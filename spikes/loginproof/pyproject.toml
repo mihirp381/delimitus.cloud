@@ -1,0 +1,28 @@
+[project]
+name = "ssc-loginproof-spike"
+version = "0.0.1"
+description = "SSC-002 spike: WorkOS login vendor proof (join key, email change, CLI token revocation)"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn==0.38.0",
+    "httpx2==2.13.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.2",
+]
+
+[tool.uv]
+exclude-newer = "2026-09-21T00:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["loginproof"]
