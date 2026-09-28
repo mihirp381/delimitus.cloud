@@ -1,0 +1,6 @@
+name: ssc-infra
+runtime:
+  name: python
+  options:
+    toolchain: uv
+description: Small Software Cloud infrastructure. Empty until the cloud is chosen (SSC-001).

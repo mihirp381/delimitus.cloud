@@ -1,0 +1,9 @@
+{
+  "name": "ssc-console",
+  "private": true,
+  "version": "0.0.1",
+  "description": "SSC admin console (TypeScript). Built by the console squad from week 3 (SSC-057).",
+  "scripts": {
+    "build": "echo 'console: no source yet (SSC-057)'"
+  }
+}

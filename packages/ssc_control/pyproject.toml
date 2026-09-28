@@ -1,0 +1,13 @@
+[project]
+name = "ssc-control"
+version = "0.0.1"
+requires-python = ">=3.14,<3.15"
+dependencies = ["ssc-contracts", "ssc-shared", "ssc-bundle", "fastapi==0.141.1", "uvicorn==0.38.0", "sqlalchemy==2.0.54", "psycopg[binary]==3.3.6", "alembic==1.20.0", "procrastinate==3.10.0", "pyjwt[crypto]==2.15.0", "httpx2==2.13.0", "cronsim==2.7"]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.deptry]
+known_first_party = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_conformance"]
+ignore = ["DEP002", "DEP004"]  # DEP002 re-enabled in SSC-011 once packages hold real code

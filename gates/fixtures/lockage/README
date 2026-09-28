@@ -1,0 +1,1 @@
+pyjwt 2.15.1 was the newest release when this fixture was generated (2026-09-28). Regenerate with gates/run_gates.py --refresh-lockage if it ages past 7 days.

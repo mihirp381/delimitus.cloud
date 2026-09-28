@@ -1,0 +1,104 @@
+[project]
+name = "ssc"
+version = "0.0.1"
+description = "Small Software Cloud control plane, cell services and tooling"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "ssc-contracts",
+    "ssc-shared",
+    "ssc-bundle",
+    "ssc-control",
+    "ssc-edge",
+    "ssc-datagw",
+    "ssc-egress",
+    "ssc-cli",
+    "ssc-app",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16,<0.17",
+    "pyright>=1.1.400,<1.2",
+    "pytest>=8.4,<10",
+    "pytest-asyncio>=1.0,<2",
+    "hypothesis>=6.150,<7",
+    "import-linter>=2.10,<3",
+    "deptry>=0.23,<1",
+    "zizmor>=1.20,<2",
+    "testcontainers[postgres]>=4.10,<5",
+]
+
+[tool.uv]
+required-version = ">=0.12,<0.13"
+exclude-newer = "2026-09-21T00:00:00Z"
+exclude-newer-package = { procrastinate = "2026-09-24T00:00:00Z", pyjwt = "2026-09-24T00:00:00Z" }
+
+[tool.uv.workspace]
+members = ["packages/*", "conformance"]
+
+[tool.uv.sources]
+ssc-contracts = { workspace = true }
+ssc-shared = { workspace = true }
+ssc-bundle = { workspace = true }
+ssc-control = { workspace = true }
+ssc-edge = { workspace = true }
+ssc-datagw = { workspace = true }
+ssc-egress = { workspace = true }
+ssc-cli = { workspace = true }
+ssc-app = { workspace = true }
+ssc-conformance = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["spikes", "gates", "console", "infra/node_modules"]
+target-version = "py314"
+src = ["packages/*/src", "conformance", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "N", "ASYNC", "T20", "PL"]
+ignore = ["PLR2004", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S", "PL", "T20"]
+"gates/**" = ["ALL"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+include = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain"]
+strict = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain"]
+reportMissingImports = true
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "conformance"]
+asyncio_mode = "auto"
+addopts = "-q --import-mode=importlib"
+
+[tool.deptry]
+known_first_party = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app"]
+
+[tool.importlinter]
+root_packages = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Cell services never import the control plane or its database"
+type = "forbidden"
+source_modules = ["ssc_edge", "ssc_datagw", "ssc_egress", "ssc_app"]
+forbidden_modules = ["ssc_control", "sqlalchemy", "alembic", "psycopg"]
+
+[[tool.importlinter.contracts]]
+name = "Contracts depend on nothing inside SSC"
+type = "forbidden"
+source_modules = ["ssc_contracts"]
+forbidden_modules = ["ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app"]
+
+[[tool.importlinter.contracts]]
+name = "Nobody imports httpx directly; use httpx2"
+type = "forbidden"
+source_modules = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app"]
+forbidden_modules = ["httpx"]
+
+[[tool.importlinter.contracts]]
+name = "Layers: contracts < shared < services"
+type = "layers"
+layers = ["ssc_control | ssc_edge | ssc_datagw | ssc_egress | ssc_cli | ssc_app", "ssc_bundle", "ssc_shared", "ssc_contracts"]
