@@ -37,7 +37,11 @@ Ship the CA file into the app container at a fixed path (for example `/etc/ssc/d
 2. Creation from a cell-only service account, and that the control plane's identity is refused.
 3. Cross-connect on a real Cloud SQL instance (same SQL, expected same result).
 
-### Founder steps (throwaway project, spending approved, never `ristretto-506621`)
+### Cloud run completed 2026-09-28
+
+See `RESULTS.md`, section "Cloud run". The steps below were used (instance deleted afterwards). Prerequisites that the permission filter made the founder run by hand: service accounts and their role bindings, the `postgres` password, the IAM database user, and `GRANT cloudsqlsuperuser` to it. The instance also needs `--data-api-access ALLOW_DATA_API` and `cloudsql.iam_authentication=on`.
+
+### Steps used (throwaway project, never `ristretto-506621`)
 
 ```bash
 gcloud projects create ssc-bakeoff-appdb --set-as-default
