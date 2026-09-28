@@ -1,0 +1,162 @@
+[
+  {
+    "id": "bx-fin-bloom-dash",
+    "cls": "builder-export",
+    "why": "Lovable Vite+React finance dashboard with Supabase client",
+    "builder_source": "lovable",
+    "stack": "vite spa",
+    "repo": "https://github.com/Gowtham3424/fin-bloom-dash"
+  },
+  {
+    "id": "bx-db-buddy",
+    "cls": "builder-export",
+    "why": "Lovable app; corpus ingest redacted a Supabase service key in client.ts",
+    "builder_source": "lovable",
+    "stack": "vite spa",
+    "repo": "https://github.com/dinesh-murugiah/db-buddy"
+  },
+  {
+    "id": "bx-eat-what-today",
+    "cls": "builder-export",
+    "why": "Lovable Vite app, small, typical export",
+    "builder_source": "lovable",
+    "stack": "vite spa",
+    "repo": "https://github.com/Dooberz/eat-what-today"
+  },
+  {
+    "id": "bx-secure-shopper",
+    "cls": "builder-export",
+    "why": "Lovable e-commerce with auth",
+    "builder_source": "lovable",
+    "stack": "vite spa",
+    "repo": "https://github.com/anand164/secure-shopper"
+  },
+  {
+    "id": "bx-fastapi-deta-on-replit",
+    "cls": "builder-export",
+    "why": "Replit Python FastAPI, requirements.txt",
+    "builder_source": "replit",
+    "stack": "python fastapi",
+    "repo": "https://github.com/bitsnaps/fastapi-deta-on-replit"
+  },
+  {
+    "id": "bx-freecodecamp-project-exercise-tracker",
+    "cls": "builder-export",
+    "why": "Replit Node/Express with Mongo URL in sample.env",
+    "builder_source": "replit",
+    "stack": "express",
+    "repo": "https://github.com/elisavetTriant/freecodecamp-project-exercise-tracker"
+  },
+  {
+    "id": "bx-my-rest-api",
+    "cls": "builder-export",
+    "why": "Replit Node API with a Dockerfile and a redacted Google key",
+    "builder_source": "replit",
+    "stack": "dockerfile",
+    "repo": "https://github.com/zeeoneofficial/my-rest-api"
+  },
+  {
+    "id": "bx-clinical-evidence-synthesizer",
+    "cls": "builder-export",
+    "why": "Replit Python data app",
+    "builder_source": "replit",
+    "stack": "python streamlit",
+    "repo": "https://github.com/dglabsxyz/clinical-evidence-synthesizer"
+  },
+  {
+    "id": "ar-flask-expense-app",
+    "cls": "agent-repo",
+    "why": "Flask app, SQLite likely",
+    "builder_source": "unknown",
+    "stack": "python",
+    "repo": "https://github.com/santos-k/Flask_Expense_App"
+  },
+  {
+    "id": "ar-budget-tracker",
+    "cls": "agent-repo",
+    "why": "Next.js with Prisma and middleware",
+    "builder_source": "unknown",
+    "stack": "next.js",
+    "repo": "https://github.com/chiragyadav2003/Budget-Tracker"
+  },
+  {
+    "id": "ar-habit-tracker",
+    "cls": "agent-repo",
+    "why": "Node/Express with env.js and vercel.json",
+    "builder_source": "unknown",
+    "stack": "express",
+    "repo": "https://github.com/guru-bandike/Habit-Tracker"
+  },
+  {
+    "id": "ar-ohmytodolist",
+    "cls": "agent-repo",
+    "why": "Cursor-built Vite SPA with prebuilt dist",
+    "builder_source": "cursor",
+    "stack": "vite spa",
+    "repo": "https://github.com/lyhue1991/ohmytodolist"
+  },
+  {
+    "id": "ar-draw-a-ui",
+    "cls": "agent-repo",
+    "why": "Copilot-built Next.js app calling OpenAI",
+    "builder_source": "copilot",
+    "stack": "next.js",
+    "repo": "https://github.com/SawyerHood/draw-a-ui"
+  },
+  {
+    "id": "ar-nutri-agent-bot",
+    "cls": "agent-repo",
+    "why": "Cursor-built Python bot with database dir",
+    "builder_source": "cursor",
+    "stack": "python fastapi",
+    "repo": "https://github.com/juandastic/nutri-agent-bot"
+  },
+  {
+    "id": "ar-broken-link-website",
+    "cls": "agent-repo",
+    "why": "Lovable-marked repo with Dockerfile and AGENTS.md",
+    "builder_source": "lovable",
+    "stack": "dockerfile",
+    "repo": "https://github.com/Deadlink-Hunter/Broken-Link-Website"
+  },
+  {
+    "id": "ar-poi-extraction-tool",
+    "cls": "agent-repo",
+    "why": "Cursor-built Python tool with on-disk cache",
+    "builder_source": "cursor",
+    "stack": "python streamlit",
+    "repo": "https://github.com/CityScope/POI-Extraction-Tool"
+  },
+  {
+    "id": "ab-attend-ops",
+    "cls": "arbitrary",
+    "why": "docker-compose frontend+backend, Lovable-marked",
+    "builder_source": "lovable",
+    "stack": "unknown",
+    "repo": "https://github.com/gurveervirk/attend-ops"
+  },
+  {
+    "id": "ab-cloudy-the-discord-bot",
+    "cls": "arbitrary",
+    "why": "Replit Python bot, poetry, no HTTP server",
+    "builder_source": "replit",
+    "stack": "python discord",
+    "repo": "https://github.com/MrPickles/Cloudy-the-Discord-Bot"
+  },
+  {
+    "id": "ab-codesphinx-freshlaundry-withadmin-and-monthlypla",
+    "cls": "arbitrary",
+    "why": "Lovable SaaS with supabase/ dir",
+    "builder_source": "lovable",
+    "stack": "vite spa",
+    "repo": "https://github.com/rophilekhan/Codesphinx-FreshLaundry--withAdmin-and-monthlyplan-SAAS"
+  },
+  {
+    "id": "ab-flat-calculator",
+    "cls": "arbitrary",
+    "why": "static site with dist/ only",
+    "builder_source": "unknown",
+    "stack": "static html",
+    "repo": "https://github.com/ahmednooor/flat-calculator"
+  }
+]

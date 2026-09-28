@@ -1,0 +1,634 @@
+{
+  "apps": {
+    "ab-attend-ops": {
+      "bucket": "uses SQLite on disk",
+      "builder_source": "lovable",
+      "cls": "arbitrary",
+      "id": "ab-attend-ops",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/gurveervirk/attend-ops",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 106,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 1,
+          "hard_port": 3,
+          "health_path": 0,
+          "localhost_bind": 2,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 2,
+          "supabase": 0
+        },
+        "latent": [
+          "uses SQLite on disk",
+          "binds to localhost only",
+          "needs build-time public variable"
+        ],
+        "port_env": false
+      },
+      "stack": "unknown",
+      "why": "docker-compose frontend+backend, Lovable-marked"
+    },
+    "ab-cloudy-the-discord-bot": {
+      "bucket": "uses SQLite on disk",
+      "builder_source": "replit",
+      "cls": "arbitrary",
+      "id": "ab-cloudy-the-discord-bot",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/MrPickles/Cloudy-the-Discord-Bot",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 10,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 2,
+          "supabase": 0
+        },
+        "latent": [
+          "uses SQLite on disk"
+        ],
+        "port_env": false
+      },
+      "stack": "python discord",
+      "why": "Replit Python bot, poetry, no HTTP server"
+    },
+    "ab-codesphinx-freshlaundry-withadmin-and-monthlypla": {
+      "bucket": "needs Supabase auth",
+      "builder_source": "lovable",
+      "cls": "arbitrary",
+      "id": "ab-codesphinx-freshlaundry-withadmin-and-monthlypla",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/rophilekhan/Codesphinx-FreshLaundry--withAdmin-and-monthlyplan-SAAS",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 92,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 8,
+          "hard_port": 1,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 1,
+          "sqlite": 0,
+          "supabase": 8
+        },
+        "latent": [
+          "needs Supabase auth",
+          "hard-coded key or password",
+          "needs build-time public variable"
+        ],
+        "port_env": false
+      },
+      "stack": "vite spa",
+      "why": "Lovable SaaS with supabase/ dir"
+    },
+    "ab-flat-calculator": {
+      "bucket": "-",
+      "builder_source": "unknown",
+      "cls": "arbitrary",
+      "id": "ab-flat-calculator",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/ahmednooor/flat-calculator",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 3,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": false
+      },
+      "stack": "static html",
+      "why": "static site with dist/ only"
+    },
+    "ar-broken-link-website": {
+      "bucket": "needs build-time public variable",
+      "builder_source": "lovable",
+      "cls": "agent-repo",
+      "id": "ar-broken-link-website",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/Deadlink-Hunter/Broken-Link-Website",
+      "scan": {
+        "dockerfile": true,
+        "files_scanned": 223,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 5,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 5,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [
+          "needs build-time public variable",
+          "needs a native library"
+        ],
+        "port_env": false
+      },
+      "stack": "dockerfile",
+      "why": "Lovable-marked repo with Dockerfile and AGENTS.md"
+    },
+    "ar-budget-tracker": {
+      "bucket": "-",
+      "builder_source": "unknown",
+      "cls": "agent-repo",
+      "id": "ar-budget-tracker",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/chiragyadav2003/Budget-Tracker",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 114,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": false
+      },
+      "stack": "next.js",
+      "why": "Next.js with Prisma and middleware"
+    },
+    "ar-draw-a-ui": {
+      "bucket": "-",
+      "builder_source": "copilot",
+      "cls": "agent-repo",
+      "id": "ar-draw-a-ui",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/SawyerHood/draw-a-ui",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 18,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": false
+      },
+      "stack": "next.js",
+      "why": "Copilot-built Next.js app calling OpenAI"
+    },
+    "ar-flask-expense-app": {
+      "bucket": "uses SQLite on disk",
+      "builder_source": "unknown",
+      "cls": "agent-repo",
+      "id": "ar-flask-expense-app",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/santos-k/Flask_Expense_App",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 14,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 1,
+          "health_path": 0,
+          "localhost_bind": 1,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 6,
+          "supabase": 0
+        },
+        "latent": [
+          "uses SQLite on disk",
+          "binds to localhost only"
+        ],
+        "port_env": false
+      },
+      "stack": "python",
+      "why": "Flask app, SQLite likely"
+    },
+    "ar-habit-tracker": {
+      "bucket": "-",
+      "builder_source": "unknown",
+      "cls": "agent-repo",
+      "id": "ar-habit-tracker",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/guru-bandike/Habit-Tracker",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 32,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 1,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": true
+      },
+      "stack": "express",
+      "why": "Node/Express with env.js and vercel.json"
+    },
+    "ar-nutri-agent-bot": {
+      "bucket": "needs Supabase auth",
+      "builder_source": "cursor",
+      "cls": "agent-repo",
+      "id": "ar-nutri-agent-bot",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/juandastic/nutri-agent-bot",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 43,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 1,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 2,
+          "supabase": 1
+        },
+        "latent": [
+          "needs Supabase auth",
+          "uses SQLite on disk"
+        ],
+        "port_env": false
+      },
+      "stack": "python fastapi",
+      "why": "Cursor-built Python bot with database dir"
+    },
+    "ar-ohmytodolist": {
+      "bucket": "-",
+      "builder_source": "cursor",
+      "cls": "agent-repo",
+      "id": "ar-ohmytodolist",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/lyhue1991/ohmytodolist",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 12,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": false
+      },
+      "stack": "vite spa",
+      "why": "Cursor-built Vite SPA with prebuilt dist"
+    },
+    "ar-poi-extraction-tool": {
+      "bucket": "-",
+      "builder_source": "cursor",
+      "cls": "agent-repo",
+      "id": "ar-poi-extraction-tool",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/CityScope/POI-Extraction-Tool",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 30,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": false
+      },
+      "stack": "python streamlit",
+      "why": "Cursor-built Python tool with on-disk cache"
+    },
+    "bx-clinical-evidence-synthesizer": {
+      "bucket": "-",
+      "builder_source": "replit",
+      "cls": "builder-export",
+      "id": "bx-clinical-evidence-synthesizer",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/dglabsxyz/clinical-evidence-synthesizer",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 11,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 3,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": false
+      },
+      "stack": "python streamlit",
+      "why": "Replit Python data app"
+    },
+    "bx-db-buddy": {
+      "bucket": "needs Supabase auth",
+      "builder_source": "lovable",
+      "cls": "builder-export",
+      "id": "bx-db-buddy",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/dinesh-murugiah/db-buddy",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 93,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 1,
+          "hard_port": 2,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 1,
+          "sqlite": 0,
+          "supabase": 2
+        },
+        "latent": [
+          "needs Supabase auth",
+          "hard-coded key or password",
+          "needs build-time public variable"
+        ],
+        "port_env": false
+      },
+      "stack": "vite spa",
+      "why": "Lovable app; corpus ingest redacted a Supabase service key in client.ts"
+    },
+    "bx-eat-what-today": {
+      "bucket": "needs build-time public variable",
+      "builder_source": "lovable",
+      "cls": "builder-export",
+      "id": "bx-eat-what-today",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/Dooberz/eat-what-today",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 71,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 1,
+          "hard_port": 1,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [
+          "needs build-time public variable"
+        ],
+        "port_env": false
+      },
+      "stack": "vite spa",
+      "why": "Lovable Vite app, small, typical export"
+    },
+    "bx-fastapi-deta-on-replit": {
+      "bucket": "-",
+      "builder_source": "replit",
+      "cls": "builder-export",
+      "id": "bx-fastapi-deta-on-replit",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/bitsnaps/fastapi-deta-on-replit",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 8,
+        "hard_port": false,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 0,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": false
+      },
+      "stack": "python fastapi",
+      "why": "Replit Python FastAPI, requirements.txt"
+    },
+    "bx-fin-bloom-dash": {
+      "bucket": "needs build-time public variable",
+      "builder_source": "lovable",
+      "cls": "builder-export",
+      "id": "bx-fin-bloom-dash",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/Gowtham3424/fin-bloom-dash",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 111,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 1,
+          "hard_port": 1,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 1,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [
+          "needs build-time public variable",
+          "needs a native library"
+        ],
+        "port_env": false
+      },
+      "stack": "vite spa",
+      "why": "Lovable Vite+React finance dashboard with Supabase client"
+    },
+    "bx-freecodecamp-project-exercise-tracker": {
+      "bucket": "-",
+      "builder_source": "replit",
+      "cls": "builder-export",
+      "id": "bx-freecodecamp-project-exercise-tracker",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/elisavetTriant/freecodecamp-project-exercise-tracker",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 12,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 1,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 1,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": true
+      },
+      "stack": "express",
+      "why": "Replit Node/Express with Mongo URL in sample.env"
+    },
+    "bx-my-rest-api": {
+      "bucket": "-",
+      "builder_source": "replit",
+      "cls": "builder-export",
+      "id": "bx-my-rest-api",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/zeeoneofficial/my-rest-api",
+      "scan": {
+        "dockerfile": true,
+        "files_scanned": 99,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 0,
+          "hard_port": 1,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 1,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [],
+        "port_env": true
+      },
+      "stack": "dockerfile",
+      "why": "Replit Node API with a Dockerfile and a redacted Google key"
+    },
+    "bx-secure-shopper": {
+      "bucket": "needs build-time public variable",
+      "builder_source": "lovable",
+      "cls": "builder-export",
+      "id": "bx-secure-shopper",
+      "outcome": "pending railpack",
+      "repo": "https://github.com/anand164/secure-shopper",
+      "scan": {
+        "dockerfile": false,
+        "files_scanned": 77,
+        "hard_port": true,
+        "health_path": false,
+        "hits": {
+          "build_public_var": 1,
+          "hard_port": 1,
+          "health_path": 0,
+          "localhost_bind": 0,
+          "native": 0,
+          "port_env": 0,
+          "scheduler": 0,
+          "secret_like": 0,
+          "sqlite": 0,
+          "supabase": 0
+        },
+        "latent": [
+          "needs build-time public variable"
+        ],
+        "port_env": false
+      },
+      "stack": "vite spa",
+      "why": "Lovable e-commerce with auth"
+    }
+  }
+}

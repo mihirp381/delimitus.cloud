@@ -1,0 +1,9 @@
+[project]
+name = "ssc-corpus20-spike"
+version = "0.0.1"
+description = "SSC-003 spike: run 20 corpus apps through Railpack, Docker and Cloud Run"
+requires-python = ">=3.14"
+dependencies = ["httpx2==2.13.0"]
+
+[tool.uv]
+package = false
