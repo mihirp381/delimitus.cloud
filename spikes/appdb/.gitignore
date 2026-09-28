@@ -1,0 +1,9 @@
+.venv/
+node_modules/
+docker/certs/
+docker/pg_hba.conf
+drivers/.env
+drivers/*_results.json
+drivers/node/node_modules/
+__pycache__/
+.pytest_cache/
