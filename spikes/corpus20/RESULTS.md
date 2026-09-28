@@ -1,10 +1,8 @@
 # SSC-003 results: 20 real apps against the SSC runtime rules
 
-Date: 2026-09-28. Status: **static scan complete, runtime half pending Railpack.**
+Date: 2026-09-28. Status: **complete: static scan, Railpack builds, local runs under the SSC rules, Cloud Run deploys, cleanup verified.**
 
-The permission classifier on this machine refused to install Railpack (install script from the
-internet) and Homebrew has no formula. Everything below that is marked *static* is measured. Every
-column marked *pending railpack* fills in when the finishing command at the bottom is run.
+Static columns come from a source scan; runtime columns were measured with Railpack 0.40.1 on this machine and on Cloud Run in the throwaway project `delimitus-0926`. Every Cloud Run service and the registry repo were deleted afterwards (see Cleanup below).
 
 Corpus apps are internal testing only. No app source is in this repo. Secret-like strings are
 counted, never recorded.
@@ -19,35 +17,6 @@ counted, never recorded.
 
 Stacks: 6 Vite SPAs, 2 Next.js, 2 Express, 2 FastAPI, 2 Streamlit, 2 with a Dockerfile, 1 Flask,
 1 Discord bot, 1 static HTML, 1 docker-compose pair.
-
-## Twenty apps
-
-| id | class | source | stack | latent buckets (static) | built | started locally | Cloud Run ready | outcome | final bucket |
-|---|---|---|---|---|---|---|---|---|---|
-| ab-attend-ops | arbitrary | lovable | docker-compose | uses SQLite on disk, binds to localhost only, needs build-time public variable | pending railpack | pending railpack | pending railpack | pending railpack | uses SQLite on disk |
-| ab-cloudy-the-discord-bot | arbitrary | replit | python discord | uses SQLite on disk | pending railpack | pending railpack | pending railpack | pending railpack | uses SQLite on disk |
-| ab-codesphinx-freshlaundry-withadmin-and-monthlypla | arbitrary | lovable | vite spa | needs Supabase auth, hard-coded key or password, needs build-time public variable | pending railpack | pending railpack | pending railpack | pending railpack | needs Supabase auth |
-| ab-flat-calculator | arbitrary | unknown | static html | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| ar-broken-link-website | agent-repo | lovable | dockerfile | needs build-time public variable, needs a native library | pending railpack | pending railpack | pending railpack | pending railpack | needs build-time public variable |
-| ar-budget-tracker | agent-repo | unknown | next.js | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| ar-draw-a-ui | agent-repo | copilot | next.js | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| ar-flask-expense-app | agent-repo | unknown | python flask | uses SQLite on disk, binds to localhost only | pending railpack | pending railpack | pending railpack | pending railpack | uses SQLite on disk |
-| ar-habit-tracker | agent-repo | unknown | express | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| ar-nutri-agent-bot | agent-repo | cursor | python fastapi | needs Supabase auth, uses SQLite on disk | pending railpack | pending railpack | pending railpack | pending railpack | needs Supabase auth |
-| ar-ohmytodolist | agent-repo | cursor | vite spa | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| ar-poi-extraction-tool | agent-repo | cursor | python streamlit | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| bx-clinical-evidence-synthesizer | builder-export | replit | python streamlit | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| bx-db-buddy | builder-export | lovable | vite spa | needs Supabase auth, hard-coded key or password, needs build-time public variable | pending railpack | pending railpack | pending railpack | pending railpack | needs Supabase auth |
-| bx-eat-what-today | builder-export | lovable | vite spa | needs build-time public variable | pending railpack | pending railpack | pending railpack | pending railpack | needs build-time public variable |
-| bx-fastapi-deta-on-replit | builder-export | replit | python fastapi | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| bx-fin-bloom-dash | builder-export | lovable | vite spa | needs build-time public variable, needs a native library | pending railpack | pending railpack | pending railpack | pending railpack | needs build-time public variable |
-| bx-freecodecamp-project-exercise-tracker | builder-export | replit | express | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| bx-my-rest-api | builder-export | replit | dockerfile | - | pending railpack | pending railpack | pending railpack | pending railpack | - |
-| bx-secure-shopper | builder-export | lovable | vite spa | needs build-time public variable | pending railpack | pending railpack | pending railpack | pending railpack | - |
-
-"Latent bucket" means the source carries the signal; whether it fails at build or run is the
-runtime half. Where an app carries several, the final bucket is the first that would stop it under
-our rules (Supabase auth before SQLite before public variable).
 
 ## Ranked causes, static scan (n=20)
 
@@ -73,53 +42,137 @@ Railpack's framework providers cover the port for Vite, Next.js and Streamlit, s
 PORT" only bites the hand-written servers (Flask, FastAPI with `uvicorn.run(port=8000)`, Express
 with `app.listen(3000)`). Expect 4 to 6 of the 20 to fail the local run on this alone.
 
-## Ranked causes, runtime
+## Runtime results (measured 2026-09-28)
 
-Pending railpack. `run_corpus.py report` fills `TABLES.md` from `results.json` after `build`,
-`run` and `deploy`; paste the two runtime tables here and re-rank.
+Railpack 0.40.1, images built for linux/amd64, run locally as uid 10001 with a read-only root, `/tmp` tmpfs,
+`PORT=8080`, no network, probed at `/` for 60 s from inside the container's network namespace. Cloud Run in
+`delimitus-0926`, us-central1, ingress internal, no unauthenticated access, 1 CPU, 512 MiB, max 1 instance.
+
+| stage | count of 20 |
+|---|---:|
+| built by Railpack | 13 |
+| answered HTTP locally under the SSC rules | 7 |
+| Cloud Run revision became ready | 8 |
+
+| id | class | source | stack | built | started locally (HTTP, seconds) | Cloud Run ready (deploy seconds) | outcome | final bucket | evidence |
+|---|---|---|---|---|---|---|---|---|---|
+| ab-attend-ops | arbitrary | lovable | unknown | no | skipped | skipped | build failed | other: monorepo, no app at root | Railpack found backend/ and frontend/ but no provider at the root |
+| ab-cloudy-the-discord-bot | arbitrary | replit | python discord | no | skipped | skipped | build failed | other: stale lockfile | poetry.lock incompatible with current Poetry; also a Discord bot, not an HTTP app |
+| ab-codesphinx-freshlaundry-withadmin-and-monthlypla | arbitrary | lovable | vite spa | no | skipped | skipped | build failed | other: stale lockfile | bun install --frozen-lockfile: lockfile had changes |
+| ab-flat-calculator | arbitrary | unknown | static html | no | skipped | skipped | build failed | other: prebuilt static site, no index at root | only dist/ and src/, no provider detected |
+| ar-broken-link-website | agent-repo | lovable | dockerfile | yes | yes (200, 3.1 s) | yes (12.7 s) | runs | runs but: needs build-time public variable | HTTP 200 from Caddy static build; VITE_ Supabase values baked at build |
+| ar-budget-tracker | agent-repo | unknown | next.js | yes | yes (500, 10.3 s) | yes (49.3 s) | runs | runs but: other: third-party auth (Clerk) needs keys | HTTP 500: @clerk/nextjs Missing publishableKey |
+| ar-draw-a-ui | agent-repo | copilot | next.js | yes | yes (200, 17.6 s) | yes (49.3 s) | runs | - | HTTP 200; OpenAI key needed only when drawing is submitted |
+| ar-flask-expense-app | agent-repo | unknown | python | no | skipped | skipped | build failed | other: pins too old for Python 3.13 | requirements.txt is UTF-16 (Windows pip freeze); numpy 1.24 and cffi 1.15 cannot build on 3.13 |
+| ar-habit-tracker | agent-repo | unknown | express | yes | no | no | fails at run | other: needs an external database (MongoDB URI) | MongooseError: uri must be a string, got undefined |
+| ar-nutri-agent-bot | agent-repo | cursor | python fastapi | yes | no | no | fails at run | needs Supabase auth | SupabaseException: supabase_url is required |
+| ar-ohmytodolist | agent-repo | cursor | vite spa | yes | yes (200, 2.4 s) | yes (9.9 s) | runs | - | HTTP 200, Vite static via Caddy |
+| ar-poi-extraction-tool | agent-repo | cursor | python streamlit | yes | no | no | fails at run | other: no start command detected | Railpack produced /bin/bash as the command; Streamlit app with no Procfile or railpack.json |
+| bx-clinical-evidence-synthesizer | builder-export | replit | python streamlit | yes | no | no | fails at run | other: wrong start command for Streamlit | Railpack ran `python app.py`; Streamlit needs `streamlit run app.py` |
+| bx-db-buddy | builder-export | lovable | vite spa | no | skipped | skipped | build failed | other: stale lockfile | bun install --frozen-lockfile: lockfile had changes |
+| bx-eat-what-today | builder-export | lovable | vite spa | no | skipped | skipped | build failed | other: stale lockfile | bun install --frozen-lockfile: lockfile had changes |
+| bx-fastapi-deta-on-replit | builder-export | replit | python fastapi | yes | no | no | fails at run | other: hosting-platform SDK (Deta) | ImportError: cannot import name 'Deta' from 'deta' |
+| bx-fin-bloom-dash | builder-export | lovable | vite spa | yes | yes (200, 2.1 s) | yes (8.0 s) | runs | runs but: needs build-time public variable | HTTP 200; Supabase URL and anon key baked at build |
+| bx-freecodecamp-project-exercise-tracker | builder-export | replit | express | yes | yes (200, 11.3 s) | yes (14.6 s) | runs | runs but: other: needs an external database (MongoDB) | HTTP 200 while Mongoose retries the connection |
+| bx-my-rest-api | builder-export | replit | dockerfile | yes | no | yes (19.6 s) | fails at run | other: non-root user has no writable home | npm start fails writing /.npm/_logs as uid 10001 |
+| bx-secure-shopper | builder-export | lovable | vite spa | yes | yes (200, 2.6 s) | yes (41.5 s) | runs | runs but: needs build-time public variable | HTTP 200; Supabase values baked at build |
+
+### Ranked failure causes, runtime (build and run, n=13)
+
+| cause | apps |
+|---|---:|
+| other: stale lockfile | 4 |
+| other: no or wrong start command (Streamlit) | 2 |
+| other: monorepo, no app at root | 1 |
+| other: prebuilt static site, no index at root | 1 |
+| other: pins too old for Python 3.13 | 1 |
+| other: needs an external database (MongoDB URI) | 1 |
+| needs Supabase auth | 1 |
+| other: hosting-platform SDK (Deta) | 1 |
+| other: non-root user has no writable home | 1 |
+
+### Runs, but carries a problem our rules will surface
+
+| cause | apps |
+|---|---:|
+| needs build-time public variable | 3 |
+| other: third-party auth (Clerk) needs keys | 1 |
+| other: needs an external database (MongoDB) | 1 |
+
+Cleanup: services left `[]`, registry repos left `[]`.
+
+### What the runtime run changed in the ranking
+
+- The static scan's top bucket (build-time public variables, 7 apps) did not stop a single build.
+  Vite bakes an empty string and the site still serves; the app breaks only when a user reaches a
+  Supabase call. It is a "runs but" problem, not a "fails" problem, so its message moves to a
+  warning shown after deploy, not a block.
+- The single biggest real failure is one the static scan did not have a bucket for: **stale lock
+  files** (4 of 20). Lovable exports carry a `bun.lockb` that no longer matches `package.json`, and
+  Railpack installs with `--frozen-lockfile`. Poetry has the same failure. Add the bucket.
+- Two Streamlit apps built fine and then ran the wrong command (`python app.py`, or no command at
+  all). Railpack's Python provider does not recognise Streamlit unless a `Procfile` or
+  `railpack.json` names the start command. Add the bucket "no or wrong start command".
+- SQLite never got to fail: three of the four SQLite apps died earlier (stale lockfile, monorepo,
+  old pins), the fourth is a Discord bot. Keep the message; it is still right, it is just not first.
+- The non-root rule alone breaks one app (`npm start` as uid 10001 with no `HOME`): Cloud Run, which
+  runs images as root by default, accepted the same image. Our image rule must set `HOME=/tmp` or
+  create the user's home, or this becomes a class of "works on Cloud Run, fails on SSC" bugs.
+- Local and Cloud Run outcomes agree on 12 of 13 built apps; the one disagreement is the `HOME`
+  case above. The local harness is therefore a trustworthy stand-in for the cloud in SSC-015 tests.
+- Cloud Run deploy time for a ready revision: 8 to 49 seconds (median about 17 s). Time to first
+  HTTP answer locally: 2 to 18 seconds under amd64 emulation, so treat those as upper bounds.
 
 ## Draft fix-it messages, top six
 
-Addressed to the builder, shown by the analyzer in SSC-015 when the signal is seen.
+Addressed to the builder, shown by SSC-015 when the signal is seen. Re-ranked by what actually
+failed in the runtime run; the static-only messages that did not fail (SQLite, localhost bind,
+scheduler, native library) drop to a second tier kept in the appendix.
 
-1. **Your app reads a `VITE_` or `NEXT_PUBLIC_` variable at build time.** These values are baked
-   into the JavaScript when we build your image, so they have to exist before the build starts.
-   Add them under "build variables" in your app settings, or move the value to a server-side call.
-   Anything in a `VITE_`/`NEXT_PUBLIC_` variable is visible to everyone who can open the app, so
-   never put a secret there.
+1. **Your lock file does not match your dependency list.** Lovable and Replit exports often ship
+   a `bun.lockb` or `poetry.lock` that is older than `package.json` or `pyproject.toml`. We install
+   with the lock file frozen, so the build stops. Run `bun install` (or `poetry lock`) locally,
+   commit the updated lock file, and deploy again.
 
-2. **Your app uses a SQLite file on disk.** Our containers run read-only and are replaced on every
-   deploy, so the file would be lost or unwritable. Ask for an app database (`ssc db create`) and
-   point your ORM at the `DATABASE_URL` we hand you. If you only need a scratch file, write it under
-   `/tmp`; it will not survive a restart.
+2. **Your app reads a `VITE_` or `NEXT_PUBLIC_` variable at build time.** These values are baked
+   into the JavaScript when we build your image, so they have to exist before the build starts. Add
+   them under "build variables" in your app settings. Anything in such a variable is visible to
+   everyone who can open the app, so never put a secret there. Your app will still start without
+   them, but every call that uses them will fail.
 
-3. **Your app has its own Supabase login.** Everyone reaching your app has already signed in with
-   the company login, and we pass who they are in the `X-SSC-Identity` header on every request.
-   Remove the Supabase sign-in screen and read the user from that header instead. If you still need
-   Supabase as a database, keep the client but drop `supabase.auth`.
+3. **We could not tell how to start your app.** Streamlit, Gradio and plain-script apps need a start
+   command. Add a `Procfile` with one line, for example `web: streamlit run app.py --server.port
+   $PORT --server.address 0.0.0.0`, or set the start command in `ssc.toml`.
 
-4. **Your app only listens on `localhost` or a fixed port.** Inside our runtime the app must listen
-   on `0.0.0.0` and on the port in the `PORT` environment variable. Change the listen call to
-   `host="0.0.0.0", port=int(os.environ["PORT"])` (Python) or `app.listen(process.env.PORT)` (Node).
+4. **Your app needs a database or login service we do not provide.** MongoDB, Supabase and Clerk
+   connection strings are read from the environment and were missing, so the app crashed on start.
+   For a database, ask for an app database (`ssc db create`) and switch the driver to Postgres. For
+   login, remove the vendor sign-in and read the user from the `X-SSC-Identity` header we send on
+   every request.
 
-5. **Your code contains something that looks like a key or password.** We block the deploy when we
-   find one. Move it to an app secret (`ssc secret set NAME`) and read it from the environment. If it
-   is a Supabase anon key, note that anon keys are public by design but still belong in a variable,
-   not in the source.
+5. **Your app writes to its home directory.** We run apps as a non-root user with a read-only file
+   system. `npm start` and some Python tools write caches under `$HOME`. Write scratch files under
+   `/tmp` only. (Platform note for SSC-015: set `HOME=/tmp` in every image so this class goes away.)
 
-6. **Your app runs its own scheduler or needs a native library.** In-process schedulers
-   (`node-cron`, `APScheduler`) run once per replica and stop when we scale to zero. Declare a timer
-   in `ssc.toml` and give it a path to call instead. Native modules (`sharp`, `bcrypt`, `canvas`)
-   must have a prebuilt binary for Linux x86-64; if the build fails on them, switch to the pure
-   JavaScript or wheel-based alternative (`bcryptjs`, `Pillow`).
+6. **Your repository is not a single app at the root.** A `backend/` and `frontend/` pair, or a
+   folder with only prebuilt `dist/` files, has nothing we can build. Deploy each app from its own
+   folder (`ssc deploy ./backend`), or add an `index.html` at the root for a static site.
 
-Message 6 covers two low-count buckets together; split it once the runtime run says which one
-actually fails more.
+Second tier, kept for the analyzer but not shown by default because none of them stopped an app in
+this run: SQLite on disk, localhost-only bind, in-process scheduler, native library, hosting-platform
+SDK (Deta, Replit DB), dependency pins too old for the default Python (fix: add a `.python-version`).
 
 ## What this means for SSC-015 and SSC-014
 
 - SSC-015 (build service) should run the analyzer before Railpack, on the seven signals above plus
-  `PORT`. The static scan is cheap: 20 apps in under 5 seconds with stdlib regexes.
+  `PORT`, the lock-file drift check and the start-command check. The static scan is cheap: 20 apps
+  in under 5 seconds with stdlib regexes. Lock-file drift is checkable offline (`bun install
+  --frozen-lockfile --dry-run`, `poetry check --lock`).
+- SSC-015 must set `HOME=/tmp` (or create the user's home) in every image, and SSC-014's `ssc
+  doctor` should run the image locally as uid 10001 with a read-only root, because that is the one
+  rule Cloud Run does not enforce for us.
+- Railpack's Python provider needs a Procfile for Streamlit. `ssc doctor` should write one when it
+  sees `import streamlit` and no start command.
 - The `PORT` and `0.0.0.0` check belongs in `ssc doctor` (SSC-014) because it is the most common
   problem and the cheapest to fix on the laptop.
 - Lovable exports are one shape: Vite SPA plus Supabase, with `VITE_SUPABASE_URL` and the anon key
@@ -131,16 +184,14 @@ actually fails more.
 - Two apps ship a Dockerfile. Decide in SSC-015 whether we honour it (faster) or ignore it (our
   rules win). Recommendation: ignore it in MVP; Railpack owns the image.
 
-## Finishing the runtime half
+## How the runtime half was run
 
-Install Railpack yourself (the classifier will not let the agent do it), then from this directory:
+Railpack 0.40.1 installed by the founder. BuildKit ran as `moby/buildkit` in a privileged container
+(`BUILDKIT_HOST=docker-container://buildkit`), images built for `linux/amd64` so the same image
+served the local run and Cloud Run. Two harness lessons worth keeping:
 
-```
-uv run python run_corpus.py build && uv run python run_corpus.py run && \
-uv run python run_corpus.py deploy && uv run python run_corpus.py cleanup && \
-uv run python run_corpus.py report
-```
-
-`deploy` uses project `delimitus-0926` only, Artifact Registry repo `corpus20` in `us-central1`,
-Cloud Run services `corpus20-1..20` with ingress internal and no unauthenticated access.
-`cleanup` deletes them and prints what is left. Then paste `TABLES.md` into this file.
+- `docker run --network none` silently drops `-p` port publishing, so the first local pass probed
+  nothing. The probe now runs `curlimages/curl` inside the app container's network namespace.
+- Emulated amd64 builds filled the host disk (4 GB free) and crashed the Docker Desktop VM twice
+  with ext4 write errors. Clearing caches and Docker's build cache (35 GB free) fixed it. Run this on
+  a Linux amd64 box next time.

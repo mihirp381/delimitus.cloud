@@ -10,12 +10,16 @@ Corpus location: `/Users/mihir/Documents/Internal_App_Platform/corpus-sources/co
 ```
 uv run python run_corpus.py select    # writes selection.json, seeds results.json
 uv run python run_corpus.py scan      # static signals per app
-uv run python run_corpus.py build     # railpack build -> image corpus20/<id>   (needs railpack)
+uv run python run_corpus.py build     # railpack build -> linux/amd64 image corpus20/<id>
 uv run python run_corpus.py run       # docker run under SSC rules, probe / for 60 s
 uv run python run_corpus.py deploy    # push + Cloud Run in delimitus-0926, ingress internal
 uv run python run_corpus.py cleanup   # delete services and registry repo, print leftovers
 uv run python run_corpus.py report    # results.json -> TABLES.md
 ```
 
-Requires Docker Desktop, `gcloud` logged in with `delimitus-0926` as the project, and the
-`railpack` binary on PATH. Set `SSC_SCRATCH` to change the build copy location.
+Requires Docker Desktop, `gcloud` logged in with `delimitus-0926` as the project, the `railpack`
+binary on PATH, and a BuildKit daemon: `docker run --rm --privileged -d --name buildkit moby/buildkit`
+then `export BUILDKIT_HOST=docker-container://buildkit`. Set `SSC_SCRATCH` to change the build copy
+location. `build` is resumable (skips images already built). Run completed 2026-09-28; the Cloud Run
+services and the `corpus20` registry repo were deleted and the empty listings recorded in
+`results.json`.

@@ -187,41 +187,45 @@ def do_build(st: dict[str, Any]) -> None:
         sys.exit("railpack not installed; install it, then rerun build")
     SCRATCH.mkdir(parents=True, exist_ok=True)
     for app in st["apps"].values():
+        if app.get("build", {}).get("ok"):
+            continue
         src, dst = bundle(app), SCRATCH / app["id"]
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst, symlinks=True)
         t0 = time.perf_counter()
-        r = sh(["railpack", "build", str(dst), "--name", f"corpus20/{app['id']}"], timeout=1200)
+        r = sh(["railpack", "build", str(dst), "--name", f"corpus20/{app['id']}", "--platform", "linux/amd64",
+                "--progress", "plain"], timeout=1200)
         app["build"] = {"ok": r.returncode == 0, "seconds": round(time.perf_counter() - t0, 1),
                         "tail": [redact(x) for x in (r.stdout + r.stderr).splitlines()[-40:]]}
         print(app["id"], "built" if r.returncode == 0 else "BUILD FAILED", app["build"]["seconds"])
         save(st)
 
 
-def probe(port: int, cid: str) -> dict[str, Any]:
+def probe(cid: str) -> dict[str, Any]:
+    """Probe from inside the container's network namespace: --network none drops published ports."""
     t0 = time.perf_counter()
     while time.perf_counter() - t0 < 60:
         st = sh(["docker", "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}}", cid]).stdout.split()
         if st and st[0] != "running":
             return {"status": None, "exit_code": int(st[1]), "seconds": round(time.perf_counter() - t0, 1)}
-        try:
-            r = httpx2.get(f"http://127.0.0.1:{port}/", timeout=3.0)
-            return {"status": r.status_code, "exit_code": None, "seconds": round(time.perf_counter() - t0, 1)}
-        except httpx2.HTTPError:
-            time.sleep(1)
+        r = sh(["docker", "run", "--rm", f"--network=container:{cid}", "curlimages/curl", "-s", "-o", "/dev/null",
+                "-m", "3", "-w", "%{http_code}", "http://127.0.0.1:8080/"])
+        code = r.stdout.strip()
+        if r.returncode == 0 and code.isdigit() and int(code) > 0:
+            return {"status": int(code), "exit_code": None, "seconds": round(time.perf_counter() - t0, 1)}
+        time.sleep(1)
     return {"status": None, "exit_code": None, "seconds": 60.0, "timeout": True}
 
 
 def do_run(st: dict[str, Any]) -> None:
-    port = 18080
     for app in st["apps"].values():
         if not app.get("build", {}).get("ok"):
             app["run"] = {"skipped": "not built"}
             continue
         img = f"corpus20/{app['id']}"
-        base = ["docker", "run", "-d", "--user", "10001:10001", "--tmpfs", "/tmp", "-e", "PORT=8080",
-                "-p", f"127.0.0.1:{port}:8080", "--network", "none"]
+        base = ["docker", "run", "-d", "--platform", "linux/amd64", "--user", "10001:10001", "--tmpfs", "/tmp",
+                "-e", "PORT=8080", "--network", "none"]
         for read_only in (True, False):
             cmd = base + (["--read-only"] if read_only else []) + [img]
             r = sh(cmd)
@@ -229,15 +233,15 @@ def do_run(st: dict[str, Any]) -> None:
                 app["run"] = {"ok": False, "read_only": read_only, "error": redact(r.stderr[-400:])}
                 break
             cid = r.stdout.strip()
-            res = probe(port, cid)
-            logs = sh(["docker", "logs", cid]).stdout.splitlines()[:40]
+            res = probe(cid)
+            lg = sh(["docker", "logs", cid])
+            logs = (lg.stdout + lg.stderr).splitlines()[:40]
             sh(["docker", "rm", "-f", cid])
             res.update(ok=res["status"] is not None, read_only=read_only, logs=[redact(x) for x in logs])
             app["run"] = res
             if res["ok"] or res.get("exit_code") is None:
                 break
-        print(app["id"], app["run"])
-        port += 1
+        print(app["id"], {k: v for k, v in app["run"].items() if k != "logs"})
         save(st)
 
 
