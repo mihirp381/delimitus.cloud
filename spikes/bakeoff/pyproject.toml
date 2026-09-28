@@ -1,0 +1,13 @@
+[project]
+name = "ssc-bakeoff"
+version = "0.0.1"
+description = "SSC-001 cloud bake-off runner"
+requires-python = "==3.14.*"
+dependencies = [
+    "httpx2==2.13.0",
+    "websockets==17.1",
+]
+
+[tool.uv]
+exclude-newer = "2026-09-21T00:00:00Z"
+package = false
