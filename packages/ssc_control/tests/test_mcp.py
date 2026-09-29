@@ -763,14 +763,23 @@ async def test_deploy_to_preview(world: World) -> None:
         try:
             ports = Ports(engine=engine, build_driver=FakeBuildDriver())
             assert await run_build(ports, org_id=org, build_id=build) == "succeeded"
-            # The same bundle built for prod: a newer release preview must not run.
-            prod_build = httpx2.post(
-                f"{world.url}/v1/apps/{world.app['id']}/environments/{prod}/builds",
-                json={"bundle_id": building.structured_content["bundle_id"]},
-                headers={"Authorization": f"Bearer {world.human}", "Idempotency-Key": new_key()},
+            # The same bundle built for prod, as promote leaves it: a newer release preview must
+            # not run.
+            prod_id = new_id("bld")
+            rows(
+                world.dsns.app,
+                org,
+                "insert into ssc.build (id, org_id, app_id, environment_id, bundle_id, actor_kind, "
+                "actor_id) values (%s, %s, %s, %s, %s, 'user', %s) returning id",
+                (
+                    prod_id,
+                    org,
+                    world.app["id"],
+                    prod,
+                    building.structured_content["bundle_id"],
+                    world.org.admin_user_id,
+                ),
             )
-            assert prod_build.status_code == 202, prod_build.text
-            prod_id = prod_build.json()["build_id"]
             assert await run_build(ports, org_id=org, build_id=prod_id) == "succeeded"
         finally:
             await engine.dispose()
