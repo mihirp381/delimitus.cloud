@@ -1467,6 +1467,8 @@ export interface operations {
             query?: never;
             header?: {
                 "If-Match"?: string | null;
+                /** @description The builder tool making the change, for product metrics. An agent credential's client id takes precedence. */
+                "X-SSC-Source-Tool"?: string | null;
             };
             path: {
                 app_id: string;

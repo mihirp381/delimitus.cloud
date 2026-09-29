@@ -1,9 +1,4 @@
--- SSC-028 · Metrics events: the shapes the recorder writes, enforced by the database too.
---
--- A pseudonym is 32 hex characters of a keyed HMAC, never an id; a source tool is the normalised
--- tool name; properties are one flat object that carries no user id and no email address.
--- metrics_event has had no writer since 0001, so every existing row passes. CHECK validation scans
--- the table without row-level security, so FORCE stays on.
+-- SSC-028 · metrics_event shape checks (reasoning in db/PII.md and db/README.md).
 
 ALTER TABLE ssc.metrics_event
   ADD CONSTRAINT metrics_event_pseudonym_check CHECK (pseudonym ~ '^[0-9a-f]{32}$'),
