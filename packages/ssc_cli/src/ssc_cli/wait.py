@@ -2,9 +2,11 @@
 
 A build or deployment that ends badly becomes a :class:`CliError` whose code is the API's
 ``failure_code``, with ``status: null`` (nothing was refused) and ``instance`` naming the build or
-operation. Time is counted in the sleeps between polls, so a test's no-op sleep still ends.
+operation. Time is counted in the sleeps between polls, so a test's no-op sleep still ends. One
+:class:`Budget` is shared by every wait of a command, so ``--timeout`` bounds the whole command.
 """
 
+from dataclasses import dataclass
 from typing import Final
 
 from ssc_cli.api import ApiClient, Sleep
@@ -38,6 +40,22 @@ FIXES: Final = {
 }
 
 
+@dataclass(slots=True)
+class Budget:
+    """The seconds one command may wait in all, and those its sleeps have spent."""
+
+    seconds: float
+    spent: float = 0.0
+
+    def sleep(self, sleep: Sleep) -> None:
+        sleep(POLL_SECONDS)
+        self.spent += POLL_SECONDS
+
+    @property
+    def used_up(self) -> bool:
+        return self.spent >= self.seconds
+
+
 def ended_badly(what: str, code: str, detail: str, instance: str) -> CliError:
     body = ErrorBody(
         code=code, title=f"The {what} failed.", detail=detail, status=None, instance=instance
@@ -45,12 +63,12 @@ def ended_badly(what: str, code: str, detail: str, instance: str) -> CliError:
     return CliError(body, ExitCode.FAILED, fix=FIXES.get(code))
 
 
-def _timed_out(what: str, state: str, timeout: float, instance: str, follow: str) -> CliError:
+def _timed_out(what: str, state: str, budget: Budget, instance: str, next_step: str) -> CliError:
     body = ErrorBody(
         code=WAIT_TIMED_OUT,
         title=f"Stopped waiting for the {what}.",
-        detail=f"It was still {state} after {timeout:g} seconds and carries on without ssc. "
-        f"Follow it with `{follow}`.",
+        detail=f"It was still {state} after {budget.seconds:g} seconds and carries on without "
+        f"ssc. {next_step}",
         status=None,
         instance=instance,
     )
@@ -58,11 +76,10 @@ def _timed_out(what: str, state: str, timeout: float, instance: str, follow: str
 
 
 def wait_for_build(
-    client: ApiClient, build_id: str, *, sleep: Sleep, timeout: float, follow: str
+    client: ApiClient, build_id: str, *, sleep: Sleep, budget: Budget, next_step: str
 ) -> tuple[str, int]:
     """The id and number of the release the build made."""
     instance = f"/v1/builds/{build_id}"
-    waited = 0.0
     while True:
         build = client.get_build(build_id)
         if build.state == "succeeded":
@@ -76,18 +93,16 @@ def wait_for_build(
         if build.state == "failed":
             code = build.failure_code or BUILD_FAILED
             raise ended_badly("build", code, f"Build {build_id} failed with {code}.", instance)
-        if waited >= timeout:
-            raise _timed_out("build", build.state, timeout, instance, follow)
-        sleep(POLL_SECONDS)
-        waited += POLL_SECONDS
+        if budget.used_up:
+            raise _timed_out("build", build.state, budget, instance, next_step)
+        budget.sleep(sleep)
 
 
 def wait_for_operation(
-    client: ApiClient, operation_id: str, *, sleep: Sleep, timeout: float, follow: str
+    client: ApiClient, operation_id: str, *, sleep: Sleep, budget: Budget, next_step: str
 ) -> OperationOut:
     """The deployment once it is ``healthy``."""
     instance = f"/v1/operations/{operation_id}"
-    waited = 0.0
     while True:
         op = client.get_operation(operation_id)
         if op.state == "healthy":
@@ -97,10 +112,11 @@ def wait_for_operation(
             detail = f"Deployment {operation_id} failed with {code}; the environment is unchanged."
             raise ended_badly("deployment", code, detail, instance)
         if op.state == "superseded":
-            detail = f"Deployment {operation_id} was superseded by a newer deployment, which is "
-            "what the environment runs or will run."
+            detail = (
+                f"Deployment {operation_id} was superseded by a newer deployment, which is "
+                "what the environment runs or will run."
+            )
             raise ended_badly("deployment", DEPLOYMENT_SUPERSEDED, detail, instance)
-        if waited >= timeout:
-            raise _timed_out("deployment", op.state, timeout, instance, follow)
-        sleep(POLL_SECONDS)
-        waited += POLL_SECONDS
+        if budget.used_up:
+            raise _timed_out("deployment", op.state, budget, instance, next_step)
+        budget.sleep(sleep)

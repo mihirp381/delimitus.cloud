@@ -23,7 +23,7 @@ from ssc_cli.models import AppOut, EnvironmentOut, ReleaseOut
 from ssc_cli.output import print_json, say
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import RollbackResult
-from ssc_cli.wait import DEFAULT_TIMEOUT, wait_for_operation
+from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_operation
 
 ROLLBACK: Final = "rollback"
 RELEASE_PREFIX: Final = "rel_"
@@ -73,9 +73,12 @@ def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option
         op = client.create_deployment(target.id, where.id, rel.release_id, ROLLBACK)
         state = op.state
         if wait:
-            follow = f"ssc status {target.slug}"
             state = wait_for_operation(
-                client, op.operation_id, sleep=s.sleep, timeout=timeout, follow=follow
+                client,
+                op.operation_id,
+                sleep=s.sleep,
+                budget=Budget(timeout),
+                next_step=f"Follow it with `ssc status {target.slug}`.",
             ).state
     result = RollbackResult(
         app_id=target.id,

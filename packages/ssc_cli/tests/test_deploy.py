@@ -363,6 +363,8 @@ def test_too_large_exits_4(cli, api, folder, monkeypatch):
         ("deploy", ".", "--app", "demo", "--env", "prod"),
         ("deploy", "/nonexistent-ssc-folder", "--app", "demo"),
         ("deploy", ".", "--app", "demo", "--timeout", "0"),
+        ("deploy", "--app", "demo", "--build", "bld_x"),
+        ("deploy", "--app", "demo", "--build", BUILD, "--commit", "ab" * 20),
         ("releases",),
         ("releases", "demo", "--limit", "101"),
         ("releases", "demo", "--before", "0"),
@@ -445,9 +447,96 @@ def test_waiting_gives_up_after_the_timeout(cli, api, folder):
     assert r.code == ExitCode.FAILED
     error = _error(r)
     assert (error["code"], error["instance"]) == ("WAIT_TIMED_OUT", f"/v1/builds/{BUILD}")
-    assert "ssc status demo" in str(error["detail"])
+    assert f"`ssc deploy --app demo --build {BUILD}`" in str(error["detail"])
+    assert "ssc status" not in str(error["detail"])
     assert slept == [2.0, 2.0]
     assert _calls(api).count(("GET", f"/v1/builds/{BUILD}")) == 3
+    assert ("POST", PREVIEW_DEPLOYMENTS) not in _calls(api)
+
+
+def test_one_timeout_covers_the_build_and_the_deployment(cli, api, folder):
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("running"), _build("succeeded")]
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [_operation("running")]
+    slept: list[float] = []
+    session = Session(
+        api_override=API, transport=httpx2.MockTransport(api.handler), sleep=slept.append
+    )
+    r = cli(
+        "deploy",
+        str(folder),
+        "--app",
+        "demo",
+        "--wait",
+        "--timeout",
+        "6",
+        "--json",
+        session=session,
+    )
+    assert r.code == ExitCode.FAILED
+    error = _error(r)
+    assert (error["code"], error["instance"]) == ("WAIT_TIMED_OUT", f"/v1/operations/{DEP}")
+    assert "after 6 seconds" in str(error["detail"])
+    assert "`ssc status demo`" in str(error["detail"])
+    assert slept == [2.0, 2.0, 2.0]
+    assert _calls(api).count(("GET", f"/v1/operations/{DEP}")) == 3
+
+
+def _resumable(api) -> None:
+    api.add(
+        "GET",
+        f"{RELEASES}/{REL}",
+        httpx2.Response(200, json=_release(7, PREVIEW) | {"release_id": REL}),
+    )
+
+
+def test_the_resume_command_waits_for_the_build_and_deploys_its_release(cli, api, tmp_path):
+    _resumable(api)
+    r = cli(
+        "deploy",
+        str(tmp_path),
+        "--app",
+        "demo",
+        "--build",
+        BUILD,
+        "--wait",
+        "--json",
+        session=api.session(),
+    )
+    assert r.code == 0, (r.stdout, r.stderr)
+    result = DeployResult.model_validate(r.json())
+    assert (result.build_id, result.bundle_id, result.release_id) == (BUILD, BUNDLE, REL)
+    assert (result.digest, result.uploaded, result.state) == (
+        "sha256:" + "3" * 64,
+        False,
+        "healthy",
+    )
+    assert (result.warnings, result.capability_changes) == ([], [])
+    assert _calls(api) == [
+        ("GET", "/v1/apps"),
+        ("GET", f"/v1/apps/{APP_ID}"),
+        ("GET", f"/v1/builds/{BUILD}"),
+        ("GET", f"/v1/builds/{BUILD}"),
+        ("GET", f"{RELEASES}/{REL}"),
+        ("POST", PREVIEW_DEPLOYMENTS),
+        ("GET", f"/v1/operations/{DEP}"),
+        ("GET", f"/v1/operations/{DEP}"),
+    ]
+    assert _body(api.seen[5]) == {"release_id": REL, "kind": "deploy"}
+
+
+def test_resuming_a_build_of_another_environment_is_refused(cli, api):
+    body = json.loads(_build("succeeded").content)
+    body["environment_id"] = PROD
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [httpx2.Response(200, json=body)]
+    r = cli("deploy", "--app", "demo", "--build", BUILD, "--json", session=api.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "BUILD_NOT_FOUND")
+    assert ("POST", PREVIEW_DEPLOYMENTS) not in _calls(api)
+
+
+def test_a_superseded_deployment_says_why(cli, api, folder):
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [_operation("superseded")]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", "--json", session=api.session())
+    assert str(_error(r)["detail"]).endswith("what the environment runs or will run.")
 
 
 def test_api_refusals_pass_through(cli, api, folder, fake_problem):
