@@ -189,6 +189,12 @@ function TransferOwner({ app }: { readonly app: AppOut }) {
   const [error, setError] = useState<unknown>(null);
   const [done, setDone] = useState<string | null>(null);
 
+  function show() {
+    setPicked(null);
+    setError(null);
+    setOpen(true);
+  }
+
   function close() {
     setOpen(false);
     setPicked(null);
@@ -218,7 +224,7 @@ function TransferOwner({ app }: { readonly app: AppOut }) {
 
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Transfer ownership</Button>
+      <Button onClick={show}>Transfer ownership</Button>
       {done ? (
         <p className="notice notice-success" role="status">
           {done}

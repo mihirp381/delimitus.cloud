@@ -56,6 +56,18 @@ const FIRST_RENDER_MS = 5000;
 
 const NEVER: Handler = () => new Promise<Response>(() => undefined);
 
+/** A handler whose response waits until `answer` is called. */
+function held(): { handler: Handler; answer: (r: Response) => void } {
+  let answer: (r: Response) => void = () => undefined;
+  const handler: Handler = () =>
+    new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+  return { handler, answer: (r) => answer(r) };
+}
+
+const FINANCE = () => json(200, { groups: [{ id: GROUP, name: 'Finance', member_count: 4 }] });
+
 function page(extra: Record<string, Handler | Handler[]> = {}, status: Status = 'active') {
   return {
     [`GET ${APP_PATH}`]: () => json(200, app(status)),
@@ -313,6 +325,63 @@ describe('share dialog', () => {
     expect(withGrant(builder)([ORG_USER, owner])).toEqual([owner, builder]);
   });
 
+  it('drops a late search result once a grp_ id was pasted', async () => {
+    const other = 'grp_gggggggggggggggggggg';
+    const search = held();
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({ 'GET /v1/groups': search.handler, [`PUT ${PROD_GRANTS}`]: echoGrants(PROD, 4) }),
+      signedIn(),
+    );
+    const { dialog } = await openShare('Production');
+    const box = within(dialog).getByLabelText('Group name or grp_ id');
+    fireEvent.change(box, { target: { value: 'finance' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
+    await waitFor(() => expect(api.of('GET', '/v1/groups')).toHaveLength(1));
+    fireEvent.change(box, { target: { value: other } });
+    await act(async () => {
+      search.answer(FINANCE());
+    });
+    expect(within(dialog).queryByRole('radio', { name: /Finance/ })).toBeNull();
+    await submitShare(dialog);
+    expect(api.of('PUT', PROD_GRANTS)[0]?.body).toEqual({
+      grants: [
+        { role: 'user', subject_kind: 'org' },
+        { role: 'user', subject_kind: 'group', subject_id: other },
+      ],
+    });
+  });
+
+  it('drops a group search that lands after switching to a person', async () => {
+    const search = held();
+    const { api } = start(`/apps/${APP_ID}`, page({ 'GET /v1/groups': search.handler }), signedIn());
+    const { dialog } = await openShare('Production');
+    fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: 'finance' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
+    await waitFor(() => expect(api.of('GET', '/v1/groups')).toHaveLength(1));
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'A person' }));
+    await act(async () => {
+      search.answer(FINANCE());
+    });
+    expect((within(dialog).getByRole('button', { name: 'Share' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('drops a search that lands after the dialog closed', async () => {
+    const search = held();
+    const { api } = start(`/apps/${APP_ID}`, page({ 'GET /v1/groups': search.handler }), signedIn());
+    const { panel, dialog } = await openShare('Production');
+    fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: 'finance' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
+    await waitFor(() => expect(api.of('GET', '/v1/groups')).toHaveLength(1));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await act(async () => {
+      search.answer(FINANCE());
+    });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Share Production' }));
+    const again = await screen.findByRole('dialog', { name: 'Share production' });
+    expect((within(again).getByRole('button', { name: 'Share' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('keeps the dialog open on a refusal', async () => {
     start(
       `/apps/${APP_ID}`,
@@ -517,6 +586,26 @@ describe('admin actions', () => {
     expect(api.of('PUT', `${APP_PATH}/owner`)[0]?.body).toEqual({ user_id: PERSON });
     expect((await within(admin).findByRole('status')).textContent).toBe('expenses now belongs to Pat.');
     expect(screen.getAllByText(PERSON).length).toBeGreaterThan(0);
+  });
+
+  it('drops a person search that lands after the transfer dialog closed', async () => {
+    const search = held();
+    const { api } = start(`/apps/${APP_ID}`, page({ 'GET /v1/users': search.handler }), signedIn());
+    const admin = await adminPanel();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
+    fireEvent.change(within(dialog).getByLabelText('New owner: email or usr_ id'), { target: { value: 'pat@example.com' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
+    await waitFor(() => expect(api.of('GET', '/v1/users')).toHaveLength(1));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await act(async () => {
+      search.answer(
+        json(200, { users: [{ id: PERSON, display_name: 'Pat', email: 'pat@example.com', role: 'member', status: 'active' }] }),
+      );
+    });
+    fireEvent.click(within(admin).getByRole('button', { name: 'Transfer ownership' }));
+    const again = await screen.findByRole('dialog', { name: 'Transfer expenses' });
+    expect((within(again).getByRole('button', { name: 'Transfer' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('shows OWNER_NOT_ACTIVE and keeps the dialog open', async () => {

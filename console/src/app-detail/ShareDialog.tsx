@@ -68,6 +68,12 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
     setAsked(null);
   }
 
+  function show() {
+    setKind('group');
+    reset();
+    setOpen(true);
+  }
+
   function close() {
     setOpen(false);
     setKind('group');
@@ -138,7 +144,7 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
 
   return (
     <>
-      <Button variant="primary" onClick={() => setOpen(true)} aria-label={`Share ${ENV_TITLE[env.name]}`}>
+      <Button variant="primary" onClick={show} aria-label={`Share ${ENV_TITLE[env.name]}`}>
         Share
       </Button>
       <Dialog open={open} title={title} onClose={close}>

@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode, useId, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import type { Match } from '../api/directory';
 import { Button } from '../components/Button';
 import { ProblemNotice } from '../components/ProblemNotice';
@@ -15,39 +15,55 @@ interface Props {
   readonly onPick: (match: Match | null) => void;
 }
 
-/** A text box that takes an id as typed, or searches and lets the user pick one match. */
+/**
+ * A text box that takes an id as typed, or searches and lets the user pick one match. A search
+ * that lands after the text changed or the box unmounted is dropped.
+ */
 export function Lookup({ label, placeholder, idPattern, search, hint, picked, onPick }: Props) {
   const [text, setText] = useState('');
   const [matches, setMatches] = useState<readonly Match[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const latest = useRef(0);
   const inputId = useId();
   const name = useId();
   const typed = text.trim();
   const isId = idPattern.test(typed);
 
+  useEffect(
+    () => () => {
+      latest.current += 1;
+    },
+    [],
+  );
+
   function change(value: string) {
+    latest.current += 1;
     setText(value);
     setMatches(null);
     setError(null);
+    setBusy(false);
     const v = value.trim();
     onPick(idPattern.test(v) ? { id: v, label: v } : null);
   }
 
   async function find() {
     if (!search || !typed || isId || busy) return;
+    const request = ++latest.current;
     setBusy(true);
     setError(null);
     try {
       const found = await search(typed);
+      if (request !== latest.current) return;
       setMatches(found);
       const open = found.filter((m) => !m.unavailable);
       onPick(open.length === 1 && open[0] ? open[0] : null);
     } catch (e) {
+      if (request !== latest.current) return;
       setMatches(null);
       setError(e);
     } finally {
-      setBusy(false);
+      if (request === latest.current) setBusy(false);
     }
   }
 
