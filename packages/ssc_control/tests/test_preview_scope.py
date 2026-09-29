@@ -177,9 +177,11 @@ def test_preview_scoped_token_cannot_make_changes_naming_no_environment(
 ) -> None:
     """The rule C3b's promote endpoint will fall under too: it names no environment."""
     ask = {"environment_id": b.env("preview"), "kind": "connect_data_source", "subject_key": "db"}
+    share_shaped = {"environment_id": b.env("preview"), "kind": "agent_share"}
     with caplog.at_level(logging.WARNING, logger="ssc.api"):
         refused_by_scope(caplog, post(b, "/v1/apps", {"slug": "from-ci"}))
         refused_by_scope(caplog, post(b, "/v1/approvals", ask))
+        refused_by_scope(caplog, post(b, f"/v1/apps/{b.app['id']}/enable", share_shaped))
     assert count(b, "select count(*) from ssc.app where slug = 'from-ci'") == 0
     assert count(b, "select count(*) from ssc.approval_request where subject_key = 'db'") == 0
 
@@ -208,6 +210,14 @@ def test_preview_scoped_token_cannot_ask_for_a_prod_share(
         for ask in asks:
             refused_by_scope(caplog, post(b, "/v1/approvals", ask))
         refused_by_scope(caplog, post(b, "/v1/approvals", None))
+        deep = b.client.post(
+            "/v1/approvals",
+            content=b"[" * 200_000 + b"]" * 200_000,
+            headers=auth(
+                b.preview, **{IDEMPOTENCY_HEADER: new_key(), "Content-Type": "text/plain"}
+            ),
+        )
+        refused_by_scope(caplog, deep)
     assert (
         count(
             b, "select count(*) from ssc.approval_request where environment_id = %s", b.env("prod")

@@ -165,7 +165,7 @@ async def _share_environment(request: Request) -> str | None:
     """The environment a share ask names, or None when the body asks for anything else."""
     try:
         body: object = await request.json()
-    except ValueError:
+    except ValueError, RecursionError:
         return None
     if not isinstance(body, dict):
         return None

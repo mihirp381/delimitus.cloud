@@ -350,7 +350,8 @@ async def test_preview_scoped_agent_cannot_roll_back_prod(world: World) -> None:
 
 async def test_preview_scoped_agent_asks_only_preview_shares(world: World) -> None:
     """Founder decision 2026-09-29: a preview share may be asked for, and another admin decides.
-    A prod share and a data connection stay refused."""
+    A data connection stays refused, and so does a prod share, already at the read of prod's
+    grants; test_preview_scope pins the prod ask itself."""
     member = add_account(world.dsns.app, world.org.org_id, "member")
     refused = [
         ("request_connection", {"app": "mcp-app", "connection": "scoped-db"}),
