@@ -15,6 +15,7 @@ from ssc_control.deferral import defer, env_lock
 NAMESPACE: Final = "deploy"
 RUN_BUILD: Final = f"{NAMESPACE}:run_build"
 RUN_DEPLOYMENT: Final = f"{NAMESPACE}:run_deployment"
+COLLECT_BUNDLES: Final = f"{NAMESPACE}:collect_bundles"
 
 
 async def defer_build(

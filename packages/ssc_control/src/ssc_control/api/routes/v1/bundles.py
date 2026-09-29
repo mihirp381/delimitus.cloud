@@ -5,7 +5,9 @@ at most 10 minutes and is bound to the length and sha256. The same digest again 
 stored bundle with no URL, or a fresh URL while it is still pending. ``complete`` re-reads the
 object and runs every check server side (``ssc_control.deploy.bundles``) before the bundle is
 stored with the manifest read from it. A release built from a bundle carries
-``source_digest = digest`` (decision 015).
+``source_digest = digest`` (decision 015). Recording a digest takes its key's advisory lock and
+``complete`` locks the row, so the bundle collector (``deploy.bundle_gc``) skips or waits for
+both.
 """
 
 import json
@@ -28,6 +30,7 @@ from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.api.uow import UnitOfWork, UserUoW
+from ssc_control.deploy.bundle_gc import lock_bundle_key
 from ssc_control.deploy.bundles import DIGEST_PREFIX, BundleRejectedError, bundle_key, check_upload
 from ssc_shared.blobstore import BlobStore
 
@@ -90,6 +93,7 @@ _SELECT_BY_ID = text(
     "file_count, created_at, stored_at from ssc.bundle "
     "where org_id = :org and app_id = :app and id = :id"
 )
+_LOCK_BY_ID = text(_SELECT_BY_ID.text + " for update")
 _STORE = text(
     "update ssc.bundle set state = 'stored', manifest = cast(:manifest as jsonb), "
     "manifest_digest = :manifest_digest, file_count = :file_count, stored_at = now() "
@@ -123,9 +127,12 @@ async def _app_status_for_builder(uow: UnitOfWork, app_id: str) -> str:
     return str(status)
 
 
-async def _bundle(uow: UnitOfWork, app_id: str, bundle_id: str) -> RowMapping:
+async def _bundle(
+    uow: UnitOfWork, app_id: str, bundle_id: str, *, lock: bool = False
+) -> RowMapping:
     params = {"org": uow.org_id, "app": app_id, "id": bundle_id}
-    row = (await uow.conn.execute(_SELECT_BY_ID, params)).mappings().first()
+    sql = _LOCK_BY_ID if lock else _SELECT_BY_ID
+    row = (await uow.conn.execute(sql, params)).mappings().first()
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"bundle_id": bundle_id})
     return row
@@ -172,6 +179,8 @@ async def create_bundle(app_id: Id, body: BundleCreate, request: Request, uow: U
             evidence={"size_bytes": body.size_bytes, "max_bytes": rt.settings.bundle_max_bytes},
         )
     store = _store_of(rt)
+    key = bundle_key(uow.org_id, app_id, body.digest)
+    await lock_bundle_key(uow.conn, key)
     p = uow.principal
     inserted = await uow.conn.execute(
         _INSERT_BUNDLE,
@@ -199,7 +208,7 @@ async def create_bundle(app_id: Id, body: BundleCreate, request: Request, uow: U
     upload = None
     if row["state"] == "pending":
         signed = await store.signed_url(
-            bundle_key(uow.org_id, app_id, body.digest),
+            key,
             method="PUT",
             content_length=body.size_bytes,
             sha256=body.digest.removeprefix(DIGEST_PREFIX),
@@ -235,7 +244,7 @@ async def complete_bundle(app_id: Id, bundle_id: Id, request: Request, uow: User
     """Check the uploaded object server side and store the bundle. A stored bundle answers 200."""
     rt = runtime_of(request)
     status = await _app_status_for_builder(uow, app_id)
-    row = await _bundle(uow, app_id, bundle_id)
+    row = await _bundle(uow, app_id, bundle_id, lock=True)
     if row["state"] == "stored":
         return uow.reply(_out(row))
     if status != "active":

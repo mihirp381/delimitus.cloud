@@ -238,6 +238,10 @@ class FsBlobStore:
             if info is not None:
                 yield info
 
+    async def delete(self, key: str) -> bool:
+        check_key(key)
+        return await asyncio.to_thread(_delete, self._path(key))
+
     async def signed_url(
         self,
         key: str,
@@ -398,6 +402,15 @@ class _Writer:
         with self._lock:
             self._file.close()
             self._temp.unlink(missing_ok=True)
+
+
+def _delete(path: Path) -> bool:
+    try:
+        path.unlink()
+    except FileNotFoundError, NotADirectoryError:
+        return False
+    _fsync_dir(path.parent)
+    return True
 
 
 def _fsync_dir(path: Path) -> None:

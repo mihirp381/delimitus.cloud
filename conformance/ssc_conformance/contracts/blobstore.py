@@ -165,8 +165,27 @@ class BlobStoreContract:
                 await read_all(blob_store.get(key))
             with pytest.raises(BlobKeyError):
                 await blob_store.signed_url(key, method="GET")
+            with pytest.raises(BlobKeyError):
+                await blob_store.delete(key)
         with pytest.raises(BlobKeyError):
             [i async for i in blob_store.list("../")]
+
+    async def test_delete_removes_only_that_key(self, blob_store: BlobStore, fetch: Fetch) -> None:
+        for key in ("d/a", "d/a/b", "d/ab"):
+            await blob_store.put(key, key.encode())
+        get = await blob_store.signed_url("d/a", method="GET")
+        assert await blob_store.delete("d/a") is True
+        assert await blob_store.stat("d/a") is None
+        with pytest.raises(BlobNotFoundError):
+            await read_all(blob_store.get("d/a"))
+        assert refused(await send(fetch, get))
+        assert [i.key async for i in blob_store.list("d/")] == ["d/a/b", "d/ab"]
+        assert await read_all(blob_store.get("d/a/b")) == b"d/a/b"
+        # Deleting again, or a key never written, is not an error.
+        assert await blob_store.delete("d/a") is False
+        assert await blob_store.delete("d/none") is False
+        await blob_store.put("d/a", b"again")
+        assert await read_all(blob_store.get("d/a")) == b"again"
 
     async def test_overwrite_replaces(self, blob_store: BlobStore) -> None:
         await blob_store.put("c/k", b"first")

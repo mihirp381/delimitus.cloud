@@ -142,6 +142,10 @@ class BlobStore(Protocol):
         """Objects whose key starts with ``prefix`` (plain string match), sorted by key."""
         ...
 
+    async def delete(self, key: str) -> bool:
+        """Remove ``key``; False when there was no object. Only that key: ``key/...`` stays."""
+        ...
+
     async def signed_url(
         self,
         key: str,

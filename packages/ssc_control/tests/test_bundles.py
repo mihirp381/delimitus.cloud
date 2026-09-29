@@ -8,7 +8,9 @@ Ticket "done when" checks:
   * .env and oversized bundles are refused            -> test_an_env_file_is_malformed,
                                                          test_*_over_the_*_cap_*
 Plus: who may ship, a disabled app, repeat completes, the manifest read from the bundle, the
-fs-store guard, and ``BundleReleaseSpecs``. Secret-shaped values are built at runtime (gitleaks).
+fs-store guard, and ``BundleReleaseSpecs``. B6: a collected upload is asked for again, and
+recording or completing waits for the collector (test_bundle_gc has the collector itself).
+Secret-shaped values are built at runtime (gitleaks).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import json
 import logging
 import tarfile
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,7 +36,16 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 from psycopg.rows import dict_row
-from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import (
+    ISSUER,
+    Dsns,
+    SigningKey,
+    assert_problem,
+    auth,
+    mint,
+    new_key,
+    wait_for_a_lock_wait,
+)
 
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
@@ -43,6 +55,7 @@ from ssc_control.api import Settings, create_app
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.routes.blobs import blob_store_for
 from ssc_control.db import NewOrg, bind_org_sync, bound_org, create_org, make_engine
+from ssc_control.deploy.bundle_gc import GRACE, LOCK_CLASS, Collected, collect_org
 from ssc_control.deploy.bundles import bundle_key
 from ssc_control.runtime.specs import (
     BundleReleaseSpecs,
@@ -364,6 +377,60 @@ def test_a_pending_digest_gets_a_fresh_url_and_a_different_size_is_refused(b: Be
     assert upload(b, second.json()["upload"], data).status_code == 201
     assert_problem(create(b, data, size=len(data) + 1), ErrorCode.BUNDLE_DIGEST_MISMATCH)
     assert len(bundles_of(b)) == 1
+
+
+def collect(b: Bench, now: datetime) -> Collected:
+    async def run() -> Collected:
+        engine = make_engine(b.dsn)
+        try:
+            return await collect_org(engine, b.store, b.w.org, now=now)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())
+
+
+def test_a_collected_upload_is_asked_for_again(b: Bench) -> None:
+    data = tar_gz({"app.py": b"print(2)\n"})
+    bundle_id = uploaded(b, data)
+    with psycopg.connect(b.dsn) as conn:
+        bind_org_sync(conn, b.w.org)
+        conn.execute("update ssc.bundle set created_at = %s where id = %s", (b.clock.at, bundle_id))
+    # A day on nothing has completed it: the collector deletes the object and keeps the row.
+    later = b.clock.at + GRACE + timedelta(minutes=1)
+    assert collect(b, later) == Collected(deleted=1)
+    assert_problem(complete(b, bundle_id), ErrorCode.BUNDLE_NOT_UPLOADED)
+    again = create(b, data)
+    assert (again.status_code, again.json()["bundle_id"]) == (200, bundle_id)
+    assert upload(b, again.json()["upload"], data).status_code == 201
+    assert complete(b, bundle_id).json()["state"] == "stored"
+    assert collect(b, later + GRACE) == Collected(kept=1)
+
+
+def test_recording_and_completing_wait_for_the_collector(b: Bench) -> None:
+    data = tar_gz({"app.py": b"print(3)\n"})
+    key = bundle_key(b.w.org, b.w.app, sha(data))
+    with ThreadPoolExecutor(1) as pool:
+        with psycopg.connect(b.dsn) as collector:
+            bind_org_sync(collector, b.w.org)
+            collector.execute("select pg_advisory_xact_lock(%s, hashtext(%s))", (LOCK_CLASS, key))
+            created = pool.submit(create, b, data)
+            wait_for_a_lock_wait(b.dsn)
+            collector.commit()
+        r = created.result(timeout=10)
+        assert r.status_code == 201, r.text
+        bundle_id = r.json()["bundle_id"]
+        assert upload(b, r.json()["upload"], data).status_code == 201
+        with psycopg.connect(b.dsn) as collector:
+            bind_org_sync(collector, b.w.org)
+            collector.execute("select 1 from ssc.bundle where id = %s for update", (bundle_id,))
+            completed = pool.submit(complete, b, bundle_id)
+            wait_for_a_lock_wait(b.dsn)
+            assert asyncio.run(b.store.delete(key)) is True
+            collector.commit()
+        # complete read the object only after the collector let go of the row.
+        assert_problem(completed.result(timeout=10), ErrorCode.BUNDLE_NOT_UPLOADED)
+        assert bundles_of(b)[0]["state"] == "pending"
 
 
 def test_complete_twice_answers_the_stored_bundle_with_one_audit(b: Bench) -> None:
