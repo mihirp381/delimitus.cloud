@@ -27,6 +27,7 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `spikes/appdb` | SSC-005 per-app database creation and driver matrix. | SSC-005 |
 | `gates/` | One planted violation per CI gate. `gates/run_gates.py` proves every gate fires. | SSC-007 |
 | `tools/` | `lock_age_check.py` (7-day rule), `deptry_all.py`, `openapi_check.py` (committed spec matches the code), `openapi_breaking.py` (refuses breaking API changes). | SSC-007, SSC-011 |
+| `tools/dev_stack.py` | Local control plane for development and CLI tests: `up` (roles, migrations, one org, a signing key), `token`, `serve` (`--port 0` prints the chosen port). State in `.ssc-dev/`. | SSC-022 |
 | `docs/decisions/` | Decision records. | SSC-006 |
 | `docs/contracts/` | Frozen cross-squad contracts (identity note). | SSC-020 |
 | `docs/api/` | API conventions and the committed `openapi.json`. | SSC-011 |

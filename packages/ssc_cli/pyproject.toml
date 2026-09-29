@@ -1,8 +1,12 @@
 [project]
 name = "ssc-cli"
 version = "0.0.1"
+description = "The ssc command line tool for Small Software Cloud."
 requires-python = ">=3.14,<3.15"
-dependencies = ["ssc-contracts", "ssc-shared", "ssc-bundle", "typer==0.27.2", "httpx2==2.13.0"]
+dependencies = ["ssc-contracts", "ssc-shared", "ssc-bundle", "typer==0.27.2", "httpx2==2.13.0", "pydantic==2.13.5", "keyring==25.7.0"]
+
+[project.scripts]
+ssc = "ssc_cli.main:app"
 
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]
@@ -10,4 +14,9 @@ build-backend = "uv_build"
 
 [tool.deptry]
 known_first_party = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_conformance"]
-ignore = ["DEP002", "DEP004"]  # DEP002 re-enabled in SSC-011 once packages hold real code
+ignore = ["DEP004"]  # dev-only imports in tests (pytest, testcontainers)
+
+[tool.deptry.per_rule_ignores]
+# Workspace packages are in known_first_party, so deptry cannot see them being used.
+# ssc-shared and ssc-bundle are needed by `ssc deploy` (C1b).
+DEP002 = ["ssc-contracts", "ssc-shared", "ssc-bundle"]

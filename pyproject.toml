@@ -75,6 +75,7 @@ include = [
   "packages/ssc_control/src/ssc_control/ports.py",
   "packages/ssc_app/src",
   "packages/ssc_edge/src",
+  "packages/ssc_cli/src",
 ]
 strict = [
   "packages/ssc_contracts/src",
@@ -86,6 +87,7 @@ strict = [
   "packages/ssc_control/src/ssc_control/ports.py",
   "packages/ssc_app/src",
   "packages/ssc_edge/src",
+  "packages/ssc_cli/src",
 ]
 reportMissingImports = true
 

@@ -1,0 +1,102 @@
+{
+  "AppResult": {
+    "created_at": "string",
+    "environments": "array<EnvironmentRow>",
+    "id": "string",
+    "owner_user_id": "string",
+    "slug": "string",
+    "status": "string"
+  },
+  "AppRow": {
+    "id": "string",
+    "owner_user_id": "string",
+    "slug": "string",
+    "status": "string"
+  },
+  "AppsResult": {
+    "apps": "array<AppRow>"
+  },
+  "DeploymentRow": {
+    "finished_at": "string|null",
+    "kind": "string",
+    "operation_id": "string",
+    "release_id": "string|null",
+    "started_at": "string",
+    "state": "string"
+  },
+  "DoctorResult": {
+    "blocking": "boolean",
+    "findings": "array<Finding>",
+    "path": "string"
+  },
+  "EnvironmentRow": {
+    "config_version": "integer",
+    "current_deployment_id": "string|null",
+    "deployment": "DeploymentRow|null",
+    "grants_version": "integer",
+    "id": "string",
+    "name": "string"
+  },
+  "ErrorBody": {
+    "code": "string",
+    "detail": "string",
+    "instance": "string|null",
+    "request_id": "string|null",
+    "status": "integer|null",
+    "title": "string",
+    "type": "string|null"
+  },
+  "ErrorResult": {
+    "error": "ErrorBody"
+  },
+  "FileAction": {
+    "action": "string[created,skipped,unchanged,updated]",
+    "note": "string|null",
+    "path": "string"
+  },
+  "Finding": {
+    "code": "string",
+    "fix": "string",
+    "line": "integer|null",
+    "message": "string",
+    "path": "string",
+    "severity": "string[block,warn]"
+  },
+  "GrantRow": {
+    "id": "string",
+    "role": "string",
+    "subject_id": "string|null",
+    "subject_kind": "string"
+  },
+  "InitResult": {
+    "files": "array<FileAction>",
+    "path": "string"
+  },
+  "ShareResult": {
+    "app_id": "string",
+    "changed": "boolean",
+    "environment": "string",
+    "environment_id": "string",
+    "grants": "array<GrantRow>",
+    "grants_version": "integer"
+  },
+  "TokenClearResult": {
+    "api_url": "string",
+    "cleared": "boolean"
+  },
+  "TokenSetResult": {
+    "api_url": "string",
+    "org_id": "string",
+    "stored_in": "string",
+    "subject": "string"
+  },
+  "WhoamiResult": {
+    "api_url": "string",
+    "client_id": "string|null",
+    "credential_id": "string",
+    "is_agent": "boolean",
+    "kind": "string",
+    "org_id": "string",
+    "subject": "string"
+  }
+}

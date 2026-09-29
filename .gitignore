@@ -11,3 +11,4 @@ dist/
 .env.*
 spikes/appdb/docker/certs/
 spikes/bakeoff/results/
+.ssc-dev/
