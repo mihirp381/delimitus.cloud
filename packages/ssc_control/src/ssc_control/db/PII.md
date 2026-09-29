@@ -60,6 +60,10 @@ same fields and nothing else.
 `ssc.kill_switch_run` (SSC-025) holds no personal data: ids, a mode, states, step timings,
 reason codes, schedule ids and the actor tuple (opaque ids). It has no free-text reason column.
 
+`ssc.timer_run` (SSC-041) holds no personal data: ids, a trigger, states, reason codes, an HTTP
+status, durations, times and, for a manual run, the requester as an opaque `usr_…` id. No request
+or response body is stored. `schedule.path` is an app route from the manifest.
+
 `ssc.org_index` (the single unscoped table, db/README.md rule 14) holds no personal data: an
 `org_…` id and a timestamp, nothing else, so reading it across orgs reveals only how many orgs
 exist and when each was created. Job arguments in `procrastinate.procrastinate_jobs.args` are

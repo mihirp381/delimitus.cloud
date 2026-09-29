@@ -24,6 +24,7 @@ import re
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -772,12 +773,14 @@ def test_deleted_schedule_is_terminal(dsns: Dsns, orgs: tuple[SeededOrg, SeededO
         bind_org_sync(conn, a.org)
         sid = new_id("sch")
         conn.execute(
-            "insert into ssc.schedule (id, org_id, environment_id, name, cron) "
-            "values (%s, %s, %s, 'nightly', '0 2 * * *')",
-            (sid, a.org, a.env),
+            "insert into ssc.schedule (id, org_id, environment_id, name, cron, path, state, "
+            "pause_reason, declared_by_user_id) "
+            "values (%s, %s, %s, 'nightly', '0 2 * * *', '/tick', 'paused', 'manual', %s)",
+            (sid, a.org, a.env, a.admin),
         )
-        conn.execute("update ssc.schedule set state = 'paused' where id = %s", (sid,))
-        conn.execute("update ssc.schedule set state = 'deleted' where id = %s", (sid,))
+        conn.execute(
+            "update ssc.schedule set state = 'deleted', pause_reason = null where id = %s", (sid,)
+        )
         for sql in (
             "update ssc.schedule set state = 'active' where id = %s",
             "update ssc.schedule set cron = '* * * * *' where id = %s",
@@ -785,6 +788,150 @@ def test_deleted_schedule_is_terminal(dsns: Dsns, orgs: tuple[SeededOrg, SeededO
             with pytest.raises(psycopg.Error) as e, conn.transaction():
                 conn.execute(sql, (sid,))
             assert sqlstate(e) == SqlState.SCHEDULE_DELETED
+
+
+# ── timers (SSC-041, revision 0013) ──────────────────────────────────────────
+
+ARMED_SCHEDULE = (
+    "insert into ssc.schedule (id, org_id, environment_id, name, cron, path, state, next_run_at, "
+    "declared_by_user_id) values (%s, %s, %s, %s, '*/5 * * * *', '/tick', 'active', now(), %s)"
+)
+RUNNING_TIMER = (
+    "insert into ssc.timer_run (id, org_id, schedule_id, trigger, scheduled_for, state, "
+    "started_at) values (%s, %s, %s, 'schedule', now(), 'running', now())"
+)
+
+
+def test_timer_runs_stay_in_their_org(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]) -> None:
+    a, b = orgs
+    sch, tmr = new_id("sch"), new_id("tmr")
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        conn.execute(ARMED_SCHEDULE, (sch, a.org, a.env, "isolated", a.admin))
+        conn.execute(RUNNING_TIMER, (tmr, a.org, sch))
+    count = "select count(*) from ssc.timer_run where id = %s"
+    assert run(dsns.app, b.org, count, (tmr,)) == [(0,)]
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, b.org)
+        cur = conn.execute(
+            "update ssc.timer_run set state = 'timed_out', error = 'abandoned', "
+            "finished_at = now() where id = %s",
+            (tmr,),
+        )
+        assert cur.rowcount == 0
+    sneaky = (new_id("tmr"), a.org, sch)
+    assert refused(dsns.app, b.org, RUNNING_TIMER, sneaky) == INSUFFICIENT_PRIVILEGE
+    theirs = (new_id("tmr"), b.org, sch)  # alpha's schedule from beta
+    assert refused(dsns.app, b.org, RUNNING_TIMER, theirs) == FOREIGN_KEY_VIOLATION
+    declarer = (new_id("sch"), b.org, b.env, "borrowed", a.admin)  # alpha's user declares in beta
+    assert refused(dsns.app, b.org, ARMED_SCHEDULE, declarer) == FOREIGN_KEY_VIOLATION
+    delete = "delete from ssc.timer_run where id = %s"
+    assert refused(dsns.app, a.org, delete, (tmr,)) == INSUFFICIENT_PRIVILEGE
+    assert run(dsns.app, a.org, count, (tmr,)) == [(1,)]
+
+
+def test_a_schedule_says_why_it_is_paused_and_its_live_name_is_unique(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, _ = orgs
+    insert = (
+        "insert into ssc.schedule (id, org_id, environment_id, name, cron, path, state, "
+        "pause_reason, next_run_at, declared_by_user_id) "
+        "values (%s, %s, %s, %s, '0 3 * * *', %s, %s, %s, %s, %s)"
+    )
+    armed = datetime(2026, 9, 29, 3, tzinfo=UTC)
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        for path, state, reason, at, constraint in (
+            ("/t", "active", None, None, "schedule_active_is_armed"),
+            ("/t", "paused", None, None, "schedule_paused_has_reason"),
+            ("/t", "active", "manual", armed, "schedule_paused_has_reason"),
+            ("/t", "paused", "manual", armed, "schedule_active_is_armed"),
+            ("/t", "paused", "tired", None, None),
+            ("t", "paused", "manual", None, None),
+            ("/a b", "paused", "manual", None, None),
+            ("/" + "a" * 512, "paused", "manual", None, None),
+        ):
+            row = (new_id("sch"), a.org, a.env, "bad", path, state, reason, at, a.admin)
+            with pytest.raises(psycopg.Error) as e, conn.transaction():
+                conn.execute(insert, row)
+            assert sqlstate(e) == CHECK_VIOLATION, (path, state, reason)
+            if constraint is not None:
+                assert e.value.diag.constraint_name == constraint
+        first = new_id("sch")
+        conn.execute(
+            insert, (first, a.org, a.env, "nightly", "/t?x=1", "active", None, armed, a.admin)
+        )
+        again = (new_id("sch"), a.org, a.env, "nightly", "/t", "paused", "manual", None, a.admin)
+        with pytest.raises(psycopg.Error) as e, conn.transaction():
+            conn.execute(insert, again)
+        assert sqlstate(e) == UNIQUE_VIOLATION
+        assert e.value.diag.constraint_name == "schedule_live_name"
+        # Deleted, the name may be declared again.
+        conn.execute(
+            "update ssc.schedule set state = 'deleted', next_run_at = null where id = %s", (first,)
+        )
+        conn.execute(insert, again)
+
+
+def test_a_timer_run_is_consistent_and_never_overlaps(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, _ = orgs
+    t = datetime(2026, 9, 29, 10, 5, tzinfo=UTC)
+    later = t.replace(minute=10)
+    insert = (
+        "insert into ssc.timer_run (id, org_id, schedule_id, trigger, scheduled_for, "
+        "requested_by_user_id, state, error, http_status, started_at, finished_at) "
+        "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    )
+    sch = new_id("sch")
+
+    def row(  # noqa: PLR0913
+        trigger: str,
+        by: str | None,
+        state: str,
+        error: str | None = None,
+        status: int | None = None,
+        started: datetime | None = None,
+        finished: datetime | None = None,
+        at: datetime = t,
+    ) -> tuple[object, ...]:
+        return (new_id("tmr"), a.org, sch, trigger, at, by, state, error, status, started, finished)
+
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        conn.execute(ARMED_SCHEDULE, (sch, a.org, a.env, "consistent", a.admin))
+        for bad in (
+            row("schedule", a.admin, "running", started=t),  # a scheduled run has no requester
+            row("manual", None, "queued"),  # a manual run always has one
+            row("schedule", None, "queued"),  # only a manual run waits
+            row("schedule", None, "running"),  # a running run has started
+            row("schedule", None, "skipped", "overlap", started=t, finished=t),  # never started
+            row("schedule", None, "succeeded", status=200, started=t),  # a finished run has ended
+            row("schedule", None, "failed", status=500, started=t, finished=t),  # says why
+            row("schedule", None, "succeeded", "http_error", 200, t, t),  # no error on success
+            row("schedule", None, "succeeded", None, 503, t, t),  # a success is 2xx
+            row("schedule", None, "failed", "boom", None, t, t),  # a known error
+            row("schedule", None, "failed", "http_error", 600, t, t),  # an HTTP status
+        ):
+            with pytest.raises(psycopg.Error) as e, conn.transaction():
+                conn.execute(insert, bad)
+            assert sqlstate(e) == CHECK_VIOLATION, bad
+        conn.execute(insert, row("schedule", None, "running", started=t))
+        for dup, index in (
+            (row("schedule", None, "skipped", "overlap", finished=t), "timer_run_once_per_instant"),
+            (row("manual", a.admin, "running", started=t, at=later), "timer_run_one_running"),
+        ):
+            with pytest.raises(psycopg.Error) as e, conn.transaction():
+                conn.execute(insert, dup)
+            assert sqlstate(e) == UNIQUE_VIOLATION
+            assert e.value.diag.constraint_name == index
+        conn.execute(insert, row("manual", a.admin, "queued", at=later))
+        with pytest.raises(psycopg.Error) as e, conn.transaction():
+            conn.execute(insert, row("manual", a.admin, "queued", at=later))
+        assert sqlstate(e) == UNIQUE_VIOLATION
+        assert e.value.diag.constraint_name == "timer_run_one_queued"
 
 
 def test_create_org_is_atomic(dsns: Dsns) -> None:
