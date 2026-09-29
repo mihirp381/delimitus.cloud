@@ -6,8 +6,8 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 
 | Path | What | Ticket |
 |---|---|---|
-| `packages/ssc_contracts` | Wire and storage contracts. Pure data, pyright strict. | SSC-010, SSC-020 |
-| `packages/ssc_shared` | Clock and other small shared pieces. | SSC-007 |
+| `packages/ssc_contracts` | Wire and storage contracts. Pure data, pyright strict. `manifest.py` reads `ssc.toml` (`ssc/v1`); `capabilities.py` diffs what a manifest asks for against what an environment grants. | SSC-010, SSC-020, SSC-044 |
+| `packages/ssc_shared` | Clock and other small shared pieces. `canonical.py` is RFC 8785 JSON and the manifest digest; `blobstore.py` is the `BlobStore` protocol, `blobstore_fs.py` its filesystem implementation with signed URLs. | SSC-007, SSC-044 |
 | `packages/ssc_bundle` | What `ssc deploy` uploads. | SSC-014 |
 | `packages/ssc_control` | Control plane API, database, job queue, reconcilers. `api/` is the FastAPI application (`/v1`, `/internal/v1`; conventions in `docs/api/README.md`); `db/` holds the schema, migrations, roles and the org bind (see `db/README.md`, `db/PLPGSQL.md`, `db/PII.md`); `audit/` is the audit log (decision 012). `api/`, `audit/`, `db/` and `domain/` are pyright strict. | SSC-010 onward |
 | `packages/ssc_control/src/ssc_control/api/routes/v1/` | The `/v1` routes, one module per resource (`whoami`, `apps`, `grants`, `deployments`, `audit`); `common.py` holds the shared models and helpers; `__init__.py` mounts each router on its own line. | SSC-011 |
@@ -19,7 +19,7 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `packages/ssc_egress` | Egress proxy control. | SSC-053 |
 | `packages/ssc_cli` | The `ssc` command. | SSC-022 |
 | `packages/ssc_app` | The helper apps install to read the identity note (`ssc_app.identity`); pyright strict. | SSC-020 |
-| `conformance/` | Black-box tests any deployment must pass. `identity_note/` holds the shared identity-note vectors and their generator. | SSC-020, SSC-056 |
+| `conformance/` | Black-box tests any deployment must pass. `identity_note/` holds the shared identity-note vectors and their generator; `ssc_conformance/contracts/` holds contract suites every implementation of a port runs (`BlobStoreContract`). | SSC-020, SSC-044, SSC-056 |
 | `helpers/node/ssc-identity` | Node verifier for the identity note, zero dependencies, `npm test` runs the shared vectors. | SSC-020 |
 | `console/` | Admin console, TypeScript. Empty until SSC-057. | SSC-057 |
 | `infra/` | Pulumi in Python. Empty until the cloud is chosen. | SSC-001, SSC-013 |
@@ -29,7 +29,7 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `tools/` | `lock_age_check.py` (7-day rule), `deptry_all.py`, `openapi_check.py` (committed spec matches the code), `openapi_breaking.py` (refuses breaking API changes). | SSC-007, SSC-011 |
 | `tools/dev_stack.py` | Local control plane for development and CLI tests: `up` (roles, migrations, one org, a signing key), `token`, `serve` (`--port 0` prints the chosen port). State in `.ssc-dev/`. | SSC-022 |
 | `docs/decisions/` | Decision records. | SSC-006 |
-| `docs/contracts/` | Frozen cross-squad contracts (identity note). | SSC-020 |
+| `docs/contracts/` | Frozen cross-squad contracts (identity note, `ssc.toml` manifest). | SSC-020, SSC-044 |
 | `docs/api/` | API conventions and the committed `openapi.json`. | SSC-011 |
 
 ## Toolchain

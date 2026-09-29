@@ -76,6 +76,7 @@ include = [
   "packages/ssc_app/src",
   "packages/ssc_edge/src",
   "packages/ssc_cli/src",
+  "conformance/ssc_conformance/contracts",
 ]
 strict = [
   "packages/ssc_contracts/src",
@@ -88,6 +89,7 @@ strict = [
   "packages/ssc_app/src",
   "packages/ssc_edge/src",
   "packages/ssc_cli/src",
+  "conformance/ssc_conformance/contracts",
 ]
 reportMissingImports = true
 

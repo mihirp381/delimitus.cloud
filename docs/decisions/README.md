@@ -16,6 +16,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 010 | Identity note v1: `X-SSC-Identity`, ES256 `ssc-id+jwt`, twelve claims, key on `sub`, verify once | SSC-020 (`docs/contracts/identity-note.md`) | decided 2026-09-29 |
 | 011 | API conventions: RFC 9457 problems from one catalogue, `Idempotency-Key` on every POST claimed in the transaction, `If-Match` on sharing rules, deployments as operations, committed OpenAPI with a breaking-change gate | SSC-011 (`docs/api/README.md`) | decided 2026-09-29 |
 | 012 | Audit log: one hash chain per org over frozen ssc-audit-v1 canonical bytes, allowlisted views, no client IP, `verify` naming the first broken link, admin-only search and audited export | SSC-012 (`packages/ssc_control/src/ssc_control/audit/`) | decided 2026-09-29; anchors and PITR re-anchor pending (A1b) |
+| 013 | Manifest `ssc/v1`: strict TOML refused by line and column, a request never enforcement, digest over the normalised model with RFC 8785, `ssc/v2` added beside v1; one `BlobStore` protocol with a filesystem implementation and a contract suite | SSC-044 (`docs/contracts/manifest.md`) | draft 2026-09-29, freezes after founder review |
 | 017 | Command line tool: only working commands registered, exit codes 0 to 5, append-only `--json` shapes, `SSC_TOKEN` then keychain, stable `doctor` codes, marked agent-pack blocks, workspace names on PyPI with publishing gated | SSC-022 (`packages/ssc_cli/`) | decided 2026-09-29 |
 
 ## 008 Job queue
@@ -96,6 +97,23 @@ Choice: every org has one append-only, hash-chained log in `ssc.audit_event`, wr
 Reason: the log is the evidence customers and auditors rely on after something goes wrong, so its bytes must be reproducible by anyone, forever, from the export alone. Freezing the canonical form before the first export is cheap; changing it after would split every chain. The views keep personal data and secrets out of a table that can never be edited, and serialising appends on one head row keeps the chain linear under concurrent requests without a sequence or advisory lock.
 
 Reverse if: an org's append rate makes the single head row a bottleneck (then per-org chains are split into dated segments linked by their first `prev_hash`, as a v2), or a regulator requires the client IP inside the evidence (then the IP rule is revisited with SSC-013 before any IP is written).
+
+## 013 Manifest v1 and the blob store protocol
+
+Choice: an app asks the platform for everything through one file, `ssc.toml` with `schema = "ssc/v1"`. Contract in `docs/contracts/manifest.md`; code in `ssc_contracts.manifest`, `ssc_contracts.capabilities` and `ssc_shared.canonical`. Blobs go through one protocol, `ssc_shared.blobstore.BlobStore`.
+
+- A manifest is a request, never enforcement. Asking for an ungranted Postgres, connection or egress host still deploys and prints the capability diff (severity, one fixed sentence, approver); `blocks` is always false. An invalid manifest is refused with every problem listed as `ssc.toml:LINE:COL: field: message`.
+- Strict: one TOML type per key, no coercion, unknown keys refused with a suggestion. A present file must say `schema = "ssc/v1"`; a missing file is `default_manifest()`.
+- Public build values are per environment (`[build.public_env.prod]`, `[build.public_env.preview]`). Only `VITE_*`, `NEXT_PUBLIC_*` and names listed in `build.public_names` are allowed; secret-looking and platform-set names are refused.
+- Postgres is the only state. A key-value request is refused with the fix-it `STATE_KV_UNSUPPORTED` (a table, or an `UNLOGGED` table for a cache).
+- Class names are v1 data; their sizes are platform policy outside the digest (decision 014). `sessions = true` caps an app at 1 instance.
+- Schedules carry what `ssc_control.ports.DeclaredSchedule` reads: `name`, `cron`, `timezone` (default `UTC`), `path`, `method` (default `POST`), `timeout_seconds` (default 60, at most 900). Cron is checked in pure Python so contracts stay pydantic-only; tests cross-check it against `cronsim`.
+- Digest: `sha256:` over RFC 8785 canonical JSON of the normalised model (defaults applied, lists sorted, cron spacing and name case normalised). Comments, order and quoting never change it. RFC 8785 is for manifest, snapshot and bundle digests only, never the audit chain (decision 012).
+- `BlobStore`: `put` (optionally checked against a size and sha256), streaming `get`, `stat`, `list` by key prefix, `signed_url` for `GET` or `PUT`. Keys are lower-case `/`-separated segments. `FsBlobStore` writes one file per object with a fixed 512-byte header, atomically, and checks size and sha256 on every read. Every implementation runs `conformance/ssc_conformance/contracts/blobstore.py`. Signed-URL policy and the bundle key layout are decision 015.
+
+Reason: the manifest is the contract between the CLI, the control plane, the doctor and the reconcilers, and B3, B4, A4, A5 and C1 all read it, so its key set, refusal format and digest are fixed first. A request-never-enforcement model lets a builder deploy before an admin decides, while the diff keeps the gap visible. Digesting the normalised model rather than the text means reformatting a file never looks like a change. A single blob protocol with a contract suite lets the cloud bucket arrive later (SSC-013) without touching callers.
+
+Reverse if: a change would refuse or re-digest a manifest v1 accepts (then `ssc/v2` is added beside v1 and `load_manifest` dispatches on `schema`), a customer needs a key-value store the Postgres fix-it cannot cover (then a `[state]` key is added in v2 with its own decision), or the chosen cloud cannot honour exact length and sha256 on a signed upload (then decision 015 records the weaker binding and the contract suite marks it).
 
 ## 017 Command line tool
 
