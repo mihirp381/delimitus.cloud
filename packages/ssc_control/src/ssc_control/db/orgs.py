@@ -1,0 +1,72 @@
+"""Org creation: admin-first, in one transaction. The only supported way to make an org.
+
+"Create the org, then add an admin" has a window with zero admins, and a crash inside it leaves
+an org only an engineer with database access can rescue. The audit head is seeded here too, so
+the first audit event (SSC-012) always has a predecessor.
+"""
+
+from dataclasses import dataclass
+from typing import Final
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from ssc_contracts.ids import new_id
+from ssc_control.db.bind import bound_org
+
+GENESIS_HASH: Final = bytes(32)
+
+
+@dataclass(frozen=True, slots=True)
+class NewOrg:
+    name: str
+    admin_display_name: str
+    admin_email: str
+    admin_issuer: str
+    admin_subject: str
+
+
+@dataclass(frozen=True, slots=True)
+class CreatedOrg:
+    org_id: str
+    admin_user_id: str
+    identity_link_id: str
+
+
+_INSERT_ORG = text("insert into ssc.org (id, name) values (:id, :name)")
+_INSERT_ADMIN = text(
+    "insert into ssc.user_account (id, org_id, display_name, email, role) "
+    "values (:id, :org, :name, :email, 'admin')"
+)
+_INSERT_LINK = text(
+    "insert into ssc.identity_link (id, org_id, user_id, issuer, subject) "
+    "values (:id, :org, :user, :issuer, :subject)"
+)
+_INSERT_HEAD = text("insert into ssc.audit_head (org_id, seq, hash) values (:org, 0, :hash)")
+
+
+async def create_org(engine: AsyncEngine, spec: NewOrg) -> CreatedOrg:
+    org_id, admin_id, link_id = new_id("org"), new_id("usr"), new_id("idl")
+    async with bound_org(engine, org_id) as conn:
+        await conn.execute(_INSERT_ORG, {"id": org_id, "name": spec.name})
+        await conn.execute(
+            _INSERT_ADMIN,
+            {
+                "id": admin_id,
+                "org": org_id,
+                "name": spec.admin_display_name,
+                "email": spec.admin_email,
+            },
+        )
+        await conn.execute(
+            _INSERT_LINK,
+            {
+                "id": link_id,
+                "org": org_id,
+                "user": admin_id,
+                "issuer": spec.admin_issuer,
+                "subject": spec.admin_subject,
+            },
+        )
+        await conn.execute(_INSERT_HEAD, {"org": org_id, "hash": GENESIS_HASH})
+    return CreatedOrg(org_id=org_id, admin_user_id=admin_id, identity_link_id=link_id)

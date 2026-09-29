@@ -2,10 +2,10 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from ssc_contracts.ids import ID_LENGTH, new_id, prefix_of
+from ssc_contracts.ids import ID_LENGTH, PREFIXES, new_id, prefix_of
 
 
-@given(st.sampled_from(["usr", "sch", "app", "rel", "env", "cell", "org", "grp", "con", "tmr"]))
+@given(st.sampled_from(PREFIXES))
 def test_round_trip(prefix):
     value = new_id(prefix)
     assert len(value) == len(prefix) + 1 + ID_LENGTH

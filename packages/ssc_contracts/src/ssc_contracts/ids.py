@@ -1,7 +1,25 @@
 import secrets
-from typing import Final, Literal
+from typing import Final, Literal, get_args
 
-Prefix = Literal["usr", "sch", "app", "rel", "env", "cell", "org", "grp", "con", "tmr"]
+Prefix = Literal[
+    "org",  # organisation (one customer)
+    "usr",  # user
+    "grp",  # group
+    "idl",  # identity link (issuer, subject) -> user
+    "app",  # app
+    "env",  # environment
+    "rel",  # release
+    "dep",  # deployment
+    "gnt",  # sharing grant
+    "sec",  # secret reference
+    "sch",  # schedule (also the subject of a schedule-principal identity note)
+    "con",  # connection to a company database
+    "apr",  # approval request
+    "pol",  # policy decision
+    "cell",  # customer cell
+    "tmr",  # timer run
+]
+PREFIXES: Final[tuple[str, ...]] = get_args(Prefix)
 _ALPHABET: Final = "abcdefghijklmnopqrstuvwxyz0123456789"
 ID_LENGTH: Final = 20
 

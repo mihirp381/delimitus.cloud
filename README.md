@@ -9,7 +9,7 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `packages/ssc_contracts` | Wire and storage contracts. Pure data, pyright strict. | SSC-010, SSC-020 |
 | `packages/ssc_shared` | Ids, clock, identity-note signing helpers. | SSC-020 |
 | `packages/ssc_bundle` | What `ssc deploy` uploads. | SSC-014 |
-| `packages/ssc_control` | Control plane API, database, job queue, reconcilers. `domain/` is pyright strict. | SSC-011 onward |
+| `packages/ssc_control` | Control plane API, database, job queue, reconcilers. `db/` holds the schema, migrations, roles and the org bind (see `db/README.md`, `db/PLPGSQL.md`, `db/PII.md`); `db/` and `domain/` are pyright strict. | SSC-010 onward |
 | `packages/ssc_edge` | Cell gateway (Envoy ext_authz, login, identity note). | SSC-018, SSC-019 |
 | `packages/ssc_datagw` | Read-only data gateway and file broker. | SSC-050, SSC-046 |
 | `packages/ssc_egress` | Egress proxy control. | SSC-053 |
@@ -36,7 +36,7 @@ uv run lint-imports
 uv run python tools/deptry_all.py
 uv run zizmor --no-online-audits .github/workflows
 uv run python tools/lock_age_check.py
-uv run pytest            # needs Docker: one test starts postgres:18
+uv run pytest            # needs Docker: control-db and job-queue tests start postgres:18
 uv run python gates/run_gates.py
 ```
 
@@ -48,6 +48,7 @@ uv run python gates/run_gates.py
 - **GitHub Actions pinned by commit hash**, checked by zizmor.
 - **Every gate has a planted violation** in `gates/fixtures/`; CI fails if any gate stays silent.
 - **Secrets.** gitleaks runs on every pull request; the planted fixture is allowlisted by path in `.gitleaks.toml`.
+- **Control database.** Every table is org-scoped with forced row-level security; queries without a bound org fail with `SC001`. Bind once per unit of work with `ssc_control.db.bound_org`. The app role owns nothing and has no privilege on the migration ledger. Catalog tests pin the table list, the PL/pgSQL list, the privilege matrix and the personal-data columns to `ssc_control.db.catalog`.
 
 ## Never
 
