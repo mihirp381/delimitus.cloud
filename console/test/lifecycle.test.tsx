@@ -614,6 +614,24 @@ describe('admin actions', () => {
     expect(screen.getAllByText(PERSON).length).toBeGreaterThan(0);
   });
 
+  it('reads the app again when a pull is refused', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        [`GET ${APP_PATH}`]: [() => json(200, app('active')), () => json(200, app('disabled'))],
+        [`POST ${APP_PATH}/kill-switch`]: () => problem(409, 'APP_NOT_ACTIVE', 'This app is not active.'),
+      }),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Disable' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Disable expenses' });
+    await confirmIn(dialog, 'Disable');
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('APP_NOT_ACTIVE');
+    await waitFor(() => expect(api.of('GET', APP_PATH).length).toBeGreaterThan(1));
+    expect(await within(admin).findByRole('button', { name: 'Enable' })).toBeTruthy();
+  });
+
   it('drops a person search that lands after the transfer dialog closed', async () => {
     const search = held();
     const { api } = start(`/apps/${APP_ID}`, page({ 'GET /v1/users': search.handler }), signedIn());

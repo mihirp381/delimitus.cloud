@@ -90,12 +90,16 @@ function Controls({ app }: { readonly app: AppOut }) {
     params: { path: { app_id: app.id } },
   }).queryKey;
 
+  /** A refusal may mean the app changed under us (another admin's run), so it is read again. */
   async function pull(mode: KillSwitchMode) {
-    const id = await pullKillSwitch(api, app.id, mode);
-    setNotice(null);
-    setEnableError(null);
-    setRunId(id);
-    await queryClient.invalidateQueries({ queryKey: appKey });
+    try {
+      const id = await pullKillSwitch(api, app.id, mode);
+      setNotice(null);
+      setEnableError(null);
+      setRunId(id);
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: appKey });
+    }
   }
 
   async function enable() {
