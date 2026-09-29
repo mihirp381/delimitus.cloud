@@ -1,13 +1,13 @@
 """API settings: a frozen dataclass read once from the environment. No framework, no magic."""
 
-import base64
 import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Final, cast
+from typing import Any, Final
 
 from ssc_control.metrics.pseudonym import parse_master_key
+from ssc_control.storage import signing_keys
 
 MIB: Final = 1024 * 1024
 USER_AUDIENCE: Final = "https://api.delimitus.com"
@@ -63,7 +63,7 @@ class Settings:
             environment=e.get("SSC_ENV", "prod"),
             blob_backend=e.get("SSC_BLOB_BACKEND", "none"),
             blob_root=e.get("SSC_BLOB_ROOT", ""),
-            blob_signing_keys=_signing_keys(e.get("SSC_BLOB_SIGNING_KEYS", "{}")),
+            blob_signing_keys=signing_keys(e.get("SSC_BLOB_SIGNING_KEYS", "{}")),
             blob_signing_kid=e.get("SSC_BLOB_SIGNING_KID", ""),
             bundle_max_bytes=int(e.get("SSC_BUNDLE_MAX_BYTES", str(100 * MIB))),
             bundle_max_unpacked_bytes=int(e.get("SSC_BUNDLE_MAX_UNPACKED_BYTES", str(500 * MIB))),
@@ -78,13 +78,3 @@ class Settings:
             jwks={"keys": []},
             issuer="https://auth.delimitus.com",
         )
-
-
-def _signing_keys(raw: str) -> dict[str, bytes]:
-    keys = json.loads(raw)
-    if not isinstance(keys, dict):
-        raise ValueError("SSC_BLOB_SIGNING_KEYS must be a JSON object")
-    return {
-        str(kid): base64.b64decode(str(value), validate=True)
-        for kid, value in cast(dict[object, object], keys).items()
-    }

@@ -49,6 +49,7 @@ from ssc_control.runtime.specs import (
     ReleaseSpecUnavailableError,
     release_manifest,
 )
+from ssc_control.storage import StorageConfigError, blob_store_from_env
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.canonical import manifest_digest
 
@@ -445,9 +446,9 @@ def test_the_filesystem_store_is_refused_outside_dev_and_test(
     for env in ("prod", "staging", ""):
         with pytest.raises(ValueError, match="filesystem blob store"):
             create_app(replace(fs, environment=env))
-    with pytest.raises(ValueError, match="blob_root"):
+    with pytest.raises(ValueError, match="SSC_BLOB_ROOT"):
         blob_store_for(replace(fs, blob_root=""))
-    with pytest.raises(ValueError, match="unknown blob_backend"):
+    with pytest.raises(ValueError, match="unknown SSC_BLOB_BACKEND"):
         blob_store_for(replace(fs, blob_backend="s3"))
     assert blob_store_for(replace(fs, blob_backend="none")) is None
 
@@ -477,6 +478,39 @@ def test_settings_read_the_blob_and_bundle_environment() -> None:
     for bad in ("[]", '{"k": "not base64!"}'):
         with pytest.raises(ValueError):
             Settings.from_env(env | {"SSC_BLOB_SIGNING_KEYS": bad})
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"SSC_BLOB_BACKEND": "s3"},
+        {"SSC_BLOB_ROOT": ""},
+        {"SSC_ENV": "prod"},
+        {"SSC_BLOB_SIGNING_KID": "k9"},
+        {"SSC_BLOB_SIGNING_KEYS": json.dumps({"k1": base64.b64encode(b"short").decode()})},
+        {"SSC_BLOB_SIGNING_KEYS": "k1"},
+    ],
+    ids=["backend", "root", "environment", "kid", "weak-key", "not-json"],
+)
+def test_the_api_and_the_worker_share_one_store_factory(
+    tmp_path: Path, overrides: dict[str, str]
+) -> None:
+    env = {
+        "SSC_DATABASE_DSN": "postgresql://ssc_app@localhost/ssc",
+        "SSC_API_JWKS": '{"keys": []}',
+        "SSC_API_ISSUER": ISSUER,
+        "SSC_ENV": "test",
+        "SSC_BLOB_BACKEND": "fs",
+        "SSC_BLOB_ROOT": str(tmp_path),
+        "SSC_BLOB_SIGNING_KEYS": json.dumps({"k1": base64.b64encode(b"k" * 32).decode()}),
+        "SSC_BLOB_SIGNING_KID": "k1",
+    }
+    assert isinstance(blob_store_for(Settings.from_env(env)), FsBlobStore)
+    with pytest.raises(StorageConfigError) as worker:
+        blob_store_from_env(env | overrides)
+    with pytest.raises(StorageConfigError) as api:
+        blob_store_for(Settings.from_env(env | overrides))
+    assert str(api.value) == str(worker.value)
 
 
 # ── the server's checks ──────────────────────────────────────────────────────

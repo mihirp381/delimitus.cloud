@@ -7,7 +7,6 @@ stored and served as ``application/octet-stream`` attachments, never as a type a
 Deployed cells use the bucket's own signed URLs (SSC-013) instead.
 """
 
-from pathlib import Path
 from typing import Final
 
 from fastapi import APIRouter, Request, Response
@@ -17,6 +16,8 @@ from ssc_contracts.errors import ErrorCode
 from ssc_control.api.problems import Refusal
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.settings import Settings
+from ssc_control.storage import BLOBS_PATH, blob_store
+from ssc_control.storage import check_fs_allowed as check_fs_environment
 from ssc_shared.blobstore import (
     DEFAULT_CONTENT_TYPE,
     BlobCorruptError,
@@ -26,38 +27,28 @@ from ssc_shared.blobstore import (
     BlobStore,
     BlobTooLargeError,
 )
-from ssc_shared.blobstore_fs import FsBlobStore, SignedUrlError, UrlSigner
-from ssc_shared.clock import SystemClock
+from ssc_shared.blobstore_fs import FsBlobStore, SignedUrlError
 
-PREFIX: Final = "/blobs"
-FS_ENVIRONMENTS: Final = frozenset({"dev", "test"})
+PREFIX: Final = BLOBS_PATH
 
 router = APIRouter(prefix=PREFIX, include_in_schema=False)
 
 
 def blob_store_for(settings: Settings) -> BlobStore | None:
-    """The store ``settings.blob_backend`` names. No I/O."""
-    match settings.blob_backend:
-        case "none":
-            return None
-        case "fs":
-            if not settings.blob_root:
-                raise ValueError("blob_backend fs needs blob_root")
-            signer = UrlSigner(
-                settings.blob_signing_keys, active=settings.blob_signing_kid, clock=SystemClock()
-            )
-            base = settings.public_url.rstrip("/") + PREFIX
-            return FsBlobStore(Path(settings.blob_root), signer=signer, base_url=base)
-        case other:
-            raise ValueError(f"unknown blob_backend {other!r}")
+    """``storage.blob_store`` over the API's settings. No I/O."""
+    return blob_store(
+        settings.blob_backend,
+        environment=settings.environment,
+        root=settings.blob_root,
+        keys=settings.blob_signing_keys,
+        kid=settings.blob_signing_kid,
+        public_url=settings.public_url,
+    )
 
 
 def check_fs_allowed(store: BlobStore | None, settings: Settings) -> None:
-    if isinstance(store, FsBlobStore) and settings.environment not in FS_ENVIRONMENTS:
-        raise ValueError(
-            f"the filesystem blob store runs only in {sorted(FS_ENVIRONMENTS)}, "
-            f"not {settings.environment!r}"
-        )
+    """``storage.check_fs_allowed``: also refuses a filesystem store passed to ``create_app``."""
+    check_fs_environment(store, settings.environment)
 
 
 def _store(request: Request) -> FsBlobStore:
