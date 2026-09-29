@@ -7,6 +7,7 @@
   ``PUT .../grants`` answers ``202`` with the pending approval ids when the change needs approval.
 * ``429`` is retried once after ``Retry-After``: the API refuses before doing any work.
 * A refusal becomes a :class:`~ssc_cli.errors.CliError` carrying the API's problem members.
+* Every request names the tool in ``X-SSC-Source-Tool`` for the API's source tool mix.
 """
 
 import time
@@ -43,6 +44,8 @@ from ssc_cli.models import (
 from ssc_contracts.errors import ErrorCode
 
 USER_AGENT: Final = f"ssc-cli/{__version__}"
+SOURCE_TOOL_HEADER: Final = "X-SSC-Source-Tool"
+SOURCE_TOOL: Final = "ssc-cli"
 IDEMPOTENCY_HEADER: Final = "Idempotency-Key"
 IF_MATCH: Final = "If-Match"
 ETAG: Final = "ETag"
@@ -80,6 +83,7 @@ class ApiClient:
             headers={
                 "Authorization": f"Bearer {token}",
                 "User-Agent": USER_AGENT,
+                SOURCE_TOOL_HEADER: SOURCE_TOOL,
                 "Accept": "application/json",
             },
         )

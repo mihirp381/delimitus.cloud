@@ -92,8 +92,8 @@ example `claude-code`, `cursor`, `lovable`) on the requests that deploy or share
 trimmed and lowercased; anything that is not 1 to 40 of `a-z 0-9 . _ -` is recorded as `other`.
 An agent credential's `client_id` takes precedence over the header. The header is optional, never
 refused, and feeds product metrics only (`ssc_control.metrics.source_tool`). `PUT .../grants`
-reads it today; the deploy path reads it when it records deploy events. Which value the `ssc`
-command sends, and how a builder declares it, is SSC-022's call.
+reads it today; the deploy path reads it when it records deploy events. The `ssc` command sends
+`ssc-cli` on every request (decision 017).
 
 **Metrics events join the transaction too.** `uow.metrics.record_event(...)` writes one
 `metrics_event` row with the change, so a refused or rolled-back request records nothing. The

@@ -355,6 +355,72 @@ def test_approval_required_says_how_to_ask(cli, scripted, fake_problem):
     assert len(_puts(scripted)) == 2
 
 
+def _fix(stderr: str) -> str:
+    (fix,) = [line for line in stderr.splitlines() if line.startswith("Fix: ")]
+    return fix.removeprefix("Fix: ")
+
+
+OLD = "usr_oldoldoldoldoldoldold"
+
+
+def test_a_role_below_the_floor_says_which_role(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/grants"
+    scripted.add("GET", path, _grants(1))
+    scripted.add("PUT", path, fake_problem(422, "VALIDATION_FAILED"))
+    r = cli("share", "demo", USR, "--env", "preview", "--role", "user", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert "Code: VALIDATION_FAILED" in r.stderr
+    assert _fix(r.stderr) == (
+        f"preview takes builder grants, so {USR} cannot be a user there; use `--role builder`."
+    )
+
+
+def test_a_stored_grant_below_the_floor_is_named_with_its_removal(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/grants"
+    legacy = {"id": "gnt_2", "role": "user", "subject_kind": "user", "subject_id": OLD}
+    org = {"id": "gnt_3", "role": "user", "subject_kind": "org", "subject_id": None}
+    scripted.add("GET", path, _grants(4, legacy, org))
+    scripted.add("PUT", path, fake_problem(422, "VALIDATION_FAILED"))
+    r = cli("share", "demo", USR, "--env", "preview", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    fix = _fix(r.stderr)
+    assert f"the user grant for {OLD} was saved before the rule" in fix
+    assert f"`ssc unshare demo {OLD} --env preview`" in fix
+    assert "`ssc unshare demo --org --env preview`" in fix
+    assert USR not in fix
+
+
+def test_a_refusal_the_rules_do_not_explain_gets_the_rules(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    scripted.add("GET", path, _grants(1))
+    scripted.add("PUT", path, fake_problem(422, "VALIDATION_FAILED"))
+    r = cli("share", "demo", USR, session=scripted.session())
+    assert _fix(r.stderr).startswith("prod takes user or builder grants, preview takes builder")
+
+
+def test_forbidden_says_who_may_change_that_environment(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    scripted.add("GET", path, _grants(1))
+    scripted.add("PUT", path, fake_problem(403, "FORBIDDEN"))
+    r = cli("share", "demo", "--org", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert "Code: FORBIDDEN" in r.stderr
+    assert "Request id: req_test" in r.stderr
+    assert _fix(r.stderr).startswith(
+        "only an org admin, the app's owner or a builder on prod can change who uses prod"
+    )
+    as_json = cli("share", "demo", "--org", "--json", session=scripted.session())
+    assert as_json.json()["error"]["code"] == "FORBIDDEN"
+    ErrorResult.model_validate(as_json.json())
+
+
+def test_the_floor_is_the_apis(cli):
+    from ssc_cli.commands.share import FLOOR
+    from ssc_control.domain.grant_rules import FLOOR as API_FLOOR
+
+    assert {e.value: r.value for e, r in FLOOR.items()} == dict(API_FLOOR)
+
+
 def test_unknown_app_and_environment(cli, scripted):
     r = cli("status", "missing", "--json", session=scripted.session())
     assert r.code == ExitCode.FAILED
@@ -542,6 +608,28 @@ def test_live_share_through_an_agent_waits_for_approval(on_live, live, isolated)
     after = on_live("status", name, "--json").json()
     prod = next(e for e in after["environments"] if e["name"] == "prod")
     assert prod["grants_version"] == result.grants_version
+
+
+def test_live_floor_refusal_is_explained(on_live, live):
+    name = slug()
+    assert on_live("apps", "create", name).code == 0
+    r = on_live("share", name, live.admin_id, "--env", "preview", "--role", "user")
+    assert r.code == ExitCode.FAILED
+    assert "Code: VALIDATION_FAILED" in r.stderr
+    assert _fix(r.stderr).endswith("use `--role builder`.")
+    ok = on_live("share", name, live.admin_id, "--env", "preview", "--json")
+    assert ok.code == 0, ok.stdout
+    assert [g["role"] for g in ok.json()["grants"]] == ["builder"]
+
+
+def test_live_owner_may_remove_every_grant(on_live, live):
+    name = slug()
+    created = on_live("apps", "create", name, "--json").json()
+    assert created["owner_user_id"] == live.admin_id
+    assert on_live("share", name, live.admin_id, "--json").code == 0
+    gone = on_live("unshare", name, live.admin_id, "--json")
+    assert gone.code == 0, gone.stdout
+    assert (gone.json()["changed"], gone.json()["grants"]) == (True, [])
 
 
 def test_live_widening_a_data_connected_app_says_how_to_ask(on_live, live):

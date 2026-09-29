@@ -6,9 +6,11 @@ import httpx2
 import pytest
 
 from ssc_cli import __version__
-from ssc_cli.api import BACKOFF, MAX_RETRY_AFTER, ApiClient
+from ssc_cli.api import BACKOFF, MAX_RETRY_AFTER, SOURCE_TOOL, SOURCE_TOOL_HEADER, ApiClient
 from ssc_cli.errors import CliError, ExitCode
 from ssc_cli.models import GrantIn
+from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER as API_HEADER
+from ssc_control.metrics.source_tool import normalise
 
 WHOAMI = {
     "org_id": "org_aaaaaaaaaaaaaaaaaaaa",
@@ -42,6 +44,22 @@ def test_sends_token_and_user_agent(fake_api):
     req = fake_api.seen[0]
     assert req.headers["authorization"] == "Bearer tok"
     assert req.headers["user-agent"] == f"ssc-cli/{__version__}"
+
+
+def test_every_request_names_the_tool(fake_api):
+    fake_api.add("GET", "/v1/whoami", httpx2.Response(200, json=WHOAMI))
+    fake_api.add("POST", "/v1/apps", httpx2.Response(201, json=APP))
+    grants = {"environment_id": "env_aaaaaaaaaaaaaaaaaaaa", "grants_version": 2, "grants": []}
+    path = "/v1/apps/app_x/environments/env_x/grants"
+    fake_api.add("PUT", path, httpx2.Response(200, json=grants))
+    with client(fake_api) as c:
+        c.whoami()
+        c.create_app("demo")
+        c.put_grants("app_x", "env_x", [], '"1"')
+    assert [r.headers[SOURCE_TOOL_HEADER] for r in fake_api.seen] == ["ssc-cli"] * 3
+    # The API records it as sent: the header it reads, and already in its stored shape.
+    assert SOURCE_TOOL_HEADER == API_HEADER
+    assert normalise(SOURCE_TOOL) == SOURCE_TOOL
 
 
 def test_tolerates_fields_it_does_not_know(fake_api):
