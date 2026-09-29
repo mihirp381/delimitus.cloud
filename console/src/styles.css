@@ -97,6 +97,11 @@ a:hover {
   text-decoration: none;
 }
 
+.topbar nav {
+  display: flex;
+  gap: 16px;
+}
+
 .topbar nav a {
   text-decoration: none;
 }
@@ -205,6 +210,7 @@ a:hover {
 }
 
 input,
+select,
 textarea {
   font: inherit;
   color: var(--ssc-text-primary);
@@ -266,6 +272,46 @@ textarea {
 .empty,
 .count {
   padding: 4px 0;
+}
+
+.more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+/* Filters and details */
+
+.filters {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  align-items: end;
+}
+
+.filters .actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--ssc-accent);
+}
+
+details pre {
+  margin: 0;
+  max-width: 420px;
+  padding: 8px;
+  overflow-x: auto;
+  font-family: var(--ssc-font-mono);
+  font-size: 13px;
+  background: var(--ssc-surface-sunken);
+  border-radius: var(--ssc-radius-sm);
+}
+
+.plain-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
 }
 
 /* Badge */

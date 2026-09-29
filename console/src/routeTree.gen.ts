@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
+import { Route as AuthedApprovalsRouteImport } from './routes/_authed/approvals'
+import { Route as AuthedAuditRouteImport } from './routes/_authed/audit'
 import { Route as AuthedAppsAppIdRouteImport } from './routes/_authed/apps.$appId'
 
 const AuthedRoute = AuthedRouteImport.update({
@@ -28,6 +30,16 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedApprovalsRoute = AuthedApprovalsRouteImport.update({
+  id: '/approvals',
+  path: '/approvals',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedAuditRoute = AuthedAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthedAppsAppIdRoute = AuthedAppsAppIdRouteImport.update({
   id: '/apps/$appId',
   path: '/apps/$appId',
@@ -37,10 +49,14 @@ const AuthedAppsAppIdRoute = AuthedAppsAppIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
+  '/approvals': typeof AuthedApprovalsRoute
+  '/audit': typeof AuthedAuditRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/approvals': typeof AuthedApprovalsRoute
+  '/audit': typeof AuthedAuditRoute
   '/': typeof AuthedIndexRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
 }
@@ -48,15 +64,24 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
+  '/_authed/approvals': typeof AuthedApprovalsRoute
+  '/_authed/audit': typeof AuthedAuditRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/apps/$appId': typeof AuthedAppsAppIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/apps/$appId'
+  fullPaths: '/' | '/login' | '/approvals' | '/audit' | '/apps/$appId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/' | '/apps/$appId'
-  id: '__root__' | '/_authed' | '/login' | '/_authed/' | '/_authed/apps/$appId'
+  to: '/login' | '/approvals' | '/audit' | '/' | '/apps/$appId'
+  id:
+    | '__root__'
+    | '/_authed'
+    | '/login'
+    | '/_authed/approvals'
+    | '/_authed/audit'
+    | '/_authed/'
+    | '/_authed/apps/$appId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -87,6 +112,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedIndexRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/approvals': {
+      id: '/_authed/approvals'
+      path: '/approvals'
+      fullPath: '/approvals'
+      preLoaderRoute: typeof AuthedApprovalsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/audit': {
+      id: '/_authed/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AuthedAuditRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/apps/$appId': {
       id: '/_authed/apps/$appId'
       path: '/apps/$appId'
@@ -98,11 +137,15 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthedRouteChildren {
+  AuthedApprovalsRoute: typeof AuthedApprovalsRoute
+  AuthedAuditRoute: typeof AuthedAuditRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
   AuthedAppsAppIdRoute: typeof AuthedAppsAppIdRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
+  AuthedApprovalsRoute: AuthedApprovalsRoute,
+  AuthedAuditRoute: AuthedAuditRoute,
   AuthedIndexRoute: AuthedIndexRoute,
   AuthedAppsAppIdRoute: AuthedAppsAppIdRoute,
 }

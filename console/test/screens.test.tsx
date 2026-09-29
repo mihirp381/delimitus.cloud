@@ -1,10 +1,9 @@
-import { createMemoryHistory } from '@tanstack/react-router';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { Grants } from '../src/api/grants';
-import { createSession, type Session, STORAGE_KEY } from '../src/auth/session';
-import { App, createConsole } from '../src/router';
-import { fakeApi, type Handler, json, ORIGIN, problem } from './fakeApi';
+import { createSession, STORAGE_KEY } from '../src/auth/session';
+import { type Handler, json, problem } from './fakeApi';
+import { signedIn, start } from './harness';
 
 const OWNER = 'usr_cccccccccccccccccccc';
 const OTHER = 'usr_dddddddddddddddddddd';
@@ -23,30 +22,8 @@ const PROD_GRANTS = `/v1/apps/${APP.id}/environments/env_prod0000000000000000/gr
 const PREVIEW_GRANTS = `/v1/apps/${APP.id}/environments/env_preview0000000000000/grants`;
 const ORG_USER = { id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null } as const;
 const OWNER_BUILDER = { id: 'gnt_000000000000000000b1', role: 'builder', subject_kind: 'user', subject_id: OWNER } as const;
-const WHOAMI = () =>
-  json(200, { org_id: 'org_ffffffffffffffffffff', subject: 'dev-admin', kind: 'user', credential_id: 'c', is_agent: false, client_id: null });
-
 function prodGrants(version: number, list: Grants['grants']): Grants {
   return { environment_id: 'env_prod0000000000000000', grants_version: version, grants: list };
-}
-
-function start(path: string, routes: Record<string, Handler | Handler[]>, session?: Session) {
-  const api = fakeApi({ 'GET /v1/whoami': WHOAMI, ...routes });
-  const s = session ?? createSession(null);
-  const app = createConsole({
-    baseUrl: ORIGIN,
-    session: s,
-    fetch: api.fetch,
-    history: createMemoryHistory({ initialEntries: [path] }),
-  });
-  render(<App console={app} />);
-  return { api, session: s, router: app.router };
-}
-
-function signedIn(): Session {
-  const s = createSession(null);
-  s.set('tok-admin', false);
-  return s;
 }
 
 describe('login', () => {

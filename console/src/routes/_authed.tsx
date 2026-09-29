@@ -11,7 +11,7 @@ export const Route = createFileRoute('/_authed')({
 });
 
 function AuthedLayout() {
-  const { queries, session, queryClient } = Route.useRouteContext();
+  const { queries, session, queryClient, isAdmin } = Route.useRouteContext();
   const navigate = useNavigate();
   const me = queries.useQuery('get', '/v1/whoami');
 
@@ -31,6 +31,8 @@ function AuthedLayout() {
           <Link to="/" activeOptions={{ exact: true }}>
             Apps
           </Link>
+          <Link to="/approvals">Approvals</Link>
+          {isAdmin(me.data) ? <Link to="/audit">Audit log</Link> : null}
         </nav>
         <span className="spacer" />
         {me.data ? (

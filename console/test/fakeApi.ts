@@ -3,6 +3,7 @@
 export interface Call {
   readonly method: string;
   readonly path: string;
+  readonly query: URLSearchParams;
   readonly headers: Headers;
   readonly body: unknown;
 }
@@ -46,6 +47,7 @@ export function fakeApi(routes: Record<string, Handler | Handler[]>) {
     const call: Call = {
       method: request.method,
       path: url.pathname,
+      query: url.searchParams,
       headers: request.headers,
       body: text ? JSON.parse(text) : undefined,
     };

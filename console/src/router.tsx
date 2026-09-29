@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRouter, RouterProvider, type RouterHistory } from '@tanstack/react-router';
 import { createApiClient, createQueries } from './api/client';
 import { ApiProblem } from './api/problem';
+import { isAdmin as defaultIsAdmin } from './auth/admin';
 import type { Session } from './auth/session';
 import type { RouterContext } from './context';
 import { routeTree } from './routeTree.gen';
@@ -11,6 +12,7 @@ interface Options {
   readonly session: Session;
   readonly fetch?: (request: Request) => Promise<Response>;
   readonly history?: RouterHistory;
+  readonly isAdmin?: RouterContext['isAdmin'];
 }
 
 function newQueryClient(): QueryClient {
@@ -26,7 +28,7 @@ function newQueryClient(): QueryClient {
   });
 }
 
-export function createConsole({ baseUrl, session, fetch, history }: Options) {
+export function createConsole({ baseUrl, session, fetch, history, isAdmin }: Options) {
   const queryClient = newQueryClient();
   const api = createApiClient({
     baseUrl,
@@ -39,7 +41,13 @@ export function createConsole({ baseUrl, session, fetch, history }: Options) {
       if (pathname !== '/login') void router.navigate({ to: '/login', search: { next: href } });
     },
   });
-  const context: RouterContext = { api, queries: createQueries(api), session, queryClient };
+  const context: RouterContext = {
+    api,
+    queries: createQueries(api),
+    session,
+    queryClient,
+    isAdmin: isAdmin ?? defaultIsAdmin,
+  };
   const router = createRouter({ routeTree, context, history, defaultPreload: false });
   return { router, queryClient, context };
 }
