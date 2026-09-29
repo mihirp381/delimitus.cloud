@@ -12,6 +12,7 @@ from ssc_contracts.errors import Problem
 from ssc_control.api import problems
 from ssc_control.api.auth import Verifier
 from ssc_control.api.idempotency import REPLAYED_HEADER, Replay
+from ssc_control.api.mcp.server import install_mcp
 from ssc_control.api.problems import REQUEST_ID_HEADER, RequestIdMiddleware, request_id_of
 from ssc_control.api.ratelimit import RateLimiter
 from ssc_control.api.routes.internal import router as internal_router
@@ -51,7 +52,8 @@ def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         if settings.metrics_key is None:
             _log.warning("SSC_METRICS_KEY is not set: no metrics events will be recorded")
-        yield
+        async with agent_interface.session_manager.run():
+            yield
         rt = app.state.runtime
         if isinstance(rt, Runtime) and rt.owns_engine:
             await rt.engine.dispose()
@@ -70,7 +72,7 @@ def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI
             {"name": "health", "description": "Unauthenticated liveness."},
         ],
     )
-    app.state.runtime = Runtime(
+    app.state.runtime = rt = Runtime(
         settings=settings,
         engine=engine if engine is not None else make_engine(settings.database_dsn),
         verifier=Verifier(dict(settings.jwks), settings.issuer),
@@ -88,6 +90,7 @@ def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI
 
     app.include_router(v1_router)
     app.include_router(internal_router)
+    agent_interface = install_mcp(app, rt)
     _install_openapi(app)
     return app
 

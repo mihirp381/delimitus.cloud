@@ -198,7 +198,6 @@ def serve(
         env["SSC_API_RATE_CAPACITY"] = str(rate_capacity)
     if rate_refill is not None:
         env["SSC_API_RATE_REFILL_PER_SECOND"] = str(rate_refill)
-    settings = Settings.from_env(env)
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     sock = socket.socket(family, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -206,7 +205,10 @@ def serve(
     sock.listen(128)
     bound = sock.getsockname()[1]
     shown = f"[{host}]" if family == socket.AF_INET6 else host
-    print(f"SSC_API_URL=http://{shown}:{bound}", flush=True)  # noqa: T201
+    url = f"http://{shown}:{bound}"
+    env.setdefault("SSC_API_PUBLIC_URL", url)
+    settings = Settings.from_env(env)
+    print(f"SSC_API_URL={url}", flush=True)  # noqa: T201
     config = uvicorn.Config(create_app(settings), log_level="warning")
     uvicorn.Server(config).run(sockets=[sock])
 

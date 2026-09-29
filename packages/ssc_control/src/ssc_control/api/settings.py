@@ -29,6 +29,8 @@ class Settings:
     metrics_key: bytes | None = field(default=None, repr=False)
     """Master key for metrics pseudonyms (``SSC_METRICS_KEY``, base64 of 32 bytes). Unset: no
     metrics events are recorded. Held outside the database."""
+    public_url: str = USER_AUDIENCE
+    """Where clients reach this API. The agent interface is served at ``{public_url}/mcp``."""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -42,6 +44,7 @@ class Settings:
             rate_capacity=int(e.get("SSC_API_RATE_CAPACITY", "60")),
             rate_refill_per_second=float(e.get("SSC_API_RATE_REFILL_PER_SECOND", "1.0")),
             metrics_key=parse_master_key(e["SSC_METRICS_KEY"]) if "SSC_METRICS_KEY" in e else None,
+            public_url=e.get("SSC_API_PUBLIC_URL", USER_AUDIENCE),
         )
 
     @classmethod
