@@ -8,11 +8,13 @@ import pytest
 from typer.core import TyperGroup
 from typer.main import get_command
 
-from ssc_cli.agentpack.content import BEGIN, END, STARTER_MANIFEST
+from ssc_cli.agentpack.content import BEGIN, END, GUIDE, STARTER_MANIFEST
+from ssc_cli.doctor import run_doctor
 from ssc_cli.doctor.finding import FIX
 from ssc_cli.errors import ExitCode
 from ssc_cli.main import app
 from ssc_cli.shapes import InitResult
+from ssc_contracts.manifest import load_manifest
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "ssc_cli"
 SKILL = ".claude/skills/ssc/SKILL.md"
@@ -197,3 +199,21 @@ def test_pack_lists_every_command(cli, tmp_path):
             expected.add(name)
         expected |= {f"{name} {s}" for s in subs or ()}
     assert listed == expected
+
+
+_EXAMPLE = re.compile(r"(?m)^# (\[[a-z_.]+\]|[a-z_]+ = .+)$")
+
+
+def test_starter_manifest_validates(cli, tmp_path):
+    load_manifest(STARTER_MANIFEST)
+    examples = load_manifest(_EXAMPLE.sub(r"\1", STARTER_MANIFEST))
+    assert examples.state.postgres
+    assert examples.runtime.start
+    blocks = re.findall(r"(?s)```toml\n(.*?)```", GUIDE)
+    assert blocks
+    for block in blocks:
+        assert load_manifest(block).state.postgres
+    for text in (GUIDE, STARTER_MANIFEST, *FIX.values()):
+        assert 'state = "' not in text
+    init(cli, tmp_path)
+    assert not [f for f in run_doctor(tmp_path) if f.code.startswith("MANIFEST")]

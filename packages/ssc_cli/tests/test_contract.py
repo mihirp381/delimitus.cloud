@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -98,22 +99,45 @@ def _shape_fields(model: type[BaseModel]) -> dict[str, str]:
     return out
 
 
+_ENUM = re.compile(r"^(\w+)\[([^\]]*)\](\|null)?$")
+
+
+def _widens(old: str, new: str) -> bool:
+    """True if ``new`` is ``old`` with more enum values: a JSON value may gain values, not lose."""
+    a, b = _ENUM.match(old), _ENUM.match(new)
+    if a is None or b is None or (a[1], a[3]) != (b[1], b[3]):
+        return False
+    return set(a[2].split(",")) < set(b[2].split(","))
+
+
 def test_json_shapes_are_append_only():
     current = {name: _shape_fields(model) for name, model in SHAPES.items()}
     recorded: dict[str, dict[str, str]] = json.loads(SHAPES_FILE.read_text())
+    widened: set[str] = set()
     for shape, fields in recorded.items():
         assert shape in current, f"{shape} was removed"
         for field, kind in fields.items():
             assert field in current[shape], f"{shape}.{field} was removed"
-            assert current[shape][field] == kind, f"{shape}.{field} changed type"
+            if current[shape][field] != kind:
+                assert _widens(kind, current[shape][field]), f"{shape}.{field} changed type"
+                widened.add(f"{shape}.{field}")
     added = {
         f"{shape}.{field}"
         for shape, fields in current.items()
         for field in fields
         if field not in recorded.get(shape, {})
     }
-    if added and os.environ.get("SSC_UPDATE_JSON_SHAPES") == "1":
-        merged = {s: {**current[s], **recorded.get(s, {})} for s in current}
-        SHAPES_FILE.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
+    changed = added | widened
+    if changed and os.environ.get("SSC_UPDATE_JSON_SHAPES") == "1":
+        SHAPES_FILE.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n")
         return
-    assert not added, f"record {sorted(added)} with SSC_UPDATE_JSON_SHAPES=1 pytest"
+    assert not changed, f"record {sorted(changed)} with SSC_UPDATE_JSON_SHAPES=1 pytest"
+
+
+def test_enum_values_may_be_added_but_not_removed():
+    assert _widens("string[a,b]", "string[a,b,c]")
+    assert _widens("string[a]|null", "string[a,b]|null")
+    assert not _widens("string[a,b]", "string[a]")
+    assert not _widens("string[a,b]", "string[a,c]")
+    assert not _widens("string[a]", "string[a,b]|null")
+    assert not _widens("string", "string[a]")

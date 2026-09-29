@@ -2,13 +2,15 @@
 
 import json
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 from ssc_cli.doctor import run_doctor
-from ssc_cli.doctor.finding import FIX, SEVERITY
+from ssc_cli.doctor.finding import FIX, SEVERITY, DoctorCode
 from ssc_cli.errors import ExitCode
 from ssc_cli.shapes import DoctorResult
+from ssc_contracts.manifest import MAX_MANIFEST_BYTES, ManifestError, load_manifest
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "doctor"
 CODES = sorted(SEVERITY)
@@ -18,8 +20,14 @@ def codes(root: Path) -> list[str]:
     return [f.code for f in run_doctor(root)]
 
 
-def make(root: Path, files: dict[str, str]) -> Path:
-    for rel, text in files.items():
+MANIFEST = 'schema = "ssc/v1"\n'
+
+
+def make(root: Path, files: dict[str, str | None]) -> Path:
+    """Write ``files`` under ``root``, with a minimal ssc.toml unless it is given (None: none)."""
+    for rel, text in {"ssc.toml": MANIFEST, **files}.items():
+        if text is None:
+            continue
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
@@ -28,7 +36,7 @@ def make(root: Path, files: dict[str, str]) -> Path:
 
 def test_every_code_has_a_fixture_and_a_fix():
     assert sorted(p.name for p in FIXTURES.iterdir() if p.is_dir()) == sorted([*CODES, "clean"])
-    assert set(FIX) == set(SEVERITY)
+    assert set(FIX) == set(SEVERITY) == set(get_args(DoctorCode))
 
 
 @pytest.mark.parametrize("code", CODES)
@@ -165,24 +173,35 @@ VITE_PKG = json.dumps({"scripts": {"build": "vite build"}, "devDependencies": {"
 
 
 @pytest.mark.parametrize(
-    "manifest",
+    "tables",
     [
         '[build.public_env.preview]\nVITE_API_URL = "https://a"\n'
         '[build.public_env.prod]\nVITE_API_URL = "https://b"\n',
-        '[build.public_env]\nVITE_API_URL = "https://a"\n',
-        '[build]\npublic_env = ["VITE_API_URL"]\n',
+        '[build.public_env.prod]\nVITE_API_URL = "https://b"\n',
     ],
 )
-def test_public_env_declared_in_the_manifest_is_fine(tmp_path, manifest):
+def test_public_env_declared_in_the_manifest_is_fine(tmp_path, tables):
     make(
         tmp_path,
         {
             "package.json": VITE_PKG,
             "src/main.js": "fetch(import.meta.env.VITE_API_URL)\n",
-            "ssc.toml": manifest,
+            "ssc.toml": MANIFEST + tables,
         },
     )
     assert codes(tmp_path) == []
+
+
+def test_public_env_in_another_form_is_refused_and_not_counted(tmp_path):
+    make(
+        tmp_path,
+        {
+            "package.json": VITE_PKG,
+            "src/main.js": "fetch(import.meta.env.VITE_API_URL)\n",
+            "ssc.toml": MANIFEST + '[build]\npublic_env = ["VITE_API_URL"]\n',
+        },
+    )
+    assert codes(tmp_path) == ["MANIFEST_INVALID", "PUBLIC_ENV_AT_BUILD"]
 
 
 def test_each_public_name_is_reported_once(tmp_path):
@@ -300,3 +319,79 @@ def test_dependency_folders_are_not_scanned(tmp_path):
         },
     )
     assert codes(tmp_path) == []
+
+
+# ── the manifest ────────────────────────────────────────────────────────────
+
+
+def manifest_findings(root: Path) -> list[tuple[str, int | None, str]]:
+    return [(f.code, f.line, f.message) for f in run_doctor(root) if f.code.startswith("MANIFEST")]
+
+
+def test_invalid_manifest_lists_every_refusal_from_the_loader(tmp_path):
+    text = MANIFEST + '\n[runtime]\nhelth_path = "/"\n\n[state]\nredis = true\n'
+    make(tmp_path, {"package.json": PKG, "server.js": SERVER, "ssc.toml": text})
+    with pytest.raises(ManifestError) as refused:
+        load_manifest(text)
+    assert manifest_findings(tmp_path) == [
+        ("MANIFEST_INVALID", p.line, str(p)) for p in refused.value.problems
+    ]
+    messages = [m for _, _, m in manifest_findings(tmp_path)]
+    assert messages[0].startswith("ssc.toml:4:1: runtime.helth_path: unknown key")
+    assert messages[1].startswith("ssc.toml:7:1: state.redis: ")
+    assert "STATE_KV_UNSUPPORTED" in messages[1]
+
+
+def test_state_as_a_string_is_refused(tmp_path):
+    make(tmp_path, {"package.json": PKG, "server.js": SERVER, "ssc.toml": 'state = "postgres"\n'})
+    found = manifest_findings(tmp_path)
+    assert [code for code, _, _ in found] == ["MANIFEST_INVALID", "MANIFEST_INVALID"]
+    assert any(m.startswith("ssc.toml:1:1: schema: ") for _, _, m in found)
+    assert any("postgres = true" in m for _, _, m in found)
+
+
+def test_invalid_manifest_human_output(cli, tmp_path):
+    text = 'schema = "ssc/v1"\n[runtime]\nport = "80"\nsessions = "yes"\n'
+    make(tmp_path, {"package.json": PKG, "server.js": SERVER, "ssc.toml": text})
+    r = cli("doctor", str(tmp_path))
+    assert r.code == ExitCode.BLOCKED
+    assert "BLOCK  MANIFEST_INVALID  ssc.toml:3\n       ssc.toml:3:1: runtime.port: " in r.stdout
+    assert "ssc.toml:4:1: runtime.sessions: " in r.stdout
+    assert r.stdout.count("Fix: ") == 1
+    assert "2 blocking, 0 warnings." in r.stdout
+
+
+@pytest.mark.parametrize(
+    ("data", "field"),
+    [
+        (b'schema = "ssc/v1"\n# caf\xe9\n', "(file)"),
+        (b'schema = "ssc/v1"\n' + b"#" * (MAX_MANIFEST_BYTES + 10), "(file)"),
+        (b'schema = "ssc/v1\n', "syntax"),
+        (b'schema = "ssc/v2"\n', "schema"),
+    ],
+)
+def test_manifest_the_loader_cannot_read(tmp_path, data, field):
+    make(tmp_path, {"package.json": PKG, "server.js": SERVER, "ssc.toml": None})
+    (tmp_path / "ssc.toml").write_bytes(data)
+    ((code, _, message),) = manifest_findings(tmp_path)
+    assert code == "MANIFEST_INVALID"
+    assert f": {field}: " in message
+
+
+def test_manifest_with_a_bom_is_read_by_every_rule(tmp_path):
+    start = '[runtime]\nstart = "streamlit run app.py --server.port $PORT"\n'
+    make(
+        tmp_path,
+        {
+            "requirements.txt": "streamlit\n",
+            "app.py": "import streamlit as st\n",
+            "ssc.toml": None,
+        },
+    )
+    (tmp_path / "ssc.toml").write_text("\ufeff" + MANIFEST + start)
+    assert codes(tmp_path) == []
+
+
+def test_missing_manifest_is_not_reported_for_a_folder_that_is_not_one_app(tmp_path):
+    make(tmp_path, {"api/requirements.txt": "flask\n", "web/package.json": "{}", "ssc.toml": None})
+    assert codes(tmp_path) == ["NOT_SINGLE_APP"]

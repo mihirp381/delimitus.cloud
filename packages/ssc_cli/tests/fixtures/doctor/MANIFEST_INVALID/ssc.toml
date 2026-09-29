@@ -1,0 +1,4 @@
+schema = "ssc/v1"
+
+[runtime]
+port = "3000"

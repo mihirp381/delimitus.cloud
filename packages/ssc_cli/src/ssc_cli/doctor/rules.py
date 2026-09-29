@@ -3,7 +3,8 @@
 The six causes come from the SSC-003 corpus (spikes/corpus20/RESULTS.md). Each rule is a pure
 function from a :class:`Tree` to findings. The checks are heuristics. Version drift is checked
 only where the lock file records the declared ranges as text (``bun.lock``); other lock files are
-checked for the names they list.
+checked for the names they list. ``ssc.toml`` itself is checked by the manifest loader
+(decision 013); the other rules read what they can from it even when it is invalid.
 """
 
 import json
@@ -18,6 +19,8 @@ from typing import Final, cast
 from ssc_cli.doctor.finding import (
     EXTERNAL_SERVICE,
     LOCKFILE_STALE,
+    MANIFEST_INVALID,
+    MANIFEST_MISSING,
     NO_START_COMMAND,
     NOT_SINGLE_APP,
     PORT_BINDING,
@@ -26,6 +29,7 @@ from ssc_cli.doctor.finding import (
     Finding,
     finding,
 )
+from ssc_contracts.manifest import MANIFEST_FILE, MAX_MANIFEST_BYTES, ManifestError, load_manifest
 
 SKIP_DIRS: Final = frozenset(
     {
@@ -90,9 +94,12 @@ class Tree:
             self._text[rel] = _read_text(self.root / rel) if rel in self.files else None
         return self._text[rel]
 
-    def data(self, rel: str) -> bytes | None:
+    def data(self, rel: str, limit: int = -1) -> bytes | None:
+        if rel not in self.files:
+            return None
         try:
-            return (self.root / rel).read_bytes() if rel in self.files else None
+            with (self.root / rel).open("rb") as f:
+                return f.read(limit)
         except OSError:
             return None
 
@@ -180,7 +187,7 @@ def _toml(t: Tree, rel: str) -> dict[str, object] | None:
     if text is None:
         return None
     try:
-        return tomllib.loads(text)
+        return tomllib.loads(text.removeprefix("\ufeff"))
     except tomllib.TOMLDecodeError:
         return None
 
@@ -217,7 +224,7 @@ def _python_deps(t: Tree) -> dict[str, str]:
 
 
 def _manifest(t: Tree) -> dict[str, object]:
-    return _toml(t, "ssc.toml") or {}
+    return _toml(t, MANIFEST_FILE) or {}
 
 
 def _manifest_start(t: Tree) -> str | None:
@@ -378,15 +385,9 @@ _PUBLIC_ENV = re.compile(r"\b((?:VITE|NEXT_PUBLIC|REACT_APP)_[A-Z0-9_]*[A-Z0-9])
 
 
 def _declared_public_env(t: Tree) -> set[str]:
-    """Public names in ssc.toml: per environment, a flat table, or a list."""
-    declared = _dig(_manifest(t), "build", "public_env")
-    names = {n for n in _list(declared) if isinstance(n, str)}
-    for key, value in _obj(declared).items():
-        if isinstance(value, dict):
-            names.update(_obj(cast(object, value)))
-        else:
-            names.add(key)
-    return names
+    """Names given a value in any ``[build.public_env.<environment>]`` table of ssc.toml."""
+    tables = _obj(_dig(_manifest(t), "build", "public_env")).values()
+    return {name for table in tables for name in _obj(table)}
 
 
 def public_env_at_build(t: Tree) -> list[Finding]:
@@ -648,6 +649,25 @@ def not_single_app(t: Tree) -> list[Finding]:
     ]
 
 
+# ── 7. the manifest ─────────────────────────────────────────────────────────
+
+
+def manifest(t: Tree) -> list[Finding]:
+    if MANIFEST_FILE not in t.files:
+        return [
+            finding(MANIFEST_MISSING, ".", "There is no ssc.toml, so the app gets the defaults.")
+        ]
+    # One byte over the limit is enough for the loader to refuse the size.
+    data = t.data(MANIFEST_FILE, MAX_MANIFEST_BYTES + 1)
+    if data is None:
+        return [finding(MANIFEST_INVALID, MANIFEST_FILE, "ssc.toml cannot be read.")]
+    try:
+        load_manifest(data)
+    except ManifestError as exc:
+        return [finding(MANIFEST_INVALID, MANIFEST_FILE, str(p), p.line) for p in exc.problems]
+    return []
+
+
 Rule = Callable[[Tree], Iterable[Finding]]
 
 RULES: Final[tuple[Rule, ...]] = (
@@ -658,4 +678,5 @@ RULES: Final[tuple[Rule, ...]] = (
     external_service,
     writes_home,
     not_single_app,
+    manifest,
 )

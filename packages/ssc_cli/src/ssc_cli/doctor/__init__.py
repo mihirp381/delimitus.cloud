@@ -11,7 +11,7 @@ def run_doctor(root: Path) -> list[Finding]:
     tree = load_tree(root)
     found = [f for rule in RULES for f in rule(tree)]
     if any(f.code == "NOT_SINGLE_APP" for f in found):
-        found = [f for f in found if f.code != "NO_START_COMMAND"]
+        found = [f for f in found if f.code not in {"NO_START_COMMAND", "MANIFEST_MISSING"}]
     return sorted(found, key=lambda f: (f.severity != "block", f.code, f.path, f.line or 0))
 
 

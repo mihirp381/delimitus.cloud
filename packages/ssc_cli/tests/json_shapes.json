@@ -55,7 +55,7 @@
     "path": "string"
   },
   "Finding": {
-    "code": "string",
+    "code": "string[EXTERNAL_SERVICE,LOCKFILE_STALE,MANIFEST_INVALID,MANIFEST_MISSING,NOT_SINGLE_APP,NO_START_COMMAND,PORT_BINDING,PUBLIC_ENV_AT_BUILD,WRITES_HOME]",
     "fix": "string",
     "line": "integer|null",
     "message": "string",

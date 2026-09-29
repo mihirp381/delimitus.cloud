@@ -30,11 +30,12 @@ def doctor(path: PathArg = Path(), json_mode: JsonOpt = False) -> None:
     elif not findings:
         say(f"No problems found in {path}.")
     else:
-        for f in findings:
+        for i, f in enumerate(findings):
             where = f"{f.path}:{f.line}" if f.line else f.path
             say(f"{f.severity.upper():5}  {f.code}  {where}")
             say(f"       {f.message}")
-            say(f"       Fix: {f.fix}")
+            if i + 1 == len(findings) or findings[i + 1].fix != f.fix:
+                say(f"       Fix: {f.fix}")
         blocks = sum(f.severity == "block" for f in findings)
         warns = len(findings) - blocks
         say(f"\n{blocks} blocking, {warns} {'warning' if warns == 1 else 'warnings'}.")

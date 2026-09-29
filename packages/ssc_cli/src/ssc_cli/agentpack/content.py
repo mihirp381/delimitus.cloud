@@ -42,8 +42,8 @@ finding marked `block`.
 - Keep the lock file in step with the dependency list; the build installs with it frozen.
 - Never put secrets in code, in `ssc.toml` or anywhere in the repository.
 - Values the browser needs at build time (`VITE_*`, `NEXT_PUBLIC_*`) go under
-  `[build.public_env.preview]` and `[build.public_env.prod]` in `ssc.toml`. Anyone who can open
-  the app can read them.
+  `[build.public_env.preview]` and `[build.public_env.prod]` in `ssc.toml`; any other name must
+  also be listed in `public_names` under `[build]`. Anyone who can open the app can read them.
 
 ### Who is signed in: the identity note
 
@@ -61,30 +61,43 @@ finding marked `block`.
 
 ### Data
 
-- For a database, declare `state = "postgres"` in `ssc.toml` and connect with the `DATABASE_URL`
-  environment variable. This part of the manifest is still a draft and may change.
+- For a database, add `[state]` with `postgres = true` to `ssc.toml` and connect with the
+  `DATABASE_URL` environment variable.
+- SSC offers no key-value store such as Redis. Keep that data in a Postgres table; for a cache,
+  use an `UNLOGGED` table with an `expires_at` column.
 - Company data connections are not live yet. Do not write code against them until SSC documents
   the API.
 
-### A minimal ssc.toml
+### ssc.toml
+
+The file starts with `schema = "ssc/v1"`, and the format is strict: unknown keys and values of
+the wrong type are refused. `ssc doctor` prints each problem as
+`ssc.toml:LINE:COL: field: message`. The format is a draft until SSC freezes it.
 
 ```toml
 schema = "ssc/v1"
 
 [runtime]
 start = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+
+[state]
+postgres = true
 ```
 """
 
 CLAUDE_IMPORT: Final = "@AGENTS.md\n"
 
 STARTER_MANIFEST: Final = """\
-# SSC app manifest. `ssc doctor` reads it; the full format is decision 013.
+# SSC app manifest, format ssc/v1. `ssc doctor` checks it.
 schema = "ssc/v1"
 
 # How to start the app, when package.json or a Procfile does not say:
 # [runtime]
 # start = "streamlit run app.py --server.port $PORT --server.address 0.0.0.0"
+
+# A Postgres database for the app, reached through DATABASE_URL:
+# [state]
+# postgres = true
 """
 
 STARTER_IGNORE: Final = """\
