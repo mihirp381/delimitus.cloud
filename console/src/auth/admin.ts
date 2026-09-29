@@ -6,10 +6,10 @@ export type Whoami = components['schemas']['Whoami'];
  * Whether the console shows admin-only screens (today: the audit log) to this caller. This is
  * the one place that decides it, and it only hides things: the API refuses a non-admin anyway.
  *
- * `whoami` has no role yet (asked of A4 and B5), so every signed-in caller sees every screen and
- * a non-admin gets the API's `403`. When the role lands, this answers from it, and `undefined`
- * (whoami not loaded yet) should answer false.
+ * It answers from `whoami`'s `role` (A4b), which the API reads from the directory on every
+ * request. Until whoami has loaded, and for a credential with no role (an agent's, or a
+ * deactivated user's), it answers false.
  */
-export function isAdmin(_me: Whoami | undefined): boolean {
-  return true;
+export function isAdmin(me: Whoami | undefined): boolean {
+  return me?.role === 'admin';
 }

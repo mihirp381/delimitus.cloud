@@ -30,15 +30,21 @@ const FORMATS: readonly { readonly format: ExportFormat; readonly label: string 
 function AuditPage() {
   const { queries, isAdmin } = Route.useRouteContext();
   const me = queries.useQuery('get', '/v1/whoami');
-  if (!isAdmin(me.data)) {
-    return (
-      <>
-        <h1>Audit log</h1>
-        <p className="muted">Only org admins can see the audit log.</p>
-      </>
-    );
+  if (isAdmin(me.data)) {
+    return <AuditLog />;
   }
-  return <AuditLog />;
+  return (
+    <>
+      <h1>Audit log</h1>
+      {me.isPending ? (
+        <p className="muted">Loading…</p>
+      ) : me.isError ? (
+        <ProblemNotice error={me.error} />
+      ) : (
+        <p className="muted">Only org admins can see the audit log.</p>
+      )}
+    </>
+  );
 }
 
 function AuditLog() {

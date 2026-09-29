@@ -201,12 +201,58 @@ describe('audit export', () => {
 
 describe('admin gating', () => {
   const apps: Record<string, Handler> = { 'GET /v1/apps': () => json(200, { apps: [] }) };
+  const whoami = (role: string | null): Handler => () =>
+    json(200, {
+      org_id: 'org_ffffffffffffffffffff',
+      subject: USER,
+      kind: 'user',
+      credential_id: 'c',
+      is_agent: false,
+      client_id: null,
+      role,
+    });
 
-  it('shows the audit log to every signed-in caller while whoami has no role', async () => {
-    start('/', apps, signedIn());
+  it('answers from the role whoami gives', () => {
+    const me = { org_id: 'o', subject: USER, kind: 'user', credential_id: 'c', is_agent: false, client_id: null } as const;
+    expect(isAdmin({ ...me, role: 'admin' })).toBe(true);
+    expect(isAdmin({ ...me, role: 'member' })).toBe(false);
+    expect(isAdmin({ ...me, role: null })).toBe(false);
+    expect(isAdmin(undefined)).toBe(false);
+  });
+
+  it('shows the audit log to an org admin', async () => {
+    start('/', { ...apps, 'GET /v1/whoami': whoami('admin') }, signedIn());
     const nav = await screen.findByRole('navigation', { name: 'Main' });
-    expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual(['Apps', 'Approvals', 'Audit log']);
-    expect(isAdmin(undefined)).toBe(true);
+    await waitFor(() =>
+      expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual(['Apps', 'Approvals', 'Audit log']),
+    );
+  });
+
+  it.each([['member'], [null]])('hides the audit log from a caller whose role is %s', async (role) => {
+    const { api } = start('/audit', { ...apps, 'GET /v1/whoami': whoami(role) }, signedIn());
+    expect(await screen.findByText('Only org admins can see the audit log.')).toBeTruthy();
+    const nav = screen.getByRole('navigation', { name: 'Main' });
+    expect(within(nav).queryByRole('link', { name: 'Audit log' })).toBeNull();
+    expect(within(nav).getByRole('link', { name: 'Approvals' })).toBeTruthy();
+    expect(api.of('GET', '/v1/audit')).toHaveLength(0);
+  });
+
+  it('waits for whoami before saying who may see the audit log', async () => {
+    const { api } = start('/audit', { ...apps, 'GET /v1/whoami': () => new Promise<Response>(() => {}) }, signedIn());
+    expect(await screen.findByText('Loading…')).toBeTruthy();
+    expect(screen.queryByText('Only org admins can see the audit log.')).toBeNull();
+    expect(api.of('GET', '/v1/audit')).toHaveLength(0);
+  });
+
+  it('shows why whoami failed instead of guessing', async () => {
+    const { api } = start(
+      '/audit',
+      { ...apps, 'GET /v1/whoami': () => problem(429, 'RATE_LIMITED', 'Too many requests') },
+      signedIn(),
+    );
+    expect((await screen.findByRole('alert')).textContent).toContain('Too many requests');
+    expect(screen.queryByText('Only org admins can see the audit log.')).toBeNull();
+    expect(api.of('GET', '/v1/audit')).toHaveLength(0);
   });
 
   it('hides the audit log when the seam says the caller is not an admin', async () => {
@@ -214,7 +260,6 @@ describe('admin gating', () => {
     expect(await screen.findByText('Only org admins can see the audit log.')).toBeTruthy();
     const nav = screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav).queryByRole('link', { name: 'Audit log' })).toBeNull();
-    expect(within(nav).getByRole('link', { name: 'Approvals' })).toBeTruthy();
     expect(api.of('GET', '/v1/audit')).toHaveLength(0);
   });
 });

@@ -13,6 +13,7 @@ export const WHOAMI = () =>
     credential_id: 'c',
     is_agent: false,
     client_id: null,
+    role: 'admin',
   });
 
 /** Renders the console at `path` against a fake API that also answers `GET /v1/whoami`. */
