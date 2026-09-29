@@ -267,6 +267,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable App
+         * @description Make a disabled or quarantined app active again and resume the schedules the kill
+         *     switch paused. The reconciler brings it back up. ``KILL_SWITCH_IN_FLIGHT`` until the
+         *     running pull has finished.
+         */
+        post: operations["enable_app_v1_apps__app_id__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app_id}/environments/{environment_id}/access": {
         parameters: {
             query?: never;
@@ -353,12 +375,77 @@ export interface paths {
          *
          *     Only an org admin, the app's owner or a builder on this environment may; anyone else gets
          *     ``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant
-         *     for one subject is ``VALIDATION_FAILED``.
+         *     for one subject is ``VALIDATION_FAILED``. A quarantined app's sharing is frozen:
+         *     ``APP_NOT_ACTIVE``.
          *
          *     A change that needs approval is not applied: an agent session gets ``202`` and the pending
          *     approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.
          */
         put: operations["put_grants_v1_apps__app_id__environments__environment_id__grants_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/kill-switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pull Kill Switch
+         * @description Stop the app now: 202 plus a ``Location`` to follow the steps.
+         *
+         *     ``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``
+         *     while an earlier pull is still running.
+         */
+        post: operations["pull_kill_switch_v1_apps__app_id__kill_switch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/kill-switch/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Kill Switch Run
+         * @description One pull of the switch: each step's state and timings, and the total.
+         */
+        get: operations["get_kill_switch_run_v1_apps__app_id__kill_switch__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Transfer Owner
+         * @description Give the app to another member. ``REFERENCE_NOT_FOUND`` for a user not in the org,
+         *     ``OWNER_NOT_ACTIVE`` for a deactivated one.
+         */
+        put: operations["transfer_owner_v1_apps__app_id__owner_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -474,6 +561,26 @@ export interface paths {
          *     builder on any environment, with a user credential (``FORBIDDEN`` otherwise).
          */
         get: operations["find_groups_v1_groups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Inventory
+         * @description Every app in the org by slug, with its owner, environments, sharing and last use.
+         */
+        get: operations["get_inventory_v1_inventory_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -925,6 +1032,13 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** CurrentRelease */
+        CurrentRelease: {
+            /** Number */
+            number: number;
+            /** Release Id */
+            release_id: string;
+        };
         /** DecisionIn */
         DecisionIn: {
             /**
@@ -1069,7 +1183,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "RELEASE_ENVIRONMENT_MISMATCH" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -1215,6 +1329,156 @@ export interface components {
             /** Org Id */
             org_id: string;
         };
+        /** InventoryApp */
+        InventoryApp: {
+            /** App Id */
+            app_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Environments */
+            environments: components["schemas"]["InventoryEnvironment"][];
+            /**
+             * Last Used At
+             * @description The last time anyone opened the app; null until the gateway reports it.
+             */
+            last_used_at: string | null;
+            owner: components["schemas"]["Owner"];
+            /** Slug */
+            slug: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "disabled" | "quarantined";
+        };
+        /** InventoryEnvironment */
+        InventoryEnvironment: {
+            current_release: components["schemas"]["CurrentRelease"] | null;
+            /** Environment Id */
+            environment_id: string;
+            last_deploy: components["schemas"]["LastDeploy"] | null;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "prod" | "preview";
+            sharing: components["schemas"]["Sharing"];
+        };
+        /** InventoryPage */
+        InventoryPage: {
+            /** Items */
+            items: components["schemas"]["InventoryApp"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` for the next page.
+             */
+            next_cursor: string | null;
+        };
+        /** KillSwitchAccepted */
+        KillSwitchAccepted: {
+            /** Run Id */
+            run_id: string;
+            /**
+             * State
+             * @constant
+             */
+            state: "running";
+        };
+        /** KillSwitchCreate */
+        KillSwitchCreate: {
+            /**
+             * Mode
+             * @description `disable` stops the app; `quarantine` also freezes its sharing rules. A disabled app can still be quarantined.
+             * @enum {string}
+             */
+            mode: "disable" | "quarantine";
+        };
+        /** KillSwitchRun */
+        KillSwitchRun: {
+            /** App Id */
+            app_id: string;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "disable" | "quarantine";
+            /** Run Id */
+            run_id: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "completed" | "failed";
+            /**
+             * Steps
+             * @description The steps begun so far, in order.
+             */
+            steps: components["schemas"]["KillSwitchStep"][];
+            /** Total Ms */
+            total_ms: number | null;
+        };
+        /** KillSwitchStep */
+        KillSwitchStep: {
+            /** Attempts */
+            attempts: number;
+            /** Elapsed Ms */
+            elapsed_ms: number | null;
+            /**
+             * Error
+             * @description The reason code of the last failed try, if any.
+             */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "gateway_deny" | "datagw_suspend" | "egress_remove" | "scale_to_zero" | "pause_timers";
+            /** Snapshot Version */
+            snapshot_version: number | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "done" | "unconfirmed" | "failed";
+        };
+        /** LastDeploy */
+        LastDeploy: {
+            /**
+             * At
+             * Format: date-time
+             * @description When it finished, or started if it has not.
+             */
+            at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "deploy" | "rollback";
+            /** Operation Id */
+            operation_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "running" | "healthy" | "failed" | "superseded";
+        };
         /** OperationAccepted */
         OperationAccepted: {
             /** Operation Id */
@@ -1260,6 +1524,18 @@ export interface components {
         };
         /** @enum {string} */
         OrgRole: "admin" | "member";
+        /** Owner */
+        Owner: {
+            /** Display Name */
+            display_name: string;
+            /** User Id */
+            user_id: string;
+        };
+        /** OwnerTransfer */
+        OwnerTransfer: {
+            /** User Id */
+            user_id: string;
+        };
         /**
          * PrincipalKind
          * @enum {string}
@@ -1352,6 +1628,21 @@ export interface components {
          * @enum {string}
          */
         RequirementKind: "widen_audience" | "connect_data_source" | "enable_internet_hosts" | "agent_share";
+        /** Sharing */
+        Sharing: {
+            /**
+             * Groups
+             * @description Grants to groups, builders included.
+             */
+            groups: number;
+            /** Org Wide */
+            org_wide: boolean;
+            /**
+             * Users
+             * @description Grants to single users, builders included.
+             */
+            users: number;
+        };
         /** UploadTarget */
         UploadTarget: {
             /**
@@ -2553,6 +2844,93 @@ export interface operations {
             };
         };
     };
+    enable_app_v1_apps__app_id__enable_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_ALREADY_ACTIVE`, `KILL_SWITCH_IN_FLIGHT` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     explain_access_v1_apps__app_id__environments__environment_id__access_get: {
         parameters: {
             query?: {
@@ -3004,7 +3382,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `APPROVAL_REQUIRED` */
+            /** @description `APPROVAL_REQUIRED`, `APP_NOT_ACTIVE` */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3033,6 +3411,236 @@ export interface operations {
             };
             /** @description `PRECONDITION_REQUIRED` */
             428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    pull_kill_switch_v1_apps__app_id__kill_switch_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KillSwitchCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KillSwitchAccepted"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `KILL_SWITCH_IN_FLIGHT` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_kill_switch_run_v1_apps__app_id__kill_switch__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KillSwitchRun"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    transfer_owner_v1_apps__app_id__owner_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerTransfer"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`, `OWNER_NOT_ACTIVE` */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3412,6 +4020,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GroupMatches"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_inventory_v1_inventory_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description The previous page's `next_cursor`. */
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryPage"];
                 };
             };
             /** @description `UNAUTHENTICATED` */

@@ -1067,6 +1067,25 @@
         "title": "CapabilityDiff",
         "type": "object"
       },
+      "CurrentRelease": {
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "release_id": {
+            "title": "Release Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "release_id",
+          "number"
+        ],
+        "title": "CurrentRelease",
+        "type": "object"
+      },
       "DecisionIn": {
         "additionalProperties": false,
         "properties": {
@@ -1441,6 +1460,8 @@
           "APP_NOT_ACTIVE",
           "BUILD_IN_FLIGHT",
           "RELEASE_ENVIRONMENT_MISMATCH",
+          "KILL_SWITCH_IN_FLIGHT",
+          "APP_ALREADY_ACTIVE",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -1809,6 +1830,398 @@
         "title": "HeartbeatAck",
         "type": "object"
       },
+      "InventoryApp": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "environments": {
+            "items": {
+              "$ref": "#/components/schemas/InventoryEnvironment"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The last time anyone opened the app; null until the gateway reports it.",
+            "title": "Last Used At"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/Owner"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "disabled",
+              "quarantined"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "slug",
+          "status",
+          "owner",
+          "created_at",
+          "last_used_at",
+          "environments"
+        ],
+        "title": "InventoryApp",
+        "type": "object"
+      },
+      "InventoryEnvironment": {
+        "additionalProperties": false,
+        "properties": {
+          "current_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentRelease"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "last_deploy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastDeploy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "enum": [
+              "prod",
+              "preview"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "sharing": {
+            "$ref": "#/components/schemas/Sharing"
+          }
+        },
+        "required": [
+          "environment_id",
+          "name",
+          "current_release",
+          "last_deploy",
+          "sharing"
+        ],
+        "title": "InventoryEnvironment",
+        "type": "object"
+      },
+      "InventoryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InventoryApp"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as `cursor` for the next page.",
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "InventoryPage",
+        "type": "object"
+      },
+      "KillSwitchAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "state": {
+            "const": "running",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "state"
+        ],
+        "title": "KillSwitchAccepted",
+        "type": "object"
+      },
+      "KillSwitchCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "description": "`disable` stops the app; `quarantine` also freezes its sharing rules. A disabled app can still be quarantined.",
+            "enum": [
+              "disable",
+              "quarantine"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "KillSwitchCreate",
+        "type": "object"
+      },
+      "KillSwitchRun": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "mode": {
+            "enum": [
+              "disable",
+              "quarantine"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "steps": {
+            "description": "The steps begun so far, in order.",
+            "items": {
+              "$ref": "#/components/schemas/KillSwitchStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "total_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Ms"
+          }
+        },
+        "required": [
+          "run_id",
+          "app_id",
+          "mode",
+          "state",
+          "steps",
+          "started_at",
+          "finished_at",
+          "total_ms"
+        ],
+        "title": "KillSwitchRun",
+        "type": "object"
+      },
+      "KillSwitchStep": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The reason code of the last failed try, if any.",
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "name": {
+            "enum": [
+              "gateway_deny",
+              "datagw_suspend",
+              "egress_remove",
+              "scale_to_zero",
+              "pause_timers"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "snapshot_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Version"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "done",
+              "unconfirmed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "state",
+          "snapshot_version",
+          "started_at",
+          "finished_at",
+          "elapsed_ms",
+          "attempts",
+          "error"
+        ],
+        "title": "KillSwitchStep",
+        "type": "object"
+      },
+      "LastDeploy": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "description": "When it finished, or started if it has not.",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "deploy",
+              "rollback"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "running",
+              "healthy",
+              "failed",
+              "superseded"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "kind",
+          "state",
+          "at"
+        ],
+        "title": "LastDeploy",
+        "type": "object"
+      },
       "OperationAccepted": {
         "additionalProperties": false,
         "properties": {
@@ -1916,6 +2329,40 @@
           "member"
         ],
         "type": "string"
+      },
+      "Owner": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name"
+        ],
+        "title": "Owner",
+        "type": "object"
+      },
+      "OwnerTransfer": {
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "pattern": "^usr_[a-z0-9]{20}$",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "OwnerTransfer",
+        "type": "object"
       },
       "PrincipalKind": {
         "enum": [
@@ -2094,6 +2541,32 @@
         ],
         "title": "RequirementKind",
         "type": "string"
+      },
+      "Sharing": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "description": "Grants to groups, builders included.",
+            "title": "Groups",
+            "type": "integer"
+          },
+          "org_wide": {
+            "title": "Org Wide",
+            "type": "boolean"
+          },
+          "users": {
+            "description": "Grants to single users, builders included.",
+            "title": "Users",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "org_wide",
+          "users",
+          "groups"
+        ],
+        "title": "Sharing",
+        "type": "object"
       },
       "UploadTarget": {
         "additionalProperties": false,
@@ -3832,6 +4305,126 @@
         ]
       }
     },
+    "/v1/apps/{app_id}/enable": {
+      "post": {
+        "description": "Make a disabled or quarantined app active again and resume the schedules the kill\nswitch paused. The reconciler brings it back up. ``KILL_SWITCH_IN_FLIGHT`` until the\nrunning pull has finished.",
+        "operationId": "enable_app_v1_apps__app_id__enable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_ALREADY_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Enable App",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
     "/v1/apps/{app_id}/environments/{environment_id}/access": {
       "get": {
         "description": "Builders of the environment only (``FORBIDDEN``); ``REFERENCE_NOT_FOUND`` for a user\nwho is not in the org.",
@@ -4430,7 +5023,7 @@
         ]
       },
       "put": {
-        "description": "Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.\n\nOnly an org admin, the app's owner or a builder on this environment may; anyone else gets\n``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant\nfor one subject is ``VALIDATION_FAILED``.\n\nA change that needs approval is not applied: an agent session gets ``202`` and the pending\napproval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.",
+        "description": "Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.\n\nOnly an org admin, the app's owner or a builder on this environment may; anyone else gets\n``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant\nfor one subject is ``VALIDATION_FAILED``. A quarantined app's sharing is frozen:\n``APP_NOT_ACTIVE``.\n\nA change that needs approval is not applied: an agent session gets ``202`` and the pending\napproval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.",
         "operationId": "put_grants_v1_apps__app_id__environments__environment_id__grants_put",
         "parameters": [
           {
@@ -4557,7 +5150,7 @@
                 }
               }
             },
-            "description": "`APPROVAL_REQUIRED`"
+            "description": "`APPROVAL_REQUIRED`, `APP_NOT_ACTIVE`"
           },
           "412": {
             "content": {
@@ -4601,6 +5194,324 @@
           }
         },
         "summary": "Put Grants",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/kill-switch": {
+      "post": {
+        "description": "Stop the app now: 202 plus a ``Location`` to follow the steps.\n\n``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``\nwhile an earlier pull is still running.",
+        "operationId": "pull_kill_switch_v1_apps__app_id__kill_switch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KillSwitchCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KillSwitchAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Pull Kill Switch",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/kill-switch/{run_id}": {
+      "get": {
+        "description": "One pull of the switch: each step's state and timings, and the total.",
+        "operationId": "get_kill_switch_run_v1_apps__app_id__kill_switch__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KillSwitchRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Kill Switch Run",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/owner": {
+      "put": {
+        "description": "Give the app to another member. ``REFERENCE_NOT_FOUND`` for a user not in the org,\n``OWNER_NOT_ACTIVE`` for a deactivated one.",
+        "operationId": "transfer_owner_v1_apps__app_id__owner_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerTransfer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`, `OWNER_NOT_ACTIVE`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Transfer Owner",
         "tags": [
           "v1"
         ]
@@ -5393,6 +6304,101 @@
           }
         },
         "summary": "Find Groups",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/inventory": {
+      "get": {
+        "description": "Every app in the org by slug, with its owner, environments, sharing and last use.",
+        "operationId": "get_inventory_v1_inventory_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The previous page's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The previous page's `next_cursor`.",
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Inventory",
         "tags": [
           "v1"
         ]
