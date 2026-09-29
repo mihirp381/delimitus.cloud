@@ -10,6 +10,8 @@ Revision 0006 adds ``org_index``, the single table in ``UNSCOPED_TABLES``: org i
 so workers can find every org and then bind each one (decision 009 amendment). It is kept out of
 ``TABLES`` so that every rule stated over ``TABLES`` stays true without an exception.
 Procrastinate's tables live in schema ``procrastinate`` and are not in this catalog at all.
+
+Revision 0008 adds ``bundle`` (SSC-014), an ordinary org-scoped table.
 """
 
 from collections.abc import Mapping
@@ -39,6 +41,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "audit_head",
         "metrics_event",
         "idempotency_claim",  # SSC-011, revision 0002
+        "bundle",  # SSC-014, revision 0008
     }
 )
 
@@ -85,6 +88,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "audit_head": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "metrics_event": frozenset({"SELECT", "INSERT"}),
     "idempotency_claim": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "bundle": frozenset({"SELECT", "INSERT", "UPDATE"}),  # pending -> stored, never DELETE
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

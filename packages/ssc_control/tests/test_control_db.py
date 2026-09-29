@@ -345,6 +345,61 @@ def test_release_and_environment_must_belong_to_the_same_app(
         conn.execute("delete from ssc.app where id = %s", (other_app,))
 
 
+BUNDLE_INSERT = (
+    "insert into ssc.bundle (id, org_id, app_id, digest, size_bytes, actor_kind, actor_id) "
+    "values (%s, %s, %s, %s, 10, 'user', %s)"
+)
+
+
+def test_bundles_stay_in_their_org_and_app(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]) -> None:
+    a, b = orgs
+    bid = new_id("bdl")
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        conn.execute(BUNDLE_INSERT, (bid, a.org, a.app, digest(bid), a.admin))
+        with pytest.raises(psycopg.Error) as e, conn.transaction():
+            conn.execute(BUNDLE_INSERT, (new_id("bdl"), a.org, a.app, digest(bid), a.admin))
+        assert sqlstate(e) == UNIQUE_VIOLATION  # one row per (org, app, digest)
+    assert run(dsns.app, b.org, "select count(*) from ssc.bundle where id = %s", (bid,)) == [(0,)]
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, b.org)
+        cur = conn.execute("update ssc.bundle set size_bytes = 11 where id = %s", (bid,))
+        assert cur.rowcount == 0
+    sneaky = (new_id("bdl"), a.org, a.app, digest("sneaky"), b.admin)
+    assert refused(dsns.app, b.org, BUNDLE_INSERT, sneaky) == INSUFFICIENT_PRIVILEGE
+    theirs = (new_id("bdl"), b.org, a.app, digest("theirs"), b.admin)  # alpha's app from beta
+    assert refused(dsns.app, b.org, BUNDLE_INSERT, theirs) == FOREIGN_KEY_VIOLATION
+    delete = "delete from ssc.bundle where id = %s"
+    assert refused(dsns.app, a.org, delete, (bid,)) == INSUFFICIENT_PRIVILEGE
+    assert run(dsns.app, a.org, "select size_bytes from ssc.bundle where id = %s", (bid,)) == [
+        (10,)
+    ]
+
+
+def test_a_stored_bundle_has_its_manifest(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]) -> None:
+    a, _ = orgs
+    bid = new_id("bdl")
+    store = (
+        "update ssc.bundle set state = 'stored', manifest = %s::jsonb, manifest_digest = %s, "
+        "file_count = 1, stored_at = now() where id = %s"
+    )
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        conn.execute(BUNDLE_INSERT, (bid, a.org, a.app, digest(bid), a.admin))
+        for sql, params in (
+            ("update ssc.bundle set state = 'stored', stored_at = now() where id = %s", (bid,)),
+            (store, ('["not an object"]', digest("m"), bid)),
+            ("update ssc.bundle set stored_at = now() where id = %s", (bid,)),
+        ):
+            with pytest.raises(psycopg.Error) as e, conn.transaction():
+                conn.execute(sql, params)
+            assert sqlstate(e) == CHECK_VIOLATION, sql
+        conn.execute(store, ('{"schema": "ssc/v1"}', digest("m"), bid))
+        assert conn.execute("select state from ssc.bundle where id = %s", (bid,)).fetchone() == (
+            "stored",
+        )
+
+
 def test_last_active_admin_cannot_be_removed(dsns: Dsns) -> None:
     org = make_org(dsns.app, "Solo")
     for sql in (
