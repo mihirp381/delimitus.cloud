@@ -1,8 +1,8 @@
 """Org creation: admin-first, in one transaction. The only supported way to make an org.
 
 "Create the org, then add an admin" has a window with zero admins, and a crash inside it leaves
-an org only an engineer with database access can rescue. The audit head is seeded here too, so
-the first audit event (SSC-012) always has a predecessor.
+an org only an engineer with database access can rescue. The audit head is seeded here too, and
+``org.created`` is the chain's first event (seq 1), in the same transaction.
 """
 
 from dataclasses import dataclass
@@ -11,10 +11,14 @@ from typing import Final
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.ids import new_id
+from ssc_control.audit.chain import GENESIS_HASH, Actor, NewEvent, append_event
 from ssc_control.db.bind import bound_org
 
-GENESIS_HASH: Final = bytes(32)
+__all__ = ["GENESIS_HASH", "SYSTEM_ACTOR", "CreatedOrg", "NewOrg", "create_org"]
+
+SYSTEM_ACTOR: Final = Actor(kind=ActorKind.OPERATOR, id="system:create_org")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +49,10 @@ _INSERT_LINK = text(
 _INSERT_HEAD = text("insert into ssc.audit_head (org_id, seq, hash) values (:org, 0, :hash)")
 
 
-async def create_org(engine: AsyncEngine, spec: NewOrg) -> CreatedOrg:
+async def create_org(
+    engine: AsyncEngine, spec: NewOrg, *, actor: Actor | None = None
+) -> CreatedOrg:
+    """Create the org, its first admin and audit chain; ``actor`` defaults to the system."""
     org_id, admin_id, link_id = new_id("org"), new_id("usr"), new_id("idl")
     async with bound_org(engine, org_id) as conn:
         await conn.execute(_INSERT_ORG, {"id": org_id, "name": spec.name})
@@ -69,4 +76,15 @@ async def create_org(engine: AsyncEngine, spec: NewOrg) -> CreatedOrg:
             },
         )
         await conn.execute(_INSERT_HEAD, {"org": org_id, "hash": GENESIS_HASH})
+        await append_event(
+            conn,
+            NewEvent(
+                org_id=org_id,
+                action=AuditAction.ORG_CREATED,
+                actor=actor or SYSTEM_ACTOR,
+                target_kind="org",
+                target_id=org_id,
+                after={"name": spec.name},
+            ),
+        )
     return CreatedOrg(org_id=org_id, admin_user_id=admin_id, identity_link_id=link_id)

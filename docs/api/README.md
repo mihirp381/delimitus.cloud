@@ -72,7 +72,14 @@ call once there is more than one replica.
 
 **Audit rows join the transaction.** `UnitOfWork.audit(...)` appends to the org's hash chain
 (`ssc_control.audit.append_event`) inside the request's transaction, so a change without its
-audit row cannot commit.
+audit row cannot commit. `before` and `after` must fit the target kind's view in
+`ssc_control/audit/views.py` (decision 012); a new target kind adds its view first.
+
+**A streamed response does not take `UserUoW`.** The unit of work commits when the endpoint
+returns, before a `StreamingResponse` body is sent. A streamed endpoint (today
+`GET /v1/audit/export`) takes `UserPrincipal`, calls `limit()`, runs its checks and writes its
+audit row in one `bound_org` transaction that commits first, then streams from a read-only
+REPEATABLE READ transaction opened inside the body generator.
 
 ## Adding an endpoint
 

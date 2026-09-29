@@ -80,7 +80,7 @@ class UnitOfWork:
         self.reply_sent = Reply(status=status, body=data, headers=dict(headers or {}))
         return self.reply_sent.to_response()
 
-    async def audit(
+    async def audit(  # noqa: PLR0913  (keyword-only)
         self,
         action: AuditAction,
         *,
@@ -88,7 +88,9 @@ class UnitOfWork:
         target_id: str,
         before: dict[str, Any] | None = None,
         after: dict[str, Any] | None = None,
+        policy_decision_id: str | None = None,
     ) -> AppendedEvent:
+        """Append to the org's chain in this transaction. ``before``/``after`` follow the views."""
         return await append_event(
             self.conn,
             NewEvent(
@@ -99,6 +101,7 @@ class UnitOfWork:
                 target_id=target_id,
                 before=before,
                 after=after,
+                policy_decision_id=policy_decision_id,
             ),
         )
 

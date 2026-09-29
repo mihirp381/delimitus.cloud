@@ -2,12 +2,13 @@
 
 This is the writer the API's unit of work uses so that the change and its audit row commit or
 roll back together. Appends are serialised per org by locking ``audit_head`` ``FOR UPDATE``;
-the chain is ``hash = sha256(prev_hash || canonical)`` over deterministic JSON. The constraints
-in ``audit_event`` (unique ``prev_hash`` and ``hash`` per org) make a fork or a gap unstorable.
+the chain is ``hash = sha256(prev_hash || canonical)`` over deterministic JSON, starting from
+:data:`GENESIS_HASH`. The constraints in ``audit_event`` (unique ``prev_hash`` and ``hash`` per
+org) make a fork or a gap unstorable.
 
-SSC-012 owns the rest of the audit log: search, CSV and JSON-lines export, the ``verify``
-command that walks the chain, the daily anchor to the bucket, and re-anchoring after a restore.
-None of that is here, and the canonical form below is the one SSC-012's verifier must reproduce.
+The canonical form is frozen as ssc-audit-v1 (decision 012): the nine keys below, sorted, no
+whitespace, UTF-8 without ASCII escaping, ``at`` in ISO 8601 with its offset. It carries no
+version key; a v2 would add ``"format"``. :mod:`ssc_control.audit.verify` reproduces it.
 """
 
 import hashlib
@@ -20,8 +21,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.audit import ActorKind, AuditAction
+from ssc_control.audit.views import check_view
 
 HASH_LENGTH: Final = 32
+GENESIS_HASH: Final = bytes(HASH_LENGTH)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,8 +73,16 @@ class NewEvent:
 
 
 async def append_event(conn: AsyncConnection, event: NewEvent) -> AppendedEvent:
-    """Append inside ``conn``'s open, org-bound transaction. Raises if the head is missing."""
+    """Append inside ``conn``'s open, org-bound transaction. Raises if the head is missing.
+
+    ``before`` and ``after`` must fit the target kind's view (:func:`check_view`), and an
+    explicit ``at`` must carry a UTC offset.
+    """
     org_id, actor = event.org_id, event.actor
+    check_view(event.target_kind, event.before)
+    check_view(event.target_kind, event.after)
+    if event.at is not None and event.at.utcoffset() is None:
+        raise ValueError("audit timestamps must carry a UTC offset")
     head = (await conn.execute(_LOCK_HEAD, {"org": org_id})).first()
     if head is None:
         raise RuntimeError(f"audit_head missing for {org_id}; orgs are created with create_org()")

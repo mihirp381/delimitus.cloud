@@ -156,7 +156,7 @@ async def put_grants(
                 AuditAction.GRANT_REMOVED,
                 target_kind="app_grant",
                 target_id=old.id,
-                before=old.model_dump(),
+                before={"environment_id": environment_id, **old.model_dump(exclude={"id"})},
             )
     for key, new in desired.items():
         if key not in existing:

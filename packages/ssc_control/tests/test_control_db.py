@@ -25,7 +25,7 @@ import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 import pytest
@@ -58,7 +58,6 @@ from ssc_control.db.errors import (
     UNIQUE_VIOLATION,
 )
 from ssc_control.db.migrate import alembic_config
-from ssc_control.db.orgs import GENESIS_HASH
 
 DB_DIR = Path(ssc_control.db.__file__).parent
 
@@ -445,18 +444,23 @@ def test_audit_log_is_append_only(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg])
     )
     with psycopg.connect(dsns.app) as conn:
         bind_org_sync(conn, a.org)
-        conn.execute(insert, (a.org, 1, AuditAction.ORG_CREATED, a.org, b"{}", GENESIS_HASH, h1))
-        conn.execute("update ssc.audit_head set seq = 1, hash = %s where org_id = %s", (h1, a.org))
+        head = conn.execute("select seq, hash from ssc.audit_head where org_id = %s", (a.org,))
+        seq, prev = cast(tuple[int, bytes], head.fetchone())
+        assert seq >= 1  # create_org's org.created
+        conn.execute(insert, (a.org, seq + 1, AuditAction.USER_CREATED, a.org, b"{}", prev, h1))
+        conn.execute(
+            "update ssc.audit_head set seq = %s, hash = %s where org_id = %s", (seq + 1, h1, a.org)
+        )
     # A fork (two events claiming the same predecessor) cannot be stored.
     fork = refused(
         dsns.app,
         a.org,
         insert,
-        (a.org, 2, AuditAction.LOGIN_SUCCEEDED, a.org, b"{}", GENESIS_HASH, h2),
+        (a.org, seq + 2, AuditAction.LOGIN_SUCCEEDED, a.org, b"{}", prev, h2),
     )
     assert fork == UNIQUE_VIOLATION
     # Actions come from the closed list.
-    made_up = refused(dsns.app, a.org, insert, (a.org, 2, "made.up", a.org, b"{}", h1, h2))
+    made_up = refused(dsns.app, a.org, insert, (a.org, seq + 2, "made.up", a.org, b"{}", h1, h2))
     assert made_up == CHECK_VIOLATION
     update = "update ssc.audit_event set action = 'login.failed' where org_id = %s and seq = 1"
     delete = "delete from ssc.audit_event where org_id = %s and seq = 1"
