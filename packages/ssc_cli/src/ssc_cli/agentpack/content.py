@@ -62,6 +62,10 @@ admin's approval first; without `--json` the error says how to ask.
 `ssc share` names a person by `usr_` id or email address (looking up an email needs an org admin's
 token) and a group by `grp_` id or name. When more than one fits, it exits 2 and lists their ids.
 
+`ssc apps --mine` lists the apps you can deploy to. `ssc access explain <app> [person]` says
+whether someone can open an environment and which grants decide it. `ssc disable` stops an app at
+once and `ssc enable` starts it again; only an org admin can run them.
+
 ### Tools for coding agents: `ssc mcp`
 
 `ssc mcp` serves SSC's agent tools (MCP) over stdio: `list_apps`, `get_app`, `get_status`,

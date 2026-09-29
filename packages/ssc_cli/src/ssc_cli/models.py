@@ -183,6 +183,53 @@ class GroupMatches(Wire):
     groups: list[GroupMatch]
 
 
+class KillSwitchAccepted(Wire):
+    run_id: str
+    state: str
+
+
+class KillSwitchStep(Wire):
+    name: str
+    state: str
+    snapshot_version: int | None = None
+    started_at: str
+    finished_at: str | None = None
+    elapsed_ms: int | None = None
+    attempts: int
+    error: str | None = None
+
+
+class KillSwitchRun(Wire):
+    run_id: str
+    app_id: str
+    mode: str
+    state: str
+    steps: list[KillSwitchStep]
+    started_at: str
+    finished_at: str | None = None
+    total_ms: int | None = None
+
+
+class ExplainedGrant(Wire):
+    grant_id: str
+    role: str
+    subject_kind: str
+    subject_id: str | None = None
+    group_name: str | None = None
+
+
+class AccessExplained(Wire):
+    user_id: str
+    environment_id: str
+    allowed: bool
+    role: str | None = None
+    floor: str
+    reason: str
+    grants: list[ExplainedGrant]
+    evaluated_from: str
+    published_version: int | None = None
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -218,3 +265,7 @@ class DeploymentCreate(Body):
 
 class PromoteIn(Body):
     preview_release_id: str | None = None
+
+
+class KillSwitchCreate(Body):
+    mode: str

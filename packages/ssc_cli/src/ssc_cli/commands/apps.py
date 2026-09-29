@@ -19,12 +19,21 @@ apps_app = typer.Typer(
 
 
 @apps_app.callback(invoke_without_command=True)
-def apps(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
+def apps(
+    ctx: typer.Context,
+    mine: Annotated[
+        bool,
+        typer.Option(
+            "--mine", help="Only the apps you can deploy to: as an org admin, owner or builder."
+        ),
+    ] = False,
+    json_mode: JsonOpt = False,
+) -> None:
     """List the apps you can see."""
     if ctx.invoked_subcommand is not None:
         return
     with handled(json_mode), session(ctx).client() as client:
-        listed = client.list_apps()
+        listed = client.list_apps(mine=mine)
     result = AppsResult(
         apps=[
             AppRow(id=a.id, slug=a.slug, owner_user_id=a.owner_user_id, status=a.status)
@@ -33,6 +42,8 @@ def apps(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
     )
     if json_mode:
         print_json(result)
+    elif not result.apps and mine:
+        say("You cannot deploy to any app yet. Create one with `ssc apps create <slug>`.")
     elif not result.apps:
         say("No apps yet. Create one with `ssc apps create <slug>`.")
     else:

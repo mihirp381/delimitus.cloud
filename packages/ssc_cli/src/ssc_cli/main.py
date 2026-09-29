@@ -6,10 +6,12 @@ import typer
 
 from ssc_cli import __version__
 from ssc_cli.commands._common import session
+from ssc_cli.commands.access import access_app
 from ssc_cli.commands.apps import apps_app
 from ssc_cli.commands.deploy import deploy
 from ssc_cli.commands.doctor import doctor
 from ssc_cli.commands.init import init
+from ssc_cli.commands.lifecycle import disable, enable
 from ssc_cli.commands.mcp import mcp
 from ssc_cli.commands.promote import promote
 from ssc_cli.commands.releases import releases
@@ -69,3 +71,6 @@ app.command()(releases)
 app.command()(rollback)
 app.command()(mcp)
 app.command()(promote)
+app.command()(disable)
+app.command()(enable)
+app.add_typer(access_app)

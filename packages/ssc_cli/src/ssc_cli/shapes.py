@@ -223,6 +223,54 @@ class PromoteResult(Shape):
     next_command: str | None
 
 
+class KillSwitchStepRow(Shape):
+    name: str
+    state: str
+    elapsed_ms: int | None
+    attempts: int
+    error: str | None
+
+
+class DisableResult(Shape):
+    """``disable``: the app's new ``status`` holds from the moment the API answered; ``state`` is
+    the kill switch run's once ssc stopped following it."""
+
+    app_id: str
+    slug: str
+    mode: str
+    status: str
+    run_id: str
+    state: str
+    steps: list[KillSwitchStepRow]
+    total_ms: int | None
+
+
+class AccessGrantRow(Shape):
+    grant_id: str
+    role: str
+    subject_kind: str
+    subject_id: str | None
+    group_name: str | None
+
+
+class AccessResult(Shape):
+    """``access explain``: whether ``user_id`` can open the environment, and the grants that
+    decided it."""
+
+    app_id: str
+    slug: str
+    environment: str
+    environment_id: str
+    user_id: str
+    allowed: bool
+    role: str | None
+    floor: str
+    reason: str
+    grants: list[AccessGrantRow]
+    evaluated_from: str
+    published_version: int | None
+
+
 class ErrorResult(Shape):
     error: ErrorBody
 
@@ -252,6 +300,10 @@ SHAPES: dict[str, type[BaseModel]] = {
         ReleasesResult,
         RollbackResult,
         PromoteResult,
+        KillSwitchStepRow,
+        DisableResult,
+        AccessGrantRow,
+        AccessResult,
         ErrorBody,
         ErrorResult,
     )

@@ -21,9 +21,11 @@ from ssc_cli.errors import ExitCode
 from ssc_cli.main import app
 from ssc_cli.session import Session
 from ssc_cli.shapes import (
+    AccessResult,
     AppResult,
     AppsResult,
     DeployResult,
+    DisableResult,
     DoctorResult,
     ErrorResult,
     InitResult,
@@ -56,6 +58,9 @@ ALLOWED = {
     "rollback",
     "mcp",
     "promote",
+    "disable",
+    "enable",
+    "access",
 }
 
 
@@ -110,8 +115,15 @@ def test_help_lists_exact_set(cli):
         ("rollback",),
         ("mcp",),
         ("promote",),
+        ("disable",),
+        ("enable",),
+        ("access", "explain"),
     }
-    for group, subs in (("token", {"set", "clear"}), ("apps", {"create"})):
+    for group, subs in (
+        ("token", {"set", "clear"}),
+        ("apps", {"create"}),
+        ("access", {"explain"}),
+    ):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
         assert {line.split()[0] for line in text.splitlines() if line.startswith("  ")} == subs
 
@@ -841,6 +853,9 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("releases",): ([name], ReleasesResult, None),
         ("rollback",): ([name, "R1", "--wait"], RollbackResult, None),
         ("promote",): ([name, "--wait"], PromoteResult, None),
+        ("access", "explain"): ([name], AccessResult, None),
+        ("disable",): ([name, "--timeout", "3600"], DisableResult, None),
+        ("enable",): ([name], AppResult, None),
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),

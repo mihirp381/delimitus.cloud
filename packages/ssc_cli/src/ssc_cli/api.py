@@ -36,6 +36,7 @@ from ssc_cli.errors import (
     local_error,
 )
 from ssc_cli.models import (
+    AccessExplained,
     AppCreate,
     AppList,
     AppOut,
@@ -50,6 +51,9 @@ from ssc_cli.models import (
     GrantsOut,
     GrantsPending,
     GroupMatches,
+    KillSwitchAccepted,
+    KillSwitchCreate,
+    KillSwitchRun,
     OperationAccepted,
     OperationOut,
     PromoteIn,
@@ -131,8 +135,9 @@ class ApiClient:
     def whoami(self) -> Whoami:
         return _parse(self._send("GET", "/v1/whoami"), Whoami)
 
-    def list_apps(self) -> AppList:
-        return _parse(self._send("GET", "/v1/apps"), AppList)
+    def list_apps(self, *, mine: bool = False) -> AppList:
+        """Every app of the org, or with ``mine`` only those the caller may deploy to."""
+        return _parse(self._send("GET", "/v1/apps?builder=me" if mine else "/v1/apps"), AppList)
 
     def get_app(self, app_id: str) -> AppOut:
         return _parse(self._send("GET", f"/v1/apps/{_seg(app_id)}"), AppOut)
@@ -245,6 +250,29 @@ class ApiClient:
 
     def find_groups(self, name: str) -> GroupMatches:
         return _parse(self._send("GET", f"/v1/groups?{urlencode({'name': name})}"), GroupMatches)
+
+    def pull_kill_switch(self, app_id: str, mode: str) -> KillSwitchAccepted:
+        """Stop the app now. Org admins only."""
+        path = f"/v1/apps/{_seg(app_id)}/kill-switch"
+        return _parse(
+            self._send("POST", path, body=KillSwitchCreate(mode=mode)), KillSwitchAccepted
+        )
+
+    def get_kill_switch_run(self, app_id: str, run_id: str) -> KillSwitchRun:
+        path = f"/v1/apps/{_seg(app_id)}/kill-switch/{_seg(run_id)}"
+        return _parse(self._send("GET", path), KillSwitchRun)
+
+    def enable_app(self, app_id: str) -> AppOut:
+        """Make a stopped app active again. Org admins only."""
+        return _parse(self._send("POST", f"/v1/apps/{_seg(app_id)}/enable"), AppOut)
+
+    def explain_access(
+        self, app_id: str, environment_id: str, user_id: str | None
+    ) -> AccessExplained:
+        """Why ``user_id`` (the caller when ``None``) can or cannot open the environment."""
+        query = "" if user_id is None else f"?{urlencode({'user_id': user_id})}"
+        path = f"{_environment_path(app_id, environment_id)}/access{query}"
+        return _parse(self._send("GET", path), AccessExplained)
 
     # ── transport ────────────────────────────────────────────────────────────
 

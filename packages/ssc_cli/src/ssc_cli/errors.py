@@ -42,6 +42,7 @@ SUBJECT_AMBIGUOUS: Final = "SUBJECT_AMBIGUOUS"
 BUILD_NOT_FOUND: Final = "BUILD_NOT_FOUND"
 AGENT_TOKEN_REQUIRED: Final = "AGENT_TOKEN_REQUIRED"  # noqa: S105  (an error code, not a secret)
 MCP_NOT_INSTALLED: Final = "MCP_NOT_INSTALLED"
+KILL_SWITCH_FAILED: Final = "KILL_SWITCH_FAILED"
 LOCAL_CODES: Final = frozenset(
     {
         NO_TOKEN,
@@ -66,6 +67,7 @@ LOCAL_CODES: Final = frozenset(
         BUILD_NOT_FOUND,
         AGENT_TOKEN_REQUIRED,
         MCP_NOT_INSTALLED,
+        KILL_SWITCH_FAILED,
     }
 )
 

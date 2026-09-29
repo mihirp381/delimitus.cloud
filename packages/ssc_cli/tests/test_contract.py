@@ -10,7 +10,7 @@ import pytest
 from pydantic import BaseModel
 
 from ssc_cli import models
-from ssc_cli.commands import deploy, releases, rollback, share
+from ssc_cli.commands import access, deploy, lifecycle, releases, rollback, share
 from ssc_cli.commands.share import DEFAULT_ROLE, SUBJECT_KINDS, Env, Role
 from ssc_cli.shapes import SHAPES
 
@@ -42,6 +42,11 @@ RESPONSES = (
     models.UserMatches,
     models.GroupMatch,
     models.GroupMatches,
+    models.KillSwitchAccepted,
+    models.KillSwitchStep,
+    models.KillSwitchRun,
+    models.ExplainedGrant,
+    models.AccessExplained,
 )
 REQUESTS = (
     models.AppCreate,
@@ -51,6 +56,7 @@ REQUESTS = (
     models.BuildCreate,
     models.DeploymentCreate,
     models.PromoteIn,
+    models.KillSwitchCreate,
 )
 
 
@@ -132,6 +138,21 @@ def test_lookups_are_checked_as_the_api_checks_them():
     (name,) = paths["/v1/groups"]["get"]["parameters"]
     assert (name["name"], name["schema"]["minLength"]) == ("name", 1)
     assert name["schema"]["maxLength"] == share.MAX_GROUP_NAME
+
+
+def test_admin_and_access_values_match_the_api(server):
+    assert set(lifecycle.MODE_STATUS) == set(
+        server["KillSwitchCreate"]["properties"]["mode"]["enum"]
+    )
+    statuses = set(server["InventoryApp"]["properties"]["status"]["enum"])
+    assert set(lifecycle.MODE_STATUS.values()) < statuses
+    paths = json.loads(OPENAPI.read_text())["paths"]
+    params = paths["/v1/apps/{app_id}/environments/{environment_id}/access"]["get"]["parameters"]
+    (user_id,) = [p for p in params if p["name"] == "user_id"]
+    assert user_id["schema"]["anyOf"][0]["pattern"] == f"^{access.USER_ID.pattern}$"
+    (builder,) = paths["/v1/apps"]["get"]["parameters"]
+    assert builder["name"] == "builder"
+    assert builder["schema"]["anyOf"][0]["const"] == "me"
 
 
 # ── --json shapes: append-only ───────────────────────────────────────────────

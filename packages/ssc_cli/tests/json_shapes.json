@@ -1,4 +1,25 @@
 {
+  "AccessGrantRow": {
+    "grant_id": "string",
+    "group_name": "string|null",
+    "role": "string",
+    "subject_id": "string|null",
+    "subject_kind": "string"
+  },
+  "AccessResult": {
+    "allowed": "boolean",
+    "app_id": "string",
+    "environment": "string",
+    "environment_id": "string",
+    "evaluated_from": "string",
+    "floor": "string",
+    "grants": "array<AccessGrantRow>",
+    "published_version": "integer|null",
+    "reason": "string",
+    "role": "string|null",
+    "slug": "string",
+    "user_id": "string"
+  },
   "AppResult": {
     "created_at": "string",
     "environments": "array<EnvironmentRow>",
@@ -54,6 +75,16 @@
     "started_at": "string",
     "state": "string"
   },
+  "DisableResult": {
+    "app_id": "string",
+    "mode": "string",
+    "run_id": "string",
+    "slug": "string",
+    "state": "string",
+    "status": "string",
+    "steps": "array<KillSwitchStepRow>",
+    "total_ms": "integer|null"
+  },
   "DoctorResult": {
     "blocking": "boolean",
     "findings": "array<Finding>",
@@ -102,6 +133,13 @@
   "InitResult": {
     "files": "array<FileAction>",
     "path": "string"
+  },
+  "KillSwitchStepRow": {
+    "attempts": "integer",
+    "elapsed_ms": "integer|null",
+    "error": "string|null",
+    "name": "string",
+    "state": "string"
   },
   "PromoteResult": {
     "app_id": "string",
