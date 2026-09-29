@@ -1,0 +1,9 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+blob-report/
+e2e/.state/
+*.tsbuildinfo
+.tanstack/
+dist-e2e/

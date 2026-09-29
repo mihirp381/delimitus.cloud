@@ -1,0 +1,342 @@
+/* Layout and components. Colours, fonts, radii and shadows come only from tokens.css
+   (`--ssc-*`); test/tokens.test.ts refuses a literal colour here. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--ssc-font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ssc-text-primary);
+  background: var(--ssc-surface);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  margin: 0;
+}
+
+h1 {
+  font-size: 24px;
+}
+
+h2 {
+  font-size: 18px;
+}
+
+h3 {
+  font-size: 15px;
+  margin-top: 16px;
+}
+
+p {
+  margin: 0;
+}
+
+code {
+  font-family: var(--ssc-font-mono);
+  font-size: 0.9em;
+}
+
+a {
+  color: var(--ssc-accent);
+}
+
+a:hover {
+  color: var(--ssc-accent-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ssc-focus-ring);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--ssc-text-muted);
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* Frame */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
+  background: var(--ssc-surface);
+  border-bottom: 1px solid var(--ssc-border-subtle);
+}
+
+.topbar .brand {
+  font-weight: 600;
+  color: var(--ssc-text-primary);
+  text-decoration: none;
+}
+
+.topbar nav a {
+  text-decoration: none;
+}
+
+.topbar nav a[data-status='active'] {
+  font-weight: 600;
+}
+
+.page {
+  display: grid;
+  gap: 16px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+.page-head h1 {
+  margin-right: auto;
+}
+
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 16px;
+  background: var(--ssc-surface-sunken);
+}
+
+.login .panel {
+  width: min(480px, 100%);
+}
+
+.panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: var(--ssc-surface-raised);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-md);
+  box-shadow: var(--ssc-shadow-raised);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--ssc-text-secondary);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Controls */
+
+.btn {
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: var(--ssc-radius-sm);
+  border: 1px solid var(--ssc-border-strong);
+  background: var(--ssc-surface-raised);
+  color: var(--ssc-text-primary);
+  cursor: pointer;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.btn-primary {
+  background: var(--ssc-accent);
+  border-color: var(--ssc-accent);
+  color: var(--ssc-accent-contrast);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--ssc-accent-hover);
+  border-color: var(--ssc-accent-hover);
+}
+
+.btn-danger {
+  color: var(--ssc-feedback-danger);
+  border-color: var(--ssc-feedback-danger);
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+}
+
+.field > span {
+  color: var(--ssc-text-secondary);
+}
+
+input,
+textarea {
+  font: inherit;
+  color: var(--ssc-text-primary);
+  background: var(--ssc-surface-raised);
+  border: 1px solid var(--ssc-border-strong);
+  border-radius: var(--ssc-radius-sm);
+  padding: 6px 10px;
+}
+
+textarea {
+  font-family: var(--ssc-font-mono);
+  resize: vertical;
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.search input {
+  width: min(320px, 100%);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Table */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ssc-border-subtle);
+  vertical-align: middle;
+}
+
+.table th {
+  font-weight: 600;
+  color: var(--ssc-text-secondary);
+}
+
+.table .actions-cell {
+  text-align: right;
+}
+
+.empty,
+.count {
+  padding: 4px 0;
+}
+
+/* Badge */
+
+.badge {
+  display: inline-block;
+  padding: 1px 10px;
+  border-radius: var(--ssc-radius-full);
+  border: 1px solid currentColor;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.badge-success {
+  color: var(--ssc-feedback-success);
+}
+
+.badge-warning {
+  color: var(--ssc-feedback-warning);
+}
+
+.badge-danger {
+  color: var(--ssc-feedback-danger);
+}
+
+.badge-info {
+  color: var(--ssc-feedback-info);
+}
+
+.badge-neutral {
+  color: var(--ssc-text-secondary);
+}
+
+/* Notices */
+
+.notice {
+  display: grid;
+  gap: 4px;
+  padding: 8px 12px;
+  border-radius: var(--ssc-radius-sm);
+  border: 1px solid currentColor;
+}
+
+.notice-danger {
+  color: var(--ssc-feedback-danger);
+}
+
+.notice-success {
+  color: var(--ssc-feedback-success);
+}
+
+/* Dialog */
+
+.dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 20px;
+  color: var(--ssc-text-primary);
+  background: var(--ssc-surface-overlay);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-lg);
+  box-shadow: var(--ssc-shadow-overlay);
+}
+
+.dialog h2 {
+  margin-bottom: 12px;
+}
+
+.dialog::backdrop {
+  background: var(--ssc-scrim);
+}
+
+.crumbs {
+  font-size: 14px;
+}
