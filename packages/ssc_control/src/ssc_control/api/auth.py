@@ -6,7 +6,9 @@ in the body: telling an attacker *why* a token failed is telling them what to fi
 
 Claims we require: ``iss``, ``aud``, ``sub``, ``iat``, ``exp``, ``jti`` (the credential id, which
 rate limits and idempotency keys are scoped to), ``org`` (an ``org_…`` id) and ``kind``. Optional:
-``agent`` (true when an agent acts for the subject) and ``client_id`` (which agent).
+``agent`` (true when an agent acts for the subject), ``client_id`` (which agent) and ``scope``
+(``preview``: the credential never touches production, enforced in ``uow``; any other value is
+refused).
 """
 
 from dataclasses import dataclass
@@ -33,6 +35,10 @@ class PrincipalKind(StrEnum):
     OPERATOR = "operator"
 
 
+class CredentialScope(StrEnum):
+    PREVIEW = "preview"
+
+
 @dataclass(frozen=True, slots=True)
 class Principal:
     org_id: str
@@ -41,6 +47,8 @@ class Principal:
     credential_id: str
     is_agent: bool = False
     client_id: str | None = None
+    scope: CredentialScope | None = None
+    """``None``: everything the subject may do. ``PREVIEW``: never production."""
 
 
 class Verifier:
@@ -88,6 +96,7 @@ def principal_from_claims(claims: dict[str, Any]) -> Principal:
     try:
         org_id = check_org_id(str(claims["org"]))
         kind = PrincipalKind(str(claims["kind"]))
+        scope = None if claims.get("scope") is None else CredentialScope(claims["scope"])
     except ValueError as e:
         raise Refusal(ErrorCode.UNAUTHENTICATED, evidence={"reason": "bad_claim"}) from e
     client_id = claims.get("client_id")
@@ -98,6 +107,7 @@ def principal_from_claims(claims: dict[str, Any]) -> Principal:
         credential_id=str(claims["jti"]),
         is_agent=bool(claims.get("agent", False)),
         client_id=str(client_id) if client_id is not None else None,
+        scope=scope,
     )
 
 

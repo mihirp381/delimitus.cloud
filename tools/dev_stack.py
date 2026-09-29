@@ -261,7 +261,7 @@ def main(argv: list[str] | None = None) -> None:
     p_token.add_argument("--ttl", type=int, default=12 * 3600, help="seconds")
     p_token.add_argument("--agent", action="store_true")
     p_token.add_argument("--client-id")
-    p_token.add_argument("--scope", help="for example preview; the API ignores it until C3")
+    p_token.add_argument("--scope", help="preview: the credential never touches prod")
 
     p_serve = sub.add_parser("serve", help="run the API")
     p_serve.add_argument("--host", default="127.0.0.1")

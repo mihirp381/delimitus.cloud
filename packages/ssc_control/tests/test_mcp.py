@@ -265,6 +265,16 @@ async def test_mutations_audited_as_agent(world: World) -> None:
     assert audit == [("rollback.started", "user", world.org.admin_user_id, True, CLIENT_ID)]
 
 
+async def test_preview_scoped_agent_cannot_roll_back_prod(world: World) -> None:
+    args = {"app": "mcp-app", "release": world.release, "env": "prod", "idempotency_key": new_key()}
+    async with session(world.url, world.agent_token(scope="preview")) as client:
+        prod = await client.call_tool("rollback", args)
+        apps = await client.call_tool("list_apps", {})
+    assert prod.is_error
+    assert prod.structured_content["error"]["code"] == "FORBIDDEN"
+    assert not apps.is_error
+
+
 async def test_tool_error_carries_the_request_id(world: World) -> None:
     async with httpx2.AsyncClient(timeout=30) as http:
         r = await http.post(

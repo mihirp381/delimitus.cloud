@@ -8,20 +8,26 @@ then rolls back.
 Endpoints answer through :meth:`UnitOfWork.reply`, which renders the body once in canonical JSON
 and remembers it. The idempotency dependency stores exactly that rendering, so a replay is the
 same bytes the first caller received.
+
+A ``preview``-scoped credential never touches production (:func:`check_scope`), checked here so
+that every route, and every route added later, is covered before its handler runs.
 """
 
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 
 from fastapi import Depends, Request, Response
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.audit import ActorKind, AuditAction
-from ssc_control.api.auth import Principal, internal_principal, user_principal
-from ssc_control.api.problems import request_id_of
+from ssc_contracts.errors import ErrorCode
+from ssc_control.api.auth import CredentialScope, Principal, internal_principal, user_principal
+from ssc_control.api.problems import Refusal, request_id_of
 from ssc_control.api.ratelimit import limit
 from ssc_control.api.runtime import runtime_of
 from ssc_control.audit import Actor, AppendedEvent, NewEvent, append_event
@@ -29,6 +35,18 @@ from ssc_control.db.bind import bound_org
 from ssc_control.ports import MetricsPort, NullMetricsPort
 
 JSON_MEDIA_TYPE = "application/json"
+PREVIEW_SCOPE_CHANGES: Final = (
+    "POST /v1/apps/{app_id}/bundles",
+    "POST /v1/apps/{app_id}/bundles/{bundle_id}/complete",
+)
+"""The changes naming no environment that a ``preview``-scoped credential may make."""
+_PREVIEW_SCOPE_CHANGES: Final = tuple(
+    re.compile(re.sub(r"\{[a-z_]+\}", "[^/]+", change)) for change in PREVIEW_SCOPE_CHANGES
+)
+_SAFE_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS"})
+_ENVIRONMENT_NAME: Final = text(
+    "select name from ssc.environment where org_id = :org and id = :environment"
+)
 
 
 def canonical_json(value: object) -> str:
@@ -109,6 +127,32 @@ class UnitOfWork:
         )
 
 
+async def check_scope(request: Request, conn: AsyncConnection, principal: Principal) -> None:
+    """A ``preview``-scoped credential never touches production: a request naming an environment
+    must name a preview one, and any other change must be in :data:`PREVIEW_SCOPE_CHANGES`.
+    Anything else is ``FORBIDDEN``. A route that names an environment changes only that one."""
+    if principal.scope is not CredentialScope.PREVIEW:
+        return
+    environment_id = request.path_params.get("environment_id")
+    if environment_id is not None:
+        name = (
+            await conn.execute(
+                _ENVIRONMENT_NAME, {"org": principal.org_id, "environment": environment_id}
+            )
+        ).scalar_one_or_none()
+        if name == "prod":
+            raise Refusal(
+                ErrorCode.FORBIDDEN,
+                evidence={"reason": "preview_scope", "environment_id": environment_id},
+            )
+        return
+    change = f"{request.method} {request.url.path}"
+    if request.method not in _SAFE_METHODS and not any(
+        p.fullmatch(change) for p in _PREVIEW_SCOPE_CHANGES
+    ):
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "preview_scope", "change": change})
+
+
 def _make(
     principal_dep: Callable[[Request], Principal],
 ) -> Callable[[Request, Principal], AsyncIterator[UnitOfWork]]:
@@ -118,6 +162,7 @@ def _make(
         limit(request, principal)
         rt = runtime_of(request)
         async with bound_org(rt.engine, principal.org_id) as conn:
+            await check_scope(request, conn, principal)
             yield UnitOfWork(
                 conn=conn,
                 principal=principal,
