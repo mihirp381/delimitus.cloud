@@ -27,6 +27,7 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `conformance/` | Black-box tests any deployment must pass. `identity_note/` holds the shared identity-note vectors and their generator; `ssc_conformance/contracts/` holds contract suites every implementation of a port runs (`BlobStoreContract`, `RuntimeDriverContract`); `ssc_conformance/runtime_probes.py` and `runtime/probe_app/` are the fourteen runtime probes (four local, ten waiting for a staging cell). | SSC-020, SSC-044, SSC-056, SSC-017 |
 | `helpers/node/ssc-identity` | Node verifier for the identity note, zero dependencies, `npm test` runs the shared vectors. | SSC-020 |
 | `console/` | Admin console (decision 018): React 19, Vite 8, TanStack Router and Query, a client generated from `docs/api/openapi.json`, `--ssc-*` tokens, Vitest and a Playwright smoke test against the API in Docker. See `console/README.md`. | SSC-057 |
+| `.github/actions/ssc-deploy` | GitHub Action: deploys a folder to an app's preview with `ssc deploy` and outputs `preview-url`, `release-id` and `operation-id` (decision 017). CI job `action` runs it against the dev stack. | SSC-023 |
 | `infra/` | Pulumi in Python. Empty until the cloud is chosen. | SSC-001, SSC-013 |
 | `spikes/bakeoff` | SSC-001 cloud bake-off harness: three test apps, probes, runner, scorecard. | SSC-001 |
 | `spikes/appdb` | SSC-005 per-app database creation and driver matrix. | SSC-005 |
