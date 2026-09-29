@@ -4,6 +4,8 @@ A change made through an agent credential, and a change that widens the audience
 data-connected app, applies only once the matching approval is approved (decision 016). Until
 then an agent session gets ``202`` with the pending approval ids and a person gets
 ``APPROVAL_REQUIRED``; the grants and their version stay as they were.
+
+Each grant a change actually adds records one ``share`` metrics event (SSC-028).
 """
 
 from typing import Annotated, Any, Literal
@@ -30,6 +32,8 @@ from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals.capabilities import RecordedCapabilities
 from ssc_control.approvals.service import ApprovalRow, newest, request, share_requirements
 from ssc_control.domain.approval_rules import GrantKey, Requirement, RequirementKind
+from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
+from ssc_control.ports import MetricKind
 
 router = APIRouter()
 
@@ -68,7 +72,7 @@ class GrantsPending(Strict):
 
 
 _LOCK_ENV = text(
-    "select id, grants_version, profile from ssc.environment "
+    "select id, grants_version, profile, name from ssc.environment "
     "where org_id = :org and app_id = :app and id = :env for update"
 )
 _SELECT_ENV = text(
@@ -183,12 +187,21 @@ async def get_grants(app_id: Id, environment_id: Id, uow: UserUoW, response: Res
         ),
     },
 )
-async def put_grants(
+async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the request)
+    *,
     app_id: Id,
     environment_id: Id,
     body: GrantsIn,
     uow: UserUoW,
     if_match: Annotated[str | None, Header(alias=IF_MATCH)] = None,
+    source_tool: Annotated[
+        str | None,
+        Header(
+            alias=SOURCE_TOOL_HEADER,
+            description="The builder tool making the change, for product metrics. "
+            "An agent credential's client id takes precedence.",
+        ),
+    ] = None,
 ) -> Response:
     """Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.
 
@@ -292,6 +305,20 @@ async def put_grants(
                 target_id=gid,
                 after={"environment_id": environment_id, **new.model_dump()},
                 policy_decision_id=policy_id,
+            )
+            await uow.metrics.record_event(
+                uow.conn,
+                org_id=uow.org_id,
+                kind=MetricKind.SHARE,
+                app_id=app_id,
+                user_id=by,
+                source_tool=source_tool_of(uow.principal, source_tool),
+                properties={
+                    "environment": str(env[3]),
+                    "role": new.role,
+                    "subject_kind": new.subject_kind,
+                    "via_agent": uow.principal.is_agent,
+                },
             )
     bumped = (
         await uow.conn.execute(_BUMP_GRANTS, {"org": uow.org_id, "env": environment_id})

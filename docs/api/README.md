@@ -70,6 +70,20 @@ gets `409 APPROVAL_REQUIRED`, then asks with `POST /v1/approvals` (`kind: widen_
 are recorded by SSC staff through `POST /v1/approvals/{id}/decision`, which takes an operator
 credential without the agent claim and names the org admin who decided (never the requester).
 
+**Tools say which tool they are** (SSC-028). A client sends `X-SSC-Source-Tool: <tool>` (for
+example `claude-code`, `cursor`, `lovable`) on the requests that deploy or share. The value is
+trimmed and lowercased; anything that is not 1 to 40 of `a-z 0-9 . _ -` is recorded as `other`.
+An agent credential's `client_id` takes precedence over the header. The header is optional, never
+refused, and feeds product metrics only (`ssc_control.metrics.source_tool`). `PUT .../grants`
+reads it today; the deploy path reads it when it records deploy events. Which value the `ssc`
+command sends, and how a builder declares it, is SSC-022's call.
+
+**Metrics events join the transaction too.** `uow.metrics.record_event(...)` writes one
+`metrics_event` row with the change, so a refused or rolled-back request records nothing. The
+real recorder runs only when `SSC_METRICS_KEY` (base64 of 32 random bytes) is set; without it
+the API logs a warning at start and records nothing. Users appear only as an org-scoped
+pseudonym; properties are flat scalars and never carry a user id or an email.
+
 **A deployment is a long-running operation.** `POST .../deployments` answers `202` with
 `Location: /v1/operations/{id}`; `GET /v1/operations/{id}` reports `pending`, `running`,
 `healthy`, `failed` or `superseded`. A second deployment while one is in flight is

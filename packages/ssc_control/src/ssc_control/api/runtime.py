@@ -1,11 +1,14 @@
-"""What one running API process holds: settings, the engine, the verifier and the limiter."""
+"""What one running API process holds: settings, the engine, the verifier, the limiter and the
+metrics recorder."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from fastapi import Request
+
+from ssc_control.ports import MetricsPort, NullMetricsPort
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -22,6 +25,7 @@ class Runtime:
     verifier: Verifier
     limiter: RateLimiter
     owns_engine: bool
+    metrics: MetricsPort = field(default_factory=NullMetricsPort)
 
 
 def runtime_of(request: Request) -> Runtime:

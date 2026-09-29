@@ -26,6 +26,7 @@ from ssc_control.api.ratelimit import limit
 from ssc_control.api.runtime import runtime_of
 from ssc_control.audit import Actor, AppendedEvent, NewEvent, append_event
 from ssc_control.db.bind import bound_org
+from ssc_control.ports import MetricsPort, NullMetricsPort
 
 JSON_MEDIA_TYPE = "application/json"
 
@@ -64,6 +65,8 @@ class UnitOfWork:
     principal: Principal
     request_id: str
     reply_sent: Reply | None = None
+    metrics: MetricsPort = field(default_factory=NullMetricsPort)
+    """Records metrics events in this transaction (``ssc_control.metrics``)."""
 
     @property
     def org_id(self) -> str:
@@ -113,8 +116,14 @@ def _make(
         request: Request, principal: Annotated[Principal, Depends(principal_dep)]
     ) -> AsyncIterator[UnitOfWork]:
         limit(request, principal)
-        async with bound_org(runtime_of(request).engine, principal.org_id) as conn:
-            yield UnitOfWork(conn=conn, principal=principal, request_id=request_id_of(request))
+        rt = runtime_of(request)
+        async with bound_org(rt.engine, principal.org_id) as conn:
+            yield UnitOfWork(
+                conn=conn,
+                principal=principal,
+                request_id=request_id_of(request),
+                metrics=rt.metrics,
+            )
 
     return unit_of_work
 

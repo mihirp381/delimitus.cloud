@@ -83,6 +83,7 @@ include = [
   "conformance/ssc_conformance/contracts",
   "packages/ssc_control/src/ssc_control/approvals",
   "conformance/ssc_conformance/runtime_probes.py",
+  "packages/ssc_control/src/ssc_control/metrics",
 ]
 strict = [
   "packages/ssc_contracts/src",
@@ -102,6 +103,7 @@ strict = [
   "conformance/ssc_conformance/contracts",
   "packages/ssc_control/src/ssc_control/approvals",
   "conformance/ssc_conformance/runtime_probes.py",
+  "packages/ssc_control/src/ssc_control/metrics",
 ]
 reportMissingImports = true
 

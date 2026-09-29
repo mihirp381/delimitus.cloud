@@ -3,8 +3,10 @@
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final
+
+from ssc_control.metrics.pseudonym import parse_master_key
 
 USER_AUDIENCE: Final = "https://api.delimitus.com"
 INTERNAL_AUDIENCE: Final = "https://api.delimitus.com/internal"
@@ -24,6 +26,9 @@ class Settings:
     """Requests a credential may burst before waiting."""
     rate_refill_per_second: float = 1.0
     max_body_bytes: int = 1_048_576
+    metrics_key: bytes | None = field(default=None, repr=False)
+    """Master key for metrics pseudonyms (``SSC_METRICS_KEY``, base64 of 32 bytes). Unset: no
+    metrics events are recorded. Held outside the database."""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -36,6 +41,7 @@ class Settings:
             internal_audience=e.get("SSC_API_INTERNAL_AUDIENCE", INTERNAL_AUDIENCE),
             rate_capacity=int(e.get("SSC_API_RATE_CAPACITY", "60")),
             rate_refill_per_second=float(e.get("SSC_API_RATE_REFILL_PER_SECOND", "1.0")),
+            metrics_key=parse_master_key(e["SSC_METRICS_KEY"]) if "SSC_METRICS_KEY" in e else None,
         )
 
     @classmethod

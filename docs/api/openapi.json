@@ -2229,6 +2229,24 @@
               ],
               "title": "If-Match"
             }
+          },
+          {
+            "description": "The builder tool making the change, for product metrics. An agent credential's client id takes precedence.",
+            "in": "header",
+            "name": "X-SSC-Source-Tool",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The builder tool making the change, for product metrics. An agent credential's client id takes precedence.",
+              "title": "X-Ssc-Source-Tool"
+            }
           }
         ],
         "requestBody": {

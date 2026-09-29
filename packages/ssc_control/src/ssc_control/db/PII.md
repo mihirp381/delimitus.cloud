@@ -20,8 +20,21 @@ Also personal data, but not stored here:
 
 - The `name` and `email` claims placed in identity notes (SSC-020) are in flight only and expire
   after five minutes.
-- `metrics_event.pseudonym` is a keyed hash of the user id. It is not reversible without the key,
-  which lives in the cell's Secret Manager, never in this database.
+- `metrics_event.pseudonym` is a keyed hash of the user id (SSC-028):
+  `HMAC-SHA256(org_key, user_id)`, first 32 hex characters, with
+  `org_key = HMAC-SHA256(master, "ssc-metrics-v1\0" + org_id)`. The master key is
+  `SSC_METRICS_KEY`, held in the API's environment (Secret Manager once SSC-013 binds it), never
+  in this database, so a database copy alone cannot link a pseudonym to a person. Anyone holding
+  the key can, by hashing known user ids; the key is therefore secret material.
+  - Properties are flat scalars and never hold a user id or an email: the recorder refuses them
+    and 0007's CHECKs refuse them again.
+  - Retention: `metrics_event` is not pruned in the MVP.
+  - Erasure: compute the person's pseudonym with the key and delete their rows as the migrator
+    (the app role has no DELETE on the table). Every org key derives from one master, so one
+    org's pseudonyms cannot be shredded by destroying a key; `PseudonymKeys` allows stored
+    per-org keys later.
+  - Rotation: never without a dual-write window. A new key changes every pseudonym, so counts of
+    distinct users across the change would double.
 
 Not personal data: `approval_request.recorded_by_operator` and an operator's `actor_id` (the operator credential's subject, an opaque staff id; operator credentials must not carry an email as subject), `idempotency_claim.key` (a client-chosen retry key; the API rejects keys longer than 200 characters and stores no request body, only its hash), `actor_id` (a `usr_…` id, opaque), `directory_ref` (a provider group id),
 `org.name` (a company name).
