@@ -14,11 +14,11 @@ ignore = ["DEP004"]  # dev-only imports in tests (pytest, testcontainers)
 
 [tool.deptry.per_rule_ignores]
 # Workspace packages are in known_first_party, so deptry cannot see them being used.
-# Pinned by SSC-007 for tickets that have not landed: uvicorn (serving, SSC-013), procrastinate
-# (workers, SSC-016), cronsim (schedules, SSC-045), httpx2 (outbound calls, SSC-016/SSC-047).
+# Pinned by SSC-007 for tickets that have not landed: uvicorn (serving, SSC-013), cronsim
+# (schedules, SSC-045), httpx2 (outbound calls, SSC-016/SSC-047).
 DEP002 = [
   "ssc-contracts", "ssc-shared", "ssc-bundle",
-  "uvicorn", "procrastinate", "cronsim", "httpx2",
+  "uvicorn", "cronsim", "httpx2",
 ]
 # Tests generate a throwaway ES256 key with cryptography, which pyjwt[crypto] already brings.
 # api/problems.py handles starlette's HTTPException (what the router raises for 404 and 405;

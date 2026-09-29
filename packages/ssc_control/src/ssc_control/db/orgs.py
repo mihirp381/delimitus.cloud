@@ -2,7 +2,9 @@
 
 "Create the org, then add an admin" has a window with zero admins, and a crash inside it leaves
 an org only an engineer with database access can rescue. The audit head is seeded here too, and
-``org.created`` is the chain's first event (seq 1), in the same transaction.
+``org.created`` is the chain's first event (seq 1), in the same transaction. So is the org's row
+in ``ssc.org_index``, the unscoped list workers use to find every org (decision 009 amendment):
+an org that exists is always discoverable, and a rolled-back org never is.
 """
 
 from dataclasses import dataclass
@@ -16,7 +18,7 @@ from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import GENESIS_HASH, Actor, NewEvent, append_event
 from ssc_control.db.bind import bound_org
 
-__all__ = ["GENESIS_HASH", "SYSTEM_ACTOR", "CreatedOrg", "NewOrg", "create_org"]
+__all__ = ["GENESIS_HASH", "SYSTEM_ACTOR", "CreatedOrg", "NewOrg", "all_org_ids", "create_org"]
 
 SYSTEM_ACTOR: Final = Actor(kind=ActorKind.OPERATOR, id="system:create_org")
 
@@ -47,6 +49,8 @@ _INSERT_LINK = text(
     "values (:id, :org, :user, :issuer, :subject)"
 )
 _INSERT_HEAD = text("insert into ssc.audit_head (org_id, seq, hash) values (:org, 0, :hash)")
+_INSERT_INDEX = text("insert into ssc.org_index (org_id) values (:org)")
+_ALL_ORG_IDS = text("select org_id from ssc.org_index order by org_id")
 
 
 async def create_org(
@@ -76,6 +80,7 @@ async def create_org(
             },
         )
         await conn.execute(_INSERT_HEAD, {"org": org_id, "hash": GENESIS_HASH})
+        await conn.execute(_INSERT_INDEX, {"org": org_id})
         await append_event(
             conn,
             NewEvent(
@@ -88,3 +93,12 @@ async def create_org(
             ),
         )
     return CreatedOrg(org_id=org_id, admin_user_id=admin_id, identity_link_id=link_id)
+
+
+async def all_org_ids(engine: AsyncEngine) -> list[str]:
+    """Every org id, from ``ssc.org_index``: the one read that crosses orgs. It needs no bind
+    and returns ids only; do the org's work inside ``bound_org(engine, org_id)``."""
+    async with engine.connect() as conn:
+        ids = (await conn.execute(_ALL_ORG_IDS)).scalars().all()
+        await conn.rollback()
+    return list(ids)

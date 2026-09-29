@@ -554,7 +554,8 @@ def test_every_table_is_declared_and_org_scoped(dsns: Dsns) -> None:
     tables = {
         r[0] for r in catalog_rows(dsns, "select tablename from pg_tables where schemaname = 'ssc'")
     }
-    assert tables == catalog.TABLES | {catalog.MIGRATION_LEDGER}
+    assert tables == catalog.TABLES | set(catalog.UNSCOPED_TABLES) | {catalog.MIGRATION_LEDGER}
+    assert catalog.TABLES.isdisjoint(catalog.UNSCOPED_TABLES)
     columns = catalog_rows(
         dsns,
         "select table_name, column_name from information_schema.columns where table_schema = 'ssc'",
@@ -607,9 +608,10 @@ def test_rls_is_enabled_and_forced_everywhere(dsns: Dsns) -> None:
         "where n.nspname = 'ssc' and c.relkind = 'r' and c.relname <> %s",
         (catalog.MIGRATION_LEDGER,),
     )
-    assert {r[0] for r in rows} == catalog.TABLES
+    assert {r[0] for r in rows} == catalog.TABLES | set(catalog.UNSCOPED_TABLES)
     for name, enabled, forced, policies in rows:
-        assert (enabled, forced, policies) == (True, True, 1), name
+        expected = (False, False, 0) if name in catalog.UNSCOPED_TABLES else (True, True, 1)
+        assert (enabled, forced, policies) == expected, name
     policies = catalog_rows(
         dsns,
         "select c.relname, p.polcmd, p.polroles, pg_get_expr(p.polqual, p.polrelid), "
@@ -715,10 +717,14 @@ def test_downgrade_then_upgrade_round_trips(dsns: Dsns) -> None:
     count = (
         "select count(*) from pg_tables where schemaname = 'ssc' and tablename <> 'alembic_version'"
     )
+    tables = len(catalog.TABLES) + len(catalog.UNSCOPED_TABLES)
+    queue_schema = "select count(*) from pg_namespace where nspname = %s"
     upgrade(dsn)
-    assert run(dsn, None, count) == [(len(catalog.TABLES),)]
+    assert run(dsn, None, count) == [(tables,)]
+    assert run(dsn, None, queue_schema, (catalog.QUEUE_SCHEMA,)) == [(1,)]
     downgrade(dsn)
     assert run(dsn, None, count) == [(0,)]
+    assert run(dsn, None, queue_schema, (catalog.QUEUE_SCHEMA,)) == [(0,)]
     assert run(
         dsn,
         None,
@@ -726,7 +732,7 @@ def test_downgrade_then_upgrade_round_trips(dsns: Dsns) -> None:
         "where n.nspname = 'ssc'",
     ) == [(0,)]
     upgrade(dsn)
-    assert run(dsn, None, count) == [(len(catalog.TABLES),)]
+    assert run(dsn, None, count) == [(tables,)]
 
 
 LANE_ACTIONS = frozenset(
@@ -772,3 +778,108 @@ def test_lane_vocab_revision_widens_the_action_check_and_downgrade_restores_it(
     assert action_check(dsn) == before
     upgrade(dsn)
     assert action_check(dsn) == after
+
+
+# ── org_index: the single unscoped table (decision 009 amendment, revision 0006) ─────────────
+
+
+def test_org_index_holds_org_ids_only(dsns: Dsns) -> None:
+    assert catalog.UNSCOPED_TABLES == ("org_index",)
+    columns = catalog_rows(
+        dsns,
+        "select column_name from information_schema.columns "
+        "where table_schema = 'ssc' and table_name = 'org_index'",
+    )
+    assert {c for (c,) in columns} == {"org_id", "created_at"}
+    defs = {
+        d
+        for (d,) in catalog_rows(
+            dsns,
+            "select pg_get_constraintdef(oid) from pg_constraint "
+            "where conrelid = 'ssc.org_index'::regclass",
+        )
+    }
+    assert "PRIMARY KEY (org_id)" in defs
+    assert "FOREIGN KEY (org_id) REFERENCES ssc.org(id)" in defs
+
+
+def test_org_index_row_is_written_in_the_creating_transaction(dsns: Dsns) -> None:
+    created = make_org(dsns.app, "Indexed")
+    rows = run(
+        dsns.superuser,
+        None,
+        "select o.xmin::text, i.xmin::text, h.xmin::text from ssc.org o "
+        "join ssc.org_index i on i.org_id = o.id join ssc.audit_head h on h.org_id = o.id "
+        "where o.id = %s",
+        (created.org_id,),
+    )
+    assert len(rows) == 1 and len(set(rows[0])) == 1, rows  # one transaction wrote all three
+
+
+def test_failed_create_org_leaves_no_index_row(dsns: Dsns) -> None:
+    before = run(dsns.superuser, None, "select count(*) from ssc.org_index")
+    with pytest.raises(IntegrityError):
+        make_org(dsns.app, name="")
+    assert run(dsns.superuser, None, "select count(*) from ssc.org_index") == before
+
+
+def test_app_role_reads_org_index_unbound_but_never_changes_it(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, b = orgs
+    ids = {r[0] for r in run(dsns.app, None, "select org_id from ssc.org_index")}
+    assert {a.org, b.org} <= ids
+    for sql in (
+        "update ssc.org_index set created_at = now() where org_id = %s",
+        "delete from ssc.org_index where org_id = %s",
+    ):
+        assert refused(dsns.app, None, sql, (a.org,)) == INSUFFICIENT_PRIVILEGE, sql
+        assert refused(dsns.app, a.org, sql, (a.org,)) == INSUFFICIENT_PRIVILEGE, sql
+    assert refused(dsns.app, None, "truncate ssc.org_index") == INSUFFICIENT_PRIVILEGE
+    insert = "insert into ssc.org_index (org_id) values (%s)"
+    assert refused(dsns.app, None, insert, (new_id("org"),)) == FOREIGN_KEY_VIOLATION
+    assert refused(dsns.app, None, insert, (a.org,)) == UNIQUE_VIOLATION
+    # Reading the index grants nothing else: the org rows themselves stay behind RLS.
+    assert refused(dsns.app, None, "select count(*) from ssc.org") == SqlState.NO_ORG_BOUND
+
+
+def test_org_index_backfills_orgs_created_before_it(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database backfill owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="backfill").render_as_string(hide_password=False)
+    app_dsn = make_url(dsns.app).set(database="backfill").render_as_string(hide_password=False)
+    upgrade(dsn, "0005_approvals")
+    old = new_id("org")
+    with psycopg.connect(app_dsn) as conn:
+        bind_org_sync(conn, old)
+        conn.execute("insert into ssc.org (id, name) values (%s, 'Before 0006')", (old,))
+    upgrade(dsn)
+    assert run(app_dsn, None, "select org_id from ssc.org_index") == [(old,)]
+    forced = "select relforcerowsecurity from pg_class where oid = 'ssc.org'::regclass"
+    assert run(dsn, None, forced) == [(True,)]  # FORCE is back on after the back-fill
+
+
+def test_queue_schema_privileges_match_the_declared_matrix(dsns: Dsns) -> None:
+    acl = catalog_rows(
+        dsns,
+        "select c.relname, a.grantee::regrole::text, a.privilege_type "
+        "from pg_class c join pg_namespace n on n.oid = c.relnamespace, aclexplode(c.relacl) a "
+        "where n.nspname = %s and c.relkind in ('r', 'S')",
+        (catalog.QUEUE_SCHEMA,),
+    )
+    assert {g for _, g, _ in acl} == {MIGRATE_ROLE, APP_ROLE}  # nothing to PUBLIC
+    app_privs: dict[str, set[str]] = {}
+    for name, grantee, priv in acl:
+        if grantee == APP_ROLE:
+            app_privs.setdefault(name, set()).add(priv)
+    assert app_privs == {t: set(p) for t, p in catalog.QUEUE_APP_PRIVILEGES.items()}
+    owners = catalog_rows(
+        dsns, "select tableowner from pg_tables where schemaname = %s", (catalog.QUEUE_SCHEMA,)
+    )
+    assert len(owners) == 4 and {o for (o,) in owners} == {MIGRATE_ROLE}
+    ((create, usage),) = catalog_rows(
+        dsns,
+        "select has_schema_privilege(%s, %s, 'CREATE'), has_schema_privilege(%s, %s, 'USAGE')",
+        (APP_ROLE, catalog.QUEUE_SCHEMA, APP_ROLE, catalog.QUEUE_SCHEMA),
+    )
+    assert (create, usage) == (False, True)

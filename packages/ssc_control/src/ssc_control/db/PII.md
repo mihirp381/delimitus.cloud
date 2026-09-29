@@ -26,6 +26,12 @@ Also personal data, but not stored here:
 Not personal data: `approval_request.recorded_by_operator` and an operator's `actor_id` (the operator credential's subject, an opaque staff id; operator credentials must not carry an email as subject), `idempotency_claim.key` (a client-chosen retry key; the API rejects keys longer than 200 characters and stores no request body, only its hash), `actor_id` (a `usr_…` id, opaque), `directory_ref` (a provider group id),
 `org.name` (a company name).
 
+`ssc.org_index` (the single unscoped table, db/README.md rule 14) holds no personal data: an
+`org_…` id and a timestamp, nothing else, so reading it across orgs reveals only how many orgs
+exist and when each was created. Job arguments in `procrastinate.procrastinate_jobs.args` are
+outside this catalog check, so tasks take ids only (`org_…`, `env_…`), never a name, email or
+other personal value; a task reads what it needs inside `bound_org`.
+
 The erasure procedure itself is an open item carried into SSC-012 (audit) and SSC-019 (directory
 sync). This file records where the data is so that answering it later is a small change, not a
 rewrite of the schema.

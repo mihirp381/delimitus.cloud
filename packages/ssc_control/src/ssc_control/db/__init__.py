@@ -4,7 +4,7 @@ from ssc_control.db.bind import bind_org, bind_org_sync, bound_org, check_org_id
 from ssc_control.db.engine import make_engine, make_sync_engine, sqlalchemy_url
 from ssc_control.db.errors import SqlState
 from ssc_control.db.migrate import downgrade, upgrade
-from ssc_control.db.orgs import CreatedOrg, NewOrg, create_org
+from ssc_control.db.orgs import CreatedOrg, NewOrg, all_org_ids, create_org
 from ssc_control.db.roles import APP_ROLE, MIGRATE_ROLE, ensure_roles
 
 __all__ = [
@@ -13,6 +13,7 @@ __all__ = [
     "CreatedOrg",
     "NewOrg",
     "SqlState",
+    "all_org_ids",
     "bind_org",
     "bind_org_sync",
     "bound_org",

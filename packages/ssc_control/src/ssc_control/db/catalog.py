@@ -5,6 +5,11 @@ file in the same change, which is the point: none of those can be added by forge
 
 Nineteen tables after revision 0002: the eighteen of SSC-010 plus ``idempotency_claim``
 (SSC-011), which is keyed by ``(org_id, credential_id, key)`` and therefore in ``UNKEYED_TABLES``.
+
+Revision 0006 adds ``org_index``, the single table in ``UNSCOPED_TABLES``: org ids only, no RLS,
+so workers can find every org and then bind each one (decision 009 amendment). It is kept out of
+``TABLES`` so that every rule stated over ``TABLES`` stays true without an exception.
+Procrastinate's tables live in schema ``procrastinate`` and are not in this catalog at all.
 """
 
 from collections.abc import Mapping
@@ -36,6 +41,10 @@ TABLES: Final[frozenset[str]] = frozenset(
         "idempotency_claim",  # SSC-011, revision 0002
     }
 )
+
+# The one exception to "org_id plus forced RLS": org ids only, readable by the app role across
+# orgs, insert-only (create_org). Decision 009 amendment; db/README.md rule 14.
+UNSCOPED_TABLES: Final[tuple[str, ...]] = ("org_index",)
 
 # Tables keyed by something other than a type-prefixed id; they have no (org_id, id) pair.
 UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
@@ -76,6 +85,20 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "audit_head": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "metrics_event": frozenset({"SELECT", "INSERT"}),
     "idempotency_claim": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
+}
+
+# Procrastinate's schema (revision 0006): the app role's privileges on its tables and sequences.
+# Vendored third-party SQL, outside the org-scoped catalog; its PL/pgSQL is not ours to count.
+QUEUE_SCHEMA: Final = "procrastinate"
+QUEUE_APP_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
+    "procrastinate_jobs": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
+    "procrastinate_workers": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
+    "procrastinate_periodic_defers": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
+    "procrastinate_events": frozenset({"SELECT", "INSERT"}),
+    "procrastinate_jobs_id_seq": frozenset({"USAGE"}),
+    "procrastinate_periodic_defers_id_seq": frozenset({"USAGE"}),
+    "procrastinate_events_id_seq": frozenset({"USAGE"}),
 }
 
 # Personal data, by (table, column). Explained in PII.md. Any column with one of the names in

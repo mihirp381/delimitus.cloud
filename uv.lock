@@ -1263,6 +1263,7 @@ dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pytest" },
     { name = "ssc-contracts" },
+    { name = "ssc-control" },
     { name = "ssc-edge" },
     { name = "ssc-shared" },
 ]
@@ -1274,6 +1275,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },
     { name = "pytest", specifier = ">=8.4,<10" },
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
+    { name = "ssc-control", editable = "packages/ssc_control" },
     { name = "ssc-edge", editable = "packages/ssc_edge" },
     { name = "ssc-shared", editable = "packages/ssc_shared" },
 ]

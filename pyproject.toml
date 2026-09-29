@@ -73,11 +73,16 @@ include = [
   "packages/ssc_control/src/ssc_control/api",
   "packages/ssc_control/src/ssc_control/audit",
   "packages/ssc_control/src/ssc_control/ports.py",
+  "packages/ssc_control/src/ssc_control/runtime",
+  "packages/ssc_control/src/ssc_control/worker.py",
+  "packages/ssc_control/src/ssc_control/worker_ports.py",
+  "packages/ssc_control/src/ssc_control/deferral.py",
   "packages/ssc_app/src",
   "packages/ssc_edge/src",
   "packages/ssc_cli/src",
   "conformance/ssc_conformance/contracts",
   "packages/ssc_control/src/ssc_control/approvals",
+  "conformance/ssc_conformance/runtime_probes.py",
 ]
 strict = [
   "packages/ssc_contracts/src",
@@ -87,11 +92,16 @@ strict = [
   "packages/ssc_control/src/ssc_control/api",
   "packages/ssc_control/src/ssc_control/audit",
   "packages/ssc_control/src/ssc_control/ports.py",
+  "packages/ssc_control/src/ssc_control/runtime",
+  "packages/ssc_control/src/ssc_control/worker.py",
+  "packages/ssc_control/src/ssc_control/worker_ports.py",
+  "packages/ssc_control/src/ssc_control/deferral.py",
   "packages/ssc_app/src",
   "packages/ssc_edge/src",
   "packages/ssc_cli/src",
   "conformance/ssc_conformance/contracts",
   "packages/ssc_control/src/ssc_control/approvals",
+  "conformance/ssc_conformance/runtime_probes.py",
 ]
 reportMissingImports = true
 
@@ -147,3 +157,9 @@ forbidden_modules = [
   "ssc_control.snapshot",
   "ssc_control.worker",
 ]
+
+[[tool.importlinter.contracts]]
+name = "The API defers jobs by name and never imports the worker"
+type = "forbidden"
+source_modules = ["ssc_control.api", "ssc_control.deferral"]
+forbidden_modules = ["ssc_control.worker", "ssc_control.runtime.jobs"]

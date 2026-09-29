@@ -6,7 +6,7 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 
 | Path | What | Ticket |
 |---|---|---|
-| `packages/ssc_contracts` | Wire and storage contracts. Pure data, pyright strict. `manifest.py` reads `ssc.toml` (`ssc/v1`); `capabilities.py` diffs what a manifest asks for against what an environment grants. | SSC-010, SSC-020, SSC-044 |
+| `packages/ssc_contracts` | Wire and storage contracts. Pure data, pyright strict. `manifest.py` reads `ssc.toml` (`ssc/v1`); `capabilities.py` diffs what a manifest asks for against what an environment grants; `app_env.py` names the environment variables the platform sets in every app container. | SSC-010, SSC-020, SSC-044, SSC-017 |
 | `packages/ssc_shared` | Clock and other small shared pieces. `canonical.py` is RFC 8785 JSON and the manifest digest; `blobstore.py` is the `BlobStore` protocol, `blobstore_fs.py` its filesystem implementation with signed URLs. | SSC-007, SSC-044 |
 | `packages/ssc_bundle` | What `ssc deploy` uploads. | SSC-014 |
 | `packages/ssc_control` | Control plane API, database, job queue, reconcilers. `api/` is the FastAPI application (`/v1`, `/internal/v1`; conventions in `docs/api/README.md`); `db/` holds the schema, migrations, roles and the org bind (see `db/README.md`, `db/PLPGSQL.md`, `db/PII.md`); `audit/` is the audit log (decision 012). `api/`, `approvals/`, `audit/`, `db/` and `domain/` are pyright strict. | SSC-010 onward |
@@ -15,12 +15,14 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `packages/ssc_control/src/ssc_control/api/authz.py` | Authorisation checks run inside a unit of work: `require_admin` (an active org admin with a user credential), `require_builder` (an admin, the app's owner or a builder of the environment). SSC-021 adds per-app roles. | SSC-012, SSC-045, SSC-021 |
 | `packages/ssc_control/src/ssc_control/audit/` | The audit log (decision 012): `chain.py` appends, `views.py` limits what a row may say, `verify.py` names the first broken link (`python -m ssc_control.audit verify --org <id>`), `search.py` and `export.py` read it back for `/v1/audit`. Pyright strict. | SSC-012 |
 | `packages/ssc_control/src/ssc_control/approvals/` | Approvals (decision 016): `service.py` opens and decides requests, `gate.py` is the fail-closed production gate and `ApprovalsProdGate` (the real `ProdGate`), `capabilities.py` says what a release asks to reach, `policy.py` writes `policy_decision` rows. The rules are pure, in `domain/approval_rules.py`. Pyright strict. | SSC-045 |
+| `packages/ssc_control/src/ssc_control/runtime/` | The runtime seam (decision 014): `driver.py` is the `RuntimeDriver` protocol and the pure `desired_for`, `fake.py` the in-memory driver, `reconciler.py` one change per pass, `jobs.py` the reconcile tick and per-environment job, `specs.py` where a release's manifest comes from. Pyright strict. | SSC-017 |
+| `packages/ssc_control/src/ssc_control/worker.py` | The worker (`python -m ssc_control.worker`): one Procrastinate app, each lane's tasks added from a blueprint factory, the stalled-job sweep and the composition root; `worker_ports.py` hands tasks their `Ports`; `deferral.py` defers a job in the caller's transaction (the API uses it). Pyright strict. | SSC-017 |
 | `packages/ssc_edge` | Cell gateway (Envoy ext_authz, login). `identity_note.py` mints the identity note; pyright strict. | SSC-020, SSC-018, SSC-019 |
 | `packages/ssc_datagw` | Read-only data gateway and file broker. | SSC-050, SSC-046 |
 | `packages/ssc_egress` | Egress proxy control. | SSC-053 |
 | `packages/ssc_cli` | The `ssc` command. | SSC-022 |
 | `packages/ssc_app` | The helper apps install to read the identity note (`ssc_app.identity`); pyright strict. | SSC-020 |
-| `conformance/` | Black-box tests any deployment must pass. `identity_note/` holds the shared identity-note vectors and their generator; `ssc_conformance/contracts/` holds contract suites every implementation of a port runs (`BlobStoreContract`). | SSC-020, SSC-044, SSC-056 |
+| `conformance/` | Black-box tests any deployment must pass. `identity_note/` holds the shared identity-note vectors and their generator; `ssc_conformance/contracts/` holds contract suites every implementation of a port runs (`BlobStoreContract`, `RuntimeDriverContract`); `ssc_conformance/runtime_probes.py` and `runtime/probe_app/` are the fourteen runtime probes (four local, ten waiting for a staging cell). | SSC-020, SSC-044, SSC-056, SSC-017 |
 | `helpers/node/ssc-identity` | Node verifier for the identity note, zero dependencies, `npm test` runs the shared vectors. | SSC-020 |
 | `console/` | Admin console, TypeScript. Empty until SSC-057. | SSC-057 |
 | `infra/` | Pulumi in Python. Empty until the cloud is chosen. | SSC-001, SSC-013 |

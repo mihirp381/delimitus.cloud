@@ -5,9 +5,10 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
 
 ## Rules
 
-1. **Every table carries `org_id`.** Foreign keys are `(org_id, id)` pairs, so a row can never
+1. **Every table carries `org_id`** (one exception, `org_index`: rule 14). Foreign keys are `(org_id, id)` pairs, so a row can never
    point at another customer's row. Every table has `UNIQUE (org_id, id)` for that purpose.
-2. **Row-level security is enabled and forced on every table.** One policy per table:
+2. **Row-level security is enabled and forced on every table in `catalog.TABLES`.** One
+   policy per table:
    `org_id = ssc.current_org()`, for both reading (`USING`) and writing (`WITH CHECK`).
 3. **`ssc.current_org()` raises `SC001` when no org is bound.** It never returns NULL.
 4. **Bind once per unit of work.** `bound_org(engine, org_id)` opens a transaction and runs
@@ -26,11 +27,24 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
 9. **PL/pgSQL is bounded.** The allowed functions are listed in `PLPGSQL.md` (limit 10).
 10. **Personal data is inventoried** in `PII.md`.
 11. **Org creation is admin-first and atomic**: `orgs.create_org` is the only supported path.
-12. **Procrastinate lives in its own schema** (`procrastinate`), not in `ssc`, when SSC-016
-    wires the worker. Its tables are not org-scoped and stay out of the RLS catalog check.
+12. **Procrastinate lives in its own schema** (`procrastinate`), not in `ssc`: revision
+    `0006_procrastinate_orgindex`, wired by SSC-017 (B2) in `ssc_control/worker.py`. Its tables
+    are not org-scoped and stay out of the RLS catalog check; the app role's privileges on them
+    are explicit per table in `catalog.QUEUE_APP_PRIVILEGES`, and a test compares them with the
+    database. Jobs are deferred with `ssc_control.deferral.defer` on the caller's connection, in
+    the caller's transaction.
 13. **Tables without a type-prefixed id** (`group_member`, `audit_event`, `audit_head`,
     `metrics_event`, `idempotency_claim`) are listed in `catalog.UNKEYED_TABLES`; they still
     carry `org_id` and forced RLS, they just have no `(org_id, id)` pair.
+14. **`ssc.org_index` is the single unscoped table** (decision 009 amendment), listed alone in
+    `catalog.UNSCOPED_TABLES` and never in `catalog.TABLES`. Forced RLS makes a cross-org scan
+    impossible, but workers must find every org (reconciler tick, audit anchors, timer re-arm).
+    The table holds `org_id` (primary key, foreign key to `ssc.org`) and `created_at`, nothing
+    else, and has no RLS. The app role may `SELECT` and `INSERT` it, never `UPDATE`, `DELETE`
+    or `TRUNCATE`. `orgs.create_org` inserts the row in the org's creating transaction.
+    Workers call `orgs.all_org_ids`, then do each org's work inside `bound_org`, under normal
+    RLS. No `BYPASSRLS` role and no `SECURITY DEFINER` function exist for this. A second
+    unscoped table needs its own decision.
 
 ## Migrations
 
@@ -45,6 +59,7 @@ after that code is out. Revisions so far, all pure expand:
 | `0002_idempotency` | SSC-011 | `ssc.idempotency_claim` (19th table): the `Idempotency-Key` ledger, keyed by org, credential and key, RLS and `SELECT, INSERT, UPDATE` for the app role |
 | `0003_lane_vocab` | W0 | nine audit actions the lanes emit (`audit.exported`, `audit.reanchored`, `user.updated`, `schedule.updated`, `schedule.run_requested`, `bundle.stored`, `build.started`, `build.failed`, `release.created`) in the `audit_event_action_check` CHECK; downgrade restores the 0002 list |
 | `0005_approvals` | SSC-045 | `environment.profile` (default `internal`, CHECK-limited); `approval_request` gains `environment_id` (FK, cascade), `subject_key`, the decision fields (`decision_reason`, `decision_channel`, `recorded_by_operator`, `policy_decision_id` FK), the four-kind CHECK, the named `approval_request_not_self` (replacing 0001's unnamed CHECK, found by its definition, and now covering denials), `approval_request_one_pending` and two lookup indexes. The table had no writer, so the NOT NULL columns take no default. Adding a foreign key checks existing rows with a query row-level security filters, which raises with no org bound, so the revision lifts `FORCE ROW LEVEL SECURITY` on the three tables inside its transaction and restores it; any revision adding a foreign key to a forced table does the same. Downgrade drops the new columns (development databases only) |
+| `0006_procrastinate_orgindex` | SSC-017 | schema `procrastinate` with Procrastinate 3.10.0's own `schema.sql`, vendored byte for byte in `sql/vendor/` (a test compares it with the installed package) and run with `search_path` set to the new schema; explicit per-table grants to the app role (`catalog.QUEUE_APP_PRIVILEGES`). `ssc.org_index` (rule 14), back-filled from `ssc.org`: `FORCE ROW LEVEL SECURITY` binds the owner too, so the revision lifts it on `ssc.org` for the back-fill inside its transaction and restores it. Upgrading Procrastinate is a new revision applying its `sql/migrations/*.sql` the same way. Downgrade drops both (development databases only) |
 
 There is no `alembic.ini`. Run migrations from Python:
 
