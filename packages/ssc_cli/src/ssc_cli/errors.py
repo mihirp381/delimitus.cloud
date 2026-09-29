@@ -61,10 +61,12 @@ class ErrorBody(BaseModel):
 class CliError(Exception):
     """A failure to report to the person and turn into an exit code."""
 
-    def __init__(self, body: ErrorBody, exit_code: ExitCode) -> None:
+    def __init__(self, body: ErrorBody, exit_code: ExitCode, fix: str | None = None) -> None:
         super().__init__(body.code)
         self.body = body
         self.exit_code = exit_code
+        # The next step, printed as a ``Fix:`` line without ``--json``. Not part of the JSON.
+        self.fix = fix
 
 
 def local_error(

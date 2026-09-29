@@ -3,8 +3,13 @@
 The sharing rules are one versioned document per environment. Each change reads it with its
 ETag, edits the one subject's entry, and writes it back with ``If-Match``. If someone else wrote
 in between (412 ``PRECONDITION_STALE``), it reads again and retries, at most three times.
+
+A change that needs approval is not applied (decision 016). Through an agent credential the API
+asks for the approvals itself and answers ``202``: the command prints the approval ids and exits
+0. A person widening a data-connected app gets ``APPROVAL_REQUIRED`` and a line saying how to ask.
 """
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -16,7 +21,7 @@ from ssc_cli.api import ApiClient
 from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.commands.status import AppArg
 from ssc_cli.errors import CliError
-from ssc_cli.models import GrantIn, GrantOut, GrantsOut
+from ssc_cli.models import GrantIn, GrantOut, GrantsOut, GrantsPending
 from ssc_cli.output import dash, print_json, say, table
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import GrantRow, ShareResult
@@ -115,7 +120,11 @@ def _run(  # noqa: PLR0913
     if json_mode:
         print_json(result)
         return
-    say(done if result.changed else "Nothing to change.")
+    if result.pending:
+        say(f"Waiting for approval, nothing changed yet: {', '.join(result.pending)}.")
+        say("Run the same command again once another admin of the org has approved.")
+    else:
+        say(done if result.changed else "Nothing to change.")
     say(
         table(
             ("ROLE", "KIND", "SUBJECT"),
@@ -139,11 +148,30 @@ def apply_change(client: ApiClient, app_ref: str, env_name: str, change: Change)
             if e.body.code == ErrorCode.PRECONDITION_STALE and attempt < MAX_STALE_RETRIES:
                 attempt += 1
                 continue
+            if e.body.code == ErrorCode.APPROVAL_REQUIRED:
+                e.fix = approval_fix(env.id, desired)
             raise
+        if isinstance(after, GrantsPending):
+            return _result(app.id, env_name, current, changed=False, pending=after.approval_ids)
         return _result(app.id, env_name, after, changed=True)
 
 
-def _result(app_id: str, env_name: str, out: GrantsOut, *, changed: bool) -> ShareResult:
+def approval_fix(environment_id: str, desired: list[GrantIn]) -> str:
+    """How to ask for the ``widen_audience`` approval of exactly this grant set."""
+    ask = {
+        "environment_id": environment_id,
+        "kind": "widen_audience",
+        "payload": {"grants": [g.model_dump(mode="json") for g in desired]},
+    }
+    return (
+        f"ask for approval with POST /v1/approvals {json.dumps(ask)}, then run this command "
+        "again once another admin of the org has approved it."
+    )
+
+
+def _result(
+    app_id: str, env_name: str, out: GrantsOut, *, changed: bool, pending: list[str] | None = None
+) -> ShareResult:
     return ShareResult(
         app_id=app_id,
         environment=env_name,
@@ -154,6 +182,7 @@ def _result(app_id: str, env_name: str, out: GrantsOut, *, changed: bool) -> Sha
             GrantRow(id=g.id, role=g.role, subject_kind=g.subject_kind, subject_id=g.subject_id)
             for g in out.grants
         ],
+        pending=pending or [],
     )
 
 

@@ -4,6 +4,7 @@
   POST carries one ``Idempotency-Key`` per logical operation, reused on each retry, so a retry
   can never do the work twice. A keyed POST also waits out ``IDEMPOTENCY_IN_FLIGHT``.
 * PUT is conditional (``If-Match``) and is not retried here; callers handle ``412`` themselves.
+  ``PUT .../grants`` answers ``202`` with the pending approval ids when the change needs approval.
 * ``429`` is retried once after ``Retry-After``: the API refuses before doing any work.
 * A refusal becomes a :class:`~ssc_cli.errors.CliError` carrying the API's problem members.
 """
@@ -35,6 +36,7 @@ from ssc_cli.models import (
     GrantIn,
     GrantsIn,
     GrantsOut,
+    GrantsPending,
     OperationOut,
     Whoami,
 )
@@ -121,13 +123,16 @@ class ApiClient:
 
     def put_grants(
         self, app_id: str, environment_id: str, grants: list[GrantIn], if_match: str
-    ) -> GrantsOut:
+    ) -> GrantsOut | GrantsPending:
+        """The new sharing rules, or, on ``202``, the approvals the change waits for."""
         r = self._send(
             "PUT",
             _grants_path(app_id, environment_id),
             body=GrantsIn(grants=grants),
             headers={IF_MATCH: if_match},
         )
+        if r.status_code == 202:
+            return _parse(r, GrantsPending)
         return _parse(r, GrantsOut)
 
     # ── transport ────────────────────────────────────────────────────────────

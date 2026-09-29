@@ -25,6 +25,7 @@ RESPONSES = (
     models.AppOut,
     models.GrantOut,
     models.GrantsOut,
+    models.GrantsPending,
     models.OperationOut,
 )
 REQUESTS = (models.AppCreate, models.GrantIn, models.GrantsIn)

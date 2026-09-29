@@ -29,6 +29,12 @@ Every command takes `--json` and then prints one JSON object on stdout; a failur
 `{{"error": {{...}}}}` with a stable `code`. Exit codes: 0 ok, 1 refused or failed, 2 bad usage,
 3 no token or token refused, 4 `ssc doctor` found a blocking problem, 5 network error.
 
+A sharing change made with an agent's token waits for another admin: `ssc share` and
+`ssc unshare` then change nothing, print the approval request ids (`pending` under `--json`) and
+exit 0. Tell the person, and run the same command again once it is approved. The code
+`APPROVAL_REQUIRED` means showing an app that reaches company data to more people needs another
+admin's approval first; without `--json` the error says how to ask.
+
 Run `ssc doctor` after every change that affects how the app installs or starts, and fix every
 finding marked `block`.
 

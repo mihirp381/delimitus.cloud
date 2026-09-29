@@ -7,7 +7,7 @@ test fails on any other kind of change.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ssc_cli.doctor.finding import Finding
 from ssc_cli.errors import ErrorBody
@@ -87,7 +87,8 @@ class GrantRow(Shape):
 
 
 class ShareResult(Shape):
-    """``share`` and ``unshare``: the sharing rules after the change."""
+    """``share`` and ``unshare``: the sharing rules after the change. When ``pending`` names
+    approval requests, nothing changed yet and ``grants`` are the rules still in force."""
 
     app_id: str
     environment: str
@@ -95,6 +96,7 @@ class ShareResult(Shape):
     grants_version: int
     changed: bool
     grants: list[GrantRow]
+    pending: list[str] = Field(default_factory=list[str])
 
 
 class DoctorResult(Shape):

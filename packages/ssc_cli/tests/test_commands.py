@@ -300,6 +300,61 @@ def test_share_stops_on_other_refusals(cli, scripted, fake_problem):
     assert len(_puts(scripted)) == 1
 
 
+APR = "apr_aaaaaaaaaaaaaaaaaaaa"
+
+
+def test_share_through_an_agent_waits_for_approval(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    pending = {"environment_id": PROD, "grants_version": 3, "approval_ids": [APR]}
+    for _ in range(2):
+        scripted.add("GET", path, _grants(3, ORG_USER))
+        scripted.add("PUT", path, httpx2.Response(202, json=pending, headers={"etag": '"3"'}))
+    r = cli("share", "demo", USR, "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    result = ShareResult.model_validate(r.json())
+    assert (result.changed, result.grants_version, result.pending) == (False, 3, [APR])
+    assert [g.id for g in result.grants] == ["gnt_1"]
+    human = cli("share", "demo", USR, session=scripted.session())
+    assert human.code == 0
+    assert human.stdout.startswith(f"Waiting for approval, nothing changed yet: {APR}.")
+    assert len(_puts(scripted)) == 2
+
+
+def test_applied_share_has_no_pending(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    scripted.add("GET", path, _grants(3))
+    scripted.add("PUT", path, _grants(4, ORG_USER))
+    r = cli("share", "demo", "--org", "--json", session=scripted.session())
+    assert r.json()["pending"] == []
+
+
+def test_approval_required_says_how_to_ask(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    for _ in range(2):
+        scripted.add("GET", path, _grants(3, ORG_USER))
+        scripted.add("PUT", path, fake_problem(409, "APPROVAL_REQUIRED"))
+    r = cli("share", "demo", USR, session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert "Code: APPROVAL_REQUIRED" in r.stderr
+    (fix,) = [line for line in r.stderr.splitlines() if line.startswith("Fix: ")]
+    ask = json.loads(fix.split("POST /v1/approvals ", 1)[1].split(", then", 1)[0])
+    assert ask == {
+        "environment_id": PROD,
+        "kind": "widen_audience",
+        "payload": {
+            "grants": [
+                {"role": "user", "subject_kind": "org", "subject_id": None},
+                {"role": "user", "subject_kind": "user", "subject_id": USR},
+            ]
+        },
+    }
+    as_json = cli("share", "demo", USR, "--json", session=scripted.session())
+    assert as_json.code == ExitCode.FAILED
+    assert as_json.json()["error"]["code"] == "APPROVAL_REQUIRED"
+    ErrorResult.model_validate(as_json.json())
+    assert len(_puts(scripted)) == 2
+
+
 def test_unknown_app_and_environment(cli, scripted):
     r = cli("status", "missing", "--json", session=scripted.session())
     assert r.code == ExitCode.FAILED
@@ -465,3 +520,46 @@ def test_share_gives_up_after_3(on_live, live):
     assert r.code == ExitCode.FAILED
     assert r.json()["error"]["code"] == "PRECONDITION_STALE"
     assert racing.puts == 4
+
+
+def test_live_share_through_an_agent_waits_for_approval(on_live, live, isolated):
+    name = slug()
+    assert on_live("apps", "create", name).code == 0
+    isolated.set_password(SERVICE, live.url, live.token(agent=True))
+    r = on_live("share", name, "--org", "--json")
+    assert r.code == 0, r.stdout
+    result = ShareResult.model_validate(r.json())
+    assert result.changed is False
+    assert result.grants == []
+    assert result.pending
+    assert all(i.startswith("apr_") for i in result.pending)
+    again = on_live("share", name, "--org")
+    assert again.code == 0, again.stderr
+    assert again.stdout.startswith(
+        f"Waiting for approval, nothing changed yet: {result.pending[0]}"
+    )
+    isolated.set_password(SERVICE, live.url, live.token())
+    after = on_live("status", name, "--json").json()
+    prod = next(e for e in after["environments"] if e["name"] == "prod")
+    assert prod["grants_version"] == result.grants_version
+
+
+def test_live_widening_a_data_connected_app_says_how_to_ask(on_live, live):
+    name = slug()
+    created = on_live("apps", "create", name, "--json").json()
+    prod = next(e["id"] for e in created["environments"] if e["name"] == "prod")
+    headers = {"authorization": f"Bearer {live.token()}"}
+    with httpx2.Client(base_url=live.url, headers=headers) as http:
+        connect = {"environment_id": prod, "kind": "connect_data_source", "subject_key": "finance"}
+        asked = http.post(
+            "/v1/approvals", json=connect, headers={"idempotency-key": str(uuid.uuid4())}
+        )
+        assert asked.status_code == 201, asked.text
+        r = on_live("share", name, "--org")
+        assert r.code == ExitCode.FAILED
+        assert "Code: APPROVAL_REQUIRED" in r.stderr
+        (fix,) = [line for line in r.stderr.splitlines() if line.startswith("Fix: ")]
+        ask = json.loads(fix.split("POST /v1/approvals ", 1)[1].split(", then", 1)[0])
+        widen = http.post("/v1/approvals", json=ask, headers={"idempotency-key": str(uuid.uuid4())})
+        assert widen.status_code == 201, widen.text
+        assert widen.json()["kind"] == "widen_audience"

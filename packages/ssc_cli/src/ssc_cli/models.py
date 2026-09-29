@@ -62,6 +62,14 @@ class GrantsOut(Wire):
     grants: list[GrantOut]
 
 
+class GrantsPending(Wire):
+    """``202`` from ``PUT .../grants``: the change waits for approval and nothing was applied."""
+
+    environment_id: str
+    grants_version: int
+    approval_ids: list[str]
+
+
 class OperationOut(Wire):
     operation_id: str
     kind: str

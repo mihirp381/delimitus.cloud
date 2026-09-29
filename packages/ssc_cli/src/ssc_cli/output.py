@@ -1,7 +1,7 @@
 """Printing. ``--json`` output goes to stdout with sorted keys; human text is plain columns.
 
 A failure under ``--json`` prints ``{"error": {...}}`` to stdout so a script reads one stream.
-Without ``--json`` it prints title, detail and request id to stderr.
+Without ``--json`` it prints title, detail, request id and any fix line to stderr.
 """
 
 import json
@@ -29,6 +29,8 @@ def print_error(error: CliError, json_mode: bool) -> None:
     typer.echo(f"Code: {body.code}", err=True)
     if body.request_id:
         typer.echo(f"Request id: {body.request_id}", err=True)
+    if error.fix:
+        typer.echo(f"Fix: {error.fix}", err=True)
 
 
 def say(text: str = "") -> None:

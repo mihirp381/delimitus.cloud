@@ -78,7 +78,8 @@
     "environment": "string",
     "environment_id": "string",
     "grants": "array<GrantRow>",
-    "grants_version": "integer"
+    "grants_version": "integer",
+    "pending": "array<string>"
   },
   "TokenClearResult": {
     "api_url": "string",
