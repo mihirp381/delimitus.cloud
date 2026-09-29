@@ -5,12 +5,13 @@ import re
 from typing import Annotated, Final
 
 from fastapi import Path
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from ssc_contracts.errors import ErrorCode
 from ssc_control.api.auth import PrincipalKind
 from ssc_control.api.problems import Refusal
 from ssc_control.api.uow import UnitOfWork
+from ssc_shared.hosts import RESERVED_SLUGS, check_slug
 
 IF_MATCH: Final = "If-Match"
 ETAG: Final = "ETag"
@@ -21,8 +22,11 @@ Slug = Annotated[
     str,
     Field(
         pattern=r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$",
-        description="Host label of the app. Lower-case, no leading digit, no `--`.",
+        description="Host label of the app. Lower-case, no leading digit, no `--`. Reserved: "
+        + ", ".join(sorted(RESERVED_SLUGS))
+        + ".",
     ),
+    AfterValidator(check_slug),
 ]
 
 

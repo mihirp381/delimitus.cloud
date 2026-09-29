@@ -708,7 +708,7 @@ export interface components {
         AppCreate: {
             /**
              * Slug
-             * @description Host label of the app. Lower-case, no leading digit, no `--`.
+             * @description Host label of the app. Lower-case, no leading digit, no `--`. Reserved: admin, api, auth, console, keys, login, mail, ssc, static, status, www.
              */
             slug: string;
         };
@@ -1178,6 +1178,11 @@ export interface components {
              * @enum {string}
              */
             name: "prod" | "preview";
+            /**
+             * Url
+             * @description Where the environment is served: `https://<slug>.<cell label>.<apps domain>`, with `--preview` after the slug for preview (decision 004). Null while the org has no cell label.
+             */
+            url: string | null;
         };
         /**
          * ErrorCode

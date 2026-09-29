@@ -8,10 +8,12 @@ from typing import Any, Final
 
 from ssc_control.metrics.pseudonym import parse_master_key
 from ssc_control.storage import signing_keys
+from ssc_shared.hosts import check_apps_domain
 
 MIB: Final = 1024 * 1024
 USER_AUDIENCE: Final = "https://api.delimitus.com"
 INTERNAL_AUDIENCE: Final = "https://api.delimitus.com/internal"
+APPS_DOMAIN: Final = "delimitusapps.com"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +48,11 @@ class Settings:
     bundle_max_bytes: int = 100 * MIB
     bundle_max_unpacked_bytes: int = 500 * MIB
     bundle_max_files: int = 20_000
+    apps_domain: str = APPS_DOMAIN
+    """``SSC_APPS_DOMAIN``: the registrable domain apps are served on (decision 004)."""
+
+    def __post_init__(self) -> None:
+        check_apps_domain(self.apps_domain)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -68,6 +75,7 @@ class Settings:
             bundle_max_bytes=int(e.get("SSC_BUNDLE_MAX_BYTES", str(100 * MIB))),
             bundle_max_unpacked_bytes=int(e.get("SSC_BUNDLE_MAX_UNPACKED_BYTES", str(500 * MIB))),
             bundle_max_files=int(e.get("SSC_BUNDLE_MAX_FILES", "20000")),
+            apps_domain=e.get("SSC_APPS_DOMAIN", APPS_DOMAIN),
         )
 
     @classmethod
