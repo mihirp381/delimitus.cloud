@@ -640,6 +640,39 @@ describe('rollback', () => {
     expect((await within(dialog).findByRole('alert')).textContent).toContain('RELEASE_ENVIRONMENT_MISMATCH');
   });
 
+  it('loads older releases until production has one it may run', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        [`GET ${APP_PATH}/releases`]: ({ query }) =>
+          query.get('before') === '8'
+            ? json(200, { items: [release(7, PROD), release(6, PREVIEW)], next_before: null })
+            : json(200, { items: [release(9, PREVIEW), release(8, PREVIEW)], next_before: 8 }),
+        [`GET ${APP_PATH}/environments/${PROD}/deployments`]: () =>
+          json(200, { environment_id: PROD, items: [deployment(5, true)] }),
+        [`POST ${APP_PATH}/environments/${PROD}/deployments`]: () => json(202, { operation_id: OP, state: 'pending' }),
+        [`GET /v1/operations/${OP}`]: () => json(200, operation('running')),
+      }),
+      signedIn(),
+    );
+    const { dialog } = await openRollback();
+    expect(await within(dialog).findByText(/None of these releases can be picked/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Load older releases' }));
+    });
+    const r7 = (await within(dialog).findByRole('radio', { name: /R7/ })) as HTMLInputElement;
+    expect(api.of('GET', `${APP_PATH}/releases`).map((c) => c.query.get('before'))).toEqual([null, '8']);
+    expect(within(dialog).queryByRole('button', { name: 'Load older releases' })).toBeNull();
+    expect(within(dialog).queryByText(/None of these releases/)).toBeNull();
+    expect(r7.disabled).toBe(false);
+    fireEvent.click(r7);
+    await confirmIn(dialog, 'Roll back');
+    expect(api.of('POST', `${APP_PATH}/environments/${PROD}/deployments`)[0]?.body).toEqual({
+      release_id: `rel_${'7'.repeat(20)}`,
+      kind: 'rollback',
+    });
+  });
+
   it('shows who may not list releases', async () => {
     start(
       `/apps/${APP_ID}`,

@@ -1,5 +1,7 @@
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { useRouteContext } from '@tanstack/react-router';
 import { type FormEvent, useEffect, useId, useState } from 'react';
+import { must } from '../api/client';
 import {
   type AppOut,
   type EnvironmentOut,
@@ -32,6 +34,7 @@ interface Started {
  * Deploys an earlier release again, keeping today's config and sharing. Only releases that may
  * run in the environment can be picked: production runs only releases built for production.
  * A stopped app cannot be rolled back (APP_NOT_ACTIVE), so the button is off until it is enabled.
+ * Releases are app-wide, newest first, so older pages load on request.
  */
 export function Rollback({ app, env }: { readonly app: AppOut; readonly env: EnvironmentOut }) {
   const [open, setOpen] = useState(false);
@@ -75,8 +78,20 @@ interface FormProps {
 
 function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
   const { api, queries } = useRouteContext({ from: '/_authed/apps/$appId' });
-  const releases = queries.useQuery('get', '/v1/apps/{app_id}/releases', {
-    params: { path: { app_id: app.id }, query: { limit: 50 } },
+  const releases = useInfiniteQuery({
+    queryKey: ['releases', app.id],
+    queryFn: async ({ pageParam, signal }) =>
+      must(
+        await api.GET('/v1/apps/{app_id}/releases', {
+          params: {
+            path: { app_id: app.id },
+            query: { limit: 50, ...(pageParam === null ? {} : { before: pageParam }) },
+          },
+          signal,
+        }),
+      ),
+    initialPageParam: null as number | null,
+    getNextPageParam: (page) => page.next_before,
   });
   const deployments = queries.useQuery('get', '/v1/apps/{app_id}/environments/{environment_id}/deployments', {
     params: { path: { app_id: app.id, environment_id: env.id }, query: { limit: 50 } },
@@ -89,7 +104,8 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
   const confirmId = useId();
 
   const live = deployments.data?.items.find((d) => d.current)?.release_id ?? null;
-  const picked = releases.data?.items.find((r) => r.release_id === choice) ?? null;
+  const items = releases.data?.pages.flatMap((p) => p.items) ?? [];
+  const picked = items.find((r) => r.release_id === choice) ?? null;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -121,16 +137,16 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
       ) : null}
       {releases.isPending || deployments.isPending ? (
         <p className="muted">Loading releases…</p>
-      ) : releases.isError ? (
+      ) : releases.isError && items.length === 0 ? (
         <ProblemNotice error={releases.error} />
       ) : deployments.isError ? (
         <ProblemNotice error={deployments.error} />
-      ) : releases.data.items.length === 0 ? (
+      ) : items.length === 0 ? (
         <p className="empty">This app has no releases yet.</p>
       ) : (
         <fieldset className="choices">
           <legend>Release</legend>
-          {releases.data.items.map((r) => {
+          {items.map((r) => {
             const blocked = why(r);
             return (
               <label key={r.release_id} className="check">
@@ -154,6 +170,19 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
           })}
         </fieldset>
       )}
+      {releases.hasNextPage && !deployments.isPending && !deployments.isError ? (
+        <div className="more">
+          {items.every((r) => why(r) !== null) ? (
+            <p className="muted" aria-live="polite">
+              None of these releases can be picked; an older one may.
+            </p>
+          ) : null}
+          <Button disabled={releases.isFetchingNextPage} onClick={() => void releases.fetchNextPage()}>
+            {releases.isFetchingNextPage ? 'Loading…' : 'Load older releases'}
+          </Button>
+        </div>
+      ) : null}
+      {releases.isError && items.length > 0 ? <ProblemNotice error={releases.error} /> : null}
       <label className="field" htmlFor={confirmId}>
         <span>
           Type <code>{app.slug}</code> to confirm
