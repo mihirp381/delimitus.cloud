@@ -285,7 +285,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/apps/{app_id}/environments/{environment_id}/deployments": {
+    "/v1/apps/{app_id}/environments/{environment_id}/builds": {
         parameters: {
             query?: never;
             header?: never;
@@ -295,8 +295,38 @@ export interface paths {
         get?: never;
         put?: never;
         /**
+         * Create Build
+         * @description Build a stored bundle for one environment: 202 plus a ``Location`` to poll. A build that
+         *     succeeds creates the app's next numbered release. One build of a bundle per environment is in
+         *     flight at a time (``BUILD_IN_FLIGHT``).
+         */
+        post: operations["create_build_v1_apps__app_id__environments__environment_id__builds_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/environments/{environment_id}/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Deployments
+         * @description The environment's deployments, newest first; ``current`` marks the live one.
+         */
+        get: operations["list_deployments_v1_apps__app_id__environments__environment_id__deployments_get"];
+        put?: never;
+        /**
          * Create Deployment
-         * @description Start a deployment: 202 plus a ``Location`` to poll. Running it is the reconciler's job.
+         * @description Start a deployment: 202 plus a ``Location`` to poll. The deploy job runs it.
+         *
+         *     A release a build made for another environment is ``RELEASE_ENVIRONMENT_MISMATCH``: prod
+         *     builds separately from the same source. A second forward deploy while one is in flight is
+         *     ``DEPLOYMENT_IN_FLIGHT``; a rollback supersedes the in-flight forward deploy instead.
          */
         post: operations["create_deployment_v1_apps__app_id__environments__environment_id__deployments_post"];
         delete?: never;
@@ -326,6 +356,43 @@ export interface paths {
          *     approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.
          */
         put: operations["put_grants_v1_apps__app_id__environments__environment_id__grants_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Releases
+         * @description The app's releases, highest number first; ``before`` pages to lower numbers.
+         */
+        get: operations["list_releases_v1_apps__app_id__releases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/releases/{release_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Release */
+        get: operations["get_release_v1_apps__app_id__releases__release_id__get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -366,6 +433,23 @@ export interface paths {
          *     ``audit.exported``. Org admins in their own session only; agent credentials are refused.
          */
         get: operations["export_audit_v1_audit_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/builds/{build_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Build */
+        get: operations["get_build_v1_builds__build_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -457,6 +541,18 @@ export interface components {
          * @enum {string}
          */
         ActorKind: "user" | "workload" | "schedule" | "operator" | "integration";
+        /** ActorOut */
+        ActorOut: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "workload" | "schedule" | "operator" | "integration";
+            /** Via Agent */
+            via_agent: boolean;
+        };
         /** AppCreate */
         AppCreate: {
             /**
@@ -646,6 +742,56 @@ export interface components {
             /** Kind */
             kind: string;
         };
+        /** BuildAccepted */
+        BuildAccepted: {
+            /** Build Id */
+            build_id: string;
+            /** @description What the manifest asks for beyond the environment. It never blocks. */
+            capability_diff: components["schemas"]["CapabilityDiff"];
+            /**
+             * State
+             * @constant
+             */
+            state: "queued";
+        };
+        /** BuildCreate */
+        BuildCreate: {
+            /** Bundle Id */
+            bundle_id: string;
+        };
+        /** BuildOut */
+        BuildOut: {
+            /** App Id */
+            app_id: string;
+            /** Build Id */
+            build_id: string;
+            /** Bundle Id */
+            bundle_id: string;
+            /** @description Against the environment today. */
+            capability_diff: components["schemas"]["CapabilityDiff"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Environment Id */
+            environment_id: string;
+            /** Failure Code */
+            failure_code: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Release Id */
+            release_id: string | null;
+            /** Release Number */
+            release_number: number | null;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "succeeded" | "failed";
+        };
         /** BundleCreate */
         BundleCreate: {
             /**
@@ -695,6 +841,46 @@ export interface components {
             /** @description Where to PUT the bytes while pending; null once stored and on reads. */
             upload: components["schemas"]["UploadTarget"] | null;
         };
+        /**
+         * CapabilityChange
+         * @description One thing asked for and not granted. ``approver`` is None when no approval step applies.
+         */
+        CapabilityChange: {
+            /** Approver */
+            approver: string | null;
+            /** Consequence */
+            consequence: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "postgres_missing" | "connection_missing" | "egress_host_missing" | "schedules_declared";
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "high" | "medium" | "low";
+            /** Subject */
+            subject: string;
+        };
+        /**
+         * CapabilityDiff
+         * @description The listed changes (at most ``MAX_LISTED_CHANGES``, highest first) and the full count.
+         */
+        CapabilityDiff: {
+            /**
+             * Blocks
+             * @default false
+             * @constant
+             */
+            blocks: false;
+            /** Changes */
+            changes: components["schemas"]["CapabilityChange"][];
+            /** Summarised */
+            readonly summarised: boolean;
+            /** Total */
+            total: number;
+        };
         /** DecisionIn */
         DecisionIn: {
             /**
@@ -726,6 +912,50 @@ export interface components {
             kind: "deploy" | "rollback";
             /** Release Id */
             release_id: string;
+        };
+        /** DeploymentList */
+        DeploymentList: {
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Items
+             * @description Newest first.
+             */
+            items: components["schemas"]["DeploymentOut"][];
+        };
+        /** DeploymentOut */
+        DeploymentOut: {
+            actor: components["schemas"]["ActorOut"];
+            /**
+             * Current
+             * @description The environment's live deployment.
+             */
+            current: boolean;
+            /** Failure Code */
+            failure_code: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "deploy" | "rollback";
+            /** Operation Id */
+            operation_id: string;
+            /** Release Id */
+            release_id: string;
+            /** Release Number */
+            release_number: number;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "running" | "healthy" | "failed" | "superseded";
         };
         /** DirectoryGroupIn */
         DirectoryGroupIn: {
@@ -795,7 +1025,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "RELEASE_ENVIRONMENT_MISMATCH" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -940,6 +1170,11 @@ export interface components {
             app_id: string;
             /** Environment Id */
             environment_id: string;
+            /**
+             * Failure Code
+             * @description Why a `failed` deployment failed, as a reason code.
+             */
+            failure_code?: string | null;
             /** Finished At */
             finished_at: string | null;
             /**
@@ -1000,6 +1235,53 @@ export interface components {
              * @description A URL naming the error code.
              */
             type: string;
+        };
+        /** ReleaseList */
+        ReleaseList: {
+            /**
+             * Items
+             * @description Highest number first.
+             */
+            items: components["schemas"]["ReleaseOut"][];
+            /**
+             * Next Before
+             * @description Pass as `before` for the next page; null at the end.
+             */
+            next_before: number | null;
+        };
+        /** ReleaseOut */
+        ReleaseOut: {
+            actor: components["schemas"]["ActorOut"];
+            /**
+             * Built For Environment Id
+             * @description The environment a build made it for; null when no build made it.
+             */
+            built_for_environment_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Image Digest */
+            image_digest: string;
+            /**
+             * Label
+             * @description How the number is shown: `R<number>`.
+             */
+            label: string;
+            /** Manifest Digest */
+            manifest_digest: string;
+            /** Number */
+            number: number;
+            /** Release Id */
+            release_id: string;
+            /** Source Commit */
+            source_commit: string | null;
+            /**
+             * Source Digest
+             * @description The digest of the bundle it was built from.
+             */
+            source_digest: string;
         };
         /**
          * RequirementKind
@@ -2245,10 +2527,174 @@ export interface operations {
             };
         };
     };
+    create_build_v1_apps__app_id__environments__environment_id__builds_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BuildCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildAccepted"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `BUILD_IN_FLIGHT`, `BUNDLE_NOT_UPLOADED` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_deployments_v1_apps__app_id__environments__environment_id__deployments_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentList"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     create_deployment_v1_apps__app_id__environments__environment_id__deployments_post: {
         parameters: {
             query?: never;
             header?: {
+                /** @description The builder tool making the change, for product metrics. An agent credential's client id takes precedence. */
+                "X-SSC-Source-Tool"?: string | null;
                 "Idempotency-Key"?: string | null;
             };
             path: {
@@ -2290,6 +2736,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `NOT_FOUND` */
             404: {
                 headers: {
@@ -2299,7 +2754,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_IN_FLIGHT`, `DEPLOYMENT_IN_FLIGHT` */
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`, `RELEASE_ENVIRONMENT_MISMATCH` */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2499,6 +2954,144 @@ export interface operations {
             };
         };
     };
+    list_releases_v1_apps__app_id__releases_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseList"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_release_v1_apps__app_id__releases__release_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                release_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     search_audit_v1_audit_get: {
         parameters: {
             query?: {
@@ -2609,6 +3202,73 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_build_v1_builds__build_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                build_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
