@@ -155,7 +155,7 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
         url=env.url,
         warnings=[
             BundleWarning(path=w.path, line=w.line, rule=w.rule, masked=w.masked)
-            for w in (prepared.warnings if prepared else [])
+            for w in (prepared.warnings if prepared is not None else ())
         ],
         capability_changes=started.changes,
     )
