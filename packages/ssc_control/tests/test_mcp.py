@@ -622,6 +622,33 @@ async def test_request_share_refused_or_not_needed(world: World) -> None:
     assert grants_of(world, prod) == before
 
 
+async def test_request_share_never_lowers_a_role(world: World) -> None:
+    prod = env_id(world.app, "prod")
+    builder = add_account(world.dsns.app, world.org.org_id, "member")
+    add_grant(world.dsns.app, world.org.org_id, prod, builder, "builder", world.org.admin_user_id)
+    before = grants_of(world, prod)
+    async with session(world.url, world.agent) as client:
+        floor = await client.call_tool(
+            "request_share", {"app": "mcp-app", "env": "prod", "who": builder}
+        )
+        lower = await client.call_tool(
+            "request_share", {"app": "mcp-app", "env": "prod", "who": builder, "role": "user"}
+        )
+
+    for result in (floor, lower):
+        assert not result.is_error
+        assert result.structured_content["requested"] is False
+        assert "already has builder" in result.structured_content["next"]
+    assert grants_of(world, prod) == before
+    asked = rows(
+        world.dsns.app,
+        world.org.org_id,
+        "select count(*) from ssc.approval_request where payload::text like %s",
+        (f"%{builder}%",),
+    )
+    assert asked == [(0,)]
+
+
 async def test_request_share_rereads_moved_grants(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
