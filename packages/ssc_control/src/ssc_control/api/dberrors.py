@@ -28,6 +28,7 @@ _BY_CONSTRAINT: Final[Mapping[str, ErrorCode]] = {
     "approval_request_decided_via_agent_check": ErrorCode.AGENT_SESSION_REFUSED,
     "approval_request_one_pending": ErrorCode.ALREADY_EXISTS,
     "build_one_in_flight": ErrorCode.BUILD_IN_FLIGHT,
+    "kill_switch_one_running": ErrorCode.KILL_SWITCH_IN_FLIGHT,
 }
 
 _BY_SQLSTATE: Final[Mapping[str, ErrorCode]] = {

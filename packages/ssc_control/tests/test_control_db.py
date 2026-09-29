@@ -510,6 +510,73 @@ def test_a_build_row_is_consistent_and_one_is_in_flight(
         assert sqlstate(e) == UNIQUE_VIOLATION
 
 
+KILL_INSERT = (
+    "insert into ssc.kill_switch_run (id, org_id, app_id, mode, actor_kind, actor_id) "
+    "values (%s, %s, %s, 'disable', 'user', %s)"
+)
+
+
+def test_kill_switch_runs_stay_in_their_org(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]) -> None:
+    a, b = orgs
+    kil = new_id("kil")
+    done = (
+        "insert into ssc.kill_switch_run (id, org_id, app_id, mode, state, actor_kind, actor_id, "
+        "finished_at) values (%s, %s, %s, 'quarantine', 'completed', 'user', %s, now())"
+    )
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        conn.execute(done, (kil, a.org, a.app, a.admin))
+    count = "select count(*) from ssc.kill_switch_run where id = %s"
+    assert run(dsns.app, b.org, count, (kil,)) == [(0,)]
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, b.org)
+        cur = conn.execute("update ssc.kill_switch_run set steps = '[]' where id = %s", (kil,))
+        assert cur.rowcount == 0
+    sneaky = (new_id("kil"), a.org, a.app, b.admin)
+    assert refused(dsns.app, b.org, KILL_INSERT, sneaky) == INSUFFICIENT_PRIVILEGE
+    theirs = (new_id("kil"), b.org, a.app, b.admin)  # alpha's app from beta
+    assert refused(dsns.app, b.org, KILL_INSERT, theirs) == FOREIGN_KEY_VIOLATION
+    delete = "delete from ssc.kill_switch_run where id = %s"
+    assert refused(dsns.app, a.org, delete, (kil,)) == INSUFFICIENT_PRIVILEGE
+    assert run(dsns.app, a.org, count, (kil,)) == [(1,)]
+
+
+def test_one_kill_switch_run_per_app_and_a_run_is_consistent(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, _ = orgs
+    kil = new_id("kil")
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        conn.execute(KILL_INSERT, (kil, a.org, a.app, a.admin))
+        with pytest.raises(psycopg.Error) as e, conn.transaction():
+            conn.execute(KILL_INSERT, (new_id("kil"), a.org, a.app, a.admin))
+        assert sqlstate(e) == UNIQUE_VIOLATION
+        assert "kill_switch_one_running" in str(e.value)
+        for sql in (
+            "update ssc.kill_switch_run set state = 'completed' where id = %s",
+            "update ssc.kill_switch_run set finished_at = now() where id = %s",
+            "update ssc.kill_switch_run set resumed_at = now() where id = %s",
+            "update ssc.kill_switch_run set mode = 'stop' where id = %s",
+            "update ssc.kill_switch_run set steps = '{}' where id = %s",
+            "update ssc.kill_switch_run set paused_schedule_ids = '\"x\"' where id = %s",
+        ):
+            with pytest.raises(psycopg.Error) as e, conn.transaction():
+                conn.execute(sql, (kil,))
+            assert sqlstate(e) == CHECK_VIOLATION, sql
+        conn.execute(
+            "update ssc.kill_switch_run set state = 'failed', finished_at = now(), "
+            "resumed_at = now() where id = %s",
+            (kil,),
+        )
+        # Once it finished, the app may be stopped again.
+        conn.execute(
+            "insert into ssc.kill_switch_run (id, org_id, app_id, mode, state, actor_kind, "
+            "actor_id, finished_at) values (%s, %s, %s, 'disable', 'completed', 'user', %s, now())",
+            (new_id("kil"), a.org, a.app, a.admin),
+        )
+
+
 def test_only_a_failed_deployment_has_a_failure_code(
     dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
 ) -> None:

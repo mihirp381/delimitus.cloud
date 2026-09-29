@@ -68,6 +68,9 @@ class ErrorCode(StrEnum):
     # builds, releases and deployments (SSC-016)
     BUILD_IN_FLIGHT = "BUILD_IN_FLIGHT"
     RELEASE_ENVIRONMENT_MISMATCH = "RELEASE_ENVIRONMENT_MISMATCH"
+    # kill switch (SSC-025)
+    KILL_SWITCH_IN_FLIGHT = "KILL_SWITCH_IN_FLIGHT"
+    APP_ALREADY_ACTIVE = "APP_ALREADY_ACTIVE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -248,7 +251,8 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
     ErrorCode.APP_NOT_ACTIVE: CatalogueEntry(
         409,
         "This app is not active.",
-        "A disabled or quarantined app does not take new source. Enable the app first.",
+        "A disabled or quarantined app takes no new source, a quarantined app takes no sharing "
+        "changes, and an app is stopped once per mode. Enable the app first.",
     ),
     ErrorCode.BUILD_IN_FLIGHT: CatalogueEntry(
         409,
@@ -261,6 +265,16 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "This release was built for another environment.",
         "Each environment runs releases built for it. Deploy a release built for this "
         "environment, or build the same bundle for it first.",
+    ),
+    ErrorCode.KILL_SWITCH_IN_FLIGHT: CatalogueEntry(
+        409,
+        "The kill switch is already running for this app.",
+        "One kill switch runs per app at a time. Wait for it to finish, then retry.",
+    ),
+    ErrorCode.APP_ALREADY_ACTIVE: CatalogueEntry(
+        409,
+        "This app is already active.",
+        "Only a disabled or quarantined app can be enabled.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

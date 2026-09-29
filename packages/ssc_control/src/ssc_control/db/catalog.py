@@ -20,6 +20,8 @@ Revision 0010 adds ``build`` (SSC-016), an ordinary org-scoped table.
 
 Revision 0011 adds ``audit_anchor`` (SSC-012), keyed by org and time, append-only like the log,
 so it is in ``UNKEYED_TABLES``.
+
+Revision 0012 adds ``kill_switch_run`` (SSC-025), an ordinary org-scoped table.
 """
 
 from collections.abc import Mapping
@@ -54,6 +56,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "snapshot_ack",  # SSC-021, revision 0009
         "build",  # SSC-016, revision 0010
         "audit_anchor",  # SSC-012, revision 0011
+        "kill_switch_run",  # SSC-025, revision 0012
     }
 )
 
@@ -114,6 +117,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "snapshot_ack": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "build": frozenset({"SELECT", "INSERT", "UPDATE"}),  # queued -> running -> done, never DELETE
     "audit_anchor": frozenset({"SELECT", "INSERT"}),  # append-only, like the log
+    "kill_switch_run": frozenset({"SELECT", "INSERT", "UPDATE"}),  # evidence, never DELETE
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

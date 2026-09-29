@@ -19,6 +19,9 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
         {"kind", "state", "release_id", "environment_id", "failure_code", "superseded"}
     ),
     "build": frozenset({"environment_id", "bundle_id", "state", "release_id", "failure_code"}),
+    "kill_switch_run": frozenset(
+        {"app_id", "mode", "step", "state", "snapshot_version", "elapsed_ms", "attempts", "error"}
+    ),
     "release": frozenset(
         {"number", "image_digest", "manifest_digest", "source_digest", "source_commit"}
     ),
