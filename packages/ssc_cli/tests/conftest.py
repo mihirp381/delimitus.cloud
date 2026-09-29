@@ -176,6 +176,11 @@ def load_dev_stack() -> ModuleType:
     return module
 
 
+@pytest.fixture(scope="session")
+def dev_stack() -> ModuleType:
+    return load_dev_stack()
+
+
 @dataclass(frozen=True)
 class Live:
     url: str

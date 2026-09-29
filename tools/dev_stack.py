@@ -8,12 +8,18 @@
 token with the same claims as the API tests. ``serve`` runs the API; ``--port 0`` picks a free port
 and prints it. State lives in ``.ssc-dev/`` at the repository root, or ``--dir``.
 
+``serve`` runs with ``SSC_ENV=dev``, a metrics key, and the filesystem blob store under
+``<dir>/blobs`` with its own URL signing key, so metrics are recorded and bundle uploads work.
+The keys are random, kept in the state file, and reused on every start; anything already set in
+the environment wins.
+
 Tokens name the issuer ``https://dev.invalid``, which a real API never trusts. The API itself is
 unchanged: it only verifies tokens against the JWKS it is given.
 """
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import secrets
@@ -44,6 +50,7 @@ DEFAULT_DIR = ROOT / ".ssc-dev"
 TESTKIT = ROOT / "packages" / "ssc_control" / "tests"
 ISSUER = "https://dev.invalid"
 KID = "dev-1"
+BLOB_KID = "dev-blob-1"
 ADMIN_SUBJECT = "dev-admin"
 
 
@@ -75,6 +82,21 @@ def _write_private(path: Path, data: bytes) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(data)
+
+
+def _random_key() -> str:
+    """Standard base64 of 32 random bytes: the shape of ``SSC_METRICS_KEY`` and of a blob key."""
+    return base64.b64encode(secrets.token_bytes(32)).decode()
+
+
+def _dev_keys(d: Path) -> dict[str, str]:
+    """The metrics key and the blob URL signing key, created and saved on first use."""
+    state = load_state(d)
+    missing = [k for k in ("metrics_key", "blob_signing_key") if k not in state]
+    if missing:
+        state.update({k: _random_key() for k in missing})
+        _write_private(_state_path(d), json.dumps(state, indent=2, sort_keys=True).encode())
+    return {k: state[k] for k in ("metrics_key", "blob_signing_key")}
 
 
 def _signing_key(d: Path) -> Any:
@@ -131,6 +153,7 @@ def up(superuser_dsn: str, d: Path, org_name: str = "Dev org") -> dict[str, Any]
     key = _signing_key(d)
     state.update(migrate_password=migrate_pw, app_password=app_pw, database_dsn=app_dsn)
     _write_private(_state_path(d), json.dumps(state, indent=2, sort_keys=True).encode())
+    _dev_keys(d)
     return {
         "SSC_DATABASE_DSN": app_dsn,
         "SSC_API_JWKS": json.dumps({"keys": [key.jwk]}, sort_keys=True),
@@ -187,6 +210,13 @@ def api_env(d: Path, env: dict[str, str] | None = None) -> dict[str, str]:
     if "SSC_API_JWKS" not in e and (d / "jwks.json").exists():
         e["SSC_API_JWKS"] = (d / "jwks.json").read_text()
     e.setdefault("SSC_API_ISSUER", ISSUER)
+    keys = _dev_keys(d)
+    e.setdefault("SSC_ENV", "dev")
+    e.setdefault("SSC_METRICS_KEY", keys["metrics_key"])
+    e.setdefault("SSC_BLOB_BACKEND", "fs")
+    e.setdefault("SSC_BLOB_ROOT", str(d / "blobs"))
+    e.setdefault("SSC_BLOB_SIGNING_KEYS", json.dumps({BLOB_KID: keys["blob_signing_key"]}))
+    e.setdefault("SSC_BLOB_SIGNING_KID", BLOB_KID)
     return e
 
 
