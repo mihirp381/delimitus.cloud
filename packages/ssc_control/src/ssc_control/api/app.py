@@ -15,12 +15,16 @@ from ssc_control.api.idempotency import REPLAYED_HEADER, Replay
 from ssc_control.api.mcp.server import install_mcp
 from ssc_control.api.problems import REQUEST_ID_HEADER, RequestIdMiddleware, request_id_of
 from ssc_control.api.ratelimit import RateLimiter
+from ssc_control.api.routes.blobs import blob_store_for, check_fs_allowed
+from ssc_control.api.routes.blobs import router as blobs_router
 from ssc_control.api.routes.internal import router as internal_router
 from ssc_control.api.routes.v1 import router as v1_router
 from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
 from ssc_control.metrics import metrics_port
+from ssc_shared.blobstore import BlobStore
+from ssc_shared.blobstore_fs import FsBlobStore
 
 _log = logging.getLogger(__name__)
 
@@ -47,7 +51,14 @@ async def _on_replay(request: Request, exc: Exception) -> Response:
     )
 
 
-def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI:
+def create_app(
+    settings: Settings,
+    engine: AsyncEngine | None = None,
+    blob_store: BlobStore | None = None,
+) -> FastAPI:
+    store = blob_store if blob_store is not None else blob_store_for(settings)
+    check_fs_allowed(store, settings)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         if settings.metrics_key is None:
@@ -79,6 +90,7 @@ def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI
         limiter=RateLimiter(settings.rate_capacity, settings.rate_refill_per_second),
         owns_engine=engine is None,
         metrics=metrics_port(settings.metrics_key),
+        blob_store=store,
     )
     app.add_middleware(RequestIdMiddleware)
     problems.install(app)
@@ -91,6 +103,8 @@ def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI
     app.include_router(v1_router)
     app.include_router(internal_router)
     agent_interface = install_mcp(app, rt)
+    if isinstance(store, FsBlobStore):
+        app.include_router(blobs_router)
     _install_openapi(app)
     return app
 

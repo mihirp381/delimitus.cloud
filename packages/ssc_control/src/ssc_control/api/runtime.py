@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ssc_control.api.auth import Verifier
     from ssc_control.api.ratelimit import RateLimiter
     from ssc_control.api.settings import Settings
+    from ssc_shared.blobstore import BlobStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +27,8 @@ class Runtime:
     limiter: RateLimiter
     owns_engine: bool
     metrics: MetricsPort = field(default_factory=NullMetricsPort)
+    blob_store: BlobStore | None = None
+    """Where bundles go; ``None`` when ``blob_backend`` is ``none``."""
 
 
 def runtime_of(request: Request) -> Runtime:

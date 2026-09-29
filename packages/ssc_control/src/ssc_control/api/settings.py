@@ -1,13 +1,15 @@
 """API settings: a frozen dataclass read once from the environment. No framework, no magic."""
 
+import base64
 import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from ssc_control.metrics.pseudonym import parse_master_key
 
+MIB: Final = 1024 * 1024
 USER_AUDIENCE: Final = "https://api.delimitus.com"
 INTERNAL_AUDIENCE: Final = "https://api.delimitus.com/internal"
 
@@ -31,6 +33,19 @@ class Settings:
     metrics events are recorded. Held outside the database."""
     public_url: str = USER_AUDIENCE
     """Where clients reach this API. The agent interface is served at ``{public_url}/mcp``."""
+    environment: str = "prod"
+    """``SSC_ENV``. The filesystem blob store is refused unless this is ``dev`` or ``test``."""
+    blob_backend: str = "none"
+    """``none`` (bundle endpoints refuse) or ``fs`` (dev and test: signed URLs served here)."""
+    blob_root: str = ""
+    """Directory of the ``fs`` blob store."""
+    blob_signing_keys: Mapping[str, bytes] = field(default_factory=dict[str, bytes], repr=False)
+    """``SSC_BLOB_SIGNING_KEYS``: JSON ``{"kid": "<base64 of 32+ bytes>"}`` for ``fs`` URLs."""
+    blob_signing_kid: str = ""
+    """The key in ``blob_signing_keys`` that signs; the others still verify."""
+    bundle_max_bytes: int = 100 * MIB
+    bundle_max_unpacked_bytes: int = 500 * MIB
+    bundle_max_files: int = 20_000
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -45,6 +60,14 @@ class Settings:
             rate_refill_per_second=float(e.get("SSC_API_RATE_REFILL_PER_SECOND", "1.0")),
             metrics_key=parse_master_key(e["SSC_METRICS_KEY"]) if "SSC_METRICS_KEY" in e else None,
             public_url=e.get("SSC_API_PUBLIC_URL", USER_AUDIENCE),
+            environment=e.get("SSC_ENV", "prod"),
+            blob_backend=e.get("SSC_BLOB_BACKEND", "none"),
+            blob_root=e.get("SSC_BLOB_ROOT", ""),
+            blob_signing_keys=_signing_keys(e.get("SSC_BLOB_SIGNING_KEYS", "{}")),
+            blob_signing_kid=e.get("SSC_BLOB_SIGNING_KID", ""),
+            bundle_max_bytes=int(e.get("SSC_BUNDLE_MAX_BYTES", str(100 * MIB))),
+            bundle_max_unpacked_bytes=int(e.get("SSC_BUNDLE_MAX_UNPACKED_BYTES", str(500 * MIB))),
+            bundle_max_files=int(e.get("SSC_BUNDLE_MAX_FILES", "20000")),
         )
 
     @classmethod
@@ -55,3 +78,13 @@ class Settings:
             jwks={"keys": []},
             issuer="https://auth.delimitus.com",
         )
+
+
+def _signing_keys(raw: str) -> dict[str, bytes]:
+    keys = json.loads(raw)
+    if not isinstance(keys, dict):
+        raise ValueError("SSC_BLOB_SIGNING_KEYS must be a JSON object")
+    return {
+        str(kid): base64.b64decode(str(value), validate=True)
+        for kid, value in cast(dict[object, object], keys).items()
+    }

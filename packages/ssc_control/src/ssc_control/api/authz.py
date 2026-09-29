@@ -54,3 +54,33 @@ async def require_builder(uow: UnitOfWork, environment_id: str) -> str:
     if (await uow.conn.execute(_SELECT_BUILDER, params)).first() is None:
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "not_a_builder"})
     return principal.subject
+
+
+# Active, and an org admin, the app's owner, or a builder (direct, group or org-wide) on any of the
+# app's environments.
+_SELECT_APP_BUILDER = text(
+    "select 1 from ssc.user_account u "
+    "join ssc.app a on a.org_id = u.org_id and a.id = :app "
+    "where u.org_id = :org and u.id = :id and u.status = 'active' and ("
+    "u.role = 'admin' or a.owner_user_id = u.id or exists ("
+    "select 1 from ssc.app_grant g join ssc.environment e "
+    "on e.org_id = g.org_id and e.id = g.environment_id "
+    "where g.org_id = a.org_id and e.app_id = a.id and g.role = 'builder' and ("
+    "g.subject_kind = 'org' "
+    "or (g.subject_kind = 'user' and g.user_id = u.id) "
+    "or (g.subject_kind = 'group' and exists (select 1 from ssc.group_member m "
+    "where m.org_id = g.org_id and m.group_id = g.group_id and m.user_id = u.id)))))"
+)
+
+
+async def require_app_builder(uow: UnitOfWork, app_id: str) -> str:
+    """The caller's user id when they may ship source to ``app_id``: an active org admin, the
+    app's owner, or a builder on any of its environments. ``FORBIDDEN`` otherwise, including for
+    a missing app; callers that must say ``NOT_FOUND`` look the app up first."""
+    principal = uow.principal
+    if principal.kind is not PrincipalKind.USER:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})
+    params = {"org": uow.org_id, "id": principal.subject, "app": app_id}
+    if (await uow.conn.execute(_SELECT_APP_BUILDER, params)).first() is None:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "not_a_builder"})
+    return principal.subject

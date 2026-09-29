@@ -1,17 +1,32 @@
-"""Where a release's manifest comes from: a port, because the bundle table arrives with B3.
+"""Where a release's manifest comes from: the stored bundle the release was built from.
 
-``reconcile_env`` never guesses a manifest. Until B3 stores bundles, the worker runs with
-``NoReleaseSpecs`` and every environment reports ``no_spec`` instead of being changed.
+``reconcile_env`` never guesses a manifest. ``BundleReleaseSpecs`` (the worker's port) reads the
+manifest stored with the release's bundle, joined on ``release.source_digest = bundle.digest``
+(decision 015), and re-derives its digest; a release without a stored bundle, or whose manifest
+does not hash to ``release.manifest_digest``, reports ``no_spec`` instead of being changed.
 """
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
 
+from pydantic import ValidationError
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.manifest import Manifest
+from ssc_shared.canonical import manifest_digest
+
+log = logging.getLogger(__name__)
+
+_RELEASE_MANIFEST = text(
+    "select b.manifest, r.manifest_digest from ssc.release r "
+    "join ssc.bundle b on b.org_id = r.org_id and b.app_id = r.app_id "
+    "and b.digest = r.source_digest "
+    "where r.org_id = :org and r.id = :rel and b.state = 'stored'"
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -32,8 +47,37 @@ class ReleaseSpecs(Protocol):
         ...
 
 
+async def release_manifest(conn: AsyncConnection, org_id: str, release_id: str) -> Manifest | None:
+    """The manifest of the bundle ``release_id`` was built from, or None when there is none or it
+    does not hash to the release's ``manifest_digest``. An approvals ``ManifestLoader``."""
+    row = (await conn.execute(_RELEASE_MANIFEST, {"org": org_id, "rel": release_id})).first()
+    if row is None:
+        return None
+    try:
+        manifest = Manifest.model_validate(row[0])
+    except ValidationError:
+        log.warning("stored manifest does not validate", extra={"release_id": release_id})
+        return None
+    if manifest_digest(manifest) != row[1]:
+        log.warning("stored manifest does not match its release", extra={"release_id": release_id})
+        return None
+    return manifest
+
+
+class BundleReleaseSpecs(ReleaseSpecs):
+    """The manifest stored with the release's bundle (``release_manifest``)."""
+
+    async def get(
+        self, conn: AsyncConnection, *, org_id: str, app_id: str, release_id: str
+    ) -> ReleaseSpec:
+        manifest = await release_manifest(conn, org_id, release_id)
+        if manifest is None:
+            raise ReleaseSpecUnavailableError(f"no stored bundle manifest for {release_id}")
+        return ReleaseSpec(manifest=manifest)
+
+
 class NoReleaseSpecs(ReleaseSpecs):
-    """Until B3: every release is unavailable."""
+    """Every release is unavailable: the default for ports that never reconcile."""
 
     async def get(
         self, conn: AsyncConnection, *, org_id: str, app_id: str, release_id: str

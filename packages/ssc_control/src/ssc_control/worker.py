@@ -29,6 +29,7 @@ from ssc_control.db.engine import make_engine
 from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.driver import RuntimeDriver
 from ssc_control.runtime.fake import FakeRuntimeDriver
+from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_of
 
 log = logging.getLogger(__name__)
@@ -134,7 +135,11 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
 
 def compose_ports(env: Mapping[str, str]) -> Ports:
     """The production ``Ports`` from the environment. The one place ports are chosen."""
-    ports = Ports(engine=make_engine(env[DSN_ENV]), runtime_driver=runtime_driver_from_env(env))
+    ports = Ports(
+        engine=make_engine(env[DSN_ENV]),
+        runtime_driver=runtime_driver_from_env(env),
+        release_specs=BundleReleaseSpecs(),
+    )
     refuse_fakes(ports, env)
     return ports
 
