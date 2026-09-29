@@ -60,6 +60,33 @@ admin's approval first; without `--json` the error says how to ask.
 `ssc share` names a person by `usr_` id or email address (looking up an email needs an org admin's
 token) and a group by `grp_` id or name. When more than one fits, it exits 2 and lists their ids.
 
+### Tools for coding agents: `ssc mcp`
+
+`ssc mcp` serves SSC's agent tools (MCP) over stdio: `list_apps`, `get_app`, `get_status`,
+`list_releases`, `rollback`, `deploy` (a folder, to preview only), `request_share` and
+`request_connection`. Asking only opens an approval request; no tool approves or promotes. It
+needs the extra (`uv tool install 'ssc-cli[mcp]'`) and a token issued to the agent, not a
+person's, and refuses to start otherwise. Agent tokens are not self-serve yet. With the agent's
+token in `SSC_AGENT_TOKEN`:
+
+- Claude Code: `claude mcp add --transport stdio --env SSC_TOKEN="$SSC_AGENT_TOKEN" ssc -- ssc mcp`
+- Codex: `codex mcp add ssc --env SSC_TOKEN="$SSC_AGENT_TOKEN" -- ssc mcp`, then set
+  `tool_timeout_sec = 1500` under `[mcp_servers.ssc]` in `~/.codex/config.toml`; the default of
+  60 seconds is shorter than a build.
+- Cursor, in `.cursor/mcp.json`:
+
+```json
+{{
+  "mcpServers": {{
+    "ssc": {{
+      "command": "ssc",
+      "args": ["mcp"],
+      "env": {{"SSC_TOKEN": "${{env:SSC_AGENT_TOKEN}}"}}
+    }}
+  }}
+}}
+```
+
 Run `ssc doctor` after every change that affects how the app installs or starts, and fix every
 finding marked `block`.
 
