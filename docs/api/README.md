@@ -16,8 +16,8 @@ compared in CI. Decision record: `docs/decisions/README.md` 011.
 
 A credential is a bearer JWT, `typ: ssc-api+jwt`, ES256, signed by a key in the configured JWKS,
 with claims `iss`, `aud`, `sub`, `iat`, `exp`, `jti`, `org`, `kind` (`user`, `workload` or
-`operator`), and optionally `agent` (bool) and `client_id`. The `jti` is the credential id: rate
-limits and idempotency keys are scoped to it. Issuing credentials is SSC-020/SSC-022's job; this
+`operator`), and optionally `agent` (bool), `client_id` and `scope` (`preview` only, below). The
+`jti` is the credential id: rate limits and idempotency keys are scoped to it. Issuing credentials is SSC-020/SSC-022's job; this
 layer only verifies them.
 
 ## Conventions every endpoint follows
@@ -106,6 +106,18 @@ pseudonym; properties are flat scalars and never carry a user id or an email.
 `healthy`, `failed` or `superseded`. A second deployment while one is in flight is
 `409 DEPLOYMENT_IN_FLIGHT`. Running the deployment is the reconciler's job (SSC-016).
 
+**A `scope: preview` credential never touches production** (decision 011, SSC-042). Before any
+handler runs, the unit of work refuses it with `403 FORBIDDEN` on any path naming the prod
+environment, whatever the method, and on any other change except those in
+`uow.PREVIEW_SCOPE_CHANGES` (the bundle upload today). Preview changes and reads stay open. Any
+other `scope` value is `401 UNAUTHENTICATED`.
+
+**Every environment has an address** (decision 004). `EnvironmentOut.url` is
+`https://<slug>.<cell label>.<apps domain>` for prod and `https://<slug>--preview.<cell
+label>.<apps domain>` for preview, from `ssc_shared.hosts`; it is null while the org has no cell
+label. The apps domain is `SSC_APPS_DOMAIN` (default `delimitusapps.com`). A slug with `--`, a
+leading `xn--` or a reserved word is `422 VALIDATION_FAILED` from the model, before any insert.
+
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's
 call once there is more than one replica.
@@ -169,6 +181,9 @@ stateless, JSON replies. Code: `api/mcp/`.
    the spec: `problem_responses(*POST_COMMON, ErrorCode.X)` (or `*AUTHENTICATED` for reads).
    Never merge two results with `|`: codes sharing a status would overwrite each other.
 4. `uv run python tools/openapi_check.py --write`, then commit `docs/api/openapi.json`.
+5. A route that changes one environment names it `{environment_id}` in its path, so a
+   `scope: preview` credential is checked against it. Any other change is closed to such a
+   credential unless it is added to `uow.PREVIEW_SCOPE_CHANGES`.
 
 CI runs `tools/openapi_check.py` (the file must match the code) and
 `tools/openapi_breaking.py` against the merge base (on a pull request) or the previous commit
