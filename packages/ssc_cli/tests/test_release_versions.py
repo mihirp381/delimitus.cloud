@@ -35,12 +35,20 @@ def test_a_tag_must_name_the_version(tool):
     assert tool.main(["--tag", "cli-v99.0.0"]) == 1
 
 
-def _tree(root: Path, packages: dict[str, tuple[str, list[str]]], builds: list[str]) -> Path:
+def _tree(
+    root: Path,
+    packages: dict[str, tuple[str, list[str]]],
+    builds: list[str],
+    action_cli: str = "0.0.1",
+) -> Path:
     workflow = root / tool_workflow()
     workflow.parent.mkdir(parents=True)
     workflow.write_text(
         "".join(f"      - run: uv build --package {n} --out-dir dist\n" for n in builds)
     )
+    action = root / ".github" / "actions" / "ssc-deploy" / "action.yml"
+    action.parent.mkdir(parents=True)
+    action.write_text(f'inputs:\n  cli-spec:\n    default: "ssc-cli=={action_cli}"\n')
     for name, (version, deps) in packages.items():
         folder = root / "packages" / name.replace("-", "_")
         folder.mkdir(parents=True)
@@ -76,3 +84,17 @@ def test_problems_are_named(tool, tmp_path):
 def test_a_published_name_must_be_a_workspace_package(tool, tmp_path):
     root = _tree(tmp_path, {"ssc-cli": ("0.0.1", [])}, ["ssc-cli", "ssc-typo"])
     assert tool.check(root) == ["ssc-typo is published but is not a workspace package"]
+
+
+def test_the_action_installs_the_released_cli(tool, tmp_path):
+    packages = {"ssc-cli": ("0.0.2", [])}
+    stale = _tree(tmp_path / "stale", packages, ["ssc-cli"], action_cli="0.0.1")
+    assert tool.check(stale) == [
+        ".github/actions/ssc-deploy/action.yml must install ssc-cli==0.0.2 by default"
+    ]
+    assert tool.check(_tree(tmp_path / "ok", packages, ["ssc-cli"], action_cli="0.0.2")) == []
+    missing = _tree(tmp_path / "missing", packages, ["ssc-cli"])
+    (missing / ".github" / "actions" / "ssc-deploy" / "action.yml").unlink()
+    assert tool.check(missing) == [
+        ".github/actions/ssc-deploy/action.yml must install ssc-cli==0.0.2 by default"
+    ]

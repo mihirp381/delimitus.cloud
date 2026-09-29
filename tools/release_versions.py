@@ -1,5 +1,6 @@
 """The packages ``release-cli.yml`` publishes share one version and pin each other to it exactly,
-and a ``cli-v<version>`` tag names that version (decision 017). Exits 1 on any problem.
+a ``cli-v<version>`` tag names that version, and the ssc-deploy Action installs that ``ssc-cli``
+by default (decision 017). Exits 1 on any problem.
 
     uv run --no-project --python 3.14 python tools/release_versions.py [--tag cli-v0.0.1]
 """
@@ -13,7 +14,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = Path(".github") / "workflows" / "release-cli.yml"
+ACTION = Path(".github") / "actions" / "ssc-deploy" / "action.yml"
 TAG_PREFIX = "cli-v"
+_ACTION_CLI = re.compile(r'^    default: "ssc-cli==([^"]*)"$', re.M)
 _BUILD = re.compile(r"uv build --package ([A-Za-z0-9._-]+)")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -66,6 +69,11 @@ def check(root: Path, tag: str | None = None) -> list[str]:
             if spec != f"=={versions[dep]}":
                 problems.append(f"{name} must pin {dep}=={versions[dep]}, not {req!r}")
     version = versions[names[-1]]
+    if "ssc-cli" in versions:
+        action = root / ACTION
+        pinned = _ACTION_CLI.findall(action.read_text()) if action.exists() else []
+        if pinned != [versions["ssc-cli"]]:
+            problems.append(f"{ACTION} must install ssc-cli=={versions['ssc-cli']} by default")
     if tag and tag != f"{TAG_PREFIX}{version}":
         problems.append(f"tag {tag} does not name the version {version} ({TAG_PREFIX}{version})")
     return problems

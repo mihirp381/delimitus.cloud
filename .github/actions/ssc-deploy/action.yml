@@ -1,0 +1,64 @@
+name: ssc deploy
+description: Deploy a folder to an app's preview environment on Small Software Cloud and report its preview URL.
+author: Delimitus
+
+inputs:
+  token:
+    description: An SSC API token, from a secret. A token with scope preview can never touch production.
+    required: true
+  app:
+    description: The app's slug or app_ id.
+    required: true
+  path:
+    description: The app folder.
+    required: false
+    default: "."
+  api-url:
+    description: The SSC API address.
+    required: false
+    default: "https://api.delimitus.com"
+  commit:
+    description: The git commit the folder holds, recorded on the release. Empty records none.
+    required: false
+    default: ${{ github.sha }}
+  cli-spec:
+    description: What `uv tool install` installs. The default is the ssc-cli release this Action belongs to.
+    required: false
+    default: "ssc-cli==0.0.1"
+
+outputs:
+  preview-url:
+    description: The preview environment's address.
+    value: ${{ steps.deploy.outputs.preview-url }}
+  release-id:
+    description: The release now live in preview.
+    value: ${{ steps.deploy.outputs.release-id }}
+  operation-id:
+    description: The deployment operation that put it there.
+    value: ${{ steps.deploy.outputs.operation-id }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        version: "0.12.19"
+        enable-cache: "false"
+    - name: Install ssc
+      shell: bash
+      env:
+        CLI_SPEC: ${{ inputs.cli-spec }}
+      run: |
+        read -ra spec <<< "$CLI_SPEC"
+        uv tool install --python 3.14 "${spec[@]}"
+    - name: Deploy to preview
+      id: deploy
+      shell: bash
+      env:
+        SSC_TOKEN: ${{ inputs.token }}
+        SSC_API_URL: ${{ inputs.api-url }}
+        SSC_APP: ${{ inputs.app }}
+        SSC_PATH: ${{ inputs.path }}
+        SSC_COMMIT: ${{ inputs.commit }}
+      run: |
+        SSC_BIN="$(uv tool dir --bin)/ssc" uv run --no-project --python 3.14 "$GITHUB_ACTION_PATH/run.py"
