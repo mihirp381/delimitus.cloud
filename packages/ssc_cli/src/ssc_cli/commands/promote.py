@@ -12,9 +12,9 @@ from typing import Annotated, Final
 
 import typer
 
-from ssc_cli.api import ApiClient
+from ssc_cli.api import ApiClient, Sleep
 from ssc_cli.commands._common import JsonOpt, handled, session
-from ssc_cli.errors import BUILD_NOT_FOUND, local_error
+from ssc_cli.errors import BUILD_NOT_FOUND, CliError, local_error
 from ssc_cli.models import AppOut, EnvironmentOut
 from ssc_cli.output import print_json, say
 from ssc_cli.resolve import environment, resolve_app
@@ -24,6 +24,7 @@ from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_build, wait_for_opera
 PROD: Final = "prod"
 PREVIEW: Final = "preview"
 DEPLOY: Final = "deploy"
+APPROVAL_REQUIRED: Final = "APPROVAL_REQUIRED"
 BUILD_ID: Final = re.compile(r"bld_[a-z0-9]{20}")
 
 
@@ -86,13 +87,7 @@ def promote(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
             op = client.create_deployment(target.id, prod.id, release_id, DEPLOY)
             op_id, state = op.operation_id, op.state
             if wait:
-                state = wait_for_operation(
-                    client,
-                    op.operation_id,
-                    sleep=s.sleep,
-                    budget=budget,
-                    next_step=f"Follow it with `ssc status {target.slug}`.",
-                ).state
+                state = _wait_live(client, op.operation_id, s.sleep, budget, target.slug, resume)
     result = PromoteResult(
         app_id=target.id,
         slug=target.slug,
@@ -119,6 +114,29 @@ def promote(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
         say(f"Deploying R{number} to prod ({op_id}). Follow it with `ssc status {target.slug}`.")
     if prod.url:
         say(f"Prod: {prod.url}")
+
+
+def _wait_live(  # noqa: PLR0913, PLR0917
+    client: ApiClient, op_id: str, sleep: Sleep, budget: Budget, slug: str, resume: str
+) -> str:
+    """The deployment's state once healthy. A deployment held for approval names ``resume``, which
+    deploys this release again without another build."""
+    try:
+        return wait_for_operation(
+            client,
+            op_id,
+            sleep=sleep,
+            budget=budget,
+            next_step=f"Follow it with `ssc status {slug}`.",
+        ).state
+    except CliError as e:
+        if e.body.code == APPROVAL_REQUIRED:
+            e.fix = (
+                "Production needs approval first. An org admin other than you decides the open "
+                f"approval requests for this app; then run `{resume}`, which deploys this release "
+                "without building again."
+            )
+        raise
 
 
 def _live_release(client: ApiClient, preview: EnvironmentOut) -> str | None:

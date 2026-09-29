@@ -878,6 +878,16 @@ def test_promote_timing_out_on_the_build_names_the_resume_command(cli, promoting
     assert ("POST", PROD_DEPLOYMENTS) not in _calls(promoting)
 
 
+def test_promote_held_for_approval_names_the_resume_command(cli, promoting):
+    promoting.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("failed", env=PROD, failure_code="APPROVAL_REQUIRED")
+    ]
+    r = cli("promote", "demo", "--wait", session=promoting.session())
+    assert r.code == ExitCode.FAILED
+    fix = next(line for line in r.stderr.splitlines() if line.startswith("Fix: "))
+    assert f"then run `ssc promote demo --build {BUILD} --wait`" in fix
+
+
 def test_promote_with_nothing_live_is_the_apis_refusal(cli, promoting, fake_problem):
     promoting.routes[("GET", f"/v1/operations/{LIVE}")] = [_operation("running", rel=SOURCE)]
     promoting.routes[("POST", PROMOTE)] = [fake_problem(409, "NOTHING_TO_PROMOTE")]
