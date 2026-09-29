@@ -71,6 +71,9 @@ class ErrorCode(StrEnum):
     # kill switch (SSC-025)
     KILL_SWITCH_IN_FLIGHT = "KILL_SWITCH_IN_FLIGHT"
     APP_ALREADY_ACTIVE = "APP_ALREADY_ACTIVE"
+    # timers (SSC-041)
+    TIMER_RUN_IN_FLIGHT = "TIMER_RUN_IN_FLIGHT"
+    SCHEDULE_CANNOT_RESUME = "SCHEDULE_CANNOT_RESUME"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -275,6 +278,18 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         409,
         "This app is already active.",
         "Only a disabled or quarantined app can be enabled.",
+    ),
+    ErrorCode.TIMER_RUN_IN_FLIGHT: CatalogueEntry(
+        409,
+        "This schedule already has a run in progress.",
+        "A manual run is waiting or a run is running. Wait for it to finish, then retry.",
+    ),
+    ErrorCode.SCHEDULE_CANNOT_RESUME: CatalogueEntry(
+        409,
+        "This schedule cannot be resumed yet.",
+        "It was paused because the app is disabled or quarantined, because it is in preview, or "
+        "because the app's owner or the person who deployed it may no longer run it. Enable the "
+        "app, restore that access, or deploy again.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

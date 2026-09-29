@@ -29,6 +29,7 @@ _BY_CONSTRAINT: Final[Mapping[str, ErrorCode]] = {
     "approval_request_one_pending": ErrorCode.ALREADY_EXISTS,
     "build_one_in_flight": ErrorCode.BUILD_IN_FLIGHT,
     "kill_switch_one_running": ErrorCode.KILL_SWITCH_IN_FLIGHT,
+    "timer_run_one_queued": ErrorCode.TIMER_RUN_IN_FLIGHT,
 }
 
 _BY_SQLSTATE: Final[Mapping[str, ErrorCode]] = {

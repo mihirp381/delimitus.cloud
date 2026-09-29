@@ -118,6 +118,19 @@ label>.<apps domain>` for preview, from `ssc_shared.hosts` and the org's cell la
 only for a slug stored before the rule refused it. The apps domain is `SSC_APPS_DOMAIN` (default `delimitusapps.com`). A slug with `--`, a
 leading `xn--` or a reserved word is `422 VALIDATION_FAILED` from the model, before any insert.
 
+**Timers change only with a deploy** (decision 020). Under
+`/v1/apps/{app}/environments/{env}/schedules`, a person who may change the environment (an
+active admin, the app's owner or a builder on it: `require_builder`, else `403 FORBIDDEN`) lists
+the live schedules with their latest run, reads one schedule, pages its runs (`GET .../runs`,
+newest first, `before` taking the previous page's `next_before`) and reads one run.
+`POST .../{id}/runs` queues a manual run, paused and preview schedules included, and answers
+`202` with `Location: .../runs/{run_id}` to poll. A second one while a run waits or runs is
+`409 TIMER_RUN_IN_FLIGHT`; a disabled or quarantined app is `409 APP_NOT_ACTIVE`.
+`POST .../pause` pauses by hand; `POST .../resume` arms it again and makes the caller the one
+whose authority it runs on. Resuming is `409 SCHEDULE_CANNOT_RESUME` in preview, while the kill
+switch holds it, while the app is not active and while the owner is not active. A deleted
+schedule is `409 SCHEDULE_DELETED`.
+
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's
 call once there is more than one replica.
