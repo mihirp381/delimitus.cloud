@@ -1180,7 +1180,7 @@ export interface components {
             name: "prod" | "preview";
             /**
              * Url
-             * @description Where the environment is served: `https://<slug>.<cell label>.<apps domain>`, with `--preview` after the slug for preview (decision 004). Null while the org has no cell label.
+             * @description Where the environment is served: `https://<slug>.<cell label>.<apps domain>`, with `--preview` after the slug for preview (decision 004). Null only for a slug stored before the host rule refused it.
              */
             url: string | null;
         };

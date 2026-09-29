@@ -114,8 +114,8 @@ other `scope` value is `401 UNAUTHENTICATED`.
 
 **Every environment has an address** (decision 004). `EnvironmentOut.url` is
 `https://<slug>.<cell label>.<apps domain>` for prod and `https://<slug>--preview.<cell
-label>.<apps domain>` for preview, from `ssc_shared.hosts`; it is null while the org has no cell
-label. The apps domain is `SSC_APPS_DOMAIN` (default `delimitusapps.com`). A slug with `--`, a
+label>.<apps domain>` for preview, from `ssc_shared.hosts` and the org's cell label; it is null
+only for a slug stored before the rule refused it. The apps domain is `SSC_APPS_DOMAIN` (default `delimitusapps.com`). A slug with `--`, a
 leading `xn--` or a reserved word is `422 VALIDATION_FAILED` from the model, before any insert.
 
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`

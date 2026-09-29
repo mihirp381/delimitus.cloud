@@ -1,5 +1,5 @@
 """SSC-042's host rule in the API (decision 004): a slug the rule refuses is 422 before the
-database, and each environment's url follows the rule once the org has a cell label."""
+database, and each environment's url follows the rule and the org's cell label."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def urls(app: dict[str, Any]) -> dict[str, str | None]:
     return {e["name"]: e["url"] for e in app["environments"]}
 
 
-def set_cell_label(h: Hosts, label: str | None) -> None:
+def set_cell_label(h: Hosts, label: str) -> None:
     with psycopg.connect(h.dsns.superuser) as conn:
         conn.execute("update ssc.org set cell_label = %s where id = %s", (label, h.org.org_id))
 
@@ -113,23 +113,27 @@ def test_a_slug_near_a_reserved_word_is_fine(h: Hosts) -> None:
 # ── urls ─────────────────────────────────────────────────────────────────────
 
 
-def test_url_is_null_until_the_org_has_a_cell_label(h: Hosts) -> None:
-    set_cell_label(h, None)
+def test_every_environment_has_its_url(h: Hosts) -> None:
+    label = h.org.cell_label
     r = create(h, "expenses")
     assert r.status_code == 201, r.text
     app = r.json()
-    assert urls(app) == {"prod": None, "preview": None}
+    want = {
+        "prod": f"https://expenses.{label}.{DOMAIN}",
+        "preview": f"https://expenses--preview.{label}.{DOMAIN}",
+    }
+    assert urls(app) == want
+    assert urls(h.client.get(f"/v1/apps/{app['id']}", headers=auth(h.token)).json()) == want
+
+
+def test_the_url_follows_the_orgs_cell_label(h: Hosts) -> None:
+    app = create(h, "payroll").json()
     try:
         set_cell_label(h, LABEL)
         got = h.client.get(f"/v1/apps/{app['id']}", headers=auth(h.token)).json()
-        assert urls(got) == {
-            "prod": f"https://expenses.{LABEL}.{DOMAIN}",
-            "preview": f"https://expenses--preview.{LABEL}.{DOMAIN}",
-        }
-        created = create(h, "payroll").json()
-        assert urls(created)["prod"] == f"https://payroll.{LABEL}.{DOMAIN}"
+        assert urls(got)["prod"] == f"https://payroll.{LABEL}.{DOMAIN}"
     finally:
-        set_cell_label(h, None)
+        set_cell_label(h, h.org.cell_label)
 
 
 def test_a_slug_stored_before_the_rule_has_no_url(h: Hosts) -> None:
@@ -145,13 +149,9 @@ def test_a_slug_stored_before_the_rule_has_no_url(h: Hosts) -> None:
                 "insert into ssc.environment (id, org_id, app_id, name) values (%s, %s, %s, %s)",
                 (new_id("env"), h.org.org_id, app_id, name),
             )
-    try:
-        set_cell_label(h, LABEL)
-        r = h.client.get(f"/v1/apps/{app_id}", headers=auth(h.token))
-        assert r.status_code == 200, r.text
-        assert urls(r.json()) == {"prod": None, "preview": None}
-    finally:
-        set_cell_label(h, None)
+    r = h.client.get(f"/v1/apps/{app_id}", headers=auth(h.token))
+    assert r.status_code == 200, r.text
+    assert urls(r.json()) == {"prod": None, "preview": None}
 
 
 # ── the setting ──────────────────────────────────────────────────────────────

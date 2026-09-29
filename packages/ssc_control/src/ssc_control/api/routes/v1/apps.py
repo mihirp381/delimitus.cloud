@@ -35,8 +35,8 @@ class EnvironmentOut(Strict):
     current_deployment_id: str | None
     url: str | None = Field(
         description="Where the environment is served: `https://<slug>.<cell label>.<apps domain>`"
-        ", with `--preview` after the slug for preview (decision 004). Null while the org has no "
-        "cell label."
+        ", with `--preview` after the slug for preview (decision 004). Null only for a slug stored "
+        "before the host rule refused it."
     )
 
 
@@ -83,9 +83,10 @@ _SELECT_ENVS = text(
 )
 
 
-def _url(slug: str, environment: str, cell_label: str | None, apps_domain: str) -> str | None:
-    """No address without a cell label, nor for a slug stored before the host rule refused it."""
-    if cell_label is None or slug_problem(slug) is not None:
+def _url(slug: str, environment: str, cell_label: str, apps_domain: str) -> str | None:
+    """No address for a slug stored before the host rule refused it. Every org has a cell label
+    matching the rule (revision 0011 and its CHECK)."""
+    if slug_problem(slug) is not None:
         return None
     return app_origin(slug, cast("Environment", environment), cell_label, apps_domain)
 
