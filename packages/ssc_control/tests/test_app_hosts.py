@@ -126,6 +126,24 @@ def test_every_environment_has_its_url(h: Hosts) -> None:
     assert urls(h.client.get(f"/v1/apps/{app['id']}", headers=auth(h.token)).json()) == want
 
 
+def test_enable_and_owner_transfer_answer_the_urls_too(h: Hosts) -> None:
+    app = create(h, "ledger").json()
+    want = urls(app)
+    assert want["prod"] == f"https://ledger.{h.org.cell_label}.{DOMAIN}"
+    moved = h.client.put(
+        f"/v1/apps/{app['id']}/owner", json={"user_id": h.org.admin_user_id}, headers=auth(h.token)
+    )
+    assert moved.status_code == 200, moved.text
+    assert urls(moved.json()) == want
+    with psycopg.connect(h.dsns.superuser) as conn:
+        conn.execute("update ssc.app set status = 'disabled' where id = %s", (app["id"],))
+    enabled = h.client.post(
+        f"/v1/apps/{app['id']}/enable", headers=auth(h.token, **{IDEMPOTENCY_HEADER: new_key()})
+    )
+    assert enabled.status_code == 200, enabled.text
+    assert (enabled.json()["status"], urls(enabled.json())) == ("active", want)
+
+
 def test_the_url_follows_the_orgs_cell_label(h: Hosts) -> None:
     app = create(h, "payroll").json()
     try:

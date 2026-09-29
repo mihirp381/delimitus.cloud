@@ -91,7 +91,8 @@ def _url(slug: str, environment: str, cell_label: str, apps_domain: str) -> str 
     return app_origin(slug, cast("Environment", environment), cell_label, apps_domain)
 
 
-async def _environments(uow: UnitOfWork, app_id: str, apps_domain: str) -> list[EnvironmentOut]:
+async def environments_of(uow: UnitOfWork, app_id: str, apps_domain: str) -> list[EnvironmentOut]:
+    """The app's environments with their addresses, for every route that answers ``AppOut``."""
     rows = (await uow.conn.execute(_SELECT_ENVS, {"org": uow.org_id, "app": app_id})).mappings()
     return [
         EnvironmentOut(
@@ -132,7 +133,7 @@ async def create_app(body: AppCreate, uow: UserUoW, request: Request) -> Respons
             _INSERT_ENV, {"id": new_id("env"), "org": uow.org_id, "app": app_id, "name": name}
         )
     apps_domain = runtime_of(request).settings.apps_domain
-    out = AppOut(**dict(row), environments=await _environments(uow, app_id, apps_domain))
+    out = AppOut(**dict(row), environments=await environments_of(uow, app_id, apps_domain))
     await uow.audit(
         AuditAction.APP_CREATED,
         target_kind="app",
@@ -179,4 +180,4 @@ async def get_app(app_id: Id, uow: UserUoW, request: Request) -> AppOut:
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"app_id": app_id})
     apps_domain = runtime_of(request).settings.apps_domain
-    return AppOut(**dict(row), environments=await _environments(uow, app_id, apps_domain))
+    return AppOut(**dict(row), environments=await environments_of(uow, app_id, apps_domain))

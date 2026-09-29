@@ -22,7 +22,7 @@ from ssc_control.api.authz import require_admin
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
-from ssc_control.api.routes.v1.apps import AppOut, EnvironmentOut
+from ssc_control.api.routes.v1.apps import AppOut, environments_of
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
@@ -129,10 +129,6 @@ _SELECT_APP = text(
     "select id, slug, owner_user_id, status, created_at from ssc.app "
     "where org_id = :org and id = :id"
 )
-_SELECT_ENVS = text(
-    "select id, name, config_version, grants_version, current_deployment_id "
-    "from ssc.environment where org_id = :org and app_id = :app order by name"
-)
 _LOCK_APP_OWNER = text(
     "select owner_user_id from ssc.app where org_id = :org and id = :id for update"
 )
@@ -144,10 +140,10 @@ _STATUS_ACTION = {
 }
 
 
-async def _app_out(uow: UnitOfWork, app_id: str) -> AppOut:
+async def _app_out(uow: UnitOfWork, app_id: str, request: Request) -> AppOut:
     row = (await uow.conn.execute(_SELECT_APP, {"org": uow.org_id, "id": app_id})).mappings().one()
-    envs = await uow.conn.execute(_SELECT_ENVS, {"org": uow.org_id, "app": app_id})
-    return AppOut(**dict(row), environments=[EnvironmentOut(**dict(e)) for e in envs.mappings()])
+    envs = await environments_of(uow, app_id, runtime_of(request).settings.apps_domain)
+    return AppOut(**dict(row), environments=envs)
 
 
 @router.get(
@@ -285,7 +281,7 @@ async def enable_app(app_id: Id, request: Request, uow: UserUoW) -> Response:
         before={"status": before},
         after={"status": "active"},
     )
-    return uow.reply(await _app_out(uow, app_id))
+    return uow.reply(await _app_out(uow, app_id, request))
 
 
 @router.put(
@@ -299,7 +295,7 @@ async def enable_app(app_id: Id, request: Request, uow: UserUoW) -> Response:
         ErrorCode.OWNER_NOT_ACTIVE,
     ),
 )
-async def transfer_owner(app_id: Id, body: OwnerTransfer, uow: UserUoW) -> AppOut:
+async def transfer_owner(app_id: Id, body: OwnerTransfer, request: Request, uow: UserUoW) -> AppOut:
     """Give the app to another member. ``REFERENCE_NOT_FOUND`` for a user not in the org,
     ``OWNER_NOT_ACTIVE`` for a deactivated one."""
     await require_admin(uow)
@@ -324,4 +320,4 @@ async def transfer_owner(app_id: Id, body: OwnerTransfer, uow: UserUoW) -> AppOu
             before={"owner_user_id": before},
             after={"owner_user_id": body.user_id},
         )
-    return await _app_out(uow, app_id)
+    return await _app_out(uow, app_id, request)
