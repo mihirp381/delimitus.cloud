@@ -24,12 +24,12 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `packages/ssc_app` | The helper apps install to read the identity note (`ssc_app.identity`); pyright strict. | SSC-020 |
 | `conformance/` | Black-box tests any deployment must pass. `identity_note/` holds the shared identity-note vectors and their generator; `ssc_conformance/contracts/` holds contract suites every implementation of a port runs (`BlobStoreContract`, `RuntimeDriverContract`); `ssc_conformance/runtime_probes.py` and `runtime/probe_app/` are the fourteen runtime probes (four local, ten waiting for a staging cell). | SSC-020, SSC-044, SSC-056, SSC-017 |
 | `helpers/node/ssc-identity` | Node verifier for the identity note, zero dependencies, `npm test` runs the shared vectors. | SSC-020 |
-| `console/` | Admin console, TypeScript. Empty until SSC-057. | SSC-057 |
+| `console/` | Admin console (decision 018): React 19, Vite 8, TanStack Router and Query, a client generated from `docs/api/openapi.json`, `--ssc-*` tokens, Vitest and a Playwright smoke test against the API in Docker. See `console/README.md`. | SSC-057 |
 | `infra/` | Pulumi in Python. Empty until the cloud is chosen. | SSC-001, SSC-013 |
 | `spikes/bakeoff` | SSC-001 cloud bake-off harness: three test apps, probes, runner, scorecard. | SSC-001 |
 | `spikes/appdb` | SSC-005 per-app database creation and driver matrix. | SSC-005 |
 | `gates/` | One planted violation per CI gate. `gates/run_gates.py` proves every gate fires. | SSC-007 |
-| `tools/` | `lock_age_check.py` (7-day rule), `deptry_all.py`, `openapi_check.py` (committed spec matches the code), `openapi_breaking.py` (refuses breaking API changes). | SSC-007, SSC-011 |
+| `tools/` | `lock_age_check.py` (7-day rule), `deptry_all.py`, `openapi_check.py` (committed spec matches the code), `openapi_breaking.py` (refuses breaking API changes), `npm_lock_age_check.py` (7-day rule for `console/package-lock.json`). | SSC-007, SSC-011, SSC-057 |
 | `tools/dev_stack.py` | Local control plane for development and CLI tests: `up` (roles, migrations, one org, a signing key), `token`, `serve` (`--port 0` prints the chosen port). State in `.ssc-dev/`. | SSC-022 |
 | `docs/decisions/` | Decision records. | SSC-006 |
 | `docs/contracts/` | Frozen cross-squad contracts (identity note, `ssc.toml` manifest). | SSC-020, SSC-044 |
@@ -52,11 +52,13 @@ uv run python tools/openapi_breaking.py OLD NEW  # CI runs it against the merge 
 uv run pytest            # needs Docker: control-db, API and job-queue tests start postgres:18
 uv run python gates/run_gates.py
 (cd helpers/node/ssc-identity && npm test)   # Node 22+
+uv run python tools/npm_lock_age_check.py      # console/package-lock.json
+(cd console && npm ci && npm run typecheck && npm test && npm run build)   # Node 22.22.2+, 24.15+ or 26+
 ```
 
 ## Rules the tooling enforces
 
-- **No package younger than 7 days.** `[tool.uv] exclude-newer` in `pyproject.toml` stops the resolver from picking one; `tools/lock_age_check.py` re-checks the lock in CI. Exceptions go in `docs/lock-exceptions.toml` with a reason and an expiry.
+- **No package younger than 7 days.** `[tool.uv] exclude-newer` in `pyproject.toml` stops the resolver from picking one; `tools/lock_age_check.py` re-checks the lock in CI. For the console, `console/.npmrc` `before=` and `tools/npm_lock_age_check.py` do the same. Exceptions go in `docs/lock-exceptions.toml` with a reason and an expiry.
 - **Cell services never import the control plane or its database.** `ssc_edge`, `ssc_datagw`, `ssc_egress`, `ssc_app` may not import `ssc_control`, `sqlalchemy`, `alembic` or `psycopg`.
 - **Layers.** `ssc_contracts` < `ssc_shared` < `ssc_bundle` < services.
 - **GitHub Actions pinned by commit hash**, checked by zizmor.

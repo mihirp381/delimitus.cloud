@@ -30,6 +30,7 @@ jobs:
       - run: uv run python tools/deptry_all.py
       - run: uv run zizmor --no-online-audits .github/workflows
       - run: uv run python tools/lock_age_check.py
+      - run: uv run python tools/npm_lock_age_check.py console/package-lock.json
       - run: uv run python tools/openapi_check.py
       - name: OpenAPI breaking changes
         env:
@@ -92,3 +93,42 @@ jobs:
           node-version: "24"
       - run: npm test
         working-directory: helpers/node/ssc-identity
+
+  console:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - run: npm ci
+      - name: API client matches docs/api/openapi.json
+        run: npm run gen:api && git diff --exit-code src/api/schema.d.ts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Route tree is committed
+        run: git diff --exit-code src/routeTree.gen.ts
+
+  console-e2e:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: console
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e

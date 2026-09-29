@@ -1,0 +1,14 @@
+# Build context is the repository root; send only what the API image needs.
+*
+!pyproject.toml
+!uv.lock
+!packages/
+!conformance/
+!tools/dev_stack.py
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.hypothesis
+**/node_modules
+**/.DS_Store

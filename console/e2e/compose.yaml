@@ -1,0 +1,28 @@
+# Postgres and the SSC API for the console's Playwright smoke test. e2e/run.mjs starts it with a
+# unique project name and a random host port, so no container name or port is fixed.
+services:
+  db:
+    image: postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+    environment:
+      # Reachable only on this project's network; the data lives in memory.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
+  api:
+    image: ssc-console-e2e-api:local
+    build:
+      context: ../..
+      dockerfile: console/e2e/api.Dockerfile
+    environment:
+      SSC_E2E_DSN: postgresql://postgres@db:5432/postgres
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1::8000"
