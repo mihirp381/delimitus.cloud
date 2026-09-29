@@ -39,7 +39,7 @@ from ssc_cli.errors import (
 )
 from ssc_cli.models import BundleCreate
 from ssc_cli.session import Session
-from ssc_cli.wait import wait_for_build, wait_for_operation
+from ssc_cli.wait import Budget, wait_for_build, wait_for_operation
 
 TOOLS: Final = (
     "list_apps",
@@ -216,6 +216,9 @@ def _quiet(_: str) -> None:
     return None
 
 
+_FOLLOW: Final = "Follow it with get_status."
+
+
 def _timed_out(e: CliError) -> bool:
     return e.body.code == WAIT_TIMED_OUT
 
@@ -251,7 +254,9 @@ def build_release(  # noqa: PLR0913  (keyword-only)
     build = _json(r)
     build_id = str(build["build_id"])
     try:
-        release_id, _ = wait_for_build(c, build_id, sleep=sleep, timeout=wait, follow="get_status")
+        release_id, _ = wait_for_build(
+            c, build_id, sleep=sleep, budget=Budget(wait), next_step=_FOLLOW
+        )
     except CliError as e:
         if not _timed_out(e):
             raise
@@ -294,7 +299,7 @@ def deploy_release(  # noqa: PLR0913  (keyword-only)
     r = c.post_json(path, body, derived_key("deploy", key))
     op_id = str(_json(r)["operation_id"])
     try:
-        wait_for_operation(c, op_id, sleep=sleep, timeout=wait, follow="get_status")
+        wait_for_operation(c, op_id, sleep=sleep, budget=Budget(wait), next_step=_FOLLOW)
     except CliError as e:
         if not _timed_out(e):
             raise
