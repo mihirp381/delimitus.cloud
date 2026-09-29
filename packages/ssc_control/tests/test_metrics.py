@@ -47,12 +47,13 @@ from ssc_control.metrics import (
     DerivedKeys,
     Metrics,
     MetricsKeyError,
+    metrics_port,
     parse_master_key,
     pseudonym,
     source_tool_of,
 )
 from ssc_control.metrics import report as rep
-from ssc_control.ports import MetricKind
+from ssc_control.ports import MetricKind, NullMetricsPort
 
 MASTER = bytes(range(32))
 KEYS = DerivedKeys(MASTER)
@@ -125,6 +126,13 @@ def test_keys_and_ids_are_checked() -> None:
         pseudonym(KEYS, ORG_A, "op_ada")
     with pytest.raises(ValueError):
         KEYS.org_key("acme")
+
+
+def test_a_process_records_only_with_a_key() -> None:
+    assert isinstance(metrics_port(None), NullMetricsPort)
+    assert isinstance(metrics_port(MASTER), Metrics)
+    with pytest.raises(MetricsKeyError):
+        metrics_port(b"short")
 
 
 def test_settings_read_the_metrics_key_and_never_show_it() -> None:

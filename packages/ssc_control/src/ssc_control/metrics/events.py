@@ -15,9 +15,9 @@ from typing import Final
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from ssc_control.metrics.pseudonym import PseudonymKeys, pseudonym
+from ssc_control.metrics.pseudonym import DerivedKeys, PseudonymKeys, pseudonym
 from ssc_control.metrics.source_tool import normalise
-from ssc_control.ports import MetricKind, MetricsPort, MetricValue
+from ssc_control.ports import MetricKind, MetricsPort, MetricValue, NullMetricsPort
 
 MAX_PROPERTIES: Final = 20
 MAX_VALUE_CHARS: Final = 200
@@ -96,3 +96,9 @@ class Metrics(MetricsPort):
                 "properties": json.dumps(checked, sort_keys=True, allow_nan=False),
             },
         )
+
+
+def metrics_port(master_key: bytes | None) -> MetricsPort:
+    """A process's recorder: :class:`Metrics` keyed from ``master_key`` (``Settings.metrics_key``
+    or :func:`~ssc_control.metrics.pseudonym.parse_master_key`), or the no-op port without one."""
+    return NullMetricsPort() if master_key is None else Metrics(DerivedKeys(master_key))

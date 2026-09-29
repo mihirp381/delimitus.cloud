@@ -19,8 +19,7 @@ from ssc_control.api.routes.v1 import router as v1_router
 from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
-from ssc_control.metrics import DerivedKeys, Metrics
-from ssc_control.ports import MetricsPort, NullMetricsPort
+from ssc_control.metrics import metrics_port
 
 _log = logging.getLogger(__name__)
 
@@ -45,12 +44,6 @@ async def _on_replay(request: Request, exc: Exception) -> Response:
     return exc.reply.to_response(
         {REPLAYED_HEADER: "true", REQUEST_ID_HEADER: request_id_of(request)}
     )
-
-
-def _metrics(settings: Settings) -> MetricsPort:
-    if settings.metrics_key is None:
-        return NullMetricsPort()
-    return Metrics(DerivedKeys(settings.metrics_key))
 
 
 def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI:
@@ -83,7 +76,7 @@ def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI
         verifier=Verifier(dict(settings.jwks), settings.issuer),
         limiter=RateLimiter(settings.rate_capacity, settings.rate_refill_per_second),
         owns_engine=engine is None,
-        metrics=_metrics(settings),
+        metrics=metrics_port(settings.metrics_key),
     )
     app.add_middleware(RequestIdMiddleware)
     problems.install(app)
