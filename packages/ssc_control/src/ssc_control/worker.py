@@ -24,6 +24,7 @@ from typing import Final, Literal
 from procrastinate import App, Blueprint, JobContext, PsycopgConnector
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
+from ssc_control.audit import jobs as audit_jobs
 from ssc_control.db.catalog import QUEUE_SCHEMA
 from ssc_control.db.engine import make_engine
 from ssc_control.deploy import jobs as deploy_jobs
@@ -37,7 +38,9 @@ from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.snapshot import jobs as snapshot_jobs
 from ssc_control.snapshot.service import Snapshots
+from ssc_control.storage import StorageConfigError, blob_store_from_env
 from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_of
+from ssc_shared.blobstore import BlobStore
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +119,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(runtime_jobs.blueprint(tick_cron=s.tick_cron), namespace="runtime")
     app.add_tasks_from(snapshot_jobs.blueprint(), namespace="snapshot")
     app.add_tasks_from(deploy_jobs.blueprint(), namespace="deploy")
+    app.add_tasks_from(audit_jobs.blueprint(), namespace="audit")
     return app
 
 
@@ -155,6 +159,14 @@ def metrics_from_env(env: Mapping[str, str]) -> MetricsPort:
         raise CompositionError(str(exc)) from None
 
 
+def blob_store_of(env: Mapping[str, str]) -> BlobStore | None:
+    """``SSC_BLOB_*``, read as the API reads them (``storage.blob_store_from_env``)."""
+    try:
+        return blob_store_from_env(env)
+    except StorageConfigError as exc:
+        raise CompositionError(str(exc)) from exc
+
+
 def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
     """Refuse any fake port unless ``SSC_ENV`` is ``dev`` or ``test``."""
     fakes = [
@@ -178,6 +190,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         engine=engine,
         runtime_driver=runtime_driver_from_env(env),
         release_specs=BundleReleaseSpecs(),
+        blob_store=blob_store_of(env),
         snapshot=Snapshots(engine),
         prod_gate=approvals_prod_gate(),
         build_driver=build_driver_from_env(env),
@@ -238,6 +251,7 @@ __all__ = [
     "Ports",
     "PortsMissingError",
     "WorkerSettings",
+    "blob_store_of",
     "build_app",
     "build_driver_from_env",
     "compose_ports",

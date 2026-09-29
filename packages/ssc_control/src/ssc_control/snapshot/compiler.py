@@ -4,11 +4,13 @@
 and every transaction that took the lock shared (``service.mark_dirty``) has committed before
 the compile reads. The object key carries the version and a digest prefix: an object left by a
 rolled-back publish is never referenced. ``point_latest`` moves ``latest.json`` after commit.
+``is_stale`` tells the sweep when the newest published version, or the pointer, lags the org.
 """
 
 import asyncio
 import hashlib
-from datetime import datetime
+import json
+from datetime import UTC, datetime
 from typing import Any, Final
 
 from sqlalchemy import text
@@ -17,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_contracts.snapshot import FORMAT_V1, SnapshotDoc
 from ssc_control.db.bind import bound_org
 from ssc_control.domain.grant_rules import floor_of
-from ssc_shared.blobstore import BlobStore
-from ssc_shared.canonical import canonical_bytes
+from ssc_shared.blobstore import BlobError, BlobStore
+from ssc_shared.canonical import canonical_bytes, canonical_digest
 
 LOCK_CLASS: Final = 21
 """First key of the org's snapshot advisory lock; the second is ``hashtext(org_id)``."""
@@ -26,6 +28,8 @@ CONTENT_TYPE: Final = "application/json"
 PUT_TIMEOUT_SECONDS: Final = 20.0
 """Bounds how long a publish holds the lock, and so how long a sharing change can wait."""
 POINTER_ATTEMPTS: Final = 5
+_UNVERSIONED: Final = frozenset({"version", "compiled_at"})
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 
 LOCK_SHARED = text("select pg_advisory_xact_lock_shared(:cls, hashtext(:org))")
 _LOCK_TIMEOUT = text("select set_config('lock_timeout', '30s', true)")
@@ -34,12 +38,13 @@ NEXT_VERSION = text(
     "select coalesce(max(version), 0) + 1 from ssc.access_snapshot where org_id = :org"
 )
 _NEWEST = text(
-    "select version, object_key, digest from ssc.access_snapshot where org_id = :org "
-    "order by version desc limit 1"
+    "select version, object_key, digest, content_digest from ssc.access_snapshot "
+    "where org_id = :org order by version desc limit 1"
 )
 _INSERT = text(
-    "insert into ssc.access_snapshot (org_id, version, digest, object_key, compiled_at) "
-    "values (:org, :version, :digest, :key, :at)"
+    "insert into ssc.access_snapshot "
+    "(org_id, version, digest, content_digest, object_key, compiled_at) "
+    "values (:org, :version, :digest, :content, :key, :at)"
 )
 # One statement, so one read snapshot: every grant's environment and user is in the result.
 _READ_ORG = text(
@@ -68,6 +73,13 @@ def latest_key(org_id: str) -> str:
 def document_bytes(doc: SnapshotDoc) -> bytes:
     """The published form: RFC 8785 canonical JSON."""
     return canonical_bytes(doc.model_dump(mode="json"))
+
+
+def content_digest(doc: SnapshotDoc) -> str:
+    """``sha256:`` over the document without ``version`` and ``compiled_at``: equal for two
+    compiles that would decide every request the same way."""
+    body = {k: v for k, v in doc.model_dump(mode="json").items() if k not in _UNVERSIONED}
+    return canonical_digest(body)
 
 
 async def compile_document(
@@ -118,7 +130,14 @@ async def publish(conn: AsyncConnection, org_id: str, blob: BlobStore, *, at: da
         await blob.put(key, body, content_type=CONTENT_TYPE, size=len(body), sha256=sha)
     await conn.execute(
         _INSERT,
-        {"org": org_id, "version": version, "digest": f"sha256:{sha}", "key": key, "at": at},
+        {
+            "org": org_id,
+            "version": version,
+            "digest": f"sha256:{sha}",
+            "content": content_digest(doc),
+            "key": key,
+            "at": at,
+        },
     )
     return version
 
@@ -140,3 +159,24 @@ async def point_latest(engine: AsyncEngine, org_id: str, blob: BlobStore) -> int
         )
         written = version
     return written
+
+
+async def _pointed_version(blob: BlobStore, org_id: str) -> int | None:
+    """The version ``latest.json`` names; None when it is missing or unreadable."""
+    try:
+        raw = b"".join([chunk async for chunk in blob.get(latest_key(org_id))])
+        version = json.loads(raw)["version"]
+    except BlobError, OSError, ValueError, KeyError, TypeError:
+        return None
+    return version if isinstance(version, int) else None
+
+
+async def is_stale(engine: AsyncEngine, org_id: str, blob: BlobStore) -> bool:
+    """True when the org has no published version, when its newest version's content differs
+    from a live compile, or when ``latest.json`` does not name that version."""
+    async with bound_org(engine, org_id) as conn:
+        newest = (await conn.execute(_NEWEST, {"org": org_id})).first()
+        live = await compile_document(conn, org_id, version=0, compiled_at=_EPOCH)
+    if newest is None or newest[3] != content_digest(live):
+        return True
+    return await _pointed_version(blob, org_id) != int(newest[0])

@@ -17,6 +17,9 @@ Revision 0009 adds ``access_snapshot`` and ``snapshot_ack`` (SSC-021), keyed by 
 and by org alone, so both are in ``UNKEYED_TABLES``.
 
 Revision 0010 adds ``build`` (SSC-016), an ordinary org-scoped table.
+
+Revision 0011 adds ``audit_anchor`` (SSC-012), keyed by org and time, append-only like the log,
+so it is in ``UNKEYED_TABLES``.
 """
 
 from collections.abc import Mapping
@@ -50,6 +53,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "access_snapshot",  # SSC-021, revision 0009
         "snapshot_ack",  # SSC-021, revision 0009
         "build",  # SSC-016, revision 0010
+        "audit_anchor",  # SSC-012, revision 0011
     }
 )
 
@@ -67,6 +71,7 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "idempotency_claim",
         "access_snapshot",
         "snapshot_ack",
+        "audit_anchor",
     }
 )
 
@@ -108,6 +113,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "access_snapshot": frozenset({"SELECT", "INSERT"}),  # a published version never changes
     "snapshot_ack": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "build": frozenset({"SELECT", "INSERT", "UPDATE"}),  # queued -> running -> done, never DELETE
+    "audit_anchor": frozenset({"SELECT", "INSERT"}),  # append-only, like the log
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

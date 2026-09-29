@@ -26,8 +26,7 @@ _UPSERT_ACK = text(
 )
 _CONFIRMED = text(
     "select 1 from ssc.snapshot_ack k join ssc.org o on o.id = k.org_id "
-    "where k.org_id = :org and k.version >= :version "
-    "and (o.cell_label is null or o.cell_label = k.cell_label)"
+    "where k.org_id = :org and k.version >= :version and o.cell_label = k.cell_label"
 )
 
 

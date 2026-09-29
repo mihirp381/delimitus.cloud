@@ -46,10 +46,10 @@ class HeartbeatAck(BaseModel):
     responses=problem_responses(*POST_COMMON, ErrorCode.FORBIDDEN, ErrorCode.REFERENCE_NOT_FOUND),
 )
 async def heartbeat(body: Heartbeat, uow: InternalUoW) -> Response:
-    """``FORBIDDEN`` when the org has a cell and it is not this one; ``REFERENCE_NOT_FOUND``
-    for a snapshot version that was never published."""
+    """``FORBIDDEN`` when the cell label is not the org's; ``REFERENCE_NOT_FOUND`` for a
+    snapshot version that was never published."""
     label = (await uow.conn.execute(_CELL_LABEL, {"org": uow.org_id})).scalar_one()
-    if label is not None and label != body.cell_label:
+    if label != body.cell_label:
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "not_the_org_cell"})
     if body.snapshot_version:
         await record_ack(

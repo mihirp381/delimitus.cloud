@@ -31,6 +31,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from procrastinate import App, PsycopgConnector
 from psycopg.rows import dict_row
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
 
@@ -62,6 +63,7 @@ from ssc_shared.clock import SystemClock
 
 REPO = Path(__file__).resolve().parents[3]
 CELL = "cellabcd"
+"""Never a generated label: those are consonants only."""
 
 
 # ── the world ────────────────────────────────────────────────────────────────
@@ -723,6 +725,76 @@ async def test_the_worker_compiles_and_moves_latest(dsns: Dsns, tmp_path: Path) 
     assert COMPILE_TASK in build_app(app_dsn).tasks
 
 
+async def run_snapshot_worker(app_dsn: str, ports: Ports, *, sweep: bool) -> None:
+    """One worker pass over the queue, after deferring a sweep when ``sweep``."""
+    app = App(connector=PsycopgConnector(conninfo=queue_conninfo(app_dsn)))
+    app.add_tasks_from(snapshot_jobs.blueprint(), namespace="snapshot")
+    async with app.open_async():
+        if sweep:
+            now = int(datetime.now(UTC).timestamp())
+            await app.configure_task("snapshot:stale_sweep").defer_async(timestamp=now)
+        await app.run_worker_async(
+            additional_context={PORTS_KEY: ports}, wait=False, install_signal_handlers=False
+        )
+
+
+def compile_jobs(superuser_dsn: str) -> list[tuple[str, str]]:
+    with psycopg.connect(superuser_dsn) as conn:
+        return [
+            (str(org), str(status))
+            for org, status in conn.execute(
+                "select args->>'org_id', status from procrastinate.procrastinate_jobs "
+                "where task_name = %s order by 1, 2",
+                (COMPILE_TASK,),
+            )
+        ]
+
+
+async def test_the_sweep_recompiles_only_the_snapshots_that_lag(dsns: Dsns, tmp_path: Path) -> None:
+    name = f"s{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database {name} owner {MIGRATE_ROLE}")
+    at = {
+        r: make_url(d).set(database=name).render_as_string(hide_password=False)
+        for r, d in (("app", dsns.app), ("migrate", dsns.migrate), ("superuser", dsns.superuser))
+    }
+    await asyncio.to_thread(upgrade, at["migrate"])
+    current, never, behind, drifted = [
+        (await asyncio.to_thread(new_org, at["app"]))[0] for _ in range(4)
+    ]
+    blob = blob_store(tmp_path)
+    for org in (current, behind, drifted):
+        await publish_now(at["app"], org, blob)
+    engine = make_engine(at["app"])
+    try:
+        async with bound_org(engine, behind) as conn:  # v2 committed, its pointer never moved
+            await publish(conn, behind, blob, at=datetime.now(UTC))
+        async with bound_org(engine, drifted) as conn:  # a change that skipped mark_dirty
+            await conn.execute(
+                text(
+                    "insert into ssc.user_account (id, org_id, display_name, email, role) "
+                    "values (:id, :org, 'New Hire', 'new@example.com', 'member')"
+                ),
+                {"id": new_id("usr"), "org": drifted},
+            )
+        # With no blob store the sweep marks nothing, and a compile does nothing but succeed.
+        async with bound_org(engine, never) as conn:
+            await mark_dirty(conn, never)
+        await run_snapshot_worker(at["app"], Ports(engine=engine), sweep=True)
+        assert compile_jobs(at["superuser"]) == [(never, "succeeded")]
+        await run_snapshot_worker(at["app"], Ports(engine=engine, blob_store=blob), sweep=True)
+    finally:
+        await engine.dispose()
+    assert compile_jobs(at["superuser"]) == sorted(
+        [(never, "succeeded"), (never, "succeeded"), (behind, "succeeded"), (drifted, "succeeded")]
+    )
+    pointers = {
+        org: json.loads(await read_blob(blob, latest_key(org)))["version"]
+        for org in (current, never, behind, drifted)
+    }
+    assert pointers == {current: 1, never: 1, behind: 3, drifted: 2}
+
+
 def heartbeat(client: TestClient, w: World, cell: str, version: int | None) -> Response:
     return client.post(
         "/internal/v1/heartbeat",
@@ -741,16 +813,21 @@ def test_heartbeats_acknowledge_published_versions(
         finally:
             await engine.dispose()
 
+    with psycopg.connect(dsns.superuser) as conn:
+        row = conn.execute("select cell_label from ssc.org where id = %s", (world.org,)).fetchone()
+    assert row is not None
+    label = row[0]
     assert asyncio.run(confirmed(1)) is False
     version, _ = asyncio.run(publish_now(dsns.app, world.org, blob_store(tmp_path)))
-    assert_problem(heartbeat(client, world, CELL, version + 5), ErrorCode.REFERENCE_NOT_FOUND)
-    assert heartbeat(client, world, CELL, version).status_code == 200
+    assert_problem(heartbeat(client, world, label, version + 5), ErrorCode.REFERENCE_NOT_FOUND)
+    assert heartbeat(client, world, label, version).status_code == 200
     assert asyncio.run(confirmed(version)) is True
     assert asyncio.run(confirmed(version + 1)) is False
-    # Once the org has its cell, another cell's heartbeat is refused and its ack does not count.
+    # Another cell's heartbeat is refused; once the org moves to another cell, the old ack does
+    # not count until the new cell reports.
+    assert_problem(heartbeat(client, world, CELL, version), ErrorCode.FORBIDDEN)
     with psycopg.connect(dsns.superuser) as conn:
         conn.execute("update ssc.org set cell_label = 'cellwxyz' where id = %s", (world.org,))
-    assert_problem(heartbeat(client, world, CELL, version), ErrorCode.FORBIDDEN)
     assert asyncio.run(confirmed(version)) is False
     assert heartbeat(client, world, "cellwxyz", version).status_code == 200
     assert asyncio.run(confirmed(version)) is True

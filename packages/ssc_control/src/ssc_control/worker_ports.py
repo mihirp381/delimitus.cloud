@@ -40,8 +40,8 @@ def _utcnow() -> datetime:
 class Ports:
     """``runtime_driver`` None means no runtime is configured: the reconciler defers nothing
     and deployments fail with ``RUNTIME_UNAVAILABLE``. ``build_driver`` None fails builds with
-    ``BUILD_DRIVER_UNAVAILABLE``. ``blob_store`` None until the first lane that stores blobs from
-    a job wires one (A1b)."""
+    ``BUILD_DRIVER_UNAVAILABLE``. ``blob_store`` None means ``SSC_BLOB_BACKEND=none``: the
+    snapshot and anchor ticks defer nothing and a compile does nothing."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None

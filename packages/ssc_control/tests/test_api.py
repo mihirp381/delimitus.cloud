@@ -243,15 +243,12 @@ def test_user_credential_is_forbidden_on_internal(world: World) -> None:
 
 def test_internal_heartbeat_for_a_workload(world: World) -> None:
     headers = auth(world.workload_token, **{IDEMPOTENCY_HEADER: new_key()})
-    r = world.client.post(
-        "/internal/v1/heartbeat", json={"cell_label": "cellabcd"}, headers=headers
-    )
+    body = {"cell_label": world.org.cell_label}
+    r = world.client.post("/internal/v1/heartbeat", json=body, headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["acknowledged"] is True
     assert r.json()["org_id"] == world.org.org_id
-    again = world.client.post(
-        "/internal/v1/heartbeat", json={"cell_label": "cellabcd"}, headers=headers
-    )
+    again = world.client.post("/internal/v1/heartbeat", json=body, headers=headers)
     assert again.headers[REPLAYED_HEADER] == "true"
     assert again.content == r.content
 

@@ -40,6 +40,7 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
         {"name", "cron", "timezone", "path", "method", "timeout_seconds", "state", "pause_reason"}
     ),
     "audit": frozenset({"format", "filters"}),
+    "audit_anchor": frozenset({"restored_to", "prior_anchor_seq", "head_seq", "ref"}),
     "org": frozenset({"name"}),
     "bundle": frozenset(
         {"app_id", "digest", "size_bytes", "file_count", "manifest_digest", "source_commit"}
