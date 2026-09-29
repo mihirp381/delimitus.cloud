@@ -151,17 +151,49 @@ stateless, JSON replies. Code: `api/mcp/`.
   own. Every change is audited with `via_agent` and the credential's `client_id`, which is also
   the source tool of any metrics event it records (SSC-028). The inner calls carry the MCP
   request's `X-Request-Id`.
-- **Tools, phase 1.** `list_apps`; `get_app(app)`; `get_status(app, operation?)` (the app, the
-  operation behind each environment's current release, and optionally one operation);
-  `rollback(app, release, env, idempotency_key?)` (a `kind: rollback` deployment; returns the
-  operation and the key to retry with). `app` is an `app_` id or a slug, as for `ssc`.
+- **Tools.** `TOOLS` in `api/mcp/tools.py` is the allowlist; `app` is an `app_` id or a slug,
+  as for `ssc`. Writes take an optional `idempotency_key` (a new one when absent) and return it.
+  - `list_apps`; `get_app(app)`; `list_releases(app, limit?, before?)` (the releases page as is).
+  - `get_status(app, operation?, build?)`: the app, the operation behind each environment's
+    current release, and optionally one operation (`GET /v1/operations/{id}`) or one build
+    (`GET /v1/builds/{id}`).
+  - `rollback(app, release, env)`: a `kind: rollback` deployment; returns the operation.
+  - `deploy(app, bundle_digest?, size_bytes?)`, preview only, one step per call; the agent calls
+    again with the same arguments and key and gets a `stage` and a `next` line. No digest:
+    `pack` (the archive rules and the `SSC_BUNDLE_MAX_*` limits). Digest without `size_bytes`:
+    `VALIDATION_FAILED` with `status: null`. A release built from the digest for preview, or by
+    no build, found by walking the releases: `live` when preview's current operation runs it
+    and is healthy, else a `kind: deploy` deployment (`deploying`); a release built for prod is
+    never used. No release: `POST .../bundles` then `complete`, each with a fresh key (a
+    replayed answer would carry an expired URL); `BUNDLE_NOT_UPLOADED` gives `upload` with the
+    signed PUT target; a stored bundle is built on preview (`building` with the build id, or
+    null on `BUILD_IN_FLIGHT`). Build and deployment POSTs use `<step>-<sha256(key)>`, so a
+    repeat replays the same build or operation. A remote server cannot read a laptop: the
+    agent packs and PUTs the bytes itself. There is no address yet: environments have no URL
+    field, so `deploying` and `live` carry the operation.
+  - `request_share(app, env, who, role?)`: `who` is a `usr_` or `grp_` id or `org`; `role`
+    defaults to the floor (`user` on prod, `builder` on preview). A grant below the floor is
+    `VALIDATION_FAILED` with `status: null`; a subject that already has the role asks nothing
+    (`requested: false`). Otherwise it reads the grants and opens an `agent_share` request
+    (`POST /v1/approvals`) for them with the subject's grant set to the role, re-reading on
+    `PRECONDITION_STALE` (three tries). It never writes grants. The answer lists
+    `not_requested: ["widen_audience"]`: applying the change asks for that when the app is
+    data-connected.
+  - `request_connection(app, connection)`: a `connect_data_source` request on prod; the server
+    validates the name.
+  - Asking opens a pending request only; another active admin of the org approves (decision
+    016, founder default D2) and SSC staff record it. The change is applied afterwards by
+    `ssc share` or `PUT .../grants` at the recorded `grants_version`.
+  - Reads are not audited (as for `ssc`). Every write is, with `via_agent` and `client_id`:
+    the bundle row, the build and `build.started`, the deployment and `deploy.started` or
+    `rollback.started`, and `approval.requested`.
 - **Refusals** are tool results with `isError: true` and structured content `{"error": {...}}`:
-  the problem's seven members for an API refusal, or `APP_NOT_FOUND` / `ENVIRONMENT_NOT_FOUND`
-  with `status: null` for one found before calling the API (the same shape as `ssc --json`).
+  the problem's seven members for an API refusal, or `APP_NOT_FOUND`, `ENVIRONMENT_NOT_FOUND`
+  or `VALIDATION_FAILED` with `status: null` for one found before calling the API (the same
+  shape as `ssc --json`).
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
-  step), secrets (SSC-026), logs (SSC-024), connections (SSC-050/051). Next (C5b):
-  `request_share` and `request_connection` through the same `/v1` paths, so an agent's sharing
-  change answers `202` and waits for another admin; `deploy`; and a local `ssc mcp`.
+  step), secrets (SSC-026), logs (SSC-024), connections (SSC-050/051). Local `ssc mcp`, which
+  packs and uploads a folder itself, is lane C's.
 - **Wiring.** The SDK's routes are added to the FastAPI router rather than mounted (no
   trailing-slash redirect, metadata at the root); they are not in `openapi.json`. The session
   manager runs in the application's lifespan. `SSC_API_PUBLIC_URL` (default

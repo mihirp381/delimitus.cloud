@@ -25,9 +25,12 @@ from ssc_control.api.runtime import Runtime
 
 MCP_PATH: Final = "/mcp"
 INSTRUCTIONS: Final = (
-    "Small Software Cloud: see the apps in your org, what each environment runs, and roll an "
-    "environment back to an earlier release. Every call is recorded as made by your agent on "
-    "behalf of the person whose credential it holds."
+    "Small Software Cloud: see the apps in your org, their releases and what each environment "
+    "runs; deploy a folder to preview (call deploy with the same arguments after each step "
+    "until it is live); roll an environment back; and ask for sharing or a data connection. "
+    "Asking only opens an approval request: another admin of the org decides, never you. "
+    "Deploy never targets prod. Every call is recorded as made by your agent on behalf of the "
+    "person whose credential it holds."
 )
 
 
@@ -61,7 +64,7 @@ def build_mcp(rt: Runtime, api: FastAPI) -> MCPServer:
                 }
             ),
         )
-    register(server, api)
+    register(server, api, s)
     return server
 
 

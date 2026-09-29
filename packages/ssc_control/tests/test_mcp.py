@@ -1,21 +1,30 @@
-"""SSC-048 phase 1: the agent interface, through an MCP client over streamable HTTP against the
-real API served by uvicorn on a free port, backed by postgres:18.
+"""SSC-048: the agent interface, through an MCP client over streamable HTTP against the real API
+served by uvicorn on a free port, backed by postgres:18.
 
-Ticket "done when" checks in this phase:
-  * every call records agent and client id         -> test_mutations_audited_as_agent
-  * nothing can be approved from an agent session  -> test_no_approve_path
-Plus: only agent credentials get in, the tool set is the phase allowlist, both protocol eras
-work, refusals are tool errors carrying the problem, rate limits are per credential, and the
-OpenAPI file is unchanged. Deferred: request_share (whose pending half completes the approval
-check), deploy and local `ssc mcp` (C5b); logs (SSC-024).
+Ticket "done when" checks:
+  * a folder deploys through the interface          -> test_deploy_to_preview (stages pack,
+    upload, building, deploying; the address is the preview environment, since the API has no
+    URL field yet)
+  * a share request from an agent is pending and cannot be approved from the same session
+                                                     -> test_request_share_pending,
+                                                        test_no_approve_path
+  * every call records agent and client id           -> test_mutations_audited_as_agent,
+                                                        test_deploy_to_preview,
+                                                        test_request_share_pending
+Plus: only agent credentials get in, the tool set is the allowlist, both protocol eras work,
+refusals are tool errors carrying the problem, rate limits are per credential, and the OpenAPI
+file is unchanged. Deferred: local `ssc mcp` (lane C), logs (SSC-024).
 """
 
 from __future__ import annotations
 
+import gzip
 import hashlib
+import io
 import json
 import logging
 import socket
+import tarfile
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -34,12 +43,28 @@ from ssc_testkit import ISSUER, Dsns, SigningKey, make_org, mint, new_key
 
 from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
+from ssc_control.api.mcp import tools
+from ssc_control.api.mcp.tools import TOOLS
 from ssc_control.api.openapi import build_spec, spec_json
 from ssc_control.api.settings import INTERNAL_AUDIENCE, USER_AUDIENCE
-from ssc_control.db import CreatedOrg, bind_org_sync
+from ssc_control.db import CreatedOrg, bind_org_sync, make_engine
+from ssc_control.deploy.build_driver import FakeBuildDriver
+from ssc_control.deploy.builds import run_build
+from ssc_control.worker_ports import Ports
+from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
+from ssc_shared.clock import SystemClock
 
 SPEC = Path(__file__).resolve().parents[3] / "docs" / "api" / "openapi.json"
-PHASE_1_TOOLS = {"list_apps", "get_app", "get_status", "rollback"}
+ALLOWLIST = {
+    "list_apps",
+    "get_app",
+    "get_status",
+    "list_releases",
+    "rollback",
+    "deploy",
+    "request_share",
+    "request_connection",
+}
 CLIENT_ID = "claude-code"
 JSONRPC_HEADERS = {
     "Accept": "application/json, text/event-stream",
@@ -70,17 +95,55 @@ def add_release(dsn: str, org: str, app: str) -> str:
     return rid
 
 
+def add_account(dsn: str, org: str, role: str) -> str:
+    uid = new_id("usr")
+    rows(
+        dsn,
+        org,
+        "insert into ssc.user_account (id, org_id, display_name, email, role, status) "
+        "values (%s, %s, 'Some One', 'someone@example.com', %s, 'active') returning id",
+        (uid, org, role),
+    )
+    return uid
+
+
+def add_grant(dsn: str, org: str, env: str, user: str, role: str, by: str) -> None:
+    rows(
+        dsn,
+        org,
+        "insert into ssc.app_grant (id, org_id, environment_id, role, subject_kind, user_id, "
+        "granted_by_user_id) values (%s, %s, %s, %s, 'user', %s, %s) returning id",
+        (new_id("gnt"), org, env, role, user, by),
+    )
+
+
+def tar_gz(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for name, data in sorted(files.items()):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), 0o644
+            tar.addfile(info, io.BytesIO(data))
+    return gzip.compress(buf.getvalue(), mtime=0)
+
+
 # ── the live server ──────────────────────────────────────────────────────────
 
 
 @contextmanager
-def serving(settings_for: Callable[[str], Settings]) -> Iterator[str]:
-    """``create_app`` under uvicorn on a free port, in a thread; yields its base URL."""
+def serving(settings_for: Callable[[str], Settings], blobs: Path | None = None) -> Iterator[str]:
+    """``create_app`` under uvicorn on a free port, in a thread; yields its base URL. With
+    ``blobs``, bundles go to a filesystem store there, served at ``<url>/blobs``."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     sock.listen(128)
     url = f"http://127.0.0.1:{sock.getsockname()[1]}"
-    server = uvicorn.Server(uvicorn.Config(create_app(settings_for(url)), log_level="warning"))
+    store = None
+    if blobs is not None:
+        signer = UrlSigner({"k1": b"k" * 32}, active="k1", clock=SystemClock())
+        store = FsBlobStore(blobs, signer=signer, base_url=f"{url}/blobs")
+    app = create_app(settings_for(url), None, store)
+    server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     deadline = time.monotonic() + 15
@@ -107,6 +170,7 @@ def settings(
             rate_capacity=capacity,
             rate_refill_per_second=refill,
             public_url=url,
+            environment="test",
         )
 
     return build
@@ -129,13 +193,16 @@ class World:
 
 
 @pytest.fixture(scope="module")
-def world(dsns: Dsns, signing_key: SigningKey) -> Iterator[World]:
+def world(
+    dsns: Dsns, signing_key: SigningKey, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[World]:
     org = make_org(dsns.app, "MCP org")
     human = mint(signing_key, org=org.org_id, sub=org.admin_user_id)
     agent = mint(
         signing_key, org=org.org_id, sub=org.admin_user_id, agent=True, client_id=CLIENT_ID
     )
-    with serving(settings(dsns, signing_key, 1000, 1000.0)) as url:
+    blobs = tmp_path_factory.mktemp("blobs")
+    with serving(settings(dsns, signing_key, 1000, 1000.0), blobs) as url:
         r = httpx2.post(
             f"{url}/v1/apps",
             json={"slug": "mcp-app"},
@@ -174,17 +241,19 @@ def rpc_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 # ── tool surface ─────────────────────────────────────────────────────────────
 
 
-async def test_tool_set_is_the_phase_allowlist(world: World) -> None:
+async def test_tool_set_is_the_allowlist(world: World) -> None:
     async with session(world.url, world.agent) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    assert set(tools) == PHASE_1_TOOLS
-    for name in ("list_apps", "get_app", "get_status"):
+    assert set(tools) == ALLOWLIST == set(TOOLS)
+    for name in ("list_apps", "get_app", "get_status", "list_releases"):
         assert tools[name].annotations is not None
         assert tools[name].annotations.read_only_hint is True
-    rollback = tools["rollback"].annotations
-    assert rollback is not None
-    assert rollback.destructive_hint is True
-    assert rollback.read_only_hint is False
+    for name in ("rollback", "deploy", "request_share", "request_connection"):
+        assert tools[name].annotations is not None
+        assert tools[name].annotations.read_only_hint is False
+    for name in ("rollback", "deploy"):
+        assert tools[name].annotations is not None
+        assert tools[name].annotations.destructive_hint is True
 
 
 @pytest.mark.parametrize("mode", ["auto", "2026-07-28", "legacy"])
@@ -432,6 +501,283 @@ async def test_no_approve_path(world: World) -> None:
         (asked.json()["id"],),
     )
     assert state == [("pending",)]
+
+    approver = add_account(world.dsns.app, world.org.org_id, "admin")
+    approved = post(path, operator, {**decision, "approver_user_id": approver})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["state"] == "approved"
+    assert approved.json()["decided_by_user_id"] == approver
+    assert approved.json()["requested_by_user_id"] == world.org.admin_user_id
+
+
+# ── asking: sharing and connections only open approval requests ─────────────
+
+
+def grants_of(world: World, env: str) -> dict[str, Any]:
+    r = httpx2.get(
+        f"{world.url}/v1/apps/{world.app['id']}/environments/{env}/grants",
+        headers={"Authorization": f"Bearer {world.human}"},
+    )
+    assert r.status_code == 200, r.text
+    body: dict[str, Any] = r.json()
+    return body
+
+
+async def test_request_share_pending(world: World) -> None:
+    prod = env_id(world.app, "prod")
+    member = add_account(world.dsns.app, world.org.org_id, "member")
+    before = grants_of(world, prod)
+    args = {"app": "mcp-app", "env": "prod", "who": member}
+    async with session(world.url, world.agent) as client:
+        asked = await client.call_tool("request_share", args)
+        again = await client.call_tool("request_share", args)
+
+    assert not asked.is_error, asked.content
+    out = asked.structured_content
+    approval = out["approval"]
+    assert out["requested"] is True
+    assert out["created"] is True
+    assert out["not_requested"] == ["widen_audience"]
+    assert out["grants_version"] == before["grants_version"]
+    assert approval["state"] == "pending"
+    assert approval["kind"] == "agent_share"
+    assert approval["environment_id"] == prod
+    assert approval["requested_via_agent"] is True
+    assert approval["requested_by_user_id"] == world.org.admin_user_id
+    wanted = {"role": "user", "subject_kind": "user", "subject_id": member}
+    assert approval["payload"] == {
+        "grants_version": before["grants_version"],
+        "grants": [*({k: g[k] for k in wanted} for g in before["grants"]), wanted],
+    }
+    assert again.structured_content["approval"]["id"] == approval["id"]
+    assert again.structured_content["created"] is False
+    assert grants_of(world, prod) == before
+
+    audit = rows(
+        world.dsns.app,
+        world.org.org_id,
+        "select action, actor_kind, actor_id, actor_via_agent, actor_client_id "
+        "from ssc.audit_event where target_id = %s",
+        (approval["id"],),
+    )
+    assert audit == [
+        ("approval.requested", "user", world.org.admin_user_id, True, CLIENT_ID),
+    ]
+
+
+async def test_request_share_refused_or_not_needed(world: World) -> None:
+    prod = env_id(world.app, "prod")
+    member = add_account(world.dsns.app, world.org.org_id, "member")
+    add_grant(world.dsns.app, world.org.org_id, prod, member, "user", world.org.admin_user_id)
+    before = grants_of(world, prod)
+    async with session(world.url, world.agent) as client:
+        floor = await client.call_tool(
+            "request_share", {"app": "mcp-app", "env": "preview", "who": member, "role": "user"}
+        )
+        same = await client.call_tool(
+            "request_share", {"app": "mcp-app", "env": "prod", "who": member}
+        )
+        wider = await client.call_tool(
+            "request_share", {"app": "mcp-app", "env": "prod", "who": member, "role": "builder"}
+        )
+
+    assert floor.is_error
+    assert floor.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert floor.structured_content["error"]["status"] is None
+    assert same.structured_content == {
+        "requested": False,
+        "environment_id": prod,
+        "grants_version": before["grants_version"],
+        "next": same.structured_content["next"],
+    }
+    grants = wider.structured_content["approval"]["payload"]["grants"]
+    mine = [g for g in grants if g["subject_id"] == member]
+    assert mine == [{"role": "builder", "subject_kind": "user", "subject_id": member}]
+    assert grants_of(world, prod) == before
+
+
+async def test_request_share_rereads_moved_grants(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prod = env_id(world.app, "prod")
+    member = add_account(world.dsns.app, world.org.org_id, "member")
+    version = grants_of(world, prod)["grants_version"]
+    real, moved = tools.V1.post, []
+
+    async def post(self: tools.V1, path: str, body: dict[str, Any], key: str) -> httpx2.Response:
+        if path == "/v1/approvals" and not moved:
+            moved.append(path)
+            rows(
+                world.dsns.app,
+                world.org.org_id,
+                "update ssc.environment set grants_version = grants_version + 1 where id = %s "
+                "returning id",
+                (prod,),
+            )
+        return await real(self, path, body, key)
+
+    monkeypatch.setattr(tools.V1, "post", post)
+    async with session(world.url, world.agent) as client:
+        asked = await client.call_tool(
+            "request_share", {"app": "mcp-app", "env": "prod", "who": member}
+        )
+    assert not asked.is_error, asked.content
+    assert moved
+    assert asked.structured_content["grants_version"] == version + 1
+    assert asked.structured_content["approval"]["payload"]["grants_version"] == version + 1
+
+
+async def test_request_connection(world: World) -> None:
+    async with session(world.url, world.agent) as client:
+        asked = await client.call_tool(
+            "request_connection", {"app": "mcp-app", "connection": "ledger-db"}
+        )
+        bad = await client.call_tool(
+            "request_connection", {"app": world.app["id"], "connection": "Ledger DB"}
+        )
+
+    assert not asked.is_error, asked.content
+    approval = asked.structured_content["approval"]
+    assert approval["kind"] == "connect_data_source"
+    assert approval["environment_id"] == env_id(world.app, "prod")
+    assert approval["subject_key"] == "ledger-db"
+    assert approval["state"] == "pending"
+    assert approval["requested_via_agent"] is True
+    assert bad.is_error
+    assert bad.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert bad.structured_content["error"]["status"] is not None
+
+
+# ── releases and deploy ──────────────────────────────────────────────────────
+
+
+async def test_list_releases(world: World) -> None:
+    async with session(world.url, world.agent) as client:
+        listed = await client.call_tool("list_releases", {"app": "mcp-app"})
+        one = await client.call_tool("list_releases", {"app": "mcp-app", "limit": 1})
+    assert not listed.is_error, listed.content
+    ids = [r["release_id"] for r in listed.structured_content["items"]]
+    assert world.release in ids
+    assert len(one.structured_content["items"]) == 1
+
+
+async def test_deploy_needs_size(world: World) -> None:
+    async with session(world.url, world.agent) as client:
+        r = await client.call_tool(
+            "deploy", {"app": "mcp-app", "bundle_digest": "sha256:" + "0" * 64}
+        )
+    assert r.is_error
+    assert r.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert r.structured_content["error"]["status"] is None
+
+
+async def test_deploy_to_preview(world: World) -> None:
+    org = world.org.org_id
+    preview, prod = env_id(world.app, "preview"), env_id(world.app, "prod")
+    data = tar_gz({"ssc.toml": b'schema = "ssc/v1"\n', "index.html": b"<p>hello</p>\n"})
+    digest = "sha256:" + hashlib.sha256(data).hexdigest()
+
+    async with session(world.url, world.agent) as client:
+        pack = await client.call_tool("deploy", {"app": "mcp-app"})
+        assert not pack.is_error, pack.content
+        assert pack.structured_content["stage"] == "pack"
+        assert pack.structured_content["bundle"]["max_bytes"] == 100 * 1024 * 1024
+        key = pack.structured_content["idempotency_key"]
+        args = {"app": "mcp-app", "bundle_digest": digest, "size_bytes": len(data)}
+        args["idempotency_key"] = key
+
+        upload = await client.call_tool("deploy", args)
+        assert upload.structured_content["stage"] == "upload", upload.content
+        target = upload.structured_content["upload"]
+        put = httpx2.put(target["url"], content=data, headers=target["headers"])
+        assert put.is_success, put.text
+
+        building = await client.call_tool("deploy", args)
+        assert building.structured_content["stage"] == "building", building.content
+        build = building.structured_content["build_id"]
+        assert build is not None
+        rebuilding = await client.call_tool("deploy", args)
+        assert rebuilding.structured_content["build_id"] == build
+        other = await client.call_tool("deploy", {**args, "idempotency_key": new_key()})
+        assert other.structured_content["stage"] == "building", other.content
+        assert other.structured_content["build_id"] is None
+
+        engine = make_engine(world.dsns.app)
+        try:
+            ports = Ports(engine=engine, build_driver=FakeBuildDriver())
+            assert await run_build(ports, org_id=org, build_id=build) == "succeeded"
+            # The same bundle built for prod: a newer release preview must not run.
+            prod_build = httpx2.post(
+                f"{world.url}/v1/apps/{world.app['id']}/environments/{prod}/builds",
+                json={"bundle_id": building.structured_content["bundle_id"]},
+                headers={"Authorization": f"Bearer {world.human}", "Idempotency-Key": new_key()},
+            )
+            assert prod_build.status_code == 202, prod_build.text
+            prod_id = prod_build.json()["build_id"]
+            assert await run_build(ports, org_id=org, build_id=prod_id) == "succeeded"
+        finally:
+            await engine.dispose()
+
+        status = await client.call_tool("get_status", {"app": "mcp-app", "build": build})
+        built = status.structured_content["build"]
+        assert built["state"] == "succeeded"
+
+        deploying = await client.call_tool("deploy", args)
+        replayed = await client.call_tool("deploy", args)
+        op = deploying.structured_content["operation_id"]
+        # What the deploy job does once the release is up.
+        rows(
+            world.dsns.app,
+            org,
+            "update ssc.deployment set state = 'healthy', finished_at = now() where id = %s "
+            "returning id",
+            (op,),
+        )
+        rows(
+            world.dsns.app,
+            org,
+            "update ssc.environment set current_deployment_id = %s where id = %s returning id",
+            (op, preview),
+        )
+        live = await client.call_tool("deploy", args)
+
+    out = deploying.structured_content
+    assert out["stage"] == "deploying", deploying.content
+    assert out["release"]["release_id"] == built["release_id"]
+    assert out["release"]["built_for_environment_id"] == preview
+    assert out["location"] == f"/v1/operations/{op}"
+    assert replayed.structured_content == out
+    assert live.structured_content["stage"] == "live"
+    assert live.structured_content["operation"]["operation_id"] == op
+    assert live.structured_content["operation"]["state"] == "healthy"
+
+    bundle = rows(
+        world.dsns.app,
+        org,
+        "select state, actor_via_agent, actor_client_id from ssc.bundle where digest = %s",
+        (digest,),
+    )
+    assert bundle == [("stored", True, CLIENT_ID)]
+    deployment = rows(
+        world.dsns.app,
+        org,
+        "select kind, environment_id, release_id, actor_via_agent, actor_client_id "
+        "from ssc.deployment where id = %s",
+        (op,),
+    )
+    assert deployment == [("deploy", preview, built["release_id"], True, CLIENT_ID)]
+    audit = rows(
+        world.dsns.app,
+        org,
+        "select action, actor_via_agent, actor_client_id from ssc.audit_event "
+        "where target_id in (%s, %s, %s) order by action",
+        (build, op, building.structured_content["bundle_id"]),
+    )
+    assert audit == [
+        ("build.started", True, CLIENT_ID),
+        ("bundle.stored", True, CLIENT_ID),
+        ("deploy.started", True, CLIENT_ID),
+    ]
 
 
 # ── contract ─────────────────────────────────────────────────────────────────
