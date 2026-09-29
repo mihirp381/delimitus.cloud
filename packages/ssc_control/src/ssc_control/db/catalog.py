@@ -2,6 +2,9 @@
 
 Adding a table, a PL/pgSQL function, a privilege or a personal-data column means changing this
 file in the same change, which is the point: none of those can be added by forgetting.
+
+Nineteen tables after revision 0002: the eighteen of SSC-010 plus ``idempotency_claim``
+(SSC-011), which is keyed by ``(org_id, credential_id, key)`` and therefore in ``UNKEYED_TABLES``.
 """
 
 from collections.abc import Mapping
@@ -30,7 +33,13 @@ TABLES: Final[frozenset[str]] = frozenset(
         "audit_event",
         "audit_head",
         "metrics_event",
+        "idempotency_claim",  # SSC-011, revision 0002
     }
+)
+
+# Tables keyed by something other than a type-prefixed id; they have no (org_id, id) pair.
+UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
+    {"group_member", "audit_event", "audit_head", "metrics_event", "idempotency_claim"}
 )
 
 # The bounded PL/pgSQL exemption from the Python rule. Listed and explained in PLPGSQL.md.
@@ -66,6 +75,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "audit_event": frozenset({"SELECT", "INSERT"}),
     "audit_head": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "metrics_event": frozenset({"SELECT", "INSERT"}),
+    "idempotency_claim": frozenset({"SELECT", "INSERT", "UPDATE"}),
 }
 
 # Personal data, by (table, column). Explained in PII.md. Any column with one of the names in

@@ -40,6 +40,7 @@ GATES = {
     "pytest": lambda: run([PY, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", str(FX / "pytest"), str(FX / "pytest")]),
     "hypothesis": lambda: run([PY, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", str(FX / "hypothesis"), str(FX / "hypothesis")]),
     "lock-age": lambda: run([PY, str(ROOT / "tools" / "lock_age_check.py"), str(FX / "lockage" / "uv.lock"), str(FX / "lockage" / "none.toml")]),
+    "openapi-breaking": lambda: run([PY, str(ROOT / "tools" / "openapi_breaking.py"), str(FX / "openapi" / "old.json"), str(FX / "openapi" / "new.json")]),
     "gitleaks": lambda: run(["gitleaks", "detect", "--no-git", "--source", str(FX / "gitleaks"), "--exit-code", "1", "--no-banner"]) if shutil.which("gitleaks") else None,
 }
 

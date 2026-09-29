@@ -1,0 +1,48 @@
+"""API settings: a frozen dataclass read once from the environment. No framework, no magic."""
+
+import json
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Final
+
+USER_AUDIENCE: Final = "https://api.delimitus.com"
+INTERNAL_AUDIENCE: Final = "https://api.delimitus.com/internal"
+
+
+@dataclass(frozen=True, slots=True)
+class Settings:
+    database_dsn: str
+    """DSN of the control database, authenticating as ``ssc_app`` (never the migrator)."""
+    jwks: Mapping[str, Any]
+    """Public keys that API credentials are signed with: ``{"keys": [...]}``."""
+    issuer: str
+    """Expected ``iss`` of every API credential."""
+    user_audience: str = USER_AUDIENCE
+    internal_audience: str = INTERNAL_AUDIENCE
+    rate_capacity: int = 60
+    """Requests a credential may burst before waiting."""
+    rate_refill_per_second: float = 1.0
+    max_body_bytes: int = 1_048_576
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
+        e = os.environ if env is None else env
+        return cls(
+            database_dsn=e["SSC_DATABASE_DSN"],
+            jwks=json.loads(e["SSC_API_JWKS"]),
+            issuer=e["SSC_API_ISSUER"],
+            user_audience=e.get("SSC_API_USER_AUDIENCE", USER_AUDIENCE),
+            internal_audience=e.get("SSC_API_INTERNAL_AUDIENCE", INTERNAL_AUDIENCE),
+            rate_capacity=int(e.get("SSC_API_RATE_CAPACITY", "60")),
+            rate_refill_per_second=float(e.get("SSC_API_RATE_REFILL_PER_SECOND", "1.0")),
+        )
+
+    @classmethod
+    def for_spec(cls) -> Settings:
+        """Enough to build the app and its OpenAPI document. Never connects to anything."""
+        return cls(
+            database_dsn="postgresql://ssc_app@localhost/ssc",
+            jwks={"keys": []},
+            issuer="https://auth.delimitus.com",
+        )

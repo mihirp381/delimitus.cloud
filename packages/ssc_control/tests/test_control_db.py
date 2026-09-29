@@ -322,7 +322,7 @@ def test_app_role_has_nothing_on_the_migration_ledger(dsns: Dsns) -> None:
     ):
         assert refused(dsns.app, None, sql) == INSUFFICIENT_PRIVILEGE, sql
     assert run(dsns.migrate, None, "select version_num from ssc.alembic_version") == [
-        ("0001_control_schema",)
+        ("0002_idempotency",)
     ]
 
 
@@ -598,7 +598,7 @@ def test_every_table_is_declared_and_org_scoped(dsns: Dsns) -> None:
     defs: dict[str, list[str]] = {}
     for rel, d in constraints:
         defs.setdefault(rel.removeprefix("ssc."), []).append(d)
-    for t in catalog.TABLES - {"org", "group_member", "audit_event", "audit_head", "metrics_event"}:
+    for t in catalog.TABLES - {"org"} - catalog.UNKEYED_TABLES:
         assert any(d in ("UNIQUE (org_id, id)", "PRIMARY KEY (org_id, id)") for d in defs[t]), t
     # Every foreign key that is not to org(id) carries org_id.
     for t, ds in defs.items():
@@ -618,7 +618,7 @@ def test_ids_are_type_prefixed_per_table(dsns: Dsns) -> None:
         m = re.search(r"\(id ~ '\^([a-z]+)_\[a-z0-9\]\{20\}\$'", d)
         if m:
             prefixed[rel.removeprefix("ssc.")] = m.group(1)
-    expected = catalog.TABLES - {"group_member", "audit_event", "audit_head", "metrics_event"}
+    expected = catalog.TABLES - catalog.UNKEYED_TABLES
     assert set(prefixed) == expected
     assert set(prefixed.values()) <= set(PREFIXES), prefixed
 

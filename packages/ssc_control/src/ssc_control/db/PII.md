@@ -21,7 +21,7 @@ Also personal data, but not stored here:
 - `metrics_event.pseudonym` is a keyed hash of the user id. It is not reversible without the key,
   which lives in the cell's Secret Manager, never in this database.
 
-Not personal data: `actor_id` (a `usr_…` id, opaque), `directory_ref` (a provider group id),
+Not personal data: `idempotency_claim.key` (a client-chosen retry key; the API rejects keys longer than 200 characters and stores no request body, only its hash), `actor_id` (a `usr_…` id, opaque), `directory_ref` (a provider group id),
 `org.name` (a company name).
 
 The erasure procedure itself is an open item carried into SSC-012 (audit) and SSC-019 (directory

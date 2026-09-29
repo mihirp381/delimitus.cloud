@@ -9,7 +9,7 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `packages/ssc_contracts` | Wire and storage contracts. Pure data, pyright strict. | SSC-010, SSC-020 |
 | `packages/ssc_shared` | Clock and other small shared pieces. | SSC-007 |
 | `packages/ssc_bundle` | What `ssc deploy` uploads. | SSC-014 |
-| `packages/ssc_control` | Control plane API, database, job queue, reconcilers. `db/` holds the schema, migrations, roles and the org bind (see `db/README.md`, `db/PLPGSQL.md`, `db/PII.md`); `db/` and `domain/` are pyright strict. | SSC-010 onward |
+| `packages/ssc_control` | Control plane API, database, job queue, reconcilers. `api/` is the FastAPI application (`/v1`, `/internal/v1`; conventions in `docs/api/README.md`); `db/` holds the schema, migrations, roles and the org bind (see `db/README.md`, `db/PLPGSQL.md`, `db/PII.md`); `audit.py` appends to the audit chain. `api/`, `audit.py`, `db/` and `domain/` are pyright strict. | SSC-010 onward |
 | `packages/ssc_edge` | Cell gateway (Envoy ext_authz, login). `identity_note.py` mints the identity note; pyright strict. | SSC-020, SSC-018, SSC-019 |
 | `packages/ssc_datagw` | Read-only data gateway and file broker. | SSC-050, SSC-046 |
 | `packages/ssc_egress` | Egress proxy control. | SSC-053 |
@@ -22,9 +22,10 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `spikes/bakeoff` | SSC-001 cloud bake-off harness: three test apps, probes, runner, scorecard. | SSC-001 |
 | `spikes/appdb` | SSC-005 per-app database creation and driver matrix. | SSC-005 |
 | `gates/` | One planted violation per CI gate. `gates/run_gates.py` proves every gate fires. | SSC-007 |
-| `tools/` | `lock_age_check.py` (7-day rule), `deptry_all.py`. | SSC-007 |
+| `tools/` | `lock_age_check.py` (7-day rule), `deptry_all.py`, `openapi_check.py` (committed spec matches the code), `openapi_breaking.py` (refuses breaking API changes). | SSC-007, SSC-011 |
 | `docs/decisions/` | Decision records. | SSC-006 |
 | `docs/contracts/` | Frozen cross-squad contracts (identity note). | SSC-020 |
+| `docs/api/` | API conventions and the committed `openapi.json`. | SSC-011 |
 
 ## Toolchain
 
@@ -38,7 +39,9 @@ uv run lint-imports
 uv run python tools/deptry_all.py
 uv run zizmor --no-online-audits .github/workflows
 uv run python tools/lock_age_check.py
-uv run pytest            # needs Docker: control-db and job-queue tests start postgres:18
+uv run python tools/openapi_check.py            # docs/api/openapi.json matches the code (--write to refresh)
+uv run python tools/openapi_breaking.py OLD NEW  # CI runs it against the merge base
+uv run pytest            # needs Docker: control-db, API and job-queue tests start postgres:18
 uv run python gates/run_gates.py
 (cd helpers/node/ssc-identity && npm test)   # Node 22+
 ```
@@ -52,6 +55,7 @@ uv run python gates/run_gates.py
 - **Every gate has a planted violation** in `gates/fixtures/`; CI fails if any gate stays silent.
 - **Secrets.** gitleaks runs on every pull request; the planted fixture is allowlisted by path in `.gitleaks.toml`.
 - **Identity note.** One header, `X-SSC-Identity`, ES256 `ssc-id+jwt`, twelve claims (`docs/contracts/identity-note.md`). Apps key on `sub`, never on `email`, and verify once per request. Both helpers must pass `conformance/identity_note/vectors.json`.
+- **API.** Every refusal is an RFC 9457 problem from the catalogue in `ssc_contracts.errors` (fixed text, evidence in the log under the request id). Every `POST` needs `Idempotency-Key`, claimed in the request's transaction; sharing-rule edits need `If-Match`; deployments are `202` operations. `docs/api/openapi.json` is committed and CI refuses a breaking change. See `docs/api/README.md`.
 - **Control database.** Every table is org-scoped with forced row-level security; queries without a bound org fail with `SC001`. Bind once per unit of work with `ssc_control.db.bound_org`. The app role owns nothing and has no privilege on the migration ledger. Catalog tests pin the table list, the PL/pgSQL list, the privilege matrix and the personal-data columns to `ssc_control.db.catalog`.
 
 ## Never

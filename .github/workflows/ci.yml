@@ -18,6 +18,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.19"
@@ -29,6 +30,22 @@ jobs:
       - run: uv run python tools/deptry_all.py
       - run: uv run zizmor --no-online-audits .github/workflows
       - run: uv run python tools/lock_age_check.py
+      - run: uv run python tools/openapi_check.py
+      - name: OpenAPI breaking changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$(git merge-base "origin/$BASE_REF" HEAD)"
+          else
+            base="HEAD~1"
+          fi
+          if git show "$base:docs/api/openapi.json" > "$RUNNER_TEMP/openapi-base.json" 2>/dev/null; then
+            uv run python tools/openapi_breaking.py "$RUNNER_TEMP/openapi-base.json" docs/api/openapi.json
+          else
+            echo "no docs/api/openapi.json at $base; nothing to compare"
+          fi
 
   test:
     runs-on: ubuntu-24.04

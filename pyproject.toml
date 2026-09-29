@@ -26,6 +26,7 @@ dev = [
     "deptry>=0.23,<1",
     "zizmor>=1.20,<2",
     "testcontainers[postgres]>=4.10,<5",
+    "httpx>=0.28,<1",  # FastAPI TestClient only; product code imports httpx2
 ]
 
 [tool.uv]
@@ -64,8 +65,8 @@ ignore = ["PLR2004", "S101"]
 
 [tool.pyright]
 pythonVersion = "3.14"
-include = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db", "packages/ssc_app/src", "packages/ssc_edge/src"]
-strict = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db", "packages/ssc_app/src", "packages/ssc_edge/src"]
+include = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db", "packages/ssc_control/src/ssc_control/api", "packages/ssc_control/src/ssc_control/audit.py", "packages/ssc_app/src", "packages/ssc_edge/src"]
+strict = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db", "packages/ssc_control/src/ssc_control/api", "packages/ssc_control/src/ssc_control/audit.py", "packages/ssc_app/src", "packages/ssc_edge/src"]
 reportMissingImports = true
 
 [tool.pytest.ini_options]

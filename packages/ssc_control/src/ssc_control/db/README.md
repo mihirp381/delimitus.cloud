@@ -26,15 +26,23 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
 9. **PL/pgSQL is bounded.** The allowed functions are listed in `PLPGSQL.md` (limit 10).
 10. **Personal data is inventoried** in `PII.md`.
 11. **Org creation is admin-first and atomic**: `orgs.create_org` is the only supported path.
-12. **Procrastinate lives in its own schema** (`procrastinate`), not in `ssc`, when SSC-011
+12. **Procrastinate lives in its own schema** (`procrastinate`), not in `ssc`, when SSC-016
     wires the worker. Its tables are not org-scoped and stay out of the RLS catalog check.
+13. **Tables without a type-prefixed id** (`group_member`, `audit_event`, `audit_head`,
+    `metrics_event`, `idempotency_claim`) are listed in `catalog.UNKEYED_TABLES`; they still
+    carry `org_id` and forced RLS, they just have no `(org_id, id)` pair.
 
 ## Migrations
 
 Alembic, expand-then-contract. Every revision must be safe to run while the previous release
 of the control plane is still serving: add columns and tables nullable or with defaults, back-fill,
 deploy code that writes both shapes, then drop the old shape in a separate contract revision
-after that code is out. The first revision, `0001_control_schema`, is pure expand.
+after that code is out. Revisions so far, both pure expand:
+
+| Revision | Ticket | Adds |
+|---|---|---|
+| `0001_control_schema` | SSC-010 | the 18 tables, roles' privileges, PL/pgSQL guards |
+| `0002_idempotency` | SSC-011 | `ssc.idempotency_claim` (19th table): the `Idempotency-Key` ledger, keyed by org, credential and key, RLS and `SELECT, INSERT, UPDATE` for the app role |
 
 There is no `alembic.ini`. Run migrations from Python:
 
