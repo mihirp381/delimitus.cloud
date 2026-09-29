@@ -1,24 +1,28 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
-import { etagOf, type Grant, grantKey, updateGrants, withoutGrant } from '../../api/grants';
-import type { components } from '../../api/schema';
+import {
+  etagOf,
+  type Grant,
+  grantKey,
+  type GrantsUpdate,
+  updateGrants,
+  withoutGrant,
+} from '../../api/grants';
+import type { AppOut, EnvironmentOut } from '../../api/lifecycle';
+import { AdminActions } from '../../app-detail/AdminActions';
+import { ENV_TITLE } from '../../app-detail/names';
+import { Rollback } from '../../app-detail/Rollback';
+import { ShareDialog } from '../../app-detail/ShareDialog';
 import { StatusBadge } from '../../components/Badge';
 import { ConfirmAction } from '../../components/ConfirmAction';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
-
-type AppOut = components['schemas']['AppOut'];
-type EnvironmentOut = components['schemas']['EnvironmentOut'];
 
 export const Route = createFileRoute('/_authed/apps/$appId')({
   component: AppDetail,
 });
 
 const ENV_ORDER: Readonly<Record<EnvironmentOut['name'], number>> = { prod: 0, preview: 1 };
-const ENV_TITLE: Readonly<Record<EnvironmentOut['name'], string>> = {
-  prod: 'Production',
-  preview: 'Preview',
-};
 
 function who(g: Grant): string {
   if (g.subject_kind === 'org') return 'Everyone in the organisation';
@@ -73,6 +77,7 @@ function AppView({ app }: { readonly app: AppOut }) {
       {environments.map((env) => (
         <EnvironmentPanel key={env.id} app={app} env={env} />
       ))}
+      <AdminActions app={app} />
     </>
   );
 }
@@ -85,22 +90,28 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
   const grants = queries.useQuery('get', path, init);
   const [notice, setNotice] = useState<string | null>(null);
   const headingId = `env-${env.id}`;
+  const seen = grants.data ? { grants: grants.data, etag: etagOf(grants.data) } : undefined;
 
-  async function remove(grant: Grant) {
-    setNotice(null);
-    const seen = grants.data ? { grants: grants.data, etag: etagOf(grants.data) } : undefined;
-    const updated = await updateGrants(api, target, withoutGrant(grant), seen);
+  async function applied(updated: GrantsUpdate, message: string) {
     queryClient.setQueryData(queries.queryOptions('get', path, init).queryKey, updated.grants);
-    if (updated.state === 'pending') {
-      setNotice(`Waiting for approval, nothing changed yet: ${updated.approvalIds.join(', ')}.`);
-      return;
-    }
+    setNotice(message);
+    if (updated.state === 'pending') return;
     await queryClient.invalidateQueries({
       queryKey: queries.queryOptions('get', '/v1/apps/{app_id}', {
         params: { path: { app_id: app.id } },
       }).queryKey,
     });
-    setNotice(`Removed access for ${who(grant)} (${grant.role}).`);
+  }
+
+  async function remove(grant: Grant) {
+    setNotice(null);
+    const updated = await updateGrants(api, target, withoutGrant(grant), seen);
+    await applied(
+      updated,
+      updated.state === 'pending'
+        ? `Waiting for approval, nothing changed yet: ${updated.approvalIds.join(', ')}.`
+        : `Removed access for ${who(grant)} (${grant.role}).`,
+    );
   }
 
   const columns: readonly Column<Grant>[] = [
@@ -149,7 +160,19 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
         <dd>{env.config_version}</dd>
         <dt>Sharing version</dt>
         <dd>{grants.data?.grants_version ?? env.grants_version}</dd>
+        {env.url ? (
+          <>
+            <dt>Address</dt>
+            <dd>
+              <a href={env.url}>{env.url}</a>
+            </dd>
+          </>
+        ) : null}
       </dl>
+      <div className="toolbar">
+        <ShareDialog app={app} env={env} seen={seen} onDone={(u, m) => void applied(u, m)} />
+        <Rollback app={app} env={env} />
+      </div>
       <h3>Who has access</h3>
       {notice ? (
         <p className="notice notice-success" role="status">

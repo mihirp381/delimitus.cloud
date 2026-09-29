@@ -132,7 +132,7 @@ describe('app detail', () => {
   it('lists production before preview, with who has access to each', async () => {
     start(`/apps/${APP.id}`, routes([], () => json(200, prodGrants(3, [OWNER_BUILDER, ORG_USER]))), signedIn());
     const headings = await screen.findAllByRole('heading', { level: 2 });
-    expect(headings.map((h) => h.textContent)).toEqual(['Production prod', 'Preview preview']);
+    expect(headings.map((h) => h.textContent)).toEqual(['Production prod', 'Preview preview', 'Admin actions']);
     const prod = screen.getByRole('region', { name: 'Production prod' });
     await within(prod).findByText('Everyone in the organisation');
     expect(within(prod).getByText(OWNER)).toBeTruthy();

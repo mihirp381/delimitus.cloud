@@ -101,3 +101,41 @@ export function withoutGrant(target: Grant | GrantInput) {
   const key = grantKey(target);
   return (grants: readonly Grant[]) => grants.filter((g) => grantKey(g) !== key);
 }
+
+/** Whether two grants name the same subject, whatever their roles. */
+export function sameSubject(a: Grant | GrantInput, b: Grant | GrantInput): boolean {
+  return a.subject_kind === b.subject_kind && (a.subject_id ?? null) === (b.subject_id ?? null);
+}
+
+/**
+ * The change that gives `target` its role. The API allows one grant per subject, so any grant
+ * the subject already has is replaced.
+ */
+export function withGrant(target: GrantInput) {
+  return (grants: readonly Grant[]): readonly (Grant | GrantInput)[] => [
+    ...grants.filter((g) => !sameSubject(g, target)),
+    target,
+  ];
+}
+
+export type Approval = components['schemas']['Approval'];
+
+/**
+ * Asks another org admin to approve exactly this grant set (`widen_audience`, decision 016), for
+ * a person whose change was refused with APPROVAL_REQUIRED.
+ */
+export async function askShareApproval(
+  api: ApiClient,
+  environmentId: string,
+  grants: readonly (Grant | GrantInput)[],
+): Promise<Approval> {
+  return must(
+    await api.POST('/v1/approvals', {
+      body: {
+        environment_id: environmentId,
+        kind: 'widen_audience',
+        payload: { grants: grants.map(toInput) },
+      },
+    }),
+  );
+}

@@ -235,6 +235,41 @@ textarea {
   width: min(320px, 100%);
 }
 
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.lookup {
+  display: flex;
+  gap: 8px;
+}
+
+.lookup input {
+  flex: 1;
+  min-width: 0;
+}
+
+.field > label {
+  color: var(--ssc-text-secondary);
+}
+
+.choices {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choices legend {
+  padding: 0;
+  margin-bottom: 4px;
+  color: var(--ssc-text-secondary);
+}
+
 .actions {
   display: flex;
   justify-content: flex-end;
@@ -361,6 +396,10 @@ details pre {
 
 .notice-success {
   color: var(--ssc-feedback-success);
+}
+
+.notice-info {
+  color: var(--ssc-feedback-info);
 }
 
 /* Dialog */

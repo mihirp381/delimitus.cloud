@@ -10,6 +10,12 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const project = `ssc-console-e2e-${randomBytes(4).toString('hex')}`;
+// An operator token for /internal/v1, which the tests use to add people and groups to the directory.
+const MINT_OPERATOR = [
+  'import sys; from pathlib import Path; sys.path.insert(0, "tools"); import dev_stack',
+  'from ssc_control.api.settings import INTERNAL_AUDIENCE',
+  'print(dev_stack.mint(Path("/state"), sub="op_e2e", kind="operator", audience=INTERNAL_AUDIENCE))',
+].join('\n');
 
 function compose(...args) {
   return execFileSync('docker', ['compose', '-p', project, '-f', join(here, 'compose.yaml'), ...args], {
@@ -35,12 +41,14 @@ try {
   const published = compose('port', 'api', '8000').trim();
   const apiPort = published.slice(published.lastIndexOf(':') + 1);
   const token = compose('exec', '-T', 'api', 'python', 'tools/dev_stack.py', '--dir', '/state', 'token').trim();
+  const operatorToken = compose('exec', '-T', 'api', 'python', '-c', MINT_OPERATOR).trim();
   const env = {
     ...process.env,
     PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? '0',
     SSC_API_URL: `http://127.0.0.1:${apiPort}`,
     SSC_CONSOLE_PORT: String(await freePort()),
     SSC_E2E_TOKEN: token,
+    SSC_E2E_OPERATOR_TOKEN: operatorToken,
   };
   const playwright = join(root, 'node_modules', '@playwright', 'test', 'cli.js');
   const config = join(here, 'playwright.config.ts');

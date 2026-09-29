@@ -20,5 +20,6 @@ RUN uv sync --locked --package ssc-control --group dev
 EXPOSE 8000
 HEALTHCHECK --interval=2s --timeout=3s --start-period=5s --retries=60 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
-# `up` prints a token; it goes nowhere. e2e/run.mjs mints its own with `token`.
-CMD ["sh", "-c", "python tools/dev_stack.py --dir /state up --dsn \"$SSC_E2E_DSN\" > /dev/null && exec python tools/dev_stack.py --dir /state serve --host 0.0.0.0 --port 8000"]
+# `up` prints a token; it goes nowhere. e2e/run.mjs mints its own with `token`. The worker, with
+# the fake builder and runtime, runs the kill switch's steps.
+CMD ["sh", "-c", "python tools/dev_stack.py --dir /state up --dsn \"$SSC_E2E_DSN\" > /dev/null && exec python tools/dev_stack.py --dir /state serve --worker --host 0.0.0.0 --port 8000"]

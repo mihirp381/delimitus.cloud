@@ -173,6 +173,8 @@ export const CONTRAST_PAIRS: readonly {
   { fg: 'feedbackDanger', bg: 'surfaceRaised', use: 'body-text' },
   { fg: 'feedbackDanger', bg: 'surfaceOverlay', use: 'body-text' },
   { fg: 'feedbackInfo', bg: 'surfaceRaised', use: 'body-text' },
+  { fg: 'feedbackSuccess', bg: 'surfaceOverlay', use: 'body-text' },
+  { fg: 'feedbackInfo', bg: 'surfaceOverlay', use: 'body-text' },
   { fg: 'feedbackSuccess', bg: 'surface', use: 'body-text' },
   { fg: 'feedbackWarning', bg: 'surface', use: 'body-text' },
   { fg: 'feedbackDanger', bg: 'surface', use: 'body-text' },
