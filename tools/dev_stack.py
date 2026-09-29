@@ -13,6 +13,10 @@ and prints it. State lives in ``.ssc-dev/`` at the repository root, or ``--dir``
 The keys are random, kept in the state file, and reused on every start; anything already set in
 the environment wins.
 
+``serve --worker`` also runs the worker in the same process, with the fake builder and runtime
+(``SSC_BUILD_DRIVER`` and ``SSC_RUNTIME_DRIVER`` default to ``fake``), so ``ssc deploy`` goes all
+the way to a healthy deployment locally. Nothing is built or run: the fakes only record.
+
 Tokens name the issuer ``https://dev.invalid``, which a real API never trusts. The API itself is
 unchanged: it only verifies tokens against the JWKS it is given.
 """
@@ -20,10 +24,12 @@ unchanged: it only verifies tokens against the JWKS it is given.
 import argparse
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import secrets
 import shlex
+import signal
 import socket
 import sys
 from pathlib import Path
@@ -34,6 +40,7 @@ import psycopg
 import uvicorn
 from psycopg import sql
 
+from ssc_control import worker
 from ssc_control.api import Settings, create_app
 from ssc_control.db import (
     APP_ROLE,
@@ -44,6 +51,7 @@ from ssc_control.db import (
     make_engine,
     upgrade,
 )
+from ssc_control.worker_ports import Ports
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = ROOT / ".ssc-dev"
@@ -52,6 +60,7 @@ ISSUER = "https://dev.invalid"
 KID = "dev-1"
 BLOB_KID = "dev-blob-1"
 ADMIN_SUBJECT = "dev-admin"
+STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
 
 def _testkit() -> ModuleType:
@@ -220,14 +229,22 @@ def api_env(d: Path, env: dict[str, str] | None = None) -> dict[str, str]:
     return e
 
 
-def serve(
-    d: Path, host: str, port: int, rate_capacity: int | None, rate_refill: float | None
+def serve(  # noqa: PLR0913, PLR0917  (each is a command line option)
+    d: Path,
+    host: str,
+    port: int,
+    rate_capacity: int | None,
+    rate_refill: float | None,
+    with_worker: bool = False,
 ) -> None:
     env = api_env(d)
     if rate_capacity is not None:
         env["SSC_API_RATE_CAPACITY"] = str(rate_capacity)
     if rate_refill is not None:
         env["SSC_API_RATE_REFILL_PER_SECOND"] = str(rate_refill)
+    if with_worker:
+        env.setdefault(worker.BUILD_DRIVER_ENV, "fake")
+        env.setdefault(worker.RUNTIME_DRIVER_ENV, "fake")
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     sock = socket.socket(family, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -238,9 +255,37 @@ def serve(
     url = f"http://{shown}:{bound}"
     env.setdefault("SSC_API_PUBLIC_URL", url)
     settings = Settings.from_env(env)
+    server = uvicorn.Server(uvicorn.Config(create_app(settings), log_level="warning"))
+    if not with_worker:
+        print(f"SSC_API_URL={url}", flush=True)  # noqa: T201
+        server.run(sockets=[sock])
+        return
+    ports = worker.compose_ports(env)
     print(f"SSC_API_URL={url}", flush=True)  # noqa: T201
-    config = uvicorn.Config(create_app(settings), log_level="warning")
-    uvicorn.Server(config).run(sockets=[sock])
+    asyncio.run(_serve_with_worker(server, sock, ports, env[worker.DSN_ENV]))
+
+
+async def _serve_with_worker(
+    server: uvicorn.Server, sock: socket.socket, ports: Ports, dsn: str
+) -> None:
+    """The API and the worker in one loop. If the worker stops, the API stops too, so a test
+    never waits on a deployment nothing will run."""
+    task = asyncio.create_task(
+        worker.run_worker(worker.build_app(dsn), ports, install_signal_handlers=False)
+    )
+    task.add_done_callback(lambda _: setattr(server, "should_exit", True))
+    # uvicorn re-raises the signal that stopped it under the handler it found; a no-op handler
+    # lets the worker stop cleanly afterwards instead of the process dying mid-job.
+    previous = {sig: signal.signal(sig, lambda *_: None) for sig in STOP_SIGNALS}
+    try:
+        await server.serve(sockets=[sock])
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        await ports.engine.dispose()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 # ── command line ─────────────────────────────────────────────────────────────
@@ -268,6 +313,9 @@ def main(argv: list[str] | None = None) -> None:
     p_serve.add_argument("--port", type=int, default=8000, help="0 picks a free port")
     p_serve.add_argument("--rate-capacity", type=int)
     p_serve.add_argument("--rate-refill", type=float)
+    p_serve.add_argument(
+        "--worker", action="store_true", help="also run the worker, with fake builder and runtime"
+    )
 
     args = parser.parse_args(argv)
     d: Path = args.dir.resolve()
@@ -287,7 +335,7 @@ def main(argv: list[str] | None = None) -> None:
             )
         )
     else:
-        serve(d, args.host, args.port, args.rate_capacity, args.rate_refill)
+        serve(d, args.host, args.port, args.rate_capacity, args.rate_refill, args.worker)
 
 
 if __name__ == "__main__":

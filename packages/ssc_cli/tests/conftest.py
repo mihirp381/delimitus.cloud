@@ -2,7 +2,8 @@
 
 No test touches the real OS keychain or the person's config. Every test gets an in-memory keyring
 and a HOME under tmp_path, and fails if a real keychain backend is active. The live API runs
-``tools/dev_stack.py serve --port 0`` against a postgres:18 testcontainer with no fixed name.
+``tools/dev_stack.py serve --port 0 --worker`` (fake builder and runtime) against a postgres:18
+testcontainer with no fixed name.
 """
 
 import os
@@ -241,6 +242,7 @@ def live(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Live]:
                     "100000",
                     "--rate-refill",
                     "100000",
+                    "--worker",
                 ],
                 stdout=subprocess.PIPE,
                 stderr=err,
