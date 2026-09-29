@@ -2477,7 +2477,7 @@
     },
     "/internal/v1/heartbeat": {
       "post": {
-        "description": "``FORBIDDEN`` when the org has a cell and it is not this one; ``REFERENCE_NOT_FOUND``\nfor a snapshot version that was never published.",
+        "description": "``FORBIDDEN`` when the cell label is not the org's; ``REFERENCE_NOT_FOUND`` for a\nsnapshot version that was never published.",
         "operationId": "heartbeat_internal_v1_heartbeat_post",
         "parameters": [
           {

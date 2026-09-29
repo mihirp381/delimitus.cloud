@@ -94,8 +94,8 @@ export interface paths {
         put?: never;
         /**
          * Heartbeat
-         * @description ``FORBIDDEN`` when the org has a cell and it is not this one; ``REFERENCE_NOT_FOUND``
-         *     for a snapshot version that was never published.
+         * @description ``FORBIDDEN`` when the cell label is not the org's; ``REFERENCE_NOT_FOUND`` for a
+         *     snapshot version that was never published.
          */
         post: operations["heartbeat_internal_v1_heartbeat_post"];
         delete?: never;

@@ -21,8 +21,8 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
    `ssc.alembic_version`. No `GRANT ... ON ALL TABLES`, ever.
 6. **Ids are type-prefixed** (`org_`, `usr_`, `app_`, ...) and checked by a regex per table.
    See `ssc_contracts.ids`.
-7. **Releases and audit rows are immutable.** No UPDATE or DELETE privilege for the app role,
-   plus triggers that refuse the owner too, plus TRUNCATE guards.
+7. **Releases, audit rows and audit anchors are immutable.** No UPDATE or DELETE privilege for
+   the app role, plus triggers that refuse the owner too, plus TRUNCATE guards.
 8. **One deployment in flight per environment**, enforced by a partial unique index.
 9. **PL/pgSQL is bounded.** The allowed functions are listed in `PLPGSQL.md` (limit 10).
 10. **Personal data is inventoried** in `PII.md`.
@@ -34,7 +34,8 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     database. Jobs are deferred with `ssc_control.deferral.defer` on the caller's connection, in
     the caller's transaction.
 13. **Tables without a type-prefixed id** (`group_member`, `audit_event`, `audit_head`,
-    `metrics_event`, `idempotency_claim`, `access_snapshot`, `snapshot_ack`) are listed in
+    `metrics_event`, `idempotency_claim`, `access_snapshot`, `snapshot_ack`, `audit_anchor`) are
+    listed in
     `catalog.UNKEYED_TABLES`; they still carry `org_id` and forced RLS, they just have no
     `(org_id, id)` pair.
 14. **`ssc.org_index` is the single unscoped table** (decision 009 amendment), listed alone in
@@ -46,11 +47,17 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     Workers call `orgs.all_org_ids`, then do each org's work inside `bound_org`, under normal
     RLS. No `BYPASSRLS` role and no `SECURITY DEFINER` function exist for this. A second
     unscoped table needs its own decision.
-15. **Advisory locks are named by class.** The one class so far is `21`, the org's access
-    snapshot lock, taken as `(21, hashtext(org_id))`: shared by every transaction that changes
-    what the gateway decides (`snapshot.service.mark_dirty`), exclusive by the compile
-    (`snapshot.compiler.publish`), both transaction-scoped (decision 019). A new class takes the
-    next number and is listed here.
+15. **Advisory locks are named by class.** Class `21` is the org's access snapshot lock, taken
+    as `(21, hashtext(org_id))`: shared by every transaction that changes what the gateway decides (`snapshot.service.mark_dirty`), exclusive by the compile
+    (`snapshot.compiler.publish`), both transaction-scoped (decision 019). Class `12` is the
+    org's audit anchor lock, `(12, hashtext(org_id))`, held exclusively by
+    `audit.anchor.write_anchor` for its transaction (decision 012). A new class takes an unused
+    number and is listed here.
+16. **Every org has a cell label** (`org.cell_label`, founder default D1: app hosts are
+    `<slug>[--preview].<cell_label>.<apps domain>`). Since revision 0011 the column's default
+    generates it at insert, twelve letters from `bcdfghjkmnpqrstv` (48 random bits, no vowels,
+    so never a word), and it is NOT NULL; 0001's "NULL until SSC-013" comment no longer holds.
+    `orgs.create_org` returns it. It is unique and never derived from the customer's name.
 
 ## Migrations
 
@@ -70,6 +77,7 @@ after that code is out. Revisions so far, all pure expand:
 | `0008_bundle` | SSC-014 | `ssc.bundle`: one row per uploaded source bundle, unique per `(org_id, app_id, digest)`, `pending` until complete has checked the stored object and then `stored` with the manifest read from the bundle (`bundle_stored_check`); forced RLS, `SELECT, INSERT, UPDATE` for the app role. Downgrade drops it (development databases only) |
 | `0009_access_snapshot` | SSC-021 | `ssc.access_snapshot`: one row per published access snapshot, keyed `(org_id, version)`, with the object's `sha256:` digest and content-addressed key; `SELECT, INSERT` for the app role (a published version never changes). `ssc.snapshot_ack`: each org's cell and the version its latest heartbeat reported, keyed by org, with a foreign key to the published version; `SELECT, INSERT, UPDATE`. Both new and empty, forced RLS, in `UNKEYED_TABLES`. Downgrade drops both (development databases only) |
 | `0010_build` | SSC-016 | `ssc.build`: one row per build of a stored bundle for one environment, `queued`, `running`, then `succeeded` with the one release it created (`build_release_check`, unique per release) or `failed` with a reason code (`build_failure_check`); `build_one_in_flight` allows one queued or running build per (environment, bundle); forced RLS, `SELECT, INSERT, UPDATE` for the app role. `deployment.failure_code`, a reason code allowed only on `failed` rows (`deployment_failure_check`); CHECK validation scans without row-level security, so FORCE stays on. Releases stay immutable. Downgrade drops both (development databases only) |
+| `0011_audit_anchor` | SSC-012 | `ssc.audit_anchor`: one row per audit anchor written to the blob store (decision 012), keyed `(org_id, anchored_at)`, unique `(org_id, object_key)`, `reason` `daily` or `restore` with `restored_to` exactly on restore anchors; append-only (triggers `SC005`/`SC006`), forced RLS, `SELECT, INSERT` for the app role, in `UNKEYED_TABLES`. `org.cell_label` gains a generating default and becomes NOT NULL (rule 16); existing orgs are back-filled with `FORCE ROW LEVEL SECURITY` lifted on `ssc.org` inside the transaction, and the default serves the previous release's inserts too. `access_snapshot.content_digest` (nullable, `sha256:` CHECK) lets the stale sweep compare content. Downgrade drops the table and the digest and makes the label nullable without a default, keeping the labels (development databases only) |
 
 There is no `alembic.ini`. Run migrations from Python:
 
