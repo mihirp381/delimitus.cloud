@@ -214,3 +214,7 @@ class BuildCreate(Body):
 class DeploymentCreate(Body):
     release_id: str
     kind: str
+
+
+class PromoteIn(Body):
+    preview_release_id: str | None = None

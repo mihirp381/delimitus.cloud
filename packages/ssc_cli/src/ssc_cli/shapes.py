@@ -203,6 +203,26 @@ class RollbackResult(Shape):
     url: str | None
 
 
+class PromoteResult(Shape):
+    """``promote``: prod builds what preview runs, then deploys it. Without ``--wait`` or
+    ``--build`` the command stops once the build has made its release: ``operation_id`` and
+    ``state`` are null and ``next_command`` puts the release live. ``source_release_id`` is null
+    with ``--build``."""
+
+    app_id: str
+    slug: str
+    environment: Literal["prod"]
+    environment_id: str
+    source_release_id: str | None
+    build_id: str
+    release_id: str
+    release_number: int
+    operation_id: str | None
+    state: str | None
+    url: str | None
+    next_command: str | None
+
+
 class ErrorResult(Shape):
     error: ErrorBody
 
@@ -231,6 +251,7 @@ SHAPES: dict[str, type[BaseModel]] = {
         ReleaseRow,
         ReleasesResult,
         RollbackResult,
+        PromoteResult,
         ErrorBody,
         ErrorResult,
     )

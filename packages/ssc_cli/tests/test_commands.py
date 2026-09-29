@@ -27,6 +27,7 @@ from ssc_cli.shapes import (
     DoctorResult,
     ErrorResult,
     InitResult,
+    PromoteResult,
     ReleasesResult,
     RollbackResult,
     ShareResult,
@@ -54,6 +55,7 @@ ALLOWED = {
     "releases",
     "rollback",
     "mcp",
+    "promote",
 }
 
 
@@ -107,6 +109,7 @@ def test_help_lists_exact_set(cli):
         ("releases",),
         ("rollback",),
         ("mcp",),
+        ("promote",),
     }
     for group, subs in (("token", {"set", "clear"}), ("apps", {"create"})):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
@@ -837,6 +840,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("deploy",): ([str(folder), "--app", name, "--wait"], DeployResult, None),
         ("releases",): ([name], ReleasesResult, None),
         ("rollback",): ([name, "R1", "--wait"], RollbackResult, None),
+        ("promote",): ([name, "--wait"], PromoteResult, None),
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),

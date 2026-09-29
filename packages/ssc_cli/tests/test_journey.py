@@ -1,4 +1,4 @@
-"""The builder journey on the dev stack: token, create, share, status, deploy, releases, rollback.
+"""The builder journey on the dev stack: token, create, share, deploy, releases, rollback, promote.
 
 The dev stack runs the worker with the fake builder and runtime, so a deploy goes all the way to
 a healthy deployment. Polls sleep briefly for real so the worker gets to run.
@@ -18,6 +18,7 @@ from ssc_cli.shapes import (
     AppResult,
     AppsResult,
     DeployResult,
+    PromoteResult,
     ReleasesResult,
     RollbackResult,
     ShareResult,
@@ -123,3 +124,13 @@ def test_journey_live(cli, live, isolated, tmp_path):
     assert (back.environment, back.release_number, back.state) == ("preview", 1, "healthy")
     after = ReleasesResult.model_validate(ssc("releases", slug))
     assert {r.number: r.live_in for r in after.releases} == {1: ["preview"], 2: [], 3: []}
+
+    promoted = PromoteResult.model_validate(ssc("promote", slug, "--wait"))
+    assert (promoted.state, promoted.release_number) == ("healthy", 4)
+    assert promoted.source_release_id == first.release_id
+    assert promoted.url is not None
+    assert re.fullmatch(rf"https://{slug}\.[a-z]{{12}}\.[a-z.]+", promoted.url)
+    rows = {r.number: r for r in ReleasesResult.model_validate(ssc("releases", slug)).releases}
+    assert (rows[4].built_for, rows[4].live_in) == ("prod", ["prod"])
+    assert rows[4].source_digest == rows[1].source_digest
+    assert rows[4].image_digest != rows[1].image_digest

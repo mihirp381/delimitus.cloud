@@ -52,6 +52,7 @@ from ssc_cli.models import (
     GroupMatches,
     OperationAccepted,
     OperationOut,
+    PromoteIn,
     ReleaseList,
     ReleaseOut,
     UploadTarget,
@@ -224,6 +225,11 @@ class ApiClient:
         path = f"{_environment_path(app_id, environment_id)}/deployments"
         body = DeploymentCreate(release_id=release_id, kind=kind)
         return _parse(self._send("POST", path, body=body), OperationAccepted)
+
+    def promote(self, app_id: str, preview_release_id: str | None) -> BuildAccepted:
+        body = PromoteIn(preview_release_id=preview_release_id)
+        path = f"/v1/apps/{_seg(app_id)}/promote"
+        return _parse(self._send("POST", path, body=body), BuildAccepted)
 
     def list_releases(self, app_id: str, *, limit: int, before: int | None = None) -> ReleaseList:
         query = f"?limit={limit}" + ("" if before is None else f"&before={before}")

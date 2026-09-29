@@ -1,4 +1,4 @@
-"""``deploy``, ``releases`` and ``rollback`` against a scripted API, and the bundle upload."""
+"""``deploy``, ``releases``, ``rollback`` and ``promote`` on a scripted API; the bundle upload."""
 
 import hashlib
 import json
@@ -12,7 +12,13 @@ from ssc_cli.commands import deploy as deploy_module
 from ssc_cli.credentials import SERVICE
 from ssc_cli.errors import ExitCode
 from ssc_cli.session import Session
-from ssc_cli.shapes import DeployResult, ErrorResult, ReleasesResult, RollbackResult
+from ssc_cli.shapes import (
+    DeployResult,
+    ErrorResult,
+    PromoteResult,
+    ReleasesResult,
+    RollbackResult,
+)
 
 API = "https://api.test"
 APP_ID = "app_aaaaaaaaaaaaaaaaaaaa"
@@ -745,3 +751,137 @@ def test_rollback_across_environments_is_the_apis_refusal(cli, history, fake_pro
     history.add("POST", PREVIEW_DEPLOYMENTS, fake_problem(409, "RELEASE_ENVIRONMENT_MISMATCH"))
     r = cli("rollback", APP_ID, "R2", "--env", "preview", "--json", session=history.session())
     assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "RELEASE_ENVIRONMENT_MISMATCH")
+
+
+# ── promote ─────────────────────────────────────────────────────────────────
+
+LIVE = "dep_livelivelivelivelive"
+SOURCE = "rel_sourcesourcesources"
+PROMOTE = f"/v1/apps/{APP_ID}/promote"
+
+
+def _prod_build(state: str) -> httpx2.Response:
+    body = json.loads(_build(state).content)
+    body["environment_id"] = PROD
+    return httpx2.Response(200, json=body)
+
+
+@pytest.fixture
+def promoting(fake_api, isolated):
+    """Preview runs SOURCE healthy; promote queues a prod build that succeeds on the second poll,
+    and the prod deployment is healthy on the second poll."""
+    isolated.set_password(SERVICE, API, "tok")
+    app = _app(preview_live=LIVE)
+    summary = {k: app[k] for k in ("id", "slug", "owner_user_id", "status")}
+    fake_api.add("GET", "/v1/apps", httpx2.Response(200, json={"apps": [summary]}))
+    fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
+    fake_api.add("GET", f"/v1/operations/{LIVE}", _operation("healthy", rel=SOURCE))
+    fake_api.add(
+        "POST",
+        PROMOTE,
+        httpx2.Response(
+            202,
+            json={
+                "build_id": BUILD,
+                "state": "queued",
+                "capability_diff": {"changes": [], "total": 0},
+            },
+            headers={"location": f"/v1/builds/{BUILD}"},
+        ),
+    )
+    fake_api.add("GET", f"/v1/builds/{BUILD}", _prod_build("running"), _prod_build("succeeded"))
+    fake_api.add("POST", PROD_DEPLOYMENTS, _accepted())
+    fake_api.add(
+        "GET",
+        f"/v1/operations/{DEP}",
+        _operation("running", env=PROD),
+        _operation("healthy", env=PROD),
+    )
+    return fake_api
+
+
+def test_promote_builds_for_prod_then_deploys_and_waits(cli, promoting):
+    r = cli("promote", "demo", "--wait", "--json", session=promoting.session())
+    assert r.code == 0, (r.stdout, r.stderr)
+    result = PromoteResult.model_validate(r.json())
+    assert (result.environment, result.environment_id, result.source_release_id) == (
+        "prod",
+        PROD,
+        SOURCE,
+    )
+    assert (result.build_id, result.release_id, result.release_number) == (BUILD, REL, 7)
+    assert (result.operation_id, result.state, result.url) == (DEP, "healthy", PROD_URL)
+    assert result.next_command is None
+    assert _calls(promoting) == [
+        ("GET", "/v1/apps"),
+        ("GET", f"/v1/apps/{APP_ID}"),
+        ("GET", f"/v1/operations/{LIVE}"),
+        ("POST", PROMOTE),
+        ("GET", f"/v1/builds/{BUILD}"),
+        ("GET", f"/v1/builds/{BUILD}"),
+        ("POST", PROD_DEPLOYMENTS),
+        ("GET", f"/v1/operations/{DEP}"),
+        ("GET", f"/v1/operations/{DEP}"),
+    ]
+    posts = [q for q in promoting.seen if q.method == "POST"]
+    assert [_body(q) for q in posts] == [
+        {"preview_release_id": SOURCE},
+        {"release_id": REL, "kind": "deploy"},
+    ]
+    keys = {q.headers["Idempotency-Key"] for q in posts}
+    assert len(keys) == 2
+
+
+def test_promote_prints_the_prod_url(cli, promoting):
+    r = cli("promote", "demo", "--wait", session=promoting.session())
+    assert r.code == 0, (r.stdout, r.stderr)
+    out = r.stdout + r.stderr
+    assert "prod of demo runs R7." in out
+    assert f"Prod: {PROD_URL}" in out
+
+
+def test_promote_without_wait_stops_after_the_build(cli, promoting):
+    r = cli("promote", "demo", "--json", session=promoting.session())
+    assert r.code == 0, (r.stdout, r.stderr)
+    result = PromoteResult.model_validate(r.json())
+    resume = f"ssc promote demo --build {BUILD} --wait"
+    assert (result.build_id, result.release_id, result.operation_id) == (BUILD, REL, None)
+    assert result.next_command == resume
+    assert ("POST", PROD_DEPLOYMENTS) not in _calls(promoting)
+    human = cli("promote", "demo", session=promoting.session())
+    assert f"Built R7 for prod. Put it live with `{resume}`." in human.stdout + human.stderr
+
+
+def test_promote_resumes_a_prod_build_and_deploys_it(cli, promoting):
+    r = cli("promote", "demo", "--build", BUILD, "--wait", "--json", session=promoting.session())
+    assert r.code == 0, (r.stdout, r.stderr)
+    result = PromoteResult.model_validate(r.json())
+    assert (result.source_release_id, result.state) == (None, "healthy")
+    assert ("POST", PROMOTE) not in _calls(promoting)
+    assert ("POST", PROD_DEPLOYMENTS) in _calls(promoting)
+
+
+def test_promote_refuses_to_resume_a_preview_build(cli, promoting):
+    promoting.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("succeeded")]
+    r = cli("promote", "demo", "--build", BUILD, "--json", session=promoting.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "BUILD_NOT_FOUND")
+    assert not [q for q in promoting.seen if q.method == "POST"]
+
+
+def test_promote_timing_out_on_the_build_names_the_resume_command(cli, promoting):
+    promoting.routes[("GET", f"/v1/builds/{BUILD}")] = [_prod_build("running")]
+    r = cli("promote", "demo", "--wait", "--timeout", "2", "--json", session=promoting.session())
+    assert r.code == ExitCode.FAILED
+    error = _error(r)
+    assert (error["code"], error["instance"]) == ("WAIT_TIMED_OUT", f"/v1/builds/{BUILD}")
+    assert f"`ssc promote demo --build {BUILD} --wait`" in str(error["detail"])
+    assert ("POST", PROD_DEPLOYMENTS) not in _calls(promoting)
+
+
+def test_promote_with_nothing_live_is_the_apis_refusal(cli, promoting, fake_problem):
+    promoting.routes[("GET", f"/v1/operations/{LIVE}")] = [_operation("running", rel=SOURCE)]
+    promoting.routes[("POST", PROMOTE)] = [fake_problem(409, "NOTHING_TO_PROMOTE")]
+    r = cli("promote", "demo", "--json", session=promoting.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "NOTHING_TO_PROMOTE")
+    (sent,) = [q for q in promoting.seen if q.method == "POST"]
+    assert _body(sent) == {"preview_release_id": None}

@@ -103,6 +103,20 @@
     "files": "array<FileAction>",
     "path": "string"
   },
+  "PromoteResult": {
+    "app_id": "string",
+    "build_id": "string",
+    "environment": "string",
+    "environment_id": "string",
+    "next_command": "string|null",
+    "operation_id": "string|null",
+    "release_id": "string",
+    "release_number": "integer",
+    "slug": "string",
+    "source_release_id": "string|null",
+    "state": "string|null",
+    "url": "string|null"
+  },
   "ReleaseRow": {
     "actor_id": "string",
     "actor_kind": "string",

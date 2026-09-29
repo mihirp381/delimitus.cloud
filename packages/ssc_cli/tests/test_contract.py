@@ -50,6 +50,7 @@ REQUESTS = (
     models.BundleCreate,
     models.BuildCreate,
     models.DeploymentCreate,
+    models.PromoteIn,
 )
 
 
@@ -83,7 +84,7 @@ def test_client_models_match_openapi(server, model):
     props, required, defs = _schema(model)
     sprops, srequired = (
         server[model.__name__]["properties"],
-        set(server[model.__name__]["required"]),
+        set(server[model.__name__].get("required", [])),
     )
     assert set(props) <= set(sprops), f"the API has no {set(props) - set(sprops)}"
     for name, prop in props.items():
