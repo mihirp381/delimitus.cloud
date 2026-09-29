@@ -38,9 +38,12 @@ from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, ne
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
-from ssc_control.api import Settings, create_app
+from ssc_control.api import Settings, authz, create_app
+from ssc_control.api.auth import Principal, PrincipalKind
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
+from ssc_control.api.problems import Refusal
 from ssc_control.api.settings import INTERNAL_AUDIENCE
+from ssc_control.api.uow import UnitOfWork
 from ssc_control.db import (
     MIGRATE_ROLE,
     NewOrg,
@@ -164,13 +167,14 @@ def sync_user(  # noqa: PLR0913
     role: str = "member",
     status: str = "active",
     name: str = "Una User",
+    email: str = "una@example.com",
     token: str | None = None,
 ) -> Response:
     body = {
         "issuer": ISSUER,
         "subject": subject,
         "display_name": name,
-        "email": "una@example.com",
+        "email": email,
         "role": role,
         "status": status,
     }
@@ -602,6 +606,197 @@ def test_explain_reports_the_published_version(
     version, _ = asyncio.run(publish_now(dsns.app, world.org, blob_store(tmp_path)))
     body = explain(client, world, world.prod, world.admin_token).json()
     assert body["published_version"] == version
+
+
+# ── who the caller is, finding people, the apps a builder may ship ──────────
+
+
+def test_whoami_reports_the_active_org_role(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    def role(token: str) -> object:
+        r = client.get("/v1/whoami", headers=auth(token))
+        assert r.status_code == 200, r.text
+        return r.json()["role"]
+
+    assert role(world.admin_token) == "admin"
+    subject = f"sub-{uuid.uuid4().hex}"
+    una = sync_user(client, world, subject).json()["user_id"]
+    token = user_token(signing_key, world.org, una)
+    assert role(token) == "member"
+    # Read from the directory on every call, not carried in the token.
+    assert sync_user(client, world, subject, role="admin").status_code == 200
+    assert role(token) == "admin"
+    assert sync_user(client, world, subject, role="admin", status="deactivated").status_code == 200
+    assert role(token) is None
+    # Unknown here, another org's admin, or not a user credential: no role.
+    _, other_admin, _ = new_org(dsns.app)
+    assert role(user_token(signing_key, world.org, new_id("usr"))) is None
+    assert role(user_token(signing_key, world.org, other_admin)) is None
+    for kind in ("workload", "operator"):
+        assert role(mint(signing_key, org=world.org, sub=world.admin, kind=kind)) is None
+
+
+def test_admins_find_people_by_email(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    def find(token: str, email: str | None) -> Response:
+        params = {} if email is None else {"email": email}
+        return client.get("/v1/users", params=params, headers=auth(token))
+
+    def sync(w: World, **kw: str) -> str:
+        r = sync_user(client, w, f"sub-{uuid.uuid4().hex}", **kw)
+        assert r.status_code == 200, r.text
+        return r.json()["user_id"]
+
+    bea = sync(world, name="Bea Two", email="Shared@Example.com")
+    al = sync(world, name="Al One", email="shared@example.com", status="deactivated")
+    sync(world, email="other@example.com")
+    other_org, _, _ = new_org(dsns.app)
+    elsewhere = World(
+        **{
+            **world.__dict__,
+            "org": other_org,
+            "operator_token": internal_token(signing_key, other_org, "operator"),
+        }
+    )
+    sync(elsewhere, email="shared@example.com")
+
+    # Email is not a key: every match comes back, deactivated people too, never another org's.
+    found = find(world.admin_token, "SHARED@example.COM")
+    assert found.status_code == 200, found.text
+    assert found.json() == {
+        "users": [
+            {
+                "id": al,
+                "display_name": "Al One",
+                "email": "shared@example.com",
+                "role": "member",
+                "status": "deactivated",
+            },
+            {
+                "id": bea,
+                "display_name": "Bea Two",
+                "email": "Shared@Example.com",
+                "role": "member",
+                "status": "active",
+            },
+        ]
+    }
+    ada = find(world.admin_token, "ada@example.com").json()["users"]
+    assert [(u["id"], u["role"]) for u in ada] == [(world.admin, "admin")]
+    # The whole address or nothing: no prefix or pattern search.
+    for miss in ("nobody@example.com", "shared@example", "%@example.com", "_hared@example.com"):
+        assert find(world.admin_token, miss).json() == {"users": []}
+    for bad in (None, "", "no-at-sign", "a@b@c", "sp ace@example.com", "x" * 320 + "@e.c"):
+        assert_problem(find(world.admin_token, bad), ErrorCode.VALIDATION_FAILED)
+
+    # Only an active admin with a user credential; an admin's agent session counts.
+    agent = mint(signing_key, org=world.org, sub=world.admin, agent=True, client_id="cli_x")
+    assert [u["id"] for u in find(agent, "ada@example.com").json()["users"]] == [world.admin]
+    gone = f"sub-{uuid.uuid4().hex}"
+    former = sync_user(client, world, gone, role="admin").json()["user_id"]
+    assert sync_user(client, world, gone, role="admin", status="deactivated").status_code == 200
+    refused = [
+        user_token(signing_key, world.org, bea),
+        user_token(signing_key, world.org, former),
+        mint(signing_key, org=world.org, sub=world.admin, kind="workload"),
+        mint(signing_key, org=world.org, sub=world.admin, kind="operator"),
+    ]
+    for token in refused:
+        assert_problem(find(token, "shared@example.com"), ErrorCode.FORBIDDEN)
+
+
+async def app_builder_rule(dsn: str, org: str, user: str, apps: list[str]) -> set[str]:
+    """The apps ``require_app_builder`` lets ``user`` ship to, asked one app at a time."""
+    engine = make_engine(dsn)
+    allowed: set[str] = set()
+    try:
+        async with bound_org(engine, org) as conn:
+            principal = Principal(org, user, PrincipalKind.USER, "cred_rule")
+            uow = UnitOfWork(conn=conn, principal=principal, request_id="req_rule")
+            for app in apps:
+                try:
+                    await authz.require_app_builder(uow, app)
+                except Refusal:
+                    continue
+                allowed.add(app)
+    finally:
+        await engine.dispose()
+    return allowed
+
+
+def test_builder_me_lists_the_apps_the_caller_may_ship(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    owner = new_member(client, world)
+    owner_token = user_token(signing_key, world.org, owner)
+    owned = create_app_as(client, owner_token, "owned")
+    owned_preview = next(e["id"] for e in owned["environments"] if e["name"] == "preview")
+    direct, grouped, viewer, nobody = (new_member(client, world) for _ in range(4))
+    gone_subject = f"sub-{uuid.uuid4().hex}"
+    gone = sync_user(client, world, gone_subject).json()["user_id"]
+    gid = sync_group(client, world, "okta-00g1builders", "Builders").json()["group_id"]
+    assert set_members(client, world, gid, [grouped]).status_code == 200
+    on_preview = [grant("builder", "user", direct), grant("builder", "user", gone)]
+    on_prod = [grant("builder", "group", gid), grant("user", "user", viewer)]
+    for env, grants in ((world.preview, on_preview), (world.prod, on_prod)):
+        r = put_grants(client, world, env, world.admin_token, grants, 1)
+        assert r.status_code == 200, r.text
+    assert sync_user(client, world, gone_subject, status="deactivated").status_code == 200
+
+    apps = [world.app, owned["id"]]
+    people = {
+        "admin": world.admin,
+        "owner": owner,
+        "direct": direct,
+        "grouped": grouped,
+        "viewer": viewer,
+        "gone": gone,
+        "nobody": nobody,
+    }
+
+    def listed(user: str) -> set[str]:
+        r = client.get(
+            "/v1/apps",
+            params={"builder": "me"},
+            headers=auth(user_token(signing_key, world.org, user)),
+        )
+        assert r.status_code == 200, r.text
+        return {a["id"] for a in r.json()["apps"]}
+
+    def check(expected: dict[str, set[str]]) -> None:
+        for name, user in people.items():
+            rule = asyncio.run(app_builder_rule(dsns.app, world.org, user, apps))
+            assert (name, listed(user)) == (name, expected[name]) == (name, rule)
+
+    ledger, mine = world.app, owned["id"]
+    # The admin's list is exactly this org's two apps: other tests' orgs have apps too.
+    first = {"admin": {ledger, mine}, "owner": {mine}, "direct": {ledger}, "grouped": {ledger}}
+    check({**dict.fromkeys(people, set[str]()), **first})
+
+    # An org-wide builder grant makes every active member a builder of that app.
+    w = World(**{**world.__dict__, "app": mine, "preview": owned_preview})
+    org_wide = put_grants(client, w, owned_preview, owner_token, [grant("builder", "org")], 1)
+    assert org_wide.status_code == 200, org_wide.text
+    check(
+        {
+            name: (set[str]() if name == "gone" else first.get(name, set()) | {mine})
+            for name in people
+        }
+    )
+
+    everyone = client.get("/v1/apps", headers=auth(user_token(signing_key, world.org, nobody)))
+    assert {a["id"] for a in everyone.json()["apps"]} == {ledger, mine}
+    admin = auth(world.admin_token)
+    assert_problem(
+        client.get("/v1/apps", params={"builder": "other"}, headers=admin),
+        ErrorCode.VALIDATION_FAILED,
+    )
+    for kind in ("workload", "operator"):
+        token = mint(signing_key, org=world.org, sub=world.admin, kind=kind)
+        refused = client.get("/v1/apps", params={"builder": "me"}, headers=auth(token))
+        assert_problem(refused, ErrorCode.FORBIDDEN)
 
 
 # ── one evaluator ────────────────────────────────────────────────────────────

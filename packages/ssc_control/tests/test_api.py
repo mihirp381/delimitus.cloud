@@ -226,6 +226,7 @@ def test_whoami_describes_the_credential(world: World) -> None:
         "credential_id": "cred_a",
         "is_agent": False,
         "client_id": None,
+        "role": "admin",
     }
 
 

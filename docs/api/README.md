@@ -69,6 +69,13 @@ VALIDATION_FAILED`. Only an active org admin, the app's owner or a builder on th
 be removed like any other; the owner keeps the right to change sharing. `GET .../access?user_id=`
 explains one user's access with the same evaluator the gateway uses.
 
+**The server says who the caller is** (decision 019). `GET /v1/whoami` returns `role`: `admin` or
+`member` for an active user of the org, `null` for any other credential or a deactivated user.
+Admin-only endpoints need `admin`, read on every request. `GET /v1/users?email=` (active admins
+only) returns every person with that address, ignoring case, because email is not a key.
+`GET /v1/apps?builder=me` lists the apps the caller may ship source to: every app for an admin,
+the apps they own, and those with a builder grant on any environment.
+
 **Some changes wait for approval** (decision 016). A `PUT .../grants` made through an agent
 credential, or one that widens the audience of a data-connected app, is not applied until the
 matching approval is approved: an agent session gets `202` with `{environment_id, grants_version,

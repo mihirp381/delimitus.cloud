@@ -1,14 +1,15 @@
 """Apps: create, list, read."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Query, Response
 from sqlalchemy import text
 
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
+from ssc_control.api.authz import buildable_app_ids
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
@@ -112,10 +113,28 @@ async def create_app(body: AppCreate, uow: UserUoW) -> Response:
     return uow.reply(out, status=201)
 
 
-@router.get("/apps", response_model=AppList, responses=problem_responses(*AUTHENTICATED))
-async def list_apps(uow: UserUoW) -> AppList:
+@router.get(
+    "/apps",
+    response_model=AppList,
+    responses=problem_responses(*AUTHENTICATED, ErrorCode.FORBIDDEN),
+)
+async def list_apps(
+    uow: UserUoW,
+    builder: Annotated[
+        Literal["me"] | None,
+        Query(
+            description="`me`: only the apps the caller may ship source to, as an active org "
+            "admin (every app), the owner, or a builder on any environment."
+        ),
+    ] = None,
+) -> AppList:
+    """Every app of the org, by slug. ``builder=me`` needs a user credential (``FORBIDDEN``)."""
     rows = (await uow.conn.execute(_SELECT_APPS, {"org": uow.org_id})).mappings()
-    return AppList(apps=[AppSummary(**dict(r)) for r in rows])
+    apps = [AppSummary(**dict(r)) for r in rows]
+    if builder == "me":
+        mine = await buildable_app_ids(uow)
+        apps = [a for a in apps if a.id in mine]
+    return AppList(apps=apps)
 
 
 @router.get(

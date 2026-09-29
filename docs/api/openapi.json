@@ -1868,6 +1868,13 @@
         "title": "OperationOut",
         "type": "object"
       },
+      "OrgRole": {
+        "enum": [
+          "admin",
+          "member"
+        ],
+        "type": "string"
+      },
       "PrincipalKind": {
         "enum": [
           "user",
@@ -2082,6 +2089,60 @@
         "title": "UploadTarget",
         "type": "object"
       },
+      "UserMatch": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/OrgRole"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "deactivated"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "email",
+          "role",
+          "status"
+        ],
+        "title": "UserMatch",
+        "type": "object"
+      },
+      "UserMatches": {
+        "additionalProperties": false,
+        "properties": {
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/UserMatch"
+            },
+            "title": "Users",
+            "type": "array"
+          }
+        },
+        "required": [
+          "users"
+        ],
+        "title": "UserMatches",
+        "type": "object"
+      },
       "Whoami": {
         "additionalProperties": false,
         "properties": {
@@ -2111,6 +2172,17 @@
             "title": "Org Id",
             "type": "string"
           },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrgRole"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The caller's org role when the credential is an active user's; null for any other credential and for a deactivated user. Admin-only endpoints need `admin`."
+          },
           "subject": {
             "title": "Subject",
             "type": "string"
@@ -2122,7 +2194,8 @@
           "kind",
           "credential_id",
           "is_agent",
-          "client_id"
+          "client_id",
+          "role"
         ],
         "title": "Whoami",
         "type": "object"
@@ -3073,7 +3146,29 @@
     },
     "/v1/apps": {
       "get": {
+        "description": "Every app of the org, by slug. ``builder=me`` needs a user credential (``FORBIDDEN``).",
         "operationId": "list_apps_v1_apps_get",
+        "parameters": [
+          {
+            "description": "`me`: only the apps the caller may ship source to, as an active org admin (every app), the owner, or a builder on any environment.",
+            "in": "query",
+            "name": "builder",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "me",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`me`: only the apps the caller may ship source to, as an active org admin (every app), the owner, or a builder on any environment.",
+              "title": "Builder"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -3094,6 +3189,16 @@
               }
             },
             "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
           },
           "422": {
             "content": {
@@ -5242,6 +5347,84 @@
           }
         },
         "summary": "Get Operation",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/users": {
+      "get": {
+        "description": "Active org admins with a user credential only (``FORBIDDEN``).",
+        "operationId": "find_users_v1_users_get",
+        "parameters": [
+          {
+            "description": "Matched whole, ignoring case. Deactivated people are included.",
+            "in": "query",
+            "name": "email",
+            "required": true,
+            "schema": {
+              "description": "Matched whole, ignoring case. Deactivated people are included.",
+              "maxLength": 320,
+              "minLength": 3,
+              "pattern": "^[^@\\s]+@[^@\\s]+$",
+              "title": "Email",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMatches"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Find Users",
         "tags": [
           "v1"
         ]

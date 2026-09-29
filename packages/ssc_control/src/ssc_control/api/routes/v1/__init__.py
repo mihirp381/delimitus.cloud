@@ -14,6 +14,7 @@ from ssc_control.api.routes.v1.audit import router as audit_router
 from ssc_control.api.routes.v1.bundles import router as bundles_router
 from ssc_control.api.routes.v1.deployments import router as deployments_router
 from ssc_control.api.routes.v1.grants import router as grants_router
+from ssc_control.api.routes.v1.users import router as users_router
 from ssc_control.api.routes.v1.whoami import router as whoami_router
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -25,3 +26,4 @@ router.include_router(deployments_router)
 router.include_router(audit_router)
 router.include_router(approvals_router)
 router.include_router(bundles_router)
+router.include_router(users_router)

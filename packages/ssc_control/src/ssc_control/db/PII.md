@@ -9,8 +9,8 @@ The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 
 | Table | Column | What it is | Why we hold it | Erasure |
 |---|---|---|---|---|
-| `user_account` | `display_name` | The person's name from the directory | Shown in the console, in `ssc access explain`, and in identity notes | Overwrite on request |
-| `user_account` | `email` | Work email from the directory | Display only. Never a key: emails are reused and reassigned. The key is `identity_link` | Overwrite on request |
+| `user_account` | `display_name` | The person's name from the directory | Shown in the console, in `ssc access explain`, in identity notes, and to active org admins by `GET /v1/users?email=` | Overwrite on request |
+| `user_account` | `email` | Work email from the directory | Display, and finding people to share with: `GET /v1/users?email=` returns every exact match, ignoring case, to active org admins only. Never a key: emails are reused and reassigned. The key is `identity_link` | Overwrite on request |
 | `user_group` | `display_name` | Cached group name (for example "Finance") | Rendering only, never authorisation; the key is `directory_ref` | Overwrite on request |
 | `identity_link` | `subject` | The identity provider's stable id for the person | The join between a login and a directory record | Delete the link |
 | `audit_event` | `actor_ip` | Client address at the time of an action | Security investigation | Cannot be edited (the log is immutable); redact on export |

@@ -179,7 +179,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Apps */
+        /**
+         * List Apps
+         * @description Every app of the org, by slug. ``builder=me`` needs a user credential (``FORBIDDEN``).
+         */
         get: operations["list_apps_v1_apps_get"];
         put?: never;
         /** Create App */
@@ -467,6 +470,26 @@ export interface paths {
         };
         /** Get Operation */
         get: operations["get_operation_v1_operations__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find Users
+         * @description Active org admins with a user credential only (``FORBIDDEN``).
+         */
+        get: operations["find_users_v1_users_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1197,6 +1220,8 @@ export interface components {
              */
             state: "pending" | "running" | "healthy" | "failed" | "superseded";
         };
+        /** @enum {string} */
+        OrgRole: "admin" | "member";
         /**
          * PrincipalKind
          * @enum {string}
@@ -1314,6 +1339,26 @@ export interface components {
              */
             url: string;
         };
+        /** UserMatch */
+        UserMatch: {
+            /** Display Name */
+            display_name: string;
+            /** Email */
+            email: string;
+            /** Id */
+            id: string;
+            role: components["schemas"]["OrgRole"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "deactivated";
+        };
+        /** UserMatches */
+        UserMatches: {
+            /** Users */
+            users: components["schemas"]["UserMatch"][];
+        };
         /** Whoami */
         Whoami: {
             /** Client Id */
@@ -1325,6 +1370,8 @@ export interface components {
             kind: components["schemas"]["PrincipalKind"];
             /** Org Id */
             org_id: string;
+            /** @description The caller's org role when the credential is an active user's; null for any other credential and for a deactivated user. Admin-only endpoints need `admin`. */
+            role: components["schemas"]["OrgRole"] | null;
             /** Subject */
             subject: string;
         };
@@ -1999,7 +2046,10 @@ export interface operations {
     };
     list_apps_v1_apps_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `me`: only the apps the caller may ship source to, as an active org admin (every app), the owner, or a builder on any environment. */
+                builder?: "me" | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2017,6 +2067,15 @@ export interface operations {
             };
             /** @description `UNAUTHENTICATED` */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3327,6 +3386,65 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    find_users_v1_users_get: {
+        parameters: {
+            query: {
+                /** @description Matched whole, ignoring case. Deactivated people are included. */
+                email: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserMatches"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
