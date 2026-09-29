@@ -1,6 +1,6 @@
 """D3 for SSC-042: a credential with ``scope: preview`` never touches production. It may change
-preview, upload source and read, and nothing else. Checked in the unit of work, before any
-handler runs."""
+preview, upload source, read and ask for a preview share, and nothing else. Checked in the unit of
+work, before any handler runs."""
 
 from __future__ import annotations
 
@@ -181,7 +181,40 @@ def test_preview_scoped_token_cannot_make_changes_naming_no_environment(
         refused_by_scope(caplog, post(b, "/v1/apps", {"slug": "from-ci"}))
         refused_by_scope(caplog, post(b, "/v1/approvals", ask))
     assert count(b, "select count(*) from ssc.app where slug = 'from-ci'") == 0
-    assert count(b, "select count(*) from ssc.approval_request") == 0
+    assert count(b, "select count(*) from ssc.approval_request where subject_key = 'db'") == 0
+
+
+def test_preview_scoped_token_cannot_ask_for_a_prod_share(
+    b: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    grants = [{"role": "builder", "subject_kind": "user", "subject_id": b.org.admin_user_id}]
+    asks = [
+        {
+            "environment_id": b.env("prod"),
+            "kind": "agent_share",
+            "payload": {"grants_version": 1, "grants": grants},
+        },
+        {"environment_id": b.env("prod"), "kind": "widen_audience", "payload": {"grants": grants}},
+        {"kind": "agent_share", "payload": {"grants_version": 1, "grants": grants}},
+        {"environment_id": [b.env("preview")], "kind": "agent_share"},
+        {"environment_id": b.env("preview"), "kind": ["agent_share"]},
+        {
+            "environment_id": b.env("preview"),
+            "kind": "enable_internet_hosts",
+            "subject_key": "a.io",
+        },
+    ]
+    with caplog.at_level(logging.WARNING, logger="ssc.api"):
+        for ask in asks:
+            refused_by_scope(caplog, post(b, "/v1/approvals", ask))
+        refused_by_scope(caplog, post(b, "/v1/approvals", None))
+    assert (
+        count(
+            b, "select count(*) from ssc.approval_request where environment_id = %s", b.env("prod")
+        )
+        == 0
+    )
+    assert count(b, "select count(*) from ssc.approval_request where subject_key = 'a.io'") == 0
 
 
 # ── preview, source and reads stay open ──────────────────────────────────────
@@ -208,6 +241,23 @@ def test_preview_scoped_token_may_upload_source(b: Bench) -> None:
     assert created.status_code == 201, created.text
     missing = post(b, f"/v1/apps/{b.app['id']}/bundles/{new_id('bdl')}/complete")
     assert_problem(missing, ErrorCode.NOT_FOUND)
+
+
+def test_preview_scoped_token_may_ask_for_a_preview_share(b: Bench) -> None:
+    """Founder decision 2026-09-29. Asking changes nothing: another admin of the org decides."""
+    member = new_id("usr")
+    grants = [{"role": "builder", "subject_kind": "user", "subject_id": member}]
+    url = f"/v1/apps/{b.app['id']}/environments/{b.env('preview')}/grants"
+    version = b.client.get(url, headers=auth(b.preview)).json()["grants_version"]
+    asks = [
+        {"kind": "agent_share", "payload": {"grants_version": version, "grants": grants}},
+        {"kind": "widen_audience", "payload": {"grants": grants}},
+    ]
+    for ask in asks:
+        r = post(b, "/v1/approvals", {"environment_id": b.env("preview"), **ask})
+        assert r.status_code == 201, r.text
+        assert r.json()["state"] == "pending"
+    assert b.client.get(url, headers=auth(b.preview)).json()["grants_version"] == version
 
 
 def test_preview_scoped_token_may_read(b: Bench) -> None:

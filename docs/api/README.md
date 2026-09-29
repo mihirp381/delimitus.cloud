@@ -109,8 +109,10 @@ pseudonym; properties are flat scalars and never carry a user id or an email.
 **A `scope: preview` credential never touches production** (decision 011, SSC-042). Before any
 handler runs, the unit of work refuses it with `403 FORBIDDEN` on any path naming the prod
 environment, whatever the method, and on any other change except those in
-`uow.PREVIEW_SCOPE_CHANGES` (the bundle upload today). Preview changes and reads stay open. Any
-other `scope` value is `401 UNAUTHENTICATED`.
+`uow.PREVIEW_SCOPE_CHANGES` (the bundle upload today) and a share ask (`uow.PREVIEW_SHARE_ASK`):
+`POST /v1/approvals` of kind `agent_share` or `widen_audience` whose body names an environment
+that is not prod. Preview changes and reads stay open. Any other `scope` value is
+`401 UNAUTHENTICATED`.
 
 **Every environment has an address** (decision 004). `EnvironmentOut.url` is
 `https://<slug>.<cell label>.<apps domain>` for prod and `https://<slug>--preview.<cell
@@ -199,9 +201,9 @@ stateless, JSON replies. Code: `api/mcp/`.
     `ssc share` or `PUT .../grants` at the recorded `grants_version`.
   - A `scope: preview` credential (decision 011) can use every read and `deploy`: the bundle
     routes are preview-scope changes and the build and deployment routes name preview.
-    `rollback` on prod, `request_share` (either environment) and `request_connection` are
-    `FORBIDDEN`, since `POST /v1/approvals` names no environment in its path and is not a
-    preview-scope change.
+    `request_share` on preview opens its pending request like any other (founder decision
+    2026-09-29); `rollback` on prod, `request_share` on prod and `request_connection` are
+    `FORBIDDEN`.
   - Reads are not audited (as for `ssc`). Every write is, with `via_agent` and `client_id`:
     the bundle row, the build and `build.started`, the deployment and `deploy.started` or
     `rollback.started`, and `approval.requested`.
@@ -233,7 +235,8 @@ stateless, JSON replies. Code: `api/mcp/`.
 4. `uv run python tools/openapi_check.py --write`, then commit `docs/api/openapi.json`.
 5. A route that changes one environment names it `{environment_id}` in its path, so a
    `scope: preview` credential is checked against it. Any other change is closed to such a
-   credential unless it is added to `uow.PREVIEW_SCOPE_CHANGES`.
+   credential unless it is added to `uow.PREVIEW_SCOPE_CHANGES`. `POST /v1/approvals` is the one
+   change naming its environment in the body; `check_scope` reads it there.
 
 CI runs `tools/openapi_check.py` (the file must match the code) and
 `tools/openapi_breaking.py` against the merge base (on a pull request) or the previous commit

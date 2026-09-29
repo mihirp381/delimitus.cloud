@@ -6,8 +6,9 @@ Ticket "done when" checks:
     agent receives an address                           upload, building, deploying, live, with
                                                         a preview-scoped credential; deploying
                                                         and live carry preview's url)
-  * a preview-scoped agent never touches prod        -> test_preview_scoped_agent_asks_nothing,
-                                     test_preview_scoped_agent_cannot_roll_back_prod
+  * a preview-scoped agent never touches prod
+                                -> test_preview_scoped_agent_cannot_roll_back_prod,
+                                   test_preview_scoped_agent_asks_only_preview_shares
   * a share request from an agent is pending and cannot be approved from the same session
                                                      -> test_request_share_pending,
                                                         test_no_approve_path
@@ -347,27 +348,35 @@ async def test_preview_scoped_agent_cannot_roll_back_prod(world: World) -> None:
     assert not apps.is_error
 
 
-async def test_preview_scoped_agent_asks_nothing(world: World) -> None:
-    """``POST /v1/approvals`` names no environment in its path and is not a preview-scope change,
-    so check_scope refuses every request tool, prod ones included."""
+async def test_preview_scoped_agent_asks_only_preview_shares(world: World) -> None:
+    """Founder decision 2026-09-29: a preview share may be asked for, and another admin decides.
+    A prod share and a data connection stay refused."""
     member = add_account(world.dsns.app, world.org.org_id, "member")
-    calls = [
+    refused = [
         ("request_connection", {"app": "mcp-app", "connection": "scoped-db"}),
         ("request_share", {"app": "mcp-app", "env": "prod", "who": member}),
-        ("request_share", {"app": "mcp-app", "env": "preview", "who": member}),
     ]
     async with session(world.url, world.agent_token(scope="preview")) as client:
-        results = [await client.call_tool(name, args) for name, args in calls]
+        results = [await client.call_tool(name, args) for name, args in refused]
+        asked = await client.call_tool(
+            "request_share", {"app": "mcp-app", "env": "preview", "who": member}
+        )
     for r in results:
         assert r.is_error
         assert r.structured_content["error"]["code"] == "FORBIDDEN"
-    asked = rows(
+    assert not asked.is_error, asked.structured_content
+    approval = asked.structured_content["approval"]
+    assert approval["environment_id"] == env_id(world.app, "preview")
+    assert (approval["kind"], approval["state"]) == ("agent_share", "pending")
+    assert approval["requested_via_agent"] is True
+    elsewhere = rows(
         world.dsns.app,
         world.org.org_id,
-        "select count(*) from ssc.approval_request where subject_key = %s or payload::text like %s",
-        ("scoped-db", f"%{member}%"),
+        "select count(*) from ssc.approval_request where subject_key = %s "
+        "or (payload::text like %s and environment_id <> %s)",
+        ("scoped-db", f"%{member}%", env_id(world.app, "preview")),
     )
-    assert asked == [(0,)]
+    assert elsewhere == [(0,)]
 
 
 async def test_tool_error_carries_the_request_id(world: World) -> None:

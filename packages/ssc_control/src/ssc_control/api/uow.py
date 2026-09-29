@@ -17,7 +17,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Final
+from typing import Annotated, Any, Final, cast
 
 from fastapi import Depends, Request, Response
 from pydantic import BaseModel
@@ -32,6 +32,7 @@ from ssc_control.api.ratelimit import limit
 from ssc_control.api.runtime import runtime_of
 from ssc_control.audit import Actor, AppendedEvent, NewEvent, append_event
 from ssc_control.db.bind import bound_org
+from ssc_control.domain.approval_rules import RequirementKind
 from ssc_control.ports import MetricsPort, NullMetricsPort
 
 JSON_MEDIA_TYPE = "application/json"
@@ -40,6 +41,10 @@ PREVIEW_SCOPE_CHANGES: Final = (
     "POST /v1/apps/{app_id}/bundles/{bundle_id}/complete",
 )
 """The changes naming no environment that a ``preview``-scoped credential may make."""
+PREVIEW_SHARE_ASK: Final = "POST /v1/approvals"
+"""The one change naming its environment in the body: a ``preview``-scoped credential may ask
+for a share of an environment that is not prod, and nothing else."""
+_SHARE_KINDS: Final = frozenset({RequirementKind.AGENT_SHARE, RequirementKind.WIDEN_AUDIENCE})
 _PREVIEW_SCOPE_CHANGES: Final = tuple(
     re.compile(re.sub(r"\{[a-z_]+\}", "[^/]+", change)) for change in PREVIEW_SCOPE_CHANGES
 )
@@ -128,12 +133,16 @@ class UnitOfWork:
 
 
 async def check_scope(request: Request, conn: AsyncConnection, principal: Principal) -> None:
-    """A ``preview``-scoped credential never touches production: a request naming an environment
-    must name a preview one, and any other change must be in :data:`PREVIEW_SCOPE_CHANGES`.
-    Anything else is ``FORBIDDEN``. A route that names an environment changes only that one."""
+    """A ``preview``-scoped credential never touches production: a request naming an environment,
+    in its path or as a share ask (:data:`PREVIEW_SHARE_ASK`), must name one that is not prod, and
+    any other change must be in :data:`PREVIEW_SCOPE_CHANGES`. Anything else is ``FORBIDDEN``. A
+    route that names an environment changes only that one."""
     if principal.scope is not CredentialScope.PREVIEW:
         return
+    change = f"{request.method} {request.url.path}"
     environment_id = request.path_params.get("environment_id")
+    if environment_id is None and change == PREVIEW_SHARE_ASK:
+        environment_id = await _share_environment(request)
     if environment_id is not None:
         name = (
             await conn.execute(
@@ -146,11 +155,25 @@ async def check_scope(request: Request, conn: AsyncConnection, principal: Princi
                 evidence={"reason": "preview_scope", "environment_id": environment_id},
             )
         return
-    change = f"{request.method} {request.url.path}"
     if request.method not in _SAFE_METHODS and not any(
         p.fullmatch(change) for p in _PREVIEW_SCOPE_CHANGES
     ):
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "preview_scope", "change": change})
+
+
+async def _share_environment(request: Request) -> str | None:
+    """The environment a share ask names, or None when the body asks for anything else."""
+    try:
+        body: object = await request.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    fields = cast("dict[str, object]", body)
+    kind, environment_id = fields.get("kind"), fields.get("environment_id")
+    if not isinstance(kind, str) or kind not in _SHARE_KINDS:
+        return None
+    return environment_id if isinstance(environment_id, str) else None
 
 
 def _make(
