@@ -29,7 +29,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import psycopg
@@ -466,29 +466,19 @@ async def test_reconciler_without_a_driver_defers_nothing(dsns: Dsns) -> None:
     db = fresh_db(dsns)
     await asyncio.to_thread(live_env, db.app, "Idle")
     engine = ssc_control.db.make_engine(db.app)
+    kept = replace(FAST, delete_jobs="never")  # poll rows that stay, not ones deleted on success
     task = asyncio.create_task(
         run_worker(
-            build_app(db.app, settings=FAST),
+            build_app(db.app, settings=kept),
             Ports(engine=engine),
-            settings=FAST,
+            settings=kept,
             install_signal_handlers=False,
         )
     )
     try:
-        done = (
-            "select count(*) from procrastinate.procrastinate_jobs "
-            "where task_name = 'runtime:reconcile_tick'"
-        )
-        await until(lambda: one(db.superuser, done) != 0, 10)
-        await asyncio.sleep(1.5)
-        assert (
-            one(
-                db.superuser,
-                "select count(*) from procrastinate.procrastinate_jobs where task_name = %s",
-                runtime_jobs.RECONCILE_ENV,
-            )
-            == 0
-        )
+        ticks = "task_name = 'runtime:reconcile_tick' and status = 'succeeded'"
+        await until(lambda: queue_count(db, ticks) >= 2, 30)
+        assert queue_count(db, "task_name = %s", runtime_jobs.RECONCILE_ENV) == 0
     finally:
         task.cancel()
         with suppress(asyncio.CancelledError):
