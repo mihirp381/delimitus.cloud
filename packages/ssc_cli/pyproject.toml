@@ -3,7 +3,7 @@ name = "ssc-cli"
 version = "0.0.1"
 description = "The ssc command line tool for Small Software Cloud."
 requires-python = ">=3.14,<3.15"
-dependencies = ["ssc-contracts", "ssc-shared", "ssc-bundle", "typer==0.27.2", "httpx2==2.13.0", "pydantic==2.13.5", "keyring==25.7.0"]
+dependencies = ["ssc-contracts==0.0.1", "ssc-shared==0.0.1", "ssc-bundle==0.0.1", "typer==0.27.2", "httpx2==2.13.0", "pydantic==2.13.5", "keyring==25.7.0"]
 
 [project.scripts]
 ssc = "ssc_cli.main:app"
