@@ -9,6 +9,8 @@ Ticket "done when" checks:
   * a duplicate queueing lock keeps the transaction usable
                                   -> test_duplicate_queueing_lock_keeps_the_transaction_usable
   * a SIGKILLed worker's job runs again           -> test_stalled_sweep_reruns_a_killed_workers_job
+  * a stalled job whose waiting twin holds its queueing lock is failed, not retried
+                             -> test_stalled_sweep_fails_a_job_whose_waiting_twin_holds_its_lock
   * workers read org_index, then bind each org    -> test_workers_find_every_org_then_bind_each
   * a drifted service is repaired in seconds      -> test_running_worker_repairs_drift
   * a disabled app is not restarted               -> test_running_worker_never_starts_a_disabled_app
@@ -57,6 +59,7 @@ from ssc_control.worker import (
     compose_ports,
     queue_conninfo,
     refuse_fakes,
+    retry_stalled,
     run,
     run_worker,
     runtime_driver_from_env,
@@ -307,6 +310,48 @@ async def test_stalled_sweep_reruns_a_killed_workers_job(dsns: Dsns, tmp_path: P
         "where task_name = 'core:stalled_sweep' and status = 'succeeded'"
     )
     assert isinstance(n := one(db.superuser, sweeps), int) and n >= 1
+
+
+async def test_stalled_sweep_fails_a_job_whose_waiting_twin_holds_its_lock(dsns: Dsns) -> None:
+    db = fresh_db(dsns)
+    held, free = f"lock-{uuid.uuid4()}", f"lock-{uuid.uuid4()}"
+    engine = ssc_control.db.make_engine(db.app)
+    try:
+        async with engine.begin() as conn:
+            stuck = await defer(conn, "probe:echo", queueing_lock=held, word="a")
+            other = await defer(conn, "probe:echo", queueing_lock=free, word="c")
+        with psycopg.connect(db.superuser) as pg:
+            pg.execute("set search_path to procrastinate")  # the queue triggers need it
+            row = pg.execute(
+                "insert into procrastinate.procrastinate_workers (last_heartbeat) "
+                "values (now() - interval '1 hour') returning id"
+            ).fetchone()
+            assert row is not None
+            pg.execute(
+                "update procrastinate.procrastinate_jobs set status = 'doing', worker_id = %s "
+                "where id = any(%s)",
+                (row[0], [stuck, other]),
+            )
+        async with engine.begin() as conn:
+            twin = await defer(conn, "probe:echo", queueing_lock=held, word="b")
+    finally:
+        await engine.dispose()
+    assert None not in (stuck, other, twin)
+
+    app = App(connector=PsycopgConnector(conninfo=queue_conninfo(db.app)))
+    async with app.open_async():
+        assert await retry_stalled(app, seconds=30) == 2
+        assert await retry_stalled(app, seconds=30) == 0
+    with psycopg.connect(db.superuser) as pg:
+        rows = pg.execute(
+            "select id, status, attempts from procrastinate.procrastinate_jobs where id = any(%s)",
+            ([stuck, other, twin],),
+        ).fetchall()
+    assert {r[0]: (r[1], r[2]) for r in rows} == {
+        stuck: ("failed", 1),
+        twin: ("todo", 0),
+        other: ("todo", 1),
+    }
 
 
 # ── the reconciler in a running worker ───────────────────────────────────────

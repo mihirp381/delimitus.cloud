@@ -5,9 +5,9 @@ builds the ``Ports`` and runs until SIGINT or SIGTERM. Each lane adds its tasks 
 ``add_tasks_from`` line in ``build_app``, from a blueprint factory.
 
 ``stalled_sweep`` is decision 008's recovery: a job left in ``doing`` by a worker whose heartbeat
-stopped (a SIGKILL, a lost node) is put back to ``todo``. Procrastinate 3.10 has no single call for
-this, so the sweep is ``get_stalled_jobs`` then ``retry_job``. Every task must therefore be safe to
-run twice.
+stopped (a SIGKILL, a lost node) is put back to ``todo``, unless a waiting twin already holds its
+``queueing_lock``. Procrastinate 3.10 has no single call for this, so the sweep is
+``get_stalled_jobs`` then ``retry_job``. Every task must therefore be safe to run twice.
 
 Fakes run only when ``SSC_ENV`` is ``dev`` or ``test``: ``compose_ports`` refuses otherwise, so no
 production worker can silently drive an in-memory runtime.
@@ -22,6 +22,9 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from procrastinate import App, Blueprint, JobContext, PsycopgConnector
+from procrastinate.exceptions import ConnectorException, UniqueViolation
+from procrastinate.jobs import Status
+from procrastinate.manager import QUEUEING_LOCK_CONSTRAINT
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from ssc_control.audit import jobs as audit_jobs
@@ -30,6 +33,7 @@ from ssc_control.db.engine import make_engine
 from ssc_control.deploy import jobs as deploy_jobs
 from ssc_control.deploy.build_driver import BuildDriver, FakeBuildDriver
 from ssc_control.deploy.gates import approvals_prod_gate
+from ssc_control.lifecycle import jobs as lifecycle_jobs
 from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
 from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
@@ -100,12 +104,29 @@ def core_blueprint(*, sweep_cron: str, stalled_after_seconds: float) -> Blueprin
 
 
 async def retry_stalled(app: App, *, seconds: float) -> int:
-    """``get_stalled_jobs`` then ``retry_job`` for each (decision 008)."""
+    """``get_stalled_jobs`` then ``retry_job`` for each (decision 008); how many were handled.
+
+    A stalled job whose ``queueing_lock`` a waiting (``todo``) twin already holds cannot go back
+    to ``todo``: it is marked ``failed`` instead, since every queueing lock names one unit of
+    work and the twin does it. Any other refusal is logged and left to the next sweep."""
     stalled = list(await app.job_manager.get_stalled_jobs(seconds_since_heartbeat=seconds))
+    handled = 0
     for job in stalled:
-        await app.job_manager.retry_job(job)
-        log.warning("stalled job retried", extra={"job_id": job.id, "task_name": job.task_name})
-    return len(stalled)
+        extra = {"job_id": job.id, "task_name": job.task_name}
+        try:
+            try:
+                await app.job_manager.retry_job(job)
+                log.warning("stalled job retried", extra=extra)
+            except UniqueViolation as exc:
+                if exc.constraint_name != QUEUEING_LOCK_CONSTRAINT:
+                    raise
+                await app.job_manager.finish_job(job, status=Status.FAILED, delete_job=False)
+                log.warning("stalled job superseded by its waiting twin", extra=extra)
+        except ConnectorException:
+            log.exception("stalled job not retried", extra=extra)
+            continue
+        handled += 1
+    return handled
 
 
 def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
@@ -120,6 +141,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(snapshot_jobs.blueprint(), namespace="snapshot")
     app.add_tasks_from(deploy_jobs.blueprint(), namespace="deploy")
     app.add_tasks_from(audit_jobs.blueprint(), namespace="audit")
+    app.add_tasks_from(lifecycle_jobs.blueprint(), namespace="lifecycle")
     return app
 
 

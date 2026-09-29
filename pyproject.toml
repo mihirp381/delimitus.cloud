@@ -89,6 +89,7 @@ include = [
   "packages/ssc_control/src/ssc_control/snapshot",
   "packages/ssc_control/src/ssc_control/directory.py",
   "packages/ssc_control/src/ssc_control/storage.py",
+  "packages/ssc_control/src/ssc_control/lifecycle",
 ]
 strict = [
   "packages/ssc_contracts/src",
@@ -114,6 +115,7 @@ strict = [
   "packages/ssc_control/src/ssc_control/snapshot",
   "packages/ssc_control/src/ssc_control/directory.py",
   "packages/ssc_control/src/ssc_control/storage.py",
+  "packages/ssc_control/src/ssc_control/lifecycle",
 ]
 reportMissingImports = true
 
@@ -174,4 +176,4 @@ forbidden_modules = [
 name = "The API defers jobs by name and never imports the worker"
 type = "forbidden"
 source_modules = ["ssc_control.api", "ssc_control.deferral"]
-forbidden_modules = ["ssc_control.worker", "ssc_control.runtime.jobs", "ssc_control.snapshot.jobs", "ssc_control.deploy.jobs", "ssc_control.audit.jobs"]
+forbidden_modules = ["ssc_control.worker", "ssc_control.runtime.jobs", "ssc_control.snapshot.jobs", "ssc_control.deploy.jobs", "ssc_control.audit.jobs", "ssc_control.lifecycle.jobs"]

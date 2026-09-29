@@ -1,5 +1,5 @@
 """What one running API process holds: settings, the engine, the verifier, the limiter, the
-metrics recorder, the blob store and the production gate."""
+metrics recorder, the blob store, the production gate and the timers."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 
 from ssc_control.deploy.gates import approvals_prod_gate
-from ssc_control.ports import MetricsPort, NullMetricsPort, ProdGate
+from ssc_control.ports import MetricsPort, NullMetricsPort, NullTimersPort, ProdGate, TimersPort
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -32,6 +32,8 @@ class Runtime:
     """Where bundles go; ``None`` when ``blob_backend`` is ``none``."""
     prod_gate: ProdGate = field(default_factory=approvals_prod_gate)
     """Checked when a ``prod`` deployment is posted; the deploy job checks it again."""
+    timers: TimersPort = field(default_factory=NullTimersPort)
+    """Resumes the schedules the kill switch paused when an app is enabled."""
 
 
 def runtime_of(request: Request) -> Runtime:

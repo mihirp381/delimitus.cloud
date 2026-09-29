@@ -82,6 +82,7 @@ _LOCK_ENV = text(
     "select id, grants_version, profile, name from ssc.environment "
     "where org_id = :org and app_id = :app and id = :env for update"
 )
+_SHARE_APP_STATUS = text("select status from ssc.app where org_id = :org and id = :app for share")
 _SELECT_ENV = text(
     "select id, grants_version from ssc.environment "
     "where org_id = :org and app_id = :app and id = :env"
@@ -229,6 +230,7 @@ async def get_grants(app_id: Id, environment_id: Id, uow: UserUoW, response: Res
             ErrorCode.REFERENCE_NOT_FOUND,
             ErrorCode.VALIDATION_FAILED,
             ErrorCode.APPROVAL_REQUIRED,
+            ErrorCode.APP_NOT_ACTIVE,
         ),
     },
 )
@@ -252,7 +254,8 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
 
     Only an org admin, the app's owner or a builder on this environment may; anyone else gets
     ``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant
-    for one subject is ``VALIDATION_FAILED``.
+    for one subject is ``VALIDATION_FAILED``. A quarantined app's sharing is frozen:
+    ``APP_NOT_ACTIVE``.
 
     A change that needs approval is not applied: an agent session gets ``202`` and the pending
     approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for."""
@@ -267,6 +270,12 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     if env is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
     await require_builder(uow, environment_id)
+    # Sharing freeze (SSC-025). FOR SHARE waits for a kill switch pulled at the same moment.
+    status = (
+        await uow.conn.execute(_SHARE_APP_STATUS, {"org": uow.org_id, "app": app_id})
+    ).scalar()
+    if status == "quarantined":
+        raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"app_id": app_id, "status": status})
     current = int(env[1])
     if current != expected:
         raise Refusal(
