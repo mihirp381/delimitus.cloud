@@ -1,0 +1,437 @@
+{
+  "_comment": "Shared identity-note test vectors (SSC-020). Regenerate with `uv run python conformance/identity_note/generate.py`. Keys in test_keys.json are throwaway.",
+  "now": 1790000000,
+  "leeway": 30,
+  "issuer": "https://keys.delimitus.com/cell-test",
+  "audiences": {
+    "app_a": "https://quiet-river-7f3k.delimitusapps.com",
+    "app_b": "https://brave-otter-2m9q.delimitusapps.com"
+  },
+  "jwks": {
+    "keys": [
+      {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "XyFczlHLlKT3lI_DFq0lHcnVKuBhpp4Yecji8cPVzuQ",
+        "y": "1sDCjvM_W4OrYPdV23K4QoEwf56fJk6yLuSgAhuD2Tc",
+        "kid": "test-2026-09-a",
+        "use": "sig",
+        "alg": "ES256"
+      },
+      {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "NzKtfoFPEqKCpXwSa6URRyiCNGA6zqvX8bihdxkJ2cE",
+        "y": "w3aUcVayicsbDoy2k4eIpKOqjhfJhGeVfw_Zjsi8KOo",
+        "kid": "test-2026-09-b",
+        "use": "sig",
+        "alg": "ES256"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "user note",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.vYCXv_JGv8SuKtX3VOOnt990D6M973qbGN5RYsaWpTLRJkH1F96qkOrXsNJhu24jNI9Oxh1Qz_Bllo2W8VbY6g",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "ok": {
+          "iss": "https://keys.delimitus.com/cell-test",
+          "aud": "https://quiet-river-7f3k.delimitusapps.com",
+          "sub": "usr_11111111111111111111",
+          "iat": 1789999990,
+          "exp": 1790000290,
+          "org": "org_0123456789abcdefghij",
+          "app": "app_aaaaaaaaaaaaaaaaaaaa",
+          "env": "prod",
+          "role": "user",
+          "groups": [
+            "grp_00000000000000000001",
+            "grp_00000000000000000002",
+            "grp_00000000000000000003"
+          ],
+          "name": "Ada Lovelace",
+          "email": "ada@example.com"
+        }
+      }
+    },
+    {
+      "name": "user note signed by the second key",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1iIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.EvBMDnXi_vQ0Nj4iJI4WP3MlEIxQ3Dq3Cfss5FLS7nxa14ICkWImlNk68IEwB1sBqNo5xD9CdSWndYI1Ht0HEg",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "ok": {
+          "iss": "https://keys.delimitus.com/cell-test",
+          "aud": "https://quiet-river-7f3k.delimitusapps.com",
+          "sub": "usr_11111111111111111111",
+          "iat": 1789999990,
+          "exp": 1790000290,
+          "org": "org_0123456789abcdefghij",
+          "app": "app_aaaaaaaaaaaaaaaaaaaa",
+          "env": "prod",
+          "role": "user",
+          "groups": [
+            "grp_00000000000000000001",
+            "grp_00000000000000000002",
+            "grp_00000000000000000003"
+          ],
+          "name": "Ada Lovelace",
+          "email": "ada@example.com"
+        }
+      }
+    },
+    {
+      "name": "builder note on preview, no groups",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJldmlldyIsInJvbGUiOiJidWlsZGVyIiwiZ3JvdXBzIjpbXSwibmFtZSI6IkFkYSBMb3ZlbGFjZSIsImVtYWlsIjoiYWRhQGV4YW1wbGUuY29tIn0.e_vqrvECmrv3MBGGrPsZMXyA3vLe3GWmDVM7Gg-m593tmtXEtagn0l3gG8Rz_Fd1ag5LrTbfqoQS8rzK1gOlmg",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "ok": {
+          "iss": "https://keys.delimitus.com/cell-test",
+          "aud": "https://quiet-river-7f3k.delimitusapps.com",
+          "sub": "usr_11111111111111111111",
+          "iat": 1789999990,
+          "exp": 1790000290,
+          "org": "org_0123456789abcdefghij",
+          "app": "app_aaaaaaaaaaaaaaaaaaaa",
+          "env": "preview",
+          "role": "builder",
+          "groups": [],
+          "name": "Ada Lovelace",
+          "email": "ada@example.com"
+        }
+      }
+    },
+    {
+      "name": "schedule note",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJzY2hfMjIyMjIyMjIyMjIyMjIyMjIyMjIiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJzY2hlZHVsZSIsImdyb3VwcyI6W119.noE0b8mAJ_0u78DwmSqG2VAeMxF2NC-l2bN_YC1fDl_bXR2VBRSIdzSGFfe1XWSa5x07hIOWK4EQc2lUaoYcrA",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "ok": {
+          "iss": "https://keys.delimitus.com/cell-test",
+          "aud": "https://quiet-river-7f3k.delimitusapps.com",
+          "sub": "sch_22222222222222222222",
+          "iat": 1789999990,
+          "exp": 1790000290,
+          "org": "org_0123456789abcdefghij",
+          "app": "app_aaaaaaaaaaaaaaaaaaaa",
+          "env": "prod",
+          "role": "schedule",
+          "groups": []
+        }
+      }
+    },
+    {
+      "name": "note with 50 groups",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwNCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwNSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwNiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwNyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwOCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwOSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxMCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxMyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxNCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxNSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxNiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxNyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxOCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxOSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyMCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyMyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyNCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyNSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyNiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyNyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyOCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyOSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzMCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzMyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzNCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzNSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzNiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzNyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzOCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzOSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0MCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0MSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0MiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0MyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0NCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0NSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0NiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0NyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0OCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0OSJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.acydEbjI_uDcmE1Ia_ZrsRvg2iXOSSecBfvkUXPKYff0ArKrFRBevicAaLAfZ2bKuDcuHNSvG1XnWLYV6S830g",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "ok": {
+          "iss": "https://keys.delimitus.com/cell-test",
+          "aud": "https://quiet-river-7f3k.delimitusapps.com",
+          "sub": "usr_11111111111111111111",
+          "iat": 1789999990,
+          "exp": 1790000290,
+          "org": "org_0123456789abcdefghij",
+          "app": "app_aaaaaaaaaaaaaaaaaaaa",
+          "env": "prod",
+          "role": "user",
+          "groups": [
+            "grp_00000000000000000000",
+            "grp_00000000000000000001",
+            "grp_00000000000000000002",
+            "grp_00000000000000000003",
+            "grp_00000000000000000004",
+            "grp_00000000000000000005",
+            "grp_00000000000000000006",
+            "grp_00000000000000000007",
+            "grp_00000000000000000008",
+            "grp_00000000000000000009",
+            "grp_00000000000000000010",
+            "grp_00000000000000000011",
+            "grp_00000000000000000012",
+            "grp_00000000000000000013",
+            "grp_00000000000000000014",
+            "grp_00000000000000000015",
+            "grp_00000000000000000016",
+            "grp_00000000000000000017",
+            "grp_00000000000000000018",
+            "grp_00000000000000000019",
+            "grp_00000000000000000020",
+            "grp_00000000000000000021",
+            "grp_00000000000000000022",
+            "grp_00000000000000000023",
+            "grp_00000000000000000024",
+            "grp_00000000000000000025",
+            "grp_00000000000000000026",
+            "grp_00000000000000000027",
+            "grp_00000000000000000028",
+            "grp_00000000000000000029",
+            "grp_00000000000000000030",
+            "grp_00000000000000000031",
+            "grp_00000000000000000032",
+            "grp_00000000000000000033",
+            "grp_00000000000000000034",
+            "grp_00000000000000000035",
+            "grp_00000000000000000036",
+            "grp_00000000000000000037",
+            "grp_00000000000000000038",
+            "grp_00000000000000000039",
+            "grp_00000000000000000040",
+            "grp_00000000000000000041",
+            "grp_00000000000000000042",
+            "grp_00000000000000000043",
+            "grp_00000000000000000044",
+            "grp_00000000000000000045",
+            "grp_00000000000000000046",
+            "grp_00000000000000000047",
+            "grp_00000000000000000048",
+            "grp_00000000000000000049"
+          ],
+          "name": "Ada Lovelace",
+          "email": "ada@example.com"
+        }
+      }
+    },
+    {
+      "name": "note issued this second",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.9HAr7nqSD4UGiY8YUGPrnE7rR3NLhS-gzuzSxZQfz14FGzDTS9-D1zUiD0jwBmV_T3nzKQ9lNKjUPsq7VfgfLg",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "ok": {
+          "iss": "https://keys.delimitus.com/cell-test",
+          "aud": "https://quiet-river-7f3k.delimitusapps.com",
+          "sub": "usr_11111111111111111111",
+          "iat": 1790000000,
+          "exp": 1790000300,
+          "org": "org_0123456789abcdefghij",
+          "app": "app_aaaaaaaaaaaaaaaaaaaa",
+          "env": "prod",
+          "role": "user",
+          "groups": [
+            "grp_00000000000000000001",
+            "grp_00000000000000000002",
+            "grp_00000000000000000003"
+          ],
+          "name": "Ada Lovelace",
+          "email": "ada@example.com"
+        }
+      }
+    },
+    {
+      "name": "token for app A verified by app B",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.7xsnj9bdZp9peC3rXiitQTmoS26wu7a5iu8JFlHt4Sd07hnMs4fLB7MjXaCMUlJ5UgEZw03EkTT1UmDk9lyPkA",
+      "audience": "https://brave-otter-2m9q.delimitusapps.com",
+      "expect": {
+        "refused": "wrong_audience"
+      }
+    },
+    {
+      "name": "expired",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk2NDAsImV4cCI6MTc4OTk5OTk0MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.Eat1K81-KCPX6ICY2ZYmaT-NPgD6pKozqWbvNYawyl0VTbNTGx_SrywMw8sQxRU3mdfH4KEjTyGTIwZEHIIYWw",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "expired"
+      }
+    },
+    {
+      "name": "expired by one second past leeway",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk2NjksImV4cCI6MTc4OTk5OTk2OSwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.FU8caf1rE-b57aI8nbb7nEuOI0F98UnnDQq2EI14VVMRSCvaMYnPMRuy5sGGFnjvHqpcBCFVR_n-9ArgJEqDjg",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "expired"
+      }
+    },
+    {
+      "name": "not yet valid",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3OTAwMDAxMjAsImV4cCI6MTc5MDAwMDQyMCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.XOEdGR0Mb-1nvEGNfG8xq_DiHiu4ZrZG8OxcCBdTKPZCUs5E2SHffJOhc4UcXTmH2PKG3N5UwlJ5WT24Xl-LkA",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "not_yet_valid"
+      }
+    },
+    {
+      "name": "wrong key claiming a known kid",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.7uDcVftogTHa6BIx5uP4pBVYvUBfySf-6KucnhGFmguXytmGv7hVLj2D-nFxp20vvrULvymXfZUDQ1SoWfFxIA",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_signature"
+      }
+    },
+    {
+      "name": "unknown kid",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtZm9yZWlnbiIsInR5cCI6InNzYy1pZCtqd3QifQ.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.fnRx16VmuI5zWw5F3re4_pkf-IlAetGXqNBiGdzuJTK40NCZRswW7SpygzR6ZM8iuXsfvr22-dT2iyKDPPno5g",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "unknown_key"
+      }
+    },
+    {
+      "name": "missing kid",
+      "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6InNzYy1pZCtqd3QifQ.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.GmieS2sEHUhJbHGREwek9FmwlBWAiPFhGUwNMSnuP3p_TgP7aJddxd52YXOKVuSpYBFL_s9YDZjPQRC_nFuR7Q",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "unknown_key"
+      }
+    },
+    {
+      "name": "tampered payload",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJidWlsZGVyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.R14XYzO7Azx1QiBNTpvhS4k3HMMpE1KzPCLEZkg6OpyI8SquCd67C4GGwBYNeomijzINNwPmol1aXQiwyFpTgQ",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_signature"
+      }
+    },
+    {
+      "name": "alg none",
+      "token": "eyJhbGciOiJub25lIiwidHlwIjoic3NjLWlkK2p3dCIsImtpZCI6InRlc3QtMjAyNi0wOS1hIn0.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "wrong_algorithm"
+      }
+    },
+    {
+      "name": "HS256",
+      "token": "eyJhbGciOiJIUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiAiaHR0cHM6Ly9rZXlzLmRlbGltaXR1cy5jb20vY2VsbC10ZXN0IiwgImF1ZCI6ICJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCAic3ViIjogInVzcl8xMTExMTExMTExMTExMTExMTExMSIsICJpYXQiOiAxNzg5OTk5OTkwLCAiZXhwIjogMTc5MDAwMDI5MCwgIm9yZyI6ICJvcmdfMDEyMzQ1Njc4OWFiY2RlZmdoaWoiLCAiYXBwIjogImFwcF9hYWFhYWFhYWFhYWFhYWFhYWFhYSIsICJlbnYiOiAicHJvZCIsICJyb2xlIjogInVzZXIiLCAiZ3JvdXBzIjogWyJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCAiZ3JwXzAwMDAwMDAwMDAwMDAwMDAwMDAyIiwgImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCAibmFtZSI6ICJBZGEgTG92ZWxhY2UiLCAiZW1haWwiOiAiYWRhQGV4YW1wbGUuY29tIn0.jRN6m4_mayg5wRwXTgbwLyhfL0xEZ2dIekLfeDXOfpk",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "wrong_algorithm"
+      }
+    },
+    {
+      "name": "wrong typ",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.vwHi5cBJWU-x2b-ZW5QqY3giuMfhCymSJRyIq9wnmZ8eRVdZHkFgmDFW_-40mcaDGH3tfzYNxNLnaNqdtd6V-Q",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "wrong_type"
+      }
+    },
+    {
+      "name": "no typ",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.XdtKzx6rWbpshtvayjo4CdYhDFRDWnUMDkmGikYt3grfwO9FWMPdSY3sY1QdDSw6gYrqDIFrUHyL1YiMKgj-rQ",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "wrong_type"
+      }
+    },
+    {
+      "name": "ttl over 300 seconds",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MSwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.MthN-QmkkmcnKq5rZ5M9IQyhICBgb54nD0Eo8q5VYUok7RiBhMeujOFi3DTJzhbeOR54g9mGU2NrDV5u99i4UA",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "ttl_too_long"
+      }
+    },
+    {
+      "name": "51 groups",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwNCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwNSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwNiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwNyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwOCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwOSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxMCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxMyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxNCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxNSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxNiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxNyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxOCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAxOSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyMCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyMyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyNCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyNSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyNiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyNyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyOCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAyOSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzMCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzMyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzNCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzNSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzNiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzNyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzOCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAzOSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0MCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0MSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0MiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0MyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0NCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0NSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0NiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0NyIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0OCIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA0OSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDA1MCJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.Mi-52ttBZ_rIa14i_H7AhCXjDPl6P1c9oMiNDYd7lV5uR5cp7hhk9eUywstr8qTDZK5xuEu7PSCmeus9IFdT6w",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "email as subject",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJhZGFAZXhhbXBsZS5jb20iLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.07WsYUo3Nwez81oyZTLoYIUhC5Ffzk2vDPwxoXUNmoC4AzaOVrh6f85r1wt8QX6-lZLQ1acNGpI8euz_IiJzgw",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "schedule note carrying email",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJzY2hfMjIyMjIyMjIyMjIyMjIyMjIyMjIiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJzY2hlZHVsZSIsImdyb3VwcyI6W10sImVtYWlsIjoiY3JvbkBleGFtcGxlLmNvbSJ9.F0ad-p3U2FGypXLj9apNWTOkd1W9weFffZ7AnB5OK8EhbWtKQqg9hS108tNnUxDmM2dJxJBAXZM1ldY6As22UA",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "schedule note carrying name",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJzY2hfMjIyMjIyMjIyMjIyMjIyMjIyMjIiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJzY2hlZHVsZSIsImdyb3VwcyI6W10sIm5hbWUiOiJOaWdodGx5In0.2KaidDFT78GTxWN_4TaBZzvyL0tbC7MeeU5mG5jcF0lMhTABbbY7D0ZaJEAM_Jb0yr-5KuHsE2JSLVX14frmgA",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "user note with role schedule",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJzY2hlZHVsZSIsImdyb3VwcyI6WyJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDIiLCJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDMiXSwibmFtZSI6IkFkYSBMb3ZlbGFjZSIsImVtYWlsIjoiYWRhQGV4YW1wbGUuY29tIn0.tTI23sBeCET_hX7SR8xJWYPHryGeHXFBylT_wwmGSNav3yTIuALkGU6Ydqy2mz3ob5SDYV-U-1G1-pVOss6rFg",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "unknown role",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJhZG1pbiIsImdyb3VwcyI6WyJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDIiLCJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDMiXSwibmFtZSI6IkFkYSBMb3ZlbGFjZSIsImVtYWlsIjoiYWRhQGV4YW1wbGUuY29tIn0.Iz76e-bN_SsCXn88SXDeqi-t8cSCg8YcocRl5u0mHXKpC88WVKWpY-AghSTqDNkhvqQN0R7mfEcv9BZWcRIvpg",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "unknown claim",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20iLCJhZG1pbiI6dHJ1ZX0.bx_l94xCSnS59IN9CXRm6EcEXdN9c1ItFTsNg8jmmJ3-PlQqD5KYf1I4PqITxKfrvceuCWQVYEyNA3qr4JfUhg",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "group that is not a grp_ id",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbIkZpbmFuY2UiXSwibmFtZSI6IkFkYSBMb3ZlbGFjZSIsImVtYWlsIjoiYWRhQGV4YW1wbGUuY29tIn0.IBJIMhzxb094q8iNorPHi246yeuLRjtuzqH7pKRSLXU3Ltqy5ogdHox7kHFGThRxVxRU0Wyrxh9TJDOQkO60Lg",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "missing org claim",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.JXoevaeqloI3RKdT_bho-bxwAJW8fzN3ixPUZFa8VnPL3MY95JCVlC2WgMD5PnkIQ3LoUFAPGapewRSmU6f4RQ",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "iat as string",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOiIxNzg5OTk5OTkwIiwiZXhwIjoxNzkwMDAwMjkwLCJvcmciOiJvcmdfMDEyMzQ1Njc4OWFiY2RlZmdoaWoiLCJhcHAiOiJhcHBfYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJlbnYiOiJwcm9kIiwicm9sZSI6InVzZXIiLCJncm91cHMiOlsiZ3JwXzAwMDAwMDAwMDAwMDAwMDAwMDAxIiwiZ3JwXzAwMDAwMDAwMDAwMDAwMDAwMDAyIiwiZ3JwXzAwMDAwMDAwMDAwMDAwMDAwMDAzIl0sIm5hbWUiOiJBZGEgTG92ZWxhY2UiLCJlbWFpbCI6ImFkYUBleGFtcGxlLmNvbSJ9.-oYs-NfoEhTMfFDSe9Td7IXeoOGZ4gywcbI7rrwqsbnXT37sGT_4qVrsH0y9Y7Up8jjBBrR75Tpv1m6_R8K02g",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "bad_claims"
+      }
+    },
+    {
+      "name": "audience with trailing slash",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20vIiwic3ViIjoidXNyXzExMTExMTExMTExMTExMTExMTExIiwiaWF0IjoxNzg5OTk5OTkwLCJleHAiOjE3OTAwMDAyOTAsIm9yZyI6Im9yZ18wMTIzNDU2Nzg5YWJjZGVmZ2hpaiIsImFwcCI6ImFwcF9hYWFhYWFhYWFhYWFhYWFhYWFhYSIsImVudiI6InByb2QiLCJyb2xlIjoidXNlciIsImdyb3VwcyI6WyJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDIiLCJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDMiXSwibmFtZSI6IkFkYSBMb3ZlbGFjZSIsImVtYWlsIjoiYWRhQGV4YW1wbGUuY29tIn0.oNkwi3K1yqDVfwyOBxjpsSq8JvPyHAtQnCusJYxQ59c1_UQzJ_aM2gozuDu3Z4055fPxvlgFSp57DGACrNgnFQ",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "wrong_audience"
+      }
+    },
+    {
+      "name": "not a token",
+      "token": "hello",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "malformed"
+      }
+    },
+    {
+      "name": "two segments",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk5OTAsImV4cCI6MTc5MDAwMDI5MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "malformed"
+      }
+    },
+    {
+      "name": "empty",
+      "token": "",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "expect": {
+        "refused": "missing"
+      }
+    }
+  ]
+}

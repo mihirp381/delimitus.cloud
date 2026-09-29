@@ -13,6 +13,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 007 | Toolchain pins and the 7-day rule | SSC-007 | decided 2026-09-28 |
 | 008 | Job queue: Procrastinate 3.10.0 core on Postgres 18, no DBOS fallback | SSC-004 (`packages/ssc_control/tests/test_jobqueue_crash.py`) | decided 2026-09-28 |
 | 009 | Control database rules: org-scoped tables, forced RLS, `SC001`, two roles, bounded PL/pgSQL | SSC-010 (`packages/ssc_control/src/ssc_control/db/`) | decided 2026-09-28 |
+| 010 | Identity note v1: `X-SSC-Identity`, ES256 `ssc-id+jwt`, twelve claims, key on `sub`, verify once | SSC-020 (`docs/contracts/identity-note.md`) | decided 2026-09-29 |
 
 ## 008 Job queue
 
@@ -44,3 +45,17 @@ Choice: one Postgres 18 database for the control plane, schema `ssc`, with custo
 Reason: the product's central claim is per-customer isolation enforced at the data layer. Retrofitting RLS onto an existing schema is much harder than starting with it, and the Delimitus live test showed every footgun this closes (owner exempt under plain ENABLE, silent zero rows on a missing scope, over-broad grants, session-scoped binds). Tests in `packages/ssc_control/tests/test_control_db.py` attack the schema through raw SQL as `ssc_app` against a `postgres:18` container.
 
 Reverse if: the control plane must shard across databases (then org routing replaces RLS as the first guard and RLS stays as the second), or the chosen cloud's managed Postgres cannot create non-superuser owner roles the way Cloud SQL does (then the two-role split is re-planned in SSC-013).
+
+## 010 Identity note v1
+
+Choice: apps learn who the user is from one signed header, `X-SSC-Identity`, and nothing else. Contract in `docs/contracts/identity-note.md`.
+
+- Compact JWS, `alg` ES256 only, `typ` `ssc-id+jwt` required, `kid` required. Twelve claims and no others: `iss`, `aud`, `sub`, `iat`, `exp`, `org`, `app`, `env`, `role`, `groups`, `name`, `email`. `aud` is the app's exact origin as one string. `exp = iat + 300`, and a verifier refuses a longer life even when the note has not expired.
+- `sub` is `usr_` or `sch_`, never an email. `name` and `email` are display strings and are absent on schedule notes. `role` is `builder`, `user` or `schedule`; `groups` holds at most 50 `grp_` ids and only the groups the app's sharing rule references.
+- Both helpers (`ssc_app.identity`, `@delimitus/ssc-identity`) raise one exception with one code from a closed list of twelve, run the same checks in the same order, and pass the same 33 vectors in `conformance/identity_note/`. The Node helper has no dependencies (webcrypto), so a customer app inherits nothing from us.
+- Keys: EC P-256 in cell Secret Manager, public JWKS at `https://keys.delimitus.com/<cell_label>/jwks.json` as a static CDN file with at most two keys during rotation (SSC-013 implements). The gateway is the only minter (`ssc_edge.identity_note`).
+- Apps verify once per request and never mid-stream; revoking access ends open streams through the kill switch drain, not through token expiry.
+
+Reason: the Delimitus design left end-user identity forwarding unspecified and header spoofing unaddressed (build plan §2, problem 3). Fixing the header, algorithm, type and claim set on day one, with vectors both helpers must pass, means the gateway, the data gateway, the CLI's agent pack and every customer app agree before any of them is finished. `typ` and single-string `aud` close the two classic JWT confusions (a token minted for something else replayed here; a note for app A accepted by app B). Names and emails ride along because the founder asked for them (tickets §9 question 8) and they are on the PII list.
+
+Reverse if: a customer needs a non-JWT form (then v2 is added beside v1, never in place), or the cell's key store cannot hold P-256 keys (then the algorithm set is widened by a v2 `typ`, not by accepting more algorithms under v1).

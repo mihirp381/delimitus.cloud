@@ -2,4 +2,8 @@
 useDefault = true
 
 [allowlist]
-paths = ['''gates/fixtures/gitleaks/.*''']
+paths = [
+  '''gates/fixtures/gitleaks/.*''',
+  '''conformance/identity_note/test_keys\.json''',  # throwaway keys for the identity-note vectors
+  '''conformance/identity_note/vectors\.json''',    # test tokens signed with those keys
+]

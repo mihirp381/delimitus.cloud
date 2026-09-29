@@ -1,1 +1,4 @@
-"""Small helpers shared by services: ids, clocks, identity note signing and verification."""
+"""Small helpers shared by services: clocks and the like.
+
+Identity-note code lives in ssc_edge (mint) and ssc_app (verify).
+"""

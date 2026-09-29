@@ -64,8 +64,8 @@ ignore = ["PLR2004", "S101"]
 
 [tool.pyright]
 pythonVersion = "3.14"
-include = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db"]
-strict = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db"]
+include = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db", "packages/ssc_app/src", "packages/ssc_edge/src"]
+strict = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db", "packages/ssc_app/src", "packages/ssc_edge/src"]
 reportMissingImports = true
 
 [tool.pytest.ini_options]

@@ -1,0 +1,29 @@
+{
+  "_comment": "THROWAWAY TEST KEYS for the identity-note conformance vectors. Generated once, committed on purpose, never used to sign anything real. A cell's signing key lives in Secret Manager (SSC-013). Allowlisted in .gitleaks.toml.",
+  "keys": {
+    "test-2026-09-a": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "XyFczlHLlKT3lI_DFq0lHcnVKuBhpp4Yecji8cPVzuQ",
+      "y": "1sDCjvM_W4OrYPdV23K4QoEwf56fJk6yLuSgAhuD2Tc",
+      "d": "7v4qls0ijP4TP-zhDvs_hZBdFKOnvf_dSHb9gNaqvfQ",
+      "kid": "test-2026-09-a"
+    },
+    "test-2026-09-b": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "NzKtfoFPEqKCpXwSa6URRyiCNGA6zqvX8bihdxkJ2cE",
+      "y": "w3aUcVayicsbDoy2k4eIpKOqjhfJhGeVfw_Zjsi8KOo",
+      "d": "8_XAhiqoeoJ8EOEXX6IPkNagzMiafI-dzn3MQiVGZdw",
+      "kid": "test-2026-09-b"
+    },
+    "test-foreign": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "LC_TCysWKkhF7Cn8zyqVdH61yzPJaM8nkkq3UZ8A9ZQ",
+      "y": "NhDLkCaiqBRD41aA64fTyP-8VKYmurc31nuztostADY",
+      "d": "WfZj9-t2uQSHCL1p1rcl9LMff5JXoa6W68Nt3RVMBzs",
+      "kid": "test-foreign"
+    }
+  }
+}

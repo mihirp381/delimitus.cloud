@@ -1,0 +1,21 @@
+{
+  "name": "@delimitus/ssc-identity",
+  "version": "0.1.0",
+  "description": "Read the identity note the SSC gateway attaches to every request (X-SSC-Identity). Zero dependencies.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": ["index.js", "index.d.ts", "README.md"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1072,12 +1072,14 @@ name = "ssc-app"
 version = "0.0.1"
 source = { editable = "packages/ssc_app" }
 dependencies = [
+    { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "ssc-contracts" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "pydantic", specifier = "==2.13.5" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
 ]
@@ -1123,16 +1125,22 @@ name = "ssc-conformance"
 version = "0.0.1"
 source = { editable = "conformance" }
 dependencies = [
+    { name = "cryptography" },
     { name = "httpx2" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pytest" },
     { name = "ssc-contracts" },
+    { name = "ssc-edge" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = "==50.0.1" },
     { name = "httpx2", specifier = "==2.13.0" },
+    { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },
     { name = "pytest", specifier = ">=8.4,<10" },
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
+    { name = "ssc-edge", editable = "packages/ssc_edge" },
 ]
 
 [[package]]
@@ -1211,6 +1219,7 @@ name = "ssc-edge"
 version = "0.0.1"
 source = { editable = "packages/ssc_edge" }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx2" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -1221,6 +1230,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = "==50.0.1" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "httpx2", specifier = "==2.13.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },
