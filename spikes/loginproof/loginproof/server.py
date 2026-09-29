@@ -37,7 +37,7 @@ def index() -> PlainTextResponse:
     return PlainTextResponse("\n".join(lines))
 
 
-@app.get("/login")
+@app.get("/login", response_model=None)
 def login(provider: str = Query(...)) -> RedirectResponse | PlainTextResponse:
     if provider not in config.SSO_PROVIDERS:
         return PlainTextResponse(f"unknown provider {provider}", status_code=400)
