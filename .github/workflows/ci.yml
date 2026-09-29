@@ -28,7 +28,7 @@ jobs:
       - run: uv run pyright
       - run: uv run lint-imports
       - run: uv run python tools/deptry_all.py
-      - run: uv run zizmor --no-online-audits .github/workflows
+      - run: uv run zizmor --no-online-audits .github/workflows .github/actions
       - run: uv run python tools/lock_age_check.py
       - run: uv run python tools/npm_lock_age_check.py console/package-lock.json
       - run: uv run python tools/openapi_check.py
@@ -132,3 +132,94 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
+
+  action:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      APP: ci-action
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+      - run: uv sync --all-packages --locked
+      # `up` prints a token, so its output goes nowhere.
+      - name: Dev stack
+        run: |
+          STACK="$RUNNER_TEMP/ssc-dev"
+          echo "STACK=$STACK" >> "$GITHUB_ENV"
+          uv run python tools/dev_stack.py --dir "$STACK" up --dsn postgresql://postgres:postgres@localhost:5432/postgres > /dev/null
+      - name: API and worker with the fake builder and runtime
+        run: |
+          uv run python tools/dev_stack.py --dir "$STACK" serve --port 0 --worker > "$STACK/serve.out" 2> "$STACK/serve.log" &
+          for _ in $(seq 60); do
+            url="$(sed -n 's/^SSC_API_URL=//p' "$STACK/serve.out")"
+            [ -n "$url" ] && curl -fsS "$url/healthz" > /dev/null && break
+            sleep 1
+          done
+          curl -fsS "$url/healthz" > /dev/null
+          echo "SSC_API_URL=$url" >> "$GITHUB_ENV"
+      # The admin token creates the app and stays in this step; the Action gets a preview token.
+      - name: The app and a preview token
+        run: |
+          admin="$(uv run python tools/dev_stack.py --dir "$STACK" token)"
+          echo "::add-mask::$admin"
+          SSC_TOKEN="$admin" uv run ssc apps create "$APP" --json > /dev/null
+          preview="$(uv run python tools/dev_stack.py --dir "$STACK" token --scope preview)"
+          echo "::add-mask::$preview"
+          echo "PREVIEW_TOKEN=$preview" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/app"
+          printf 'schema = "ssc/v1"\n' > "$RUNNER_TEMP/app/ssc.toml"
+          printf 'print("hello")\n' > "$RUNNER_TEMP/app/main.py"
+      # Wheels of this commit, installed by path with the lock's versions as constraints, so no
+      # workspace name can come from PyPI instead.
+      - name: Build the CLI
+        run: |
+          dist="$RUNNER_TEMP/dist"
+          for p in ssc-contracts ssc-shared ssc-bundle ssc-cli; do
+            uv build --package "$p" --wheel --out-dir "$dist"
+          done
+          uv export -q --package ssc-cli --no-dev --no-emit-workspace --no-hashes --frozen -o "$RUNNER_TEMP/constraints.txt"
+          wheel() { local found=("$dist/$1"-*.whl); echo "${found[0]}"; }
+          spec="$(wheel ssc_cli)"
+          for p in ssc_contracts ssc_shared ssc_bundle; do spec="$spec --with $(wheel "$p")"; done
+          echo "CLI_SPEC=$spec --constraints $RUNNER_TEMP/constraints.txt" >> "$GITHUB_ENV"
+      - uses: $/.github/actions/ssc-deploy
+        id: deploy
+        with:
+          token: ${{ env.PREVIEW_TOKEN }}
+          app: ${{ env.APP }}
+          path: ${{ runner.temp }}/app
+          api-url: ${{ env.SSC_API_URL }}
+          cli-spec: ${{ env.CLI_SPEC }}
+      - name: Preview is live and prod untouched
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.preview-url }}
+          RELEASE_ID: ${{ steps.deploy.outputs.release-id }}
+        run: |
+          [[ "$PREVIEW_URL" =~ ^https://[a-z0-9-]+--preview\. ]] || { echo "preview-url is '$PREVIEW_URL'"; exit 1; }
+          admin="$(uv run python tools/dev_stack.py --dir "$STACK" token)"
+          echo "::add-mask::$admin"
+          SSC_TOKEN="$admin" uv run ssc status "$APP" --json > "$RUNNER_TEMP/status.json"
+          jq -e --arg rel "$RELEASE_ID" --arg url "$PREVIEW_URL" '
+            (.environments[] | select(.name == "preview") | .deployment.state == "healthy" and .deployment.release_id == $rel and .url == $url)
+            and (.environments[] | select(.name == "prod") | .deployment == null)
+          ' "$RUNNER_TEMP/status.json"
+      - name: API log
+        if: failure()
+        run: cat "$STACK/serve.log"
