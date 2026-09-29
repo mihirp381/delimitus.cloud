@@ -23,6 +23,7 @@ from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
 from ssc_control.metrics import metrics_port
+from ssc_control.timers.service import Timers
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore
 
@@ -95,6 +96,7 @@ def create_app(
         owns_engine=engine is None,
         metrics=metrics_port(settings.metrics_key),
         blob_store=store,
+        timers=Timers(),
     )
     app.add_middleware(RequestIdMiddleware)
     problems.install(app)

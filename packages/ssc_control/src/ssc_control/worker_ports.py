@@ -27,6 +27,7 @@ from ssc_control.ports import (
 )
 from ssc_control.runtime.driver import RuntimeDriver
 from ssc_control.runtime.specs import NoReleaseSpecs, ReleaseSpecs
+from ssc_control.timers.dispatch import ScheduleDispatcher
 from ssc_shared.blobstore import BlobStore
 
 PORTS_KEY: Final = "ssc_ports"
@@ -41,7 +42,8 @@ class Ports:
     """``runtime_driver`` None means no runtime is configured: the reconciler defers nothing
     and deployments fail with ``RUNTIME_UNAVAILABLE``. ``build_driver`` None fails builds with
     ``BUILD_DRIVER_UNAVAILABLE``. ``blob_store`` None means ``SSC_BLOB_BACKEND=none``: the
-    snapshot and anchor ticks defer nothing and a compile does nothing."""
+    snapshot and anchor ticks defer nothing and a compile does nothing. ``timer_dispatcher`` None
+    fails timer runs with ``dispatch_unavailable``."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -53,6 +55,7 @@ class Ports:
     clock: Callable[[], datetime] = _utcnow
     build_driver: BuildDriver | None = None
     metrics: MetricsPort = field(default_factory=NullMetricsPort)
+    timer_dispatcher: ScheduleDispatcher | None = None
 
 
 class PortsMissingError(RuntimeError):

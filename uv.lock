@@ -1463,6 +1463,7 @@ dependencies = [
     { name = "ssc-bundle" },
     { name = "ssc-contracts" },
     { name = "ssc-shared" },
+    { name = "tzdata" },
     { name = "uvicorn" },
 ]
 
@@ -1481,6 +1482,7 @@ requires-dist = [
     { name = "ssc-bundle", editable = "packages/ssc_bundle" },
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
     { name = "ssc-shared", editable = "packages/ssc_shared" },
+    { name = "tzdata", specifier = "==2026.4" },
     { name = "uvicorn", specifier = "==0.38.0" },
 ]
 

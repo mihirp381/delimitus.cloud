@@ -41,6 +41,7 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     ),
     "schedule": frozenset(
         {"name", "cron", "timezone", "path", "method", "timeout_seconds", "state", "pause_reason"}
+        | {"environment_id", "run_id"}  # SSC-041
     ),
     "audit": frozenset({"format", "filters"}),
     "audit_anchor": frozenset({"restored_to", "prior_anchor_seq", "head_seq", "ref"}),

@@ -2,7 +2,8 @@
 
 Only an active org admin, the app's owner, or a builder on the environment may change them.
 Grants must meet the environment's floor (``domain.grant_rules``): preview is for builders.
-A change that adds or removes a grant marks the org's access snapshot dirty.
+A change that adds or removes a grant marks the org's access snapshot dirty and pauses the
+schedules whose declarer may no longer build (decision 020).
 
 A change made through an agent credential, and a change that widens the audience of a
 data-connected app, applies only once the matching approval is approved (decision 016). Until
@@ -41,6 +42,7 @@ from ssc_control.domain.approval_rules import GrantKey, Requirement, Requirement
 from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
 from ssc_control.ports import MetricKind
 from ssc_control.snapshot.service import mark_dirty
+from ssc_control.timers.service import pause_blocked
 
 router = APIRouter()
 
@@ -372,4 +374,5 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     version = int(bumped)
     if changed:
         await mark_dirty(uow.conn, uow.org_id)
+        await pause_blocked(uow.conn, uow.org_id)
     return uow.reply(await _grants_out(uow, environment_id, version), headers={ETAG: etag(version)})

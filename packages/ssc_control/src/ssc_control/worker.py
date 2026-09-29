@@ -43,6 +43,9 @@ from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.snapshot import jobs as snapshot_jobs
 from ssc_control.snapshot.service import Snapshots
 from ssc_control.storage import StorageConfigError, blob_store_from_env
+from ssc_control.timers import jobs as timers_jobs
+from ssc_control.timers.dispatch import FakeScheduleDispatcher, ScheduleDispatcher
+from ssc_control.timers.service import Timers
 from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_of
 from ssc_shared.blobstore import BlobStore
 
@@ -53,6 +56,7 @@ ENV_ENV: Final = "SSC_ENV"
 RUNTIME_DRIVER_ENV: Final = "SSC_RUNTIME_DRIVER"
 BUILD_DRIVER_ENV: Final = "SSC_BUILD_DRIVER"
 METRICS_KEY_ENV: Final = "SSC_METRICS_KEY"
+TIMER_DISPATCHER_ENV: Final = "SSC_TIMER_DISPATCHER"
 FAKE_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 SWEEP_CRON: Final = "* * * * * */30"
 """Every 30 seconds."""
@@ -142,6 +146,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(deploy_jobs.blueprint(), namespace="deploy")
     app.add_tasks_from(audit_jobs.blueprint(), namespace="audit")
     app.add_tasks_from(lifecycle_jobs.blueprint(), namespace="lifecycle")
+    app.add_tasks_from(timers_jobs.blueprint(), namespace="timers")
     return app
 
 
@@ -167,6 +172,19 @@ def build_driver_from_env(env: Mapping[str, str]) -> BuildDriver | None:
             return FakeBuildDriver()
         case other:
             raise CompositionError(f"unknown {BUILD_DRIVER_ENV} {other!r}")
+
+
+def timer_dispatcher_from_env(env: Mapping[str, str]) -> ScheduleDispatcher | None:
+    """``SSC_TIMER_DISPATCHER``: unset means none (timer runs fail with ``dispatch_unavailable``),
+    ``fake`` the in-memory dispatcher. The real one arrives with the cell's timer endpoint
+    (SSC-018)."""
+    match env.get(TIMER_DISPATCHER_ENV, ""):
+        case "":
+            return None
+        case "fake":
+            return FakeScheduleDispatcher()
+        case other:
+            raise CompositionError(f"unknown {TIMER_DISPATCHER_ENV} {other!r}")
 
 
 def metrics_from_env(env: Mapping[str, str]) -> MetricsPort:
@@ -196,8 +214,9 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
         for name, value in (
             ("runtime_driver", ports.runtime_driver),
             ("build_driver", ports.build_driver),
+            ("timer_dispatcher", ports.timer_dispatcher),
         )
-        if isinstance(value, FakeRuntimeDriver | FakeBuildDriver)
+        if isinstance(value, FakeRuntimeDriver | FakeBuildDriver | FakeScheduleDispatcher)
     ]
     if fakes and env.get(ENV_ENV) not in FAKE_ENVIRONMENTS:
         raise CompositionError(
@@ -217,6 +236,8 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         prod_gate=approvals_prod_gate(),
         build_driver=build_driver_from_env(env),
         metrics=metrics_from_env(env),
+        timers=Timers(),
+        timer_dispatcher=timer_dispatcher_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports
@@ -286,6 +307,7 @@ __all__ = [
     "run",
     "run_worker",
     "runtime_driver_from_env",
+    "timer_dispatcher_from_env",
 ]
 
 if __name__ == "__main__":

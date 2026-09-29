@@ -3,7 +3,9 @@
 A person is found by ``(issuer, subject)`` through ``identity_link``, never by email. Every
 change is audited in the caller's transaction. A change that alters what the gateway decides (a
 new user, a status change, a membership change) also marks the org's access snapshot dirty in
-that transaction (decision 019). The database refuses demoting or deactivating the org's last
+that transaction (decision 019). A deactivation, a role change or a removal from a group pauses the
+schedules whose owner or declarer lost authority by it (``timers.service.pause_blocked``, decision
+020). The database refuses demoting or deactivating the org's last
 active admin (SC002, ``LAST_ORG_ADMIN``). Two first syncs of one identity racing each other end
 with one unique violation (``ALREADY_EXISTS``); the directory retries and finds the user.
 """
@@ -19,6 +21,7 @@ from ssc_contracts.audit import AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.snapshot.service import mark_dirty
+from ssc_control.timers.service import pause_blocked
 
 Role = Literal["admin", "member"]
 Status = Literal["active", "deactivated"]
@@ -231,6 +234,8 @@ async def upsert_user(
             after={"status": user.status},
         )
         await mark_dirty(conn, org_id)
+    if (role, status) != (user.role, user.status):
+        await pause_blocked(conn, org_id)
     return UserResult(user_id=user_id, created=False)
 
 
@@ -300,4 +305,6 @@ async def set_group_members(
             after={"directory_ref": str(ref), "added": added, "removed": removed},
         )
         await mark_dirty(conn, org_id)
+    if removed:
+        await pause_blocked(conn, org_id)
     return MembersResult(group_id=group_id, added=tuple(added), removed=tuple(removed))
