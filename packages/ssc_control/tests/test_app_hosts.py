@@ -105,6 +105,22 @@ def test_reserved_and_punycode_slugs_422_before_db(
     _refused_by_the_model(caplog, h, slug)
 
 
+@pytest.mark.parametrize("slug", ["xn", "ab"])
+def test_slugs_shorter_than_3_422_before_db(
+    h: Hosts, caplog: pytest.LogCaptureFixture, slug: str
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="ssc.api"):
+        r = create(h, slug)
+    assert_problem(r, ErrorCode.VALIDATION_FAILED)
+    errors = logged_evidence(caplog, r)["errors"]
+    assert [(e["loc"], e["type"]) for e in errors] == [(["body", "slug"], "value_error")]
+    assert app_rows(h, slug) == []
+
+
+def test_a_3_character_slug_is_fine(h: Hosts) -> None:
+    assert create(h, "abc").status_code == 201
+
+
 def test_a_slug_near_a_reserved_word_is_fine(h: Hosts) -> None:
     assert create(h, "apis").status_code == 201
     assert create(h, "my-console").status_code == 201

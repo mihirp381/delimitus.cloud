@@ -22,9 +22,8 @@ Slug = Annotated[
     str,
     Field(
         pattern=r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$",
-        description="Host label of the app. Lower-case, no leading digit, no `--`. Reserved: "
-        + ", ".join(sorted(RESERVED_SLUGS))
-        + ".",
+        description="Host label of the app. 3 to 40 characters, lower-case, no leading digit, "
+        "no `--`. Reserved: " + ", ".join(sorted(RESERVED_SLUGS)) + ".",
     ),
     AfterValidator(check_slug),
 ]

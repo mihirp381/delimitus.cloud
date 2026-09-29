@@ -708,7 +708,7 @@ export interface components {
         AppCreate: {
             /**
              * Slug
-             * @description Host label of the app. Lower-case, no leading digit, no `--`. Reserved: admin, api, auth, console, keys, login, mail, ssc, static, status, www.
+             * @description Host label of the app. 3 to 40 characters, lower-case, no leading digit, no `--`. Reserved: admin, api, auth, console, keys, login, mail, ssc, static, status, www.
              */
             slug: string;
         };

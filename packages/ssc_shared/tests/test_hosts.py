@@ -47,7 +47,7 @@ def test_no_two_app_environments_share_a_host(s1: str, e1: str, s2: str, e2: str
 
 
 def test_a_preview_host_is_never_another_apps_prod_host() -> None:
-    for slug in ("a", "a-preview", "preview", "x-y"):
+    for slug in ("abc", "a-preview", "preview", "x-y"):
         preview = app_host(slug, "preview", LABEL, DOMAIN)
         parsed = parse_app_host(preview, DOMAIN)
         assert parsed == AppHost(slug, "preview", LABEL)
@@ -83,6 +83,9 @@ def test_the_longest_host_is_exactly_the_limit() -> None:
         ("9lives", "pattern"),
         ("trailing-", "pattern"),
         ("a" * 41, "pattern"),
+        ("xn", "short"),
+        ("ab", "short"),
+        ("a", "short"),
         ("", "pattern"),
         ("naïve", "pattern"),
         ("a\n", "pattern"),
@@ -95,6 +98,19 @@ def test_refused_slugs(slug: str, problem: str) -> None:
         check_slug(slug)
     with pytest.raises(ValueError, match="slug"):
         app_host(slug, "prod", LABEL, DOMAIN)
+
+
+@given(slugs, environments, labels)
+def test_no_label_has_a_double_dash_at_3_4(slug: str, environment: str, label: str) -> None:
+    assert all(part[2:4] != "--" for part in app_host(slug, environment, label, DOMAIN).split("."))
+
+
+def test_xn_and_two_letter_slugs_make_no_host() -> None:
+    for slug in ("xn", "ab"):
+        with pytest.raises(ValueError, match="at least 3"):
+            app_host(slug, "preview", LABEL, DOMAIN)
+        assert parse_app_host(f"{slug}--preview.{LABEL}.{DOMAIN}", DOMAIN) is None
+    assert app_host("abc", "preview", LABEL, DOMAIN) == f"abc--preview.{LABEL}.{DOMAIN}"
 
 
 def test_reserved_words_are_the_component_reference_list() -> None:
@@ -134,7 +150,7 @@ def test_the_parser_refuses_what_the_rule_never_makes(host: str) -> None:
 def test_the_domain_must_follow_a_dot() -> None:
     domain = "a.bcdefghij"
     assert parse_app_host("xa.bcdefghij", domain) is None
-    assert parse_app_host("x.k7q2m9xa.a.bcdefghij", domain) == AppHost("x", "prod", LABEL)
+    assert parse_app_host("xyz.k7q2m9xa.a.bcdefghij", domain) == AppHost("xyz", "prod", LABEL)
 
 
 @given(st.text(alphabet="abcdkmqxz79-.AP:", max_size=40).map(lambda t: t + "." + DOMAIN))

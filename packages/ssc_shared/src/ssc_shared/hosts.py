@@ -6,7 +6,9 @@
 The cell label is the org's opaque ``ssc.org.cell_label``, so one wildcard certificate per org
 covers all its hosts and certificate logs never name a customer. A slug never contains ``--``
 (nor, therefore, starts with ``xn--``), so ``<slug>--preview`` is never another app's slug and no
-two (slug, environment) pairs share a host. Reserved words are never slugs.
+two (slug, environment) pairs share a host. A slug has at least 3 characters, so no host label
+has ``--`` in positions 3-4 (reserved by IDNA2008) except through ``--preview``. Reserved words
+are never slugs.
 
 Pure and strict: nothing here accepts what the rule does not produce. :func:`parse_app_host`
 takes the host after the caller has lower-cased it and dropped any port.
@@ -17,10 +19,11 @@ from dataclasses import dataclass
 from typing import Final, Literal, get_args
 
 type Environment = Literal["prod", "preview"]
-type SlugProblem = Literal["pattern", "punycode", "double_dash", "reserved"]
+type SlugProblem = Literal["pattern", "short", "punycode", "double_dash", "reserved"]
 
 SLUG_PATTERN: Final = r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$"
 LABEL_PATTERN: Final = r"^[a-z][a-z0-9]{7,15}$"
+MIN_SLUG: Final = 3
 RESERVED_SLUGS: Final = frozenset(
     {"www", "api", "auth", "login", "console", "admin", "status", "static", "keys", "ssc", "mail"}
 )
@@ -34,8 +37,9 @@ _SLUG: Final = re.compile(SLUG_PATTERN)
 _LABEL: Final = re.compile(LABEL_PATTERN)
 _DNS_LABEL: Final = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 _SLUG_MESSAGES: Final[dict[SlugProblem, str]] = {
-    "pattern": "an app slug is 1 to 40 lower-case letters, digits and hyphens, starting with a "
+    "pattern": "an app slug is 3 to 40 lower-case letters, digits and hyphens, starting with a "
     "letter and not ending with a hyphen",
+    "short": "an app slug has at least 3 characters",
     "punycode": "an app slug never starts with 'xn--'",
     "double_dash": "an app slug never contains '--', which preview hosts use",
     "reserved": "that app slug is reserved",
@@ -53,6 +57,8 @@ def slug_problem(slug: str) -> SlugProblem | None:
     """Why ``slug`` cannot name an app, or ``None`` when it can."""
     if _SLUG.fullmatch(slug) is None:
         return "pattern"
+    if len(slug) < MIN_SLUG:
+        return "short"
     if slug.startswith("xn--"):
         return "punycode"
     if "--" in slug:
