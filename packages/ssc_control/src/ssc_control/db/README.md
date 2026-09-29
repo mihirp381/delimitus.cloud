@@ -34,8 +34,9 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     database. Jobs are deferred with `ssc_control.deferral.defer` on the caller's connection, in
     the caller's transaction.
 13. **Tables without a type-prefixed id** (`group_member`, `audit_event`, `audit_head`,
-    `metrics_event`, `idempotency_claim`) are listed in `catalog.UNKEYED_TABLES`; they still
-    carry `org_id` and forced RLS, they just have no `(org_id, id)` pair.
+    `metrics_event`, `idempotency_claim`, `access_snapshot`, `snapshot_ack`) are listed in
+    `catalog.UNKEYED_TABLES`; they still carry `org_id` and forced RLS, they just have no
+    `(org_id, id)` pair.
 14. **`ssc.org_index` is the single unscoped table** (decision 009 amendment), listed alone in
     `catalog.UNSCOPED_TABLES` and never in `catalog.TABLES`. Forced RLS makes a cross-org scan
     impossible, but workers must find every org (reconciler tick, audit anchors, timer re-arm).
@@ -45,6 +46,11 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     Workers call `orgs.all_org_ids`, then do each org's work inside `bound_org`, under normal
     RLS. No `BYPASSRLS` role and no `SECURITY DEFINER` function exist for this. A second
     unscoped table needs its own decision.
+15. **Advisory locks are named by class.** The one class so far is `21`, the org's access
+    snapshot lock, taken as `(21, hashtext(org_id))`: shared by every transaction that changes
+    what the gateway decides (`snapshot.service.mark_dirty`), exclusive by the compile
+    (`snapshot.compiler.publish`), both transaction-scoped (decision 019). A new class takes the
+    next number and is listed here.
 
 ## Migrations
 
@@ -62,6 +68,7 @@ after that code is out. Revisions so far, all pure expand:
 | `0006_procrastinate_orgindex` | SSC-017 | schema `procrastinate` with Procrastinate 3.10.0's own `schema.sql`, vendored byte for byte in `sql/vendor/` (a test compares it with the installed package) and run with `search_path` set to the new schema; explicit per-table grants to the app role (`catalog.QUEUE_APP_PRIVILEGES`). `ssc.org_index` (rule 14), back-filled from `ssc.org`: `FORCE ROW LEVEL SECURITY` binds the owner too, so the revision lifts it on `ssc.org` for the back-fill inside its transaction and restores it. Upgrading Procrastinate is a new revision applying its `sql/migrations/*.sql` the same way. Downgrade drops both (development databases only) |
 | `0007_metrics_checks` | SSC-028 | CHECKs on `metrics_event`: `pseudonym` is 32 hex characters, `source_tool` the normalised tool name, `app_id` an app id, and `properties` one JSON object whose text holds no `usr_` id and no email address. The table had no writer, so every row passes; CHECK validation scans without row-level security, so FORCE stays on. Downgrade drops the four constraints |
 | `0008_bundle` | SSC-014 | `ssc.bundle`: one row per uploaded source bundle, unique per `(org_id, app_id, digest)`, `pending` until complete has checked the stored object and then `stored` with the manifest read from the bundle (`bundle_stored_check`); forced RLS, `SELECT, INSERT, UPDATE` for the app role. Downgrade drops it (development databases only) |
+| `0009_access_snapshot` | SSC-021 | `ssc.access_snapshot`: one row per published access snapshot, keyed `(org_id, version)`, with the object's `sha256:` digest and content-addressed key; `SELECT, INSERT` for the app role (a published version never changes). `ssc.snapshot_ack`: each org's cell and the version its latest heartbeat reported, keyed by org, with a foreign key to the published version; `SELECT, INSERT, UPDATE`. Both new and empty, forced RLS, in `UNKEYED_TABLES`. Downgrade drops both (development databases only) |
 
 There is no `alembic.ini`. Run migrations from Python:
 

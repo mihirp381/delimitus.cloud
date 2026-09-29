@@ -1,6 +1,99 @@
 {
   "components": {
     "schemas": {
+      "AccessExplained": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "evaluated_from": {
+            "const": "live",
+            "title": "Evaluated From",
+            "type": "string"
+          },
+          "floor": {
+            "description": "The least role this environment takes.",
+            "enum": [
+              "builder",
+              "user"
+            ],
+            "title": "Floor",
+            "type": "string"
+          },
+          "grants": {
+            "description": "The grants that decided it: those that count when allowed, those below the floor when refused for it, none otherwise.",
+            "items": {
+              "$ref": "#/components/schemas/ExplainedGrant"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
+          "published_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The org's newest published snapshot; null before the first.",
+            "title": "Published Version"
+          },
+          "reason": {
+            "enum": [
+              "no_view",
+              "unknown_environment",
+              "app_not_active",
+              "user_not_active",
+              "no_grant",
+              "below_floor",
+              "granted"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "builder",
+                  "user"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The best role granted.",
+            "title": "Role"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "environment_id",
+          "allowed",
+          "role",
+          "floor",
+          "reason",
+          "grants",
+          "evaluated_from",
+          "published_version"
+        ],
+        "title": "AccessExplained",
+        "type": "object"
+      },
       "ActorKind": {
         "enum": [
           "user",
@@ -766,6 +859,124 @@
         "title": "DeploymentCreate",
         "type": "object"
       },
+      "DirectoryGroupIn": {
+        "additionalProperties": false,
+        "properties": {
+          "directory_ref": {
+            "description": "The provider's group id: the key grants use.",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Directory Ref",
+            "type": "string"
+          },
+          "display_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "directory_ref",
+          "display_name"
+        ],
+        "title": "DirectoryGroupIn",
+        "type": "object"
+      },
+      "DirectoryGroupOut": {
+        "additionalProperties": false,
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "created"
+        ],
+        "title": "DirectoryGroupOut",
+        "type": "object"
+      },
+      "DirectoryUserIn": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 320,
+            "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+            "title": "Email",
+            "type": "string"
+          },
+          "issuer": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Issuer",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "admin",
+              "member"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "deactivated"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "description": "The provider's stable id.",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "issuer",
+          "subject",
+          "display_name",
+          "email",
+          "role",
+          "status"
+        ],
+        "title": "DirectoryUserIn",
+        "type": "object"
+      },
+      "DirectoryUserOut": {
+        "additionalProperties": false,
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "created"
+        ],
+        "title": "DirectoryUserOut",
+        "type": "object"
+      },
       "EnvironmentOut": {
         "additionalProperties": false,
         "properties": {
@@ -849,6 +1060,64 @@
         ],
         "title": "ErrorCode",
         "type": "string"
+      },
+      "ExplainedGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "grant_id": {
+            "title": "Grant Id",
+            "type": "string"
+          },
+          "group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The group's cached name, for a group grant.",
+            "title": "Group Name"
+          },
+          "role": {
+            "enum": [
+              "builder",
+              "user"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "subject_kind": {
+            "enum": [
+              "user",
+              "group",
+              "org"
+            ],
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grant_id",
+          "role",
+          "subject_kind",
+          "subject_id",
+          "group_name"
+        ],
+        "title": "ExplainedGrant",
+        "type": "object"
       },
       "GrantIn": {
         "additionalProperties": false,
@@ -1010,6 +1279,55 @@
         "title": "GrantsPending",
         "type": "object"
       },
+      "GroupMembersIn": {
+        "additionalProperties": false,
+        "properties": {
+          "user_ids": {
+            "items": {
+              "pattern": "^usr_[a-z0-9]{20}$",
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "title": "User Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "user_ids"
+        ],
+        "title": "GroupMembersIn",
+        "type": "object"
+      },
+      "GroupMembersOut": {
+        "additionalProperties": false,
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "group_id",
+          "added",
+          "removed"
+        ],
+        "title": "GroupMembersOut",
+        "type": "object"
+      },
       "Heartbeat": {
         "additionalProperties": false,
         "properties": {
@@ -1028,6 +1346,7 @@
                 "type": "null"
               }
             ],
+            "description": "The access snapshot version the cell has applied; 0 or absent for none.",
             "title": "Snapshot Version"
           }
         },
@@ -1338,8 +1657,323 @@
         ]
       }
     },
+    "/internal/v1/directory/groups": {
+      "post": {
+        "description": "Create the group with this ``directory_ref``, or refresh its cached name.",
+        "operationId": "sync_group_internal_v1_directory_groups_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectoryGroupIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryGroupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Sync Group",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/internal/v1/directory/groups/{group_id}/members": {
+      "put": {
+        "description": "Replace the group's members. ``NOT_FOUND`` for an unknown group; ``REFERENCE_NOT_FOUND``\nwhen a user id is not a user of this org.",
+        "operationId": "sync_members_internal_v1_directory_groups__group_id__members_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupMembersIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupMembersOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Sync Members",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/internal/v1/directory/users": {
+      "post": {
+        "description": "Create or update the person with this ``(issuer, subject)``. ``LAST_ORG_ADMIN`` when the\nchange would leave the org without an active admin.",
+        "operationId": "sync_user_internal_v1_directory_users_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectoryUserIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryUserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `ALREADY_EXISTS`, `LAST_ORG_ADMIN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Sync User",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
     "/internal/v1/heartbeat": {
       "post": {
+        "description": "``FORBIDDEN`` when the org has a cell and it is not this one; ``REFERENCE_NOT_FOUND``\nfor a snapshot version that was never published.",
         "operationId": "heartbeat_internal_v1_heartbeat_post",
         "parameters": [
           {
@@ -1428,7 +2062,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
           },
           "429": {
             "content": {
@@ -2547,6 +3181,119 @@
         ]
       }
     },
+    "/v1/apps/{app_id}/environments/{environment_id}/access": {
+      "get": {
+        "description": "Builders of the environment only (``FORBIDDEN``); ``REFERENCE_NOT_FOUND`` for a user\nwho is not in the org.",
+        "operationId": "explain_access_v1_apps__app_id__environments__environment_id__access_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Whose access; the caller by default.",
+            "in": "query",
+            "name": "user_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^usr_[a-z0-9]{20}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Whose access; the caller by default.",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessExplained"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Explain Access",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
     "/v1/apps/{app_id}/environments/{environment_id}/deployments": {
       "post": {
         "description": "Start a deployment: 202 plus a ``Location`` to poll. Running it is the reconciler's job.",
@@ -2760,7 +3507,7 @@
         ]
       },
       "put": {
-        "description": "Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.\n\nA change that needs approval is not applied: an agent session gets ``202`` and the pending\napproval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.",
+        "description": "Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.\n\nOnly an org admin, the app's owner or a builder on this environment may; anyone else gets\n``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant\nfor one subject is ``VALIDATION_FAILED``.\n\nA change that needs approval is not applied: an agent session gets ``202`` and the pending\napproval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.",
         "operationId": "put_grants_v1_apps__app_id__environments__environment_id__grants_put",
         "parameters": [
           {
@@ -3492,7 +4239,7 @@
       "name": "v1"
     },
     {
-      "description": "For cell services. Workload credentials only.",
+      "description": "For cell services and the directory sync. Workload or operator credentials, never a person's.",
       "name": "internal"
     },
     {

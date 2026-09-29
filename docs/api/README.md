@@ -10,7 +10,7 @@ compared in CI. Decision record: `docs/decisions/README.md` 011.
 | Prefix | Who | Credential audience |
 |---|---|---|
 | `/v1` | people and their tools | `https://api.delimitus.com` |
-| `/internal/v1` | cell services (workload and operator credentials only) | `https://api.delimitus.com/internal` |
+| `/internal/v1` | cell services and the directory sync (workload and operator credentials only; the directory takes operator credentials only) | `https://api.delimitus.com/internal` |
 | `/healthz` | anyone | none |
 | `/mcp` | agents, over MCP (below) | `https://api.delimitus.com`, with `agent: true` and a `client_id` |
 
@@ -61,6 +61,13 @@ request leaves no claim and a crash leaves nothing. Outcomes:
 `PUT .../grants` without the header is `428 PRECONDITION_REQUIRED`; with an old value it is
 `412 PRECONDITION_STALE` and nothing changes. A successful `PUT` bumps the version and returns the
 new `ETag`.
+
+**Sharing has floors and owners** (decision 019). Preview takes `builder` grants only and prod
+`user` or `builder`; a grant below the floor, or two grants for one subject, is `422
+VALIDATION_FAILED`. Only an active org admin, the app's owner or a builder on that environment may
+`PUT .../grants` (`403 FORBIDDEN` otherwise). No owner grant is created and the owner's grants can
+be removed like any other; the owner keeps the right to change sharing. `GET .../access?user_id=`
+explains one user's access with the same evaluator the gateway uses.
 
 **Some changes wait for approval** (decision 016). A `PUT .../grants` made through an agent
 credential, or one that widens the audience of a data-connected app, is not applied until the
@@ -143,7 +150,7 @@ stateless, JSON replies. Code: `api/mcp/`.
 
 1. Put it in the resource's module under `api/routes/v1/` (a new resource gets its own module
    with a prefix-less `router`, mounted on its own line in `api/routes/v1/__init__.py`), or in
-   `api/routes/internal.py`. Shared v1 pieces (`Strict`, `Id`, `Slug`, `require_user`, `etag`,
+   a module under `api/routes/internal/` (mounted in its `__init__.py`). Shared v1 pieces (`Strict`, `Id`, `Slug`, `require_user`, `etag`,
    `parse_if_match`) are in `api/routes/v1/common.py`. Take `UserUoW` (or `InternalUoW`) for the
    org-bound connection; a `POST` also lists `UserIdempotent` in `dependencies` and must answer
    through `uow.reply(...)` so the reply can be stored.

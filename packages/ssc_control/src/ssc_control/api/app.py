@@ -79,7 +79,11 @@ def create_app(
         openapi_url="/openapi.json",
         openapi_tags=[
             {"name": "v1", "description": "For people and their tools."},
-            {"name": "internal", "description": "For cell services. Workload credentials only."},
+            {
+                "name": "internal",
+                "description": "For cell services and the directory sync. Workload or operator "
+                "credentials, never a person's.",
+            },
             {"name": "health", "description": "Unauthenticated liveness."},
         ],
     )

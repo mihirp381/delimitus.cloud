@@ -21,6 +21,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/v1/directory/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync Group
+         * @description Create the group with this ``directory_ref``, or refresh its cached name.
+         */
+        post: operations["sync_group_internal_v1_directory_groups_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/v1/directory/groups/{group_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sync Members
+         * @description Replace the group's members. ``NOT_FOUND`` for an unknown group; ``REFERENCE_NOT_FOUND``
+         *     when a user id is not a user of this org.
+         */
+        put: operations["sync_members_internal_v1_directory_groups__group_id__members_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/v1/directory/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync User
+         * @description Create or update the person with this ``(issuer, subject)``. ``LAST_ORG_ADMIN`` when the
+         *     change would leave the org without an active admin.
+         */
+        post: operations["sync_user_internal_v1_directory_users_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/v1/heartbeat": {
         parameters: {
             query?: never;
@@ -30,7 +92,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Heartbeat */
+        /**
+         * Heartbeat
+         * @description ``FORBIDDEN`` when the org has a cell and it is not this one; ``REFERENCE_NOT_FOUND``
+         *     for a snapshot version that was never published.
+         */
         post: operations["heartbeat_internal_v1_heartbeat_post"];
         delete?: never;
         options?: never;
@@ -198,6 +264,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app_id}/environments/{environment_id}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Explain Access
+         * @description Builders of the environment only (``FORBIDDEN``); ``REFERENCE_NOT_FOUND`` for a user
+         *     who is not in the org.
+         */
+        get: operations["explain_access_v1_apps__app_id__environments__environment_id__access_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app_id}/environments/{environment_id}/deployments": {
         parameters: {
             query?: never;
@@ -230,6 +317,10 @@ export interface paths {
         /**
          * Put Grants
          * @description Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.
+         *
+         *     Only an org admin, the app's owner or a builder on this environment may; anyone else gets
+         *     ``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant
+         *     for one subject is ``VALIDATION_FAILED``.
          *
          *     A change that needs approval is not applied: an agent session gets ``202`` and the pending
          *     approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.
@@ -321,6 +412,46 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccessExplained */
+        AccessExplained: {
+            /** Allowed */
+            allowed: boolean;
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Evaluated From
+             * @constant
+             */
+            evaluated_from: "live";
+            /**
+             * Floor
+             * @description The least role this environment takes.
+             * @enum {string}
+             */
+            floor: "builder" | "user";
+            /**
+             * Grants
+             * @description The grants that decided it: those that count when allowed, those below the floor when refused for it, none otherwise.
+             */
+            grants: components["schemas"]["ExplainedGrant"][];
+            /**
+             * Published Version
+             * @description The org's newest published snapshot; null before the first.
+             */
+            published_version: number | null;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "no_view" | "unknown_environment" | "app_not_active" | "user_not_active" | "no_grant" | "below_floor" | "granted";
+            /**
+             * Role
+             * @description The best role granted.
+             */
+            role: ("builder" | "user") | null;
+            /** User Id */
+            user_id: string;
+        };
         /**
          * ActorKind
          * @enum {string}
@@ -596,6 +727,54 @@ export interface components {
             /** Release Id */
             release_id: string;
         };
+        /** DirectoryGroupIn */
+        DirectoryGroupIn: {
+            /**
+             * Directory Ref
+             * @description The provider's group id: the key grants use.
+             */
+            directory_ref: string;
+            /** Display Name */
+            display_name: string;
+        };
+        /** DirectoryGroupOut */
+        DirectoryGroupOut: {
+            /** Created */
+            created: boolean;
+            /** Group Id */
+            group_id: string;
+        };
+        /** DirectoryUserIn */
+        DirectoryUserIn: {
+            /** Display Name */
+            display_name: string;
+            /** Email */
+            email: string;
+            /** Issuer */
+            issuer: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "deactivated";
+            /**
+             * Subject
+             * @description The provider's stable id.
+             */
+            subject: string;
+        };
+        /** DirectoryUserOut */
+        DirectoryUserOut: {
+            /** Created */
+            created: boolean;
+            /** User Id */
+            user_id: string;
+        };
         /** EnvironmentOut */
         EnvironmentOut: {
             /** Config Version */
@@ -617,6 +796,28 @@ export interface components {
          * @enum {string}
          */
         ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "INTERNAL";
+        /** ExplainedGrant */
+        ExplainedGrant: {
+            /** Grant Id */
+            grant_id: string;
+            /**
+             * Group Name
+             * @description The group's cached name, for a group grant.
+             */
+            group_name: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "builder" | "user";
+            /** Subject Id */
+            subject_id: string | null;
+            /**
+             * Subject Kind
+             * @enum {string}
+             */
+            subject_kind: "user" | "group" | "org";
+        };
         /** GrantIn */
         GrantIn: {
             /**
@@ -684,11 +885,28 @@ export interface components {
              */
             grants_version: number;
         };
+        /** GroupMembersIn */
+        GroupMembersIn: {
+            /** User Ids */
+            user_ids: string[];
+        };
+        /** GroupMembersOut */
+        GroupMembersOut: {
+            /** Added */
+            added: string[];
+            /** Group Id */
+            group_id: string;
+            /** Removed */
+            removed: string[];
+        };
         /** Heartbeat */
         Heartbeat: {
             /** Cell Label */
             cell_label: string;
-            /** Snapshot Version */
+            /**
+             * Snapshot Version
+             * @description The access snapshot version the cell has applied; 0 or absent for none.
+             */
             snapshot_version?: number | null;
         };
         /** HeartbeatAck */
@@ -859,6 +1077,237 @@ export interface operations {
             };
         };
     };
+    sync_group_internal_v1_directory_groups_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectoryGroupIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryGroupOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sync_members_internal_v1_directory_groups__group_id__members_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupMembersIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupMembersOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sync_user_internal_v1_directory_users_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectoryUserIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryUserOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `ALREADY_EXISTS`, `LAST_ORG_ADMIN` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     heartbeat_internal_v1_heartbeat_post: {
         parameters: {
             query?: never;
@@ -919,7 +1368,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1706,6 +2155,77 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `BUNDLE_DIGEST_MISMATCH`, `BUNDLE_MALFORMED`, `MANIFEST_INVALID`, `SECRET_IN_BUNDLE` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    explain_access_v1_apps__app_id__environments__environment_id__access_get: {
+        parameters: {
+            query?: {
+                /** @description Whose access; the caller by default. */
+                user_id?: string | null;
+            };
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessExplained"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
                     [name: string]: unknown;

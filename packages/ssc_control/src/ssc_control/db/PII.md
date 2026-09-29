@@ -43,6 +43,13 @@ Not personal data: `approval_request.recorded_by_operator` and an operator's `ac
 and the manifest the server read from the bundle, whose only free-form values are the public
 build values (`build.public_env`), which are shipped to every browser by design.
 
+`ssc.access_snapshot` and `ssc.snapshot_ack` (SSC-021) hold no personal data: org ids,
+versions, digests, object keys, a cell label and timestamps. The published snapshot documents
+they point at (`ssc-snapshot/v1`, `docs/contracts/access-snapshot.md`) hold ids and states only
+(`usr_…`, `grp_…`, `env_…`, `gnt_…`, active or deactivated), never a name, an email, an identity
+subject or a group name, so a copy of the snapshot bucket names nobody. `GET .../access`
+(explain) adds the cached group name when it answers; it is not published.
+
 `ssc.org_index` (the single unscoped table, db/README.md rule 14) holds no personal data: an
 `org_…` id and a timestamp, nothing else, so reading it across orgs reveals only how many orgs
 exist and when each was created. Job arguments in `procrastinate.procrastinate_jobs.args` are
