@@ -90,7 +90,11 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
     setNotice(null);
     const seen = grants.data ? { grants: grants.data, etag: etagOf(grants.data) } : undefined;
     const updated = await updateGrants(api, target, withoutGrant(grant), seen);
-    queryClient.setQueryData(queries.queryOptions('get', path, init).queryKey, updated);
+    queryClient.setQueryData(queries.queryOptions('get', path, init).queryKey, updated.grants);
+    if (updated.state === 'pending') {
+      setNotice(`Waiting for approval, nothing changed yet: ${updated.approvalIds.join(', ')}.`);
+      return;
+    }
     await queryClient.invalidateQueries({
       queryKey: queries.queryOptions('get', '/v1/apps/{app_id}', {
         params: { path: { app_id: app.id } },

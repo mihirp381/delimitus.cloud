@@ -5,6 +5,15 @@ import type { components } from './schema';
 export type Grant = components['schemas']['GrantOut'];
 export type GrantInput = components['schemas']['GrantIn'];
 export type Grants = components['schemas']['GrantsOut'];
+export type GrantsPending = components['schemas']['GrantsPending'];
+
+/**
+ * The rules after a change, or, when the change waits for approval (a `202`, decision 016), the
+ * approval ids and the rules still in force.
+ */
+export type GrantsUpdate =
+  | { readonly state: 'applied'; readonly grants: Grants }
+  | { readonly state: 'pending'; readonly grants: Grants; readonly approvalIds: readonly string[] };
 
 export interface GrantsTarget {
   readonly appId: string;
@@ -54,20 +63,20 @@ export async function readGrants(api: ApiClient, target: GrantsTarget): Promise<
  * Applies `change` to an environment's grants with If-Match. When someone else changed them
  * first (412 PRECONDITION_STALE), it re-reads the grants and their ETag and applies `change`
  * again to what is there now, up to MAX_ATTEMPTS PUTs. Nothing is sent when `change` leaves the
- * set as it is.
+ * set as it is. A `202` means nothing changed yet and the result names the pending approvals.
  */
 export async function updateGrants(
   api: ApiClient,
   target: GrantsTarget,
   change: (grants: readonly Grant[]) => readonly (Grant | GrantInput)[],
   seen?: GrantsSnapshot,
-): Promise<Grants> {
+): Promise<GrantsUpdate> {
   let current = seen ?? (await readGrants(api, target));
   for (let attempt = 1; ; attempt += 1) {
     const next = change(current.grants.grants);
-    if (sameSet(next, current.grants.grants)) return current.grants;
+    if (sameSet(next, current.grants.grants)) return { state: 'applied', grants: current.grants };
     try {
-      return must(
+      const body = must(
         await api.PUT(PATH, {
           params: {
             path: { app_id: target.appId, environment_id: target.environmentId },
@@ -76,6 +85,9 @@ export async function updateGrants(
           body: { grants: next.map(toInput) },
         }),
       );
+      return 'approval_ids' in body
+        ? { state: 'pending', grants: current.grants, approvalIds: body.approval_ids }
+        : { state: 'applied', grants: body };
     } catch (error) {
       const stale = error instanceof ApiProblem && error.code === 'PRECONDITION_STALE';
       if (!stale || attempt >= MAX_ATTEMPTS) throw error;

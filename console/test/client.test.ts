@@ -118,7 +118,7 @@ describe('updateGrants', () => {
     expect(put?.body).toEqual({
       grants: [{ role: 'builder', subject_kind: 'user', subject_id: OWNER }],
     });
-    expect(result.grants_version).toBe(4);
+    expect(result).toMatchObject({ state: 'applied', grants: { grants_version: 4 } });
   });
 
   it('re-reads the ETag after a 412 and applies the change to the current grants', async () => {
@@ -138,7 +138,7 @@ describe('updateGrants', () => {
     const puts = api.of('PUT', GRANTS_PATH);
     expect(puts.map((p) => p.headers.get('If-Match'))).toEqual(['"3"', '"4"']);
     expect(puts[1]?.body).toEqual({ grants: [] });
-    expect(result.grants_version).toBe(5);
+    expect(result).toMatchObject({ state: 'applied', grants: { grants_version: 5 } });
   });
 
   it('reads first when the caller has no snapshot, and sends nothing when the set is unchanged', async () => {
@@ -146,7 +146,7 @@ describe('updateGrants', () => {
       [`GET ${GRANTS_PATH}`]: () => json(200, grants(7, [OWNER_BUILDER]), { ETag: '"7"' }),
     });
     const result = await updateGrants(client(api), TARGET, withoutGrant(ORG_USER));
-    expect(result.grants_version).toBe(7);
+    expect(result).toMatchObject({ state: 'applied', grants: { grants_version: 7 } });
     expect(api.of('PUT', GRANTS_PATH)).toHaveLength(0);
   });
 
@@ -179,6 +179,19 @@ describe('updateGrants', () => {
     });
     await updateGrants(client(api), TARGET, withoutGrant(ORG_USER));
     expect(api.of('PUT', GRANTS_PATH)[0]?.headers.get('If-Match')).toBe('"6"');
+  });
+
+  it('reports a 202 as pending approvals and keeps the rules in force', async () => {
+    const seen = grants(3, [ORG_USER, OWNER_BUILDER]);
+    const approvalIds = ['apr_aaaaaaaaaaaaaaaaaaaa'];
+    const pending = { environment_id: ENV, grants_version: 3, approval_ids: approvalIds };
+    const api = fakeApi({ [`PUT ${GRANTS_PATH}`]: () => json(202, pending, { ETag: '"3"' }) });
+    const result = await updateGrants(client(api), TARGET, withoutGrant(ORG_USER), {
+      grants: seen,
+      etag: etagOf(seen),
+    });
+    expect(result).toEqual({ state: 'pending', grants: seen, approvalIds });
+    expect(api.of('PUT', GRANTS_PATH)).toHaveLength(1);
   });
 
   it('matches grants by role and subject, not by id', () => {

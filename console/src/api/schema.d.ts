@@ -38,6 +38,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Approvals
+         * @description Newest first. Org admins and operators see every request; others see their own. An
+         *     operator's read is audited as ``operator.access``.
+         */
+        get: operations["list_approvals_v1_approvals_get"];
+        put?: never;
+        /**
+         * Create Approval
+         * @description Ask another admin of the org to approve one change to one environment. Allowed to the
+         *     environment's builders, its app's owner and org admins, agent sessions included.
+         */
+        post: operations["create_approval_v1_approvals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/approvals/{approval_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Approval
+         * @description One request. A request the caller may not see is ``NOT_FOUND``.
+         */
+        get: operations["get_approval_v1_approvals__approval_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/approvals/{approval_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Approval
+         * @description Record what an org admin decided. Operator credentials only, never in an agent session.
+         *     Refused, in this order: not an operator, an agent session, no such request, already decided,
+         *     the approver asked for it, the approver is not an active org admin.
+         */
+        post: operations["decide_approval_v1_approvals__approval_id__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps": {
         parameters: {
             query?: never;
@@ -105,6 +173,9 @@ export interface paths {
         /**
          * Put Grants
          * @description Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.
+         *
+         *     A change that needs approval is not applied: an agent session gets ``202`` and the pending
+         *     approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.
          */
         put: operations["put_grants_v1_apps__app_id__environments__environment_id__grants_put"];
         post?: never;
@@ -246,6 +317,82 @@ export interface components {
              */
             status: "active" | "disabled" | "quarantined";
         };
+        /** Approval */
+        Approval: {
+            /** App Id */
+            app_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Decided By User Id */
+            decided_by_user_id: string | null;
+            /** Decision Channel */
+            decision_channel: ("email" | "chat" | "console") | null;
+            /** Decision Reason */
+            decision_reason: string | null;
+            /** Environment Id */
+            environment_id: string;
+            /** Id */
+            id: string;
+            kind: components["schemas"]["RequirementKind"];
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Policy Decision Id */
+            policy_decision_id: string | null;
+            /**
+             * Recorded By Operator
+             * @description The SSC operator who recorded the decision, when one did.
+             */
+            recorded_by_operator: string | null;
+            /** Requested By User Id */
+            requested_by_user_id: string;
+            /** Requested Via Agent */
+            requested_via_agent: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "approved" | "denied" | "cancelled";
+            /**
+             * Subject Key
+             * @description What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).
+             */
+            subject_key: string;
+        };
+        /** ApprovalCreate */
+        ApprovalCreate: {
+            /** Environment Id */
+            environment_id: string;
+            kind: components["schemas"]["RequirementKind"];
+            /**
+             * Payload
+             * @description `widen_audience`: `{grants}`. `agent_share`: `{grants_version, grants}`. Others: `{}`.
+             */
+            payload?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Subject Key
+             * @description The connection name or host. Derived by the server for `widen_audience` and `agent_share`; when sent for those it must match.
+             */
+            subject_key?: string | null;
+        };
+        /** ApprovalPage */
+        ApprovalPage: {
+            /** Approvals */
+            approvals: components["schemas"]["Approval"][];
+            /**
+             * Next Before
+             * @description Pass as `before` for the next, older page; null on the last page.
+             */
+            next_before: string | null;
+        };
         /**
          * AuditAction
          * @enum {string}
@@ -311,6 +458,27 @@ export interface components {
             /** Kind */
             kind: string;
         };
+        /** DecisionIn */
+        DecisionIn: {
+            /**
+             * Approver User Id
+             * @description The org admin who decided, never the requester.
+             */
+            approver_user_id: string;
+            /**
+             * Channel
+             * @description How the decision reached SSC.
+             * @enum {string}
+             */
+            channel: "email" | "chat";
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "approved" | "denied";
+            /** Reason */
+            reason: string;
+        };
         /** DeploymentCreate */
         DeploymentCreate: {
             /**
@@ -342,7 +510,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "INTERNAL";
         /** GrantIn */
         GrantIn: {
             /**
@@ -390,6 +558,24 @@ export interface components {
             /** Grants */
             grants: components["schemas"]["GrantOut"][];
             /** Grants Version */
+            grants_version: number;
+        };
+        /**
+         * GrantsPending
+         * @description An agent session's change, waiting for another admin. Nothing was applied.
+         */
+        GrantsPending: {
+            /**
+             * Approval Ids
+             * @description Retry the same change once all are approved.
+             */
+            approval_ids: string[];
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Grants Version
+             * @description Unchanged: the version the change will replace.
+             */
             grants_version: number;
         };
         /** Heartbeat */
@@ -491,6 +677,12 @@ export interface components {
              */
             type: string;
         };
+        /**
+         * RequirementKind
+         * @description Mirrors the ``ssc.approval_request.kind`` CHECK.
+         * @enum {string}
+         */
+        RequirementKind: "widen_audience" | "connect_data_source" | "enable_internet_hosts" | "agent_share";
         /** Whoami */
         Whoami: {
             /** Client Id */
@@ -588,6 +780,333 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_IN_FLIGHT` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_approvals_v1_approvals_get: {
+        parameters: {
+            query?: {
+                state?: ("pending" | "approved" | "denied" | "cancelled") | null;
+                environment_id?: string | null;
+                /** @description The previous page's `next_before`. */
+                before?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalPage"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_approval_v1_approvals_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalCreate"];
+            };
+        };
+        responses: {
+            /** @description The same question is already pending or approved; that request is returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `PRECONDITION_STALE` */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_approval_v1_approvals__approval_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    decide_approval_v1_approvals__approval_id__decision_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED`, `SELF_APPROVAL_REFUSED`, `APPROVER_NOT_ELIGIBLE` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING` */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -970,6 +1489,15 @@ export interface operations {
                     "application/json": components["schemas"]["GrantsOut"];
                 };
             };
+            /** @description Made through an agent credential, or widening a data-connected app: waiting for approval. Nothing changed. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantsPending"];
+                };
+            };
             /** @description `UNAUTHENTICATED` */
             401: {
                 headers: {
@@ -990,6 +1518,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `APPROVAL_REQUIRED` */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

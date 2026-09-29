@@ -226,6 +226,26 @@ describe('app detail', () => {
     expect(within(prod).getByText('Everyone in the organisation')).toBeTruthy();
   });
 
+  it('says when a removal waits for approval and keeps the grant listed', async () => {
+    const pending = { environment_id: 'env_prod0000000000000000', grants_version: 3, approval_ids: ['apr_aaaaaaaaaaaaaaaaaaaa'] };
+    start(
+      `/apps/${APP.id}`,
+      routes(() => json(202, pending, { ETag: '"3"' }), () => json(200, prodGrants(3, [ORG_USER]))),
+      signedIn(),
+    );
+    const prod = await screen.findByRole('region', { name: 'Production prod' });
+    fireEvent.click(await within(prod).findByRole('button', { name: /Remove access for/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Remove access' });
+    fireEvent.change(within(dialog).getByLabelText(/Type/), { target: { value: 'expenses' } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Remove access' }));
+    });
+    expect((await within(prod).findByRole('status')).textContent).toBe(
+      'Waiting for approval, nothing changed yet: apr_aaaaaaaaaaaaaaaaaaaa.',
+    );
+    expect(within(prod).getByText('Everyone in the organisation')).toBeTruthy();
+  });
+
   it('shows not found for an unknown app', async () => {
     start('/apps/app_unknown0000000000000', {}, signedIn());
     expect((await screen.findByRole('alert')).textContent).toContain('Not found');
