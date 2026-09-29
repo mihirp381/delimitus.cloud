@@ -185,6 +185,11 @@ def test_refusal_rendering(cli, fake_api, fake_problem, isolated):
         ("share", "demo", "--org", "--env", "staging"),
         ("share", "demo", "--org", "--role", "owner"),
         ("unshare", "demo", "--org", "--role", "user"),
+        ("unshare", "demo"),
+        ("unshare", "demo", USR, USR),
+        ("share", "demo", "--org", "--group"),
+        ("unshare", "demo", "--org", "--group"),
+        ("share", "demo", USR, "grp_financefinancefinanc"),
         ("apps", "create"),
         ("nope",),
     ],
@@ -414,9 +419,74 @@ def test_a_stored_grant_below_the_floor_is_named_with_its_removal(cli, scripted,
     assert r.code == ExitCode.FAILED
     fix = _fix(r.stderr)
     assert f"the user grant for {OLD} was saved before the rule" in fix
-    assert f"`ssc unshare demo {OLD} --env preview`" in fix
-    assert "`ssc unshare demo --org --env preview`" in fix
+    assert f"remove them first with `ssc unshare demo {OLD} --org --env preview`." in fix
+    assert fix.count("ssc unshare") == 1
     assert USR not in fix
+
+
+OLD1 = "usr_oldaoldaoldaoldaolda"
+OLD2 = "usr_old2old2old2old2old2"
+
+
+def test_two_stored_grants_below_the_floor_go_in_one_unshare(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/grants"
+    legacy = [
+        {"id": f"gnt_{i}", "role": "user", "subject_kind": "user", "subject_id": uid}
+        for i, uid in enumerate((OLD1, OLD2))
+    ]
+    kept = {"id": "gnt_9", "role": "builder", "subject_kind": "user", "subject_id": USR}
+    scripted.add("GET", path, _grants(4, *legacy, kept))
+    scripted.add("PUT", path, fake_problem(422, "VALIDATION_FAILED"))
+    r = cli("share", "demo", GRP, "--env", "preview", session=scripted.session())
+    fix = _fix(r.stderr)
+    command = f"ssc unshare demo {OLD1} {OLD2} --env preview"
+    assert f"`{command}`" in fix
+    scripted.routes[("PUT", path)] = [_grants(5, kept)]
+    scripted.seen.clear()
+    done = cli(*command.split()[1:], "--json", session=scripted.session())
+    assert done.code == 0, done.stdout
+    (put,) = _puts(scripted)
+    assert json.loads(put.content)["grants"] == [
+        {"role": "builder", "subject_kind": "user", "subject_id": USR}
+    ]
+    result = ShareResult.model_validate(done.json())
+    assert [(x.kind, x.id) for x in result.subjects] == [("user", OLD1), ("user", OLD2)]
+    assert (result.subject_kind, result.subject_id, result.changed) == ("user", OLD1, True)
+
+
+def test_unshare_takes_ids_and_the_org_in_one_put(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    mine = {"id": "gnt_2", "role": "user", "subject_kind": "user", "subject_id": USR}
+    scripted.add("GET", path, _grants(3, ORG_USER, mine))
+    scripted.add("PUT", path, _grants(4))
+    r = cli("unshare", "demo", USR, "--org", session=scripted.session())
+    assert r.code == 0, r.stdout
+    assert r.stdout.startswith(f"Removed {USR}, everyone in the org from prod.")
+    (put,) = _puts(scripted)
+    assert json.loads(put.content)["grants"] == []
+
+
+def test_group_reads_a_name_with_an_at_or_an_id_prefix_as_a_group(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/grants"
+    for name in ("ops@lists", "usr_team"):
+        scripted.seen.clear()
+        scripted.routes[("GET", "/v1/groups")] = [_groups(_group(GRP, name))]
+        scripted.routes[("GET", path)] = [_grants(1)]
+        scripted.routes[("PUT", path)] = [_grants(2)]
+        r = cli(
+            "share",
+            "demo",
+            name,
+            "--group",
+            "--env",
+            "preview",
+            "--json",
+            session=scripted.session(),
+        )
+        assert r.code == 0, r.stdout
+        (lookup,) = _lookups(scripted)
+        assert (lookup.url.path, lookup.url.params["name"]) == ("/v1/groups", name)
+        assert (r.json()["subject_kind"], r.json()["subject_id"]) == ("group", GRP)
 
 
 def test_a_refusal_the_rules_do_not_explain_gets_the_rules(cli, scripted, fake_problem):

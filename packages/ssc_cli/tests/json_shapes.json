@@ -144,7 +144,12 @@
     "grants_version": "integer",
     "pending": "array<string>",
     "subject_id": "string|null",
-    "subject_kind": "string"
+    "subject_kind": "string",
+    "subjects": "array<SubjectRow>"
+  },
+  "SubjectRow": {
+    "id": "string|null",
+    "kind": "string"
   },
   "TokenClearResult": {
     "api_url": "string",

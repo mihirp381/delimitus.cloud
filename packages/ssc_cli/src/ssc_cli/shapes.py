@@ -88,11 +88,16 @@ class GrantRow(Shape):
     subject_id: str | None
 
 
+class SubjectRow(Shape):
+    kind: str
+    id: str | None
+
+
 class ShareResult(Shape):
     """``share`` and ``unshare``: the sharing rules after the change. When ``pending`` names
     approval requests, nothing changed yet and ``grants`` are the rules still in force.
     ``subject_kind`` and ``subject_id`` say whose grant it was, after an email or group name was
-    looked up."""
+    looked up; ``subjects`` lists every subject named, since ``unshare`` takes several."""
 
     app_id: str
     environment: str
@@ -103,6 +108,7 @@ class ShareResult(Shape):
     pending: list[str] = Field(default_factory=list[str])
     subject_kind: str
     subject_id: str | None
+    subjects: list[SubjectRow] = Field(default_factory=list[SubjectRow])
 
 
 class DoctorResult(Shape):
@@ -213,6 +219,7 @@ SHAPES: dict[str, type[BaseModel]] = {
         EnvironmentRow,
         AppResult,
         GrantRow,
+        SubjectRow,
         ShareResult,
         Finding,
         DoctorResult,
