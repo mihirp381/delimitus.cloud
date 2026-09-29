@@ -224,3 +224,25 @@ async def test_rollback_sends_the_given_key(fake_api):
     (post,) = [q for q in fake_api.seen if q.method == "POST"]
     assert post.headers["Idempotency-Key"] == "k1"
     assert json.loads(post.content) == {"release_id": release, "kind": "rollback"}
+
+
+async def test_request_share_never_lowers_a_role(fake_api):
+    app_id = "app_" + "a" * 20
+    env_id = "env_" + "p" * 20
+    app = {"id": app_id, "slug": "a1", "environments": [{"id": env_id, "name": "prod"}]}
+    held = {"role": "builder", "subject_kind": "user", "subject_id": USR}
+    grants = {"grants_version": 3, "grants": [held]}
+    fake_api.add("GET", f"/v1/apps/{app_id}", httpx2.Response(200, json=app))
+    fake_api.add(
+        "GET", f"/v1/apps/{app_id}/environments/{env_id}/grants", httpx2.Response(200, json=grants)
+    )
+    async with Client(local_server(fake_api), cache=None) as client:
+        floor = await client.call_tool("request_share", {"app": app_id, "env": "prod", "who": USR})
+        lower = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": USR, "role": "user"}
+        )
+    for r in (floor, lower):
+        assert not r.is_error
+        assert r.structured_content["requested"] is False
+        assert "already has builder" in r.structured_content["next"]
+    assert all(q.method == "GET" for q in fake_api.seen)

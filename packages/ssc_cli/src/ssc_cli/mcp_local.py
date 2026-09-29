@@ -338,7 +338,7 @@ def ask_share(  # noqa: PLR0913  (keyword-only)
     c: ApiClient, *, ref: str, env: str, who: str, role: str | None, key: str
 ) -> Body:
     """Ask for ``who`` to get ``role`` on ``env``: an ``agent_share`` approval request for the
-    current grants plus that one. Never changes the grants."""
+    current grants plus that one. Never changes the grants, and never asks to lower a role."""
     found = resolve_app(c, ref)
     env_id = environment_id(found, env)
     kind, subject = subject_of(who)
@@ -355,12 +355,13 @@ def ask_share(  # noqa: PLR0913  (keyword-only)
         current = c.get_json(f"/v1/apps/{found['id']}/environments/{env_id}/grants")
         version = current["grants_version"]
         existing = [(g["role"], g["subject_kind"], g["subject_id"]) for g in current["grants"]]
-        if wanted in existing:
+        held = next((g for g in existing if (g[1], g[2]) == (kind, subject)), None)
+        if held is not None and RANK[held[0]] >= RANK[wanted[0]]:
             return {
                 "requested": False,
                 "environment_id": env_id,
                 "grants_version": version,
-                "next": f"{who} already has {wanted[0]} on {env}. Nothing to ask for.",
+                "next": f"{who} already has {held[0]} on {env}. Nothing to ask for.",
             }
         desired = [g for g in existing if (g[1], g[2]) != (kind, subject)] + [wanted]
         body = {
