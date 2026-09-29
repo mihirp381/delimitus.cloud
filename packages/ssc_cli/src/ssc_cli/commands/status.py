@@ -30,10 +30,11 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
             dash(e.deployment.release_id if e.deployment else None),
             dash(e.current_deployment_id),
             dash(e.deployment.finished_at if e.deployment else None),
+            dash(e.url),
         )
         for e in result.environments
     ]
-    say(table(("ENVIRONMENT", "STATE", "RELEASE", "DEPLOYMENT", "FINISHED"), rows))
+    say(table(("ENVIRONMENT", "STATE", "RELEASE", "DEPLOYMENT", "FINISHED", "URL"), rows))
 
 
 def app_result(client: ApiClient, app: AppOut, *, with_deployments: bool) -> AppResult:
@@ -58,6 +59,7 @@ def app_result(client: ApiClient, app: AppOut, *, with_deployments: bool) -> App
                 grants_version=e.grants_version,
                 current_deployment_id=e.current_deployment_id,
                 deployment=deployment,
+                url=e.url,
             )
         )
     return AppResult(

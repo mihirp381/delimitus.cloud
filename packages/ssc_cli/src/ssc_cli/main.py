@@ -7,8 +7,11 @@ import typer
 from ssc_cli import __version__
 from ssc_cli.commands._common import session
 from ssc_cli.commands.apps import apps_app
+from ssc_cli.commands.deploy import deploy
 from ssc_cli.commands.doctor import doctor
 from ssc_cli.commands.init import init
+from ssc_cli.commands.releases import releases
+from ssc_cli.commands.rollback import rollback
 from ssc_cli.commands.share import share, unshare
 from ssc_cli.commands.status import status
 from ssc_cli.commands.token import token_app
@@ -16,7 +19,7 @@ from ssc_cli.commands.whoami import whoami
 
 app = typer.Typer(
     name="ssc",
-    help="Small Software Cloud: check, share and inspect internal apps.",
+    help="Small Software Cloud: check, deploy, share and inspect internal apps.",
     no_args_is_help=True,
     add_completion=False,
     pretty_exceptions_enable=False,
@@ -46,7 +49,7 @@ def root(
         typer.Option("--version", callback=_version, is_eager=True, help="Print the version."),
     ] = False,
 ) -> None:
-    """Small Software Cloud: check, share and inspect internal apps."""
+    """Small Software Cloud: check, deploy, share and inspect internal apps."""
     if api is not None:
         session(ctx).api_override = api
 
@@ -59,3 +62,6 @@ app.command()(share)
 app.command()(unshare)
 app.command()(doctor)
 app.command()(init)
+app.command()(deploy)
+app.command()(releases)
+app.command()(rollback)

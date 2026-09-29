@@ -10,6 +10,7 @@ import pytest
 from pydantic import BaseModel
 
 from ssc_cli import models
+from ssc_cli.commands import deploy, releases, rollback
 from ssc_cli.commands.share import DEFAULT_ROLE, SUBJECT_KINDS, Env, Role
 from ssc_cli.shapes import SHAPES
 
@@ -27,8 +28,25 @@ RESPONSES = (
     models.GrantsOut,
     models.GrantsPending,
     models.OperationOut,
+    models.OperationAccepted,
+    models.UploadTarget,
+    models.BundleOut,
+    models.CapabilityChange,
+    models.CapabilityDiff,
+    models.BuildAccepted,
+    models.BuildOut,
+    models.ActorOut,
+    models.ReleaseOut,
+    models.ReleaseList,
 )
-REQUESTS = (models.AppCreate, models.GrantIn, models.GrantsIn)
+REQUESTS = (
+    models.AppCreate,
+    models.GrantIn,
+    models.GrantsIn,
+    models.BundleCreate,
+    models.BuildCreate,
+    models.DeploymentCreate,
+)
 
 
 def _type(prop: dict[str, Any], defs: dict[str, Any]) -> tuple[str, bool]:
@@ -83,6 +101,21 @@ def test_values_the_cli_sends_are_allowed(server):
     kinds = {*SUBJECT_KINDS.values(), "org"}
     assert kinds <= set(grant["subject_kind"]["enum"])
     assert {e.value for e in Env} == set(server["EnvironmentOut"]["properties"]["name"]["enum"])
+    assert deploy.PREVIEW in {e.value for e in Env}
+    kinds = set(server["DeploymentCreate"]["properties"]["kind"]["enum"])
+    assert {deploy.DEPLOY, rollback.ROLLBACK} <= kinds
+    commit = server["BundleCreate"]["properties"]["source_commit"]["anyOf"][0]["pattern"]
+    assert f"^{deploy.COMMIT.pattern}$" == commit
+
+
+def test_release_paging_matches_the_api():
+    paths = json.loads(OPENAPI.read_text())["paths"]
+    params = {
+        p["name"]: p["schema"] for p in paths["/v1/apps/{app_id}/releases"]["get"]["parameters"]
+    }
+    assert params["limit"]["maximum"] == releases.MAX_PAGE
+    before = params["before"]["anyOf"][0]
+    assert (before["minimum"], before["maximum"]) == (1, releases.MAX_BEFORE)
 
 
 # ── --json shapes: append-only ───────────────────────────────────────────────

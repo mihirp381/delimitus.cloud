@@ -38,6 +38,7 @@ class EnvironmentOut(Wire):
     config_version: int
     grants_version: int
     current_deployment_id: str | None = None
+    url: str | None = None
 
 
 class AppOut(Wire):
@@ -79,6 +80,84 @@ class OperationOut(Wire):
     release_id: str | None = None
     started_at: str
     finished_at: str | None = None
+    failure_code: str | None = None
+
+
+class OperationAccepted(Wire):
+    operation_id: str
+    state: str
+
+
+class UploadTarget(Wire):
+    """Where to PUT a bundle. ``url`` is a credential: never print or log it."""
+
+    method: str
+    url: str
+    headers: dict[str, str]
+    expires_at: str
+
+
+class BundleOut(Wire):
+    bundle_id: str
+    app_id: str
+    digest: str
+    size_bytes: int
+    state: str
+    manifest_digest: str | None = None
+    upload: UploadTarget | None = None
+
+
+class CapabilityChange(Wire):
+    severity: str
+    kind: str
+    subject: str
+    consequence: str
+    approver: str | None = None
+
+
+class CapabilityDiff(Wire):
+    changes: list[CapabilityChange]
+    total: int
+
+
+class BuildAccepted(Wire):
+    build_id: str
+    state: str
+    capability_diff: CapabilityDiff
+
+
+class BuildOut(Wire):
+    build_id: str
+    app_id: str
+    environment_id: str
+    bundle_id: str
+    state: str
+    release_id: str | None = None
+    release_number: int | None = None
+    failure_code: str | None = None
+
+
+class ActorOut(Wire):
+    kind: str
+    id: str
+    via_agent: bool
+
+
+class ReleaseOut(Wire):
+    release_id: str
+    number: int
+    label: str
+    image_digest: str
+    source_digest: str
+    source_commit: str | None = None
+    built_for_environment_id: str | None = None
+    created_at: str
+    actor: ActorOut
+
+
+class ReleaseList(Wire):
+    items: list[ReleaseOut]
+    next_before: int | None = None
 
 
 class Body(BaseModel):
@@ -97,3 +176,18 @@ class GrantIn(Body):
 
 class GrantsIn(Body):
     grants: list[GrantIn]
+
+
+class BundleCreate(Body):
+    digest: str
+    size_bytes: int
+    source_commit: str | None = None
+
+
+class BuildCreate(Body):
+    bundle_id: str
+
+
+class DeploymentCreate(Body):
+    release_id: str
+    kind: str

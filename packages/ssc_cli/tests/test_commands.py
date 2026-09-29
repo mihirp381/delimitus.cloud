@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -22,9 +23,12 @@ from ssc_cli.session import Session
 from ssc_cli.shapes import (
     AppResult,
     AppsResult,
+    DeployResult,
     DoctorResult,
     ErrorResult,
     InitResult,
+    ReleasesResult,
+    RollbackResult,
     ShareResult,
     TokenClearResult,
     TokenSetResult,
@@ -37,7 +41,19 @@ USR = "usr_aaaaaaaaaaaaaaaaaaaa"
 APP_ID = "app_aaaaaaaaaaaaaaaaaaaa"
 PROD = "env_prodprodprodprodprod"
 PREVIEW = "env_prevprevprevprevprev"
-ALLOWED = {"whoami", "token", "apps", "status", "share", "unshare", "doctor", "init"}
+ALLOWED = {
+    "whoami",
+    "token",
+    "apps",
+    "status",
+    "share",
+    "unshare",
+    "doctor",
+    "init",
+    "deploy",
+    "releases",
+    "rollback",
+}
 
 
 def slug() -> str:
@@ -46,6 +62,11 @@ def slug() -> str:
 
 def _no_sleep(_: float) -> None:
     return None
+
+
+def _short_sleep(_: float) -> None:
+    """Polls on the live stack sleep a little for real, so the worker gets to run."""
+    time.sleep(0.05)
 
 
 # ── the command set ─────────────────────────────────────────────────────────
@@ -81,6 +102,9 @@ def test_help_lists_exact_set(cli):
         ("unshare",),
         ("doctor",),
         ("init",),
+        ("deploy",),
+        ("releases",),
+        ("rollback",),
     }
     for group, subs in (("token", {"set", "clear"}), ("apps", {"create"})):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
@@ -485,7 +509,7 @@ def on_live(cli, live, isolated):
     isolated.set_password(SERVICE, live.url, live.token())
 
     def run(*args: str, input: str | None = None, transport: httpx2.BaseTransport | None = None):
-        session = Session(api_override=live.url, transport=transport, sleep=_no_sleep)
+        session = Session(api_override=live.url, transport=transport, sleep=_short_sleep)
         return cli(*args, input=input, session=session)
 
     return run
@@ -493,6 +517,10 @@ def on_live(cli, live, isolated):
 
 def test_every_command_has_json(on_live, live, tmp_path):
     name = slug()
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "ssc.toml").write_text('schema = "ssc/v1"\n')
+    (folder / "main.py").write_text("print('hello')\n")
     cases: dict[tuple[str, ...], tuple[list[str], type[BaseModel], str | None]] = {
         ("token", "set"): ([], TokenSetResult, live.token()),
         ("whoami",): ([], WhoamiResult, None),
@@ -501,6 +529,9 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("status",): ([name], AppResult, None),
         ("share",): ([name, "--org"], ShareResult, None),
         ("unshare",): ([name, "--org"], ShareResult, None),
+        ("deploy",): ([str(folder), "--app", name, "--wait"], DeployResult, None),
+        ("releases",): ([name], ReleasesResult, None),
+        ("rollback",): ([name, "R1", "--wait"], RollbackResult, None),
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),

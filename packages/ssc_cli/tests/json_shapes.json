@@ -16,6 +16,36 @@
   "AppsResult": {
     "apps": "array<AppRow>"
   },
+  "BundleWarning": {
+    "line": "integer",
+    "masked": "string",
+    "path": "string",
+    "rule": "string"
+  },
+  "CapabilityChangeRow": {
+    "approver": "string|null",
+    "consequence": "string",
+    "kind": "string",
+    "severity": "string",
+    "subject": "string"
+  },
+  "DeployResult": {
+    "app_id": "string",
+    "build_id": "string",
+    "bundle_id": "string",
+    "capability_changes": "array<CapabilityChangeRow>",
+    "digest": "string",
+    "environment": "string",
+    "environment_id": "string",
+    "operation_id": "string",
+    "release_id": "string",
+    "release_number": "integer",
+    "slug": "string",
+    "state": "string",
+    "uploaded": "boolean",
+    "url": "string|null",
+    "warnings": "array<BundleWarning>"
+  },
   "DeploymentRow": {
     "finished_at": "string|null",
     "kind": "string",
@@ -35,7 +65,8 @@
     "deployment": "DeploymentRow|null",
     "grants_version": "integer",
     "id": "string",
-    "name": "string"
+    "name": "string",
+    "url": "string|null"
   },
   "ErrorBody": {
     "code": "string",
@@ -71,6 +102,38 @@
   "InitResult": {
     "files": "array<FileAction>",
     "path": "string"
+  },
+  "ReleaseRow": {
+    "actor_id": "string",
+    "actor_kind": "string",
+    "built_for": "string|null",
+    "built_for_environment_id": "string|null",
+    "created_at": "string",
+    "image_digest": "string",
+    "label": "string",
+    "live_in": "array<string>",
+    "number": "integer",
+    "release_id": "string",
+    "source_commit": "string|null",
+    "source_digest": "string",
+    "via_agent": "boolean"
+  },
+  "ReleasesResult": {
+    "app_id": "string",
+    "next_before": "integer|null",
+    "releases": "array<ReleaseRow>",
+    "slug": "string"
+  },
+  "RollbackResult": {
+    "app_id": "string",
+    "environment": "string",
+    "environment_id": "string",
+    "operation_id": "string",
+    "release_id": "string",
+    "release_number": "integer",
+    "slug": "string",
+    "state": "string",
+    "url": "string|null"
   },
   "ShareResult": {
     "app_id": "string",

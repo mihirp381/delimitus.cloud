@@ -66,6 +66,7 @@ class EnvironmentRow(Shape):
     grants_version: int
     current_deployment_id: str | None
     deployment: DeploymentRow | None
+    url: str | None = Field(description="Where the environment is served.")
 
 
 class AppResult(Shape):
@@ -116,6 +117,81 @@ class InitResult(Shape):
     files: list[FileAction]
 
 
+class BundleWarning(Shape):
+    """A secret-scan finding that does not block, with the value masked."""
+
+    path: str
+    line: int
+    rule: str
+    masked: str
+
+
+class CapabilityChangeRow(Shape):
+    severity: str
+    kind: str
+    subject: str
+    consequence: str
+    approver: str | None
+
+
+class DeployResult(Shape):
+    """``deploy``: always to preview. ``state`` is the deployment's, ``pending`` until it is
+    live unless ``--wait`` was given. A failed build or deployment prints an error instead."""
+
+    app_id: str
+    slug: str
+    environment: Literal["preview"]
+    environment_id: str
+    bundle_id: str
+    digest: str
+    uploaded: bool = Field(description="False when the API already had these exact bytes.")
+    build_id: str
+    release_id: str
+    release_number: int
+    operation_id: str
+    state: str
+    url: str | None
+    warnings: list[BundleWarning]
+    capability_changes: list[CapabilityChangeRow]
+
+
+class ReleaseRow(Shape):
+    release_id: str
+    number: int
+    label: str
+    built_for: str | None = Field(description="The environment a build made it for.")
+    built_for_environment_id: str | None
+    live_in: list[str] = Field(description="Environments whose live deployment runs it.")
+    source_digest: str
+    source_commit: str | None
+    image_digest: str
+    created_at: str
+    actor_kind: str
+    actor_id: str
+    via_agent: bool
+
+
+class ReleasesResult(Shape):
+    app_id: str
+    slug: str
+    releases: list[ReleaseRow] = Field(description="Highest number first.")
+    next_before: int | None = Field(description="Pass as `--before` for the next page.")
+
+
+class RollbackResult(Shape):
+    """``rollback``: ``state`` is the deployment's, ``pending`` unless ``--wait`` was given."""
+
+    app_id: str
+    slug: str
+    environment: str
+    environment_id: str
+    release_id: str
+    release_number: int
+    operation_id: str
+    state: str
+    url: str | None
+
+
 class ErrorResult(Shape):
     error: ErrorBody
 
@@ -137,6 +213,12 @@ SHAPES: dict[str, type[BaseModel]] = {
         DoctorResult,
         FileAction,
         InitResult,
+        BundleWarning,
+        CapabilityChangeRow,
+        DeployResult,
+        ReleaseRow,
+        ReleasesResult,
+        RollbackResult,
         ErrorBody,
         ErrorResult,
     )

@@ -8,11 +8,14 @@
 * ``429`` is retried once after ``Retry-After``: the API refuses before doing any work.
 * A refusal becomes a :class:`~ssc_cli.errors.CliError` carrying the API's problem members.
 * Every request names the tool in ``X-SSC-Source-Tool`` for the API's source tool mix.
+* A bundle goes to the signed upload URL the API hands out, from a separate client that sends
+  no token. The URL is a credential and never appears in an error.
 """
 
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from pathlib import Path
 from types import TracebackType
 from typing import Any, Final, Self
 from urllib.parse import quote
@@ -24,6 +27,7 @@ from ssc_cli import __version__
 from ssc_cli.errors import (
     BAD_RESPONSE,
     NETWORK_ERROR,
+    UPLOAD_FAILED,
     CliError,
     ErrorBody,
     ExitCode,
@@ -34,11 +38,21 @@ from ssc_cli.models import (
     AppCreate,
     AppList,
     AppOut,
+    BuildAccepted,
+    BuildCreate,
+    BuildOut,
+    BundleCreate,
+    BundleOut,
+    DeploymentCreate,
     GrantIn,
     GrantsIn,
     GrantsOut,
     GrantsPending,
+    OperationAccepted,
     OperationOut,
+    ReleaseList,
+    ReleaseOut,
+    UploadTarget,
     Whoami,
 )
 from ssc_contracts.errors import ErrorCode
@@ -53,6 +67,8 @@ REQUEST_ID_HEADER: Final = "X-Request-Id"
 BACKOFF: Final = (0.5, 1.0, 2.0)
 MAX_RETRY_AFTER: Final = 60.0
 DEFAULT_TIMEOUT: Final = 30.0
+UPLOAD_TIMEOUT: Final = 300.0
+UPLOAD_CHUNK: Final = 1024 * 1024
 
 Sleep = Callable[[float], None]
 
@@ -75,6 +91,8 @@ class ApiClient:
     ) -> None:
         self.api_url = base_url
         self._sleep = sleep
+        self._transport = transport
+        self._upload_http: httpx2.Client | None = None
         self._http = httpx2.Client(
             base_url=base_url,
             transport=transport,
@@ -100,6 +118,8 @@ class ApiClient:
         self.close()
 
     def close(self) -> None:
+        if self._upload_http is not None:
+            self._upload_http.close()
         self._http.close()
 
     # ── endpoints ────────────────────────────────────────────────────────────
@@ -138,6 +158,77 @@ class ApiClient:
         if r.status_code == 202:
             return _parse(r, GrantsPending)
         return _parse(r, GrantsOut)
+
+    def create_bundle(self, app_id: str, body: BundleCreate) -> BundleOut:
+        """The bundle recorded by digest: ``upload`` is set while its bytes are still needed."""
+        return _parse(self._send("POST", f"/v1/apps/{_seg(app_id)}/bundles", body=body), BundleOut)
+
+    def complete_bundle(self, app_id: str, bundle_id: str) -> BundleOut:
+        path = f"/v1/apps/{_seg(app_id)}/bundles/{_seg(bundle_id)}/complete"
+        return _parse(self._send("POST", path), BundleOut)
+
+    def upload(self, target: UploadTarget, path: Path) -> None:
+        """PUT the file to the signed URL, streaming it, with the headers the API asked for and
+        without the API token. Transport errors and 5xx are retried like a GET."""
+        if self._upload_http is None:
+            self._upload_http = httpx2.Client(
+                transport=self._transport, timeout=UPLOAD_TIMEOUT, follow_redirects=False
+            )
+        retries = 0
+        while True:
+            try:
+                r = self._upload_http.request(
+                    target.method,
+                    target.url,
+                    content=_chunks(path),
+                    headers={**target.headers, "User-Agent": USER_AGENT},
+                )
+            except httpx2.TransportError as e:
+                if retries < len(BACKOFF):
+                    self._sleep(BACKOFF[retries])
+                    retries += 1
+                    continue
+                raise local_error(
+                    NETWORK_ERROR,
+                    "The bundle could not be uploaded.",
+                    f"{type(e).__name__} while uploading. Check your connection, then retry.",
+                    ExitCode.NETWORK,
+                ) from None
+            if r.status_code >= 500 and retries < len(BACKOFF):
+                self._sleep(BACKOFF[retries])
+                retries += 1
+                continue
+            if r.status_code >= 300:
+                raise local_error(
+                    UPLOAD_FAILED,
+                    "The bundle upload was refused.",
+                    f"The upload address answered HTTP {r.status_code}. Run the command again; "
+                    "it asks for a fresh address.",
+                )
+            return
+
+    def create_build(self, app_id: str, environment_id: str, bundle_id: str) -> BuildAccepted:
+        path = f"{_environment_path(app_id, environment_id)}/builds"
+        body = BuildCreate(bundle_id=bundle_id)
+        return _parse(self._send("POST", path, body=body), BuildAccepted)
+
+    def get_build(self, build_id: str) -> BuildOut:
+        return _parse(self._send("GET", f"/v1/builds/{_seg(build_id)}"), BuildOut)
+
+    def create_deployment(
+        self, app_id: str, environment_id: str, release_id: str, kind: str
+    ) -> OperationAccepted:
+        path = f"{_environment_path(app_id, environment_id)}/deployments"
+        body = DeploymentCreate(release_id=release_id, kind=kind)
+        return _parse(self._send("POST", path, body=body), OperationAccepted)
+
+    def list_releases(self, app_id: str, *, limit: int, before: int | None = None) -> ReleaseList:
+        query = f"?limit={limit}" + ("" if before is None else f"&before={before}")
+        return _parse(self._send("GET", f"/v1/apps/{_seg(app_id)}/releases{query}"), ReleaseList)
+
+    def get_release(self, app_id: str, release_id: str) -> ReleaseOut:
+        path = f"/v1/apps/{_seg(app_id)}/releases/{_seg(release_id)}"
+        return _parse(self._send("GET", path), ReleaseOut)
 
     # ── transport ────────────────────────────────────────────────────────────
 
@@ -186,8 +277,18 @@ class ApiClient:
             return r
 
 
+def _environment_path(app_id: str, environment_id: str) -> str:
+    return f"/v1/apps/{_seg(app_id)}/environments/{_seg(environment_id)}"
+
+
 def _grants_path(app_id: str, environment_id: str) -> str:
-    return f"/v1/apps/{_seg(app_id)}/environments/{_seg(environment_id)}/grants"
+    return f"{_environment_path(app_id, environment_id)}/grants"
+
+
+def _chunks(path: Path) -> Iterator[bytes]:
+    with path.open("rb") as f:
+        while chunk := f.read(UPLOAD_CHUNK):
+            yield chunk
 
 
 def _transient(r: httpx2.Response, method: str) -> bool:
