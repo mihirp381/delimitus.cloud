@@ -74,9 +74,10 @@ finding marked `block`.
   `await new IdentityVerifier({{ audience, keys }}).fromHeaders(req.headers)`.
 - Key users on `note.sub`, never on email or name, which can change.
 - Take `audience` from the `{app_origin}` environment variable, the app's own exact origin
-  (such as `https://quiet-river-7f3k.delimitusapps.com`), and `keys` from `{keys_url}`, the
-  JWKS address (`https://keys.delimitus.com/<cell>/jwks.json`). Never hard-code either. While
-  one is unset, treat every request as not signed in.
+  (such as `https://expenses.qtbvkmrdhpsc.delimitusapps.com`, and
+  `https://expenses--preview.qtbvkmrdhpsc.delimitusapps.com` in preview), and `keys` from
+  `{keys_url}`, the JWKS address (`https://keys.delimitus.com/<cell>/jwks.json`). Never
+  hard-code either. While one is unset, treat every request as not signed in.
 - Treat every refusal as "not a signed-in user": answer 401 and never echo the note.
 
 ### Data
