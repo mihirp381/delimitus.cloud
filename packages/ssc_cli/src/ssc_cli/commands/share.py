@@ -323,7 +323,8 @@ def rules_fix(app_ref: str, env: Env, current: list[GrantOut], desired: list[Gra
     """Which grants break the sharing rules, and what to run about each.
 
     Every stored grant below the floor blocks every write, so the ``ssc unshare`` it suggests names
-    all of them at once, plus the grants this command removes or replaces.
+    all of them at once, plus the subjects this command removes. A grant it only replaces is left
+    out, since the write keeps that subject.
     """
     floor = FLOOR[env]
     allowed = " or ".join(r for r, n in RANK.items() if n >= RANK[floor.value])
@@ -333,7 +334,7 @@ def rules_fix(app_ref: str, env: Env, current: list[GrantOut], desired: list[Gra
         return rank is not None and rank < RANK[floor.value]
 
     stored = {(g.role, g.subject_kind, g.subject_id) for g in current}
-    kept = {(g.role, g.subject_kind, g.subject_id) for g in desired}
+    kept = {(g.subject_kind, g.subject_id) for g in desired}
     fixes: list[str] = []
     blocking: list[str] = []
     changed: list[str] = []
@@ -345,7 +346,7 @@ def rules_fix(app_ref: str, env: Env, current: list[GrantOut], desired: list[Gra
                 f"the {g.role} grant for {g.subject_id or 'everyone in the org'} was saved before "
                 f"the rule and blocks every change to {env.value}"
             )
-        elif (g.role, g.subject_kind, g.subject_id) not in kept:
+        elif (g.subject_kind, g.subject_id) not in kept:
             changed.append(arg)
     seen: set[tuple[str, str | None]] = set()
     for g in desired:

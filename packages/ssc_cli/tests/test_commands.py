@@ -490,6 +490,17 @@ def test_unshares_that_leave_another_stored_grant_name_every_one(cli, scripted, 
     assert f"`ssc unshare demo {OLD1} {OLD2} {USR} --env preview`" in _fix(r.stderr)
 
 
+def test_a_share_that_replaces_a_grant_does_not_name_it_for_removal(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/grants"
+    legacy = {"id": "gnt_2", "role": "user", "subject_kind": "user", "subject_id": OLD1}
+    held = {"id": "gnt_9", "role": "builder", "subject_kind": "user", "subject_id": USR}
+    scripted.add("GET", path, _grants(4, legacy, held))
+    scripted.add("PUT", path, fake_problem(422, "VALIDATION_FAILED"))
+    r = cli("share", "demo", USR, "--env", "preview", "--role", "user", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert f"remove it first with `ssc unshare demo {OLD1} --env preview`." in _fix(r.stderr)
+
+
 def test_unshare_says_which_subjects_had_no_grant(cli, scripted):
     path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
     mine = {"id": "gnt_2", "role": "user", "subject_kind": "user", "subject_id": USR}
