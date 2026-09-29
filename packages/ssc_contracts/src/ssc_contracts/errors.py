@@ -50,6 +50,12 @@ class ErrorCode(StrEnum):
     OWNER_NOT_ACTIVE = "OWNER_NOT_ACTIVE"
     RECORD_IMMUTABLE = "RECORD_IMMUTABLE"
     SCHEDULE_DELETED = "SCHEDULE_DELETED"
+    # approvals (SSC-045)
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    APPROVAL_NOT_PENDING = "APPROVAL_NOT_PENDING"
+    SELF_APPROVAL_REFUSED = "SELF_APPROVAL_REFUSED"
+    AGENT_SESSION_REFUSED = "AGENT_SESSION_REFUSED"
+    APPROVER_NOT_ELIGIBLE = "APPROVER_NOT_ELIGIBLE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -159,6 +165,32 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         409,
         "This schedule was deleted.",
         "A deleted schedule cannot be changed. Create a new schedule instead.",
+    ),
+    ErrorCode.APPROVAL_REQUIRED: CatalogueEntry(
+        409,
+        "This change needs an approval first.",
+        "Another admin of the organisation must approve exactly this change before it is applied. "
+        "Ask for an approval and retry once it is approved.",
+    ),
+    ErrorCode.APPROVAL_NOT_PENDING: CatalogueEntry(
+        409,
+        "This approval request is already decided.",
+        "Only a pending request can be decided. Read the request to see its decision.",
+    ),
+    ErrorCode.SELF_APPROVAL_REFUSED: CatalogueEntry(
+        403,
+        "You cannot decide your own request.",
+        "An approval must be decided by a different person from the one who asked for it.",
+    ),
+    ErrorCode.AGENT_SESSION_REFUSED: CatalogueEntry(
+        403,
+        "An agent session cannot decide approvals.",
+        "Approvals are decided by a person in an interactive session, never through an agent.",
+    ),
+    ErrorCode.APPROVER_NOT_ELIGIBLE: CatalogueEntry(
+        403,
+        "This person cannot decide this request.",
+        "The approver must be an active admin of the organisation.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

@@ -87,6 +87,7 @@ PII_COLUMNS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("user_group", "display_name"),
         ("identity_link", "subject"),
         ("audit_event", "actor_ip"),
+        ("approval_request", "decision_reason"),
     }
 )
 PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(
@@ -99,6 +100,7 @@ PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(
         "given_name",
         "family_name",
         "phone",
+        "decision_reason",
     }
 )
 

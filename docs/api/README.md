@@ -61,6 +61,15 @@ request leaves no claim and a crash leaves nothing. Outcomes:
 `412 PRECONDITION_STALE` and nothing changes. A successful `PUT` bumps the version and returns the
 new `ETag`.
 
+**Some changes wait for approval** (decision 016). A `PUT .../grants` made through an agent
+credential, or one that widens the audience of a data-connected app, is not applied until the
+matching approval is approved: an agent session gets `202` with `{environment_id, grants_version,
+approval_ids}` (the requests are opened for it, the version and `ETag` are unchanged) and a person
+gets `409 APPROVAL_REQUIRED`, then asks with `POST /v1/approvals` (`kind: widen_audience`,
+`payload.grants` set to the same desired grants). Once approved, the same `PUT` applies. Decisions
+are recorded by SSC staff through `POST /v1/approvals/{id}/decision`, which takes an operator
+credential without the agent claim and names the org admin who decided (never the requester).
+
 **A deployment is a long-running operation.** `POST .../deployments` answers `202` with
 `Location: /v1/operations/{id}`; `GET /v1/operations/{id}` reports `pending`, `running`,
 `healthy`, `failed` or `superseded`. A second deployment while one is in flight is

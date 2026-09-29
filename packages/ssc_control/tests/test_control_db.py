@@ -476,30 +476,38 @@ def test_audit_log_is_append_only(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg])
 def test_approvals_need_another_person_and_never_an_agent(dsns: Dsns) -> None:
     org = make_org(dsns.app, "Approvals")
     insert = (
-        "insert into ssc.approval_request (id, org_id, kind, requested_by_user_id, state, "
-        "decided_by_user_id, decided_at, decided_via_agent) "
-        "values (%s, %s, 'connection', %s, %s, %s, %s, %s)"
+        "insert into ssc.approval_request (id, org_id, environment_id, kind, subject_key, "
+        "requested_by_user_id, state, decided_by_user_id, decided_at, decided_via_agent, "
+        "decision_reason) values (%s, %s, %s, %s, 'finance', %s, %s, %s, %s, %s, %s)"
     )
     with psycopg.connect(dsns.app) as conn:
         bind_org_sync(conn, org.org_id)
         approver = add_user(conn, org.org_id, role="admin")
         me = org.admin_user_id
+        env = add_env(conn, org.org_id, add_app(conn, org.org_id, me, "approvals"))
         at = "2026-09-28T00:00:00Z"
+        kind = "connect_data_source"
         bad = (
-            ("approved", me, at, False),  # self-approval
-            ("approved", approver, at, True),  # approved through an agent
-            ("pending", approver, at, False),  # pending with a decider
-            ("approved", approver, None, False),  # approved without a time
+            (kind, "approved", me, at, False, "approval_request_not_self"),
+            (kind, "denied", me, at, False, "approval_request_not_self"),
+            (kind, "approved", approver, at, True, "approval_request_decided_via_agent_check"),
+            (kind, "pending", approver, at, False, None),  # pending with a decider
+            (kind, "approved", approver, None, False, None),  # approved without a time
+            ("connection", "approved", approver, at, False, "approval_request_kind_check"),
         )
-        for state, decider, decided_at, via_agent in bad:
+        for kind_, state, decider, decided_at, via_agent, constraint in bad:
+            reason = None if state == "pending" else "Asked by email."
+            row = (new_id("apr"), org.org_id, env, kind_, me, state, decider, decided_at)
             with pytest.raises(psycopg.Error) as e, conn.transaction():
-                conn.execute(
-                    insert, (new_id("apr"), org.org_id, me, state, decider, decided_at, via_agent)
-                )
+                conn.execute(insert, (*row, via_agent, reason))
             assert sqlstate(e) == CHECK_VIOLATION, (state, decider, decided_at, via_agent)
-        conn.execute(insert, (new_id("apr"), org.org_id, me, "approved", approver, at, False))
+            if constraint is not None:
+                assert e.value.diag.constraint_name == constraint
+        ok = (new_id("apr"), org.org_id, env, kind, me, "approved", approver, at, False, "Yes.")
+        conn.execute(insert, ok)
         # The requester may withdraw their own request.
-        conn.execute(insert, (new_id("apr"), org.org_id, me, "cancelled", me, at, False))
+        mine = (new_id("apr"), org.org_id, env, kind, me, "cancelled", me, at, False, "Withdrawn.")
+        conn.execute(insert, mine)
 
 
 def test_deleted_schedule_is_terminal(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]) -> None:

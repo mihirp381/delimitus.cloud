@@ -1,0 +1,428 @@
+"""Approval requests: open one, decide one, and find the newest answer to a question.
+
+A question is ``(environment, kind, subject_key)``. At most one request per question is pending
+(a partial unique index); asking again while one is pending or approved returns that request.
+Deciding locks the request, checks the decider (never an agent session, never the requester,
+always an active org admin), writes a ``policy_decision`` and audits ``approval.decided``.
+"""
+
+import json
+from collections.abc import Collection, Iterable, Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Final, Literal, cast
+
+from sqlalchemy import Select, and_, column, literal, select, table, text, tuple_
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+from ssc_contracts.audit import AuditAction
+from ssc_contracts.ids import new_id
+from ssc_control.approvals.capabilities import CapabilitySource
+from ssc_control.approvals.policy import record_policy_decision
+from ssc_control.audit import Actor, NewEvent, append_event
+from ssc_control.domain.approval_rules import (
+    ApprovalState,
+    GrantKey,
+    Requirement,
+    RequirementKind,
+    agent_share_needs_approval,
+    check_decider,
+    widening_needs_approval,
+    widens,
+)
+
+DecisionChannel = Literal["email", "chat", "console"]
+DecisionOutcome = Literal["approved", "denied"]
+RefusalReason = Literal[
+    "not_found", "not_pending", "agent_session", "self_approval", "not_eligible"
+]
+
+DECIDE_ACTION: Final = "approval.decide"
+_STATES: Final[frozenset[str]] = frozenset({"pending", "approved", "denied", "cancelled"})
+_ATTEMPTS: Final = 3
+
+_R: Final = table(
+    "approval_request",
+    column("org_id"),
+    column("id"),
+    column("environment_id"),
+    column("kind"),
+    column("subject_key"),
+    column("payload"),
+    column("state"),
+    column("requested_by_user_id"),
+    column("requested_via_agent"),
+    column("decided_by_user_id"),
+    column("decided_at"),
+    column("decision_reason"),
+    column("decision_channel"),
+    column("recorded_by_operator"),
+    column("policy_decision_id"),
+    column("created_at"),
+    schema="ssc",
+)
+_E: Final = table("environment", column("org_id"), column("id"), column("app_id"), schema="ssc")
+
+
+def _select() -> Select[Any]:
+    """Approval rows with their app id; callers add the ``org_id`` filter and the rest."""
+    r = _R.c
+    return select(
+        r.id,
+        _E.c.app_id,
+        r.environment_id,
+        r.kind,
+        r.subject_key,
+        r.payload,
+        r.state,
+        r.requested_by_user_id,
+        r.requested_via_agent,
+        r.decided_by_user_id,
+        r.decided_at,
+        r.decision_reason,
+        r.decision_channel,
+        r.recorded_by_operator,
+        r.policy_decision_id,
+        r.created_at,
+    ).select_from(_R.join(_E, and_(_E.c.org_id == r.org_id, _E.c.id == r.environment_id)))
+
+
+_INSERT_PENDING: Final = text(
+    "insert into ssc.approval_request (id, org_id, environment_id, kind, subject_key, payload, "
+    "requested_by_user_id, requested_via_agent) values (:id, :org, :env, :kind, :key, "
+    "cast(:payload as jsonb), :by, :via_agent) "
+    "on conflict (org_id, environment_id, kind, subject_key) where state = 'pending' do nothing "
+    "returning id"
+)
+_LOCK_DECIDER: Final = text(
+    "select role, status from ssc.user_account where org_id = :org and id = :id for share"
+)
+_DECIDE: Final = text(
+    "update ssc.approval_request set state = :state, decided_by_user_id = :by, "
+    "decided_at = now(), decided_via_agent = :via_agent, decision_reason = :reason, "
+    "decision_channel = :channel, recorded_by_operator = :operator, policy_decision_id = :pol "
+    "where org_id = :org and id = :id and state = 'pending'"
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ApprovalRow:
+    id: str
+    app_id: str
+    environment_id: str
+    kind: RequirementKind
+    subject_key: str
+    payload: dict[str, Any]
+    state: ApprovalState
+    requested_by_user_id: str
+    requested_via_agent: bool
+    decided_by_user_id: str | None
+    decided_at: datetime | None
+    decision_reason: str | None
+    decision_channel: DecisionChannel | None
+    recorded_by_operator: str | None
+    policy_decision_id: str | None
+    created_at: datetime
+
+    @property
+    def requirement(self) -> Requirement:
+        return Requirement(self.kind, self.subject_key)
+
+    def view(self) -> dict[str, Any]:
+        """The ``approval_request`` audit view of this row."""
+        return {
+            "kind": self.kind.value,
+            "environment_id": self.environment_id,
+            "subject_key": self.subject_key,
+            "state": self.state,
+            "requested_by_user_id": self.requested_by_user_id,
+            "decided_by_user_id": self.decided_by_user_id,
+            "decision_channel": self.decision_channel,
+        }
+
+
+def approval_row(row: Mapping[Any, Any]) -> ApprovalRow:
+    """A database row to :class:`ApprovalRow`; an unknown kind or state raises ``ValueError``."""
+    state = str(row["state"])
+    if state not in _STATES:
+        raise ValueError(f"unknown approval state {state!r}")
+    channel = row["decision_channel"]
+    return ApprovalRow(
+        id=str(row["id"]),
+        app_id=str(row["app_id"]),
+        environment_id=str(row["environment_id"]),
+        kind=RequirementKind(str(row["kind"])),
+        subject_key=str(row["subject_key"]),
+        payload=cast(dict[str, Any], row["payload"]),
+        state=cast(ApprovalState, state),
+        requested_by_user_id=str(row["requested_by_user_id"]),
+        requested_via_agent=bool(row["requested_via_agent"]),
+        decided_by_user_id=row["decided_by_user_id"],
+        decided_at=row["decided_at"],
+        decision_reason=row["decision_reason"],
+        decision_channel=cast(DecisionChannel | None, channel),
+        recorded_by_operator=row["recorded_by_operator"],
+        policy_decision_id=row["policy_decision_id"],
+        created_at=row["created_at"],
+    )
+
+
+class ApprovalRefusedError(Exception):
+    """A request that cannot be decided as asked; ``reason`` says why."""
+
+    def __init__(self, reason: RefusalReason) -> None:
+        super().__init__(reason)
+        self.reason: RefusalReason = reason
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Decider:
+    """Who decided, how the decision reached us, and what it was."""
+
+    user_id: str
+    via_agent: bool
+    recorded_by_operator: str | None
+    channel: DecisionChannel
+    reason: str
+    outcome: DecisionOutcome
+
+
+async def get(
+    conn: AsyncConnection, *, org_id: str, approval_id: str, lock: bool = False
+) -> ApprovalRow | None:
+    """One request of the org, or None. ``lock`` takes the row ``FOR UPDATE``."""
+    query = _select().where(_R.c.org_id == org_id, _R.c.id == approval_id)
+    if lock:
+        query = query.with_for_update(of=_R)
+    row = (await conn.execute(query)).mappings().first()
+    return None if row is None else approval_row(row)
+
+
+async def newest(
+    conn: AsyncConnection,
+    *,
+    org_id: str,
+    environment_id: str,
+    requirements: Iterable[Requirement],
+) -> dict[Requirement, ApprovalRow]:
+    """The newest request for each requirement that has one."""
+    wanted = set(requirements)
+    if not wanted:
+        return {}
+    r = _R.c
+    query = (
+        _select()
+        .where(
+            r.org_id == org_id,
+            r.environment_id == environment_id,
+            r.kind.in_(sorted({w.kind.value for w in wanted})),
+            r.subject_key.in_(sorted({w.subject_key for w in wanted})),
+        )
+        .distinct(r.kind, r.subject_key)
+        # Newest first; a pending row wins a tie inside one transaction.
+        .order_by(
+            r.kind, r.subject_key, r.created_at.desc(), (r.state == "pending").desc(), r.id.desc()
+        )
+    )
+    rows = await conn.execute(query)
+    found = (approval_row(r) for r in rows.mappings())
+    return {a.requirement: a for a in found if a.requirement in wanted}
+
+
+async def request(  # noqa: PLR0913  (keyword-only)
+    conn: AsyncConnection,
+    *,
+    org_id: str,
+    environment_id: str,
+    requirement: Requirement,
+    requested_by: str,
+    via_agent: bool,
+    payload: Mapping[str, object],
+    actor: Actor,
+) -> tuple[ApprovalRow, bool]:
+    """The pending or approved request for this question, or a new pending one (``True``).
+
+    A new request is audited as ``approval.requested`` by ``actor``. Two callers asking at once
+    get the same row: the loser's insert does nothing and it reads the winner's request.
+    """
+    for _ in range(_ATTEMPTS):
+        found = (
+            await newest(
+                conn, org_id=org_id, environment_id=environment_id, requirements=[requirement]
+            )
+        ).get(requirement)
+        if found is not None and found.state in ("pending", "approved"):
+            return found, False
+        apr_id = new_id("apr")
+        inserted = (
+            await conn.execute(
+                _INSERT_PENDING,
+                {
+                    "id": apr_id,
+                    "org": org_id,
+                    "env": environment_id,
+                    "kind": requirement.kind.value,
+                    "key": requirement.subject_key,
+                    "payload": json.dumps(dict(payload), sort_keys=True, ensure_ascii=False),
+                    "by": requested_by,
+                    "via_agent": via_agent,
+                },
+            )
+        ).scalar_one_or_none()
+        if inserted is None:
+            continue  # another transaction holds the pending request; read it next time round
+        row = await get(conn, org_id=org_id, approval_id=apr_id)
+        if row is None:
+            raise RuntimeError(f"approval request {apr_id} vanished inside its own transaction")
+        await append_event(
+            conn,
+            NewEvent(
+                org_id=org_id,
+                action=AuditAction.APPROVAL_REQUESTED,
+                actor=actor,
+                target_kind="approval_request",
+                target_id=apr_id,
+                after=row.view(),
+            ),
+        )
+        return row, True
+    raise RuntimeError("the pending approval request kept changing under concurrent writers")
+
+
+async def decide(
+    conn: AsyncConnection, *, org_id: str, approval_id: str, decider: Decider, actor: Actor
+) -> ApprovalRow:
+    """Record a decision. Raises :class:`ApprovalRefusedError` in the order the API documents:
+    agent session, missing, not pending, self-approval, not an active admin."""
+    if decider.via_agent:
+        raise ApprovalRefusedError("agent_session")
+    row = await get(conn, org_id=org_id, approval_id=approval_id, lock=True)
+    if row is None:
+        raise ApprovalRefusedError("not_found")
+    if row.state != "pending":
+        raise ApprovalRefusedError("not_pending")
+    # FOR SHARE: the approver cannot be demoted or deactivated until this decision commits.
+    account = (await conn.execute(_LOCK_DECIDER, {"org": org_id, "id": decider.user_id})).first()
+    refusal = check_decider(
+        row.requested_by_user_id,
+        decider.user_id,
+        None if account is None else str(account[0]),
+        account is not None and account[1] == "active",
+        decider.via_agent,
+    )
+    if refusal is not None:
+        raise ApprovalRefusedError(refusal)
+    pol_id = await record_policy_decision(
+        conn,
+        org_id=org_id,
+        principal_kind="user",
+        principal_id=decider.user_id,
+        action=DECIDE_ACTION,
+        target_kind="approval_request",
+        target_id=approval_id,
+        outcome="allow",
+        reason="other_active_admin",
+        inputs={
+            "outcome": decider.outcome,
+            "kind": row.kind.value,
+            "subject_key": row.subject_key,
+            "environment_id": row.environment_id,
+            "requested_by_user_id": row.requested_by_user_id,
+            "channel": decider.channel,
+            "recorded_by_operator": decider.recorded_by_operator,
+        },
+    )
+    await conn.execute(
+        _DECIDE,
+        {
+            "org": org_id,
+            "id": approval_id,
+            "state": decider.outcome,
+            "by": decider.user_id,
+            "via_agent": decider.via_agent,
+            "reason": decider.reason,
+            "channel": decider.channel,
+            "operator": decider.recorded_by_operator,
+            "pol": pol_id,
+        },
+    )
+    decided = await get(conn, org_id=org_id, approval_id=approval_id)
+    if decided is None:
+        raise RuntimeError(f"approval request {approval_id} vanished while it was locked")
+    await append_event(
+        conn,
+        NewEvent(
+            org_id=org_id,
+            action=AuditAction.APPROVAL_DECIDED,
+            actor=actor,
+            target_kind="approval_request",
+            target_id=approval_id,
+            before=row.view(),
+            after=decided.view(),
+            policy_decision_id=pol_id,
+        ),
+    )
+    return decided
+
+
+async def data_connected(
+    conn: AsyncConnection, *, org_id: str, environment_id: str, source: CapabilitySource
+) -> bool:
+    """Whether the environment's app reaches company data. Unknown counts as connected."""
+    caps = await source.for_environment(conn, org_id=org_id, environment_id=environment_id)
+    return caps is None or bool(caps.connections)
+
+
+async def share_requirements(  # noqa: PLR0913  (keyword-only)
+    conn: AsyncConnection,
+    *,
+    org_id: str,
+    environment_id: str,
+    profile: str,
+    base_version: int,
+    before: Collection[GrantKey],
+    after: Collection[GrantKey],
+    via_agent: bool,
+    source: CapabilitySource,
+) -> list[Requirement]:
+    """What replacing ``before`` with ``after`` needs approved: ``agent_share`` for any change
+    through an agent credential, ``widen_audience`` for widening a data-connected app."""
+    out: list[Requirement] = []
+    agent = agent_share_needs_approval(via_agent, base_version, before, after)
+    if agent is not None:
+        out.append(agent)
+    connected = widens(before, after) and await data_connected(
+        conn, org_id=org_id, environment_id=environment_id, source=source
+    )
+    widen = widening_needs_approval(profile, connected, before, after)
+    if widen is not None:
+        out.append(widen)
+    return out
+
+
+async def search(  # noqa: PLR0913  (keyword-only)
+    conn: AsyncConnection,
+    *,
+    org_id: str,
+    requested_by: str | None,
+    state: ApprovalState | None,
+    environment_id: str | None,
+    before: ApprovalRow | None,
+    limit: int,
+) -> list[ApprovalRow]:
+    """Newest first, keyed on ``(created_at, id)`` so a page boundary never skips a row.
+    ``requested_by`` limits the page to one requester's requests."""
+    r = _R.c
+    query = _select().where(r.org_id == org_id)
+    if requested_by is not None:
+        query = query.where(r.requested_by_user_id == requested_by)
+    if state is not None:
+        query = query.where(r.state == state)
+    if environment_id is not None:
+        query = query.where(r.environment_id == environment_id)
+    if before is not None:
+        query = query.where(
+            tuple_(r.created_at, r.id) < tuple_(literal(before.created_at), literal(before.id))
+        )
+    query = query.order_by(r.created_at.desc(), r.id.desc()).limit(limit)
+    return [approval_row(row) for row in (await conn.execute(query)).mappings()]

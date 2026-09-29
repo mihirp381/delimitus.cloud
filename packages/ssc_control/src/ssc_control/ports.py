@@ -46,7 +46,8 @@ class ProdGate(Protocol):
 
 
 class RefusingProdGate(ProdGate):
-    """Until A3 lands, nothing reaches production."""
+    """For tests: nothing reaches production. The real gate is
+    ``ssc_control.approvals.gate.ApprovalsProdGate``."""
 
     async def check(
         self,

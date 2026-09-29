@@ -127,6 +127,220 @@
         "title": "AppSummary",
         "type": "object"
       },
+      "Approval": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By User Id"
+          },
+          "decision_channel": {
+            "anyOf": [
+              {
+                "enum": [
+                  "email",
+                  "chat",
+                  "console"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Channel"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Reason"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RequirementKind"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "policy_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Decision Id"
+          },
+          "recorded_by_operator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The SSC operator who recorded the decision, when one did.",
+            "title": "Recorded By Operator"
+          },
+          "requested_by_user_id": {
+            "title": "Requested By User Id",
+            "type": "string"
+          },
+          "requested_via_agent": {
+            "title": "Requested Via Agent",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "subject_key": {
+            "description": "What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).",
+            "title": "Subject Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "app_id",
+          "environment_id",
+          "kind",
+          "subject_key",
+          "payload",
+          "state",
+          "requested_by_user_id",
+          "requested_via_agent",
+          "decided_by_user_id",
+          "decided_at",
+          "decision_reason",
+          "decision_channel",
+          "recorded_by_operator",
+          "policy_decision_id",
+          "created_at"
+        ],
+        "title": "Approval",
+        "type": "object"
+      },
+      "ApprovalCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_id": {
+            "pattern": "^env_[a-z0-9]{20}$",
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RequirementKind"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "description": "`widen_audience`: `{grants}`. `agent_share`: `{grants_version, grants}`. Others: `{}`.",
+            "title": "Payload",
+            "type": "object"
+          },
+          "subject_key": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The connection name or host. Derived by the server for `widen_audience` and `agent_share`; when sent for those it must match.",
+            "title": "Subject Key"
+          }
+        },
+        "required": [
+          "environment_id",
+          "kind"
+        ],
+        "title": "ApprovalCreate",
+        "type": "object"
+      },
+      "ApprovalPage": {
+        "additionalProperties": false,
+        "properties": {
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/Approval"
+            },
+            "title": "Approvals",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as `before` for the next, older page; null on the last page.",
+            "title": "Next Before"
+          }
+        },
+        "required": [
+          "approvals",
+          "next_before"
+        ],
+        "title": "ApprovalPage",
+        "type": "object"
+      },
       "AuditAction": {
         "enum": [
           "org.created",
@@ -344,6 +558,48 @@
         "title": "AuditTarget",
         "type": "object"
       },
+      "DecisionIn": {
+        "additionalProperties": false,
+        "properties": {
+          "approver_user_id": {
+            "description": "The org admin who decided, never the requester.",
+            "pattern": "^usr_[a-z0-9]{20}$",
+            "title": "Approver User Id",
+            "type": "string"
+          },
+          "channel": {
+            "description": "How the decision reached SSC.",
+            "enum": [
+              "email",
+              "chat"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "approved",
+              "denied"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "approver_user_id",
+          "channel",
+          "reason"
+        ],
+        "title": "DecisionIn",
+        "type": "object"
+      },
       "DeploymentCreate": {
         "additionalProperties": false,
         "properties": {
@@ -434,6 +690,11 @@
           "OWNER_NOT_ACTIVE",
           "RECORD_IMMUTABLE",
           "SCHEDULE_DELETED",
+          "APPROVAL_REQUIRED",
+          "APPROVAL_NOT_PENDING",
+          "SELF_APPROVAL_REFUSED",
+          "AGENT_SESSION_REFUSED",
+          "APPROVER_NOT_ELIGIBLE",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -567,6 +828,36 @@
           "grants"
         ],
         "title": "GrantsOut",
+        "type": "object"
+      },
+      "GrantsPending": {
+        "additionalProperties": false,
+        "description": "An agent session's change, waiting for another admin. Nothing was applied.",
+        "properties": {
+          "approval_ids": {
+            "description": "Retry the same change once all are approved.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Approval Ids",
+            "type": "array"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "grants_version": {
+            "description": "Unchanged: the version the change will replace.",
+            "title": "Grants Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "environment_id",
+          "grants_version",
+          "approval_ids"
+        ],
+        "title": "GrantsPending",
         "type": "object"
       },
       "Heartbeat": {
@@ -771,6 +1062,17 @@
         "title": "Problem",
         "type": "object"
       },
+      "RequirementKind": {
+        "description": "Mirrors the ``ssc.approval_request.kind`` CHECK.",
+        "enum": [
+          "widen_audience",
+          "connect_data_source",
+          "enable_internet_hosts",
+          "agent_share"
+        ],
+        "title": "RequirementKind",
+        "type": "string"
+      },
       "Whoami": {
         "additionalProperties": false,
         "properties": {
@@ -956,6 +1258,492 @@
         "summary": "Heartbeat",
         "tags": [
           "internal"
+        ]
+      }
+    },
+    "/v1/approvals": {
+      "get": {
+        "description": "Newest first. Org admins and operators see every request; others see their own. An\noperator's read is audited as ``operator.access``.",
+        "operationId": "list_approvals_v1_approvals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "approved",
+                    "denied",
+                    "cancelled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "environment_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^env_[a-z0-9]{20}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Environment Id"
+            }
+          },
+          {
+            "description": "The previous page's `next_before`.",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^apr_[a-z0-9]{20}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The previous page's `next_before`.",
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "List Approvals",
+        "tags": [
+          "v1"
+        ]
+      },
+      "post": {
+        "description": "Ask another admin of the org to approve one change to one environment. Allowed to the\nenvironment's builders, its app's owner and org admins, agent sessions included.",
+        "operationId": "create_approval_v1_approvals_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            },
+            "description": "The same question is already pending or approved; that request is returned."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`PRECONDITION_STALE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Create Approval",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/approvals/{approval_id}": {
+      "get": {
+        "description": "One request. A request the caller may not see is ``NOT_FOUND``.",
+        "operationId": "get_approval_v1_approvals__approval_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Approval",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/approvals/{approval_id}/decision": {
+      "post": {
+        "description": "Record what an org admin decided. Operator credentials only, never in an agent session.\nRefused, in this order: not an operator, an agent session, no such request, already decided,\nthe approver asked for it, the approver is not an active org admin.",
+        "operationId": "decide_approval_v1_approvals__approval_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Approval Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`, `SELF_APPROVAL_REFUSED`, `APPROVER_NOT_ELIGIBLE`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Decide Approval",
+        "tags": [
+          "v1"
         ]
       }
     },
@@ -1403,7 +2191,7 @@
         ]
       },
       "put": {
-        "description": "Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.",
+        "description": "Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.\n\nA change that needs approval is not applied: an agent session gets ``202`` and the pending\napproval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.",
         "operationId": "put_grants_v1_apps__app_id__environments__environment_id__grants_put",
         "parameters": [
           {
@@ -1464,6 +2252,16 @@
             },
             "description": "Successful Response"
           },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantsPending"
+                }
+              }
+            },
+            "description": "Made through an agent credential, or widening a data-connected app: waiting for approval. Nothing changed."
+          },
           "401": {
             "content": {
               "application/problem+json": {
@@ -1493,6 +2291,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`APPROVAL_REQUIRED`"
           },
           "412": {
             "content": {

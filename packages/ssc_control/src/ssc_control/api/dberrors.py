@@ -22,6 +22,13 @@ from ssc_control.db.errors import (
 
 ONE_IN_FLIGHT_INDEX: Final = "deployment_one_in_flight"
 
+# Constraints whose refusal has its own code, whatever the SQLSTATE class says.
+_BY_CONSTRAINT: Final[Mapping[str, ErrorCode]] = {
+    "approval_request_not_self": ErrorCode.SELF_APPROVAL_REFUSED,
+    "approval_request_decided_via_agent_check": ErrorCode.AGENT_SESSION_REFUSED,
+    "approval_request_one_pending": ErrorCode.ALREADY_EXISTS,
+}
+
 _BY_SQLSTATE: Final[Mapping[str, ErrorCode]] = {
     UNIQUE_VIOLATION: ErrorCode.ALREADY_EXISTS,
     FOREIGN_KEY_VIOLATION: ErrorCode.REFERENCE_NOT_FOUND,
@@ -56,6 +63,8 @@ def classify(exc: DBAPIError) -> tuple[ErrorCode, dict[str, object]]:
         return ErrorCode.INTERNAL, evidence
     if sqlstate == UNIQUE_VIOLATION and constraint == ONE_IN_FLIGHT_INDEX:
         return ErrorCode.DEPLOYMENT_IN_FLIGHT, evidence
+    if constraint is not None and constraint in _BY_CONSTRAINT:
+        return _BY_CONSTRAINT[constraint], evidence
     if sqlstate.startswith("22"):  # data exception: bad literal, out of range, ...
         return ErrorCode.VALIDATION_FAILED, evidence
     return _BY_SQLSTATE.get(sqlstate, ErrorCode.INTERNAL), evidence

@@ -1,4 +1,10 @@
-"""Sharing rules of one environment, behind ``If-Match``."""
+"""Sharing rules of one environment, behind ``If-Match``.
+
+A change made through an agent credential, and a change that widens the audience of a
+data-connected app, applies only once the matching approval is approved (decision 016). Until
+then an agent session gets ``202`` with the pending approval ids and a person gets
+``APPROVAL_REQUIRED``; the grants and their version stay as they were.
+"""
 
 from typing import Annotated, Any, Literal
 
@@ -20,7 +26,10 @@ from ssc_control.api.routes.v1.common import (
     parse_if_match,
     require_user,
 )
-from ssc_control.api.uow import UnitOfWork, UserUoW
+from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
+from ssc_control.approvals.capabilities import RecordedCapabilities
+from ssc_control.approvals.service import ApprovalRow, newest, request, share_requirements
+from ssc_control.domain.approval_rules import GrantKey, Requirement, RequirementKind
 
 router = APIRouter()
 
@@ -50,8 +59,16 @@ class GrantsOut(Strict):
     grants: list[GrantOut]
 
 
+class GrantsPending(Strict):
+    """An agent session's change, waiting for another admin. Nothing was applied."""
+
+    environment_id: str
+    grants_version: int = Field(description="Unchanged: the version the change will replace.")
+    approval_ids: list[str] = Field(description="Retry the same change once all are approved.")
+
+
 _LOCK_ENV = text(
-    "select id, grants_version from ssc.environment "
+    "select id, grants_version, profile from ssc.environment "
     "where org_id = :org and app_id = :app and id = :env for update"
 )
 _SELECT_ENV = text(
@@ -82,8 +99,42 @@ def _grant_out(row: dict[str, Any]) -> GrantOut:
     )
 
 
-def _grant_key(g: GrantIn | GrantOut) -> tuple[str, str, str | None]:
+def _grant_key(g: GrantIn | GrantOut) -> GrantKey:
     return (g.role, g.subject_kind, g.subject_id)
+
+
+def _grants_payload(grants: dict[GrantKey, GrantIn]) -> list[dict[str, Any]]:
+    return [
+        grants[k].model_dump(mode="json")
+        for k in sorted(grants, key=lambda k: (k[0], k[1], k[2] or ""))
+    ]
+
+
+async def _approvals_for(  # noqa: PLR0913  (keyword-only)
+    uow: UnitOfWork,
+    *,
+    environment_id: str,
+    profile: str,
+    version: int,
+    existing: set[GrantKey],
+    desired: dict[GrantKey, GrantIn],
+) -> tuple[list[Requirement], dict[Requirement, ApprovalRow]]:
+    """What this change needs approved, and the newest request for each."""
+    needed = await share_requirements(
+        uow.conn,
+        org_id=uow.org_id,
+        environment_id=environment_id,
+        profile=profile,
+        base_version=version,
+        before=existing,
+        after=set(desired),
+        via_agent=uow.principal.is_agent,
+        source=RecordedCapabilities(),
+    )
+    found = await newest(
+        uow.conn, org_id=uow.org_id, environment_id=environment_id, requirements=needed
+    )
+    return needed, found
 
 
 async def _grants_out(uow: UnitOfWork, env_id: str, version: int) -> GrantsOut:
@@ -114,15 +165,23 @@ async def get_grants(app_id: Id, environment_id: Id, uow: UserUoW, response: Res
 @router.put(
     "/apps/{app_id}/environments/{environment_id}/grants",
     response_model=GrantsOut,
-    responses=problem_responses(
-        *AUTHENTICATED,
-        ErrorCode.NOT_FOUND,
-        ErrorCode.FORBIDDEN,
-        ErrorCode.PRECONDITION_REQUIRED,
-        ErrorCode.PRECONDITION_STALE,
-        ErrorCode.REFERENCE_NOT_FOUND,
-        ErrorCode.VALIDATION_FAILED,
-    ),
+    responses={
+        202: {
+            "model": GrantsPending,
+            "description": "Made through an agent credential, or widening a data-connected app: "
+            "waiting for approval. Nothing changed.",
+        },
+        **problem_responses(
+            *AUTHENTICATED,
+            ErrorCode.NOT_FOUND,
+            ErrorCode.FORBIDDEN,
+            ErrorCode.PRECONDITION_REQUIRED,
+            ErrorCode.PRECONDITION_STALE,
+            ErrorCode.REFERENCE_NOT_FOUND,
+            ErrorCode.VALIDATION_FAILED,
+            ErrorCode.APPROVAL_REQUIRED,
+        ),
+    },
 )
 async def put_grants(
     app_id: Id,
@@ -131,7 +190,10 @@ async def put_grants(
     uow: UserUoW,
     if_match: Annotated[str | None, Header(alias=IF_MATCH)] = None,
 ) -> Response:
-    """Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag."""
+    """Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.
+
+    A change that needs approval is not applied: an agent session gets ``202`` and the pending
+    approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for."""
     expected = parse_if_match(if_match)
     by = require_user(uow)
     for g in body.grants:
@@ -149,6 +211,55 @@ async def put_grants(
         )
     existing = {_grant_key(g): g for g in (await _grants_out(uow, environment_id, current)).grants}
     desired = {_grant_key(g): g for g in body.grants}
+    needed, found = await _approvals_for(
+        uow,
+        environment_id=environment_id,
+        profile=str(env[2]),
+        version=current,
+        existing=set(existing),
+        desired=desired,
+    )
+    open_ = [r for r in needed if r not in found or found[r].state != "approved"]
+    if open_ and uow.principal.is_agent:
+        asked: list[str] = []
+        for req in open_:
+            payload: dict[str, Any] = {"grants": _grants_payload(desired)}
+            if req.kind is RequirementKind.AGENT_SHARE:
+                payload["grants_version"] = current
+            row, _ = await request(
+                uow.conn,
+                org_id=uow.org_id,
+                environment_id=environment_id,
+                requirement=req,
+                requested_by=by,
+                via_agent=True,
+                payload=payload,
+                actor=actor_of(uow.principal),
+            )
+            asked.append(row.id)
+        pending = GrantsPending(
+            environment_id=environment_id, grants_version=current, approval_ids=asked
+        )
+        return uow.reply(pending, status=202, headers={ETAG: etag(current)})
+    if open_:
+        raise Refusal(
+            ErrorCode.APPROVAL_REQUIRED,
+            evidence={
+                "environment_id": environment_id,
+                "requirements": [
+                    {
+                        "kind": r.kind.value,
+                        "subject_key": r.subject_key,
+                        "approval_id": found[r].id if r in found else None,
+                        "state": found[r].state if r in found else None,
+                    }
+                    for r in open_
+                ],
+            },
+        )
+    # The approval that let the change through, agent_share first, is linked from each grant row.
+    approved = sorted(needed, key=lambda r: r.kind is not RequirementKind.AGENT_SHARE)
+    policy_id = found[approved[0]].policy_decision_id if approved else None
     for key, old in existing.items():
         if key not in desired:
             await uow.conn.execute(_DELETE_GRANT, {"org": uow.org_id, "id": old.id})
@@ -157,6 +268,7 @@ async def put_grants(
                 target_kind="app_grant",
                 target_id=old.id,
                 before={"environment_id": environment_id, **old.model_dump(exclude={"id"})},
+                policy_decision_id=policy_id,
             )
     for key, new in desired.items():
         if key not in existing:
@@ -179,6 +291,7 @@ async def put_grants(
                 target_kind="app_grant",
                 target_id=gid,
                 after={"environment_id": environment_id, **new.model_dump()},
+                policy_decision_id=policy_id,
             )
     bumped = (
         await uow.conn.execute(_BUMP_GRANTS, {"org": uow.org_id, "env": environment_id})
