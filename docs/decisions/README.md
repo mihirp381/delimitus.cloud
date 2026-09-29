@@ -4,7 +4,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 
 | # | Decision | Source | Status |
 |---|---|---|---|
-| 001 | Cloud and runtime | SSC-001 scorecard (`spikes/bakeoff/SCORECARD.md`) | pending bake-off |
+| 001 | Cloud and runtime: GCP, Cloud Run gen2 in a project per customer cell, Direct VPC egress into a deny-all VPC, regional internal Application LB, kill switch by traffic to a tombstone revision, prod apps kept warm | SSC-001 (`spikes/bakeoff/RESULTS.md`, `spikes/bakeoff/COST_SHEET.md`) | decided 2026-09-29 |
 | 002 | Login vendor and directory join key | SSC-002 | pending |
 | 003 | App database connection string form | SSC-005 (`spikes/appdb/RESULTS.md`) | draft |
 | 004 | Domains: `delimitus.com` platform hosts; apps on `delimitusapps.com` with opaque org labels; host rule `<slug>.<cell label>.<apps domain>` and `<slug>--preview.<cell label>.<apps domain>` | tickets §2 SSC-006; host rule SSC-042 (`ssc_shared/hosts.py`) | decided 2026-09-28; host rule and apps domain 2026-09-29 |
@@ -24,6 +24,23 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 018 | Admin console: React 19, Vite 8, TanStack Router and Query, exact npm pins behind a 7-day rule, `--ssc-*` tokens from the Delimitus UI with contrast tests, a client generated from the committed OpenAPI, a dev token login compiled out of production builds, `/v1` proxied instead of CORS | SSC-057 (`console/`) | decided 2026-09-29; auth-host login pending (019) |
 | 019 | Sharing rules and access snapshots: floors (prod `user`, preview `builder`), sharing changed by an active admin, the app's owner or a builder on that environment, no owner grant and no owner shortcut, one evaluator for explain and the gateway, frozen `ssc-snapshot/v1` published content-addressed with a `latest.json` pointer, a per-org advisory lock handshake giving every change its version, operator-only directory sync, fail-closed confirmation | SSC-021 (`docs/contracts/access-snapshot.md`, `ssc_shared/access.py`, `ssc_control/snapshot/`) | decided 2026-09-29; `role` in whoami, admin email lookup and `?builder=me` 2026-09-29 (A4b); group lookup 2026-09-29 (A4c); gateway enforcement (018), cell fetch (013) and the sync worker (019) pending |
 | 020 | Timers: schedules from the manifest upserted by name at deploy, cron read in the schedule's IANA zone from pinned `tzdata`, one Procrastinate job per armed instant with no `lock`, missed instants coalesced into one late run, no overlap by partial unique index, a dispatch at most once, prod only with preview stored paused, paused when the owner or the declaring builder loses authority, paused and resumed by the kill switch | SSC-041 (`packages/ssc_control/src/ssc_control/timers/`) | decided 2026-09-29 |
+
+## 001 Cloud and runtime
+
+Choice: Google Cloud. Each customer cell is its own project, with apps on Cloud Run gen2 in `us-central1`.
+- Apps attach to a custom VPC with Direct VPC egress (`--vpc-egress all-traffic`). The VPC denies all egress except to the cell's egress proxy. A private Cloud DNS zone answers NXDOMAIN for the canary zone. Cloud NAT holds the cell's one fixed outbound IP.
+- Ingress is `internal-and-cloud-load-balancing` behind one regional internal Application Load Balancer (serverless NEG per app). The `run.app` address is never used.
+- Apps run as a service account with no roles.
+- The kill switch moves 100 % of traffic to a tombstone revision (cut-off 2.3 s); deleting the service (1.6 s) is the fallback. Removing the invoker binding (80 s) and swapping the load-balancer route (142 s) are too slow and are not used.
+- Prod environments keep one instance warm (`min-instances 1`, about $9.86 a month per app at the idle rate); preview environments scale to zero.
+
+Reason: GCP passes every security row: egress, DNS exfiltration, machine token, peer isolation, public ingress, header passthrough and the 30-minute WebSocket / 10-minute SSE holds. It has the fastest cut-off. The empty cell costs $199.37 a month, under A7's $450. Cloud Build worked with no support ticket. IAM deny policies can block secret reads at the org level. Delimitus already runs on GCP, so the team knows its IAM, billing and failure modes.
+- AWS also passes every security row, and its empty cell is cheaper ($173.71). Fargate has no request-driven scale-to-zero, though: starting from zero took 25 to 125 s, so every app needs a warm task, even in preview. AWS offered no advantage that outweighs the team's GCP experience.
+- Azure fails peer isolation: apps in one Container Apps environment reach each other. It has no user-authored deny on secret reads, and ACR Tasks is blocked until a support request. Its empty cell costs the most ($362.02), and its cold starts were the slowest (static 25 s, API 24 s, Streamlit 39 s at p50).
+
+Known gap: no candidate meets the cold-start targets from zero. GCP p50 was 4.5 s static, 8.2 s API and 22.3 s Streamlit; Fly's floor for the same images was 2.2, 5.8 and 4.3 s. Warm prod instances cover production; previews show the cold start. Worth measuring before the Cloud Run driver ships: startup CPU boost, and cold start without Direct VPC egress (the gap between the container-start metric and first byte is 1 to 15 s).
+
+Reverse if: warm-instance cost per app pushes a typical cell over A7, or a customer needs cold starts GCP cannot meet with startup CPU boost. Also reverse if an IAM deny policy on `secretmanager.versions.access` does not hold when tested, or tombstone-revision cut-off exceeds 10 s under load. AWS is the fallback: it passed the same security rows, and the runtime driver (decision 014) hides the runtime behind one protocol.
 
 ## 004 Domains and app hosts
 

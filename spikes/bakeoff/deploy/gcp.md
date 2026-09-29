@@ -28,3 +28,12 @@ Throwaway project only. Never `ristretto-506621`. Set `P=<project> R=<region>` f
     - `gcloud run services delete probe-api --quiet --region $R --project $P`
 13. Cost row: fill `COST_SHEET.md` from the project's billing report after 24 h idle, plus the price list.
 14. Tear down: `gcloud projects delete $P`.
+
+## Run notes 2026-09-29 (project delimitus-0926, us-central1)
+
+- Step 5: a response policy was not needed. A private Cloud DNS zone that owns `canary.<zone>.` with no records, bound to `cell-vpc`, returned NXDOMAIN to Cloud Run with Direct VPC egress. The name never appeared in the public zone's query log.
+- Step 9: regional internal Application LB (`INTERNAL_MANAGED`) needs a proxy-only subnet (`--purpose REGIONAL_MANAGED_PROXY`). HTTP on port 80 was used for the spike. `allUsers` invoker is safe only together with `--ingress internal-and-cloud-load-balancing`; the LB does not add an identity token.
+- Step 11: the default `run.app` address returned 404 from the internet, with and without an owner token.
+- Step 12: `--ingress none` is not a valid value. Removing the invoker binding took 80 s to cut traffic and an LB route swap took 142 s, both too slow. Shifting 100 % traffic to a tombstone revision cut traffic in 2.3 s and deleting the service in 1.6 s.
+- Scale-to-zero: Cloud Run kept idle instances past a 15-minute gap, so a 900 s `--cold-gap` measures warm starts. Cold samples used a 26-minute gap.
+- The metadata token cannot even reach the Google APIs because egress is denied; the probe records that as blocked.

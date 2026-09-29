@@ -15,3 +15,14 @@ Throwaway subscription. Install `azure-cli` first (`brew install azure-cli`). It
 11. Managed Postgres row: Azure Database for PostgreSQL Flexible Server 18, zone-redundant HA, PITR default, customer-managed key. Log store row: Log Analytics query API (KQL). Secret store row: Key Vault; org-level deny via Azure Policy or a management-group RBAC deny assignment (verify that deny assignments can be authored directly; they are normally only created by Blueprints/managed apps — Unknown / verify).
 12. Cost row: Cost Management after 24 h idle plus the price list.
 13. Tear down: delete the resource group.
+
+## Run notes 2026-09-29 (eastus; runner VM in westus2 because eastus had no VM capacity for any size)
+
+- Step 2: one NSG rule per service tag. A rule listing several tags failed silently. Outbound tags needed for a workload-profiles environment: AzureContainerRegistry, MicrosoftContainerRegistry, AzureFrontDoor.FirstParty, AzureMonitor, Storage, AzureActiveDirectory. The NSG blocked direct egress including UDP.
+- Step 3: a private DNS zone for the canary name linked to the VNet returned NXDOMAIN to the apps. A second private zone for the environment domain with a wildcard A record to the environment static IP is needed for the runner to resolve app FQDNs.
+- Step 5: `az acr build` is refused on this subscription (`TasksOperationsNotAllowed`); ACR Tasks needs a support request. Images were pushed with local `docker buildx`.
+- Step 6: in an internal-only environment, `--ingress external` means reachable from the VNet, and `--ingress internal` means reachable only from inside the environment. The spike used `external`. Revisions stuck in ActivationFailed after NSG changes needed a new revision suffix.
+- Step 7: no Application Gateway was needed for the spike; the environment's internal load balancer served HTTPS directly.
+- Step 9: peer check fails. Apps in the same environment reach each other through the internal FQDN (HTTP 200). Isolation needs one environment per app or per customer.
+- Step 4: the probe only calls IMDS; it does not exercise `IDENTITY_ENDPOINT`. The assigned identity has zero role assignments.
+- Step 10: `ingress disable` took 20 s to return and 13.2 s to cut traffic. `az containerapp revision deactivate` cut traffic in 2.0 s.

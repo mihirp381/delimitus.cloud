@@ -115,8 +115,11 @@ def metadata():
         if status != 200:
             return {"token": False, "status": status}
         tok = json.loads(body).get("access_token", "")
-        st, _ = _http("https://cloudresourcemanager.googleapis.com/v1/projects",
-                      headers={"Authorization": f"Bearer {tok}"}, timeout=5)
+        try:
+            st, _ = _http("https://cloudresourcemanager.googleapis.com/v1/projects",
+                          headers={"Authorization": f"Bearer {tok}"}, timeout=1)
+        except Exception as e:
+            st = f"egress blocked: {type(e).__name__}"
         return {"token": True, "token_len": len(tok), "projects_list_status": st}
 
     def aws():
@@ -139,7 +142,8 @@ def metadata():
     for name, fn in (("gcp", gcp), ("aws", aws), ("azure", azure)):
         out[name] = _timed(fn)
     got = [n for n, v in out.items() if v.get("token")]
-    gcp_ok = out["gcp"].get("projects_list_status") in (401, 403)
+    pls = out["gcp"].get("projects_list_status")
+    gcp_ok = pls in (401, 403) or str(pls).startswith("egress blocked")
     if not got:
         result = "pass"
     elif got == ["gcp"] and gcp_ok:

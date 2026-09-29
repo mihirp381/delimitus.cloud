@@ -14,3 +14,13 @@ Throwaway account under a fresh organisation OU. Install `awscli` first (`brew i
 10. Managed Postgres row: RDS for PostgreSQL 18, Multi-AZ smallest class, PITR on by default, KMS customer-managed key. Log store row: CloudWatch Logs Insights query API. Secret store row: Secrets Manager; org-level deny via SCP on `secretsmanager:GetSecretValue` for all principals except the cell agent role (verify SCP condition keys).
 11. Cost row: Cost Explorer after 24 h idle plus the price list.
 12. Tear down: close the account or delete the VPC, NAT (billed hourly), RDS and ALB.
+
+## Run notes 2026-09-29 (us-east-1)
+
+- Step 1: with the app SG allowing only 443 to the endpoint SG plus the S3 prefix list, tasks still pull images through interface endpoints `ecr.api`, `ecr.dkr`, `logs` and the S3 gateway endpoint. Three interface endpoints in two AZs are a fixed monthly cost.
+- Step 2: Route 53 Resolver DNS Firewall with an NXDOMAIN block on the canary domain worked for Fargate tasks.
+- Step 6: target-group health checks must point at a 200 path (`/healthz` for probe-api) or ECS replaces the task and long WS/SSE connections drop after about 2 minutes. Health-check interval must exceed the timeout.
+- Step 7: the internal ALB's public DNS name resolves to private IPs and is unreachable from the internet.
+- Step 9: listener fixed-response 403 cut traffic in 7.8 s; `stop-task` in 6.1 s.
+- Fargate has no request-driven scale-to-zero. Scale 0 to 1 through ECS took 25 to 125 s to the first 200, so every cold-start target fails unless one task per app stays warm.
+- Streamlit origin check passes only when the Origin header carries the ALB port (`http://<alb>:8083`); browsers send that automatically.

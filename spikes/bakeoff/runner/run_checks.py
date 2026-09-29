@@ -106,7 +106,8 @@ def main():
             h = r.json()
             d = h.get("detail", {})
             h["result"] = "pass" if d.get("authorization_len") == 71 else "fail"
-            h["host_matches_request"] = d.get("host") == httpx2.URL(api).host
+            u = httpx2.URL(api)
+            h["host_matches_request"] = d.get("host") in (u.host, f"{u.host}:{u.port}")
             c["headers"] = h
         except Exception as e:
             c["headers"] = {"result": "unknown", "detail": str(e)}
