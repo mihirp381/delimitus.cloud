@@ -1017,8 +1017,9 @@ def test_widening_a_data_connected_app_needs_approval(
 ) -> None:
     before = keyed(current(client, world, world.prod, tokens.admin)["grants"])
     org_wide = [*before, {"role": "user", "subject_kind": "org", "subject_id": None}]
-    # Not data-connected yet: widening applies at once.
-    assert put(client, world, world.preview, tokens.admin, org_wide, 1).status_code == 200
+    # Not data-connected yet: widening applies at once (preview is for builders).
+    preview_wide = [*before, {"role": "builder", "subject_kind": "org", "subject_id": None}]
+    assert put(client, world, world.preview, tokens.admin, preview_wide, 1).status_code == 200
     # The app now asks for company data in prod.
     ask_api(client, tokens.builder, world.prod, subject="finance")
     refused = put(client, world, world.prod, tokens.admin, org_wide, 1)

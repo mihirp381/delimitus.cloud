@@ -12,6 +12,9 @@ so workers can find every org and then bind each one (decision 009 amendment). I
 Procrastinate's tables live in schema ``procrastinate`` and are not in this catalog at all.
 
 Revision 0008 adds ``bundle`` (SSC-014), an ordinary org-scoped table.
+
+Revision 0009 adds ``access_snapshot`` and ``snapshot_ack`` (SSC-021), keyed by org and version
+and by org alone, so both are in ``UNKEYED_TABLES``.
 """
 
 from collections.abc import Mapping
@@ -42,6 +45,8 @@ TABLES: Final[frozenset[str]] = frozenset(
         "metrics_event",
         "idempotency_claim",  # SSC-011, revision 0002
         "bundle",  # SSC-014, revision 0008
+        "access_snapshot",  # SSC-021, revision 0009
+        "snapshot_ack",  # SSC-021, revision 0009
     }
 )
 
@@ -51,7 +56,15 @@ UNSCOPED_TABLES: Final[tuple[str, ...]] = ("org_index",)
 
 # Tables keyed by something other than a type-prefixed id; they have no (org_id, id) pair.
 UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
-    {"group_member", "audit_event", "audit_head", "metrics_event", "idempotency_claim"}
+    {
+        "group_member",
+        "audit_event",
+        "audit_head",
+        "metrics_event",
+        "idempotency_claim",
+        "access_snapshot",
+        "snapshot_ack",
+    }
 )
 
 # The bounded PL/pgSQL exemption from the Python rule. Listed and explained in PLPGSQL.md.
@@ -89,6 +102,8 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "metrics_event": frozenset({"SELECT", "INSERT"}),
     "idempotency_claim": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "bundle": frozenset({"SELECT", "INSERT", "UPDATE"}),  # pending -> stored, never DELETE
+    "access_snapshot": frozenset({"SELECT", "INSERT"}),  # a published version never changes
+    "snapshot_ack": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

@@ -1,4 +1,8 @@
-"""Sharing rules of one environment, behind ``If-Match``.
+"""Sharing rules of one environment, behind ``If-Match`` (SSC-021, decision 019).
+
+Only an active org admin, the app's owner, or a builder on the environment may change them.
+Grants must meet the environment's floor (``domain.grant_rules``): preview is for builders.
+A change that adds or removes a grant marks the org's access snapshot dirty.
 
 A change made through an agent credential, and a change that widens the audience of a
 data-connected app, applies only once the matching approval is approved (decision 016). Until
@@ -17,6 +21,7 @@ from sqlalchemy import text
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
+from ssc_control.api.authz import require_builder
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.common import (
@@ -31,9 +36,11 @@ from ssc_control.api.routes.v1.common import (
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals.capabilities import RecordedCapabilities
 from ssc_control.approvals.service import ApprovalRow, newest, request, share_requirements
+from ssc_control.domain import grant_rules
 from ssc_control.domain.approval_rules import GrantKey, Requirement, RequirementKind
 from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
 from ssc_control.ports import MetricKind
+from ssc_control.snapshot.service import mark_dirty
 
 router = APIRouter()
 
@@ -141,6 +148,44 @@ async def _approvals_for(  # noqa: PLR0913  (keyword-only)
     return needed, found
 
 
+def _check_rules(target: grant_rules.SharingTarget, desired: dict[GrantKey, GrantIn]) -> None:
+    """Floors, one grant per subject, then the audience ceiling hook."""
+    problems = grant_rules.validate(target.name, desired)
+    if problems:
+        raise Refusal(
+            ErrorCode.VALIDATION_FAILED,
+            evidence={"problems": [{"problem": p.problem, "grant": p.grant} for p in problems]},
+        )
+    grant_rules.audience_ceiling(target, set(desired))
+
+
+async def _ask(
+    uow: UnitOfWork,
+    environment_id: str,
+    open_: list[Requirement],
+    desired: dict[GrantKey, GrantIn],
+    version: int,
+) -> list[str]:
+    """Open (or find) the approval request for each open requirement; their ids."""
+    asked: list[str] = []
+    for req in open_:
+        payload: dict[str, Any] = {"grants": _grants_payload(desired)}
+        if req.kind is RequirementKind.AGENT_SHARE:
+            payload["grants_version"] = version
+        row, _ = await request(
+            uow.conn,
+            org_id=uow.org_id,
+            environment_id=environment_id,
+            requirement=req,
+            requested_by=uow.principal.subject,
+            via_agent=True,
+            payload=payload,
+            actor=actor_of(uow.principal),
+        )
+        asked.append(row.id)
+    return asked
+
+
 async def _grants_out(uow: UnitOfWork, env_id: str, version: int) -> GrantsOut:
     rows = (await uow.conn.execute(_SELECT_GRANTS, {"org": uow.org_id, "env": env_id})).mappings()
     return GrantsOut(
@@ -205,6 +250,10 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
 ) -> Response:
     """Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.
 
+    Only an org admin, the app's owner or a builder on this environment may; anyone else gets
+    ``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant
+    for one subject is ``VALIDATION_FAILED``.
+
     A change that needs approval is not applied: an agent session gets ``202`` and the pending
     approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for."""
     expected = parse_if_match(if_match)
@@ -217,6 +266,7 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     ).first()
     if env is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
+    await require_builder(uow, environment_id)
     current = int(env[1])
     if current != expected:
         raise Refusal(
@@ -224,6 +274,7 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
         )
     existing = {_grant_key(g): g for g in (await _grants_out(uow, environment_id, current)).grants}
     desired = {_grant_key(g): g for g in body.grants}
+    _check_rules(grant_rules.SharingTarget(environment_id, str(env[3]), str(env[2])), desired)
     needed, found = await _approvals_for(
         uow,
         environment_id=environment_id,
@@ -234,22 +285,7 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     )
     open_ = [r for r in needed if r not in found or found[r].state != "approved"]
     if open_ and uow.principal.is_agent:
-        asked: list[str] = []
-        for req in open_:
-            payload: dict[str, Any] = {"grants": _grants_payload(desired)}
-            if req.kind is RequirementKind.AGENT_SHARE:
-                payload["grants_version"] = current
-            row, _ = await request(
-                uow.conn,
-                org_id=uow.org_id,
-                environment_id=environment_id,
-                requirement=req,
-                requested_by=by,
-                via_agent=True,
-                payload=payload,
-                actor=actor_of(uow.principal),
-            )
-            asked.append(row.id)
+        asked = await _ask(uow, environment_id, open_, desired, current)
         pending = GrantsPending(
             environment_id=environment_id, grants_version=current, approval_ids=asked
         )
@@ -273,6 +309,7 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     # The approval that let the change through, agent_share first, is linked from each grant row.
     approved = sorted(needed, key=lambda r: r.kind is not RequirementKind.AGENT_SHARE)
     policy_id = found[approved[0]].policy_decision_id if approved else None
+    changed = existing.keys() != desired.keys()
     for key, old in existing.items():
         if key not in desired:
             await uow.conn.execute(_DELETE_GRANT, {"org": uow.org_id, "id": old.id})
@@ -324,4 +361,6 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
         await uow.conn.execute(_BUMP_GRANTS, {"org": uow.org_id, "env": environment_id})
     ).scalar_one()
     version = int(bumped)
+    if changed:
+        await mark_dirty(uow.conn, uow.org_id)
     return uow.reply(await _grants_out(uow, environment_id, version), headers={ETAG: etag(version)})

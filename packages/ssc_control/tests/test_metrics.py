@@ -431,7 +431,7 @@ def test_put_grants_records_one_share_event_per_added_grant(
 ) -> None:
     admin = token(signing_key, world, world.admin)
     two = [user_grant(world.member), user_grant(world.approver, "builder")]
-    r = put(client, world, world.preview, admin, two, 1, **{SOURCE_TOOL_HEADER: "Claude-Code"})
+    r = put(client, world, world.prod, admin, two, 1, **{SOURCE_TOOL_HEADER: "Claude-Code"})
     assert r.status_code == 200, r.text
     rows = shares(dsns, world)
     assert len(rows) == 2
@@ -445,17 +445,17 @@ def test_put_grants_records_one_share_event_per_added_grant(
     ]
     assert {json.dumps(r["properties"], sort_keys=True) for r in rows} >= {
         json.dumps(
-            {"environment": "preview", "role": "user", "subject_kind": "user", "via_agent": False},
+            {"environment": "prod", "role": "user", "subject_kind": "user", "via_agent": False},
             sort_keys=True,
         )
     }
     # Keeping one and adding one records one; removing and re-sending the same set record none.
     three = [two[0], ORG_WIDE]
-    assert put(client, world, world.preview, admin, three, 2).status_code == 200
+    assert put(client, world, world.prod, admin, three, 2).status_code == 200
     (added,) = shares(dsns, world)[2:]
     assert (added["properties"]["subject_kind"], added["source_tool"]) == ("org", None)
-    assert put(client, world, world.preview, admin, three, 3).status_code == 200
-    assert put(client, world, world.preview, admin, [], 4).status_code == 200
+    assert put(client, world, world.prod, admin, three, 3).status_code == 200
+    assert put(client, world, world.prod, admin, [], 4).status_code == 200
     assert len(shares(dsns, world)) == 3
 
 
@@ -522,7 +522,7 @@ def test_without_a_key_nothing_is_recorded(
     with TestClient(create_app(settings_for(dsns, signing_key, None))) as c:
         assert "SSC_METRICS_KEY is not set" in caplog.text
         admin = token(signing_key, world, world.admin)
-        assert put(c, world, world.preview, admin, [ORG_WIDE], 1).status_code == 200
+        assert put(c, world, world.prod, admin, [ORG_WIDE], 1).status_code == 200
     assert metrics_rows(dsns.app, world.org) == []
 
 

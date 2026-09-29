@@ -7,6 +7,7 @@ belong to SSC-021, running a deployment to SSC-016/SSC-017; both keep these shap
 
 from fastapi import APIRouter
 
+from ssc_control.api.routes.v1.access import router as access_router
 from ssc_control.api.routes.v1.approvals import router as approvals_router
 from ssc_control.api.routes.v1.apps import router as apps_router
 from ssc_control.api.routes.v1.audit import router as audit_router
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/v1", tags=["v1"])
 router.include_router(whoami_router)
 router.include_router(apps_router)
 router.include_router(grants_router)
+router.include_router(access_router)
 router.include_router(deployments_router)
 router.include_router(audit_router)
 router.include_router(approvals_router)

@@ -30,6 +30,8 @@ from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.driver import RuntimeDriver
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
+from ssc_control.snapshot import jobs as snapshot_jobs
+from ssc_control.snapshot.service import Snapshots
 from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_of
 
 log = logging.getLogger(__name__)
@@ -105,6 +107,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
         namespace="core",
     )
     app.add_tasks_from(runtime_jobs.blueprint(tick_cron=s.tick_cron), namespace="runtime")
+    app.add_tasks_from(snapshot_jobs.blueprint(), namespace="snapshot")
     return app
 
 
@@ -135,10 +138,12 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
 
 def compose_ports(env: Mapping[str, str]) -> Ports:
     """The production ``Ports`` from the environment. The one place ports are chosen."""
+    engine = make_engine(env[DSN_ENV])
     ports = Ports(
-        engine=make_engine(env[DSN_ENV]),
+        engine=engine,
         runtime_driver=runtime_driver_from_env(env),
         release_specs=BundleReleaseSpecs(),
+        snapshot=Snapshots(engine),
     )
     refuse_fakes(ports, env)
     return ports

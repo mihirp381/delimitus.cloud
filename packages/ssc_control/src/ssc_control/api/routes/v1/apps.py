@@ -14,6 +14,7 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Slug, Strict, require_user
 from ssc_control.api.uow import UnitOfWork, UserUoW
+from ssc_control.snapshot.service import mark_dirty
 
 router = APIRouter()
 
@@ -107,6 +108,7 @@ async def create_app(body: AppCreate, uow: UserUoW) -> Response:
         target_id=app_id,
         after={"slug": body.slug, "owner_user_id": owner},
     )
+    await mark_dirty(uow.conn, uow.org_id)
     return uow.reply(out, status=201)
 
 
