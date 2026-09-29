@@ -1,6 +1,18 @@
-"""The text ``ssc init`` writes. Command lines are filled in from the registered commands."""
+"""The text ``ssc init`` writes. Command lines are filled in from the registered commands, and
+the runtime environment names from ``ssc_contracts.app_env`` (decision 014)."""
 
 from typing import Final
+
+from ssc_contracts import app_env
+
+ENV_NAMES: Final = {
+    "port": app_env.PORT,
+    "home": app_env.HOME,
+    "home_value": app_env.HOME_VALUE,
+    "database_url": app_env.DATABASE_URL,
+    "app_origin": app_env.APP_ORIGIN,
+    "keys_url": app_env.IDENTITY_KEYS_URL,
+}
 
 BEGIN: Final = "<!-- ssc:begin v1 -->"
 END: Final = "<!-- ssc:end -->"
@@ -40,11 +52,12 @@ finding marked `block`.
 
 ### Runtime rules
 
-- Listen on 0.0.0.0 and take the port from the `PORT` environment variable.
+- Listen on 0.0.0.0 and take the port from the `{port}` environment variable.
 - One app per folder. It starts from the `start` script in package.json, a `web:` line in a
   `Procfile`, or `start` under `[runtime]` in `ssc.toml`.
 - The app runs as a non-root user, and anything it writes to disk is kept in memory and lost on
-  every restart or deploy. Write scratch files under /tmp and keep lasting data in Postgres.
+  every restart or deploy. `{home}` is `{home_value}`. Write scratch files under /tmp and keep
+  lasting data in Postgres.
 - Keep the lock file in step with the dependency list; the build installs with it frozen.
 - Never put secrets in code, in `ssc.toml` or anywhere in the repository.
 - Values the browser needs at build time (`VITE_*`, `NEXT_PUBLIC_*`) go under
@@ -60,15 +73,16 @@ finding marked `block`.
 - Node: `import {{ IdentityVerifier }} from '@delimitus/ssc-identity'`, then
   `await new IdentityVerifier({{ audience, keys }}).fromHeaders(req.headers)`.
 - Key users on `note.sub`, never on email or name, which can change.
-- `audience` is the app's own exact origin, such as `https://quiet-river-7f3k.delimitusapps.com`.
-  `keys` is the JWKS address `https://keys.delimitus.com/<cell>/jwks.json`. SSC will pass both to
-  the app; the environment variable names are not fixed yet.
+- Take `audience` from the `{app_origin}` environment variable, the app's own exact origin
+  (such as `https://quiet-river-7f3k.delimitusapps.com`), and `keys` from `{keys_url}`, the
+  JWKS address (`https://keys.delimitus.com/<cell>/jwks.json`). Never hard-code either. While
+  one is unset, treat every request as not signed in.
 - Treat every refusal as "not a signed-in user": answer 401 and never echo the note.
 
 ### Data
 
 - For a database, add `[state]` with `postgres = true` to `ssc.toml` and connect with the
-  `DATABASE_URL` environment variable.
+  `{database_url}` environment variable.
 - SSC offers no key-value store such as Redis. Keep that data in a Postgres table; for a cache,
   use an `UNLOGGED` table with an `expires_at` column.
 - Company data connections are not live yet. Do not write code against them until SSC documents
@@ -84,11 +98,15 @@ the wrong type are refused. `ssc doctor` prints each problem as
 schema = "ssc/v1"
 
 [runtime]
-start = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+start = "uvicorn main:app --host 0.0.0.0 --port ${port}"
 
 [state]
 postgres = true
 ```
+
+SSC sets `{port}`, `{home}`, `{database_url}` (only with `postgres = true`), `{app_origin}` and
+`{keys_url}` itself; the last three are not set in every environment yet. `ssc.toml` cannot set
+them, nor any other name that starts with `SSC_`.
 """
 
 CLAUDE_IMPORT: Final = "@AGENTS.md\n"

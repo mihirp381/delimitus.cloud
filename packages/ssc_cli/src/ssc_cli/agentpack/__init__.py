@@ -15,6 +15,7 @@ from ssc_cli.agentpack.content import (
     BEGIN,
     CLAUDE_IMPORT,
     END,
+    ENV_NAMES,
     GUIDE,
     SKILL_FRONTMATTER,
     STARTER_IGNORE,
@@ -40,7 +41,7 @@ class Written:
 
 
 def guide(command_lines: list[str]) -> str:
-    return GUIDE.format(commands="\n".join(command_lines))
+    return GUIDE.format(commands="\n".join(command_lines), **ENV_NAMES)
 
 
 def write_agent_pack(root: Path, command_lines: list[str], *, force: bool) -> list[Written]:

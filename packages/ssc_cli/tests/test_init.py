@@ -8,12 +8,14 @@ import pytest
 from typer.core import TyperGroup
 from typer.main import get_command
 
-from ssc_cli.agentpack.content import BEGIN, END, GUIDE, STARTER_MANIFEST
+from ssc_cli.agentpack import guide
+from ssc_cli.agentpack.content import BEGIN, END, STARTER_MANIFEST
 from ssc_cli.doctor import run_doctor
 from ssc_cli.doctor.finding import FIX
 from ssc_cli.errors import ExitCode
 from ssc_cli.main import app
 from ssc_cli.shapes import InitResult
+from ssc_contracts import app_env
 from ssc_contracts.manifest import load_manifest
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "ssc_cli"
@@ -209,11 +211,21 @@ def test_starter_manifest_validates(cli, tmp_path):
     examples = load_manifest(_EXAMPLE.sub(r"\1", STARTER_MANIFEST))
     assert examples.state.postgres
     assert examples.runtime.start
-    blocks = re.findall(r"(?s)```toml\n(.*?)```", GUIDE)
+    blocks = re.findall(r"(?s)```toml\n(.*?)```", guide([]))
     assert blocks
     for block in blocks:
         assert load_manifest(block).state.postgres
-    for text in (GUIDE, STARTER_MANIFEST, *FIX.values()):
+    for text in (guide([]), STARTER_MANIFEST, *FIX.values()):
         assert 'state = "' not in text
     init(cli, tmp_path)
     assert not [f for f in run_doctor(tmp_path) if f.code.startswith("MANIFEST")]
+
+
+def test_pack_names_the_platform_env(cli, tmp_path):
+    init(cli, tmp_path)
+    agents = (tmp_path / "AGENTS.md").read_text()
+    for name in app_env.PLATFORM_ENV_NAMES:
+        assert f"`{name}`" in agents, name
+    assert f"`{app_env.HOME}` is `{app_env.HOME_VALUE}`" in agents
+    assert "--port $PORT" in agents
+    assert "not fixed yet" not in agents

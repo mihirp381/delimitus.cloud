@@ -8,6 +8,8 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from ssc_contracts import app_env
+
 Severity = Literal["block", "warn"]
 DoctorCode = Literal[
     "LOCKFILE_STALE",
@@ -73,7 +75,8 @@ FIX: Final[dict[DoctorCode, str]] = {
     ),
     WRITES_HOME: (
         "Write scratch files under /tmp and keep lasting data in Postgres. Do not rely on a home "
-        "folder: the app runs as a non-root user, and what it writes is lost on restart."
+        f"folder: the app runs as a non-root user with {app_env.HOME}={app_env.HOME_VALUE}, "
+        "which is memory, so what it writes is lost on every restart."
     ),
     NOT_SINGLE_APP: (
         "Run `ssc doctor` on the folder that holds one app, for example `ssc doctor ./backend`. "
