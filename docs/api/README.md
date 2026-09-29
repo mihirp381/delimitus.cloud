@@ -12,6 +12,7 @@ compared in CI. Decision record: `docs/decisions/README.md` 011.
 | `/v1` | people and their tools | `https://api.delimitus.com` |
 | `/internal/v1` | cell services (workload and operator credentials only) | `https://api.delimitus.com/internal` |
 | `/healthz` | anyone | none |
+| `/mcp` | agents, over MCP (below) | `https://api.delimitus.com`, with `agent: true` and a `client_id` |
 
 A credential is a bearer JWT, `typ: ssc-api+jwt`, ES256, signed by a key in the configured JWKS,
 with claims `iss`, `aud`, `sub`, `iat`, `exp`, `jti`, `org`, `kind` (`user`, `workload` or
@@ -103,6 +104,40 @@ returns, before a `StreamingResponse` body is sent. A streamed endpoint (today
 `GET /v1/audit/export`) takes `UserPrincipal`, calls `limit()`, runs its checks and writes its
 audit row in one `bound_org` transaction that commits first, then streams from a read-only
 REPEATABLE READ transaction opened inside the body generator.
+
+## Agent interface (MCP, SSC-048)
+
+`/mcp` is an MCP server (Python SDK `mcp` 2.2.0) on the same application: streamable HTTP,
+stateless, JSON replies. Code: `api/mcp/`.
+
+- **Who.** Only a user credential that an agent holds: the user audience, `kind: user`,
+  `agent: true` and a `client_id`. Any other bearer, or none, gets the SDK's `401` with
+  `WWW-Authenticate: Bearer ... resource_metadata="<public URL>/.well-known/oauth-protected-resource/mcp"`
+  (RFC 6750 and RFC 9728, not a problem body). That metadata names the API's token issuer as
+  the authorization server. Until SSC-019 issues agent tokens, only `tools/dev_stack.py token
+  --agent --client-id X` makes one. A request gets `421` unless its `Host` is the public host
+  or a loopback address (DNS rebinding).
+- **One code path.** Each tool calls `/v1` in process (`httpx2.ASGITransport` on this
+  application) with the caller's own bearer, so authorisation, row-level security,
+  `Idempotency-Key`, the per-credential rate limit, `If-Match` and audit are the route handlers'
+  own. Every change is audited with `via_agent` and the credential's `client_id`, which is also
+  the source tool of any metrics event it records (SSC-028). The inner calls carry the MCP
+  request's `X-Request-Id`.
+- **Tools, phase 1.** `list_apps`; `get_app(app)`; `get_status(app, operation?)` (the app, the
+  operation behind each environment's current release, and optionally one operation);
+  `rollback(app, release, env, idempotency_key?)` (a `kind: rollback` deployment; returns the
+  operation and the key to retry with). `app` is an `app_` id or a slug, as for `ssc`.
+- **Refusals** are tool results with `isError: true` and structured content `{"error": {...}}`:
+  the problem's seven members for an API refusal, or `APP_NOT_FOUND` / `ENVIRONMENT_NOT_FOUND`
+  with `status: null` for one found before calling the API (the same shape as `ssc --json`).
+- **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
+  step), secrets (SSC-026), logs (SSC-024), connections (SSC-050/051). Next (C5b):
+  `request_share` and `request_connection` through the same `/v1` paths, so an agent's sharing
+  change answers `202` and waits for another admin; `deploy`; and a local `ssc mcp`.
+- **Wiring.** The SDK's routes are added to the FastAPI router rather than mounted (no
+  trailing-slash redirect, metadata at the root); they are not in `openapi.json`. The session
+  manager runs in the application's lifespan. `SSC_API_PUBLIC_URL` (default
+  `https://api.delimitus.com`) sets the resource URL and the allowed host.
 
 ## Adding an endpoint
 
