@@ -10,10 +10,13 @@ PROBLEM_REF: Final = "#/components/schemas/Problem"
 def problem_responses(*codes: ErrorCode) -> dict[int | str, dict[str, Any]]:
     """OpenAPI ``responses`` entries for the given codes, grouped by status.
 
-    The schema is a reference; ``app.py`` adds the ``Problem`` component to the document.
+    Codes sharing a status share one entry; a repeated code is listed once. Compose by passing
+    every code in one call (``problem_responses(*POST_COMMON, ...)``): merging two results with
+    ``|`` keeps only the right-hand entry for a shared status. The schema is a reference;
+    ``app.py`` adds the ``Problem`` component to the document.
     """
     out: dict[int | str, dict[str, Any]] = {}
-    for code in codes:
+    for code in dict.fromkeys(codes):
         entry = CATALOGUE[code]
         existing = out.get(entry.status)
         names = (
@@ -26,10 +29,12 @@ def problem_responses(*codes: ErrorCode) -> dict[int | str, dict[str, Any]]:
     return out
 
 
-AUTHENTICATED: Final = problem_responses(
-    ErrorCode.UNAUTHENTICATED, ErrorCode.RATE_LIMITED, ErrorCode.VALIDATION_FAILED
+AUTHENTICATED: Final[tuple[ErrorCode, ...]] = (
+    ErrorCode.UNAUTHENTICATED,
+    ErrorCode.RATE_LIMITED,
+    ErrorCode.VALIDATION_FAILED,
 )
-POST_COMMON: Final = problem_responses(
+POST_COMMON: Final[tuple[ErrorCode, ...]] = (
     ErrorCode.UNAUTHENTICATED,
     ErrorCode.RATE_LIMITED,
     ErrorCode.IDEMPOTENCY_KEY_REQUIRED,

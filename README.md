@@ -10,6 +10,8 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `packages/ssc_shared` | Clock and other small shared pieces. | SSC-007 |
 | `packages/ssc_bundle` | What `ssc deploy` uploads. | SSC-014 |
 | `packages/ssc_control` | Control plane API, database, job queue, reconcilers. `api/` is the FastAPI application (`/v1`, `/internal/v1`; conventions in `docs/api/README.md`); `db/` holds the schema, migrations, roles and the org bind (see `db/README.md`, `db/PLPGSQL.md`, `db/PII.md`); `audit.py` appends to the audit chain. `api/`, `audit.py`, `db/` and `domain/` are pyright strict. | SSC-010 onward |
+| `packages/ssc_control/src/ssc_control/api/routes/v1/` | The `/v1` routes, one module per resource (`whoami`, `apps`, `grants`, `deployments`); `common.py` holds the shared models and helpers; `__init__.py` mounts each router on its own line. | SSC-011 |
+| `packages/ssc_control/src/ssc_control/ports.py` | Frozen cross-lane Protocols, each with a safe stub: `ProdGate` (stub refuses), `SnapshotPort` (stub never confirms), `TimersPort` and `MetricsPort` (stubs do nothing). Pyright strict. | W0 |
 | `packages/ssc_edge` | Cell gateway (Envoy ext_authz, login). `identity_note.py` mints the identity note; pyright strict. | SSC-020, SSC-018, SSC-019 |
 | `packages/ssc_datagw` | Read-only data gateway and file broker. | SSC-050, SSC-046 |
 | `packages/ssc_egress` | Egress proxy control. | SSC-053 |

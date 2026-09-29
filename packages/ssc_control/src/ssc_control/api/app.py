@@ -13,7 +13,8 @@ from ssc_control.api.auth import Verifier
 from ssc_control.api.idempotency import REPLAYED_HEADER, Replay
 from ssc_control.api.problems import REQUEST_ID_HEADER, RequestIdMiddleware, request_id_of
 from ssc_control.api.ratelimit import RateLimiter
-from ssc_control.api.routes import internal, v1
+from ssc_control.api.routes.internal import router as internal_router
+from ssc_control.api.routes.v1 import router as v1_router
 from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
@@ -78,8 +79,8 @@ def create_app(settings: Settings, engine: AsyncEngine | None = None) -> FastAPI
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    app.include_router(v1.router)
-    app.include_router(internal.router)
+    app.include_router(v1_router)
+    app.include_router(internal_router)
     _install_openapi(app)
     return app
 

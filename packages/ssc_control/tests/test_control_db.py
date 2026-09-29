@@ -19,21 +19,21 @@ catalog tests that pin the declared shape: RLS everywhere, the PL/pgSQL list, pr
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import re
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError
-from testcontainers.postgres import PostgresContainer
+from ssc_testkit import Dsns, make_org
 
 import ssc_control.db
 from ssc_contracts.audit import ActorKind, AuditAction
@@ -41,16 +41,12 @@ from ssc_contracts.ids import PREFIXES, new_id
 from ssc_control.db import (
     APP_ROLE,
     MIGRATE_ROLE,
-    CreatedOrg,
-    NewOrg,
     SqlState,
     bind_org_sync,
     bound_org,
     catalog,
     check_org_id,
-    create_org,
     downgrade,
-    ensure_roles,
     make_engine,
     upgrade,
 )
@@ -61,51 +57,10 @@ from ssc_control.db.errors import (
     NOT_NULL_VIOLATION,
     UNIQUE_VIOLATION,
 )
+from ssc_control.db.migrate import alembic_config
 from ssc_control.db.orgs import GENESIS_HASH
 
 DB_DIR = Path(ssc_control.db.__file__).parent
-
-
-# ── fixture ──────────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class Dsns:
-    superuser: str
-    migrate: str
-    app: str
-
-
-def with_role(dsn: str, user: str, password: str) -> str:
-    return make_url(dsn).set(username=user, password=password).render_as_string(hide_password=False)
-
-
-@pytest.fixture(scope="module")
-def dsns() -> Iterator[Dsns]:
-    with PostgresContainer("postgres:18", driver=None) as pg:
-        su = pg.get_connection_url()
-        with psycopg.connect(su, autocommit=True) as conn:
-            ensure_roles(conn)
-            conn.execute(f"alter role {MIGRATE_ROLE} login password 'migrate'")
-            conn.execute(f"alter role {APP_ROLE} login password 'app'")
-            conn.execute(f"grant create on database {pg.dbname} to {MIGRATE_ROLE}")
-        d = Dsns(su, with_role(su, MIGRATE_ROLE, "migrate"), with_role(su, APP_ROLE, "app"))
-        upgrade(d.migrate)
-        yield d
-
-
-def make_org(dsn: str, name: str = "Acme") -> CreatedOrg:
-    async def go() -> CreatedOrg:
-        engine = make_engine(dsn)
-        try:
-            spec = NewOrg(
-                name, "Ada Admin", "ada@example.com", "https://idp.example", new_id("usr")
-            )
-            return await create_org(engine, spec)
-        finally:
-            await engine.dispose()
-
-    return asyncio.run(go())
 
 
 def digest(seed: str) -> str:
@@ -321,9 +276,17 @@ def test_app_role_has_nothing_on_the_migration_ledger(dsns: Dsns) -> None:
         "insert into ssc.alembic_version values ('x')",
     ):
         assert refused(dsns.app, None, sql) == INSUFFICIENT_PRIVILEGE, sql
-    assert run(dsns.migrate, None, "select version_num from ssc.alembic_version") == [
-        ("0002_idempotency",)
-    ]
+    head = ScriptDirectory.from_config(alembic_config(dsns.migrate)).get_current_head()
+    assert run(dsns.migrate, None, "select version_num from ssc.alembic_version") == [(head,)]
+
+
+def test_migration_chain_has_one_head_and_short_revision_ids() -> None:
+    scripts = ScriptDirectory.from_config(alembic_config("postgresql://unused/ssc"))
+    assert len(scripts.get_heads()) == 1, scripts.get_heads()
+    revisions = [s.revision for s in scripts.walk_revisions()]
+    assert "0001_control_schema" in revisions
+    # ssc.alembic_version.version_num is varchar(32).
+    assert [r for r in revisions if len(r) > 32] == []
 
 
 # ── immutability and state rules ─────────────────────────────────────────────
@@ -752,3 +715,48 @@ def test_downgrade_then_upgrade_round_trips(dsns: Dsns) -> None:
     ) == [(0,)]
     upgrade(dsn)
     assert run(dsn, None, count) == [(len(catalog.TABLES),)]
+
+
+LANE_ACTIONS = frozenset(
+    {
+        "audit.exported",
+        "audit.reanchored",
+        "user.updated",
+        "schedule.updated",
+        "schedule.run_requested",
+        "bundle.stored",
+        "build.started",
+        "build.failed",
+        "release.created",
+    }
+)
+
+
+def action_check(dsn: str) -> tuple[str, bool]:
+    ((definition, validated),) = run(
+        dsn,
+        None,
+        "select pg_get_constraintdef(oid), convalidated from pg_constraint "
+        "where conrelid = 'ssc.audit_event'::regclass and conname = 'audit_event_action_check'",
+    )
+    return definition, validated
+
+
+def test_lane_vocab_revision_widens_the_action_check_and_downgrade_restores_it(
+    dsns: Dsns,
+) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database vocab owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="vocab").render_as_string(hide_password=False)
+    upgrade(dsn, "0002_idempotency")
+    before = action_check(dsn)
+    upgrade(dsn, "0003_lane_vocab")
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | LANE_ACTIONS
+    assert old.isdisjoint(LANE_ACTIONS)
+    assert after[1] is True
+    downgrade(dsn, "0002_idempotency")
+    assert action_check(dsn) == before
+    upgrade(dsn)
+    assert action_check(dsn) == after

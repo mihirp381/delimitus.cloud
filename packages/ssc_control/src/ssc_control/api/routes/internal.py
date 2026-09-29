@@ -38,7 +38,7 @@ class HeartbeatAck(BaseModel):
     "/heartbeat",
     response_model=HeartbeatAck,
     dependencies=[InternalIdempotent],
-    responses=POST_COMMON | problem_responses(ErrorCode.FORBIDDEN),
+    responses=problem_responses(*POST_COMMON, ErrorCode.FORBIDDEN),
 )
 async def heartbeat(body: Heartbeat, uow: InternalUoW) -> Response:
     return uow.reply(HeartbeatAck(acknowledged=True, org_id=uow.org_id, at=datetime.now(UTC)))

@@ -4,9 +4,11 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from ssc_contracts.errors import CATALOGUE, PROBLEM_MEDIA_TYPE, ErrorCode
 from ssc_control.api.openapi import build_spec, spec_json
+from ssc_control.api.routes.common import problem_responses
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "docs" / "api" / "openapi.json"
@@ -55,6 +57,39 @@ def test_every_post_documents_the_idempotency_refusals() -> None:
         assert {400, 409, 422}.issubset(statuses), path
         desc = item["post"]["responses"]["400"]["description"]
         assert ErrorCode.IDEMPOTENCY_KEY_REQUIRED.value in desc
+
+
+def _codes(op: dict[str, Any], status: int) -> set[str]:
+    return {c.strip(" `") for c in op["responses"][str(status)]["description"].split(",")}
+
+
+def test_every_post_lists_each_idempotency_refusal_under_its_status() -> None:
+    spec = build_spec()
+    shared = (
+        ErrorCode.IDEMPOTENCY_KEY_REQUIRED,
+        ErrorCode.IDEMPOTENCY_KEY_REUSED,
+        ErrorCode.IDEMPOTENCY_IN_FLIGHT,
+        ErrorCode.VALIDATION_FAILED,
+    )
+    for path, item in spec["paths"].items():
+        if "post" not in item:
+            continue
+        for code in shared:
+            assert code.value in _codes(item["post"], CATALOGUE[code].status), (path, code)
+
+
+def test_create_app_lists_every_refusal_that_shares_a_status() -> None:
+    op = build_spec()["paths"]["/v1/apps"]["post"]
+    assert _codes(op, 409) == {"ALREADY_EXISTS", "IDEMPOTENCY_IN_FLIGHT"}
+    assert _codes(op, 422) == {"IDEMPOTENCY_KEY_REUSED", "OWNER_NOT_ACTIVE", "VALIDATION_FAILED"}
+
+
+def test_problem_responses_merges_a_shared_status_and_lists_a_code_once() -> None:
+    out = problem_responses(
+        ErrorCode.ALREADY_EXISTS, ErrorCode.IDEMPOTENCY_IN_FLIGHT, ErrorCode.ALREADY_EXISTS
+    )
+    assert list(out) == [409]
+    assert out[409]["description"] == "`ALREADY_EXISTS`, `IDEMPOTENCY_IN_FLIGHT`"
 
 
 def test_problem_component_lists_the_catalogue_codes() -> None:

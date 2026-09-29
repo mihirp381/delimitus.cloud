@@ -37,12 +37,13 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
 Alembic, expand-then-contract. Every revision must be safe to run while the previous release
 of the control plane is still serving: add columns and tables nullable or with defaults, back-fill,
 deploy code that writes both shapes, then drop the old shape in a separate contract revision
-after that code is out. Revisions so far, both pure expand:
+after that code is out. Revisions so far, all pure expand:
 
 | Revision | Ticket | Adds |
 |---|---|---|
 | `0001_control_schema` | SSC-010 | the 18 tables, roles' privileges, PL/pgSQL guards |
 | `0002_idempotency` | SSC-011 | `ssc.idempotency_claim` (19th table): the `Idempotency-Key` ledger, keyed by org, credential and key, RLS and `SELECT, INSERT, UPDATE` for the app role |
+| `0003_lane_vocab` | W0 | nine audit actions the lanes emit (`audit.exported`, `audit.reanchored`, `user.updated`, `schedule.updated`, `schedule.run_requested`, `bundle.stored`, `build.started`, `build.failed`, `release.created`) in the `audit_event_action_check` CHECK; downgrade restores the 0002 list |
 
 There is no `alembic.ini`. Run migrations from Python:
 

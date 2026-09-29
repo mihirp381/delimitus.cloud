@@ -860,7 +860,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `ALREADY_EXISTS`"
           },
           "422": {
             "content": {
@@ -870,7 +870,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`"
           },
           "429": {
             "content": {
@@ -1063,7 +1063,7 @@
                 }
               }
             },
-            "description": "`DEPLOYMENT_IN_FLIGHT`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `DEPLOYMENT_IN_FLIGHT`"
           },
           "422": {
             "content": {
@@ -1073,7 +1073,7 @@
                 }
               }
             },
-            "description": "`REFERENCE_NOT_FOUND`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
           },
           "429": {
             "content": {
@@ -1284,7 +1284,7 @@
                 }
               }
             },
-            "description": "`REFERENCE_NOT_FOUND`, `VALIDATION_FAILED`"
+            "description": "`VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
           },
           "428": {
             "content": {

@@ -65,14 +65,36 @@ ignore = ["PLR2004", "S101"]
 
 [tool.pyright]
 pythonVersion = "3.14"
-include = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db", "packages/ssc_control/src/ssc_control/api", "packages/ssc_control/src/ssc_control/audit.py", "packages/ssc_app/src", "packages/ssc_edge/src"]
-strict = ["packages/ssc_contracts/src", "packages/ssc_shared/src", "packages/ssc_control/src/ssc_control/domain", "packages/ssc_control/src/ssc_control/db", "packages/ssc_control/src/ssc_control/api", "packages/ssc_control/src/ssc_control/audit.py", "packages/ssc_app/src", "packages/ssc_edge/src"]
+include = [
+  "packages/ssc_contracts/src",
+  "packages/ssc_shared/src",
+  "packages/ssc_control/src/ssc_control/domain",
+  "packages/ssc_control/src/ssc_control/db",
+  "packages/ssc_control/src/ssc_control/api",
+  "packages/ssc_control/src/ssc_control/audit.py",
+  "packages/ssc_control/src/ssc_control/ports.py",
+  "packages/ssc_app/src",
+  "packages/ssc_edge/src",
+]
+strict = [
+  "packages/ssc_contracts/src",
+  "packages/ssc_shared/src",
+  "packages/ssc_control/src/ssc_control/domain",
+  "packages/ssc_control/src/ssc_control/db",
+  "packages/ssc_control/src/ssc_control/api",
+  "packages/ssc_control/src/ssc_control/audit.py",
+  "packages/ssc_control/src/ssc_control/ports.py",
+  "packages/ssc_app/src",
+  "packages/ssc_edge/src",
+]
 reportMissingImports = true
 
 [tool.pytest.ini_options]
 testpaths = ["packages", "conformance"]
 asyncio_mode = "auto"
 addopts = "-q --import-mode=importlib"
+# Shared test helpers (``ssc_testkit``); test modules cannot import conftest.py.
+pythonpath = ["packages/ssc_control/tests"]
 
 [tool.deptry]
 known_first_party = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app"]
@@ -103,3 +125,19 @@ forbidden_modules = ["httpx"]
 name = "Layers: contracts < shared < services"
 type = "layers"
 layers = ["ssc_control | ssc_edge | ssc_datagw | ssc_egress | ssc_cli | ssc_app", "ssc_bundle", "ssc_shared", "ssc_contracts"]
+
+[[tool.importlinter.contracts]]
+name = "Cross-lane ports depend on no implementation"
+type = "forbidden"
+source_modules = ["ssc_control.ports"]
+forbidden_modules = [
+  "ssc_control.api",
+  "ssc_control.approvals",
+  "ssc_control.deferral",
+  "ssc_control.deploy",
+  "ssc_control.jobs",
+  "ssc_control.lifecycle",
+  "ssc_control.metrics",
+  "ssc_control.snapshot",
+  "ssc_control.worker",
+]

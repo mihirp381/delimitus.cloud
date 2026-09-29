@@ -18,6 +18,9 @@ Prefix = Literal[
     "pol",  # policy decision
     "cell",  # customer cell
     "tmr",  # timer run
+    "bdl",  # source bundle
+    "bld",  # build
+    "kil",  # kill-switch run
 ]
 PREFIXES: Final[tuple[str, ...]] = get_args(Prefix)
 _ALPHABET: Final = "abcdefghijklmnopqrstuvwxyz0123456789"

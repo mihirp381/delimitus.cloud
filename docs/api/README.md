@@ -76,12 +76,17 @@ audit row cannot commit.
 
 ## Adding an endpoint
 
-1. Put it in `api/routes/v1.py` or `api/routes/internal.py`. Take `UserUoW` (or `InternalUoW`)
-   for the org-bound connection; a `POST` also lists `UserIdempotent` in `dependencies` and must
-   answer through `uow.reply(...)` so the reply can be stored.
+1. Put it in the resource's module under `api/routes/v1/` (a new resource gets its own module
+   with a prefix-less `router`, mounted on its own line in `api/routes/v1/__init__.py`), or in
+   `api/routes/internal.py`. Shared v1 pieces (`Strict`, `Id`, `Slug`, `require_user`, `etag`,
+   `parse_if_match`) are in `api/routes/v1/common.py`. Take `UserUoW` (or `InternalUoW`) for the
+   org-bound connection; a `POST` also lists `UserIdempotent` in `dependencies` and must answer
+   through `uow.reply(...)` so the reply can be stored.
 2. Refuse with `raise Refusal(ErrorCode.X, evidence={...})`. Need a new code? Add it to the
    catalogue with fixed text; `test_errors.py` checks the entry.
-3. Declare the refusals in `responses=` with `problem_responses(...)` so they appear in the spec.
+3. Declare the refusals in `responses=` with one `problem_responses(...)` call so they appear in
+   the spec: `problem_responses(*POST_COMMON, ErrorCode.X)` (or `*AUTHENTICATED` for reads).
+   Never merge two results with `|`: codes sharing a status would overwrite each other.
 4. `uv run python tools/openapi_check.py --write`, then commit `docs/api/openapi.json`.
 
 CI runs `tools/openapi_check.py` (the file must match the code) and
