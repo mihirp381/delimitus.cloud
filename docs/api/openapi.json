@@ -105,6 +105,37 @@
         "title": "ActorKind",
         "type": "string"
       },
+      "ActorOut": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "user",
+              "workload",
+              "schedule",
+              "operator",
+              "integration"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "via_agent": {
+            "title": "Via Agent",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "via_agent"
+        ],
+        "title": "ActorOut",
+        "type": "object"
+      },
       "AppCreate": {
         "additionalProperties": false,
         "properties": {
@@ -651,6 +682,159 @@
         "title": "AuditTarget",
         "type": "object"
       },
+      "BuildAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "build_id": {
+            "title": "Build Id",
+            "type": "string"
+          },
+          "capability_diff": {
+            "$ref": "#/components/schemas/CapabilityDiff",
+            "description": "What the manifest asks for beyond the environment. It never blocks."
+          },
+          "state": {
+            "const": "queued",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "build_id",
+          "state",
+          "capability_diff"
+        ],
+        "title": "BuildAccepted",
+        "type": "object"
+      },
+      "BuildCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "bundle_id": {
+            "pattern": "^bdl_[a-z0-9]{20}$",
+            "title": "Bundle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle_id"
+        ],
+        "title": "BuildCreate",
+        "type": "object"
+      },
+      "BuildOut": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "build_id": {
+            "title": "Build Id",
+            "type": "string"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "capability_diff": {
+            "$ref": "#/components/schemas/CapabilityDiff",
+            "description": "Against the environment today."
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "release_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Number"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "build_id",
+          "app_id",
+          "environment_id",
+          "bundle_id",
+          "state",
+          "release_id",
+          "release_number",
+          "failure_code",
+          "capability_diff",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "BuildOut",
+        "type": "object"
+      },
       "BundleCreate": {
         "additionalProperties": false,
         "properties": {
@@ -793,6 +977,96 @@
         "title": "BundleOut",
         "type": "object"
       },
+      "CapabilityChange": {
+        "additionalProperties": false,
+        "description": "One thing asked for and not granted. ``approver`` is None when no approval step applies.",
+        "properties": {
+          "approver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver"
+          },
+          "consequence": {
+            "title": "Consequence",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "postgres_missing",
+              "connection_missing",
+              "egress_host_missing",
+              "schedules_declared"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "kind",
+          "subject",
+          "consequence",
+          "approver"
+        ],
+        "title": "CapabilityChange",
+        "type": "object"
+      },
+      "CapabilityDiff": {
+        "additionalProperties": false,
+        "description": "The listed changes (at most ``MAX_LISTED_CHANGES``, highest first) and the full count.",
+        "properties": {
+          "blocks": {
+            "const": false,
+            "default": false,
+            "title": "Blocks",
+            "type": "boolean"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilityChange"
+            },
+            "maxItems": 20,
+            "title": "Changes",
+            "type": "array"
+          },
+          "summarised": {
+            "readOnly": true,
+            "title": "Summarised",
+            "type": "boolean"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "changes",
+          "total",
+          "summarised"
+        ],
+        "title": "CapabilityDiff",
+        "type": "object"
+      },
       "DecisionIn": {
         "additionalProperties": false,
         "properties": {
@@ -857,6 +1131,115 @@
           "release_id"
         ],
         "title": "DeploymentCreate",
+        "type": "object"
+      },
+      "DeploymentList": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "items": {
+            "description": "Newest first.",
+            "items": {
+              "$ref": "#/components/schemas/DeploymentOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "environment_id",
+          "items"
+        ],
+        "title": "DeploymentList",
+        "type": "object"
+      },
+      "DeploymentOut": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ActorOut"
+          },
+          "current": {
+            "description": "The environment's live deployment.",
+            "title": "Current",
+            "type": "boolean"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "kind": {
+            "enum": [
+              "deploy",
+              "rollback"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "release_id": {
+            "title": "Release Id",
+            "type": "string"
+          },
+          "release_number": {
+            "title": "Release Number",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "running",
+              "healthy",
+              "failed",
+              "superseded"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "kind",
+          "state",
+          "release_id",
+          "release_number",
+          "failure_code",
+          "current",
+          "actor",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "DeploymentOut",
         "type": "object"
       },
       "DirectoryGroupIn": {
@@ -1056,6 +1439,8 @@
           "BUNDLE_NOT_UPLOADED",
           "UPLOAD_URL_INVALID",
           "APP_NOT_ACTIVE",
+          "BUILD_IN_FLIGHT",
+          "RELEASE_ENVIRONMENT_MISMATCH",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -1413,6 +1798,18 @@
             "title": "Environment Id",
             "type": "string"
           },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a `failed` deployment failed, as a reason code.",
+            "title": "Failure Code"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -1529,6 +1926,113 @@
           "request_id"
         ],
         "title": "Problem",
+        "type": "object"
+      },
+      "ReleaseList": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "description": "Highest number first.",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as `before` for the next page; null at the end.",
+            "title": "Next Before"
+          }
+        },
+        "required": [
+          "items",
+          "next_before"
+        ],
+        "title": "ReleaseList",
+        "type": "object"
+      },
+      "ReleaseOut": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ActorOut"
+          },
+          "built_for_environment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The environment a build made it for; null when no build made it.",
+            "title": "Built For Environment Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "image_digest": {
+            "title": "Image Digest",
+            "type": "string"
+          },
+          "label": {
+            "description": "How the number is shown: `R<number>`.",
+            "title": "Label",
+            "type": "string"
+          },
+          "manifest_digest": {
+            "title": "Manifest Digest",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "release_id": {
+            "title": "Release Id",
+            "type": "string"
+          },
+          "source_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Commit"
+          },
+          "source_digest": {
+            "description": "The digest of the bundle it was built from.",
+            "title": "Source Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "release_id",
+          "number",
+          "label",
+          "image_digest",
+          "manifest_digest",
+          "source_digest",
+          "source_commit",
+          "built_for_environment_id",
+          "created_at",
+          "actor"
+        ],
+        "title": "ReleaseOut",
         "type": "object"
       },
       "RequirementKind": {
@@ -3294,9 +3798,253 @@
         ]
       }
     },
-    "/v1/apps/{app_id}/environments/{environment_id}/deployments": {
+    "/v1/apps/{app_id}/environments/{environment_id}/builds": {
       "post": {
-        "description": "Start a deployment: 202 plus a ``Location`` to poll. Running it is the reconciler's job.",
+        "description": "Build a stored bundle for one environment: 202 plus a ``Location`` to poll. A build that\nsucceeds creates the app's next numbered release. One build of a bundle per environment is in\nflight at a time (``BUILD_IN_FLIGHT``).",
+        "operationId": "create_build_v1_apps__app_id__environments__environment_id__builds_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `BUILD_IN_FLIGHT`, `BUNDLE_NOT_UPLOADED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Create Build",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/deployments": {
+      "get": {
+        "description": "The environment's deployments, newest first; ``current`` marks the live one.",
+        "operationId": "list_deployments_v1_apps__app_id__environments__environment_id__deployments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "List Deployments",
+        "tags": [
+          "v1"
+        ]
+      },
+      "post": {
+        "description": "Start a deployment: 202 plus a ``Location`` to poll. The deploy job runs it.\n\nA release a build made for another environment is ``RELEASE_ENVIRONMENT_MISMATCH``: prod\nbuilds separately from the same source. A second forward deploy while one is in flight is\n``DEPLOYMENT_IN_FLIGHT``; a rollback supersedes the in-flight forward deploy instead.",
         "operationId": "create_deployment_v1_apps__app_id__environments__environment_id__deployments_post",
         "parameters": [
           {
@@ -3317,6 +4065,24 @@
               "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
               "title": "Environment Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "The builder tool making the change, for product metrics. An agent credential's client id takes precedence.",
+            "in": "header",
+            "name": "X-SSC-Source-Tool",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The builder tool making the change, for product metrics. An agent credential's client id takes precedence.",
+              "title": "X-Ssc-Source-Tool"
             }
           },
           {
@@ -3377,6 +4143,16 @@
             },
             "description": "`UNAUTHENTICATED`"
           },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
           "404": {
             "content": {
               "application/problem+json": {
@@ -3395,7 +4171,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`, `DEPLOYMENT_IN_FLIGHT`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`, `RELEASE_ENVIRONMENT_MISMATCH`"
           },
           "422": {
             "content": {
@@ -3678,6 +4454,213 @@
           }
         },
         "summary": "Put Grants",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/releases": {
+      "get": {
+        "description": "The app's releases, highest number first; ``before`` pages to lower numbers.",
+        "operationId": "list_releases_v1_apps__app_id__releases_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "List Releases",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/releases/{release_id}": {
+      "get": {
+        "operationId": "get_release_v1_apps__app_id__releases__release_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Release",
         "tags": [
           "v1"
         ]
@@ -4103,6 +5086,89 @@
           }
         },
         "summary": "Export Audit",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/builds/{build_id}": {
+      "get": {
+        "operationId": "get_build_v1_builds__build_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Build Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Build",
         "tags": [
           "v1"
         ]

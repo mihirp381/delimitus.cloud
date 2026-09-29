@@ -65,6 +65,9 @@ class ErrorCode(StrEnum):
     BUNDLE_NOT_UPLOADED = "BUNDLE_NOT_UPLOADED"
     UPLOAD_URL_INVALID = "UPLOAD_URL_INVALID"
     APP_NOT_ACTIVE = "APP_NOT_ACTIVE"
+    # builds, releases and deployments (SSC-016)
+    BUILD_IN_FLIGHT = "BUILD_IN_FLIGHT"
+    RELEASE_ENVIRONMENT_MISMATCH = "RELEASE_ENVIRONMENT_MISMATCH"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -246,6 +249,18 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         409,
         "This app is not active.",
         "A disabled or quarantined app does not take new source. Enable the app first.",
+    ),
+    ErrorCode.BUILD_IN_FLIGHT: CatalogueEntry(
+        409,
+        "This bundle is already being built here.",
+        "A build of the same bundle for this environment is queued or running. Poll it instead "
+        "of starting another.",
+    ),
+    ErrorCode.RELEASE_ENVIRONMENT_MISMATCH: CatalogueEntry(
+        409,
+        "This release was built for another environment.",
+        "Each environment runs releases built for it. Deploy a release built for this "
+        "environment, or build the same bundle for it first.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,
