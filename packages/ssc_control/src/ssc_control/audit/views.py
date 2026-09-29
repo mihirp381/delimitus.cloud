@@ -15,7 +15,10 @@ from typing import Any, Final, cast
 VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "app": frozenset({"slug", "owner_user_id", "status"}),
     "app_grant": frozenset({"environment_id", "role", "subject_kind", "subject_id"}),
-    "deployment": frozenset({"kind", "state", "release_id", "environment_id"}),
+    "deployment": frozenset(
+        {"kind", "state", "release_id", "environment_id", "failure_code", "superseded"}
+    ),
+    "build": frozenset({"environment_id", "bundle_id", "state", "release_id", "failure_code"}),
     "release": frozenset(
         {"number", "image_digest", "manifest_digest", "source_digest", "source_commit"}
     ),

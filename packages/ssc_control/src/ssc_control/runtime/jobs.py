@@ -18,7 +18,7 @@ from sqlalchemy import text
 
 from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
-from ssc_control.deferral import defer
+from ssc_control.deferral import defer, env_lock
 from ssc_control.runtime import reconciler
 from ssc_control.worker_ports import ports_of
 
@@ -33,11 +33,6 @@ _LIVE_ENVS: Final = text(
     "select id from ssc.environment where org_id = :org and current_deployment_id is not null "
     "order by id"
 )
-
-
-def env_lock(env_id: str) -> str:
-    """The ``lock`` every job that changes ``env_id``'s runtime takes."""
-    return f"env:{env_id}"
 
 
 class NoRuntimeDriverError(RuntimeError):

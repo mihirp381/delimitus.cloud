@@ -26,6 +26,11 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from ssc_control.db.catalog import QUEUE_SCHEMA
 from ssc_control.db.engine import make_engine
+from ssc_control.deploy import jobs as deploy_jobs
+from ssc_control.deploy.build_driver import BuildDriver, FakeBuildDriver
+from ssc_control.deploy.gates import approvals_prod_gate
+from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
+from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.driver import RuntimeDriver
 from ssc_control.runtime.fake import FakeRuntimeDriver
@@ -39,6 +44,8 @@ log = logging.getLogger(__name__)
 DSN_ENV: Final = "SSC_DATABASE_DSN"
 ENV_ENV: Final = "SSC_ENV"
 RUNTIME_DRIVER_ENV: Final = "SSC_RUNTIME_DRIVER"
+BUILD_DRIVER_ENV: Final = "SSC_BUILD_DRIVER"
+METRICS_KEY_ENV: Final = "SSC_METRICS_KEY"
 FAKE_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 SWEEP_CRON: Final = "* * * * * */30"
 """Every 30 seconds."""
@@ -108,6 +115,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     )
     app.add_tasks_from(runtime_jobs.blueprint(tick_cron=s.tick_cron), namespace="runtime")
     app.add_tasks_from(snapshot_jobs.blueprint(), namespace="snapshot")
+    app.add_tasks_from(deploy_jobs.blueprint(), namespace="deploy")
     return app
 
 
@@ -123,12 +131,39 @@ def runtime_driver_from_env(env: Mapping[str, str]) -> RuntimeDriver | None:
             raise CompositionError(f"unknown {RUNTIME_DRIVER_ENV} {other!r}")
 
 
+def build_driver_from_env(env: Mapping[str, str]) -> BuildDriver | None:
+    """``SSC_BUILD_DRIVER``: unset means none (builds fail with ``BUILD_DRIVER_UNAVAILABLE``),
+    ``fake`` the in-memory builder. Cloud Build arrives with SSC-015."""
+    match env.get(BUILD_DRIVER_ENV, ""):
+        case "":
+            return None
+        case "fake":
+            return FakeBuildDriver()
+        case other:
+            raise CompositionError(f"unknown {BUILD_DRIVER_ENV} {other!r}")
+
+
+def metrics_from_env(env: Mapping[str, str]) -> MetricsPort:
+    """``SSC_METRICS_KEY`` keys the recorder; unset records nothing, malformed refuses to start."""
+    value = env.get(METRICS_KEY_ENV)
+    if not value:
+        log.warning("%s is not set: no metrics events will be recorded", METRICS_KEY_ENV)
+        return metrics_port(None)
+    try:
+        return metrics_port(parse_master_key(value))
+    except MetricsKeyError as exc:
+        raise CompositionError(str(exc)) from None
+
+
 def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
     """Refuse any fake port unless ``SSC_ENV`` is ``dev`` or ``test``."""
     fakes = [
         name
-        for name, value in (("runtime_driver", ports.runtime_driver),)
-        if isinstance(value, FakeRuntimeDriver)
+        for name, value in (
+            ("runtime_driver", ports.runtime_driver),
+            ("build_driver", ports.build_driver),
+        )
+        if isinstance(value, FakeRuntimeDriver | FakeBuildDriver)
     ]
     if fakes and env.get(ENV_ENV) not in FAKE_ENVIRONMENTS:
         raise CompositionError(
@@ -144,6 +179,9 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         runtime_driver=runtime_driver_from_env(env),
         release_specs=BundleReleaseSpecs(),
         snapshot=Snapshots(engine),
+        prod_gate=approvals_prod_gate(),
+        build_driver=build_driver_from_env(env),
+        metrics=metrics_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports
@@ -201,8 +239,10 @@ __all__ = [
     "PortsMissingError",
     "WorkerSettings",
     "build_app",
+    "build_driver_from_env",
     "compose_ports",
     "core_blueprint",
+    "metrics_from_env",
     "ports_of",
     "queue_conninfo",
     "refuse_fakes",

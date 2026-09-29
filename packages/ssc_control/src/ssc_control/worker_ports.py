@@ -3,7 +3,7 @@
 
 A task declared with ``pass_context=True`` calls ``ports_of(context)``. ``worker.run`` builds the
 production ``Ports``; tests build their own. Lanes add a field here, with a safe default, when
-they first need one (``build_driver`` arrives with B4).
+they first need one.
 """
 
 from collections.abc import Callable
@@ -14,7 +14,10 @@ from typing import Final, cast
 from procrastinate import JobContext
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ssc_control.deploy.build_driver import BuildDriver
 from ssc_control.ports import (
+    MetricsPort,
+    NullMetricsPort,
     NullSnapshotPort,
     NullTimersPort,
     ProdGate,
@@ -35,8 +38,10 @@ def _utcnow() -> datetime:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Ports:
-    """``runtime_driver`` None means no runtime is configured: the reconciler defers nothing.
-    ``blob_store`` None until the first lane that stores blobs from a job wires one (A1b)."""
+    """``runtime_driver`` None means no runtime is configured: the reconciler defers nothing
+    and deployments fail with ``RUNTIME_UNAVAILABLE``. ``build_driver`` None fails builds with
+    ``BUILD_DRIVER_UNAVAILABLE``. ``blob_store`` None until the first lane that stores blobs from
+    a job wires one (A1b)."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -46,6 +51,8 @@ class Ports:
     timers: TimersPort = field(default_factory=NullTimersPort)
     prod_gate: ProdGate = field(default_factory=RefusingProdGate)
     clock: Callable[[], datetime] = _utcnow
+    build_driver: BuildDriver | None = None
+    metrics: MetricsPort = field(default_factory=NullMetricsPort)
 
 
 class PortsMissingError(RuntimeError):

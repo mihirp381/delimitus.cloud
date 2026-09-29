@@ -35,6 +35,11 @@ class DeferralError(RuntimeError):
     pass
 
 
+def env_lock(env_id: str) -> str:
+    """The ``lock`` every job that calls the runtime driver for ``env_id`` takes (decision 014)."""
+    return f"env:{env_id}"
+
+
 async def defer(  # noqa: PLR0913  (keyword-only)
     conn: AsyncConnection,
     task_name: str,
