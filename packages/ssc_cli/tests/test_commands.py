@@ -456,6 +456,37 @@ def test_two_stored_grants_below_the_floor_go_in_one_unshare(cli, scripted, fake
     assert (result.subject_kind, result.subject_id, result.changed) == ("user", OLD1, True)
 
 
+def test_unshares_that_leave_another_stored_grant_name_every_one(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/grants"
+    legacy = [
+        {"id": f"gnt_{i}", "role": "user", "subject_kind": "user", "subject_id": uid}
+        for i, uid in enumerate((OLD1, OLD2))
+    ]
+    kept = {"id": "gnt_9", "role": "builder", "subject_kind": "user", "subject_id": USR}
+    for _ in range(3):
+        scripted.add("GET", path, _grants(4, *legacy, kept))
+        scripted.add("PUT", path, fake_problem(422, "VALIDATION_FAILED"))
+    both = f"`ssc unshare demo {OLD1} {OLD2} --env preview`"
+    for first in (OLD1, OLD2):
+        r = cli("unshare", "demo", first, "--env", "preview", session=scripted.session())
+        assert r.code == ExitCode.FAILED
+        assert f"remove them first with {both}." in _fix(r.stderr)
+    r = cli("unshare", "demo", USR, "--env", "preview", session=scripted.session())
+    assert f"`ssc unshare demo {OLD1} {OLD2} {USR} --env preview`" in _fix(r.stderr)
+
+
+def test_unshare_says_which_subjects_had_no_grant(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    mine = {"id": "gnt_2", "role": "user", "subject_kind": "user", "subject_id": USR}
+    scripted.add("GET", path, _grants(3, mine))
+    scripted.add("PUT", path, _grants(4))
+    r = cli("unshare", "demo", USR, OLD1, "--org", session=scripted.session())
+    assert r.code == 0, r.stdout
+    assert r.stdout.startswith(
+        f"Removed {USR} from prod; {OLD1}, everyone in the org had no grant.\n"
+    )
+
+
 def test_unshare_takes_ids_and_the_org_in_one_put(cli, scripted):
     path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
     mine = {"id": "gnt_2", "role": "user", "subject_kind": "user", "subject_id": USR}

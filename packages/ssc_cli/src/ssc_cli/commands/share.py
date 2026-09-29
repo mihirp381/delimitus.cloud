@@ -166,13 +166,18 @@ def unshare(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to the comman
     def named(subjects: list[Subject], g: GrantOut) -> bool:
         return any(s.matches(g) for s in subjects)
 
+    had: list[Subject] = []
+
     def change(subjects: list[Subject], grants: list[GrantOut]) -> list[GrantIn] | None:
-        if not any(named(subjects, g) for g in grants):
+        had[:] = [s for s in subjects if any(s.matches(g) for g in grants)]
+        if not had:
             return None
         return [_to_in(g) for g in grants if not named(subjects, g)]
 
     def done(subjects: list[Subject]) -> str:
-        return f"Removed {', '.join(s.label for s in subjects)} from {env.value}."
+        text = f"Removed {', '.join(s.label for s in had)} from {env.value}"
+        missing = [s.label for s in subjects if s not in had]
+        return f"{text}; {', '.join(missing)} had no grant." if missing else f"{text}."
 
     # A deactivated person's grant is still worth removing.
     _run(ctx, app, env, targets, change, json_mode=json_mode, done=done, active_only=False)
@@ -315,36 +320,49 @@ def _ambiguous(what: str, options: list[str], prefix: str) -> CliError:
 
 
 def rules_fix(app_ref: str, env: Env, current: list[GrantOut], desired: list[GrantIn]) -> str:
-    """Which grants break the sharing rules, and what to run about each."""
+    """Which grants break the sharing rules, and what to run about each.
+
+    Every stored grant below the floor blocks every write, so the ``ssc unshare`` it suggests names
+    all of them at once, plus the grants this command removes or replaces.
+    """
     floor = FLOOR[env]
     allowed = " or ".join(r for r, n in RANK.items() if n >= RANK[floor.value])
+
+    def below(role: str) -> bool:
+        rank = RANK.get(role)
+        return rank is not None and rank < RANK[floor.value]
+
     stored = {(g.role, g.subject_kind, g.subject_id) for g in current}
+    kept = {(g.role, g.subject_kind, g.subject_id) for g in desired}
     fixes: list[str] = []
     blocking: list[str] = []
+    changed: list[str] = []
+    for g in current:
+        arg = g.subject_id or "--org"
+        if below(g.role):
+            blocking.append(arg)
+            fixes.append(
+                f"the {g.role} grant for {g.subject_id or 'everyone in the org'} was saved before "
+                f"the rule and blocks every change to {env.value}"
+            )
+        elif (g.role, g.subject_kind, g.subject_id) not in kept:
+            changed.append(arg)
     seen: set[tuple[str, str | None]] = set()
     for g in desired:
         who = g.subject_id or "everyone in the org"
-        rank = RANK.get(g.role)
-        if rank is not None and rank < RANK[floor.value]:
-            if (g.role, g.subject_kind, g.subject_id) in stored:
-                blocking.append(g.subject_id or "--org")
-                fixes.append(
-                    f"the {g.role} grant for {who} was saved before the rule and blocks every "
-                    f"change to {env.value}"
-                )
-            else:
-                fixes.append(
-                    f"{env.value} takes {allowed} grants, so {who} cannot be a {g.role} there; "
-                    f"use `--role {floor.value}`"
-                )
+        if below(g.role) and (g.role, g.subject_kind, g.subject_id) not in stored:
+            fixes.append(
+                f"{env.value} takes {allowed} grants, so {who} cannot be a {g.role} there; "
+                f"use `--role {floor.value}`"
+            )
         if (g.subject_kind, g.subject_id) in seen:
             fixes.append(f"{who} has two grants; keep one")
         seen.add((g.subject_kind, g.subject_id))
     if blocking:
-        args = " ".join(dict.fromkeys(blocking))
+        args = list(dict.fromkeys(blocking + changed))
         fixes.append(
-            f"remove {'them' if len(blocking) > 1 else 'it'} first with "
-            f"`ssc unshare {app_ref} {args} --env {env.value}`"
+            f"remove {'them' if len(args) > 1 else 'it'} first with "
+            f"`ssc unshare {app_ref} {' '.join(args)} --env {env.value}`"
         )
     if not fixes:
         return (
