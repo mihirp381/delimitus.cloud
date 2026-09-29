@@ -11,9 +11,14 @@ asks for the approvals itself and answers ``202``: the command prints the approv
 The API keeps the reasons for ``VALIDATION_FAILED`` and ``FORBIDDEN`` in its log (decision 019),
 so the ``Fix:`` line for them is worked out here from the sharing rules: which grant is below its
 environment's floor or repeated, or who may change that environment's sharing.
+
+A person can be named by email and a group by name. Both are display data that several people or
+groups can share, so the API answers a list and the command goes on only when exactly one fits;
+otherwise it names the candidates' ids. Only org admins may look people up by email.
 """
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -24,16 +29,29 @@ import typer
 from ssc_cli.api import ApiClient
 from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.commands.status import AppArg
-from ssc_cli.errors import CliError
+from ssc_cli.errors import (
+    GROUP_NOT_FOUND,
+    SUBJECT_AMBIGUOUS,
+    USER_NOT_FOUND,
+    CliError,
+    ExitCode,
+    local_error,
+)
 from ssc_cli.models import GrantIn, GrantOut, GrantsOut, GrantsPending
 from ssc_cli.output import dash, print_json, say, table
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import GrantRow, ShareResult
 from ssc_contracts.errors import ErrorCode
-from ssc_contracts.ids import prefix_of
+from ssc_contracts.ids import PREFIXES, prefix_of
 
 MAX_STALE_RETRIES: Final = 3
 SUBJECT_KINDS: Final = {"usr": "user", "grp": "group"}
+# What GET /v1/users?email= and GET /v1/groups?name= accept.
+EMAIL: Final = re.compile(r"[^@\s]+@[^@\s]+")
+MIN_EMAIL: Final = 3
+MAX_EMAIL: Final = 320
+MAX_GROUP_NAME: Final = 200
+ACTIVE: Final = "active"
 
 
 class Env(StrEnum):
@@ -52,7 +70,12 @@ FLOOR: Final = {Env.prod: Role.user, Env.preview: Role.builder}
 DEFAULT_ROLE: Final = FLOOR
 RANK: Final[dict[str, int]] = {Role.user.value: 1, Role.builder.value: 2}
 
-WhoArg = Annotated[str | None, typer.Argument(help="A usr_ or grp_ id.", show_default=False)]
+WhoArg = Annotated[
+    str | None,
+    typer.Argument(
+        help="A usr_ or grp_ id, a person's email address, or a group's name.", show_default=False
+    ),
+]
 OrgOpt = Annotated[bool, typer.Option("--org", help="Everyone in the org instead of one id.")]
 EnvOpt = Annotated[Env, typer.Option("--env", help="Which environment.")]
 
@@ -61,12 +84,24 @@ EnvOpt = Annotated[Env, typer.Option("--env", help="Which environment.")]
 class Subject:
     kind: str
     id: str | None
+    label: str
 
     def matches(self, g: GrantOut) -> bool:
         return g.subject_kind == self.kind and g.subject_id == self.id
 
-    def label(self) -> str:
-        return self.id or "everyone in the org"
+
+ORG: Final = Subject("org", None, "everyone in the org")
+
+
+@dataclass(frozen=True, slots=True)
+class Lookup:
+    """A person by email or a group by name, found through the API when the command runs."""
+
+    kind: str
+    key: str
+
+
+type Who = Subject | Lookup
 
 
 def share(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to the command line)
@@ -82,19 +117,20 @@ def share(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to the command 
     json_mode: JsonOpt = False,
 ) -> None:
     """Let a person, a group or the whole org use an app environment."""
-    subject = _subject(who, org)
-    wanted = GrantIn(
-        role=(role or DEFAULT_ROLE[env]).value, subject_kind=subject.kind, subject_id=subject.id
-    )
+    target = _who(who, org)
+    wanted_role = (role or DEFAULT_ROLE[env]).value
 
-    def change(grants: list[GrantOut]) -> list[GrantIn] | None:
+    def change(subject: Subject, grants: list[GrantOut]) -> list[GrantIn] | None:
         mine = [g for g in grants if subject.matches(g)]
-        if len(mine) == 1 and mine[0].role == wanted.role:
+        if len(mine) == 1 and mine[0].role == wanted_role:
             return None
+        wanted = GrantIn(role=wanted_role, subject_kind=subject.kind, subject_id=subject.id)
         return [_to_in(g) for g in grants if not subject.matches(g)] + [wanted]
 
-    done = f"Shared {env.value} with {subject.label()} as {wanted.role}."
-    _run(ctx, app, env, change, json_mode=json_mode, done=done)
+    def done(subject: Subject) -> str:
+        return f"Shared {env.value} with {subject.label} as {wanted_role}."
+
+    _run(ctx, app, env, target, change, json_mode=json_mode, done=done, active_only=True)
 
 
 def unshare(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to the command line)
@@ -106,25 +142,36 @@ def unshare(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to the comman
     json_mode: JsonOpt = False,
 ) -> None:
     """Remove a person's, a group's or the org's grant on an app environment."""
-    subject = _subject(who, org)
+    target = _who(who, org)
 
-    def change(grants: list[GrantOut]) -> list[GrantIn] | None:
+    def change(subject: Subject, grants: list[GrantOut]) -> list[GrantIn] | None:
         if not any(subject.matches(g) for g in grants):
             return None
         return [_to_in(g) for g in grants if not subject.matches(g)]
 
-    done = f"Removed {subject.label()} from {env.value}."
-    _run(ctx, app, env, change, json_mode=json_mode, done=done)
+    def done(subject: Subject) -> str:
+        return f"Removed {subject.label} from {env.value}."
+
+    # A deactivated person's grant is still worth removing.
+    _run(ctx, app, env, target, change, json_mode=json_mode, done=done, active_only=False)
 
 
-Change = Callable[[list[GrantOut]], list[GrantIn] | None]
+Change = Callable[[Subject, list[GrantOut]], list[GrantIn] | None]
 
 
 def _run(  # noqa: PLR0913
-    ctx: typer.Context, app: str, env: Env, change: Change, *, json_mode: bool, done: str
+    ctx: typer.Context,
+    app: str,
+    env: Env,
+    who: Who,
+    change: Change,
+    *,
+    json_mode: bool,
+    done: Callable[[Subject], str],
+    active_only: bool,
 ) -> None:
     with handled(json_mode), session(ctx).client() as client:
-        result = apply_change(client, app, env, change)
+        subject, result = apply_change(client, app, env, who, change, active_only=active_only)
     if json_mode:
         print_json(result)
         return
@@ -132,7 +179,7 @@ def _run(  # noqa: PLR0913
         say(f"Waiting for approval, nothing changed yet: {', '.join(result.pending)}.")
         say("Run the same command again once another admin of the org has approved.")
     else:
-        say(done if result.changed else "Nothing to change.")
+        say(done(subject) if result.changed else "Nothing to change.")
     say(
         table(
             ("ROLE", "KIND", "SUBJECT"),
@@ -141,15 +188,18 @@ def _run(  # noqa: PLR0913
     )
 
 
-def apply_change(client: ApiClient, app_ref: str, env_name: Env, change: Change) -> ShareResult:
+def apply_change(  # noqa: PLR0913
+    client: ApiClient, app_ref: str, env_name: Env, who: Who, change: Change, *, active_only: bool
+) -> tuple[Subject, ShareResult]:
     app = resolve_app(client, app_ref)
     env = environment(app, env_name.value)
+    subject = resolve_subject(client, who, env_name, active_only=active_only)
     attempt = 0
     while True:
         current, etag = client.get_grants(app.id, env.id)
-        desired = change(current.grants)
+        desired = change(subject, current.grants)
         if desired is None:
-            return _result(app.id, env_name, current, changed=False)
+            return subject, _result(app.id, env_name, subject, current, changed=False)
         try:
             after = client.put_grants(app.id, env.id, desired, etag)
         except CliError as e:
@@ -164,8 +214,76 @@ def apply_change(client: ApiClient, app_ref: str, env_name: Env, change: Change)
                 e.fix = forbidden_fix(env_name)
             raise
         if isinstance(after, GrantsPending):
-            return _result(app.id, env_name, current, changed=False, pending=after.approval_ids)
-        return _result(app.id, env_name, after, changed=True)
+            pending = after.approval_ids
+            return subject, _result(
+                app.id, env_name, subject, current, changed=False, pending=pending
+            )
+        return subject, _result(app.id, env_name, subject, after, changed=True)
+
+
+def resolve_subject(client: ApiClient, who: Who, env: Env, *, active_only: bool) -> Subject:
+    """The one person or group ``who`` names. ``active_only`` passes over deactivated people."""
+    if isinstance(who, Subject):
+        return who
+    if who.kind == "user":
+        return _person(client, who.key, active_only=active_only)
+    return _group(client, who.key, env)
+
+
+def _person(client: ApiClient, email: str, *, active_only: bool) -> Subject:
+    try:
+        found = client.find_users(email).users
+    except CliError as e:
+        if e.body.code == ErrorCode.FORBIDDEN:
+            e.fix = (
+                "only an org admin can look people up by email, so a builder shares by usr_ id: "
+                "ask the person for theirs (their `ssc whoami` shows it as subject), or ask an "
+                "org admin to share by email."
+            )
+        raise
+    fits = [u for u in found if u.status == ACTIVE] if active_only else found
+    if not fits:
+        detail = f"No one in the org has the address {email}."
+        if found:
+            ids = ", ".join(u.id for u in found)
+            detail = (
+                f"Everyone with the address {email} is deactivated ({ids}), so a grant would let "
+                "no one in. Give the usr_ id to share anyway."
+            )
+        raise local_error(USER_NOT_FOUND, "No such person.", detail)
+    if len(fits) > 1:
+        options = [f"{u.id} ({u.display_name}, {u.status})" for u in fits]
+        raise _ambiguous(f"{len(fits)} people have the address {email}", options, "usr_")
+    return Subject("user", fits[0].id, f"{email} ({fits[0].id})")
+
+
+def _group(client: ApiClient, name: str, env: Env) -> Subject:
+    try:
+        found = client.find_groups(name).groups
+    except CliError as e:
+        if e.body.code == ErrorCode.FORBIDDEN:
+            e.fix = forbidden_fix(env)
+        raise
+    if not found:
+        raise local_error(
+            GROUP_NOT_FOUND,
+            "No such group.",
+            f"The org has no group named {name!r}. Group names come from the company directory "
+            "and must match whole (case does not matter).",
+        )
+    if len(found) > 1:
+        options = [f"{g.id} ({g.name}, {g.member_count} active members)" for g in found]
+        raise _ambiguous(f"{len(found)} groups are named {name!r}", options, "grp_")
+    g = found[0]
+    return Subject("group", g.id, f"group {g.name} ({g.id})")
+
+
+def _ambiguous(what: str, options: list[str], prefix: str) -> CliError:
+    e = local_error(
+        SUBJECT_AMBIGUOUS, "More than one match.", f"{what}: {'; '.join(options)}.", ExitCode.USAGE
+    )
+    e.fix = f"run the command again with the {prefix} id you mean."
+    return e
 
 
 def rules_fix(app_ref: str, env: Env, current: list[GrantOut], desired: list[GrantIn]) -> str:
@@ -224,8 +342,14 @@ def approval_fix(environment_id: str, desired: list[GrantIn]) -> str:
     )
 
 
-def _result(
-    app_id: str, env_name: Env, out: GrantsOut, *, changed: bool, pending: list[str] | None = None
+def _result(  # noqa: PLR0913
+    app_id: str,
+    env_name: Env,
+    subject: Subject,
+    out: GrantsOut,
+    *,
+    changed: bool,
+    pending: list[str] | None = None,
 ) -> ShareResult:
     return ShareResult(
         app_id=app_id,
@@ -238,6 +362,8 @@ def _result(
             for g in out.grants
         ],
         pending=pending or [],
+        subject_kind=subject.kind,
+        subject_id=subject.id,
     )
 
 
@@ -245,18 +371,30 @@ def _to_in(g: GrantOut) -> GrantIn:
     return GrantIn(role=g.role, subject_kind=g.subject_kind, subject_id=g.subject_id)
 
 
-def _subject(who: str | None, org: bool) -> Subject:
+def _who(who: str | None, org: bool) -> Who:
+    """What was typed, checked before any request: an id, an email address or a group name."""
     if org == (who is not None):
-        raise typer.BadParameter("give exactly one of a usr_/grp_ id or --org", param_hint="WHO")
+        raise typer.BadParameter("give exactly one of a person, a group or --org", param_hint="WHO")
     if who is None:
-        return Subject("org", None)
+        return ORG
     try:
-        kind = SUBJECT_KINDS.get(prefix_of(who))
+        prefix = prefix_of(who)
     except ValueError:
-        kind = None
-    if kind is None:
+        prefix = None
+    if prefix in SUBJECT_KINDS:
+        return Subject(SUBJECT_KINDS[prefix], who, who)
+    if prefix in PREFIXES:
         raise typer.BadParameter(
-            f"{who!r} is not a usr_ or grp_ id; sharing by email is not available yet",
-            param_hint="WHO",
+            f"{who!r} is an id, but not of a person (usr_) or a group (grp_)", param_hint="WHO"
         )
-    return Subject(kind, who)
+    if who.startswith(tuple(f"{p}_" for p in SUBJECT_KINDS)):
+        raise typer.BadParameter(f"{who!r} is not a whole usr_ or grp_ id", param_hint="WHO")
+    if "@" in who:
+        if not (MIN_EMAIL <= len(who) <= MAX_EMAIL and EMAIL.fullmatch(who)):
+            raise typer.BadParameter(f"{who!r} is not an email address", param_hint="WHO")
+        return Lookup("user", who)
+    if not 1 <= len(who) <= MAX_GROUP_NAME:
+        raise typer.BadParameter(
+            f"a group name has 1 to {MAX_GROUP_NAME} characters", param_hint="WHO"
+        )
+    return Lookup("group", who)

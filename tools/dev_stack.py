@@ -183,12 +183,16 @@ def mint(  # noqa: PLR0913  (each is a token claim)
     agent: bool = False,
     client_id: str | None = None,
     scope: str | None = None,
+    audience: str | None = None,
 ) -> str:
-    """An API token signed with the dev key. ``sub`` defaults to the org's admin."""
+    """An API token signed with the dev key. ``sub`` defaults to the org's admin; ``audience``
+    defaults to ``/v1``'s (an operator token for ``/internal/v1`` needs the internal one)."""
     state = load_state(d)
     if "org_id" not in state:
         raise SystemExit(f"no dev stack in {d}; run `up` first")
     extra: dict[str, Any] = {}
+    if audience:
+        extra["audience"] = audience
     if agent:
         extra["agent"] = True
     if client_id:

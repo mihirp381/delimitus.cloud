@@ -8,7 +8,7 @@ from ssc_cli.shapes import WhoamiResult
 
 
 def whoami(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
-    """Show the org and person the token belongs to."""
+    """Show the org and person the token belongs to, and their org role."""
     with handled(json_mode), session(ctx).client() as client:
         me = client.whoami()
         result = WhoamiResult(
@@ -19,6 +19,7 @@ def whoami(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
             credential_id=me.credential_id,
             is_agent=me.is_agent,
             client_id=me.client_id,
+            role=me.role,
         )
     if json_mode:
         print_json(result)
@@ -31,6 +32,7 @@ def whoami(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
                 ("org", result.org_id),
                 ("subject", result.subject),
                 ("kind", result.kind),
+                ("role", dash(result.role)),
                 ("agent", "yes" if result.is_agent else "no"),
                 ("client id", dash(result.client_id)),
             ],

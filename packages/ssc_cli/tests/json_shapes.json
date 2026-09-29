@@ -142,7 +142,9 @@
     "environment_id": "string",
     "grants": "array<GrantRow>",
     "grants_version": "integer",
-    "pending": "array<string>"
+    "pending": "array<string>",
+    "subject_id": "string|null",
+    "subject_kind": "string"
   },
   "TokenClearResult": {
     "api_url": "string",
@@ -161,6 +163,7 @@
     "is_agent": "boolean",
     "kind": "string",
     "org_id": "string",
+    "role": "string|null",
     "subject": "string"
   }
 }

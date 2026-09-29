@@ -25,6 +25,7 @@ class WhoamiResult(Shape):
     credential_id: str
     is_agent: bool
     client_id: str | None
+    role: str | None
 
 
 class TokenSetResult(Shape):
@@ -89,7 +90,9 @@ class GrantRow(Shape):
 
 class ShareResult(Shape):
     """``share`` and ``unshare``: the sharing rules after the change. When ``pending`` names
-    approval requests, nothing changed yet and ``grants`` are the rules still in force."""
+    approval requests, nothing changed yet and ``grants`` are the rules still in force.
+    ``subject_kind`` and ``subject_id`` say whose grant it was, after an email or group name was
+    looked up."""
 
     app_id: str
     environment: str
@@ -98,6 +101,8 @@ class ShareResult(Shape):
     changed: bool
     grants: list[GrantRow]
     pending: list[str] = Field(default_factory=list[str])
+    subject_kind: str
+    subject_id: str | None
 
 
 class DoctorResult(Shape):

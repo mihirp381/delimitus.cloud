@@ -57,6 +57,9 @@ exit 0. Tell the person, and run the same command again once it is approved. The
 `APPROVAL_REQUIRED` means showing an app that reaches company data to more people needs another
 admin's approval first; without `--json` the error says how to ask.
 
+`ssc share` names a person by `usr_` id or email address (looking up an email needs an org admin's
+token) and a group by `grp_` id or name. When more than one fits, it exits 2 and lists their ids.
+
 Run `ssc doctor` after every change that affects how the app installs or starts, and fix every
 finding marked `block`.
 

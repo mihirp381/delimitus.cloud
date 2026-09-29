@@ -175,8 +175,13 @@ def test_refusal_rendering(cli, fake_api, fake_problem, isolated):
     [
         ("share", "demo"),
         ("share", "demo", USR, "--org"),
-        ("share", "demo", "bob@example.com"),
+        ("share", "demo", "bob@"),
+        ("share", "demo", "bob smith@example.com"),
+        ("share", "demo", "usr_short"),
+        ("share", "demo", "grp_AAAAAAAAAAAAAAAAAAAA"),
         ("share", "demo", APP_ID),
+        ("unshare", "demo", ""),
+        ("unshare", "demo", "g" * 201),
         ("share", "demo", "--org", "--env", "staging"),
         ("share", "demo", "--org", "--role", "owner"),
         ("unshare", "demo", "--org", "--role", "user"),
@@ -438,6 +443,203 @@ def test_forbidden_says_who_may_change_that_environment(cli, scripted, fake_prob
     ErrorResult.model_validate(as_json.json())
 
 
+# ── naming a person by email or a group by name ─────────────────────────────
+
+BOB = "usr_bobbobbobbobbobbobbo"
+BOB2 = "usr_bob2bob2bob2bob2bob2"
+GRP = "grp_financefinancefinanc"
+GRP2 = "grp_finance2finance2fina"
+
+
+def _person(uid: str, status: str = "active") -> dict[str, str]:
+    return {
+        "id": uid,
+        "display_name": f"Bob {uid[-3:]}",
+        "email": "bob+ops@example.com",
+        "role": "member",
+        "status": status,
+    }
+
+
+def _users(*people: dict[str, str]) -> httpx2.Response:
+    return httpx2.Response(200, json={"users": list(people)})
+
+
+def _group(gid: str, name: str = "Finance Team", members: int = 3) -> dict[str, object]:
+    return {"id": gid, "name": name, "member_count": members}
+
+
+def _groups(*groups: dict[str, object]) -> httpx2.Response:
+    return httpx2.Response(200, json={"groups": list(groups)})
+
+
+def _lookups(fake_api) -> list[httpx2.Request]:
+    return [r for r in fake_api.seen if r.url.path in {"/v1/users", "/v1/groups"}]
+
+
+def _grant_calls(fake_api) -> list[httpx2.Request]:
+    return [r for r in fake_api.seen if r.url.path.endswith("/grants")]
+
+
+def test_share_by_email_grants_the_one_active_person(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    scripted.add("GET", "/v1/users", _users(_person(BOB2, "deactivated"), _person(BOB)))
+    scripted.add("GET", path, _grants(1))
+    scripted.add("PUT", path, _grants(2))
+    r = cli("share", "demo", "Bob+Ops@Example.com", "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    result = ShareResult.model_validate(r.json())
+    assert (result.subject_kind, result.subject_id, result.changed) == ("user", BOB, True)
+    (lookup,) = _lookups(scripted)
+    assert lookup.url.params["email"] == "Bob+Ops@Example.com"
+    assert "%2B" in str(lookup.url)
+    (put,) = _puts(scripted)
+    assert json.loads(put.content)["grants"] == [
+        {"role": "user", "subject_kind": "user", "subject_id": BOB}
+    ]
+    human = cli("share", "demo", "Bob+Ops@Example.com", session=scripted.session())
+    assert human.stdout.startswith(f"Shared prod with Bob+Ops@Example.com ({BOB}) as user.")
+
+
+def test_share_by_id_or_org_looks_nothing_up(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    scripted.add("GET", path, _grants(1))
+    scripted.add("PUT", path, _grants(2))
+    r = cli("share", "demo", USR, "--json", session=scripted.session())
+    assert (r.json()["subject_kind"], r.json()["subject_id"]) == ("user", USR)
+    r = cli("share", "demo", "--org", "--json", session=scripted.session())
+    assert (r.json()["subject_kind"], r.json()["subject_id"]) == ("org", None)
+    assert _lookups(scripted) == []
+
+
+def test_an_address_several_people_share_names_each_of_them(cli, scripted):
+    scripted.add("GET", "/v1/users", _users(_person(BOB), _person(BOB2)))
+    r = cli("share", "demo", "bob+ops@example.com", "--json", session=scripted.session())
+    assert r.code == ExitCode.USAGE
+    error = r.json()["error"]
+    assert (error["code"], error["status"]) == ("SUBJECT_AMBIGUOUS", None)
+    assert BOB in error["detail"]
+    assert BOB2 in error["detail"]
+    assert _grant_calls(scripted) == []
+    human = cli("share", "demo", "bob+ops@example.com", session=scripted.session())
+    assert _fix(human.stderr) == "run the command again with the usr_ id you mean."
+
+
+def test_share_passes_over_deactivated_people_and_unshare_does_not(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    held = {"id": "gnt_b", "role": "user", "subject_kind": "user", "subject_id": BOB}
+    scripted.add("GET", "/v1/users", _users(_person(BOB, "deactivated")))
+    scripted.add("GET", path, _grants(4, held))
+    scripted.add("PUT", path, _grants(5))
+    r = cli("share", "demo", "bob+ops@example.com", "--json", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    error = r.json()["error"]
+    assert (error["code"], error["status"]) == ("USER_NOT_FOUND", None)
+    assert BOB in error["detail"]
+    assert _grant_calls(scripted) == []
+    gone = cli("unshare", "demo", "bob+ops@example.com", "--json", session=scripted.session())
+    assert gone.code == 0, gone.stdout
+    assert (gone.json()["changed"], gone.json()["subject_id"]) == (True, BOB)
+    (put,) = _puts(scripted)
+    assert json.loads(put.content) == {"grants": []}
+
+
+def test_an_unknown_address_is_user_not_found(cli, scripted):
+    scripted.add("GET", "/v1/users", _users())
+    r = cli("unshare", "demo", "nobody@example.com", "--json", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert r.json()["error"]["code"] == "USER_NOT_FOUND"
+    assert "nobody@example.com" in r.json()["error"]["detail"]
+    assert _grant_calls(scripted) == []
+
+
+def test_a_builder_sharing_by_email_is_told_to_use_the_usr_id(cli, scripted, fake_problem):
+    scripted.add("GET", "/v1/users", fake_problem(403, "FORBIDDEN"))
+    r = cli("share", "demo", "bob@example.com", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert "Code: FORBIDDEN" in r.stderr
+    assert _fix(r.stderr).startswith(
+        "only an org admin can look people up by email, so a builder shares by usr_ id"
+    )
+    as_json = cli("share", "demo", "bob@example.com", "--json", session=scripted.session())
+    assert (as_json.json()["error"]["code"], as_json.json()["error"]["status"]) == (
+        "FORBIDDEN",
+        403,
+    )
+    assert _grant_calls(scripted) == []
+
+
+def test_share_by_group_name(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/grants"
+    scripted.add("GET", "/v1/groups", _groups(_group(GRP)))
+    scripted.add("GET", path, _grants(1))
+    scripted.add("PUT", path, _grants(2))
+    args = ("share", "demo", "finance team", "--env", "preview")
+    r = cli(*args, "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    assert (r.json()["subject_kind"], r.json()["subject_id"]) == ("group", GRP)
+    (lookup,) = _lookups(scripted)
+    assert (lookup.url.path, lookup.url.params["name"]) == ("/v1/groups", "finance team")
+    (put,) = _puts(scripted)
+    assert json.loads(put.content)["grants"] == [
+        {"role": "builder", "subject_kind": "group", "subject_id": GRP}
+    ]
+    human = cli(*args, session=scripted.session())
+    assert human.stdout.startswith(f"Shared preview with group Finance Team ({GRP}) as builder.")
+
+
+def test_a_group_name_two_groups_share_names_both(cli, scripted):
+    scripted.add("GET", "/v1/groups", _groups(_group(GRP), _group(GRP2, "FINANCE TEAM", 0)))
+    r = cli("unshare", "demo", "Finance Team", "--json", session=scripted.session())
+    assert r.code == ExitCode.USAGE
+    error = r.json()["error"]
+    assert error["code"] == "SUBJECT_AMBIGUOUS"
+    assert f"{GRP} (Finance Team, 3 active members)" in error["detail"]
+    assert f"{GRP2} (FINANCE TEAM, 0 active members)" in error["detail"]
+    assert _grant_calls(scripted) == []
+
+
+def test_an_unknown_group_name_is_group_not_found(cli, scripted):
+    scripted.add("GET", "/v1/groups", _groups())
+    r = cli("share", "demo", "Finance", "--json", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert (r.json()["error"]["code"], r.json()["error"]["status"]) == ("GROUP_NOT_FOUND", None)
+    assert _grant_calls(scripted) == []
+
+
+def test_a_group_lookup_refused_says_who_may_share(cli, scripted, fake_problem):
+    scripted.add("GET", "/v1/groups", fake_problem(403, "FORBIDDEN"))
+    r = cli("share", "demo", "Finance", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert _fix(r.stderr).startswith(
+        "only an org admin, the app's owner or a builder on prod can change who uses prod"
+    )
+
+
+def test_whoami_shows_the_org_role(cli, fake_api, isolated):
+    isolated.set_password(SERVICE, "https://api.test", "tok")
+    me = {
+        "org_id": ORG,
+        "subject": USR,
+        "kind": "user",
+        "credential_id": "cred_1",
+        "is_agent": False,
+        "client_id": None,
+    }
+    fake_api.add(
+        "GET",
+        "/v1/whoami",
+        httpx2.Response(200, json={**me, "role": "admin"}),
+        httpx2.Response(200, json={**me, "role": None}),
+    )
+    r = cli("whoami", "--json", session=fake_api.session())
+    assert WhoamiResult.model_validate(r.json()).role == "admin"
+    human = cli("whoami", session=fake_api.session())
+    assert [line.split() for line in human.stdout.splitlines() if line.startswith("role")] == [
+        ["role", "-"]
+    ]
+
+
 def test_the_floor_is_the_apis(cli):
     from ssc_cli.commands.share import FLOOR
     from ssc_control.domain.grant_rules import FLOOR as API_FLOOR
@@ -661,6 +863,70 @@ def test_live_owner_may_remove_every_grant(on_live, live):
     gone = on_live("unshare", name, live.admin_id, "--json")
     assert gone.code == 0, gone.stdout
     assert (gone.json()["changed"], gone.json()["grants"]) == (True, [])
+
+
+def _operator(live) -> httpx2.Client:
+    from ssc_control.api.settings import INTERNAL_AUDIENCE
+
+    token = live.token(kind="operator", sub="op_sync", audience=INTERNAL_AUDIENCE)
+    return httpx2.Client(base_url=live.url, headers={"authorization": f"Bearer {token}"})
+
+
+def test_live_share_by_email_and_group_name(on_live, live, isolated):
+    name = slug()
+    assert on_live("apps", "create", name).code == 0
+    by_email = on_live("share", name, "DEV@example.invalid", "--json")
+    assert by_email.code == 0, by_email.stdout
+    assert (by_email.json()["subject_id"], by_email.json()["changed"]) == (live.admin_id, True)
+
+    team = f"Finance Team {uuid.uuid4().hex[:8]}"
+    key = {"idempotency-key": str(uuid.uuid4())}
+    with _operator(live) as op:
+        made = op.post(
+            "/internal/v1/directory/groups",
+            json={"directory_ref": f"ref-{team}", "display_name": team},
+            headers=key,
+        )
+        assert made.status_code == 200, made.text
+        group = made.json()["group_id"]
+        members = op.put(
+            f"/internal/v1/directory/groups/{group}/members", json={"user_ids": [live.admin_id]}
+        )
+        assert members.status_code == 200, members.text
+    by_name = on_live("share", name, team.upper(), "--env", "preview", "--json")
+    assert by_name.code == 0, by_name.stdout
+    assert by_name.json()["subject_id"] == group
+    assert {"role": "builder", "subject_kind": "group", "subject_id": group} in [
+        {k: g[k] for k in ("role", "subject_kind", "subject_id")} for g in by_name.json()["grants"]
+    ]
+
+
+def test_live_a_member_sharing_by_email_is_told_to_use_the_usr_id(on_live, live, isolated):
+    subject = f"sub-{uuid.uuid4().hex}"
+    person = {
+        "issuer": "https://dev.invalid",
+        "subject": subject,
+        "display_name": "Mia Member",
+        "email": f"{subject}@example.com",
+        "role": "member",
+        "status": "active",
+    }
+    with _operator(live) as op:
+        made = op.post(
+            "/internal/v1/directory/users",
+            json=person,
+            headers={"idempotency-key": str(uuid.uuid4())},
+        )
+        assert made.status_code == 200, made.text
+    isolated.set_password(SERVICE, live.url, live.token(sub=made.json()["user_id"]))
+    name = slug()
+    assert on_live("apps", "create", name).code == 0
+    r = on_live("share", name, "dev@example.invalid")
+    assert r.code == ExitCode.FAILED
+    assert "Code: FORBIDDEN" in r.stderr
+    assert "shares by usr_ id" in _fix(r.stderr)
+    me = on_live("whoami", "--json").json()
+    assert me["role"] == "member"
 
 
 def test_live_widening_a_data_connected_app_says_how_to_ask(on_live, live):

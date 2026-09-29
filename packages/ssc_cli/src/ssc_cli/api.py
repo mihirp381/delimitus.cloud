@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Final, Self
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx2
 from pydantic import BaseModel, ValidationError
@@ -48,11 +48,13 @@ from ssc_cli.models import (
     GrantsIn,
     GrantsOut,
     GrantsPending,
+    GroupMatches,
     OperationAccepted,
     OperationOut,
     ReleaseList,
     ReleaseOut,
     UploadTarget,
+    UserMatches,
     Whoami,
 )
 from ssc_contracts.errors import ErrorCode
@@ -229,6 +231,13 @@ class ApiClient:
     def get_release(self, app_id: str, release_id: str) -> ReleaseOut:
         path = f"/v1/apps/{_seg(app_id)}/releases/{_seg(release_id)}"
         return _parse(self._send("GET", path), ReleaseOut)
+
+    def find_users(self, email: str) -> UserMatches:
+        """The org's people with this address, deactivated ones included. Org admins only."""
+        return _parse(self._send("GET", f"/v1/users?{urlencode({'email': email})}"), UserMatches)
+
+    def find_groups(self, name: str) -> GroupMatches:
+        return _parse(self._send("GET", f"/v1/groups?{urlencode({'name': name})}"), GroupMatches)
 
     # ── transport ────────────────────────────────────────────────────────────
 

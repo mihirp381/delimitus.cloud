@@ -10,7 +10,7 @@ import pytest
 from pydantic import BaseModel
 
 from ssc_cli import models
-from ssc_cli.commands import deploy, releases, rollback
+from ssc_cli.commands import deploy, releases, rollback, share
 from ssc_cli.commands.share import DEFAULT_ROLE, SUBJECT_KINDS, Env, Role
 from ssc_cli.shapes import SHAPES
 
@@ -38,6 +38,10 @@ RESPONSES = (
     models.ActorOut,
     models.ReleaseOut,
     models.ReleaseList,
+    models.UserMatch,
+    models.UserMatches,
+    models.GroupMatch,
+    models.GroupMatches,
 )
 REQUESTS = (
     models.AppCreate,
@@ -116,6 +120,17 @@ def test_release_paging_matches_the_api():
     assert params["limit"]["maximum"] == releases.MAX_PAGE
     before = params["before"]["anyOf"][0]
     assert (before["minimum"], before["maximum"]) == (1, releases.MAX_BEFORE)
+
+
+def test_lookups_are_checked_as_the_api_checks_them():
+    paths = json.loads(OPENAPI.read_text())["paths"]
+    (email,) = paths["/v1/users"]["get"]["parameters"]
+    e = email["schema"]
+    assert (email["name"], e["pattern"]) == ("email", f"^{share.EMAIL.pattern}$")
+    assert (e["minLength"], e["maxLength"]) == (share.MIN_EMAIL, share.MAX_EMAIL)
+    (name,) = paths["/v1/groups"]["get"]["parameters"]
+    assert (name["name"], name["schema"]["minLength"]) == ("name", 1)
+    assert name["schema"]["maxLength"] == share.MAX_GROUP_NAME
 
 
 # ── --json shapes: append-only ───────────────────────────────────────────────

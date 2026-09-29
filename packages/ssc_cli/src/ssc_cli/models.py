@@ -19,6 +19,7 @@ class Whoami(Wire):
     credential_id: str
     is_agent: bool
     client_id: str | None = None
+    role: str | None = None
 
 
 class AppSummary(Wire):
@@ -158,6 +159,28 @@ class ReleaseOut(Wire):
 class ReleaseList(Wire):
     items: list[ReleaseOut]
     next_before: int | None = None
+
+
+class UserMatch(Wire):
+    id: str
+    display_name: str
+    email: str
+    role: str
+    status: str
+
+
+class UserMatches(Wire):
+    users: list[UserMatch]
+
+
+class GroupMatch(Wire):
+    id: str
+    name: str
+    member_count: int
+
+
+class GroupMatches(Wire):
+    groups: list[GroupMatch]
 
 
 class Body(BaseModel):
