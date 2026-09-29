@@ -1664,6 +1664,48 @@
         "title": "GrantsPending",
         "type": "object"
       },
+      "GroupMatch": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "member_count": {
+            "description": "Active members only: a grant gives a deactivated member nothing.",
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "member_count"
+        ],
+        "title": "GroupMatch",
+        "type": "object"
+      },
+      "GroupMatches": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GroupMatch"
+            },
+            "title": "Groups",
+            "type": "array"
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "title": "GroupMatches",
+        "type": "object"
+      },
       "GroupMembersIn": {
         "additionalProperties": false,
         "properties": {
@@ -5274,6 +5316,83 @@
           }
         },
         "summary": "Get Build",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/groups": {
+      "get": {
+        "description": "Those who may change some app's sharing: an active org admin, an app's owner, or a\nbuilder on any environment, with a user credential (``FORBIDDEN`` otherwise).",
+        "operationId": "find_groups_v1_groups_get",
+        "parameters": [
+          {
+            "description": "Matched whole, ignoring case.",
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Matched whole, ignoring case.",
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupMatches"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Find Groups",
         "tags": [
           "v1"
         ]

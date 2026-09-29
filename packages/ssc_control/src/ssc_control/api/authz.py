@@ -3,7 +3,8 @@
 SSC-021 adds the per-app roles; this module starts with the org-admin check the audit log needs
 and the builder check approval requests need. ``active_role`` is the one answer to "is the caller
 an admin": ``require_admin`` and ``GET /v1/whoami`` both use it. ``buildable_app_ids`` lists the
-apps ``require_app_builder`` would allow, for ``GET /v1/apps?builder=me``.
+apps ``require_app_builder`` would allow, for ``GET /v1/apps?builder=me``. ``require_sharer``
+admits those who may change some app's sharing, for ``GET /v1/groups``.
 """
 
 from typing import Literal
@@ -131,3 +132,31 @@ async def buildable_app_ids(uow: UnitOfWork) -> frozenset[str]:
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})
     params = {"org": uow.org_id, "id": principal.subject}
     return frozenset(str(r[0]) for r in await uow.conn.execute(_SELECT_BUILDABLE_APPS, params))
+
+
+# Active, and an org admin, the owner of an app, or a builder on any environment directly, through
+# a group, or through an org-wide builder grant: ``_SELECT_BUILDER`` for some environment.
+_SELECT_SHARER = text(
+    "select 1 from ssc.user_account u "
+    "where u.org_id = :org and u.id = :id and u.status = 'active' and ("
+    "u.role = 'admin' "
+    "or exists (select 1 from ssc.app a where a.org_id = u.org_id and a.owner_user_id = u.id) "
+    "or exists (select 1 from ssc.app_grant g where g.org_id = u.org_id and g.role = 'builder' "
+    "and (g.subject_kind = 'org' "
+    "or (g.subject_kind = 'user' and g.user_id = u.id) "
+    "or (g.subject_kind = 'group' and exists (select 1 from ssc.group_member m "
+    "where m.org_id = g.org_id and m.group_id = g.group_id and m.user_id = u.id)))))"
+)
+
+
+async def require_sharer(uow: UnitOfWork) -> str:
+    """The caller's user id when they may change the sharing of at least one environment: an
+    active org admin (even with no apps), an app's owner, or a builder anywhere. ``FORBIDDEN``
+    otherwise."""
+    principal = uow.principal
+    if principal.kind is not PrincipalKind.USER:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})
+    params = {"org": uow.org_id, "id": principal.subject}
+    if (await uow.conn.execute(_SELECT_SHARER, params)).first() is None:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "not_a_sharer"})
+    return principal.subject

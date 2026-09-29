@@ -11,7 +11,7 @@ The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 |---|---|---|---|---|
 | `user_account` | `display_name` | The person's name from the directory | Shown in the console, in `ssc access explain`, in identity notes, and to active org admins by `GET /v1/users?email=` | Overwrite on request |
 | `user_account` | `email` | Work email from the directory | Display, and finding people to share with: `GET /v1/users?email=` returns every exact match, ignoring case, to active org admins only. Never a key: emails are reused and reassigned. The key is `identity_link` | Overwrite on request |
-| `user_group` | `display_name` | Cached group name (for example "Finance") | Rendering only, never authorisation; the key is `directory_ref` | Overwrite on request |
+| `user_group` | `display_name` | Cached group name (for example "Finance") | Rendering and finding a group to share with: `GET /v1/groups?name=` returns every exact match, ignoring case, to those who may change some app's sharing. Never authorisation; the key is `directory_ref` | Overwrite on request |
 | `identity_link` | `subject` | The identity provider's stable id for the person | The join between a login and a directory record | Delete the link |
 | `audit_event` | `actor_ip` | Client address at the time of an action | Security investigation | Cannot be edited (the log is immutable); redact on export |
 | `approval_request` | `decision_reason` | Free text an SSC operator writes when recording an approval decision; may name people from the email or chat exchange | The reason shown with the decision (SSC-045) | Overwrite on request; the audit row holds no reason |

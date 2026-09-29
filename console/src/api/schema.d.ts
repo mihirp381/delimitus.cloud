@@ -461,6 +461,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find Groups
+         * @description Those who may change some app's sharing: an active org admin, an app's owner, or a
+         *     builder on any environment, with a user credential (``FORBIDDEN`` otherwise).
+         */
+        get: operations["find_groups_v1_groups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/operations/{operation_id}": {
         parameters: {
             query?: never;
@@ -1137,6 +1158,23 @@ export interface components {
              * @description Unchanged: the version the change will replace.
              */
             grants_version: number;
+        };
+        /** GroupMatch */
+        GroupMatch: {
+            /** Id */
+            id: string;
+            /**
+             * Member Count
+             * @description Active members only: a grant gives a deactivated member nothing.
+             */
+            member_count: number;
+            /** Name */
+            name: string;
+        };
+        /** GroupMatches */
+        GroupMatches: {
+            /** Groups */
+            groups: components["schemas"]["GroupMatch"][];
         };
         /** GroupMembersIn */
         GroupMembersIn: {
@@ -3328,6 +3366,65 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    find_groups_v1_groups_get: {
+        parameters: {
+            query: {
+                /** @description Matched whole, ignoring case. */
+                name: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupMatches"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

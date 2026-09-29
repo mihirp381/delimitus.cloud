@@ -20,6 +20,7 @@ import json
 import re
 import secrets
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -707,32 +708,46 @@ def test_admins_find_people_by_email(
         assert_problem(find(token, "shared@example.com"), ErrorCode.FORBIDDEN)
 
 
-async def app_builder_rule(dsn: str, org: str, user: str, apps: list[str]) -> set[str]:
-    """The apps ``require_app_builder`` lets ``user`` ship to, asked one app at a time."""
+type Check = Callable[[UnitOfWork, str], Awaitable[str]]
+
+
+async def passes(dsn: str, org: str, user: str, check: Check, ids: list[str]) -> set[str]:
+    """The ids for which ``check`` (an ``authz.require_*``) lets ``user`` through, one at a time."""
     engine = make_engine(dsn)
     allowed: set[str] = set()
     try:
         async with bound_org(engine, org) as conn:
             principal = Principal(org, user, PrincipalKind.USER, "cred_rule")
             uow = UnitOfWork(conn=conn, principal=principal, request_id="req_rule")
-            for app in apps:
+            for one in ids:
                 try:
-                    await authz.require_app_builder(uow, app)
+                    await check(uow, one)
                 except Refusal:
                     continue
-                allowed.add(app)
+                allowed.add(one)
     finally:
         await engine.dispose()
     return allowed
 
 
-def test_builder_me_lists_the_apps_the_caller_may_ship(
-    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
-) -> None:
+@dataclass(frozen=True)
+class Cast:
+    """Seven people around two apps: the world's ``ledger`` (the admin's) and ``owned``."""
+
+    people: dict[str, str]
+    owned: str
+    owned_prod: str
+    owned_preview: str
+    owner_token: str
+
+
+def cast_of_builders(client: TestClient, world: World, signing_key: SigningKey) -> Cast:
+    """The admin; the owner of ``owned``; a builder on ledger's preview directly, and one through
+    a group on its prod; a user of ledger's prod only; a deactivated builder; and nobody."""
     owner = new_member(client, world)
     owner_token = user_token(signing_key, world.org, owner)
     owned = create_app_as(client, owner_token, "owned")
-    owned_preview = next(e["id"] for e in owned["environments"] if e["name"] == "preview")
+    envs = {e["name"]: e["id"] for e in owned["environments"]}
     direct, grouped, viewer, nobody = (new_member(client, world) for _ in range(4))
     gone_subject = f"sub-{uuid.uuid4().hex}"
     gone = sync_user(client, world, gone_subject).json()["user_id"]
@@ -744,8 +759,6 @@ def test_builder_me_lists_the_apps_the_caller_may_ship(
         r = put_grants(client, world, env, world.admin_token, grants, 1)
         assert r.status_code == 200, r.text
     assert sync_user(client, world, gone_subject, status="deactivated").status_code == 200
-
-    apps = [world.app, owned["id"]]
     people = {
         "admin": world.admin,
         "owner": owner,
@@ -755,6 +768,22 @@ def test_builder_me_lists_the_apps_the_caller_may_ship(
         "gone": gone,
         "nobody": nobody,
     }
+    return Cast(people, owned["id"], envs["prod"], envs["preview"], owner_token)
+
+
+def open_owned_to_the_org(client: TestClient, world: World, cast: Cast) -> None:
+    """An org-wide builder grant on ``owned``'s preview: every active member builds it."""
+    w = World(**{**world.__dict__, "app": cast.owned, "preview": cast.owned_preview})
+    grants = [grant("builder", "org")]
+    r = put_grants(client, w, cast.owned_preview, cast.owner_token, grants, 1)
+    assert r.status_code == 200, r.text
+
+
+def test_builder_me_lists_the_apps_the_caller_may_ship(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    cast = cast_of_builders(client, world, signing_key)
+    ledger, mine = world.app, cast.owned
 
     def listed(user: str) -> set[str]:
         r = client.get(
@@ -766,27 +795,26 @@ def test_builder_me_lists_the_apps_the_caller_may_ship(
         return {a["id"] for a in r.json()["apps"]}
 
     def check(expected: dict[str, set[str]]) -> None:
-        for name, user in people.items():
-            rule = asyncio.run(app_builder_rule(dsns.app, world.org, user, apps))
+        for name, user in cast.people.items():
+            rule = asyncio.run(
+                passes(dsns.app, world.org, user, authz.require_app_builder, [ledger, mine])
+            )
             assert (name, listed(user)) == (name, expected[name]) == (name, rule)
 
-    ledger, mine = world.app, owned["id"]
     # The admin's list is exactly this org's two apps: other tests' orgs have apps too.
     first = {"admin": {ledger, mine}, "owner": {mine}, "direct": {ledger}, "grouped": {ledger}}
-    check({**dict.fromkeys(people, set[str]()), **first})
+    check({**dict.fromkeys(cast.people, set[str]()), **first})
 
-    # An org-wide builder grant makes every active member a builder of that app.
-    w = World(**{**world.__dict__, "app": mine, "preview": owned_preview})
-    org_wide = put_grants(client, w, owned_preview, owner_token, [grant("builder", "org")], 1)
-    assert org_wide.status_code == 200, org_wide.text
+    open_owned_to_the_org(client, world, cast)
     check(
         {
             name: (set[str]() if name == "gone" else first.get(name, set()) | {mine})
-            for name in people
+            for name in cast.people
         }
     )
 
-    everyone = client.get("/v1/apps", headers=auth(user_token(signing_key, world.org, nobody)))
+    nobody = user_token(signing_key, world.org, cast.people["nobody"])
+    everyone = client.get("/v1/apps", headers=auth(nobody))
     assert {a["id"] for a in everyone.json()["apps"]} == {ledger, mine}
     admin = auth(world.admin_token)
     assert_problem(
@@ -797,6 +825,78 @@ def test_builder_me_lists_the_apps_the_caller_may_ship(
         token = mint(signing_key, org=world.org, sub=world.admin, kind=kind)
         refused = client.get("/v1/apps", params={"builder": "me"}, headers=auth(token))
         assert_problem(refused, ErrorCode.FORBIDDEN)
+
+
+def test_those_who_may_share_find_groups_by_name(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    cast = cast_of_builders(client, world, signing_key)
+
+    def find(token: str, name: str | None) -> Response:
+        params = {} if name is None else {"name": name}
+        return client.get("/v1/groups", params=params, headers=auth(token))
+
+    def group(w: World, ref: str, name: str, members: list[str]) -> str:
+        r = sync_group(client, w, ref, name)
+        assert r.status_code == 200, r.text
+        gid = r.json()["group_id"]
+        assert set_members(client, w, gid, members).status_code == 200
+        return gid
+
+    people = cast.people
+    finance = group(world, "okta-00gfin", "Finance", [people["nobody"], people["gone"]])
+    shouting = group(world, "okta-00gFIN2", "FINANCE", [])
+    group(world, "okta-00gfin3", "Finance Team", [people["viewer"]])
+    other_org, other_admin, _ = new_org(dsns.app)
+    elsewhere = World(
+        **{
+            **world.__dict__,
+            "org": other_org,
+            "operator_token": internal_token(signing_key, other_org, "operator"),
+        }
+    )
+    group(elsewhere, "okta-00gfin", "Finance", [])
+
+    # Names are cached display data, not keys: every whole-name match, never another org's, and
+    # only active members counted.
+    found = find(world.admin_token, "finance")
+    assert found.status_code == 200, found.text
+    assert sorted(found.json()["groups"], key=lambda g: g["id"]) == sorted(
+        [
+            {"id": finance, "name": "Finance", "member_count": 1},
+            {"id": shouting, "name": "FINANCE", "member_count": 0},
+        ],
+        key=lambda g: g["id"],
+    )
+    for miss in ("Financ", "Finance Tea", "%", "Financ_", "nobody"):
+        assert find(world.admin_token, miss).json() == {"groups": []}
+    for bad in (None, "", "x" * 201):
+        assert_problem(find(world.admin_token, bad), ErrorCode.VALIDATION_FAILED)
+
+    # Those who may change some app's sharing: an active admin (with no apps too), an owner, or
+    # a builder on any environment; ``require_builder`` on some environment, checked person by
+    # person. Everyone else, and any credential but a user's, is refused.
+    other = find(user_token(signing_key, other_org, other_admin), "Finance")
+    assert [g["member_count"] for g in other.json()["groups"]] == [0]
+    envs = [world.prod, world.preview, cast.owned_prod, cast.owned_preview]
+
+    def check(allowed: set[str]) -> None:
+        for name, user in people.items():
+            r = find(user_token(signing_key, world.org, user), "Finance")
+            ok = r.status_code == 200
+            if not ok:
+                assert_problem(r, ErrorCode.FORBIDDEN)
+            rule = name == "admin" or bool(
+                asyncio.run(passes(dsns.app, world.org, user, authz.require_builder, envs))
+            )
+            assert (name, ok) == (name, name in allowed) == (name, rule)
+
+    check({"admin", "owner", "direct", "grouped"})
+    open_owned_to_the_org(client, world, cast)
+    check(set(people) - {"gone"})
+    for kind in ("workload", "operator"):
+        token = mint(signing_key, org=world.org, sub=world.admin, kind=kind)
+        assert_problem(find(token, "Finance"), ErrorCode.FORBIDDEN)
 
 
 # ── one evaluator ────────────────────────────────────────────────────────────

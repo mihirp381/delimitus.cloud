@@ -74,7 +74,9 @@ explains one user's access with the same evaluator the gateway uses.
 Admin-only endpoints need `admin`, read on every request. `GET /v1/users?email=` (active admins
 only) returns every person with that address, ignoring case, because email is not a key.
 `GET /v1/apps?builder=me` lists the apps the caller may ship source to: every app for an admin,
-the apps they own, and those with a builder grant on any environment.
+the apps they own, and those with a builder grant on any environment. `GET /v1/groups?name=`
+returns every group with that name, ignoring case, with its active member count, to anyone who
+may change some app's sharing: an admin, an owner or a builder.
 
 **Some changes wait for approval** (decision 016). A `PUT .../grants` made through an agent
 credential, or one that widens the audience of a data-connected app, is not applied until the
