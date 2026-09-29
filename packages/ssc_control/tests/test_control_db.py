@@ -400,6 +400,140 @@ def test_a_stored_bundle_has_its_manifest(dsns: Dsns, orgs: tuple[SeededOrg, See
         )
 
 
+BUILD_INSERT = (
+    "insert into ssc.build (id, org_id, app_id, environment_id, bundle_id, actor_kind, actor_id) "
+    "values (%s, %s, %s, %s, %s, 'user', %s)"
+)
+
+
+def add_bundle(conn: psycopg.Connection[Any], a: SeededOrg) -> str:
+    bid = new_id("bdl")
+    conn.execute(BUNDLE_INSERT, (bid, a.org, a.app, digest(bid), a.admin))
+    return bid
+
+
+def test_builds_stay_in_their_org_and_app(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]) -> None:
+    a, b = orgs
+    build = new_id("bld")
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        bundle = add_bundle(conn, a)
+        conn.execute(BUILD_INSERT, (build, a.org, a.app, a.env, bundle, a.admin))
+    assert run(dsns.app, b.org, "select count(*) from ssc.build where id = %s", (build,)) == [(0,)]
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, b.org)
+        cur = conn.execute("update ssc.build set driver_ref = 'x' where id = %s", (build,))
+        assert cur.rowcount == 0
+    sneaky = (new_id("bld"), a.org, a.app, a.env, bundle, b.admin)
+    assert refused(dsns.app, b.org, BUILD_INSERT, sneaky) == INSUFFICIENT_PRIVILEGE
+    theirs = (new_id("bld"), b.org, a.app, a.env, bundle, b.admin)  # alpha's rows from beta
+    assert refused(dsns.app, b.org, BUILD_INSERT, theirs) == FOREIGN_KEY_VIOLATION
+    delete = "delete from ssc.build where id = %s"
+    assert refused(dsns.app, a.org, delete, (build,)) == INSUFFICIENT_PRIVILEGE
+    assert run(dsns.app, a.org, "select state from ssc.build where id = %s", (build,)) == [
+        ("queued",)
+    ]
+
+
+def test_a_build_row_is_consistent_and_one_is_in_flight(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, _ = orgs
+    build = new_id("bld")
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        bundle = add_bundle(conn, a)
+        conn.execute(BUILD_INSERT, (build, a.org, a.app, a.env, bundle, a.admin))
+        with pytest.raises(psycopg.Error) as e, conn.transaction():
+            conn.execute(BUILD_INSERT, (new_id("bld"), a.org, a.app, a.env, bundle, a.admin))
+        assert sqlstate(e) == UNIQUE_VIOLATION
+        assert "build_one_in_flight" in str(e.value)
+        for sql, params in (
+            ("update ssc.build set state = 'running' where id = %s", (build,)),
+            ("update ssc.build set started_at = now() where id = %s", (build,)),
+            (
+                "update ssc.build set state = 'succeeded', started_at = now(), "
+                "finished_at = now() where id = %s",
+                (build,),
+            ),
+            (
+                "update ssc.build set state = 'failed', started_at = now(), "
+                "finished_at = now() where id = %s",
+                (build,),
+            ),
+            (
+                "update ssc.build set state = 'failed', failure_code = 'BUILD_TIMED_OUT', "
+                "started_at = now() where id = %s",
+                (build,),
+            ),
+            (
+                "update ssc.build set state = 'running', started_at = now(), "
+                "failure_code = 'BUILD_TIMED_OUT' where id = %s",
+                (build,),
+            ),
+            (
+                "update ssc.build set state = 'running', started_at = now(), "
+                "release_id = %s where id = %s",
+                (a.release, build),
+            ),
+            (
+                "update ssc.build set state = 'running', started_at = now(), "
+                "failure_code = 'lower case' where id = %s",
+                (build,),
+            ),
+        ):
+            with pytest.raises(psycopg.Error) as e, conn.transaction():
+                conn.execute(sql, params)
+            assert sqlstate(e) == CHECK_VIOLATION, sql
+        conn.execute(
+            "update ssc.build set state = 'failed', failure_code = 'BUILD_TIMED_OUT', "
+            "started_at = now(), finished_at = now() where id = %s",
+            (build,),
+        )
+        # Once it finished, the bundle may build again for that environment.
+        again = new_id("bld")
+        conn.execute(BUILD_INSERT, (again, a.org, a.app, a.env, bundle, a.admin))
+        conn.execute(
+            "update ssc.build set state = 'succeeded', release_id = %s, started_at = now(), "
+            "finished_at = now() where id = %s",
+            (a.release, again),
+        )
+        # A release is made by at most one build.
+        other = new_id("bld")
+        conn.execute(BUILD_INSERT, (other, a.org, a.app, a.env, bundle, a.admin))
+        with pytest.raises(psycopg.Error) as e, conn.transaction():
+            conn.execute(
+                "update ssc.build set state = 'succeeded', release_id = %s, started_at = now(), "
+                "finished_at = now() where id = %s",
+                (a.release, other),
+            )
+        assert sqlstate(e) == UNIQUE_VIOLATION
+
+
+def test_only_a_failed_deployment_has_a_failure_code(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, _ = orgs
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        dep = add_deployment(conn, a.org, a.app, a.env, a.release, "pending")
+        for sql in (
+            "update ssc.deployment set failure_code = 'HEALTH_CHECK_FAILED' where id = %s",
+            "update ssc.deployment set state = 'healthy', finished_at = now(), "
+            "failure_code = 'HEALTH_CHECK_FAILED' where id = %s",
+            "update ssc.deployment set state = 'failed', finished_at = now(), "
+            "failure_code = 'not a code' where id = %s",
+        ):
+            with pytest.raises(psycopg.Error) as e, conn.transaction():
+                conn.execute(sql, (dep,))
+            assert sqlstate(e) == CHECK_VIOLATION, sql
+        conn.execute(
+            "update ssc.deployment set state = 'failed', finished_at = now(), "
+            "failure_code = 'HEALTH_CHECK_FAILED' where id = %s",
+            (dep,),
+        )
+
+
 def test_last_active_admin_cannot_be_removed(dsns: Dsns) -> None:
     org = make_org(dsns.app, "Solo")
     for sql in (

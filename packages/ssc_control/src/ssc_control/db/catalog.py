@@ -15,6 +15,8 @@ Revision 0008 adds ``bundle`` (SSC-014), an ordinary org-scoped table.
 
 Revision 0009 adds ``access_snapshot`` and ``snapshot_ack`` (SSC-021), keyed by org and version
 and by org alone, so both are in ``UNKEYED_TABLES``.
+
+Revision 0010 adds ``build`` (SSC-016), an ordinary org-scoped table.
 """
 
 from collections.abc import Mapping
@@ -47,6 +49,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "bundle",  # SSC-014, revision 0008
         "access_snapshot",  # SSC-021, revision 0009
         "snapshot_ack",  # SSC-021, revision 0009
+        "build",  # SSC-016, revision 0010
     }
 )
 
@@ -104,6 +107,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "bundle": frozenset({"SELECT", "INSERT", "UPDATE"}),  # pending -> stored, never DELETE
     "access_snapshot": frozenset({"SELECT", "INSERT"}),  # a published version never changes
     "snapshot_ack": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "build": frozenset({"SELECT", "INSERT", "UPDATE"}),  # queued -> running -> done, never DELETE
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 
