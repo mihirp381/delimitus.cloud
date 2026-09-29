@@ -1477,6 +1477,8 @@
           "APP_ALREADY_ACTIVE",
           "TIMER_RUN_IN_FLIGHT",
           "SCHEDULE_CANNOT_RESUME",
+          "NOTHING_TO_PROMOTE",
+          "PROD_REQUIRES_PROMOTE",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -2437,6 +2439,26 @@
           "request_id"
         ],
         "title": "Problem",
+        "type": "object"
+      },
+      "PromoteIn": {
+        "additionalProperties": false,
+        "properties": {
+          "preview_release_id": {
+            "anyOf": [
+              {
+                "pattern": "^rel_[a-z0-9]{20}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The release the caller saw live in preview. `PRECONDITION_STALE` when preview now runs another.",
+            "title": "Preview Release Id"
+          }
+        },
+        "title": "PromoteIn",
         "type": "object"
       },
       "ReleaseList": {
@@ -4885,7 +4907,7 @@
     },
     "/v1/apps/{app_id}/environments/{environment_id}/builds": {
       "post": {
-        "description": "Build a stored bundle for one environment: 202 plus a ``Location`` to poll. A build that\nsucceeds creates the app's next numbered release. One build of a bundle per environment is in\nflight at a time (``BUILD_IN_FLIGHT``).",
+        "description": "Build a stored bundle for one environment: 202 plus a ``Location`` to poll. A build that\nsucceeds creates the app's next numbered release. One build of a bundle per environment is in\nflight at a time (``BUILD_IN_FLIGHT``). ``prod`` builds only through promote\n(``PROD_REQUIRES_PROMOTE``).",
         "operationId": "create_build_v1_apps__app_id__environments__environment_id__builds_post",
         "parameters": [
           {
@@ -4994,7 +5016,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `BUILD_IN_FLIGHT`, `BUNDLE_NOT_UPLOADED`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `BUILD_IN_FLIGHT`, `BUNDLE_NOT_UPLOADED`, `PROD_REQUIRES_PROMOTE`"
           },
           "422": {
             "content": {
@@ -6721,6 +6743,146 @@
           }
         },
         "summary": "Transfer Owner",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/promote": {
+      "post": {
+        "description": "Build for prod the source of the release live in preview: 202 plus a ``Location`` to\npoll. Deploy the release it makes to prod with ``POST .../deployments``.\n\nNeeds a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a\nhealthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when\ngiven (``PRECONDITION_STALE``), and prod must have no deployment or build in flight.",
+        "operationId": "promote_v1_apps__app_id__promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `NOTHING_TO_PROMOTE`, `DEPLOYMENT_IN_FLIGHT`, `BUILD_IN_FLIGHT`, `BUNDLE_NOT_UPLOADED`"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`PRECONDITION_STALE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Promote",
         "tags": [
           "v1"
         ]

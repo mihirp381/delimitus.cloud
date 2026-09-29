@@ -74,6 +74,9 @@ class ErrorCode(StrEnum):
     # timers (SSC-041)
     TIMER_RUN_IN_FLIGHT = "TIMER_RUN_IN_FLIGHT"
     SCHEDULE_CANNOT_RESUME = "SCHEDULE_CANNOT_RESUME"
+    # promote (SSC-042)
+    NOTHING_TO_PROMOTE = "NOTHING_TO_PROMOTE"
+    PROD_REQUIRES_PROMOTE = "PROD_REQUIRES_PROMOTE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -290,6 +293,17 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "It was paused because the app is disabled or quarantined, because it is in preview, or "
         "because the app's owner or the person who deployed it may no longer run it. Enable the "
         "app, restore that access, or deploy again.",
+    ),
+    ErrorCode.NOTHING_TO_PROMOTE: CatalogueEntry(
+        409,
+        "Preview has nothing live to promote.",
+        "Promote builds for production what preview runs now. Deploy to preview and wait until "
+        "it is healthy, then promote.",
+    ),
+    ErrorCode.PROD_REQUIRES_PROMOTE: CatalogueEntry(
+        409,
+        "Production builds only through promote.",
+        "Production runs only source that ran in preview. Deploy to preview, then promote the app.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

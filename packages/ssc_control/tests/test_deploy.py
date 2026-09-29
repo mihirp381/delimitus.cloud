@@ -353,13 +353,34 @@ def start_deploy(
     return post(b, path, {"release_id": release, "kind": kind}, token, **headers)
 
 
+def seed_prod_build(b: Bench, bundle_id: str, actor: str | None = None) -> str:
+    """A queued prod build as promote leaves it; the builds route refuses prod (SSC-042)."""
+    build = new_id("bld")
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.build (id, org_id, app_id, environment_id, bundle_id, actor_kind, "
+        "actor_id) values (%s, %s, %s, %s, %s, 'user', %s)",
+        build,
+        b.w.org,
+        b.w.app,
+        b.w.prod,
+        bundle_id,
+        actor or b.w.builder,
+    )
+    return build
+
+
 async def build_release(
     b: Bench, env: str, manifest: Manifest | None = None, token: str | None = None
 ) -> str:
     bundle, _ = seed_bundle(b, manifest)
-    r = start_build(b, env, bundle, token)
-    assert r.status_code == 202, r.text
-    build = r.json()["build_id"]
+    if env == b.w.prod:
+        build = seed_prod_build(b, bundle, b.w.admin if token == b.t.admin else None)
+    else:
+        r = start_build(b, env, bundle, token)
+        assert r.status_code == 202, r.text
+        build = r.json()["build_id"]
     assert await run_build(b.ports, org_id=b.w.org, build_id=build) == "succeeded"
     release = get(b, f"/v1/builds/{build}").json()["release_id"]
     assert release is not None
@@ -503,8 +524,8 @@ async def test_build_refusals(b: Bench) -> None:
     bundle, _ = seed_bundle(b)
     assert start_build(b, b.w.preview, bundle).status_code == 202
     assert_problem(start_build(b, b.w.preview, bundle), ErrorCode.BUILD_IN_FLIGHT)
-    # Each environment builds separately, so the same bundle may build for prod meanwhile.
-    assert start_build(b, b.w.prod, bundle).status_code == 202
+    # Prod builds only through promote.
+    assert_problem(start_build(b, b.w.prod, bundle), ErrorCode.PROD_REQUIRES_PROMOTE)
     pending, _ = seed_bundle(b, stored=False)
     assert_problem(start_build(b, b.w.preview, pending), ErrorCode.BUNDLE_NOT_UPLOADED)
     assert_problem(start_build(b, b.w.preview, new_id("bdl")), ErrorCode.REFERENCE_NOT_FOUND)
@@ -579,7 +600,7 @@ async def test_a_build_of_a_stopped_app_fails_when_claimed(b: Bench) -> None:
     bundle, _ = seed_bundle(b)
     queued = start_build(b, b.w.preview, bundle).json()["build_id"]
     other, _ = seed_bundle(b)
-    running = start_build(b, b.w.prod, other).json()["build_id"]
+    running = seed_prod_build(b, other)
     take_job(b.dsn, f"bld:{running}")
     assert await run_build(ports, org_id=b.w.org, build_id=running) == "running"
     assert (len(builds.requests), builds.polls) == (1, 1)

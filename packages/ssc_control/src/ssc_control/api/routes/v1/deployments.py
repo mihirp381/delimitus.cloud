@@ -5,12 +5,16 @@ release live in an environment. Both are long-running: the POST answers ``202`` 
 ``Location`` to poll and defers the job in the same transaction. Starting either needs an org
 admin, the app's owner or a builder on the environment. Releases are never changed or deleted.
 
+A build for ``prod`` comes only from promote (``routes/v1/promote.py``), so every prod release is
+built from source that ran in preview; this route refuses it with ``PROD_REQUIRES_PROMOTE``.
+
 A ``prod`` deployment is checked against the production gate here, so the approvals it needs are
 opened with the deployment; the job checks the gate again and never boots before it clears. A
 rollback supersedes the environment's in-flight forward deploy and keeps the environment's
 current config and sharing versions: it changes the running code, nothing else.
 """
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Any, Final, Literal
 
@@ -438,21 +442,38 @@ async def list_deployments(
         ErrorCode.BUILD_IN_FLIGHT,
         ErrorCode.BUNDLE_NOT_UPLOADED,
         ErrorCode.REFERENCE_NOT_FOUND,
+        ErrorCode.PROD_REQUIRES_PROMOTE,
     ),
 )
 async def create_build(app_id: Id, environment_id: Id, body: BuildCreate, uow: UserUoW) -> Response:
     """Build a stored bundle for one environment: 202 plus a ``Location`` to poll. A build that
     succeeds creates the app's next numbered release. One build of a bundle per environment is in
-    flight at a time (``BUILD_IN_FLIGHT``)."""
+    flight at a time (``BUILD_IN_FLIGHT``). ``prod`` builds only through promote
+    (``PROD_REQUIRES_PROMOTE``)."""
     env = await _environment(uow, app_id, environment_id)
     if env["status"] != "active":
         raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"app_id": app_id})
-    params = {"org": uow.org_id, "app": app_id, "id": body.bundle_id}
+    if env["name"] == "prod":
+        raise Refusal(ErrorCode.PROD_REQUIRES_PROMOTE, evidence={"environment_id": environment_id})
+    accepted = await start_build(uow, app_id, environment_id, body.bundle_id)
+    return uow.reply(accepted, status=202, headers={"Location": f"/v1/builds/{accepted.build_id}"})
+
+
+async def start_build(
+    uow: UnitOfWork,
+    app_id: str,
+    environment_id: str,
+    bundle_id: str,
+    audit_extra: Mapping[str, object] | None = None,
+) -> BuildAccepted:
+    """Queue a build of a stored bundle, audit it and defer its job. The caller has checked the
+    environment, the caller and the app's status."""
+    params = {"org": uow.org_id, "app": app_id, "id": bundle_id}
     bundle = (await uow.conn.execute(_SELECT_BUNDLE, params)).first()
     if bundle is None:
-        raise Refusal(ErrorCode.REFERENCE_NOT_FOUND, evidence={"bundle_id": body.bundle_id})
+        raise Refusal(ErrorCode.REFERENCE_NOT_FOUND, evidence={"bundle_id": bundle_id})
     if bundle[0] != "stored":
-        raise Refusal(ErrorCode.BUNDLE_NOT_UPLOADED, evidence={"bundle_id": body.bundle_id})
+        raise Refusal(ErrorCode.BUNDLE_NOT_UPLOADED, evidence={"bundle_id": bundle_id})
     diff = await _capability_diff(uow, bundle[1])
     build_id = new_id("bld")
     await uow.conn.execute(
@@ -462,7 +483,7 @@ async def create_build(app_id: Id, environment_id: Id, body: BuildCreate, uow: U
             "org": uow.org_id,
             "app": app_id,
             "env": environment_id,
-            "bundle": body.bundle_id,
+            "bundle": bundle_id,
             **_actor_params(uow),
         },
     )
@@ -470,14 +491,15 @@ async def create_build(app_id: Id, environment_id: Id, body: BuildCreate, uow: U
         AuditAction.BUILD_STARTED,
         target_kind="build",
         target_id=build_id,
-        after={"environment_id": environment_id, "bundle_id": body.bundle_id, "state": "queued"},
+        after={
+            "environment_id": environment_id,
+            "bundle_id": bundle_id,
+            "state": "queued",
+            **(audit_extra or {}),
+        },
     )
     await defer_build(uow.conn, org_id=uow.org_id, build_id=build_id)
-    return uow.reply(
-        BuildAccepted(build_id=build_id, state="queued", capability_diff=diff),
-        status=202,
-        headers={"Location": f"/v1/builds/{build_id}"},
-    )
+    return BuildAccepted(build_id=build_id, state="queued", capability_diff=diff)
 
 
 @router.get(
