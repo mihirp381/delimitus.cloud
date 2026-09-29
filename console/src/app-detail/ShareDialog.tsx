@@ -61,11 +61,21 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
   const roleId = useId();
   const title = `Share ${ENV_TITLE[env.name].toLowerCase()}`;
 
-  function reset() {
-    setPicked(null);
+  /** Forgets a refusal and an approval request, which were for the grant set as it was. */
+  function forget() {
     setError(null);
     setNeedsApproval(null);
     setAsked(null);
+  }
+
+  function reset() {
+    setPicked(null);
+    forget();
+  }
+
+  function pick(match: Match | null) {
+    setPicked(match);
+    forget();
   }
 
   function show() {
@@ -78,6 +88,11 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
     setOpen(false);
     setKind('group');
     reset();
+  }
+
+  function pickRole(next: Role) {
+    setRole(next);
+    forget();
   }
 
   function pickKind(next: Kind) {
@@ -171,7 +186,7 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
               idPattern={GROUP_ID_PATTERN}
               search={(name) => findGroups(api, name)}
               picked={picked}
-              onPick={setPicked}
+              onPick={pick}
             />
           ) : null}
           {kind === 'user' ? (
@@ -185,13 +200,13 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
                 search={admin ? (email) => findPeople(api, email) : undefined}
                 hint={personHint}
                 picked={picked}
-                onPick={setPicked}
+                onPick={pick}
               />
             </>
           ) : null}
           <label className="field" htmlFor={roleId}>
             <span>Role</span>
-            <select id={roleId} value={role} onChange={(e) => setRole(e.target.value as Role)}>
+            <select id={roleId} value={role} onChange={(e) => pickRole(e.target.value as Role)}>
               {env.name === 'preview' ? null : <option value="user">user: can open the app</option>}
               <option value="builder">builder: can also ship and share it</option>
             </select>

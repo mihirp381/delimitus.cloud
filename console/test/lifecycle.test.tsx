@@ -382,6 +382,32 @@ describe('share dialog', () => {
     expect((within(again).getByRole('button', { name: 'Share' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it.each([
+    ['the role', (dialog: HTMLElement) => fireEvent.change(within(dialog).getByLabelText('Role'), { target: { value: 'builder' } })],
+    [
+      'the subject',
+      (dialog: HTMLElement) =>
+        fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), {
+          target: { value: 'grp_gggggggggggggggggggg' },
+        }),
+    ],
+  ])('forgets an APPROVAL_REQUIRED refusal when %s changes', async (_, edit) => {
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({ [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.') }),
+      signedIn(),
+    );
+    const { dialog } = await openShare('Production');
+    fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: GROUP } });
+    await submitShare(dialog);
+    expect(await within(dialog).findByRole('note')).toBeTruthy();
+    edit(dialog);
+    expect(within(dialog).queryByRole('note')).toBeNull();
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: 'Ask for approval' })).toBeNull();
+    expect(api.of('POST', '/v1/approvals')).toHaveLength(0);
+  });
+
   it('keeps the dialog open on a refusal', async () => {
     start(
       `/apps/${APP_ID}`,
