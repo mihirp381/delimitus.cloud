@@ -16,8 +16,8 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
 3. Healthy: one transaction checks the app is still active (``FOR SHARE``, so it waits for a
    kill switch pulled at the same moment; ``APP_NOT_ACTIVE`` otherwise), marks it ``healthy``
    (only if still ``running``), supersedes the previous live deployment, moves the
-   environment's pointer, audits ``*.finished``, records ``first_url`` for the environment's
-   first live deployment and, for a forward deploy only, syncs the manifest's schedules. Then
+   environment's pointer, records ``first_url`` for the environment's first live deployment,
+   for a forward deploy only syncs the manifest's schedules, and audits ``*.finished``. Then
    traffic moves; if that call fails the reconciler finishes it. Unhealthy or stopped:
    ``failed`` with the reason code and ``*.failed``; the pointer and traffic are untouched, and
    a service that never had a live deployment is scaled to zero.
@@ -306,7 +306,6 @@ async def _mark_healthy(conn: AsyncConnection, ports: Ports, org_id: str, ready:
     if previous is not None and previous != dep.id:
         await conn.execute(_SUPERSEDE_LIVE, {"org": org_id, "id": previous})
     await conn.execute(_MOVE_POINTER, params)
-    await _audit(conn, org_id, dep, _FINISHED[dep.kind], state="healthy", code=None)
     person = dep.actor.id if dep.actor.kind is ActorKind.USER else None
     if previous is None:
         await ports.metrics.record_event(
@@ -326,6 +325,8 @@ async def _mark_healthy(conn: AsyncConnection, ports: Ports, org_id: str, ready:
             declared_by_user_id=person or dep.owner_user_id,
             actor=dep.actor,
         )
+    # Last: every row lock above is taken before audit_head (decision 020).
+    await _audit(conn, org_id, dep, _FINISHED[dep.kind], state="healthy", code=None)
     return True
 
 

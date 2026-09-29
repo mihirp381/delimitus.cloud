@@ -103,6 +103,9 @@ _LIVE_IN_ENV = text(
     f"select {_COLUMNS} from ssc.schedule s where s.org_id = :org and s.environment_id = :env "  # noqa: S608  (constant SQL fragments)
     "and s.state <> 'deleted' order by s.name for update"
 )
+_LOCK_DECLARER = text(
+    "select 1 from ssc.user_account where org_id = :org and id = :by for key share"
+)
 _INSERT = text(
     "insert into ssc.schedule (id, org_id, environment_id, name, cron, timezone, path, method, "
     "timeout_seconds, state, pause_reason, next_run_at, declared_by_user_id) values (:id, :org, "
@@ -152,6 +155,10 @@ _INSERT_MANUAL = text(
     "insert into ssc.timer_run (id, org_id, schedule_id, trigger, scheduled_for, "
     "requested_by_user_id, state) values (:id, :org, :sch, 'manual', :at, :by, 'queued')"
 )
+
+
+type _Change = tuple[AuditAction, str, dict[str, Any] | None, dict[str, Any] | None]
+"""An audit to append: action, schedule id, before, after."""
 
 
 def view(row: RowMapping) -> dict[str, Any]:
@@ -271,10 +278,10 @@ async def _declare(  # noqa: PLR0913  (keyword-only)
     old: RowMapping | None,
     reason: PauseReason | None,
     now: datetime,
-    actor: Actor,
-) -> None:
-    """Insert or redefine one declared schedule. An active schedule whose cron and zone are
-    unchanged keeps its armed instant; any other armed one is armed afresh from ``now``."""
+) -> _Change | None:
+    """Insert or redefine one declared schedule; the audit it needs. An active schedule whose
+    cron and zone are unchanged keeps its armed instant; any other armed one is armed afresh
+    from ``now``."""
     definition = {k: getattr(s, k) for k in _DEFINITION}
     state = "active" if reason is None else "paused"
     new = {**definition, "name": s.name, "state": state, "pause_reason": reason}
@@ -301,16 +308,7 @@ async def _declare(  # noqa: PLR0913  (keyword-only)
         action, before = _change(old, new), view(old)
     if rearm and armed is not None:
         await defer_scheduled_run(conn, org_id=org_id, schedule_id=schedule_id, instant=armed)
-    if action is not None:
-        await _audit(
-            conn,
-            org_id=org_id,
-            actor=actor,
-            action=action,
-            schedule_id=schedule_id,
-            before=before,
-            after=new,
-        )
+    return None if action is None else (action, schedule_id, before, new)
 
 
 class Timers(TimersPort):
@@ -333,32 +331,37 @@ class Timers(TimersPort):
 
         ``declared_by_user_id`` becomes every schedule's declarer. In prod a new schedule is
         armed unless its owner or declarer lacks authority; a schedule paused for that reason
-        is resumed when both have it now. Manual, preview and kill-switch pauses are kept."""
+        is resumed when both have it now. Manual, preview and kill-switch pauses are kept.
+
+        The schedules, then the declarer's key, are locked before authority is read and before
+        the first audit: ``audit_head`` always comes last (decision 020)."""
         params = {"org": org_id, "env": environment_id, "by": declared_by_user_id}
-        env = (await conn.execute(_ENV, params)).mappings().one()
         rows = (await conn.execute(_LIVE_IN_ENV, params)).mappings().all()
+        if declared:
+            await conn.execute(_LOCK_DECLARER, params)
+        env = (await conn.execute(_ENV, params)).mappings().one()
         live = {str(r["name"]): r for r in rows}
         now, blocker = self._clock(), _blocker(env)
+        changes: list[_Change | None] = []
         for s in sorted(declared, key=lambda d: d.name):
             old = live.pop(s.name, None)
-            await _declare(
-                conn,
-                params=params,
-                s=s,
-                old=old,
-                reason=_declared_reason(env["name"], old, blocker),
-                now=now,
-                actor=actor,
+            reason = _declared_reason(env["name"], old, blocker)
+            changes.append(
+                await _declare(conn, params=params, s=s, old=old, reason=reason, now=now)
             )
         for old in live.values():
             await conn.execute(_DELETE, {"org": org_id, "id": old["id"]})
+            changes.append((AuditAction.SCHEDULE_DELETED, str(old["id"]), view(old), None))
+        for change in filter(None, changes):
+            action, schedule_id, before, after = change
             await _audit(
                 conn,
                 org_id=org_id,
                 actor=actor,
-                action=AuditAction.SCHEDULE_DELETED,
-                schedule_id=str(old["id"]),
-                before=view(old),
+                action=action,
+                schedule_id=schedule_id,
+                before=before,
+                after=after,
             )
 
     async def pause_for_kill(

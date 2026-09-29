@@ -18,7 +18,8 @@ Ticket "done when" checks (decision 020):
                                               test_directory_changes_pause_what_lost_authority,
                                               test_an_owner_transfer_is_caught_by_the_sweep
 Plus: pause and resume by hand, the API's authorisation, deletion and paging, cross-org reads,
-``may_build`` against ``require_builder``, the fake dispatcher, the worker's wiring and a real
+``may_build`` against ``require_builder``, a sync's row locks before ``audit_head``, the fake
+dispatcher, the worker's wiring and a real
 worker pass, and revision 0013's round trip.
 """
 
@@ -42,7 +43,19 @@ from psycopg.rows import dict_row
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, make_org, mint, new_key
+from ssc_testkit import (
+    ISSUER,
+    Dsns,
+    SigningKey,
+    assert_problem,
+    audit_head_is_free,
+    auth,
+    backend_pid,
+    make_org,
+    mint,
+    new_key,
+    wait_for_a_lock_wait,
+)
 
 from ssc_contracts.audit import ActorKind
 from ssc_contracts.errors import ErrorCode
@@ -1082,6 +1095,22 @@ async def test_an_owner_transfer_is_caught_by_the_sweep(b: Bench) -> None:
     async with bound_org(b.engine, b.w.org) as conn:
         await sweep_org(conn, b.w.org, now=at(3))
     assert schedule(b, sid)["pause_reason"] == "builder_access_revoked"
+
+
+async def test_a_sync_waits_for_its_declarer_before_it_holds_audit_head(b: Bench) -> None:
+    # ``directory.upsert_user`` holds the person's row, then appends to the audit chain.
+    await sync(b, b.w.prod, declared("a"))
+    lock_user = text("select 1 from ssc.user_account where org_id = :org and id = :id for update")
+    async with bound_org(b.engine, b.w.org) as holder:
+        pid = await backend_pid(holder)
+        await holder.execute(lock_user, {"org": b.w.org, "id": b.w.builder})
+        # ``a`` is redefined (audited, no key check); ``b`` is new (checks its declarer's key).
+        job = asyncio.create_task(sync(b, b.w.prod, declared("a", "*/10 * * * *"), declared("b")))
+        await asyncio.wait_for(asyncio.to_thread(wait_for_a_lock_wait, b.dsn, blocker=pid), 10)
+        free = await audit_head_is_free(holder, b.w.org)
+    await asyncio.wait_for(job, 10)
+    assert free
+    assert set(live(b, b.w.prod)) == {"a", "b"}
 
 
 async def test_may_build_is_the_require_builder_rule(b: Bench) -> None:

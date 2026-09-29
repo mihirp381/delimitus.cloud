@@ -21,7 +21,10 @@ import psycopg
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import Response
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncConnection
 from testcontainers.postgres import PostgresContainer
 
 from ssc_contracts.errors import CATALOGUE, PROBLEM_MEDIA_TYPE, ErrorCode, problem_type
@@ -73,18 +76,38 @@ def control_db() -> Iterator[Dsns]:
         yield d
 
 
-def wait_for_a_lock_wait(dsn: str, *, seconds: float = 10.0) -> None:
-    """Return once another session waits on a lock: the call a test started is blocked."""
+def wait_for_a_lock_wait(dsn: str, *, seconds: float = 10.0, blocker: int | None = None) -> None:
+    """Return once another session waits on a lock (held by backend ``blocker``, when given):
+    the call a test started is blocked."""
     deadline = time.monotonic() + seconds
     with psycopg.connect(dsn, autocommit=True) as conn:
         while time.monotonic() < deadline:
             row = conn.execute(
                 "select count(*) from pg_locks where not granted and pid <> pg_backend_pid()"
+                if blocker is None
+                else "select count(*) from pg_stat_activity where %s = any(pg_blocking_pids(pid))",
+                () if blocker is None else (blocker,),
             ).fetchone()
             if row is not None and row[0] > 0:
                 return
             time.sleep(0.01)
     raise AssertionError(f"no session waited on a lock within {seconds} s")
+
+
+async def backend_pid(conn: AsyncConnection) -> int:
+    return int((await conn.execute(text("select pg_backend_pid()"))).scalar_one())
+
+
+async def audit_head_is_free(conn: AsyncConnection, org_id: str) -> bool:
+    """Whether ``conn`` can lock the org's audit head at once (``FOR UPDATE NOWAIT``)."""
+    head = text("select 1 from ssc.audit_head where org_id = :org for update nowait")
+    try:
+        async with conn.begin_nested():
+            await conn.execute(head, {"org": org_id})
+    except DBAPIError as e:
+        assert getattr(e.orig, "sqlstate", None) == "55P03", e  # lock_not_available
+        return False
+    return True
 
 
 def make_org(dsn: str, name: str = "Acme") -> CreatedOrg:

@@ -19,8 +19,9 @@ SSC-025 (a stopped app, decision 014):
   * a deploy stops within one poll               -> test_a_stopped_app_ends_a_deploy_within_one_poll
   * and when going live                          -> test_a_stop_while_observing_is_caught_when_...
   * a build fails when claimed                   -> test_a_build_of_a_stopped_app_fails_when_claimed
-Plus: the build API and job, build failures and timeouts, the health timeout, the deploy and
-first_url metrics, history and release listings, and the worker's wiring.
+Plus: the build API and job, build failures and timeouts, the health timeout, going live locking
+schedule rows before ``audit_head``, the deploy and first_url metrics, history and release
+listings, and the worker's wiring.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 from psycopg.rows import dict_row
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_testkit import (
@@ -49,7 +51,9 @@ from ssc_testkit import (
     Dsns,
     SigningKey,
     assert_problem,
+    audit_head_is_free,
     auth,
+    backend_pid,
     mint,
     new_key,
     wait_for_a_lock_wait,
@@ -91,6 +95,7 @@ from ssc_control.ports import DeclaredSchedule, GateResult, NullMetricsPort, Nul
 from ssc_control.runtime.driver import service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
+from ssc_control.timers.service import Timers
 from ssc_control.worker import CompositionError, Ports, build_app, compose_ports
 from ssc_shared.canonical import manifest_digest
 
@@ -937,6 +942,27 @@ def assert_stopped_without_going_live(
     assert len(b.timers.calls) == synced
     last = audit_of(b, op)[-1]
     assert (last["action"], last["after"]["failure_code"]) == ("deploy.failed", APP_NOT_ACTIVE)
+
+
+async def test_going_live_locks_schedules_before_audit_head(b: Bench) -> None:
+    # A schedule's own writers (pause, resume, a run's claim) lock its row, then audit.
+    ports = replace(b.ports, timers=Timers())
+    r1 = await build_release(b, b.w.preview, manifest_of(**NIGHTLY))
+    assert await run(b, start_deploy(b, b.w.preview, r1).json()["operation_id"], ports) == "healthy"
+    r2 = await build_release(b, b.w.preview, manifest_of(**NIGHTLY))
+    second = start_deploy(b, b.w.preview, r2).json()["operation_id"]
+    lock_schedules = text(
+        "select 1 from ssc.schedule where org_id = :org and environment_id = :env for update"
+    )
+    async with bound_org(b.ports.engine, b.w.org) as holder:
+        pid = await backend_pid(holder)
+        await holder.execute(lock_schedules, {"org": b.w.org, "env": b.w.preview})
+        job = asyncio.create_task(run(b, second, ports))
+        await asyncio.wait_for(asyncio.to_thread(wait_for_a_lock_wait, b.dsn, blocker=pid), 10)
+        free = await audit_head_is_free(holder, b.w.org)
+    assert await asyncio.wait_for(job, 10) == "healthy"
+    assert free
+    assert pointer(b, b.w.preview) == second
 
 
 # ── metrics ──────────────────────────────────────────────────────────────────
