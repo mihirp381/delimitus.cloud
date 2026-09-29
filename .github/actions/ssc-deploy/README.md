@@ -8,7 +8,7 @@ Deploys a folder to an app's preview environment on Small Software Cloud and pri
   with: { token: "${{ secrets.SSC_PREVIEW_TOKEN }}", app: my-app }
 ```
 
-- Inputs: `token` and `app` (a slug or an `app_` id) are required. Optional: `path` (default `.`), `api-url`, `commit` (default the workflow's commit, recorded on the release; empty records none) and `cli-spec` (what `uv tool install` installs; default the matching `ssc-cli` release).
+- Inputs: `token` and `app` (a slug or an `app_` id) are required. Optional: `path` (default `.`), `api-url`, `commit` (default the workflow's commit, recorded on the release; empty records none) and `cli-spec` (what `uv tool install` installs; default the matching `ssc-cli` release). Every dependency is held to `constraints.txt`, the versions in `uv.lock`; after a lock change, regenerate it with `uv export -q --package ssc-cli --all-extras --no-dev --no-emit-workspace --no-hashes --frozen --no-header --no-annotate -o .github/actions/ssc-deploy/constraints.txt`.
 - Outputs: `preview-url`, `release-id`, `operation-id`.
 - There is no environment input: the Action only deploys to preview. Give it a token with scope `preview`, which the API never lets touch production. Production changes only through `ssc promote`.
 - Runs on Linux and macOS runners. It installs uv 0.12.19 with `astral-sh/setup-uv` and Python 3.14 through uv.

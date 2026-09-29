@@ -22,7 +22,7 @@ inputs:
     required: false
     default: ${{ github.sha }}
   cli-spec:
-    description: What `uv tool install` installs. The default is the ssc-cli release this Action belongs to.
+    description: What `uv tool install` installs. The default is the ssc-cli release this Action belongs to. Its dependencies are held to constraints.txt, the versions in uv.lock.
     required: false
     default: "ssc-cli==0.0.1"
 
@@ -50,7 +50,7 @@ runs:
         CLI_SPEC: ${{ inputs.cli-spec }}
       run: |
         read -ra spec <<< "$CLI_SPEC"
-        uv tool install --python 3.14 "${spec[@]}"
+        uv tool install --python 3.14 --constraints "$GITHUB_ACTION_PATH/constraints.txt" "${spec[@]}"
     - name: Deploy to preview
       id: deploy
       shell: bash

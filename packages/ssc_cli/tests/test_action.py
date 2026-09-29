@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -233,6 +234,37 @@ def test_every_input_reaches_the_steps_through_env(run):
     runs = re.findall(r"run: \|\n((?:\s{8}.*\n)+)", text)
     assert runs
     assert all("${{" not in r for r in runs)
+
+
+EXPORT = [
+    "export",
+    "-q",
+    "--package",
+    "ssc-cli",
+    "--all-extras",
+    "--no-dev",
+    "--no-emit-workspace",
+    "--no-hashes",
+    "--frozen",
+    "--no-header",
+    "--no-annotate",
+]
+
+
+def test_the_install_holds_every_dependency_to_the_lock():
+    text = (ACTION / "action.yml").read_text()
+    assert '--constraints "$GITHUB_ACTION_PATH/constraints.txt" "${spec[@]}"' in text
+    uv = shutil.which("uv")
+    assert uv
+    locked = subprocess.run([uv, *EXPORT], cwd=ROOT, capture_output=True, text=True, check=True)
+    pins = (ACTION / "constraints.txt").read_text()
+    assert pins == locked.stdout, (
+        f"regenerate: uv {' '.join(EXPORT)} -o {ACTION / 'constraints.txt'}"
+    )
+    names = {line.split("==", 1)[0] for line in pins.splitlines()}
+    assert {"httpx2", "keyring", "typer", "pydantic", "mcp"} <= names
+    assert not {"ssc-cli", "ssc-contracts", "ssc-shared", "ssc-bundle"} & names
+    assert all(re.fullmatch(r"[a-z0-9.-]+==[^ ;]+( ; .+)?", line) for line in pins.splitlines())
 
 
 def test_an_app_or_commit_that_looks_like_an_option_stays_a_value(run, step):
