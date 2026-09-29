@@ -288,8 +288,11 @@ async def release_for(c: V1, app_id: str, digest: str, preview_id: str) -> Body 
 
 
 async def deploy_release(c: V1, app: Body, preview_id: str, release: Body, key: str) -> Body:
-    """``live`` when preview already runs ``release``, else start deploying it."""
-    current = environment(app, preview_id)["current_deployment_id"]
+    """``live`` when preview already runs ``release``, else start deploying it. Both carry
+    preview's ``url``."""
+    env = environment(app, preview_id)
+    url = env["url"]
+    current = env["current_deployment_id"]
     if current is not None:
         op = await c.get(f"/v1/operations/{current}")
         if op["release_id"] == release["release_id"] and op["state"] == "healthy":
@@ -297,7 +300,8 @@ async def deploy_release(c: V1, app: Body, preview_id: str, release: Body, key: 
                 "stage": "live",
                 "release": release,
                 "operation": op,
-                "next": "Preview runs this bundle now. Nothing more to do.",
+                "url": url,
+                "next": f"Preview runs this bundle now at {url}. Nothing more to do.",
             }
     path = f"/v1/apps/{app['id']}/environments/{preview_id}/deployments"
     body = {"release_id": release["release_id"], "kind": "deploy"}
@@ -308,7 +312,9 @@ async def deploy_release(c: V1, app: Body, preview_id: str, release: Body, key: 
         "release": release,
         "operation_id": op_id,
         "location": r.headers["Location"],
-        "next": f"Follow it with get_status(app, operation={op_id!r}) until it is healthy.",
+        "url": url,
+        "next": f"Follow it with get_status(app, operation={op_id!r}) until it is healthy; "
+        f"preview is then served at {url}.",
     }
 
 
@@ -571,8 +577,8 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         """Deploy a folder to the app's preview environment (never prod), one step per call.
         Without `bundle_digest`: how to pack the folder. With it (and `size_bytes`): uploads,
         builds and deploys, answering with a `stage` (`upload`, `building`, `deploying` or
-        `live`) and what to do `next`. Call again with the same arguments and the returned
-        `idempotency_key` after each step; nothing starts twice."""
+        `live`, both with preview's `url`) and what to do `next`. Call again with the same
+        arguments and the returned `idempotency_key` after each step; nothing starts twice."""
         key = idempotency_key or fresh_key()
         return await run(
             api,

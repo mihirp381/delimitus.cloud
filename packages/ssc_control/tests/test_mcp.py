@@ -2,9 +2,12 @@
 served by uvicorn on a free port, backed by postgres:18.
 
 Ticket "done when" checks:
-  * a folder deploys through the interface          -> test_deploy_to_preview (stages pack,
-    upload, building, deploying; the address is the preview environment, since the API has no
-    URL field yet)
+  * a folder deploys through the interface and the  -> test_deploy_to_preview (stages pack,
+    agent receives an address                           upload, building, deploying, live, with
+                                                        a preview-scoped credential; deploying
+                                                        and live carry preview's url)
+  * a preview-scoped agent never touches prod        -> test_preview_scoped_agent_asks_nothing,
+                                     test_preview_scoped_agent_cannot_roll_back_prod
   * a share request from an agent is pending and cannot be approved from the same session
                                                      -> test_request_share_pending,
                                                         test_no_approve_path
@@ -344,6 +347,29 @@ async def test_preview_scoped_agent_cannot_roll_back_prod(world: World) -> None:
     assert not apps.is_error
 
 
+async def test_preview_scoped_agent_asks_nothing(world: World) -> None:
+    """``POST /v1/approvals`` names no environment in its path and is not a preview-scope change,
+    so check_scope refuses every request tool, prod ones included."""
+    member = add_account(world.dsns.app, world.org.org_id, "member")
+    calls = [
+        ("request_connection", {"app": "mcp-app", "connection": "scoped-db"}),
+        ("request_share", {"app": "mcp-app", "env": "prod", "who": member}),
+        ("request_share", {"app": "mcp-app", "env": "preview", "who": member}),
+    ]
+    async with session(world.url, world.agent_token(scope="preview")) as client:
+        results = [await client.call_tool(name, args) for name, args in calls]
+    for r in results:
+        assert r.is_error
+        assert r.structured_content["error"]["code"] == "FORBIDDEN"
+    asked = rows(
+        world.dsns.app,
+        world.org.org_id,
+        "select count(*) from ssc.approval_request where subject_key = %s or payload::text like %s",
+        ("scoped-db", f"%{member}%"),
+    )
+    assert asked == [(0,)]
+
+
 async def test_tool_error_carries_the_request_id(world: World) -> None:
     async with httpx2.AsyncClient(timeout=30) as http:
         r = await http.post(
@@ -677,7 +703,11 @@ async def test_deploy_to_preview(world: World) -> None:
     data = tar_gz({"ssc.toml": b'schema = "ssc/v1"\n', "index.html": b"<p>hello</p>\n"})
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
 
-    async with session(world.url, world.agent) as client:
+    preview_url = next(e["url"] for e in world.app["environments"] if e["name"] == "preview")
+    assert preview_url is not None
+    assert "--preview." in preview_url
+
+    async with session(world.url, world.agent_token(scope="preview")) as client:
         pack = await client.call_tool("deploy", {"app": "mcp-app"})
         assert not pack.is_error, pack.content
         assert pack.structured_content["stage"] == "pack"
@@ -746,10 +776,12 @@ async def test_deploy_to_preview(world: World) -> None:
     assert out["release"]["release_id"] == built["release_id"]
     assert out["release"]["built_for_environment_id"] == preview
     assert out["location"] == f"/v1/operations/{op}"
+    assert out["url"] == preview_url
     assert replayed.structured_content == out
     assert live.structured_content["stage"] == "live"
     assert live.structured_content["operation"]["operation_id"] == op
     assert live.structured_content["operation"]["state"] == "healthy"
+    assert live.structured_content["url"] == preview_url
 
     bundle = rows(
         world.dsns.app,

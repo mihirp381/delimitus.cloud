@@ -169,8 +169,8 @@ stateless, JSON replies. Code: `api/mcp/`.
     signed PUT target; a stored bundle is built on preview (`building` with the build id, or
     null on `BUILD_IN_FLIGHT`). Build and deployment POSTs use `<step>-<sha256(key)>`, so a
     repeat replays the same build or operation. A remote server cannot read a laptop: the
-    agent packs and PUTs the bytes itself. There is no address yet: environments have no URL
-    field, so `deploying` and `live` carry the operation.
+    agent packs and PUTs the bytes itself. `deploying` and `live` also carry `url`, preview's
+    `EnvironmentOut.url`: the address the folder is served at.
   - `request_share(app, env, who, role?)`: `who` is a `usr_` or `grp_` id or `org`; `role`
     defaults to the floor (`user` on prod, `builder` on preview). A grant below the floor is
     `VALIDATION_FAILED` with `status: null`; a subject that already has the role asks nothing
@@ -184,6 +184,11 @@ stateless, JSON replies. Code: `api/mcp/`.
   - Asking opens a pending request only; another active admin of the org approves (decision
     016, founder default D2) and SSC staff record it. The change is applied afterwards by
     `ssc share` or `PUT .../grants` at the recorded `grants_version`.
+  - A `scope: preview` credential (decision 011) can use every read and `deploy`: the bundle
+    routes are preview-scope changes and the build and deployment routes name preview.
+    `rollback` on prod, `request_share` (either environment) and `request_connection` are
+    `FORBIDDEN`, since `POST /v1/approvals` names no environment in its path and is not a
+    preview-scope change.
   - Reads are not audited (as for `ssc`). Every write is, with `via_agent` and `client_id`:
     the bundle row, the build and `build.started`, the deployment and `deploy.started` or
     `rollback.started`, and `approval.requested`.
