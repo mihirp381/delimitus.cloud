@@ -169,6 +169,36 @@ def test_quarantining_a_quarantined_app_says_so(cli, scripted, fake_problem):
     assert "demo is already quarantined" in _fix(r.stderr)
 
 
+def test_losing_the_run_still_says_the_app_is_stopped(cli, scripted, fake_problem):
+    scripted.add("POST", KILL, _accepted())
+    scripted.add("GET", f"{KILL}/{RUN}", fake_problem(401, "UNAUTHENTICATED"))
+    r = cli("disable", "demo", "--json", session=scripted.session())
+    assert r.code != 0
+    error = r.json()["error"]
+    assert error["code"] == "UNAUTHENTICATED"
+    assert f"stopped already and denies every request; kill switch run {RUN}" in error["detail"]
+    assert error["instance"]
+
+
+@pytest.mark.parametrize(
+    ("status", "fix", "absent"),
+    [
+        ("disabled", "`ssc disable demo --quarantine` quarantines it too", "ssc enable"),
+        ("quarantined", "demo is already quarantined; `ssc enable demo` undoes it", "--quarantine"),
+    ],
+)
+def test_disabling_a_stopped_app_says_what_it_is(cli, scripted, fake_problem, status, fix, absent):
+    stopped = _app(status)
+    summary = {k: stopped[k] for k in ("id", "slug", "owner_user_id", "status")}
+    scripted.routes[("GET", "/v1/apps")] = [httpx2.Response(200, json={"apps": [summary]})]
+    scripted.routes[("GET", f"/v1/apps/{APP_ID}")] = [httpx2.Response(200, json=stopped)]
+    scripted.add("POST", KILL, fake_problem(409, "APP_NOT_ACTIVE"))
+    r = cli("disable", "demo", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert fix in _fix(r.stderr)
+    assert absent not in _fix(r.stderr)
+
+
 # ── enable ──────────────────────────────────────────────────────────────────
 
 

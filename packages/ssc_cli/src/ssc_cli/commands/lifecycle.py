@@ -53,7 +53,7 @@ def disable(
         try:
             accepted = client.pull_kill_switch(target.id, mode)
         except CliError as e:
-            e.fix = _disable_fix(e.body.code, target.slug, mode)
+            e.fix = _disable_fix(e.body.code, target.slug, mode, target.status)
             raise
         run = _follow(client, target.id, accepted.run_id, sleep=s.sleep, budget=Budget(timeout))
     result = DisableResult(
@@ -118,7 +118,10 @@ def _follow(
 ) -> KillSwitchRun:
     instance = f"/v1/apps/{app_id}/kill-switch/{run_id}"
     while True:
-        run = client.get_kill_switch_run(app_id, run_id)
+        try:
+            run = client.get_kill_switch_run(app_id, run_id)
+        except CliError as e:
+            raise _still_stopped(e, run_id, instance) from e
         if run.state == "failed":
             failed = [
                 f"{st.name} ({st.error or 'no reason given'})"
@@ -149,16 +152,27 @@ def _follow(
         budget.sleep(sleep)
 
 
-def _disable_fix(code: str, slug: str, mode: str) -> str | None:
+def _still_stopped(e: CliError, run_id: str, instance: str) -> CliError:
+    """``e``, raised while following a run, saying the app is stopped already and naming the run."""
+    body = e.body.model_copy(
+        update={
+            "detail": f"{e.body.detail} The app is stopped already and denies every request; "
+            f"kill switch run {run_id} carries on without ssc.",
+            "instance": e.body.instance or instance,
+        }
+    )
+    return CliError(body, e.exit_code, fix=e.fix)
+
+
+def _disable_fix(code: str, slug: str, mode: str, status: str) -> str | None:
     if code == ErrorCode.FORBIDDEN:
         return ADMINS_ONLY
-    if code == ErrorCode.APP_NOT_ACTIVE and mode == "quarantine":
-        return f"{slug} is already quarantined; `ssc status {slug}` shows it."
+    if code == ErrorCode.APP_NOT_ACTIVE and "quarantined" in {status, MODE_STATUS[mode]}:
+        return f"{slug} is already quarantined; `ssc enable {slug}` undoes it."
+    if code == ErrorCode.APP_NOT_ACTIVE and status == "disabled":
+        return f"{slug} is disabled already; `ssc disable {slug} --quarantine` quarantines it too."
     if code == ErrorCode.APP_NOT_ACTIVE:
-        return (
-            f"{slug} is stopped already; `ssc status {slug}` shows how. "
-            "`ssc disable --quarantine` still quarantines a disabled app."
-        )
+        return f"{slug} is stopped already; `ssc status {slug}` shows how."
     if code == ErrorCode.KILL_SWITCH_IN_FLIGHT:
         return "an earlier pull of the kill switch is still running; run this again once it ends."
     return None
