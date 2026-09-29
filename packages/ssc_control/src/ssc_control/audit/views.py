@@ -38,6 +38,9 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     ),
     "audit": frozenset({"format", "filters"}),
     "org": frozenset({"name"}),
+    "bundle": frozenset(
+        {"app_id", "digest", "size_bytes", "file_count", "manifest_digest", "source_commit"}
+    ),
 }
 
 FILTER_KEYS: Final = frozenset(

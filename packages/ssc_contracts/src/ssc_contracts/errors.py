@@ -56,6 +56,15 @@ class ErrorCode(StrEnum):
     SELF_APPROVAL_REFUSED = "SELF_APPROVAL_REFUSED"
     AGENT_SESSION_REFUSED = "AGENT_SESSION_REFUSED"
     APPROVER_NOT_ELIGIBLE = "APPROVER_NOT_ELIGIBLE"
+    # source upload (SSC-014)
+    MANIFEST_INVALID = "MANIFEST_INVALID"
+    BUNDLE_TOO_LARGE = "BUNDLE_TOO_LARGE"
+    BUNDLE_MALFORMED = "BUNDLE_MALFORMED"
+    SECRET_IN_BUNDLE = "SECRET_IN_BUNDLE"
+    BUNDLE_DIGEST_MISMATCH = "BUNDLE_DIGEST_MISMATCH"
+    BUNDLE_NOT_UPLOADED = "BUNDLE_NOT_UPLOADED"
+    UPLOAD_URL_INVALID = "UPLOAD_URL_INVALID"
+    APP_NOT_ACTIVE = "APP_NOT_ACTIVE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -191,6 +200,52 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         403,
         "This person cannot decide this request.",
         "The approver must be an active admin of the organisation.",
+    ),
+    ErrorCode.MANIFEST_INVALID: CatalogueEntry(
+        422,
+        "The bundle's ssc.toml is not valid.",
+        "The manifest does not follow ssc/v1. Run ssc doctor to see each problem with its line, "
+        "fix them and deploy again.",
+    ),
+    ErrorCode.BUNDLE_TOO_LARGE: CatalogueEntry(
+        413,
+        "The bundle is too large.",
+        "The bundle is over the compressed size, unpacked size or file count limit. Leave "
+        "dependencies and generated files out with .sscignore and retry.",
+    ),
+    ErrorCode.BUNDLE_MALFORMED: CatalogueEntry(
+        422,
+        "The bundle is not a valid source bundle.",
+        "A bundle is a gzip-compressed tar of regular files and folders with safe relative names "
+        "and no .env files. Pack it with ssc deploy and retry.",
+    ),
+    ErrorCode.SECRET_IN_BUNDLE: CatalogueEntry(
+        422,
+        "The bundle contains a secret.",
+        "A value that looks like a credential was found in the source. Remove it from the code, "
+        "store it as an app secret and deploy again.",
+    ),
+    ErrorCode.BUNDLE_DIGEST_MISMATCH: CatalogueEntry(
+        422,
+        "The uploaded bytes do not match the bundle.",
+        "The size or sha256 of the uploaded object differs from the one declared. Upload the same "
+        "bytes again.",
+    ),
+    ErrorCode.BUNDLE_NOT_UPLOADED: CatalogueEntry(
+        409,
+        "The bundle has not been uploaded.",
+        "Upload the bundle to its upload URL before completing it.",
+    ),
+    ErrorCode.UPLOAD_URL_INVALID: CatalogueEntry(
+        403,
+        "This upload URL is not valid.",
+        "The URL has expired, was altered, or is for a different method. Ask for a new URL and "
+        "retry.",
+    ),
+    ErrorCode.APP_NOT_ACTIVE: CatalogueEntry(
+        409,
+        "This app is not active.",
+        "A disabled or quarantined app does not take new source. Enable the app first.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,
