@@ -148,16 +148,20 @@ def test_preview_scoped_token_cannot_change_prod(
     grants = [{"role": "user", "subject_kind": "org"}]
     release = add_release(b)
     deployments = f"/v1/apps/{b.app['id']}/environments/{b.env('prod')}/deployments"
+    builds = f"/v1/apps/{b.app['id']}/environments/{b.env('prod')}/builds"
     with caplog.at_level(logging.WARNING, logger="ssc.api"):
         refused_by_scope(caplog, put_grants(b, "prod", b.preview, grants))
+        refused_by_scope(caplog, post(b, builds, {"bundle_id": new_id("bdl")}))
         refused_by_scope(caplog, post(b, deployments, {"release_id": release}))
         refused_by_scope(caplog, post(b, deployments, {"release_id": release, "kind": "rollback"}))
     assert count(b, "select grants_version from ssc.environment where id = %s", b.env("prod")) == 1
+    for table in ("build", "deployment"):
+        sql = f"select count(*) from ssc.{table} where environment_id = %s"
+        assert count(b, sql, b.env("prod")) == 0, table
     assert (
-        count(b, "select count(*) from ssc.deployment where environment_id = %s", b.env("prod"))
+        count(b, "select count(*) from ssc.audit_event where action ~ '^(grant|deploy|build)[.]'")
         == 0
     )
-    assert count(b, "select count(*) from ssc.audit_event where action ~ '^(grant|deploy)[.]'") == 0
     assert put_grants(b, "prod", b.full, grants).status_code == 200
 
 
@@ -190,6 +194,11 @@ def test_preview_scoped_token_works_in_preview(b: Bench) -> None:
     r = post(b, url, {"release_id": add_release(b)})
     assert r.status_code == 202, r.text
     assert b.client.get(r.headers["Location"], headers=auth(b.preview)).status_code == 200
+
+
+def test_preview_scoped_token_may_build_in_preview(b: Bench) -> None:
+    url = f"/v1/apps/{b.app['id']}/environments/{b.env('preview')}/builds"
+    assert_problem(post(b, url, {"bundle_id": new_id("bdl")}), ErrorCode.REFERENCE_NOT_FOUND)
 
 
 def test_preview_scoped_token_may_upload_source(b: Bench) -> None:
