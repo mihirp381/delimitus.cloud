@@ -15,6 +15,10 @@ Ticket "done when" checks:
                                                     test_the_production_gate_end_to_end
   * other refusals                               -> test_a_release_built_for_preview_is_refused_...,
                                                     test_a_disabled_app_is_refused
+SSC-025 (a stopped app, decision 014):
+  * a deploy stops within one poll               -> test_a_stopped_app_ends_a_deploy_within_one_poll
+  * and when going live                          -> test_a_stop_while_observing_is_caught_when_...
+  * a build fails when claimed                   -> test_a_build_of_a_stopped_app_fails_when_claimed
 Plus: the build API and job, build failures and timeouts, the health timeout, the deploy and
 first_url metrics, history and release listings, and the worker's wiring.
 """
@@ -28,7 +32,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -40,7 +44,16 @@ from httpx import Response
 from psycopg.rows import dict_row
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import (
+    ISSUER,
+    Dsns,
+    SigningKey,
+    assert_problem,
+    auth,
+    mint,
+    new_key,
+    wait_for_a_lock_wait,
+)
 
 import ssc_control.api
 from ssc_contracts.audit import ActorKind
@@ -56,7 +69,12 @@ from ssc_control.approvals.gate import ApprovalsProdGate
 from ssc_control.audit import Actor
 from ssc_control.db import NewOrg, bind_org_sync, bound_org, create_org, make_engine
 from ssc_control.deploy import tasks
-from ssc_control.deploy.build_driver import BUILD_TIMED_OUT, FakeBuildDriver, fake_image_digest
+from ssc_control.deploy.build_driver import (
+    BUILD_TIMED_OUT,
+    BuildStatus,
+    FakeBuildDriver,
+    fake_image_digest,
+)
 from ssc_control.deploy.builds import BUILD_DRIVER_UNAVAILABLE, run_build
 from ssc_control.deploy.deployments import (
     APP_NOT_ACTIVE,
@@ -67,6 +85,7 @@ from ssc_control.deploy.deployments import (
     run_deployment,
 )
 from ssc_control.deploy.gates import approvals_prod_gate
+from ssc_control.lifecycle import kill_switch
 from ssc_control.metrics import metrics_port
 from ssc_control.ports import DeclaredSchedule, GateResult, NullMetricsPort, NullTimersPort
 from ssc_control.runtime.driver import service_name
@@ -526,7 +545,9 @@ async def test_a_build_polls_later_then_times_out(b: Bench) -> None:
         f"bld:{build}",
     )
     assert len(later) == 1
-    out = await run_build(slow, org_id=b.w.org, build_id=build, build_timeout=timedelta(0))
+    # A minute ahead, so the database's clock running a little fast cannot hide the timeout.
+    ahead = replace(slow, clock=lambda: datetime.now(UTC) + timedelta(minutes=1))
+    out = await run_build(ahead, org_id=b.w.org, build_id=build, build_timeout=timedelta(0))
     assert out == "failed"
     assert get(b, f"/v1/builds/{build}").json()["failure_code"] == BUILD_TIMED_OUT
     # With no builder configured a build fails at once.
@@ -535,6 +556,37 @@ async def test_a_build_polls_later_then_times_out(b: Bench) -> None:
     none = replace(b.ports, build_driver=None)
     assert await run_build(none, org_id=b.w.org, build_id=build) == "failed"
     assert get(b, f"/v1/builds/{build}").json()["failure_code"] == BUILD_DRIVER_UNAVAILABLE
+
+
+class CountingBuilds(FakeBuildDriver):
+    def __init__(self, *, polls: int = 0) -> None:
+        super().__init__(polls=polls)
+        self.polls = 0
+
+    async def poll(self, ref: str) -> BuildStatus:
+        self.polls += 1
+        return await super().poll(ref)
+
+
+async def test_a_build_of_a_stopped_app_fails_when_claimed(b: Bench) -> None:
+    builds = CountingBuilds(polls=5)
+    ports = replace(b.ports, build_driver=builds)
+    bundle, _ = seed_bundle(b)
+    queued = start_build(b, b.w.preview, bundle).json()["build_id"]
+    other, _ = seed_bundle(b)
+    running = start_build(b, b.w.prod, other).json()["build_id"]
+    take_job(b.dsn, f"bld:{running}")
+    assert await run_build(ports, org_id=b.w.org, build_id=running) == "running"
+    assert (len(builds.requests), builds.polls) == (1, 1)
+    execute(b.dsn, b.w.org, "update ssc.app set status = 'quarantined' where id = %s", b.w.app)
+    # Queued or already running, the next step fails it before any builder call.
+    for build in (queued, running):
+        assert await run_build(ports, org_id=b.w.org, build_id=build) == "failed"
+        out = get(b, f"/v1/builds/{build}").json()
+        assert (out["state"], out["failure_code"]) == ("failed", APP_NOT_ACTIVE)
+        assert audit_of(b, build)[-1]["action"] == "build.failed"
+    assert (len(builds.requests), builds.polls) == (1, 1)
+    assert rows_of(b.dsn, b.w.org, "select count(*) as n from ssc.release") == [{"n": 0}]
 
 
 async def test_a_release_row_cannot_be_edited(b: Bench, dsns: Dsns) -> None:
@@ -814,6 +866,77 @@ async def test_a_disabled_app_is_refused(b: Bench) -> None:
     assert_problem(start_deploy(b, b.w.preview, release), ErrorCode.APP_NOT_ACTIVE)
     bundle, _ = seed_bundle(b)
     assert_problem(start_build(b, b.w.preview, bundle), ErrorCode.APP_NOT_ACTIVE)
+
+
+async def test_a_stopped_app_ends_a_deploy_within_one_poll(b: Bench) -> None:
+    r1 = await build_release(b, b.w.preview, manifest_of(**NIGHTLY))
+    first, _ = await deploy(b, b.w.preview, r1)
+    r2 = await build_release(b, b.w.preview, manifest_of(**NIGHTLY))
+    b.runtime.starting(image_of(b, r2))
+    second = start_deploy(b, b.w.preview, r2).json()["operation_id"]
+    synced = len(b.timers.calls)
+    b.runtime.reset_calls()
+
+    async def stop_between_polls(_seconds: float) -> None:
+        sql = "update ssc.app set status = 'disabled' where id = %s"
+        await asyncio.to_thread(execute, b.dsn, b.w.org, sql, b.w.app)
+
+    # A minute to become healthy: only the stop can end the job at once.
+    wait = HealthWait(within=60.0, every=0.01, sleep=stop_between_polls)
+    job = run_deployment(b.ports, org_id=b.w.org, deployment_id=second, health=wait)
+    assert await asyncio.wait_for(job, 10) == "failed"
+    assert_stopped_without_going_live(b, second, first, r1, synced)
+    service = service_name(b.w.preview)
+    assert b.runtime.calls == [("apply", service), ("observe", service)]
+
+
+async def test_a_stop_while_observing_is_caught_when_going_live(b: Bench) -> None:
+    r1 = await build_release(b, b.w.preview, manifest_of(**NIGHTLY))
+    first, _ = await deploy(b, b.w.preview, r1)
+    r2 = await build_release(b, b.w.preview, manifest_of(**NIGHTLY))
+    second = start_deploy(b, b.w.preview, r2).json()["operation_id"]
+    synced = len(b.timers.calls)
+    b.runtime.reset_calls()
+    b.runtime.slow("observe", 1.0)
+    job = asyncio.create_task(run(b, second))
+    # The poll saw an active app; R2 is ready and its job is parked inside ``observe``.
+    await asyncio.wait_for(b.hold.entered.wait(), 10)
+    pulled, commit = asyncio.Event(), asyncio.Event()
+
+    async def pull_the_switch() -> None:
+        async with bound_org(b.ports.engine, b.w.org) as conn:
+            await kill_switch.start(
+                conn,
+                org_id=b.w.org,
+                app_id=b.w.app,
+                mode="disable",
+                actor=Actor(ActorKind.USER, b.w.admin),
+            )
+            pulled.set()
+            await commit.wait()
+
+    switch = asyncio.create_task(pull_the_switch())
+    await asyncio.wait_for(pulled.wait(), 10)
+    b.runtime.slow("observe", 0)
+    b.hold.released.set()
+    # Going live waits on the uncommitted switch, then sees the app stopped.
+    await asyncio.wait_for(asyncio.to_thread(wait_for_a_lock_wait, b.dsn), 10)
+    commit.set()
+    await asyncio.wait_for(switch, 10)
+    assert await asyncio.wait_for(job, 10) == "failed"
+    assert_stopped_without_going_live(b, second, first, r1, synced)
+    assert "set_traffic" not in {method for method, _ in b.runtime.calls}
+
+
+def assert_stopped_without_going_live(
+    b: Bench, op: str, live: str, live_release: str, synced: int
+) -> None:
+    assert operation(b, op)["failure_code"] == APP_NOT_ACTIVE
+    assert pointer(b, b.w.preview) == live
+    assert live_image(b, b.w.preview) == image_of(b, live_release)
+    assert len(b.timers.calls) == synced
+    last = audit_of(b, op)[-1]
+    assert (last["action"], last["after"]["failure_code"]) == ("deploy.failed", APP_NOT_ACTIVE)
 
 
 # ── metrics ──────────────────────────────────────────────────────────────────

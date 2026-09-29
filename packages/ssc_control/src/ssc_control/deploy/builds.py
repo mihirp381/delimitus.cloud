@@ -5,7 +5,9 @@ on the build row, and ``BuildDriver.start`` is keyed by the build id. While the 
 job defers its own next poll (``schedule_at``) instead of sleeping, so a build never holds a
 worker, and no transaction stays open across a builder call. A builder error is retried until
 the build's deadline; after it, the build fails with ``BUILD_TIMED_OUT`` or
-``BUILD_DRIVER_ERROR``, so no build stays ``running``.
+``BUILD_DRIVER_ERROR``, so no build stays ``running``. Every step starts by claiming the build
+and re-reading its app: a disabled or quarantined app fails the build with ``APP_NOT_ACTIVE``
+before any builder call.
 
 On success one transaction numbers and writes the release (``source_digest`` is the bundle's
 digest, ``manifest_digest`` the stored bundle's), marks the build ``succeeded`` and audits
@@ -54,9 +56,10 @@ NOT_RUNNING: Final = "not_running"
 _LOAD = text(
     "select b.state, b.app_id, b.environment_id, b.bundle_id, b.driver_ref, b.started_at, "
     "b.actor_kind, b.actor_id, b.actor_via_agent, b.actor_client_id, e.name as env_name, "
-    "d.digest, d.manifest, d.manifest_digest, d.source_commit "
+    "d.digest, d.manifest, d.manifest_digest, d.source_commit, a.status as app_status "
     "from ssc.build b "
     "join ssc.environment e on e.org_id = b.org_id and e.id = b.environment_id "
+    "join ssc.app a on a.org_id = b.org_id and a.id = b.app_id "
     "join ssc.bundle d on d.org_id = b.org_id and d.app_id = b.app_id and d.id = b.bundle_id "
     "where b.org_id = :org and b.id = :id for update of b"
 )
@@ -96,6 +99,7 @@ class _Build:
     manifest: Any
     manifest_digest: str | None
     source_commit: str | None
+    app_status: str
 
 
 def _actor(row: Any) -> Actor:
@@ -125,6 +129,7 @@ async def _load(conn: AsyncConnection, org_id: str, build_id: str) -> _Build | N
         manifest=row.manifest,
         manifest_digest=row.manifest_digest,
         source_commit=row.source_commit,
+        app_status=str(row.app_status),
     )
 
 
@@ -201,7 +206,8 @@ async def _settle(  # noqa: PLR0913  (keyword-only)
 
 
 async def _claim(ports: Ports, org_id: str, build_id: str) -> _Build | str:
-    """The running build (claimed now, or by an earlier run), or the state it already ended in."""
+    """The running build (claimed now, or by an earlier run), or the state it ended in: already,
+    or now with ``APP_NOT_ACTIVE`` when its app is stopped."""
     async with bound_org(ports.engine, org_id) as conn:
         build = await _load(conn, org_id, build_id)
         if build is None:
@@ -212,6 +218,8 @@ async def _claim(ports: Ports, org_id: str, build_id: str) -> _Build | str:
         if build.state == "queued":
             started = (await conn.execute(_CLAIM, {"org": org_id, "id": build_id})).scalar_one()
             build = replace(build, state="running", started_at=started)
+        if build.app_status != "active":
+            return await _fail_in(conn, org_id, build, ErrorCode.APP_NOT_ACTIVE.value)
     return build
 
 
@@ -284,19 +292,23 @@ async def _succeed(ports: Ports, org_id: str, build: _Build, result: Succeeded) 
 
 async def _fail(ports: Ports, org_id: str, build: _Build, code: str) -> str:
     async with bound_org(ports.engine, org_id) as conn:
-        done = await conn.execute(_FAIL, {"org": org_id, "id": build.id, "code": code})
-        if done.rowcount == 0:
-            return NOT_RUNNING
-        await append_event(
-            conn,
-            NewEvent(
-                org_id=org_id,
-                action=AuditAction.BUILD_FAILED,
-                actor=build.actor,
-                target_kind="build",
-                target_id=build.id,
-                before={"state": "running"},
-                after={"state": "failed", "failure_code": code},
-            ),
-        )
+        return await _fail_in(conn, org_id, build, code)
+
+
+async def _fail_in(conn: AsyncConnection, org_id: str, build: _Build, code: str) -> str:
+    done = await conn.execute(_FAIL, {"org": org_id, "id": build.id, "code": code})
+    if done.rowcount == 0:
+        return NOT_RUNNING
+    await append_event(
+        conn,
+        NewEvent(
+            org_id=org_id,
+            action=AuditAction.BUILD_FAILED,
+            actor=build.actor,
+            target_kind="build",
+            target_id=build.id,
+            before={"state": "running"},
+            after={"state": "failed", "failure_code": code},
+        ),
+    )
     return "failed"

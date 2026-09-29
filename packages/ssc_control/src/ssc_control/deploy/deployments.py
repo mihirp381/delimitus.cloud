@@ -11,13 +11,16 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    called before the gate clears.
 2. ``apply`` the release's spec, then poll ``observe`` until the new revision is ready, fails, or
    the health timeout passes. A deployment another one pre-empted (``superseded``) stops at the
-   next poll without touching traffic.
-3. Healthy: one transaction marks it ``healthy`` (only if still ``running``), supersedes the
-   previous live deployment, moves the environment's pointer, audits ``*.finished``, records
-   ``first_url`` for the environment's first live deployment and, for a forward deploy only,
-   syncs the manifest's schedules. Then traffic moves; if that call fails the reconciler
-   finishes it. Unhealthy: ``failed`` with ``HEALTH_CHECK_FAILED`` and ``*.failed``; the
-   pointer is untouched, and a service that never had a live deployment is scaled to zero.
+   next poll without touching traffic. So does one whose app stopped (the kill switch): it
+   fails with ``APP_NOT_ACTIVE`` and frees ``env:<id>`` within one poll.
+3. Healthy: one transaction checks the app is still active (``FOR SHARE``, so it waits for a
+   kill switch pulled at the same moment; ``APP_NOT_ACTIVE`` otherwise), marks it ``healthy``
+   (only if still ``running``), supersedes the previous live deployment, moves the
+   environment's pointer, audits ``*.finished``, records ``first_url`` for the environment's
+   first live deployment and, for a forward deploy only, syncs the manifest's schedules. Then
+   traffic moves; if that call fails the reconciler finishes it. Unhealthy or stopped:
+   ``failed`` with the reason code and ``*.failed``; the pointer and traffic are untouched, and
+   a service that never had a live deployment is scaled to zero.
 """
 
 import asyncio
@@ -58,11 +61,13 @@ RUNTIME_UNAVAILABLE: Final = "RUNTIME_UNAVAILABLE"
 RUNTIME_ERROR: Final = "RUNTIME_ERROR"
 
 Kind = Literal["deploy", "rollback"]
+type _Verdict = Literal["ready", "unhealthy", "stopped", "preempted"]
 _FINISHED: Final = {
     "deploy": AuditAction.DEPLOY_FINISHED,
     "rollback": AuditAction.ROLLBACK_FINISHED,
 }
 _FAILED: Final = {"deploy": AuditAction.DEPLOY_FAILED, "rollback": AuditAction.ROLLBACK_FAILED}
+_VERDICT_CODE: Final = {"unhealthy": HEALTH_CHECK_FAILED, "stopped": APP_NOT_ACTIVE}
 
 _CLAIM = text(
     "update ssc.deployment set state = 'running' "
@@ -79,6 +84,12 @@ _LOAD = text(
     "where d.org_id = :org and d.id = :id for update of d"
 )
 _STATE = text("select state from ssc.deployment where org_id = :org and id = :id")
+_POLL = text(
+    "select d.state, a.status as app_status from ssc.deployment d "
+    "join ssc.app a on a.org_id = d.org_id and a.id = d.app_id "
+    "where d.org_id = :org and d.id = :id"
+)
+_SHARE_APP_STATUS = text("select status from ssc.app where org_id = :org and id = :app for share")
 _FINISH = text(
     "update ssc.deployment set state = :state, failure_code = :code, finished_at = now() "
     "where org_id = :org and id = :id and state = 'running'"
@@ -160,16 +171,17 @@ async def run_deployment(
     dep, driver, desired = ready.deployment, ready.driver, ready.desired
     try:
         revision = await driver.apply(desired)
-        healthy = await _wait_healthy(ports, org_id, ready, revision, health or HealthWait())
+        verdict = await _wait_healthy(ports, org_id, ready, revision, health or HealthWait())
     except Exception:
         log.exception("runtime call failed", extra={"deployment_id": dep.id})
         return await _fail_after_runtime(ports, org_id, ready, RUNTIME_ERROR)
-    if healthy is None:
+    if verdict == "preempted":
         return "superseded"
-    if not healthy:
-        return await _fail_after_runtime(ports, org_id, ready, HEALTH_CHECK_FAILED)
-    if not await _go_live(ports, org_id, ready):
-        return "superseded"
+    if verdict != "ready":
+        return await _fail_after_runtime(ports, org_id, ready, _VERDICT_CODE[verdict])
+    state = await _go_live(ports, org_id, ready)
+    if state != "healthy":
+        return state
     try:
         await driver.set_traffic(desired.service, revision)
     except Exception:
@@ -240,21 +252,24 @@ async def _prepare(
 
 async def _wait_healthy(
     ports: Ports, org_id: str, ready: _Ready, revision: str, health: HealthWait
-) -> bool | None:
-    """True when ``revision`` is ready, False when it failed, vanished or timed out, None when
-    the deployment stopped being ``running`` (pre-empted)."""
+) -> _Verdict:
+    """``ready`` when ``revision`` is; ``unhealthy`` when it failed, vanished or timed out;
+    ``preempted`` when the deployment stopped being ``running``; ``stopped`` when the app did.
+    Both are read before each ``observe``."""
     deadline = time.monotonic() + health.within
     params = {"org": org_id, "id": ready.deployment.id}
     while True:
         async with bound_org(ports.engine, org_id) as conn:
-            state = (await conn.execute(_STATE, params)).scalar()
-        if state != "running":
-            return None
+            row = (await conn.execute(_POLL, params)).first()
+        if row is None or row.state != "running":
+            return "preempted"
+        if row.app_status != "active":
+            return "stopped"
         verdict = _health(await ready.driver.observe(ready.desired.service), revision)
         if verdict is not None:
-            return verdict
+            return "ready" if verdict else "unhealthy"
         if time.monotonic() >= deadline:
-            return False
+            return "unhealthy"
         await health.sleep(health.every)
 
 
@@ -268,54 +283,76 @@ def _health(observed: ServiceObservation | None, revision: str) -> bool | None:
     return True if match.ready is True else None
 
 
-async def _go_live(ports: Ports, org_id: str, ready: _Ready) -> bool:
-    """Step 3 in one transaction; False when the deployment was pre-empted first."""
+async def _go_live(ports: Ports, org_id: str, ready: _Ready) -> str:
+    """Step 3 in one transaction. The state after it: ``healthy``, ``superseded`` when the
+    deployment was pre-empted first, or ``failed`` (``APP_NOT_ACTIVE``) when the app stopped."""
+    dep = ready.deployment
+    async with bound_org(ports.engine, org_id) as conn:
+        app = {"org": org_id, "app": dep.app_id}
+        if (await conn.execute(_SHARE_APP_STATUS, app)).scalar() == "active":
+            return "healthy" if await _mark_healthy(conn, ports, org_id, ready) else "superseded"
+        state, never_live = await _record_failure(conn, org_id, dep, APP_NOT_ACTIVE)
+    return await _scale_down_if_never_live(ready, state, never_live=never_live)
+
+
+async def _mark_healthy(conn: AsyncConnection, ports: Ports, org_id: str, ready: _Ready) -> bool:
+    """Step 3's writes; False when the deployment is no longer ``running``."""
     dep = ready.deployment
     params = {"org": org_id, "id": dep.id, "env": dep.environment_id}
-    async with bound_org(ports.engine, org_id) as conn:
-        done = await conn.execute(_FINISH, {**params, "state": "healthy", "code": None})
-        if done.rowcount == 0:
-            return False
-        previous = (await conn.execute(_LOCK_POINTER, params)).scalar()
-        if previous is not None and previous != dep.id:
-            await conn.execute(_SUPERSEDE_LIVE, {"org": org_id, "id": previous})
-        await conn.execute(_MOVE_POINTER, params)
-        await _audit(conn, org_id, dep, _FINISHED[dep.kind], state="healthy", code=None)
-        person = dep.actor.id if dep.actor.kind is ActorKind.USER else None
-        if previous is None:
-            await ports.metrics.record_event(
-                conn,
-                org_id=org_id,
-                kind=MetricKind.FIRST_URL,
-                app_id=dep.app_id,
-                user_id=person,
-                properties={"environment": dep.env_name},
-            )
-        if dep.kind == "deploy":
-            await ports.timers.sync_schedules(
-                conn,
-                org_id=org_id,
-                environment_id=dep.environment_id,
-                declared=ready.spec.manifest.schedules,
-                declared_by_user_id=person or dep.owner_user_id,
-                actor=dep.actor,
-            )
+    done = await conn.execute(_FINISH, {**params, "state": "healthy", "code": None})
+    if done.rowcount == 0:
+        return False
+    previous = (await conn.execute(_LOCK_POINTER, params)).scalar()
+    if previous is not None and previous != dep.id:
+        await conn.execute(_SUPERSEDE_LIVE, {"org": org_id, "id": previous})
+    await conn.execute(_MOVE_POINTER, params)
+    await _audit(conn, org_id, dep, _FINISHED[dep.kind], state="healthy", code=None)
+    person = dep.actor.id if dep.actor.kind is ActorKind.USER else None
+    if previous is None:
+        await ports.metrics.record_event(
+            conn,
+            org_id=org_id,
+            kind=MetricKind.FIRST_URL,
+            app_id=dep.app_id,
+            user_id=person,
+            properties={"environment": dep.env_name},
+        )
+    if dep.kind == "deploy":
+        await ports.timers.sync_schedules(
+            conn,
+            org_id=org_id,
+            environment_id=dep.environment_id,
+            declared=ready.spec.manifest.schedules,
+            declared_by_user_id=person or dep.owner_user_id,
+            actor=dep.actor,
+        )
     return True
 
 
 async def _fail_after_runtime(ports: Ports, org_id: str, ready: _Ready, code: str) -> str:
     """Record the failure; scale a service that never had a live deployment to zero."""
-    dep = ready.deployment
     async with bound_org(ports.engine, org_id) as conn:
-        state = await _fail(conn, org_id, dep, code)
-        pointer = (
-            await conn.execute(_LOCK_POINTER, {"org": org_id, "env": dep.environment_id})
-        ).scalar()
-    if state == "failed" and pointer is None:
+        state, never_live = await _record_failure(conn, org_id, ready.deployment, code)
+    return await _scale_down_if_never_live(ready, state, never_live=never_live)
+
+
+async def _record_failure(
+    conn: AsyncConnection, org_id: str, dep: _Deployment, code: str
+) -> tuple[str, bool]:
+    """Fail the deployment; its state after, and whether its environment has no live one."""
+    state = await _fail(conn, org_id, dep, code)
+    pointer = (
+        await conn.execute(_LOCK_POINTER, {"org": org_id, "env": dep.environment_id})
+    ).scalar()
+    return state, pointer is None
+
+
+async def _scale_down_if_never_live(ready: _Ready, state: str, *, never_live: bool) -> str:
+    if state == "failed" and never_live:
         try:
             await ready.driver.scale_to_zero(ready.desired.service)
         except Exception:
-            log.exception("scale_to_zero failed", extra={"deployment_id": dep.id})
+            log.exception("scale_to_zero failed", extra={"deployment_id": ready.deployment.id})
     return state
 
 

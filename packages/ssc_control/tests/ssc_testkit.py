@@ -8,6 +8,7 @@ The fixtures that wrap them (``dsns``, ``signing_key``) are in ``conftest.py``.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -70,6 +71,20 @@ def control_db() -> Iterator[Dsns]:
         d = Dsns(su, with_role(su, MIGRATE_ROLE, "migrate"), with_role(su, APP_ROLE, "app"))
         upgrade(d.migrate)
         yield d
+
+
+def wait_for_a_lock_wait(dsn: str, *, seconds: float = 10.0) -> None:
+    """Return once another session waits on a lock: the call a test started is blocked."""
+    deadline = time.monotonic() + seconds
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        while time.monotonic() < deadline:
+            row = conn.execute(
+                "select count(*) from pg_locks where not granted and pid <> pg_backend_pid()"
+            ).fetchone()
+            if row is not None and row[0] > 0:
+                return
+            time.sleep(0.01)
+    raise AssertionError(f"no session waited on a lock within {seconds} s")
 
 
 def make_org(dsn: str, name: str = "Acme") -> CreatedOrg:
