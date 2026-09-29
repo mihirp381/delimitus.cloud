@@ -12,12 +12,13 @@
   no token. The URL is a credential and never appears in an error.
 """
 
+import json
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Final, Self
+from typing import Any, Final, Self, cast
 from urllib.parse import quote, urlencode
 
 import httpx2
@@ -241,19 +242,38 @@ class ApiClient:
 
     # ── transport ────────────────────────────────────────────────────────────
 
+    def get_json(self, path: str) -> dict[str, Any]:
+        """The JSON object at ``path``, exactly as the API sent it."""
+        r = self._send("GET", path)
+        data = _json(r)
+        if not isinstance(data, dict):
+            raise local_error(
+                BAD_RESPONSE,
+                "The API answered in a shape this ssc does not understand.",
+                f"GET {path} did not answer with a JSON object.",
+            )
+        return cast("dict[str, Any]", data)
+
+    def post_json(self, path: str, body: Mapping[str, Any], key: str) -> httpx2.Response:
+        """POST ``body`` with this ``Idempotency-Key``; sending the same key again replays."""
+        return self._send("POST", path, body=body, headers={IDEMPOTENCY_HEADER: key})
+
     def _send(
         self,
         method: str,
         path: str,
         *,
-        body: BaseModel | None = None,
+        body: BaseModel | Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> httpx2.Response:
         sent = dict(headers or {})
         if method == "POST":
-            sent[IDEMPOTENCY_HEADER] = str(uuid.uuid4())
+            sent.setdefault(IDEMPOTENCY_HEADER, str(uuid.uuid4()))
         retryable = method in {"GET", "POST"}
-        content = body.model_dump_json().encode() if body is not None else None
+        if isinstance(body, BaseModel):
+            content = body.model_dump_json().encode()
+        else:
+            content = None if body is None else json.dumps(dict(body)).encode()
         if content is not None:
             sent["Content-Type"] = "application/json"
         retries = 0

@@ -40,6 +40,8 @@ USER_NOT_FOUND: Final = "USER_NOT_FOUND"
 GROUP_NOT_FOUND: Final = "GROUP_NOT_FOUND"
 SUBJECT_AMBIGUOUS: Final = "SUBJECT_AMBIGUOUS"
 BUILD_NOT_FOUND: Final = "BUILD_NOT_FOUND"
+AGENT_TOKEN_REQUIRED: Final = "AGENT_TOKEN_REQUIRED"  # noqa: S105  (an error code, not a secret)
+MCP_NOT_INSTALLED: Final = "MCP_NOT_INSTALLED"
 LOCAL_CODES: Final = frozenset(
     {
         NO_TOKEN,
@@ -62,6 +64,8 @@ LOCAL_CODES: Final = frozenset(
         GROUP_NOT_FOUND,
         SUBJECT_AMBIGUOUS,
         BUILD_NOT_FOUND,
+        AGENT_TOKEN_REQUIRED,
+        MCP_NOT_INSTALLED,
     }
 )
 

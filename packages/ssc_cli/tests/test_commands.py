@@ -53,6 +53,7 @@ ALLOWED = {
     "deploy",
     "releases",
     "rollback",
+    "mcp",
 }
 
 
@@ -105,6 +106,7 @@ def test_help_lists_exact_set(cli):
         ("deploy",),
         ("releases",),
         ("rollback",),
+        ("mcp",),
     }
     for group, subs in (("token", {"set", "clear"}), ("apps", {"create"})):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
@@ -808,7 +810,8 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),
     }
-    assert set(cases) == _paths()
+    # `mcp` serves stdio; its --json covers start-up refusals only (test_mcp_local.py).
+    assert set(cases) | {("mcp",)} == _paths()
     for path, (args, shape, stdin) in cases.items():
         r = on_live(*path, *args, "--json", input=stdin)
         assert r.code == 0, (path, r.stdout, r.stderr)

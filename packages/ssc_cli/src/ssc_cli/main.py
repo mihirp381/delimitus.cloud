@@ -10,6 +10,7 @@ from ssc_cli.commands.apps import apps_app
 from ssc_cli.commands.deploy import deploy
 from ssc_cli.commands.doctor import doctor
 from ssc_cli.commands.init import init
+from ssc_cli.commands.mcp import mcp
 from ssc_cli.commands.releases import releases
 from ssc_cli.commands.rollback import rollback
 from ssc_cli.commands.share import share, unshare
@@ -65,3 +66,4 @@ app.command()(init)
 app.command()(deploy)
 app.command()(releases)
 app.command()(rollback)
+app.command()(mcp)

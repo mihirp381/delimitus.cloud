@@ -105,7 +105,7 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
     note = _progress(json_mode)
     budget = Budget(timeout)
     with handled(json_mode), tempfile.TemporaryDirectory(prefix="ssc-deploy-") as tmp:
-        prepared = None if build else _prepare(path, Path(tmp) / "bundle.tar.gz")
+        prepared = None if build else prepare_folder(path, Path(tmp) / "bundle.tar.gz")
         if prepared is not None:
             b = prepared.bundle
             note(f"Packed {b.file_count} files, {b.size} bytes, {b.digest}.")
@@ -188,7 +188,7 @@ def _start(  # noqa: PLR0913, PLR0917
     """Upload the bundle and start its preview build."""
     b = prepared.bundle
     body = BundleCreate(digest=b.digest, size_bytes=b.size, source_commit=commit)
-    bundle, uploaded = _upload(client, app_id, body, prepared, note)
+    bundle, uploaded = upload_bundle(client, app_id, body, prepared, note)
     note(f"Building {bundle.bundle_id} for preview.")
     accepted = client.create_build(app_id, env_id, bundle.bundle_id)
     changes = [
@@ -226,7 +226,8 @@ def _progress(json_mode: bool) -> Note:
     return note
 
 
-def _prepare(root: Path, dest: Path) -> Prepared:
+def prepare_folder(root: Path, dest: Path) -> Prepared:
+    """The packed and scanned folder, or a :class:`CliError` (exit 4) saying what blocks it."""
     try:
         return prepare(root, dest)
     except ManifestError as e:
@@ -265,7 +266,7 @@ def _blocked(code: ErrorCode, title: str, detail: str, fix: str | None = None) -
     return CliError(ErrorBody(code=code.value, title=title, detail=detail), ExitCode.BLOCKED, fix)
 
 
-def _upload(
+def upload_bundle(
     client: ApiClient, app_id: str, body: BundleCreate, prepared: Prepared, note: Note
 ) -> tuple[BundleOut, bool]:
     """The stored bundle, and whether its bytes were sent now."""
