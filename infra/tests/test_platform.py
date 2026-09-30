@@ -51,7 +51,7 @@ def test_the_folder_deny_rule_names_the_control_plane(declared: list[Declared]) 
     cells = _folders(declared)["ssc-cells"].outputs["folderId"]
     assert deny["parent"] == f"cloudresourcemanager.googleapis.com%2Ffolders%2F{cells}"
     rule = deny["rules"][0]["denyRule"]
-    assert rule["deniedPermissions"] == [naming.SECRET_READ]
+    assert rule["deniedPermissions"] == ["secretmanager.googleapis.com/versions.access"]
     assert rule["deniedPrincipals"] == [
         "principal://iam.googleapis.com/projects/-/serviceAccounts/"
         "ssc-control@ssc-control-staging.iam.gserviceaccount.com"
@@ -68,6 +68,7 @@ def test_staff_access_is_just_in_time(declared: list[Declared]) -> None:
         jit["privilegedAccess"]["gcpIamAccess"]["resourceType"]
         == "cloudresourcemanager.googleapis.com/Folder"
     )
+    assert jit["privilegedAccess"]["gcpIamAccess"]["roleBindings"] == [{"role": "roles/writer"}]
 
 
 def test_the_budget_is_250_a_month_over_every_ssc_folder(declared: list[Declared]) -> None:
@@ -89,3 +90,13 @@ def test_the_control_project_is_protected(declared: list[Declared]) -> None:
     assert project["projectId"] == "ssc-control-staging"
     assert project["folderId"] == PLATFORM_FOLDER
     assert project["deletionPolicy"] == "PREVENT"
+
+
+def test_the_pam_service_agent_manages_the_cells_folder(declared: list[Declared]) -> None:
+    grant = one(declared, "gcp:folder/iAMMember:IAMMember").inputs
+    assert grant["role"] == "roles/privilegedaccessmanager.folderServiceAgent"
+    assert (
+        grant["member"]
+        == f"serviceAccount:service-org-{naming.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
+    )
+    assert grant["folder"] == _folders(declared)["ssc-cells"].outputs["name"]

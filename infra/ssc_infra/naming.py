@@ -35,7 +35,7 @@ APP_PREFIX: Final = "ssc-a-"
 PROBE_SECRET: Final = f"{APP_PREFIX}probe"
 PROBE_ALLOWED_SA: Final = f"{APP_PREFIX}probe"
 PROBE_DENIED_SA: Final = "ssc-deny-probe"
-SECRET_READ: Final = "secretmanager.googleapis.com/secretmanager.versions.access"  # noqa: S105
+SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S105
 
 
 def control_project(stage: Stage) -> str:

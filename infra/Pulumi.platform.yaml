@@ -1,0 +1,5 @@
+secretsprovider: gcpkms://projects/ssc-platform-0/locations/us-central1/keyRings/ssc-platform/cryptoKeys/pulumi-secrets
+encryptedkey: CiQAiY3wT86Zz1DTE5r/+4Hi96o+jtIVSd4kGzekFkg1lhILvOESSQARqRw/8aVTQDK1U/NtBF6555Bl3Gn0hxbtp+LLCa1DMNjCe0E1RsDiHLlusRWKdjUky8QmbOP48RAOE0wXfn+WUGc8uq+hJ3Q=
+config:
+  ssc-infra:platform_folder_id: "370253497254"
+  gcp:disableGlobalProjectWarning: "true"

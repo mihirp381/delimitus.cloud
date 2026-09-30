@@ -18,8 +18,10 @@ BUDGET_THRESHOLDS = (
     (1.0, "CURRENT_SPEND"),
     (1.0, "FORECASTED_SPEND"),
 )
-JIT_ROLE = "roles/editor"
+JIT_ROLE = "roles/writer"
 JIT_MAX = "3600s"
+PAM_AGENT = f"serviceAccount:service-org-{n.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
+PAM_AGENT_ROLE = "roles/privilegedaccessmanager.folderServiceAgent"
 
 
 def provider() -> gcp.Provider:
@@ -136,6 +138,9 @@ def build() -> None:
         opts=opts,
     )
 
+    pam_agent = gcp.folder.IAMMember(
+        "cells-pam-agent", folder=cells.name, role=PAM_AGENT_ROLE, member=PAM_AGENT, opts=opts
+    )
     gcp.privilegedaccessmanager.Entitlement(
         "cells-jit",
         entitlement_id="ssc-cells-jit",
@@ -161,7 +166,7 @@ def build() -> None:
         requester_justification_config=gcp.privilegedaccessmanager.EntitlementRequesterJustificationConfigArgs(
             unstructured=gcp.privilegedaccessmanager.EntitlementRequesterJustificationConfigUnstructuredArgs()
         ),
-        opts=opts,
+        opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=[pam_agent])),
     )
 
     gcp.billing.Budget(
