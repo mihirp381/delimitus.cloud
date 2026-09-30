@@ -129,3 +129,35 @@ def test_report_renders_before_any_run_and_after_device_recheck():
     )
     assert "| OKTA | 1 | 2 | idp_id | not measured | yes | yes |" in done
     assert "Fallback design" in done
+
+
+def test_login_before_a_directory_email_change_still_joins_on_idp_id_and_is_stable():
+    users = [duser("du_1", "00u1abc", ["ann.smith@example.test"], ["Finance"])]
+    records = {
+        "logins": [login("OKTA", "00u1abc", "ann@example.test")],
+        "directories": {"OKTA": {"users": users}},
+        "device": {},
+    }
+    r = join.evaluate(records)["OKTA"]
+    assert r["join_key"] == "idp_id"
+    assert r["stable_across_email_change"] is True
+
+
+def test_google_saml_idp_id_that_is_the_email_is_not_stable():
+    records = {
+        "logins": [login("GOOGLE", "ann@example.test", "ann@example.test")],
+        "directories": {"GOOGLE": GOOGLE_DIR},
+        "device": {},
+    }
+    r = join.evaluate(records)["GOOGLE"]
+    assert r["join_key"] == "email"
+    assert r["stable_across_email_change"] is False
+
+
+def test_directory_without_groups_leaves_group_sharing_unmeasured():
+    no_groups = {"users": [{**ENTRA_DIR["users"][0], "groups": []}]}
+    login_rec = login("ENTRA_OIDC", "8f1c2d3e-0000-0000-0000-000000000001", "ann@example.test")
+    records = {"logins": [login_rec], "directories": {"ENTRA": no_groups}, "device": {}}
+    r = join.evaluate(records)["ENTRA_OIDC"]
+    assert r["join_key"] == "idp_id"
+    assert r["group_sharing_possible"] == join.NOT_MEASURED

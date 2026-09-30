@@ -19,6 +19,12 @@ file and never source one.
 
 ## Founder checklist (about two hours, one afternoon)
 
+**Scope, founder decision 2026-09-30:** Entra is skipped entirely; the proof runs on Google Workspace and
+Okta. Entra's free tier cannot assign groups to an enterprise app, and its `onmicrosoft.com` user domain cannot
+be verified on a WorkOS Organization without adding a custom domain. Leave `WORKOS_CONN_ENTRA_*` and
+`WORKOS_DIR_ENTRA` unset so the harness shows no Entra links or rows. Entra's join key stays unmeasured until
+the first Microsoft customer.
+
 Fixed costs: Google Workspace Business Starter trial needs a card and a spare domain you own (about $7 per
 user per month after 14 days; cancel after the test). Microsoft Entra ID free tenant: $0. Okta Developer
 Edition: $0. WorkOS staging environment: $0.

@@ -5,7 +5,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 | # | Decision | Source | Status |
 |---|---|---|---|
 | 001 | Cloud and runtime: GCP, Cloud Run gen2 in a project per customer cell, Direct VPC egress into a deny-all VPC, regional internal Application LB, kill switch by traffic to a tombstone revision, prod apps kept warm | SSC-001 (`spikes/bakeoff/RESULTS.md`, `spikes/bakeoff/COST_SHEET.md`) | decided 2026-09-29 |
-| 002 | Login vendor and directory join key | SSC-002 | pending |
+| 002 | Login vendor and directory join key: WorkOS SSO, Directory Sync and the AuthKit device flow; users keyed on the directory user, joined by SSO `idp_id` where it equals the directory `idp_id` (Okta), by email plus an admin link where it does not (Google); SSC revokes sessions and CLI tokens itself on directory deactivation or removal | SSC-002 (`spikes/loginproof/RESULTS.md`, `spikes/loginproof/NOTES.md` h) | decided 2026-09-30; Entra untested (founder skip); WorkOS data residency Unknown |
 | 003 | App database connection string form | SSC-005 (`spikes/appdb/RESULTS.md`) | draft |
 | 004 | Domains: `delimitus.com` platform hosts; apps on `delimitusapps.com` with opaque org labels; host rule `<slug>.<cell label>.<apps domain>` and `<slug>--preview.<cell label>.<apps domain>` | tickets §2 SSC-006; host rule SSC-042 (`ssc_shared/hosts.py`) | decided 2026-09-28; host rule and apps domain 2026-09-29 |
 | 005 | The seven decide-once rules | build path | decided 2026-09-28 |
@@ -41,6 +41,22 @@ Reason: GCP passes every security row: egress, DNS exfiltration, machine token, 
 Known gap: no candidate meets the cold-start targets from zero. GCP p50 was 4.5 s static, 8.2 s API and 22.3 s Streamlit; Fly's floor for the same images was 2.2, 5.8 and 4.3 s. Warm prod instances cover production; previews show the cold start. Worth measuring before the Cloud Run driver ships: startup CPU boost, and cold start without Direct VPC egress (the gap between the container-start metric and first byte is 1 to 15 s).
 
 Reverse if: warm-instance cost per app pushes a typical cell over A7, or a customer needs cold starts GCP cannot meet with startup CPU boost. Also reverse if an IAM deny policy on `secretmanager.versions.access` does not hold when tested, or tombstone-revision cut-off exceeds 10 s under load. AWS is the fallback: it passed the same security rows, and the runtime driver (decision 014) hides the runtime behind one protocol.
+
+## 002 Login vendor and directory join key
+
+Choice: WorkOS for SSO (SAML), Directory Sync and command-line login (AuthKit device flow).
+- An SSC user is keyed on the directory user (`(issuer, subject)` with the directory `idp_id`), never on email.
+- A login joins its directory user by SSO `idp_id` equal to directory `idp_id`. Okta passes: the `00u…` user id is in both, and it survived an email change.
+- Google Workspace SAML sends the email as `idp_id`, so a Google login joins by a unique lower-cased email match against the synced directory, and the fallback design in `spikes/loginproof/RESULTS.md` applies: an unmatched login gets no groups and lands in an admin `Unlinked logins` list; a link, once made, is stored and audited.
+- The SSO email and the directory email can disagree (Okta sent the old address after a change), so email is display only.
+- WorkOS does not revoke refresh tokens or end sessions when a directory user is removed (measured: still refreshing 11 minutes after a Google suspension). On `dsync.user.updated` to `inactive` and on `dsync.user.deleted`, SSC ends its own sessions and revokes the user's WorkOS sessions (`POST /user_management/sessions/revoke`).
+- Google Workspace removes a suspended user from the directory instead of marking them `inactive`, so both events are handled. WorkOS polls Google (docs: about every 30 minutes; observed about ten), so the 5-minute lockout in SSC-019 counts from the directory event, not from the admin's click.
+
+Reason: WorkOS was the only vendor in scope. The two tenants measured cover the join-key good case (Okta) and the bad case (Google), and the fallback design keeps Google usable without a stable key. Staging is free; production connections cost $125 each a month for the first 15.
+
+Known gaps: Entra ID was not measured (founder decision 2026-09-30); whether its OIDC `idp_id` is the pairwise `sub` or the tenant `oid` is still Unknown. Okta deactivation, revocation and SCIM push latency were not measured. WorkOS data residency is Unknown; ask WorkOS before promising an EU region.
+
+Reverse if: an Entra tenant joins neither by `idp_id` nor by the `objectidentifier` claim; a buyer needs a data region WorkOS cannot provide; or revoking WorkOS sessions from the directory event does not stop a refresh.
 
 ## 004 Domains and app hosts
 

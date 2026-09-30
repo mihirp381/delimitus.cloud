@@ -19,6 +19,10 @@ def yn(v: Any) -> str:
     return str(v) if v else join.NOT_MEASURED
 
 
+SKIPPED: frozenset[str] = frozenset({"ENTRA_OIDC", "ENTRA_SAML"})
+"""Providers left out of the proof; see README.md."""
+
+
 def render(records: dict[str, Any]) -> str:
     ev = join.evaluate(records)
     device = records.get("device", {})
@@ -43,8 +47,13 @@ def render(records: dict[str, Any]) -> str:
     ]
     for p in SSO_PROVIDERS:
         r = ev.get(p)
+        if not r and p in SKIPPED:
+            lines.append(f"| {p} | skipped (founder decision 2026-09-30) | | | | | |")
+            continue
         if not r:
-            lines.append(f"| {p} | 0 | 0 | {join.NOT_MEASURED} | {join.NOT_MEASURED} | {cli} | {join.NOT_MEASURED} |")
+            lines.append(
+                f"| {p} | 0 | 0 | {join.NOT_MEASURED} | {join.NOT_MEASURED} | {cli} | {join.NOT_MEASURED} |"
+            )
             continue
         lines.append(
             f"| {p} | {r['logins']} | {r['directory_users']} | {r['join_key'] or 'none'} | "
@@ -60,6 +69,8 @@ def render(records: dict[str, Any]) -> str:
         ),
         "",
         "## Device flow",
+        "",
+        "Measured with a Google Workspace user; timings and what was not measured: NOTES.md section h.",
         "",
         f"- Offered: {yn(flow.get('offered')) if flow else join.NOT_MEASURED}",
         f"- Refresh before deactivation succeeded: {yn(device.get('before_deactivation', {}).get('refresh_succeeded'))}",

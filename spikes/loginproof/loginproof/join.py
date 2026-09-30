@@ -61,8 +61,9 @@ def match_login(login: dict[str, Any], users: list[dict[str, Any]]) -> dict[str,
 
 
 def stability(logins: list[dict[str, Any]]) -> str | bool:
-    """True when one idp_id appears with two different emails. False when the same person (same directory
-    match) got a new idp_id after the email change. Not measured otherwise."""
+    """True when one idp_id appears with two different emails, or when a login joined by a non-email key to a
+    directory user whose email has since changed. False when the same person (same directory match) got a new
+    idp_id after the email change, or when every idp_id is the email itself. Not measured otherwise."""
     by_idp: dict[str, set[str]] = {}
     for rec in logins:
         if rec.get("idp_id"):
@@ -75,7 +76,24 @@ def stability(logins: list[dict[str, Any]]) -> str | bool:
             by_user.setdefault(rec["matched_user_id"], set()).add(rec.get("idp_id") or "")
     if any(len(v) >= 2 for v in by_user.values()):
         return False
+    if any(
+        rec.get("matched_key") not in (None, "email")
+        and (rec.get("email") or "").lower() not in rec.get("matched_emails", [])
+        for rec in logins
+    ):
+        return True
+    if logins and all(
+        rec.get("idp_id") and rec["idp_id"].lower() == (rec.get("email") or "").lower() for rec in logins
+    ):
+        return False
     return NOT_MEASURED
+
+
+def _group_sharing(users: list[dict[str, Any]], matched: int, logins: int, keys: list[str]) -> str | bool:
+    """Not measured when no directory user has a group, since there is nothing to share with."""
+    if users and not any(u.get("groups") for u in users):
+        return NOT_MEASURED
+    return bool(users) and matched == logins and keys not in ([], ["email"])
 
 
 def evaluate(records: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -94,7 +112,14 @@ def evaluate(records: dict[str, Any]) -> dict[str, dict[str, Any]]:
             if m["user"]:
                 matched += 1
                 keys.append(m["key"])
-                annotated.append({**rec, "matched_user_id": m["user"]["id"]})
+                annotated.append(
+                    {
+                        **rec,
+                        "matched_user_id": m["user"]["id"],
+                        "matched_key": m["key"],
+                        "matched_emails": [e.lower() for e in m["user"].get("emails", [])],
+                    }
+                )
             else:
                 annotated.append(rec)
         key_set = sorted(set(keys))
@@ -105,7 +130,7 @@ def evaluate(records: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "join_key": key_set[0] if len(key_set) == 1 else (key_set or None),
             "idp_id_present": all(bool(r.get("idp_id")) for r in logins),
             "stable_across_email_change": stability(annotated),
-            "group_sharing_possible": bool(users) and matched == len(logins) and key_set not in ([], ["email"]),
+            "group_sharing_possible": _group_sharing(users, matched, len(logins), key_set),
         }
     return result
 

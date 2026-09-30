@@ -116,6 +116,28 @@ to a European buyer. The harness reads `WORKOS_API_BASE` so a regional base URL 
 https://workos.com/pricing: "Staging environments: Free for testing. Only production environments are
 billed." SSO and Directory Sync connections in production: "1–15 $125/ea" per month, falling to "51–100 $65/ea".
 
+## h. Founder run, 2026-09-30 (measured)
+
+Tenants: a Google Workspace trial and an Okta developer org, both on the test domain, one WorkOS Organization
+each. Entra skipped by founder decision. Times are UTC.
+
+- Google SAML: the SSO `idp_id` is the email address. The directory `idp_id` is Google's numeric user id, so
+  the only join is by email. An admin rename (`mihir@` to `mihir123@`) produced a new SSO `idp_id` and a new
+  WorkOS profile, while the directory user kept its id. Not stable.
+- Okta SAML: the SSO `idp_id` is the Okta user id (`00u…`), equal to the directory `idp_id`. After a user's
+  email was changed to `irinapetro123@`, the directory showed the new email under the same `idp_id`, and a
+  login at 16:05 still joined on `idp_id`. That login's assertion still carried the old email, so the SSO
+  email and the directory email can disagree: never key on email.
+- Google deprovisioning: a suspended Workspace user is removed from the WorkOS directory (no longer listed),
+  not shown as `state: inactive`. Expected event `dsync.user.deleted`; not captured (no webhook in the harness).
+- Google sync lag: user suspended at 16:09; the founder saw them gone from the WorkOS directory about ten
+  minutes later (exact time Unknown); the 16:23:49 snapshot confirms. Docs say about every 30 minutes.
+- Revocation (Google user, device flow): login 16:08:01; refresh before suspension 200; after the user was
+  gone from the directory, refresh at 16:20:48 still 200 and the WorkOS session still `active`, `ended_at`
+  null. WorkOS does not revoke CLI refresh tokens or end sessions when a directory user is removed.
+- Not measured: Okta deactivation and revocation (docs: deactivation gives `state: inactive`), Okta SCIM push
+  latency, anything about Entra.
+
 ## SDK decision
 
 No `workos` Python package added. The harness uses six REST calls over httpx2; the PyPI JSON fetch for the

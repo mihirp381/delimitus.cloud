@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 
 from loginproof import api, config, store
@@ -48,7 +48,13 @@ def login(provider: str = Query(...)) -> RedirectResponse | PlainTextResponse:
 
 
 @app.get("/callback")
-def callback(code: str = Query(...), state: str = Query("")) -> PlainTextResponse:
+def callback(request: Request, code: str | None = None, state: str = "") -> PlainTextResponse:
+    if not code:
+        sent = "\n".join(f"{k}={v}" for k, v in request.query_params.items()) or "(nothing)"
+        return PlainTextResponse(
+            f"no login recorded for {state or 'unknown provider'}: WorkOS returned no code\n\n{sent}",
+            status_code=400,
+        )
     token = api.exchange_code(code)
     rec = profile_record(state, token["profile"])
     store.add_login(rec)
