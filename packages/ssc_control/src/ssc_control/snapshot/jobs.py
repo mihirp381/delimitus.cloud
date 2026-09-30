@@ -2,7 +2,8 @@
 ``snapshot`` namespace; the API defers ``compile`` by name (``service.COMPILE_TASK``).
 
 ``compile``: one job per org at a time (``lock``), at most one waiting (``queueing_lock``). A
-failure is retried six times. With no blob store configured it does nothing.
+failure is retried six times. It publishes to the org's cell bucket when ``Ports.cell_stores`` is
+set (SSC-013), else to ``Ports.blob_store``; with neither configured it does nothing.
 
 ``stale_sweep`` is periodic: for every org whose newest version lags a live compile, or whose
 ``latest.json`` lags its newest version (a compile that ran out of retries, a lost job), it marks
@@ -13,14 +14,15 @@ import logging
 from typing import Final
 
 from procrastinate import Blueprint, JobContext, RetryStrategy
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
 from ssc_control.snapshot.compiler import is_stale, point_latest, publish
 from ssc_control.snapshot.service import mark_dirty
-from ssc_control.worker_ports import ports_of
-from ssc_shared.blobstore import BlobError
+from ssc_control.worker_ports import Ports, ports_of
+from ssc_shared.blobstore import BlobError, BlobStore
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +34,16 @@ RETRY: Final = RetryStrategy(
     linear_wait=2,
     retry_exceptions=[DBAPIError, BlobError, OSError, TimeoutError],
 )
+_CELL_LABEL = text("select cell_label from ssc.org where id = :org")
+
+
+async def snapshot_store(ports: Ports, org_id: str) -> BlobStore | None:
+    """Where the org's snapshots are published: its cell's bucket, else the one blob store."""
+    if ports.cell_stores is None:
+        return ports.blob_store
+    async with bound_org(ports.engine, org_id) as conn:
+        label = (await conn.execute(_CELL_LABEL, {"org": org_id})).scalar_one()
+    return ports.cell_stores(str(label))
 
 
 def blueprint(*, sweep_cron: str = SWEEP_CRON) -> Blueprint:
@@ -41,12 +53,13 @@ def blueprint(*, sweep_cron: str = SWEEP_CRON) -> Blueprint:
     async def compile_snapshot(context: JobContext, org_id: str) -> int | None:  # pyright: ignore[reportUnusedFunction]
         """Publish the org's next version and move ``latest.json``; returns the version."""
         ports = ports_of(context)
-        if ports.blob_store is None:
+        store = await snapshot_store(ports, org_id)
+        if store is None:
             log.warning("snapshot compile skipped: no blob store", extra={"org_id": org_id})
             return None
         async with bound_org(ports.engine, org_id) as conn:
-            version = await publish(conn, org_id, ports.blob_store, at=ports.clock())
-        await point_latest(ports.engine, org_id, ports.blob_store)
+            version = await publish(conn, org_id, store, at=ports.clock())
+        await point_latest(ports.engine, org_id, store)
         return version
 
     @bp.periodic(cron=sweep_cron, periodic_id="snapshot_sweep", queueing_lock="snapshot_sweep")
@@ -54,13 +67,14 @@ def blueprint(*, sweep_cron: str = SWEEP_CRON) -> Blueprint:
     async def stale_sweep(context: JobContext, timestamp: int) -> int:  # pyright: ignore[reportUnusedFunction]
         """Mark every lagging org's snapshot dirty; returns how many."""
         ports = ports_of(context)
-        if ports.blob_store is None:
+        if ports.blob_store is None and ports.cell_stores is None:
             log.info("snapshot sweep skipped: no blob store", extra={"tick": timestamp})
             return 0
         dirty = 0
         for org_id in await all_org_ids(ports.engine):
             try:
-                if not await is_stale(ports.engine, org_id, ports.blob_store):
+                store = await snapshot_store(ports, org_id)
+                if store is None or not await is_stale(ports.engine, org_id, store):
                     continue
                 async with bound_org(ports.engine, org_id) as conn:
                     await mark_dirty(conn, org_id)

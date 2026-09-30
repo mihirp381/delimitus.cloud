@@ -1,4 +1,6 @@
-"""``BlobStore`` contract. The filesystem store passes it now; the cloud bucket (SSC-013) must too.
+"""``BlobStore`` contract. The filesystem store passes all of it. The bucket store (SSC-013) passes
+``BlobStoreCoreContract``, which needs only the ``blob_store`` fixture; it signs no URLs until
+SSC-014.
 
 Subclass ``BlobStoreContract`` as a ``Test*`` class and provide three fixtures: ``blob_store``,
 ``fetch`` (sends a request to a signed URL, real HTTP for a cloud store) and ``clock`` (the clock
@@ -115,8 +117,8 @@ def altered(value: str) -> str:
     return value[:-1] + ("b" if value[-1:] != "b" else "c")
 
 
-class BlobStoreContract:
-    """Behaviour every ``BlobStore`` shows. Test methods take the three fixtures by name."""
+class BlobStoreCoreContract:
+    """Behaviour every ``BlobStore`` shows without signed URLs."""
 
     async def test_bytes_round_trip(self, blob_store: BlobStore) -> None:
         info = await blob_store.put("c/one", b"hello", content_type="text/plain")
@@ -170,15 +172,13 @@ class BlobStoreContract:
         with pytest.raises(BlobKeyError):
             [i async for i in blob_store.list("../")]
 
-    async def test_delete_removes_only_that_key(self, blob_store: BlobStore, fetch: Fetch) -> None:
+    async def test_delete_removes_only_that_key(self, blob_store: BlobStore) -> None:
         for key in ("d/a", "d/a/b", "d/ab"):
             await blob_store.put(key, key.encode())
-        get = await blob_store.signed_url("d/a", method="GET")
         assert await blob_store.delete("d/a") is True
         assert await blob_store.stat("d/a") is None
         with pytest.raises(BlobNotFoundError):
             await read_all(blob_store.get("d/a"))
-        assert refused(await send(fetch, get))
         assert [i.key async for i in blob_store.list("d/")] == ["d/a/b", "d/ab"]
         assert await read_all(blob_store.get("d/a/b")) == b"d/a/b"
         # Deleting again, or a key never written, is not an error.
@@ -204,6 +204,16 @@ class BlobStoreContract:
             await blob_store.put("c/fresh", b"new", size=4)
         assert await read_all(blob_store.get("c/k")) == b"old"
         assert await blob_store.stat("c/fresh") is None
+
+
+class BlobStoreContract(BlobStoreCoreContract):
+    """The core, plus signed URLs. Test methods take the three fixtures by name."""
+
+    async def test_a_deleted_keys_url_is_refused(self, blob_store: BlobStore, fetch: Fetch) -> None:
+        await blob_store.put("d/a", b"d/a")
+        get = await blob_store.signed_url("d/a", method="GET")
+        assert await blob_store.delete("d/a") is True
+        assert refused(await send(fetch, get))
 
     async def test_signed_url_lifetime_is_at_most_ten_minutes(
         self, blob_store: BlobStore, clock: SettableClock

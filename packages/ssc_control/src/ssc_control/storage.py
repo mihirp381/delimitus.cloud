@@ -6,20 +6,31 @@ and the operator commands from the environment (``blob_store_from_env``); both c
 readers in step.
 
 ``none`` (the default) means no store. ``fs`` is the development store and is refused unless
-``SSC_ENV`` is ``dev`` or ``test``; bucket bindings arrive with SSC-013.
+``SSC_ENV`` is ``dev`` or ``test``.
+
+``cell_stores_from_env`` is the other store family (SSC-013): one bucket per customer cell,
+named by ``SSC_CELL_BUCKET_TEMPLATE`` with ``{cell}`` standing for the org's cell label. Access
+snapshots go there, so a cell reads its rules from its own project.
 """
 
 import base64
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final, cast
 
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
+from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of
 from ssc_shared.clock import SystemClock
+from ssc_shared.hosts import check_cell_label
 
 BACKEND_ENV: Final = "SSC_BLOB_BACKEND"
+CELL_BUCKET_ENV: Final = "SSC_CELL_BUCKET_TEMPLATE"
+CELL_PLACEHOLDER: Final = "{cell}"
+
+CellStores = Callable[[str], BlobStore]
+"""A cell label to that cell's bucket store."""
 FS_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 BLOBS_PATH: Final = "/blobs"
 """Where the API serves the filesystem store's signed URLs."""
@@ -101,3 +112,29 @@ def blob_store_from_env(env: Mapping[str, str]) -> BlobStore | None:
         kid=env.get("SSC_BLOB_SIGNING_KID", ""),
         public_url=env.get("SSC_API_PUBLIC_URL", DEFAULT_PUBLIC_URL),
     )
+
+
+def _gcs_store(name: str) -> BlobStore:
+    return GcsBlobStore(bucket_of(name))
+
+
+def cell_stores(template: str, *, bucket: Callable[[str], BlobStore] | None = None) -> CellStores:
+    """Stores for ``template`` (one ``{cell}``), built once per label. No I/O."""
+    if template.count(CELL_PLACEHOLDER) != 1:
+        raise StorageConfigError(f"{CELL_BUCKET_ENV} needs exactly one {CELL_PLACEHOLDER}")
+    make = bucket or _gcs_store
+    built: dict[str, BlobStore] = {}
+
+    def store(cell_label: str) -> BlobStore:
+        label = check_cell_label(cell_label)
+        if label not in built:
+            built[label] = make(template.replace(CELL_PLACEHOLDER, label))
+        return built[label]
+
+    return store
+
+
+def cell_stores_from_env(env: Mapping[str, str]) -> CellStores | None:
+    """``SSC_CELL_BUCKET_TEMPLATE``, or None when it is unset."""
+    template = env.get(CELL_BUCKET_ENV, "")
+    return cell_stores(template) if template else None

@@ -1,3 +1,9 @@
 import pulumi
 
-pulumi.export("note", "no resources until SSC-001 picks the cloud")
+from ssc_infra import cell, naming, platform
+
+stack = pulumi.get_stack()
+if stack == naming.PLATFORM_STACK:
+    platform.build()
+else:
+    cell.build(stack)

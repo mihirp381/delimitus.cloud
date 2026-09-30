@@ -174,6 +174,10 @@ class ViewHolder:
         self._view: AccessView | None = None
 
     @property
+    def org_id(self) -> str:
+        return self._org_id
+
+    @property
     def view(self) -> AccessView | None:
         return self._view
 

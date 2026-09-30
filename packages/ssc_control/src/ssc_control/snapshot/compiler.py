@@ -21,6 +21,7 @@ from ssc_control.db.bind import bound_org
 from ssc_control.domain.grant_rules import floor_of
 from ssc_shared.blobstore import BlobError, BlobStore
 from ssc_shared.canonical import canonical_bytes, canonical_digest
+from ssc_shared.snapshot_feed import latest_key, object_key
 
 LOCK_CLASS: Final = 21
 """First key of the org's snapshot advisory lock; the second is ``hashtext(org_id)``."""
@@ -60,14 +61,6 @@ _READ_ORG = text(
     "(select coalesce(jsonb_agg(jsonb_build_array(m.user_id, m.group_id) "
     "order by m.user_id, m.group_id), '[]') from ssc.group_member m where m.org_id = :org)"
 )
-
-
-def object_key(org_id: str, version: int, sha256_hex: str) -> str:
-    return f"snapshots/{org_id}/v{version}-{sha256_hex[:12]}.json"
-
-
-def latest_key(org_id: str) -> str:
-    return f"snapshots/{org_id}/latest.json"
 
 
 def document_bytes(doc: SnapshotDoc) -> bytes:

@@ -25,6 +25,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 019 | Sharing rules and access snapshots: floors (prod `user`, preview `builder`), sharing changed by an active admin, the app's owner or a builder on that environment, no owner grant and no owner shortcut, one evaluator for explain and the gateway, frozen `ssc-snapshot/v1` published content-addressed with a `latest.json` pointer, a per-org advisory lock handshake giving every change its version, operator-only directory sync, fail-closed confirmation | SSC-021 (`docs/contracts/access-snapshot.md`, `ssc_shared/access.py`, `ssc_control/snapshot/`) | decided 2026-09-29; `role` in whoami, admin email lookup and `?builder=me` 2026-09-29 (A4b); group lookup 2026-09-29 (A4c); gateway enforcement (018), cell fetch (013) and the sync worker (019) pending |
 | 020 | Timers: schedules from the manifest upserted by name at deploy, cron read in the schedule's IANA zone from pinned `tzdata`, one Procrastinate job per armed instant with no `lock`, missed instants coalesced into one late run, no overlap by partial unique index, a dispatch at most once, prod only with preview stored paused, paused when the owner or the declaring builder loses authority, paused and resumed by the kill switch | SSC-041 (`packages/ssc_control/src/ssc_control/timers/`) | decided 2026-09-29 |
 | 021 | Cell layout and log location on GCP: folders `ssc-platform`, `ssc-cells/{prod,staging}` and `ssc-sandbox` under the existing organisation; one project per customer cell named from its cell label; everything in `us-central1`, logs included, set on the folder before any project exists | SSC-006 on decision 001; built by SSC-013 | decided 2026-09-30 |
+| 022 | Cell bootstrap: Pulumi stacks `platform` and `c-<cell label>` with state in `ssc-platform-0`; secret reads denied on the folder for the control plane and on each cell for its own identities; the cell agent limited to `ssc-a-` names except on create; a $250 monthly budget over every SSC folder; just-in-time `editor` on `ssc-cells` for at most 1 h; cells fetch snapshots from their bucket every 2 s | SSC-013 (`infra/`, `ssc_shared/snapshot_feed.py`, `ssc_shared/blobstore_gcs.py`) | decided 2026-09-30; live run pending |
 
 ## 001 Cloud and runtime
 
@@ -434,3 +435,33 @@ Choice: SSC lives under the existing Google Cloud organisation, in folders creat
 Reason: there are no customers yet, so there is nothing to migrate and no data-location demand. `us-central1` is where every SSC-001 number was measured. Setting log location and the secret-read deny on the folder, not the project, means a new cell is correct from its first second instead of after a fix-up. A folder per stage keeps staging cells out of production policy and billing.
 
 Reverse if: a customer needs data in another region (then add `ssc-cells/<region>` folders with their own location policy; existing cells stay put). Or the per-project quota on the billing account blocks growth (then request a raise before moving to shared projects).
+
+## 022 Cell bootstrap
+
+Choice: one Pulumi project, `infra/`, with a `platform` stack and one `c-<cell label>` stack per cell. Everything in a cell is named from its label, so two cells differ only in label, project number and assigned addresses. `python -m ssc_infra.cell_diff` checks exactly that.
+- Bootstrap: `python -m ssc_infra.bootstrap` creates the `ssc-platform` folder, sets its log location, then creates project `ssc-platform-0`. That project holds the Pulumi state bucket and the KMS key for stack secrets, and every API call's quota goes to it. The `platform` stack creates the other folders, their log location, the location policy, `ssc-control-staging` and the budget. A prod control project waits for a prod cell.
+- Cell contents:
+  - Project `ssc-c-<label>` and a VPC with `apps` 10.20.0.0/22 and `gateway` 10.20.4.0/24 (IPv4 only), plus a proxy-only subnet.
+  - Egress denied except inside the cell, to Google's private API range, and from the gateway tag. A private `googleapis.com` zone.
+  - Two Cloud NATs, one for apps and one for the gateway, each with its own fixed IP.
+  - Cloud SQL Postgres 18: regional, private IP only, encrypted connections only, CMEK, IAM login, Data API on (decision 003).
+  - Artifact Registry with CMEK. A versioned, non-public bucket `ssc-c-<label>-cell`.
+  - Service identities `ssc-gateway`, `ssc-cell-agent` and `ssc-build`.
+  - The gateway on Cloud Run: at least two instances, CPU always allocated, internal and load-balancer ingress only, Direct VPC egress. It sits behind a regional internal Application Load Balancer.
+  - The cell agent on Cloud Run, invocable only by the control plane.
+- Staging cells can be destroyed. A prod cell's project, database and services are deletion-protected.
+- Secret reads: IAM deny rules cannot match "every service account" without also denying the apps, which must read their own secrets. So there are two rules:
+  - one on `ssc-cells` naming the control-plane identities
+  - one per cell project naming that cell's SSC identities
+  Both deny `secretmanager.versions.access` whatever role is granted. `python -m ssc_infra.deny_probe` proves it: two probe identities hold `secretAccessor` on one secret, the unlisted one reads it, and the listed one is refused.
+- Control plane in a cell: `secretVersionAdder` limited by an IAM condition to secrets named `ssc-a-*`, `objectUser` on the cell bucket, and invoker on the cell agent. Nothing else.
+- Cell agent: admin roles on secrets, Cloud Run services and service accounts, each limited by an IAM condition to names starting `ssc-a-`. IAM conditions cannot limit a create call, because the resource named is the parent, so a custom role grants the four create permissions without a condition. The agent's own code enforces the prefix on create. Cloud SQL databases have no per-database IAM, so `cloudsql.admin` is unconditioned and database names are also enforced in the agent's code.
+- Staff: no standing roles in cells. A Privileged Access Manager entitlement on `ssc-cells` grants `roles/editor` for at most 1 hour. It needs no approver, requires a written justification, and is logged by PAM.
+- Budget: $250 a month over `ssc-platform`, `ssc-cells` and `ssc-sandbox`. Alerts go out at 50, 90 and 100 percent of actual spend and at 100 percent of forecast. This replaces the $450 per-cell alert in decision 021 until cells carry customers (founder, 2026-09-30).
+- Snapshots: the compiler writes each org's snapshot to its cell's bucket, `SSC_CELL_BUCKET_TEMPLATE` with `{cell}`. A cell service runs `SnapshotFeed`, which reads `latest.json` every 2 seconds. It checks the object's sha256 against the pointer and keeps the last good view on any failure. `python -m ssc_infra.snapshot_rtt` times the round trip against a real cell bucket.
+- The bucket `BlobStore` (`GcsBlobStore`) passes the core contract. It signs no URLs yet: bundle uploads to a bucket arrive with SSC-014, and until then only the filesystem store serves signed URLs.
+- Test cells are `testcell01` and `testcell02`, because a cell label is 8 to 16 characters (decision 004). Their project IDs stay reserved for 30 days after deletion.
+
+Reason: the ticket's done-when needs repeatable cells, a secret-read refusal that no role grant can undo, and a snapshot round trip under 5 seconds. Deny rules are the only IAM control that wins over a grant. Naming everything from the label makes "identical" a mechanical check. The $250 budget matches spend while the only cells are test cells.
+
+Reverse if: IAM deny gains a principal set for "SSC's service accounts only" (then one folder rule). Or IAM conditions can limit creates (then drop the custom create role). Or a prod control plane is needed (add `ssc-control-prod` to the platform stack).

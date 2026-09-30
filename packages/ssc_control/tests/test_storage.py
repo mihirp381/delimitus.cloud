@@ -8,13 +8,20 @@ import base64
 import json
 import secrets
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from ssc_control.api.routes.blobs import blob_store_for, check_fs_allowed
 from ssc_control.api.settings import Settings
-from ssc_control.storage import StorageConfigError, blob_store_from_env
+from ssc_control.storage import (
+    CELL_BUCKET_ENV,
+    StorageConfigError,
+    blob_store_from_env,
+    cell_stores,
+)
 from ssc_control.worker import CompositionError, compose_ports
+from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore
 
 DSN = "postgresql://ssc_app@localhost/ssc"
@@ -90,3 +97,31 @@ def test_the_filesystem_store_is_refused_outside_dev_and_test(
 def test_the_worker_composes_the_blob_store(tmp_path: Path) -> None:
     assert isinstance(compose_ports(fs_env(tmp_path)).blob_store, FsBlobStore)
     assert compose_ports({"SSC_DATABASE_DSN": DSN}).blob_store is None
+
+
+def test_cell_stores_name_one_bucket_per_cell_label() -> None:
+    made: list[str] = []
+
+    def bucket(name: str) -> BlobStore:
+        made.append(name)
+        return cast("BlobStore", object())
+
+    stores = cell_stores("ssc-c-{cell}-cell", bucket=bucket)
+    first = stores("bcdfghjklmnp")
+    assert stores("bcdfghjklmnp") is first
+    assert stores("testcell02") is not first
+    assert made == ["ssc-c-bcdfghjklmnp-cell", "ssc-c-testcell02-cell"]
+    for bad in ("Short", "has-dash1", "1digitfirst", "a" * 17):
+        with pytest.raises(ValueError):
+            stores(bad)
+    for template in ("ssc-c-cell", "{cell}-{cell}"):
+        with pytest.raises(StorageConfigError, match="exactly one"):
+            cell_stores(template)
+
+
+def test_the_worker_composes_cell_stores_only_when_a_template_is_set() -> None:
+    env = {"SSC_DATABASE_DSN": DSN}
+    assert compose_ports(env).cell_stores is None
+    assert compose_ports({**env, CELL_BUCKET_ENV: "ssc-c-{cell}-cell"}).cell_stores is not None
+    with pytest.raises(CompositionError, match="exactly one"):
+        compose_ports({**env, CELL_BUCKET_ENV: "no-placeholder"})

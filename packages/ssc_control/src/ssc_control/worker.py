@@ -42,7 +42,12 @@ from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.snapshot import jobs as snapshot_jobs
 from ssc_control.snapshot.service import Snapshots
-from ssc_control.storage import StorageConfigError, blob_store_from_env
+from ssc_control.storage import (
+    CellStores,
+    StorageConfigError,
+    blob_store_from_env,
+    cell_stores_from_env,
+)
 from ssc_control.timers import jobs as timers_jobs
 from ssc_control.timers.dispatch import FakeScheduleDispatcher, ScheduleDispatcher
 from ssc_control.timers.service import Timers
@@ -207,6 +212,14 @@ def blob_store_of(env: Mapping[str, str]) -> BlobStore | None:
         raise CompositionError(str(exc)) from exc
 
 
+def cell_stores_of(env: Mapping[str, str]) -> CellStores | None:
+    """``SSC_CELL_BUCKET_TEMPLATE`` (``storage.cell_stores_from_env``)."""
+    try:
+        return cell_stores_from_env(env)
+    except StorageConfigError as exc:
+        raise CompositionError(str(exc)) from exc
+
+
 def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
     """Refuse any fake port unless ``SSC_ENV`` is ``dev`` or ``test``."""
     fakes = [
@@ -232,6 +245,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         runtime_driver=runtime_driver_from_env(env),
         release_specs=BundleReleaseSpecs(),
         blob_store=blob_store_of(env),
+        cell_stores=cell_stores_of(env),
         snapshot=Snapshots(engine),
         prod_gate=approvals_prod_gate(),
         build_driver=build_driver_from_env(env),
@@ -295,6 +309,7 @@ __all__ = [
     "PortsMissingError",
     "WorkerSettings",
     "blob_store_of",
+    "cell_stores_of",
     "build_app",
     "build_driver_from_env",
     "compose_ports",

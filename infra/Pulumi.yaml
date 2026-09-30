@@ -3,4 +3,4 @@ runtime:
   name: python
   options:
     toolchain: uv
-description: Small Software Cloud infrastructure. Empty until the cloud is chosen (SSC-001).
+description: Small Software Cloud on Google Cloud. Stack `platform`, then one `c-<cell label>` stack per cell (decisions 021, 022).
