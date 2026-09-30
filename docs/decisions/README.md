@@ -6,7 +6,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 |---|---|---|---|
 | 001 | Cloud and runtime: GCP, Cloud Run gen2 in a project per customer cell, Direct VPC egress into a deny-all VPC, regional internal Application LB, kill switch by traffic to a tombstone revision, prod apps kept warm | SSC-001 (`spikes/bakeoff/RESULTS.md`, `spikes/bakeoff/COST_SHEET.md`) | decided 2026-09-29 |
 | 002 | Login vendor and directory join key: WorkOS SSO, Directory Sync and the AuthKit device flow; users keyed on the directory user, joined by SSO `idp_id` where it equals the directory `idp_id` (Okta), by email plus an admin link where it does not (Google); SSC revokes sessions and CLI tokens itself on directory deactivation or removal | SSC-002 (`spikes/loginproof/RESULTS.md`, `spikes/loginproof/NOTES.md` h) | decided 2026-09-30; Entra untested (founder skip); WorkOS data residency Unknown |
-| 003 | App database connection string form | SSC-005 (`spikes/appdb/RESULTS.md`) | draft |
+| 003 | App database connection string form: one `postgresql://` URL with `sslmode=verify-full` and an absolute `sslrootcert`, plus `PG*` parts; databases created by `databases.insert`, roles and grants by `executeSql` | SSC-005 (`spikes/appdb/RESULTS.md`) | decided 2026-09-30 |
 | 004 | Domains: `delimitus.com` platform hosts; apps on `delimitusapps.com` with opaque org labels; host rule `<slug>.<cell label>.<apps domain>` and `<slug>--preview.<cell label>.<apps domain>` | tickets §2 SSC-006; host rule SSC-042 (`ssc_shared/hosts.py`) | decided 2026-09-28; host rule and apps domain 2026-09-29 |
 | 005 | The seven decide-once rules | build path | decided 2026-09-28 |
 | 006 | Assumptions A1 to A7 | tickets §1 | decided 2026-09-28 |
@@ -24,6 +24,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 018 | Admin console: React 19, Vite 8, TanStack Router and Query, exact npm pins behind a 7-day rule, `--ssc-*` tokens from the Delimitus UI with contrast tests, a client generated from the committed OpenAPI, a dev token login compiled out of production builds, `/v1` proxied instead of CORS | SSC-057 (`console/`) | decided 2026-09-29; auth-host login pending (019) |
 | 019 | Sharing rules and access snapshots: floors (prod `user`, preview `builder`), sharing changed by an active admin, the app's owner or a builder on that environment, no owner grant and no owner shortcut, one evaluator for explain and the gateway, frozen `ssc-snapshot/v1` published content-addressed with a `latest.json` pointer, a per-org advisory lock handshake giving every change its version, operator-only directory sync, fail-closed confirmation | SSC-021 (`docs/contracts/access-snapshot.md`, `ssc_shared/access.py`, `ssc_control/snapshot/`) | decided 2026-09-29; `role` in whoami, admin email lookup and `?builder=me` 2026-09-29 (A4b); group lookup 2026-09-29 (A4c); gateway enforcement (018), cell fetch (013) and the sync worker (019) pending |
 | 020 | Timers: schedules from the manifest upserted by name at deploy, cron read in the schedule's IANA zone from pinned `tzdata`, one Procrastinate job per armed instant with no `lock`, missed instants coalesced into one late run, no overlap by partial unique index, a dispatch at most once, prod only with preview stored paused, paused when the owner or the declaring builder loses authority, paused and resumed by the kill switch | SSC-041 (`packages/ssc_control/src/ssc_control/timers/`) | decided 2026-09-29 |
+| 021 | Cell layout and log location on GCP: folders `ssc-platform`, `ssc-cells/{prod,staging}` and `ssc-sandbox` under the existing organisation; one project per customer cell named from its cell label; everything in `us-central1`, logs included, set on the folder before any project exists | SSC-006 on decision 001; built by SSC-013 | decided 2026-09-30 |
 
 ## 001 Cloud and runtime
 
@@ -58,6 +59,18 @@ Known gaps: Entra ID was not measured (founder decision 2026-09-30); whether its
 
 Reverse if: an Entra tenant joins neither by `idp_id` nor by the `objectidentifier` claim; a buyer needs a data region WorkOS cannot provide; or revoking WorkOS sessions from the directory event does not stop a refresh.
 
+## 003 App database connection string form
+
+Choice: every app database gets one URL, and the same values as separate `PG*` variables.
+- `DATABASE_URL=postgresql://app_<id>:<password>@<host>:<port>/app_<id>?sslmode=verify-full&sslrootcert=<absolute CA path>`
+- Also `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE`, `PGSSLROOTCERT`, for frameworks with no URL parser (Django).
+- The cell agent creates the database with the Cloud SQL Admin API `databases.insert`. Roles and grants go through `executeSql`, in the four-step order in `spikes/appdb/RESULTS.md`. Grants run before `REVOKE CONNECT ... FROM PUBLIC`, because afterwards the cell agent can no longer connect.
+- `executeSql` callers check `status.code`, not only the HTTP code, because SQL failures return HTTP 200.
+
+Reason: psycopg, asyncpg, node-pg, drizzle and Prisma 7 (through its adapter) all accepted the URL as given and rejected a wrong CA. Django needed the parts. On Cloud SQL, creation from the cell agent took 1.67 to 2.1 s. An identity with no roles got HTTP 403, and no app role could connect to another app's database. `executeSql` runs semicolon-separated statements in one transaction and cannot run `CREATE DATABASE`, hence `databases.insert`.
+
+Reverse if: a pilot framework can use neither the URL nor the `PG*` parts. Also if Cloud SQL `executeSql` limits (30 s, 10 MB) block role management; the fallback is a Python connector over the cell's private endpoint, already needed for anything longer or larger.
+
 ## 004 Domains and app hosts
 
 Choice: `delimitus.com` carries the platform hosts (`api.`, `auth.`, `keys.`, `console.`). Apps are served on `delimitusapps.com`, already registered and used for nothing else; `delimitus.app` is not used. The API reads it from `SSC_APPS_DOMAIN` (default `delimitusapps.com`; tests use `apps.test`) and refuses to start on a value that is not a lower-case DNS name of at most 186 characters. Every app environment has one host (`ssc_shared/hosts.py`):
@@ -71,6 +84,51 @@ Choice: `delimitus.com` carries the platform hosts (`api.`, `auth.`, `keys.`, `c
 Reason: an app under `delimitus.com` would share a site with the login and API hosts, and would receive the live Delimitus product's `delimitus.com` cookie (tickets §2 SSC-006). Opaque labels keep certificate transparency logs from listing customers. A flat first label with `--preview` keeps every host one level under the org wildcard, and reserving `--` means a preview host can never be another app's prod host. Refusing `xn--` rules out punycode lookalikes. The reserved words keep names such as `login.<label>` from looking like platform pages.
 
 Reverse if: the founder chooses per-app labels (lane option B: an `app.host_label` column, a lane A migration, the same module with a different input), or customer domains arrive (Phase 2: a customer-dedicated registrable domain, never a subdomain of theirs).
+
+## 005 The seven decide-once rules
+
+Choice: from the build path, fixed before code:
+1. Every customer gets their own cloud project (decision 021). Our shared system holds only the bookkeeping.
+2. Apps live on `delimitusapps.com`, never on a customer's domain and never under `delimitus.com` (decision 004). Cookies never cross between apps.
+3. Sharing rules, data permissions, timers and secrets belong to the environment, not to a release. A rollback never restores an old permission.
+4. The app learns who the user is from one signed note on every request, one header, one format (decision 010).
+5. Every action gets a line in a log that cannot be quietly edited (decision 012).
+6. Only a person approves. An AI agent can only ask; the service enforces it and records the approver (decision 016).
+7. All new backend code is Python. We buy compute, login, image building, logs and secret storage instead of writing them.
+
+Reason: each rule is expensive to retrofit. Isolation, cookie scope, permission lifetime, identity format, audit integrity and the approval boundary all shape the schema and the contracts. Rule 7 keeps a small team on one language and off infrastructure it cannot staff.
+
+Reverse if: a paying customer requires their own domain (rule 2; a separate security design), or a bought service cannot meet a stated requirement and no other vendor can (rule 7, for that one service only).
+
+## 006 Assumptions A1 to A7
+
+Choice: build on these until buyers exist. There are no customers yet, and buyer conversations start after the MVP.
+
+| # | Assumption | Status 2026-09-30 |
+|---|---|---|
+| A1 | Customers accept apps on an address we own, never their company domain. | Assumed. |
+| A2 | Customers accept one cloud project per customer, hosted by us, on the cloud SSC-001 picks. | Assumed; the cloud is GCP (decision 001). |
+| A3 | Customers use Google Workspace, Microsoft Entra or Okta and connect a directory sync. | Google and Okta measured (decision 002); Entra not measured. |
+| A4 | First pilot apps are Python and Node apps from Claude Code, Codex, Cursor, plus one Lovable or Replit export. | Assumed; SSC-003 ran 20 such apps. |
+| A5 | Pilot company databases are Postgres reachable over the internet or from a fixed IP we publish. | Assumed; each cell has a fixed NAT IP (decision 001). |
+| A6 | Price is a flat platform fee; no pricing bands in MVP V1. | Assumed. |
+| A7 | An empty cell costs under $450 a month. | Measured: $199.37 on GCP list prices (`spikes/bakeoff/COST_SHEET.md`), plus about $9.86 a month per warm prod app (`spikes/bakeoff/RESULTS.md`). |
+
+Reason: waiting for buyers would stall the build; each assumption has a known cost if wrong (tickets section 1).
+
+Reverse if: the first buyer conversations contradict one. The "if wrong" column in tickets section 1 says what changes.
+
+## 007 Toolchain pins and the 7-day rule
+
+Choice: uv 0.12 and Python 3.14 only. Pins: FastAPI 0.141, Pydantic 2.13, SQLAlchemy 2.0.54, psycopg 3.3, Alembic 1.20, Procrastinate 3.10, PyJWT 2.15, Typer 0.27 and httpx2 2.13 (the repo README keeps the full list).
+- No dependency may be younger than 7 days. uv enforces it with `exclude-newer` in `pyproject.toml`. CI checks it with `tools/lock_age_check.py`, and with `tools/npm_lock_age_check.py` for the console's `package-lock.json`.
+- An exception needs a reason and an expiry in `docs/lock-exceptions.toml`.
+- CI runs ruff, pyright, import-linter, deptry, zizmor, gitleaks, the lock-age checks, the OpenAPI checks and pytest.
+- `gates/run_gates.py` plants one violation per gate and CI fails if any gate lets its violation through.
+
+Reason: a 7-day delay keeps a freshly published malicious release out of the lock file. The planted-violation gates prove each check still bites. One Python version and exact pins keep the three lanes' environments identical.
+
+Reverse if: a security fix must land sooner than 7 days (add an expiring exception, never drop the rule). Or Python 3.15 is released and every pinned package supports it (then bump in one change).
 
 ## 008 Job queue
 
@@ -358,3 +416,21 @@ Choice: an app's schedules are declared in its manifest (`[[schedules]]`, decisi
 Reason: a job per instant with `schedule_at` needs no scheduler process and survives worker restarts, and arming in the changing transaction means a rolled-back change arms nothing. Coalescing gives "at most one late run" instead of a burst after an outage, which is what a job that sends mail or rebuilds a report wants. Pinned zone data keeps two workers from disagreeing about an instant. At-most-once dispatch is the safe default when the app's handler may not be idempotent. Checking authority at declaration, at each hook, at claim and in the sweep means a missed hook delays a pause by at most a minute and never lets a run through.
 
 Reverse if: builders need at-least-once runs with retries (then a retry policy per schedule and an idempotency key on the call), missed instants must each run (then a catch-up limit per schedule), per-minute sweeps over every org get slow (then a due-schedule index across orgs, or per-cell workers), or zone names the manifest accepts are missing from the pinned `tzdata` (then the manifest checks names against the same package).
+
+## 021 Cell layout and log location on GCP
+
+Choice: SSC lives under the existing Google Cloud organisation, in folders created before the first cell.
+- `ssc-platform`: the control plane projects (`ssc-control-prod`, `ssc-control-staging`).
+- `ssc-cells/prod` and `ssc-cells/staging`: one project per customer cell. The project ID is `ssc-c-<cell label>` (the org's opaque label, decision 004), never the customer's name. The staging folder holds our own test cells, including the one for the outside security test (SSC-008).
+- `ssc-sandbox`: throwaway spike projects. `delimitus-0926` moves here or is deleted.
+- The live Delimitus project `ristretto-506621` stays outside these folders, and SSC identities get no roles on it.
+- Region: `us-central1` for everything. A resource-location org policy on `ssc-cells` and `ssc-platform` allows only `us-central1`.
+- Logs: the Cloud Logging default storage location is set to `us-central1` on the `ssc-cells` and `ssc-platform` folders before any project is created. The `_Default` and `_Required` buckets of every new project then land in-region. App, build and deploy logs stay in the cell project's `_Default` bucket, with 30-day retention (included in the price). The platform reads them only through the logs facade, filtered to org and app.
+- SSC's own audit trail is not Cloud Logging. It is the hash-chained log in the control database, with daily anchors in the blob store (decision 012).
+- The IAM deny rule on reading secret values is attached to `ssc-cells`, so it covers every cell project from creation.
+- Billing: one billing account. Each cell project carries the label `ssc-cell=<cell label>`, with a budget alert at $450 a month (A7).
+- SSC-013 builds this with Pulumi. No folders exist yet; the organisation has none today.
+
+Reason: there are no customers yet, so there is nothing to migrate and no data-location demand. `us-central1` is where every SSC-001 number was measured. Setting log location and the secret-read deny on the folder, not the project, means a new cell is correct from its first second instead of after a fix-up. A folder per stage keeps staging cells out of production policy and billing.
+
+Reverse if: a customer needs data in another region (then add `ssc-cells/<region>` folders with their own location policy; existing cells stay put). Or the per-project quota on the billing account blocks growth (then request a raise before moving to shared projects).
