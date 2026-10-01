@@ -133,3 +133,9 @@ def test_only_the_nightly_workflow_on_main_becomes_the_nightly_account(
     assert tokens["member"] == "serviceAccount:" + naming.sa_email(
         naming.NIGHTLY_SA, naming.control_project("staging")
     )
+
+
+def test_the_nightly_project_can_read_cell_logs(declared: list[Declared]) -> None:
+    logging_api = one(declared, "gcp:projects/service:Service", "control-staging-logging")
+    assert logging_api.inputs["service"] == "logging.googleapis.com"
+    assert logging_api.inputs["project"] == naming.control_project("staging")

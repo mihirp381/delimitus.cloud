@@ -88,7 +88,8 @@ def _nightly(
     """The nightly probe run (SSC-017): GitHub Actions on ``main`` of this repository, running
     the nightly workflow, becomes ``ssc-nightly`` with no key. It may mint ID tokens as the
     control plane, which is all it needs to call a cell's agent; each probe cell grants it the
-    probe job and read access to that job's results."""
+    probe job and read access to that job's results. Logging bills a log read to the caller's
+    project, so this project needs the Logging API to read a cell's job results."""
     apis = [
         gcp.projects.Service(
             f"control-staging-{api.split('.')[0]}",
@@ -97,7 +98,7 @@ def _nightly(
             disable_on_destroy=False,
             opts=opts,
         )
-        for api in ("sts.googleapis.com", "iamcredentials.googleapis.com")
+        for api in ("sts.googleapis.com", "iamcredentials.googleapis.com", "logging.googleapis.com")
     ]
     after = pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=apis))
     pool = gcp.iam.WorkloadIdentityPool(
