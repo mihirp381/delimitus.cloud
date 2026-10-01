@@ -95,6 +95,13 @@ def test_the_network_is_ipv4_with_a_fixed_ip_per_nat(cell_a: list[Declared]) -> 
     assert all(n["natIpAllocateOption"] == "MANUAL_ONLY" and len(n["natIps"]) == 1 for n in nats)
 
 
+def test_destroy_leaves_the_sql_peering_to_the_project(cell_a: list[Declared]) -> None:
+    assert (
+        one(cell_a, "gcp:servicenetworking/connection:Connection").inputs["deletionPolicy"]
+        == "ABANDON"
+    )
+
+
 def test_egress_is_denied_unless_allowed(cell_a: list[Declared]) -> None:
     rules = {
         d.inputs["name"]: d.inputs for d in cell_a if d.type == "gcp:compute/firewall:Firewall"

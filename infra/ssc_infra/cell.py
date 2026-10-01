@@ -295,6 +295,7 @@ class Cell:
             network=self.vpc.id,
             service="servicenetworking.googleapis.com",
             reserved_peering_ranges=[psa.name],
+            deletion_policy="ABANDON",  # Google holds it for a while after Cloud SQL is deleted
             opts=self._o(),
         )
         psa_cidr = f"{PSA_ADDRESS}/{PSA_PREFIX}"
