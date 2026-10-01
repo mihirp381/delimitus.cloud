@@ -110,10 +110,27 @@ def test_the_gateway_is_internal_always_on_and_behind_the_load_balancer(
     gw = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
     assert gw["ingress"] == "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
     assert gw["template"]["scaling"]["minInstanceCount"] == 2
+    assert gw["scaling"]["maxInstanceCount"] == 20
     assert gw["template"]["containers"][0]["resources"]["cpuIdle"] is False
     assert gw["template"]["vpcAccess"]["egress"] == "ALL_TRAFFIC"
     rule = one(cell_a, "gcp:compute/forwardingRule:ForwardingRule").inputs
     assert rule["loadBalancingScheme"] == "INTERNAL_MANAGED"
+
+
+def test_the_cell_agent_scales_to_zero_with_a_pinned_ceiling(cell_a: list[Declared]) -> None:
+    agent = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
+    assert agent["template"]["scaling"]["minInstanceCount"] == 0
+    assert agent["scaling"]["maxInstanceCount"] == cell.AGENT_MAX
+
+
+def test_the_diff_ignores_ids_google_assigns(
+    cell_a: list[Declared], cell_b: list[Declared]
+) -> None:
+    assigned = {"numericId": "1", "generatedId": 2, "creationTime": "2026-10-01T00:00:00Z"}
+    renumbered = [Declared(d.type, d.name, d.inputs, {**d.outputs, **assigned}) for d in cell_b]
+    first = cell_diff.normalise(as_export(cell_a, A), A)
+    second = cell_diff.normalise(as_export(renumbered, B), B)
+    assert cell_diff.compare(first, second) == []
 
 
 def test_only_the_control_plane_invokes_the_cell_agent(cell_a: list[Declared]) -> None:

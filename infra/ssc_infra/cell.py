@@ -38,6 +38,7 @@ PSA_PREFIX: Final = 20
 GOOGLE_PRIVATE: Final = ("199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11")
 GOOGLE_PRIVATE_RANGE: Final = "199.36.153.8/30"
 GATEWAY_TAG: Final = "ssc-gateway"
+AGENT_MAX: Final = 3
 KEY_ROTATION: Final = "7776000s"
 SQL_TIER: Final = "db-custom-1-3840"
 PLACEHOLDER_IMAGE: Final = "us-docker.pkg.dev/cloudrun/container/hello"
@@ -56,6 +57,7 @@ class CellConfig:
     stage: n.Stage
     probe: bool
     gateway_min: int
+    gateway_max: int
 
     @property
     def project_id(self) -> str:
@@ -76,6 +78,7 @@ def read_config(stack: str) -> CellConfig:
         stage=stage,
         probe=config.get_bool("probe") or False,
         gateway_min=config.get_int("gateway_min") or 2,
+        gateway_max=config.get_int("gateway_max") or 20,
     )
 
 
@@ -504,8 +507,9 @@ class Cell:
         sa: gcp.serviceaccount.Account,
         ingress: str,
         vpc: gcp.cloudrunv2.ServiceTemplateVpcAccessArgs | None,
-        min_instances: int,
+        instances: tuple[int, int],
     ) -> gcp.cloudrunv2.Service:
+        min_instances, max_instances = instances
         return gcp.cloudrunv2.Service(
             name,
             project=self.pid,
@@ -513,6 +517,7 @@ class Cell:
             location=n.REGION,
             ingress=ingress,
             deletion_protection=not self.cfg.disposable,
+            scaling=gcp.cloudrunv2.ServiceScalingArgs(max_instance_count=max_instances),
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=sa.email,
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=min_instances),
@@ -543,11 +548,13 @@ class Cell:
                     )
                 ],
             ),
-            self.cfg.gateway_min,
+            (self.cfg.gateway_min, self.cfg.gateway_max),
         )
 
     def cell_agent(self) -> None:
-        agent = self._run("ssc-cell-agent", self.agent_sa, "INGRESS_TRAFFIC_ALL", None, 0)
+        agent = self._run(
+            "ssc-cell-agent", self.agent_sa, "INGRESS_TRAFFIC_ALL", None, (0, AGENT_MAX)
+        )
         gcp.cloudrunv2.ServiceIamMember(
             "agent-invoker",
             project=self.pid,
