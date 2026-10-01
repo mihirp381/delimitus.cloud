@@ -86,7 +86,7 @@ def test_the_budget_is_250_a_month_over_every_ssc_folder(declared: list[Declared
 
 
 def test_the_control_plane_signs_bundle_urls_as_itself(declared: list[Declared]) -> None:
-    (grant,) = [d for d in declared if d.type == "gcp:serviceaccount/iAMMember:IAMMember"]
+    grant = one(declared, "gcp:serviceaccount/iAMMember:IAMMember", "control-staging-signs-urls")
     control = "ssc-control@ssc-control-staging.iam.gserviceaccount.com"
     assert grant.inputs["role"] == "roles/iam.serviceAccountTokenCreator"
     assert grant.inputs["member"] == f"serviceAccount:{control}"
