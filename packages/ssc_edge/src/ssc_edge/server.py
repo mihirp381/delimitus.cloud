@@ -174,12 +174,9 @@ def create_app(
                     headers[SERVERLESS_AUTH] = f"Bearer {token}"
                 return Response(status_code=200, headers=headers)
         except Exception:
-            log.exception("authz check failed", extra={"host": facts.host})
+            log.exception("authz check failed for %s", facts.host)
             return _unavailable()
-        log.info(
-            "gateway refused",
-            extra={"host": facts.host, "status": outcome.status, "reason": outcome.reason},
-        )
+        log.info("gateway refused %s %s %s", outcome.status, outcome.reason, facts.host)
         response = Response(outcome.body, status_code=outcome.status)
         for name, value in outcome.headers:
             response.headers.append(name, value)
@@ -218,7 +215,8 @@ def production_app(env: Mapping[str, str] | None = None) -> FastAPI:
             yield
         finally:
             stop.set()
-            await task
+            task.cancel()  # a poll can be mid-retry; Cloud Run allows 10 s after SIGTERM
+            await asyncio.gather(task, return_exceptions=True)
             await tokens.aclose()
 
     dev = settings.environment in DEV_ENVS
@@ -226,8 +224,10 @@ def production_app(env: Mapping[str, str] | None = None) -> FastAPI:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO)
     port = int(os.environ.get("SSC_AUTHZ_PORT", "9001"))
-    uvicorn.run(production_app(), host="127.0.0.1", port=port, log_config=None)
+    # No access log: a callback's query string carries a one-time login code.
+    uvicorn.run(production_app(), host="127.0.0.1", port=port, log_config=None, access_log=False)
 
 
 if __name__ == "__main__":

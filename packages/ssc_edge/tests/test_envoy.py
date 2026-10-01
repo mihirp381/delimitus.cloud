@@ -5,6 +5,7 @@ under the Cloud Run host name the gateway computes. Without Docker these tests s
 fail in CI.
 """
 
+import ast
 import json
 import os
 import secrets
@@ -50,10 +51,23 @@ UPSTREAM = "ssc-a-" + "p" * 20 + "-123456789012.us-central1.run.app"
 PAY_UPSTREAM = "ssc-a-" + "y" * 20 + "-123456789012.us-central1.run.app"
 ECHO_APP = """
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class Echo(BaseHTTPRequestHandler):
+    def _events(self):
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("cache-control", "no-cache")
+        self.end_headers()
+        for n in range(3):
+            self.wfile.write(f"data: {n}\\n\\n".encode())
+            self.wfile.flush()
+            time.sleep(1)
+
     def _go(self):
+        if self.path.startswith("/events"):
+            return self._events()
         n = int(self.headers.get("content-length") or 0)
         self.rfile.read(n)
         seen = [[k.lower(), v] for k, v in self.headers.items()]
@@ -178,6 +192,7 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
     while not server.started:
         time.sleep(0.05)
 
+    ast.parse(ECHO_APP)
     tag = "ssc018-" + secrets.token_hex(4)
     (tmp / "echo.py").write_text(ECHO_APP)
     cfg = EnvoyConfig(authz_host="host.docker.internal", authz_port=port, upstream_tls=False)
@@ -195,6 +210,10 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
             "-v", f"{tmp}:/c:ro", ENVOY_IMAGE, "-c", "/c/envoy.json", "--log-level", "warn",
         )  # fmt: skip
         host_port = run("port", f"{tag}-envoy", "8080/tcp").splitlines()[0].rsplit(":", 1)[1]
+        time.sleep(0.5)
+        for name in (f"{tag}-app", f"{tag}-pay"):
+            # A dead app drops its alias, and Envoy would resolve the real run.app name.
+            assert run("inspect", "-f", "{{.State.Running}}", name) == "true", name
         url = f"http://127.0.0.1:{host_port}"
         deadline = time.monotonic() + 30
         while True:
@@ -305,6 +324,25 @@ def test_request_shape_is_refused_before_the_app(stack: Stack) -> None:
     assert big.status_code == 413
     small = stack.get(HOST, method="POST", headers=cookie, content=b"x" * 1000)
     assert small.status_code == 200
+
+
+def test_server_sent_events_stream_through_unbuffered(stack: Stack) -> None:
+    started = time.monotonic()
+    arrived: list[tuple[str, float]] = []
+    with httpx2.stream(
+        "GET",
+        stack.url + "/events",
+        headers={"host": HOST, "cookie": stack.world.cookie(), "accept": "text/event-stream"},
+        timeout=10,
+    ) as r:
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "text/event-stream"
+        for line in r.iter_lines():
+            if line.startswith("data: "):
+                arrived.append((line, time.monotonic() - started))
+    assert [line for line, _ in arrived] == ["data: 0", "data: 1", "data: 2"]
+    assert arrived[0][1] < 0.9, arrived  # before the app sent the second event
+    assert arrived[2][1] - arrived[0][1] > 1.5, arrived
 
 
 def test_everything_is_refused_when_the_authoriser_stops(stack: Stack) -> None:

@@ -119,6 +119,7 @@ class EnvoyConfig:
     upstream_tls: bool = True
     rate_per_second: int = 500
     rate_burst: int = 1000
+    max_connections: int = 10000
 
 
 def _exact(names: tuple[str, ...]) -> list[dict[str, str]]:
@@ -290,7 +291,19 @@ def render(cfg: EnvoyConfig) -> dict[str, Any]:
         "static_resources": {
             "listeners": [listener],
             "clusters": [_authz_cluster(cfg), _apps_cluster(cfg)],
-        }
+        },
+        "overload_manager": {
+            "resource_monitors": [
+                {
+                    "name": "envoy.resource_monitors.global_downstream_max_connections",
+                    "typed_config": {
+                        "@type": _T + "resource_monitors.downstream_connections.v3."
+                        "DownstreamConnectionsConfig",
+                        "max_active_downstream_connections": cfg.max_connections,
+                    },
+                }
+            ]
+        },
     }
 
 
