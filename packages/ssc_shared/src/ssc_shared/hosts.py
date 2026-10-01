@@ -94,11 +94,16 @@ def check_apps_domain(domain: str) -> str:
     return domain
 
 
-def app_host(slug: str, environment: Environment, cell_label: str, apps_domain: str) -> str:
-    """The host of one app environment. ``ValueError`` for anything the rule refuses."""
+def host_label(slug: str, environment: Environment) -> str:
+    """The first label of an app environment's host: the key of the snapshot's ``hosts``."""
     if environment not in _ENVIRONMENTS:
         raise ValueError(f"not an environment: {environment!r}")
-    first = check_slug(slug) + (PREVIEW_SUFFIX if environment == "preview" else "")
+    return check_slug(slug) + (PREVIEW_SUFFIX if environment == "preview" else "")
+
+
+def app_host(slug: str, environment: Environment, cell_label: str, apps_domain: str) -> str:
+    """The host of one app environment. ``ValueError`` for anything the rule refuses."""
+    first = host_label(slug, environment)
     return f"{first}.{check_cell_label(cell_label)}.{check_apps_domain(apps_domain)}"
 
 

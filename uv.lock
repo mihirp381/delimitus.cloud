@@ -1692,7 +1692,7 @@ dependencies = [
     { name = "httpx2" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "ssc-contracts" },
-    { name = "ssc-shared" },
+    { name = "ssc-shared", extra = ["gcs"] },
     { name = "uvicorn" },
 ]
 
@@ -1703,7 +1703,7 @@ requires-dist = [
     { name = "httpx2", specifier = "==2.13.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
-    { name = "ssc-shared", editable = "packages/ssc_shared" },
+    { name = "ssc-shared", extras = ["gcs"], editable = "packages/ssc_shared" },
     { name = "uvicorn", specifier = "==0.38.0" },
 ]
 

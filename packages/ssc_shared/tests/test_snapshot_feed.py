@@ -87,6 +87,23 @@ async def test_the_newest_version_is_applied_once(store: FsBlobStore) -> None:
     assert (feed.version, feed.last_error, feed.failures) == (2, None, 0)
 
 
+async def test_fresh_means_a_poll_confirmed_the_view_recently(store: FsBlobStore) -> None:
+    now = [100.0]
+    feed = SnapshotFeed(store, ViewHolder(ORG), monotonic=lambda: now[0])
+    assert not feed.fresh(300)
+    await publish(store, 1)
+    await feed.poll_once()
+    now[0] += 299
+    assert feed.fresh(300)
+    await feed.poll_once()  # same version: still a confirmation
+    now[0] += 299
+    assert feed.fresh(300)
+    await store.put(latest_key(ORG), b"torn")
+    await feed.poll_once()
+    now[0] += 2
+    assert not feed.fresh(300) and feed.version == 1
+
+
 async def test_an_older_pointer_changes_nothing(store: FsBlobStore) -> None:
     feed = feed_for(store)
     await publish(store, 2)

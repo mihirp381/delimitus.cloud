@@ -94,6 +94,7 @@ class SnapshotFeed:
         self._monotonic = monotonic
         self.last_error: str | None = None
         self.last_applied_at: float | None = None
+        self.last_ok_at: float | None = None
         self.failures = 0
 
     @property
@@ -140,7 +141,13 @@ class SnapshotFeed:
             except TimeoutError:
                 continue
 
+    def fresh(self, max_age: float) -> bool:
+        """True when a poll confirmed the current view within ``max_age`` seconds."""
+        ok = self.last_ok_at
+        return ok is not None and self._monotonic() - ok <= max_age
+
     def _ok(self) -> None:
+        self.last_ok_at = self._monotonic()
         if self.failures:
             log.info("snapshot feed recovered", extra={"after_failures": self.failures})
         self.failures = 0

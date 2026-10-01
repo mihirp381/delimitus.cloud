@@ -37,7 +37,7 @@ No other claim is allowed; a note with an unknown claim is refused. Schedule not
 
 ## Keys
 
-- The cell signing key is an EC P-256 private key in the cell's Secret Manager, loaded by the gateway at start. It never appears in a snapshot, a log or the control database.
+- The cell signing key is an EC P-256 private key, loaded by the gateway at start. It never appears in a snapshot, a log or the control database. It is not in Secret Manager: the cell's own identities may not read secrets (decision 022), so it reaches the gateway inside a keyring encrypted with a Cloud KMS key only the gateway may decrypt with (decision 010 amendment, decision 023).
 - The public half is a JWKS at `<iss>/jwks.json`, a static file in the cell bucket behind a CDN, so verification never depends on the gateway being up. Cache it; refetch when a `kid` is unknown.
 - Rotation: publish the new key beside the old one, start signing with the new `kid`, remove the old key after a day. The JWKS therefore holds one or two keys.
 
@@ -112,7 +112,7 @@ app.use(async (req, res, next) => {
 
 ## Still owed by other tickets
 
-- SSC-013: create the signing key in Secret Manager, publish `jwks.json` to the cell bucket and CDN under `keys.delimitus.com/<cell_label>`, and rotate.
-- SSC-018: mint on every admitted request with `ssc_edge.identity_note.compose_note` and `sign_note`, filling `role` and `groups` from the sharing-rule evaluation and stripping inbound `X-SSC-*` headers.
+- Cell infrastructure (after SSC-017): the gateway KMS key and keyring, `jwks.json` in the cell bucket and CDN under `keys.delimitus.com/<cell_label>` (not built by SSC-013), and rotation.
+- SSC-018 mints on every admitted request (`ssc_edge.gate`) and strips inbound `X-SSC-*` headers (`ssc_edge.envoy`).
 - SSC-050: the data gateway accepts this same note with the calling app's origin as `aud`, alongside the app's own workload token.
 - Open design item (build plan §3.3): a bounded stream token for app-to-data-gateway calls from long streams.

@@ -1,9 +1,9 @@
 """Mint identity notes. The gateway (SSC-018) is the only legitimate caller.
 
-The signing key is an EC P-256 private key that lives in the cell's Secret Manager and is loaded
+The signing key is an EC P-256 private key in the gateway keyring (``ssc_edge.keys``), loaded
 into the gateway process at start; it is never written to a snapshot, a log or the control
-database. Its public half is published as a JWKS at ``<issuer>/jwks.json`` (SSC-013), which is
-what ``ssc_app.identity`` and the Node helper read.
+database. Its public half is published as a JWKS at ``<issuer>/jwks.json``, which is what
+``ssc_app.identity`` and the Node helper read.
 """
 
 from typing import Any, Final

@@ -13,7 +13,7 @@ One JSON object, published as RFC 8785 canonical JSON (`ssc_shared.canonical`). 
 | `version` | int | 1 to 2^53−1, one more than the org's previous published version. `0` means a live evaluation (explain) and is never published. |
 | `compiled_at` | string | RFC 3339 timestamp with offset. |
 | `environments` | object | `env_…` → `{app_id, name, status, floor}`. `name` is `prod` or `preview`; `status` is the app's, `active`, `disabled` or `quarantined`; `floor` is the least role that grants access, `user` for prod and `builder` for preview. Every environment of the org is listed. |
-| `hosts` | object | host label → `env_…`. Empty until the host label rules exist (SSC-013, decision 004). |
+| `hosts` | object | host label → `env_…`. The host label is the first label of the environment's host (decision 004): the slug for prod, `<slug>--preview` for preview. An environment whose app's slug breaks the slug rule (stored before the rule) has no entry. Filled since SSC-018; the gateway finds an environment by it. |
 | `grants` | object | `env_…` → list of `{grant_id, role, subject_kind, subject_id}`. `role` is `builder` or `user`; `subject_kind` is `user` (`subject_id` a `usr_…`), `group` (a `grp_…`) or `org` (`subject_id` null). |
 | `groups_by_user` | object | `usr_…` → list of `grp_…`: every group membership in the org. |
 | `users` | object | `usr_…` → `{status}`, `active` or `deactivated`: every user in the org. |

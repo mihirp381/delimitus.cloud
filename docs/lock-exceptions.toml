@@ -1,14 +1,2 @@
 # Packages allowed to be younger than 7 days. Each entry needs a reason and an expiry.
 # The uv resolver enforces the same rule through `exclude-newer` in pyproject.toml.
-
-[[exception]]
-name = "procrastinate"
-version = "3.10.0"
-reason = "SSC-007 pins Procrastinate 3.10 (released 2026-09-23). Not a security exception: a plan pin. Remove once 7 days old."
-expires = "2026-10-01"
-
-[[exception]]
-name = "pyjwt"
-version = "2.15.0"
-reason = "SSC-007 pins PyJWT 2.15 (released 2026-09-23). Not a security exception: a plan pin. Remove once 7 days old."
-expires = "2026-10-01"

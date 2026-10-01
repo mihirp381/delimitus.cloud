@@ -77,7 +77,9 @@ class SnapshotDoc(_Frozen):
     version: int = Field(ge=0, le=MAX_VERSION)
     compiled_at: AwareDatetime
     environments: dict[EnvId, SnapshotEnvironment]
-    hosts: dict[HostName, EnvId] = Field(description="Empty until host labels exist (SSC-013).")
+    hosts: dict[HostName, EnvId] = Field(
+        description="First host label (decision 004) to environment; the gateway's lookup."
+    )
     grants: dict[EnvId, tuple[SnapshotGrant, ...]]
     groups_by_user: dict[UserId, tuple[GroupId, ...]]
     users: dict[UserId, SnapshotUser]

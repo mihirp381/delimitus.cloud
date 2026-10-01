@@ -13,6 +13,7 @@ from typing import Final, Literal, Self
 
 from pydantic import ValidationError
 
+from ssc_contracts.identity import EnvironmentName
 from ssc_contracts.snapshot import GrantRole, SnapshotDoc, SubjectKind
 
 Reason = Literal[
@@ -54,6 +55,8 @@ class AccessDecision:
 class EnvironmentIndex:
     """One environment's grants, split by subject for lookup."""
 
+    app_id: str
+    name: EnvironmentName
     active: bool
     floor: GrantRole
     org_wide: tuple[GrantRef, ...]
@@ -74,6 +77,8 @@ def _index(doc: SnapshotDoc, env_id: str) -> EnvironmentIndex:
             target = by_user if g.subject_kind == "user" else by_group
             target.setdefault(g.subject_id, []).append(ref)
     return EnvironmentIndex(
+        app_id=env.app_id,
+        name=env.name,
         active=env.status == "active",
         floor=env.floor,
         org_wide=tuple(org_wide),
@@ -90,6 +95,7 @@ class AccessView:
         "compiled_at",
         "environments",
         "groups_by_user",
+        "hosts",
         "org_id",
         "version",
     )
@@ -107,6 +113,7 @@ class AccessView:
         self.groups_by_user: Mapping[str, frozenset[str]] = MappingProxyType(
             {u: frozenset(gs) for u, gs in doc.groups_by_user.items()}
         )
+        self.hosts: Mapping[str, str] = MappingProxyType(dict(doc.hosts))
 
     @classmethod
     def from_document(cls, doc: SnapshotDoc | Mapping[str, object] | bytes | str) -> Self:

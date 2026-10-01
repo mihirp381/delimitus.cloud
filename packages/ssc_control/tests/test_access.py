@@ -299,6 +299,7 @@ def test_group_removal_loses_access_in_the_next_version(
     holder = ViewHolder(world.org)
     v1, doc1 = asyncio.run(publish_now(dsns.app, world.org, blob))
     assert holder.apply(doc1) is True
+    assert json.loads(doc1)["hosts"] == {"ledger": world.prod, "ledger--preview": world.preview}
     first = decide(holder.view, world.prod, una)
     assert (first.allowed, first.reason, first.role) == (True, "granted", "user")
     assert [g.grant_id for g in first.via] == [granted["id"]]
