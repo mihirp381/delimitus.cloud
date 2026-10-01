@@ -77,6 +77,7 @@ MAX_RETRY_AFTER: Final = 60.0
 DEFAULT_TIMEOUT: Final = 30.0
 UPLOAD_TIMEOUT: Final = 300.0
 UPLOAD_CHUNK: Final = 1024 * 1024
+ALREADY_STORED: Final = 412
 
 Sleep = Callable[[float], None]
 
@@ -177,12 +178,16 @@ class ApiClient:
         return _parse(self._send("POST", path), BundleOut)
 
     def upload(self, target: UploadTarget, path: Path) -> None:
-        """PUT the file to the signed URL, streaming it, with the headers the API asked for and
-        without the API token. Transport errors and 5xx are retried like a GET."""
+        """PUT the file to the signed URL, streaming it with its exact length, the headers the
+        API asked for and without the API token. Transport errors and 5xx are retried like a GET.
+        A 412 means a bucket already holds an object there (its URLs only create), so ``complete``
+        decides whether it is these bytes."""
         if self._upload_http is None:
             self._upload_http = httpx2.Client(
                 transport=self._transport, timeout=UPLOAD_TIMEOUT, follow_redirects=False
             )
+        asked = {k: v for k, v in target.headers.items() if k.lower() != "content-length"}
+        headers = {**asked, "Content-Length": str(path.stat().st_size), "User-Agent": USER_AGENT}
         retries = 0
         while True:
             try:
@@ -190,7 +195,7 @@ class ApiClient:
                     target.method,
                     target.url,
                     content=_chunks(path),
-                    headers={**target.headers, "User-Agent": USER_AGENT},
+                    headers=headers,
                 )
             except httpx2.TransportError as e:
                 if retries < len(BACKOFF):
@@ -207,6 +212,8 @@ class ApiClient:
                 self._sleep(BACKOFF[retries])
                 retries += 1
                 continue
+            if r.status_code == ALREADY_STORED:
+                return
             if r.status_code >= 300:
                 raise local_error(
                     UPLOAD_FAILED,

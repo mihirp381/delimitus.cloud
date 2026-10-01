@@ -4,7 +4,7 @@ Not in the OpenAPI document and mounted only for an ``FsBlobStore``; ``create_ap
 store outside ``dev`` and ``test``. The signature is the credential, so there is no bearer token.
 A PUT stores exactly the signed length and sha256 and stops reading at the length. Objects are
 stored and served as ``application/octet-stream`` attachments, never as a type a browser renders.
-Deployed cells use the bucket's own signed URLs (SSC-013) instead.
+Deployed cells use the bucket's own signed URLs (``SSC_BLOB_BACKEND=gcs``) instead.
 """
 
 from typing import Final
@@ -43,6 +43,8 @@ def blob_store_for(settings: Settings) -> BlobStore | None:
         keys=settings.blob_signing_keys,
         kid=settings.blob_signing_kid,
         public_url=settings.public_url,
+        bucket=settings.blob_bucket,
+        signer=settings.blob_signer,
     )
 
 

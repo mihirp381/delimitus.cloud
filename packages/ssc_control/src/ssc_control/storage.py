@@ -6,7 +6,9 @@ and the operator commands from the environment (``blob_store_from_env``); both c
 readers in step.
 
 ``none`` (the default) means no store. ``fs`` is the development store and is refused unless
-``SSC_ENV`` is ``dev`` or ``test``.
+``SSC_ENV`` is ``dev`` or ``test``. ``gcs`` is the bucket ``SSC_BLOB_BUCKET``, whose URLs are
+signed through IAM ``signBlob`` as ``SSC_BLOB_SIGNER`` (decision 015): one bucket until placement
+(which cell holds an org) has its ticket.
 
 ``cell_stores_from_env`` is the other store family (SSC-013): one bucket per customer cell,
 named by ``SSC_CELL_BUCKET_TEMPLATE`` with ``{cell}`` standing for the org's cell label. Access
@@ -15,13 +17,14 @@ snapshots go there, so a cell reads its rules from its own project.
 
 import base64
 import json
+import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final, cast
 
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
-from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of
+from ssc_shared.blobstore_gcs import GcsBlobStore, IamSigner, bucket_of
 from ssc_shared.clock import SystemClock
 from ssc_shared.hosts import check_cell_label
 
@@ -35,6 +38,10 @@ FS_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 BLOBS_PATH: Final = "/blobs"
 """Where the API serves the filesystem store's signed URLs."""
 DEFAULT_PUBLIC_URL: Final = "https://api.delimitus.com"
+_BUCKET = re.compile(r"[a-z0-9][a-z0-9_-]{1,61}[a-z0-9]")
+_SERVICE_ACCOUNT = re.compile(
+    r"[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com"
+)
 
 
 class StorageConfigError(ValueError):
@@ -71,6 +78,11 @@ def _refuse_fs_outside_dev(environment: str) -> None:
         )
 
 
+def gcs_store(bucket: str, signer: str) -> BlobStore:
+    """The bucket store with IAM-signed URLs. Builds a storage client, so it reads credentials."""
+    return GcsBlobStore(bucket_of(bucket), signer=IamSigner(signer))
+
+
 def blob_store(  # noqa: PLR0913  (keyword-only)
     backend: str,
     *,
@@ -79,8 +91,10 @@ def blob_store(  # noqa: PLR0913  (keyword-only)
     keys: Mapping[str, bytes],
     kid: str,
     public_url: str,
+    bucket: str = "",
+    signer: str = "",
 ) -> BlobStore | None:
-    """The store ``backend`` names. No I/O."""
+    """The store ``backend`` names. No I/O except the ``gcs`` client's credential lookup."""
     match backend:
         case "none":
             return None
@@ -89,18 +103,28 @@ def blob_store(  # noqa: PLR0913  (keyword-only)
             if not root:
                 raise StorageConfigError("SSC_BLOB_BACKEND=fs needs SSC_BLOB_ROOT")
             try:
-                signer = UrlSigner(keys, active=kid, clock=SystemClock())
+                url_signer = UrlSigner(keys, active=kid, clock=SystemClock())
             except ValueError as exc:
                 raise StorageConfigError(str(exc)) from exc
             base = public_url.rstrip("/") + BLOBS_PATH
-            return FsBlobStore(Path(root), signer=signer, base_url=base)
+            return FsBlobStore(Path(root), signer=url_signer, base_url=base)
+        case "gcs":
+            if not _BUCKET.fullmatch(bucket):
+                raise StorageConfigError(
+                    "SSC_BLOB_BACKEND=gcs needs SSC_BLOB_BUCKET, a bucket name"
+                )
+            if not _SERVICE_ACCOUNT.fullmatch(signer):
+                raise StorageConfigError(
+                    "SSC_BLOB_BACKEND=gcs needs SSC_BLOB_SIGNER, a service account email"
+                )
+            return gcs_store(bucket, signer)
         case other:
             raise StorageConfigError(f"unknown {BACKEND_ENV} {other!r}")
 
 
 def blob_store_from_env(env: Mapping[str, str]) -> BlobStore | None:
-    """``blob_store`` over ``SSC_BLOB_*``, ``SSC_ENV`` and ``SSC_API_PUBLIC_URL``. No I/O; the
-    signing keys are read only for a store that signs."""
+    """``blob_store`` over ``SSC_BLOB_*``, ``SSC_ENV`` and ``SSC_API_PUBLIC_URL``. The ``fs``
+    signing keys are read only for that store."""
     backend = env.get(BACKEND_ENV, "none")
     if backend == "none":
         return None
@@ -111,6 +135,8 @@ def blob_store_from_env(env: Mapping[str, str]) -> BlobStore | None:
         keys=signing_keys(env.get("SSC_BLOB_SIGNING_KEYS", "{}")) if backend == "fs" else {},
         kid=env.get("SSC_BLOB_SIGNING_KID", ""),
         public_url=env.get("SSC_API_PUBLIC_URL", DEFAULT_PUBLIC_URL),
+        bucket=env.get("SSC_BLOB_BUCKET", ""),
+        signer=env.get("SSC_BLOB_SIGNER", ""),
     )
 
 

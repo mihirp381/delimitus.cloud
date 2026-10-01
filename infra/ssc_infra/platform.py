@@ -169,6 +169,14 @@ def build() -> None:
         opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=[pam_agent])),
     )
 
+    gcp.serviceaccount.IAMMember(
+        "control-staging-signs-urls",
+        service_account_id=control.name,
+        role="roles/iam.serviceAccountTokenCreator",
+        member=control.member,
+        opts=opts,
+    )
+
     gcp.billing.Budget(
         "ssc-monthly",
         billing_account=n.BILLING_ACCOUNT,

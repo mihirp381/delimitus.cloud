@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import psycopg
@@ -51,6 +51,7 @@ from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import Manifest, load_manifest
+from ssc_control import storage
 from ssc_control.api import Settings, create_app
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.routes.blobs import blob_store_for
@@ -472,6 +473,20 @@ def test_the_upload_must_be_exactly_the_signed_bytes(b: Bench) -> None:
     assert asyncio.run(b.store.stat(bundle_key(b.w.org, b.w.app, sha(data)))) is None
 
 
+def test_an_object_that_is_not_the_declared_bytes_is_discarded_at_complete(b: Bench) -> None:
+    data = tar_gz({"app.py": b"x\n"})
+    r = create(b, data)
+    key = bundle_key(b.w.org, b.w.app, sha(data))
+    asyncio.run(b.store.put(key, bytes(len(data))))
+    assert_problem(complete(b, r.json()["bundle_id"]), ErrorCode.BUNDLE_DIGEST_MISMATCH)
+    assert asyncio.run(b.store.stat(key)) is None
+    assert bundles_of(b)[0]["state"] == "pending"
+    again = create(b, data)
+    assert again.status_code == 200
+    assert upload(b, again.json()["upload"], data).status_code == 201
+    assert complete(b, again.json()["bundle_id"]).json()["state"] == "stored"
+
+
 def test_a_signed_get_serves_an_attachment_and_nothing_else(b: Bench) -> None:
     data = tar_gz({"app.py": b"x\n"})
     uploaded(b, data)
@@ -578,6 +593,44 @@ def test_the_api_and_the_worker_share_one_store_factory(
     with pytest.raises(StorageConfigError) as api:
         blob_store_for(Settings.from_env(env | overrides))
     assert str(api.value) == str(worker.value)
+
+
+def test_the_gcs_store_is_one_bucket_signed_as_one_service_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: list[tuple[str, str]] = []
+
+    def fake_gcs(bucket: str, signer: str) -> FsBlobStore:
+        built.append((bucket, signer))
+        return cast(FsBlobStore, object())
+
+    monkeypatch.setattr(storage, "gcs_store", fake_gcs)
+    signer = "ssc-control@ssc-control-staging.iam.gserviceaccount.com"
+    env = {
+        "SSC_DATABASE_DSN": "postgresql://ssc_app@localhost/ssc",
+        "SSC_API_JWKS": '{"keys": []}',
+        "SSC_API_ISSUER": ISSUER,
+        "SSC_BLOB_BACKEND": "gcs",
+        "SSC_BLOB_BUCKET": "ssc-c-testcell01-cell",
+        "SSC_BLOB_SIGNER": signer,
+    }
+    s = Settings.from_env(env)
+    assert (s.environment, s.blob_bucket, s.blob_signer) == ("prod", env["SSC_BLOB_BUCKET"], signer)
+    blob_store_for(s)
+    blob_store_from_env(env)
+    assert built == [(env["SSC_BLOB_BUCKET"], signer)] * 2
+    for bad in (
+        {"SSC_BLOB_BUCKET": ""},
+        {"SSC_BLOB_BUCKET": "Bad_Bucket"},
+        {"SSC_BLOB_SIGNER": ""},
+        {"SSC_BLOB_SIGNER": "someone@example.com"},
+    ):
+        with pytest.raises(StorageConfigError) as worker:
+            blob_store_from_env(env | bad)
+        with pytest.raises(StorageConfigError) as api:
+            blob_store_for(Settings.from_env(env | bad))
+        assert str(api.value) == str(worker.value)
+    assert len(built) == 2
 
 
 # ── the server's checks ──────────────────────────────────────────────────────

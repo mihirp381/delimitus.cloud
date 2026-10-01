@@ -895,3 +895,20 @@ def test_promote_with_nothing_live_is_the_apis_refusal(cli, promoting, fake_prob
     assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "NOTHING_TO_PROMOTE")
     (sent,) = [q for q in promoting.seen if q.method == "POST"]
     assert _body(sent) == {"preview_release_id": None}
+
+
+def test_an_upload_sends_its_exact_length_once_and_the_asked_headers(cli, api, folder):
+    r = cli("deploy", str(folder), "--app", "demo", "--json", session=api.session())
+    assert r.code == 0, (r.stdout, r.stderr)
+    (put,) = [q for q in api.seen if q.method == "PUT"]
+    assert put.headers.get_list("content-length") == [str(len(put.content))]
+    assert "transfer-encoding" not in put.headers
+    assert put.headers["content-type"] == "application/gzip"
+    assert "authorization" not in put.headers
+
+
+def test_an_object_already_in_the_bucket_goes_on_to_complete(cli, api, folder):
+    api.routes[("PUT", f"/put/{BUNDLE}")] = [httpx2.Response(412)]
+    r = cli("deploy", str(folder), "--app", "demo", "--json", session=api.session())
+    assert r.code == 0, (r.stdout, r.stderr)
+    assert ("POST", f"{BUNDLES}/{BUNDLE}/complete") in _calls(api)

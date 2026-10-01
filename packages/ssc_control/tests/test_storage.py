@@ -67,6 +67,8 @@ def test_none_is_the_default_and_unknown_backends_are_refused(tmp_path: Path) ->
     assert blob_store_from_env({"SSC_BLOB_BACKEND": "none"}) is None
     assert blob_store_for(Settings.from_env(fs_env(tmp_path, SSC_BLOB_BACKEND="none"))) is None
     with pytest.raises(StorageConfigError, match="unknown"):
+        blob_store_from_env({"SSC_BLOB_BACKEND": "s3"})
+    with pytest.raises(StorageConfigError, match="SSC_BLOB_BUCKET"):
         blob_store_from_env({"SSC_BLOB_BACKEND": "gcs"})
     with pytest.raises(StorageConfigError, match="SSC_BLOB_ROOT"):
         blob_store_from_env(fs_env(tmp_path, SSC_BLOB_ROOT=""))

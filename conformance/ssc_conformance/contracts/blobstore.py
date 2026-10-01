@@ -1,6 +1,6 @@
-"""``BlobStore`` contract. The filesystem store passes all of it. The bucket store (SSC-013) passes
-``BlobStoreCoreContract``, which needs only the ``blob_store`` fixture; it signs no URLs until
-SSC-014.
+"""``BlobStore`` contract. The filesystem store and the bucket store pass all of it.
+``BlobStoreCoreContract`` needs only the ``blob_store`` fixture. A store whose PUT URLs need the
+sha256 (the bucket store records it as object metadata) sets ``put_needs_sha256``.
 
 Subclass ``BlobStoreContract`` as a ``Test*`` class and provide three fixtures: ``blob_store``,
 ``fetch`` (sends a request to a signed URL, real HTTP for a cloud store) and ``clock`` (the clock
@@ -209,6 +209,11 @@ class BlobStoreCoreContract:
 class BlobStoreContract(BlobStoreCoreContract):
     """The core, plus signed URLs. Test methods take the three fixtures by name."""
 
+    put_needs_sha256: bool = False
+
+    def _sha(self, body: bytes) -> str | None:
+        return sha(body) if self.put_needs_sha256 else None
+
     async def test_a_deleted_keys_url_is_refused(self, blob_store: BlobStore, fetch: Fetch) -> None:
         await blob_store.put("d/a", b"d/a")
         get = await blob_store.signed_url("d/a", method="GET")
@@ -256,6 +261,10 @@ class BlobStoreContract(BlobStoreCoreContract):
     async def test_put_url_without_sha_takes_any_body_of_that_length(
         self, blob_store: BlobStore, fetch: Fetch
     ) -> None:
+        if self.put_needs_sha256:
+            with pytest.raises(ValueError, match="sha256"):
+                await blob_store.signed_url("u/free", method="PUT", content_length=3)
+            return
         put = await blob_store.signed_url("u/free", method="PUT", content_length=3)
         assert 200 <= (await send(fetch, put, b"abc")).status < 300
         assert await read_all(blob_store.get("u/free")) == b"abc"
@@ -266,7 +275,9 @@ class BlobStoreContract(BlobStoreCoreContract):
         await blob_store.put("u/old", b"old")
         now = clock.now()
         clock.set(now - timedelta(minutes=11))
-        put = await blob_store.signed_url("u/new", method="PUT", content_length=3)
+        put = await blob_store.signed_url(
+            "u/new", method="PUT", content_length=3, sha256=self._sha(b"new")
+        )
         get = await blob_store.signed_url("u/old", method="GET")
         clock.set(now)
         assert refused(await send(fetch, put, b"new"))
@@ -277,7 +288,9 @@ class BlobStoreContract(BlobStoreCoreContract):
         self, blob_store: BlobStore, fetch: Fetch
     ) -> None:
         await blob_store.put("u/secret", b"secret")
-        put = await blob_store.signed_url("u/mine", method="PUT", content_length=3)
+        put = await blob_store.signed_url(
+            "u/mine", method="PUT", content_length=3, sha256=self._sha(b"bad")
+        )
         get = await blob_store.signed_url("u/mine", method="GET")
         assert "/u/mine?" in put.url
         assert refused(await send(fetch, put, b"bad", url=put.url.replace("/u/mine?", "/u/other?")))
@@ -297,7 +310,9 @@ class BlobStoreContract(BlobStoreCoreContract):
         assert await blob_store.stat("u/k") is None
 
     async def test_wrong_length_is_refused(self, blob_store: BlobStore, fetch: Fetch) -> None:
-        put = await blob_store.signed_url("u/k", method="PUT", content_length=10)
+        put = await blob_store.signed_url(
+            "u/k", method="PUT", content_length=10, sha256=self._sha(b"x" * 10)
+        )
         assert refused(await send(fetch, put, b"x" * 11))
         assert refused(await send(fetch, put, b"x" * 9))
         assert await blob_store.stat("u/k") is None
@@ -314,7 +329,9 @@ class BlobStoreContract(BlobStoreCoreContract):
         get = await blob_store.signed_url("u/k", method="GET")
         assert refused(await send(fetch, get, b"new", method="PUT"))
         assert await read_all(blob_store.get("u/k")) == b"old"
-        put = await blob_store.signed_url("u/k", method="PUT", content_length=3)
+        put = await blob_store.signed_url(
+            "u/k", method="PUT", content_length=3, sha256=self._sha(b"new")
+        )
         result = await send(fetch, put, method="GET")
         assert refused(result)
         assert result.body != b"old"

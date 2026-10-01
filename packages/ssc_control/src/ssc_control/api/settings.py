@@ -38,13 +38,18 @@ class Settings:
     environment: str = "prod"
     """``SSC_ENV``. The filesystem blob store is refused unless this is ``dev`` or ``test``."""
     blob_backend: str = "none"
-    """``none`` (bundle endpoints refuse) or ``fs`` (dev and test: signed URLs served here)."""
+    """``none`` (bundle endpoints refuse), ``fs`` (dev and test: signed URLs served here) or
+    ``gcs`` (``blob_bucket``, URLs signed as ``blob_signer``)."""
     blob_root: str = ""
     """Directory of the ``fs`` blob store."""
     blob_signing_keys: Mapping[str, bytes] = field(default_factory=dict[str, bytes], repr=False)
     """``SSC_BLOB_SIGNING_KEYS``: JSON ``{"kid": "<base64 of 32+ bytes>"}`` for ``fs`` URLs."""
     blob_signing_kid: str = ""
     """The key in ``blob_signing_keys`` that signs; the others still verify."""
+    blob_bucket: str = ""
+    """``SSC_BLOB_BUCKET``: the ``gcs`` store's bucket."""
+    blob_signer: str = ""
+    """``SSC_BLOB_SIGNER``: the service account the ``gcs`` store signs URLs as (IAM signBlob)."""
     bundle_max_bytes: int = 100 * MIB
     bundle_max_unpacked_bytes: int = 500 * MIB
     bundle_max_files: int = 20_000
@@ -72,6 +77,8 @@ class Settings:
             blob_root=e.get("SSC_BLOB_ROOT", ""),
             blob_signing_keys=signing_keys(e.get("SSC_BLOB_SIGNING_KEYS", "{}")),
             blob_signing_kid=e.get("SSC_BLOB_SIGNING_KID", ""),
+            blob_bucket=e.get("SSC_BLOB_BUCKET", ""),
+            blob_signer=e.get("SSC_BLOB_SIGNER", ""),
             bundle_max_bytes=int(e.get("SSC_BUNDLE_MAX_BYTES", str(100 * MIB))),
             bundle_max_unpacked_bytes=int(e.get("SSC_BUNDLE_MAX_UNPACKED_BYTES", str(500 * MIB))),
             bundle_max_files=int(e.get("SSC_BUNDLE_MAX_FILES", "20000")),

@@ -7,10 +7,12 @@ object and runs every check server side (``ssc_control.deploy.bundles``) before 
 stored with the manifest read from it. A release built from a bundle carries
 ``source_digest = digest`` (decision 015). Recording a digest takes its key's advisory lock and
 ``complete`` locks the row, so the bundle collector (``deploy.bundle_gc``) skips or waits for
-both.
+both. An object that is not the declared bytes is deleted at ``complete``, because a bucket URL
+only creates: the client then asks for a fresh URL and uploads again.
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import Annotated, Final, Literal
 
@@ -32,8 +34,9 @@ from ssc_control.api.settings import Settings
 from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.deploy.bundle_gc import lock_bundle_key
 from ssc_control.deploy.bundles import DIGEST_PREFIX, BundleRejectedError, bundle_key, check_upload
-from ssc_shared.blobstore import BlobStore
+from ssc_shared.blobstore import BlobError, BlobStore
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_SAFE_INTEGER: Final = 2**53 - 1
@@ -136,6 +139,14 @@ async def _bundle(
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"bundle_id": bundle_id})
     return row
+
+
+async def _discard(store: BlobStore, key: str) -> None:
+    """Delete an object that is not the declared bytes; the row stays ``pending``."""
+    try:
+        await store.delete(key)
+    except BlobError:
+        log.warning("bundle object not discarded", extra={"key": key})
 
 
 def _out(row: RowMapping, upload: UploadTarget | None = None) -> BundleOut:
@@ -249,15 +260,15 @@ async def complete_bundle(app_id: Id, bundle_id: Id, request: Request, uow: User
         return uow.reply(_out(row))
     if status != "active":
         raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"status": status})
+    store = _store_of(rt)
+    key = bundle_key(uow.org_id, app_id, row["digest"])
     try:
         checked = await check_upload(
-            _store_of(rt),
-            bundle_key(uow.org_id, app_id, row["digest"]),
-            size=row["size_bytes"],
-            digest=row["digest"],
-            limits=limits_of(rt.settings),
+            store, key, size=row["size_bytes"], digest=row["digest"], limits=limits_of(rt.settings)
         )
     except BundleRejectedError as e:
+        if e.code is ErrorCode.BUNDLE_DIGEST_MISMATCH:
+            await _discard(store, key)
         raise Refusal(e.code, evidence={"bundle_id": bundle_id, **e.evidence}) from None
     manifest = checked.manifest.model_dump(mode="json", by_alias=True)
     stored = (
