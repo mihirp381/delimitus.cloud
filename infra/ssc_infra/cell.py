@@ -14,6 +14,7 @@ import pulumi_gcp as gcp
 
 from ssc_infra import naming as n
 from ssc_infra.platform import provider, sa_principal
+from ssc_shared.runtime import service_name
 
 APIS: Final = (
     "artifactregistry.googleapis.com",
@@ -42,6 +43,17 @@ AGENT_MAX: Final = 3
 KEY_ROTATION: Final = "7776000s"
 SQL_TIER: Final = "db-custom-1-3840"
 PLACEHOLDER_IMAGE: Final = "us-docker.pkg.dev/cloudrun/container/hello"
+GOOGLE_DNS_PASSTHRU: Final = (
+    "googleapis.com.",
+    "*.googleapis.com.",
+    "run.app.",
+    "*.run.app.",
+    "metadata.google.internal.",
+    "*.google.internal.",
+    "*.internal.",
+)
+SINKHOLE: Final = "192.0.2.1"  # TEST-NET-1: never routed
+APP_IMAGE: Final = "apps"
 APP_CONDITION: Final = 'resource.name.extract("/{kind}/{{name}}").startsWith("{prefix}")'
 CREATE_PERMISSIONS: Final = (
     "iam.serviceAccounts.create",
@@ -58,6 +70,8 @@ class CellConfig:
     probe: bool
     gateway_min: int
     gateway_max: int
+    agent_image: str | None
+    probe_digest: str | None
 
     @property
     def project_id(self) -> str:
@@ -79,6 +93,8 @@ def read_config(stack: str) -> CellConfig:
         probe=config.get_bool("probe") or False,
         gateway_min=config.get_int("gateway_min") or 2,
         gateway_max=config.get_int("gateway_max") or 20,
+        agent_image=config.get("agent_image"),
+        probe_digest=config.get("probe_digest"),
     )
 
 
@@ -124,6 +140,7 @@ class Cell:
         self.network()
         self.database()
         self.registry()
+        self.dns_policy()
         self.bucket()
         self.gateway()
         self.cell_agent()
@@ -131,6 +148,7 @@ class Cell:
         self.deny()
         if self.cfg.probe:
             self.probe()
+            self.probe_runner()
         self.exports()
 
     def project(self) -> None:
@@ -473,6 +491,19 @@ class Cell:
             kms_key_name=self.registry_key.id,
             opts=self._o(*self.key_grants),
         )
+        self.app_images = pulumi.Output.concat(
+            n.REGION, "-docker.pkg.dev/", self.pid, "/", self.repo.repository_id, "/", APP_IMAGE
+        )
+        self.platform_repo = gcp.artifactregistry.Repository(
+            "registry-platform",
+            project=self.pid,
+            location=n.REGION,
+            repository_id="ssc-platform",
+            format="DOCKER",
+            description="SSC's own images in this cell: the cell agent.",
+            kms_key_name=self.registry_key.id,
+            opts=self._o(*self.key_grants),
+        )
         gcp.artifactregistry.RepositoryIamMember(
             "registry-build",
             project=self.pid,
@@ -482,6 +513,44 @@ class Cell:
             member=self.build_sa.member,
             opts=self._o(),
         )
+
+    def dns_policy(self) -> None:
+        """Names resolve inside the cell only when Google serves them; every other name gets an
+        unroutable answer from Cloud DNS itself, so no query leaves to a public resolver (the
+        ``no_dns_exfil`` probe). The egress gateway resolves allowed hosts itself."""
+        policy = gcp.dns.ResponsePolicy(
+            "dns-policy",
+            project=self.pid,
+            response_policy_name="ssc-cell",
+            description="Only Google's names resolve in the cell.",
+            networks=[gcp.dns.ResponsePolicyNetworkArgs(network_url=self.vpc.id)],
+            opts=self._o(),
+        )
+        gcp.dns.ResponsePolicyRule(
+            "dns-sinkhole",
+            project=self.pid,
+            response_policy=policy.response_policy_name,
+            rule_name="sinkhole",
+            dns_name="*.",
+            local_data=gcp.dns.ResponsePolicyRuleLocalDataArgs(
+                local_datas=[
+                    gcp.dns.ResponsePolicyRuleLocalDataLocalDataArgs(
+                        name="*.", type="A", ttl=300, rrdatas=[SINKHOLE]
+                    )
+                ]
+            ),
+            opts=self._o(),
+        )
+        for i, name in enumerate(GOOGLE_DNS_PASSTHRU):
+            gcp.dns.ResponsePolicyRule(
+                f"dns-google-{i}",
+                project=self.pid,
+                response_policy=policy.response_policy_name,
+                rule_name=f"google-{i}",
+                dns_name=name,
+                behavior="bypassResponsePolicy",
+                opts=self._o(),
+            )
 
     def bucket(self) -> None:
         cfg = self.cfg
@@ -509,13 +578,16 @@ class Cell:
                 name, bucket=self.bucket_.name, role=role, member=member, opts=self._o()
             )
 
-    def _run(
+    def _run(  # noqa: PLR0913  (keyword-only)
         self,
         name: str,
         sa: gcp.serviceaccount.Account,
+        *,
         ingress: str,
         vpc: gcp.cloudrunv2.ServiceTemplateVpcAccessArgs | None,
         instances: tuple[int, int],
+        image: str | None = None,
+        env: dict[str, pulumi.Input[str]] | None = None,
     ) -> gcp.cloudrunv2.Service:
         min_instances, max_instances = instances
         return gcp.cloudrunv2.Service(
@@ -532,7 +604,12 @@ class Cell:
                 vpc_access=vpc,
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
-                        image=PLACEHOLDER_IMAGE,
+                        image=image or PLACEHOLDER_IMAGE,
+                        envs=[
+                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=k, value=v)
+                            for k, v in sorted((env or {}).items())
+                        ]
+                        or None,
                         resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
                             cpu_idle=min_instances == 0,
                             limits={"cpu": "1", "memory": "512Mi"},
@@ -547,8 +624,8 @@ class Cell:
         self.gateway_ = self._run(
             "ssc-gateway",
             self.gateway_sa,
-            "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
-            gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
+            ingress="INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
+            vpc=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                 egress="ALL_TRAFFIC",
                 network_interfaces=[
                     gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
@@ -556,12 +633,37 @@ class Cell:
                     )
                 ],
             ),
-            (self.cfg.gateway_min, self.cfg.gateway_max),
+            instances=(self.cfg.gateway_min, self.cfg.gateway_max),
         )
 
     def cell_agent(self) -> None:
+        """Runs ``python -m ssc_agent`` (decision 014) once ``agent_image`` names a build of
+        ``packages/ssc_agent/Dockerfile`` in the cell's ``ssc-platform`` repository."""
+        env: dict[str, pulumi.Input[str]] = {
+            "SSC_CELL_PROJECT": self.pid,
+            "SSC_CELL_REGION": n.REGION,
+            "SSC_CELL_NETWORK": self.vpc.id,
+            "SSC_CELL_SUBNETWORK": self.apps_subnet.id,
+            "SSC_IMAGE_REPOSITORY": self.app_images,
+            "SSC_GATEWAY_SA": self.gateway_sa.email,
+        }
         agent = self._run(
-            "ssc-cell-agent", self.agent_sa, "INGRESS_TRAFFIC_ALL", None, (0, AGENT_MAX)
+            "ssc-cell-agent",
+            self.agent_sa,
+            ingress="INGRESS_TRAFFIC_ALL",
+            vpc=None,
+            instances=(0, AGENT_MAX),
+            image=self.cfg.agent_image,
+            env=env if self.cfg.agent_image else None,
+        )
+        gcp.compute.SubnetworkIAMMember(
+            "agent-apps-subnet",
+            project=self.pid,
+            region=n.REGION,
+            subnetwork=self.apps_subnet.name,
+            role="roles/compute.networkUser",
+            member=self.agent_sa.member,
+            opts=self._o(),
         )
         gcp.cloudrunv2.ServiceIamMember(
             "agent-invoker",
@@ -696,12 +798,81 @@ class Cell:
                 opts=self._o(),
             )
 
+    def probe_runner(self) -> None:
+        """The in-cell probe run (SSC-017): a job that stands where the gateway stands (its
+        identity, subnet and tag) and calls probe app ``a``. The nightly run starts it."""
+        digest = self.cfg.probe_digest
+        if digest is None:
+            return
+        a, b = (service_name(env) for env in n.PROBE_ENVS)
+        number = self.project_.number
+        job = gcp.cloudrunv2.Job(
+            "probe-runner",
+            project=self.pid,
+            name=n.PROBE_RUNNER,
+            location=n.REGION,
+            deletion_protection=False,
+            template=gcp.cloudrunv2.JobTemplateArgs(
+                task_count=1,
+                template=gcp.cloudrunv2.JobTemplateTemplateArgs(
+                    service_account=self.gateway_sa.email,
+                    max_retries=0,
+                    timeout="600s",
+                    vpc_access=gcp.cloudrunv2.JobTemplateTemplateVpcAccessArgs(
+                        egress="ALL_TRAFFIC",
+                        network_interfaces=[
+                            gcp.cloudrunv2.JobTemplateTemplateVpcAccessNetworkInterfaceArgs(
+                                network=self.vpc.id,
+                                subnetwork=self.gateway_subnet.id,
+                                tags=[GATEWAY_TAG],
+                            )
+                        ],
+                    ),
+                    containers=[
+                        gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
+                            image=pulumi.Output.concat(self.app_images, "@", digest),
+                            commands=["python", "/app/runner.py"],
+                            envs=[
+                                gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
+                                    name="PROBE_URL", value=number.apply(lambda p: n.run_url(a, p))
+                                ),
+                                gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
+                                    name="PROBE_PEER_URL",
+                                    value=number.apply(lambda p: n.run_url(b, p)),
+                                ),
+                            ],
+                        )
+                    ],
+                ),
+            ),
+            opts=self._o(),
+        )
+        nightly = self.platform.require_output("nightly_service_account")
+        member = pulumi.Output.concat("serviceAccount:", nightly)
+        gcp.cloudrunv2.JobIamMember(
+            "probe-runner-nightly",
+            project=self.pid,
+            location=n.REGION,
+            name=job.name,
+            role="roles/run.jobsExecutor",
+            member=member,
+            opts=self._o(),
+        )
+        # Reads the run's executions and the probe results it logs; staging probe cells only.
+        self._project_role("nightly-run-viewer", member, "roles/run.viewer")
+        self._project_role("nightly-logs", member, "roles/logging.viewer")
+
     def exports(self) -> None:
         pulumi.export("project_id", self.pid)
         pulumi.export("project_number", self.project_.number)
         pulumi.export("bucket", self.bucket_.name)
         pulumi.export("sql_instance", self.sql.connection_name)
         pulumi.export("registry", self.repo.name)
+        pulumi.export("app_images", self.app_images)
+        pulumi.export(
+            "agent_url",
+            self.project_.number.apply(lambda p: n.run_url("ssc-cell-agent", p)),
+        )
         pulumi.export("gateway_ilb_ip", self.lb.ip_address)
         pulumi.export("nat_ips", {k: ip.address for k, ip in self.nat_ips.items()})
         pulumi.export(

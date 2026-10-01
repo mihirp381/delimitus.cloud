@@ -12,6 +12,7 @@ pyjwt = "2026-09-24T00:00:00Z"
 [manifest]
 members = [
     "ssc",
+    "ssc-agent",
     "ssc-app",
     "ssc-bundle",
     "ssc-cli",
@@ -1434,6 +1435,7 @@ name = "ssc"
 version = "0.0.1"
 source = { virtual = "." }
 dependencies = [
+    { name = "ssc-agent" },
     { name = "ssc-app" },
     { name = "ssc-bundle" },
     { name = "ssc-cli" },
@@ -1461,6 +1463,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ssc-agent", editable = "packages/ssc_agent" },
     { name = "ssc-app", editable = "packages/ssc_app" },
     { name = "ssc-bundle", editable = "packages/ssc_bundle" },
     { name = "ssc-cli", editable = "packages/ssc_cli" },
@@ -1484,6 +1487,27 @@ dev = [
     { name = "ruff", specifier = ">=0.16,<0.17" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.10,<5" },
     { name = "zizmor", specifier = ">=1.20,<2" },
+]
+
+[[package]]
+name = "ssc-agent"
+version = "0.0.1"
+source = { editable = "packages/ssc_agent" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx2" },
+    { name = "ssc-contracts" },
+    { name = "ssc-shared" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = "==0.141.1" },
+    { name = "httpx2", specifier = "==2.13.0" },
+    { name = "ssc-contracts", editable = "packages/ssc_contracts" },
+    { name = "ssc-shared", editable = "packages/ssc_shared" },
+    { name = "uvicorn", specifier = "==0.38.0" },
 ]
 
 [[package]]
@@ -1561,6 +1585,7 @@ dependencies = [
     { name = "httpx2" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pytest" },
+    { name = "ssc-agent" },
     { name = "ssc-contracts" },
     { name = "ssc-control" },
     { name = "ssc-edge" },
@@ -1573,6 +1598,7 @@ requires-dist = [
     { name = "httpx2", specifier = "==2.13.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },
     { name = "pytest", specifier = ">=8.4,<10" },
+    { name = "ssc-agent", editable = "packages/ssc_agent" },
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
     { name = "ssc-control", editable = "packages/ssc_control" },
     { name = "ssc-edge", editable = "packages/ssc_edge" },

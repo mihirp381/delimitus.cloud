@@ -142,6 +142,22 @@ async def reconcile_env(
     desired = await load_desired(engine, specs, org_id=org_id, env_id=env_id)
     if isinstance(desired, str):
         return Outcome(desired)
+    outcome = await reconcile_once(driver, desired)
+    if outcome.change is not None:
+        log.info(
+            "reconciled",
+            extra={
+                "org_id": org_id,
+                "env_id": env_id,
+                "service": desired.service,
+                "change": outcome.change.kind,
+            },
+        )
+    return outcome
+
+
+async def reconcile_once(driver: RuntimeDriver, desired: ServiceSpec | Stopped) -> Outcome:
+    """Observe, plan, and make at most one change, for desired state already loaded."""
     observed = await driver.observe(desired.service)
     plan = plan_one_change(desired, observed)
     if plan is None:
@@ -158,8 +174,4 @@ async def reconcile_env(
             await driver.scale_to_zero(desired.service)
         case _:
             raise AssertionError(f"no such plan {plan} for {desired}")
-    log.info(
-        "reconciled",
-        extra={"org_id": org_id, "env_id": env_id, "service": desired.service, "change": plan.kind},
-    )
     return Outcome("changed", desired.service, plan)

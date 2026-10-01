@@ -35,6 +35,12 @@ APP_PREFIX: Final = "ssc-a-"
 PROBE_SECRET: Final = f"{APP_PREFIX}probe"
 PROBE_ALLOWED_SA: Final = f"{APP_PREFIX}probe"
 PROBE_DENIED_SA: Final = "ssc-deny-probe"
+# The two runtime-probe apps (SSC-017): ``a`` runs the probes, ``b`` is the peer it must not reach.
+PROBE_ENVS: Final = ("env_probe00000000000000a", "env_probe00000000000000b")
+PROBE_RUNNER: Final = "ssc-probe-runner"
+NIGHTLY_SA: Final = "ssc-nightly"
+GITHUB_REPOSITORY: Final = "mihirp381/delimitus.cloud"
+NIGHTLY_WORKFLOW: Final = ".github/workflows/nightly.yml"
 SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S105
 
 
@@ -62,6 +68,11 @@ def label_of_stack(stack: str) -> str:
 
 def sa_email(account: str, project: str) -> str:
     return f"{account}@{project}.iam.gserviceaccount.com"
+
+
+def run_url(service: str, project_number: str) -> str:
+    """A Cloud Run service's deterministic URL."""
+    return f"https://{service}-{project_number}.{REGION}.run.app"
 
 
 def platform_stack_ref() -> str:

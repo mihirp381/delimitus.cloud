@@ -1,0 +1,17 @@
+[project]
+name = "ssc-agent"
+version = "0.0.1"
+requires-python = ">=3.14,<3.15"
+dependencies = ["ssc-contracts", "ssc-shared", "fastapi==0.141.1", "uvicorn==0.38.0", "httpx2==2.13.0"]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.deptry]
+known_first_party = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_conformance"]
+ignore = ["DEP004"]  # dev-only imports in tests
+
+[tool.deptry.per_rule_ignores]
+# Workspace packages are in known_first_party, so deptry cannot see them being used.
+DEP002 = ["ssc-contracts", "ssc-shared"]

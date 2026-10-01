@@ -1,0 +1,344 @@
+"""The nightly runtime check in a staging cell (SSC-017): ``python -m ssc_conformance.nightly``.
+
+1. Deploys the two probe apps through the cell agent, as the control plane does: the reconciler
+   (``reconcile_once``) drives ``CellAgentDriver`` until each has converged.
+2. Runs the cell's ``ssc-probe-runner`` job, which calls probe app ``a`` from where the gateway
+   stands, and reads its fourteen results from Cloud Logging.
+3. Drifts probe app ``a`` (a revision with an extra variable takes all traffic) and runs the
+   reconciler at its tick until the service is back on the desired revision. The ticket allows
+   one minute, counted from the drift to the converged observation.
+
+Configuration, all required: ``SSC_PROBE_PROJECT`` (the cell project), ``SSC_PROBE_AGENT_URL``,
+``SSC_PROBE_DIGEST`` (the probe image in the cell's ``ssc-apps/apps`` repository) and
+``SSC_CONTROL_SA`` (whose ID tokens the agent accepts). The caller's access token comes from
+``SSC_ACCESS_TOKEN`` (the nightly workflow's federated token) or else ``gcloud``; it needs
+``getOpenIdToken`` on the control SA, the probe job, and read access to its logs.
+Exits 1 when a probe fails or is missing, or when the drift outlives the minute.
+"""
+
+import asyncio
+import logging
+import os
+import subprocess  # noqa: S404
+import sys
+import time
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any, Final, cast
+
+import httpx2
+
+from ssc_conformance.runtime_probes import PROBES
+from ssc_contracts import app_env
+from ssc_control.runtime.cell_agent import AccessTokens, CellAgentDriver, ImpersonatedIdTokens
+from ssc_control.runtime.jobs import TICK_CRON
+from ssc_control.runtime.reconciler import Outcome, plan_one_change, reconcile_once
+from ssc_shared.runtime import RuntimeDriver, RuntimeDriverError, ServiceSpec, service_name
+
+log = logging.getLogger("ssc_conformance.nightly")
+
+ENV: Final = {
+    "project": "SSC_PROBE_PROJECT",
+    "agent_url": "SSC_PROBE_AGENT_URL",
+    "probe_digest": "SSC_PROBE_DIGEST",
+    "control_sa": "SSC_CONTROL_SA",
+}
+PROBE_ENVS: Final = ("env_probe00000000000000a", "env_probe00000000000000b")
+PROBE_JOB: Final = "ssc-probe-runner"
+REGION: Final = "us-central1"
+RUN_API: Final = "https://run.googleapis.com/v2"
+LOGGING_API: Final = "https://logging.googleapis.com/v2"
+PORT: Final = 8080
+TICK_SECONDS: Final = int(TICK_CRON.rsplit("*/", 1)[1])
+DRIFT_LIMIT_SECONDS: Final = 60.0
+DEPLOY_LIMIT_SECONDS: Final = 600.0
+JOB_LIMIT_SECONDS: Final = 900.0
+LOGS_LIMIT_SECONDS: Final = 300.0
+POLL_SECONDS: Final = 5.0
+DRIFT_VARIABLE: Final = "PROBE_DRIFT"
+
+type Sleep = Callable[[float], Awaitable[None]]
+type Clock = Callable[[], float]
+type Json = dict[str, Any]
+
+
+class NightlyError(Exception):
+    pass
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NightlyConfig:
+    project: str
+    agent_url: str
+    probe_digest: str
+    control_sa: str
+
+
+def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
+    missing = [name for name in ENV.values() if not environ.get(name)]
+    if missing:
+        raise NightlyError(f"missing {', '.join(missing)}")
+    return NightlyConfig(**{field: environ[name] for field, name in ENV.items()})
+
+
+def probe_spec(env_id: str, digest: str) -> ServiceSpec:
+    return ServiceSpec(
+        service=service_name(env_id),
+        image_digest=digest,
+        port=PORT,
+        health_path="/healthz",
+        resource_class="small",
+        env={app_env.PORT: str(PORT), app_env.HOME: app_env.HOME_VALUE},
+        min_instances=0,
+        max_instances=1,
+        labels={"ssc-env": env_id, "ssc-probe": "true"},
+    )
+
+
+async def converge(  # noqa: PLR0913  (keyword-only)
+    driver: RuntimeDriver,
+    desired: ServiceSpec,
+    *,
+    every: float,
+    limit: float,
+    sleep: Sleep = asyncio.sleep,
+    clock: Clock = time.monotonic,
+    first_after: float = 0.0,
+) -> float:
+    """Reconcile passes ``every`` seconds until converged; returns the seconds until the service
+    first observed as desired, which can be right after a pass's change."""
+    started = clock()
+    await sleep(first_after)
+    while True:
+        outcome = await reconcile_once(driver, desired)
+        if outcome.kind == "changed" and await _converged(driver, desired):
+            outcome = Outcome("converged", desired.service)
+        elapsed = clock() - started
+        if outcome.kind == "converged":
+            return elapsed
+        if outcome.kind == "revision_failed":
+            raise NightlyError(f"{desired.service}: the desired revision failed to start")
+        if elapsed > limit:
+            raise NightlyError(f"{desired.service}: not converged after {elapsed:.0f} s")
+        await sleep(every)
+
+
+async def _converged(driver: RuntimeDriver, desired: ServiceSpec) -> bool:
+    return plan_one_change(desired, await driver.observe(desired.service)) is None
+
+
+async def drift(
+    driver: RuntimeDriver,
+    desired: ServiceSpec,
+    *,
+    sleep: Sleep = asyncio.sleep,
+    clock: Clock = time.monotonic,
+) -> float:
+    """Moves all traffic to a revision the control plane never asked for, then times the
+    reconciler at its tick (the first pass one tick later, the worst case) until repaired."""
+    drifted = replace(desired, env={**desired.env, DRIFT_VARIABLE: str(int(time.time()))})
+    await converge(
+        driver, drifted, every=POLL_SECONDS, limit=DEPLOY_LIMIT_SECONDS, sleep=sleep, clock=clock
+    )
+    return await converge(
+        driver,
+        desired,
+        every=TICK_SECONDS,
+        limit=DRIFT_LIMIT_SECONDS,
+        sleep=sleep,
+        clock=clock,
+        first_after=TICK_SECONDS,
+    )
+
+
+class ProbeJob:
+    """The cell's probe runner job, and its results from Cloud Logging."""
+
+    def __init__(
+        self,
+        project: str,
+        access_tokens: AccessTokens,
+        *,
+        client: httpx2.AsyncClient | None = None,
+        sleep: Sleep = asyncio.sleep,
+        clock: Clock = time.monotonic,
+    ) -> None:
+        self._project = project
+        self._access_tokens = access_tokens
+        self._client = client or httpx2.AsyncClient(timeout=30.0)
+        self._sleep = sleep
+        self._clock = clock
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def run(self) -> list[Json]:
+        job = f"projects/{self._project}/locations/{REGION}/jobs/{PROBE_JOB}"
+        operation = await self._call("POST", f"{RUN_API}/{job}:run", {})
+        execution = str(_obj(operation.get("metadata")).get("name") or "")
+        if "/executions/" not in execution:
+            raise NightlyError(f"{PROBE_JOB}: the run named no execution")
+        await self._finished(execution)
+        return await self._results(execution.rsplit("/", 1)[1])
+
+    async def _finished(self, execution: str) -> Json:
+        started = self._clock()
+        while True:
+            body = await self._call("GET", f"{RUN_API}/{execution}")
+            if body.get("completionTime"):
+                return body
+            if self._clock() - started > JOB_LIMIT_SECONDS:
+                raise NightlyError(f"{execution}: still running after {JOB_LIMIT_SECONDS:.0f} s")
+            await self._sleep(POLL_SECONDS)
+
+    async def _results(self, execution: str) -> list[Json]:
+        """The job's ``ssc_probe`` lines once its summary line has been ingested."""
+        query = {
+            "resourceNames": [f"projects/{self._project}"],
+            "filter": (
+                f'resource.type="cloud_run_job" AND resource.labels.job_name="{PROBE_JOB}" '
+                f'AND labels."run.googleapis.com/execution_name"="{execution}"'
+            ),
+            "orderBy": "timestamp asc",
+            "pageSize": 200,
+        }
+        started = self._clock()
+        while True:
+            body = await self._call("POST", f"{LOGGING_API}/entries:list", query)
+            payloads = [_obj(e.get("jsonPayload")) for e in _objs(body.get("entries"))]
+            if any("ssc_probe_summary" in p for p in payloads):
+                return [_obj(p["ssc_probe"]) for p in payloads if "ssc_probe" in p]
+            if self._clock() - started > LOGS_LIMIT_SECONDS:
+                raise NightlyError(f"{execution}: no probe summary in the logs")
+            await self._sleep(POLL_SECONDS)
+
+    async def _call(self, method: str, url: str, body: Json | None = None) -> Json:
+        token = await self._access_tokens()
+        try:
+            response = await self._client.request(
+                method, url, json=body, headers={"Authorization": f"Bearer {token}"}
+            )
+        except httpx2.HTTPError as exc:
+            raise NightlyError(f"{method} {url}: {type(exc).__name__}") from None
+        if not response.is_success:
+            raise NightlyError(f"{method} {url}: HTTP {response.status_code} {response.text[:300]}")
+        return _obj(response.json())
+
+
+def verdict(results: list[Json]) -> list[str]:
+    """Every probe must report, exactly once, and pass. Returns the failures."""
+    by_name: dict[str, list[Json]] = {}
+    for result in results:
+        by_name.setdefault(str(result.get("probe")), []).append(result)
+    failures = [f"{name}: did not report" for name in PROBES if name not in by_name]
+    failures += [f"{name}: unknown probe" for name in by_name if name not in PROBES]
+    failures += [f"{name}: reported {len(r)} times" for name, r in by_name.items() if len(r) > 1]
+    failures += [
+        f"{name}: {r[0].get('reason')}"
+        for name, r in by_name.items()
+        if name in PROBES and r[0].get("status") != "passed"
+    ]
+    return failures
+
+
+@dataclass(frozen=True, slots=True)
+class Report:
+    results: list[Json]
+    drift_seconds: float | None
+    failures: list[str]
+
+    def markdown(self) -> str:
+        lines = ["| probe | status | reason |", "| --- | --- | --- |"]
+        lines += [
+            f"| {r.get('probe')} | {r.get('status')} | {str(r.get('reason')).replace('|', '/')} |"
+            for r in self.results
+        ]
+        repaired = "not run" if self.drift_seconds is None else f"{self.drift_seconds:.0f} s"
+        lines += ["", f"Drift repaired in: {repaired} (limit {DRIFT_LIMIT_SECONDS:.0f} s)"]
+        lines += ["", *(f"- FAILED {f}" for f in self.failures)] if self.failures else []
+        return "\n".join(lines) + "\n"
+
+
+async def nightly(
+    driver: RuntimeDriver,
+    job: ProbeJob,
+    digest: str,
+    *,
+    sleep: Sleep = asyncio.sleep,
+    clock: Clock = time.monotonic,
+) -> Report:
+    specs = [probe_spec(env_id, digest) for env_id in PROBE_ENVS]
+    for spec in specs:
+        await converge(
+            driver, spec, every=POLL_SECONDS, limit=DEPLOY_LIMIT_SECONDS, sleep=sleep, clock=clock
+        )
+        log.info("probe app ready", extra={"service": spec.service})
+    results = await job.run()
+    failures = verdict(results)
+    drift_seconds: float | None = None
+    try:
+        drift_seconds = await drift(driver, specs[0], sleep=sleep, clock=clock)
+    except (NightlyError, RuntimeDriverError) as exc:
+        failures.append(f"drift: {exc}")
+    return Report(results, drift_seconds, failures)
+
+
+def gcloud_access_tokens() -> AccessTokens:
+    """``SSC_ACCESS_TOKEN`` if set, else the operator's ``gcloud`` login. Never logged."""
+
+    async def token() -> str:
+        if env := os.environ.get("SSC_ACCESS_TOKEN"):
+            return env
+        done = await asyncio.to_thread(
+            subprocess.run,
+            ["gcloud", "auth", "print-access-token"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if done.returncode != 0:
+            raise NightlyError("no access token: set SSC_ACCESS_TOKEN or log in to gcloud")
+        return done.stdout.strip()
+
+    return token
+
+
+async def main_async(environ: Mapping[str, str]) -> Report:
+    cfg = config_from_env(environ)
+    access = gcloud_access_tokens()
+    driver = CellAgentDriver(cfg.agent_url, ImpersonatedIdTokens(cfg.control_sa, access))
+    job = ProbeJob(cfg.project, access)
+    try:
+        return await nightly(driver, job, cfg.probe_digest)
+    finally:
+        await driver.aclose()
+        await job.aclose()
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    try:
+        report = asyncio.run(main_async(os.environ))
+    except (NightlyError, RuntimeDriverError) as exc:
+        sys.stderr.write(f"nightly: {exc}\n")
+        return 1
+    text = report.markdown()
+    sys.stdout.write(text)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with Path(summary).open("a", encoding="utf-8") as f:
+            f.write("## SSC-017 runtime probes\n\n" + text)
+    return 1 if report.failures else 0
+
+
+def _obj(value: object) -> Json:
+    return cast(Json, value) if isinstance(value, dict) else {}
+
+
+def _objs(value: object) -> list[Json]:
+    items = cast("list[object]", value) if isinstance(value, list) else []
+    return [cast(Json, v) for v in items if isinstance(v, dict)]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

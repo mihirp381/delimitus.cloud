@@ -108,3 +108,28 @@ def test_the_pam_service_agent_manages_the_cells_folder(declared: list[Declared]
         == f"serviceAccount:service-org-{naming.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
     )
     assert grant["folder"] == _folders(declared)["ssc-cells"].outputs["name"]
+
+
+def test_only_the_nightly_workflow_on_main_becomes_the_nightly_account(
+    declared: list[Declared],
+) -> None:
+    provider = one(declared, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider")
+    condition = provider.inputs["attributeCondition"]
+    assert f'assertion.repository == "{naming.GITHUB_REPOSITORY}"' in condition
+    assert (
+        f'assertion.workflow_ref == "{naming.GITHUB_REPOSITORY}/.github/workflows/nightly.yml'
+        '@refs/heads/main"' in condition
+    )
+    assert provider.inputs["oidc"]["issuerUri"] == "https://token.actions.githubusercontent.com"
+    members = {
+        d.name: d.inputs for d in declared if d.type == "gcp:serviceaccount/iAMMember:IAMMember"
+    }
+    assert members["nightly-wif"]["role"] == "roles/iam.workloadIdentityUser"
+    assert members["nightly-wif"]["member"].endswith(
+        f"/workloadIdentityPools/ssc-github/attribute.repository/{naming.GITHUB_REPOSITORY}"
+    )
+    tokens = members["nightly-control-id-tokens"]
+    assert tokens["role"] == "roles/iam.serviceAccountOpenIdTokenCreator"
+    assert tokens["member"] == "serviceAccount:" + naming.sa_email(
+        naming.NIGHTLY_SA, naming.control_project("staging")
+    )

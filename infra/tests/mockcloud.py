@@ -11,6 +11,7 @@ from pulumi.runtime import config as runtime_config
 from ssc_infra import cell, naming, platform
 
 FOLDERS = {"prod": "111111111111", "staging": "222222222222"}
+NIGHTLY = naming.sa_email(naming.NIGHTLY_SA, naming.control_project("staging"))
 CONTROL = {s: naming.sa_email(naming.CONTROL_SA, naming.control_project(s)) for s in naming.STAGES}
 
 
@@ -32,7 +33,11 @@ class Recorder(pulumi.runtime.Mocks):
 
     def new_resource(self, args: pulumi.runtime.MockResourceArgs) -> tuple[str, dict[str, Any]]:
         if args.typ == "pulumi:pulumi:StackReference":
-            outputs = {"stage_folder_ids": FOLDERS, "control_service_accounts": CONTROL}
+            outputs = {
+                "stage_folder_ids": FOLDERS,
+                "control_service_accounts": CONTROL,
+                "nightly_service_account": NIGHTLY,
+            }
             return f"{args.name}-id", {"name": args.name, "outputs": outputs}
         state = dict(args.inputs)
         project = state.get("project") or state.get("projectId") or ""
@@ -52,6 +57,12 @@ class Recorder(pulumi.runtime.Mocks):
             case "gcp:projects/serviceIdentity:ServiceIdentity":
                 agent = f"service-{project_number(project)}@{args.name}.iam.gserviceaccount.com"
                 state |= {"email": agent, "member": f"serviceAccount:{agent}"}
+            case "gcp:iam/workloadIdentityPool:WorkloadIdentityPool":
+                number = project_number(project)
+                state["name"] = (
+                    f"projects/{number}/locations/global/workloadIdentityPools/"
+                    f"{state['workloadIdentityPoolId']}"
+                )
             case "gcp:projects/iAMCustomRole:IAMCustomRole":
                 state["name"] = f"projects/{project}/roles/{state['roleId']}"
             case _:

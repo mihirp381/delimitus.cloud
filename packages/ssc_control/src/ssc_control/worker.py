@@ -37,6 +37,7 @@ from ssc_control.lifecycle import jobs as lifecycle_jobs
 from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
 from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
+from ssc_control.runtime.cell_agent import CellAgentDriver, MetadataIdTokens
 from ssc_control.runtime.driver import RuntimeDriver
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
@@ -59,6 +60,7 @@ log = logging.getLogger(__name__)
 DSN_ENV: Final = "SSC_DATABASE_DSN"
 ENV_ENV: Final = "SSC_ENV"
 RUNTIME_DRIVER_ENV: Final = "SSC_RUNTIME_DRIVER"
+CELL_AGENT_URL_ENV: Final = "SSC_CELL_AGENT_URL"
 BUILD_DRIVER_ENV: Final = "SSC_BUILD_DRIVER"
 METRICS_KEY_ENV: Final = "SSC_METRICS_KEY"
 TIMER_DISPATCHER_ENV: Final = "SSC_TIMER_DISPATCHER"
@@ -157,12 +159,18 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
 
 def runtime_driver_from_env(env: Mapping[str, str]) -> RuntimeDriver | None:
     """``SSC_RUNTIME_DRIVER``: unset means none (the reconciler defers nothing), ``fake`` the
-    in-memory driver. Cloud drivers arrive with SSC-013."""
+    in-memory driver, ``cell_agent`` the cell agent at ``SSC_CELL_AGENT_URL`` with this
+    instance's ID token. One cell until placement (which cell holds an org) has its ticket."""
     match env.get(RUNTIME_DRIVER_ENV, ""):
         case "":
             return None
         case "fake":
             return FakeRuntimeDriver()
+        case "cell_agent":
+            url = env.get(CELL_AGENT_URL_ENV, "")
+            if not url.startswith("https://"):
+                raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
+            return CellAgentDriver(url, MetadataIdTokens())
         case other:
             raise CompositionError(f"unknown {RUNTIME_DRIVER_ENV} {other!r}")
 

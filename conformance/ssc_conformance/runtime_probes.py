@@ -2,8 +2,9 @@
 
 ``run(base_url)`` asks the probe app (``conformance/runtime/probe_app``) running behind
 ``base_url`` and returns one ``ProbeResult`` per entry of ``PROBES``. Four probes run anywhere a
-container runs. The other ten need the real network path of a cell and report ``skipped`` until a
-staging cell exists; they never report ``passed`` here.
+container runs. The other ten need the real network path of a cell: here they report
+``skipped``, never ``passed``. In a staging cell the probe image's runner job runs all fourteen
+(``conformance/runtime/probe_app/runner.py``, started by ``python -m ssc_conformance.nightly``).
 
 A local run starts the image with ``--read-only --tmpfs /tmp``, ``HOME=/tmp`` and a ``PORT`` other
 than 8080, and publishes only that port, so ``listens_on_PORT`` fails for an app that ignores it.
@@ -18,7 +19,7 @@ import httpx2
 Status = Literal["passed", "failed", "skipped"]
 
 EXPECTED_UID: Final = 10001
-STAGING_CELL: Final = "needs a staging cell (SSC-006 cloud choice, SSC-013 cell bootstrap)"
+STAGING_CELL: Final = "runs in a staging cell only (ssc_conformance.nightly)"
 LOCAL_PROBES: Final = (
     "non_root_10001",
     "listens_on_PORT",
@@ -29,10 +30,10 @@ CELL_PROBES: Final = (
     "no_direct_egress",
     "no_dns_exfil",
     "metadata_token_no_roles",
-    "metadata_token_scoped",
+    "metadata_identity_is_own",
     "cannot_reach_peer_app",
     "header_echo_no_google_jwt",
-    "no_x_serverless_authorization_leak",
+    "authorization_passthrough",
     "cannot_read_secrets",
     "no_platform_credentials_in_env",
     "sse_passthrough",

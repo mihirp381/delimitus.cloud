@@ -80,6 +80,82 @@ def sa_principal(email: pulumi.Input[str]) -> pulumi.Output[str]:
     return pulumi.Output.concat("principal://iam.googleapis.com/projects/-/serviceAccounts/", email)
 
 
+def _nightly(
+    project: pulumi.Input[str],
+    control: gcp.serviceaccount.Account,
+    opts: pulumi.ResourceOptions,
+) -> gcp.serviceaccount.Account:
+    """The nightly probe run (SSC-017): GitHub Actions on ``main`` of this repository, running
+    the nightly workflow, becomes ``ssc-nightly`` with no key. It may mint ID tokens as the
+    control plane, which is all it needs to call a cell's agent; each probe cell grants it the
+    probe job and read access to that job's results."""
+    apis = [
+        gcp.projects.Service(
+            f"control-staging-{api.split('.')[0]}",
+            project=project,
+            service=api,
+            disable_on_destroy=False,
+            opts=opts,
+        )
+        for api in ("sts.googleapis.com", "iamcredentials.googleapis.com")
+    ]
+    after = pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=apis))
+    pool = gcp.iam.WorkloadIdentityPool(
+        "github-pool",
+        project=project,
+        workload_identity_pool_id="ssc-github",
+        display_name="SSC GitHub Actions",
+        opts=after,
+    )
+    workflow = f"{n.GITHUB_REPOSITORY}/{n.NIGHTLY_WORKFLOW}@refs/heads/main"
+    gcp.iam.WorkloadIdentityPoolProvider(
+        "github-provider",
+        project=project,
+        workload_identity_pool_id=pool.workload_identity_pool_id,
+        workload_identity_pool_provider_id="github",
+        display_name="GitHub Actions OIDC",
+        attribute_mapping={
+            "google.subject": "assertion.sub",
+            "attribute.repository": "assertion.repository",
+            "attribute.workflow_ref": "assertion.workflow_ref",
+        },
+        attribute_condition=(
+            f'assertion.repository == "{n.GITHUB_REPOSITORY}" '
+            f'&& assertion.workflow_ref == "{workflow}"'
+        ),
+        oidc=gcp.iam.WorkloadIdentityPoolProviderOidcArgs(
+            issuer_uri="https://token.actions.githubusercontent.com"
+        ),
+        opts=after,
+    )
+    nightly = gcp.serviceaccount.Account(
+        "nightly-sa",
+        project=project,
+        account_id=n.NIGHTLY_SA,
+        display_name="SSC nightly probe run",
+        opts=after,
+    )
+    gcp.serviceaccount.IAMMember(
+        "nightly-wif",
+        service_account_id=nightly.name,
+        role="roles/iam.workloadIdentityUser",
+        member=pulumi.Output.concat(
+            "principalSet://iam.googleapis.com/",
+            pool.name,
+            f"/attribute.repository/{n.GITHUB_REPOSITORY}",
+        ),
+        opts=opts,
+    )
+    gcp.serviceaccount.IAMMember(
+        "nightly-control-id-tokens",
+        service_account_id=control.name,
+        role="roles/iam.serviceAccountOpenIdTokenCreator",
+        member=nightly.member,
+        opts=opts,
+    )
+    return nightly
+
+
 def build() -> None:
     config = pulumi.Config()
     platform_folder = config.require("platform_folder_id")
@@ -120,6 +196,8 @@ def build() -> None:
         display_name="SSC control plane (staging)",
         opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=[iam_api])),
     )
+
+    nightly = _nightly(control_project.project_id, control, opts)
 
     gcp.iam.DenyPolicy(
         "cells-secret-read",
@@ -206,3 +284,4 @@ def build() -> None:
     pulumi.export("stage_folder_ids", {s: f.folder_id for s, f in stages.items()})
     pulumi.export("sandbox_folder_id", sandbox.folder_id)
     pulumi.export("control_service_accounts", {"staging": control.email})
+    pulumi.export("nightly_service_account", nightly.email)

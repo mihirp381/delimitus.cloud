@@ -48,6 +48,7 @@ from ssc_contracts.manifest import default_manifest
 from ssc_control.db import MIGRATE_ROLE, SqlState, all_org_ids, bind_org_sync, bound_org, upgrade
 from ssc_control.deferral import DeferralError, defer
 from ssc_control.runtime import jobs as runtime_jobs
+from ssc_control.runtime.cell_agent import CellAgentDriver
 from ssc_control.runtime.driver import service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver, changed
 from ssc_control.runtime.specs import BundleReleaseSpecs, ReleaseSpec, StaticReleaseSpecs
@@ -587,6 +588,14 @@ def test_fakes_run_only_in_dev_and_test() -> None:
     assert isinstance(compose_ports(base).release_specs, BundleReleaseSpecs)
     with pytest.raises(CompositionError, match="unknown"):
         runtime_driver_from_env({"SSC_RUNTIME_DRIVER": "cloudrun"})
+    for url in ("", "http://agent.test"):
+        with pytest.raises(CompositionError, match="SSC_CELL_AGENT_URL"):
+            runtime_driver_from_env({"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": url})
+    agent = runtime_driver_from_env(
+        {"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": "https://agent.test"}
+    )
+    assert isinstance(agent, CellAgentDriver)
+    refuse_fakes(Ports(engine=ports.engine, runtime_driver=agent), {"SSC_ENV": "prod"})
 
 
 def test_worker_refuses_to_start_without_a_database() -> None:

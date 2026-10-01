@@ -1,0 +1,290 @@
+"""The runtime driver protocol and the types it speaks (decision 014).
+
+The control plane (``ssc_control.runtime``) decides what should run; the cell agent
+(``ssc_agent``) runs it on Cloud Run. Both speak this protocol, so it lives below both.
+"""
+
+import hashlib
+import json
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Final, Protocol, cast
+
+from ssc_contracts.manifest import RESOURCE_CLASSES, ResourceClass, ResourceClassName
+
+SERVICE_PREFIX: Final = "ssc-a-"
+FINGERPRINT_VERSION: Final = "ssc-spec-v1"
+
+_ENV_ID = re.compile(r"env_([a-z0-9]{20})")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+SERVICE_NAME: Final = re.compile(re.escape(SERVICE_PREFIX) + r"[a-z0-9]{20}")
+
+
+def service_name(environment_id: str) -> str:
+    """``ssc-a-`` plus the environment id's 20 characters: unique, and under Cloud Run's 49."""
+    m = _ENV_ID.fullmatch(environment_id)
+    if m is None:
+        raise ValueError(f"not an environment id: {environment_id!r}")
+    return SERVICE_PREFIX + m.group(1)
+
+
+def is_image_digest(value: str) -> bool:
+    return _DIGEST.fullmatch(value) is not None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ServiceSpec:
+    """One app environment's service as it should be. Images are by digest only; a tag can never
+    reach a runtime. ``spec_fingerprint`` covers what defines a revision (image, port, health
+    path, class, environment); scaling and labels are service settings outside it."""
+
+    service: str
+    image_digest: str
+    port: int
+    health_path: str
+    resource_class: ResourceClassName
+    env: Mapping[str, str]
+    min_instances: int
+    max_instances: int
+    labels: Mapping[str, str]
+    spec_fingerprint: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not self.service.startswith(SERVICE_PREFIX):
+            raise ValueError(f"service names start with {SERVICE_PREFIX!r}: {self.service!r}")
+        if not is_image_digest(self.image_digest):
+            raise ValueError(f"images are pinned by sha256 digest only: {self.image_digest!r}")
+        if not 0 <= self.min_instances <= self.max_instances:
+            raise ValueError("need 0 <= min_instances <= max_instances")
+        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+        object.__setattr__(self, "labels", MappingProxyType(dict(self.labels)))
+        object.__setattr__(
+            self,
+            "spec_fingerprint",
+            revision_fingerprint(
+                image_digest=self.image_digest,
+                port=self.port,
+                health_path=self.health_path,
+                resource_class=self.resource_class,
+                env=self.env,
+            ),
+        )
+
+    @property
+    def resources(self) -> ResourceClass:
+        return RESOURCE_CLASSES[self.resource_class]
+
+
+def revision_fingerprint(
+    *,
+    image_digest: str,
+    port: int,
+    health_path: str,
+    resource_class: ResourceClassName,
+    env: Mapping[str, str],
+) -> str:
+    """What makes two revisions the same. A driver computes this from a revision's actual
+    configuration when it observes one, never from a label it wrote, so drift in any field shows."""
+    size = RESOURCE_CLASSES[resource_class]
+    return fingerprint_of(
+        image_digest=image_digest,
+        port=port,
+        health_path=health_path,
+        vcpu=size.vcpu,
+        memory_mib=size.memory_mib,
+        env=env,
+    )
+
+
+def fingerprint_of(  # noqa: PLR0913  (keyword-only)
+    *,
+    image_digest: str,
+    port: int,
+    health_path: str,
+    vcpu: float,
+    memory_mib: int,
+    env: Mapping[str, str],
+) -> str:
+    """``revision_fingerprint`` over raw sizes, for a revision whose size is no class at all."""
+    if float(vcpu).is_integer():
+        vcpu = int(vcpu)
+    body = {
+        "v": FINGERPRINT_VERSION,
+        "image_digest": image_digest,
+        "port": port,
+        "health_path": health_path,
+        "vcpu": vcpu,
+        "memory_mib": memory_mib,
+        "env": dict(sorted(env.items())),
+    }
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(raw.encode("ascii")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RevisionObservation:
+    revision: str
+    spec_fingerprint: str
+    image_digest: str
+    ready: bool | None  # None: still starting
+    failed: bool
+    traffic_percent: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ServiceObservation:
+    service: str
+    revisions: tuple[RevisionObservation, ...]
+    min_instances: int
+    max_instances: int
+    stopped: bool
+
+
+class RuntimeDriverError(Exception):
+    """The runtime refused or failed a call. The reconciler logs it and tries again next pass."""
+
+
+class ServiceNotFoundError(RuntimeDriverError):
+    pass
+
+
+class RevisionNotFoundError(RuntimeDriverError):
+    pass
+
+
+class RuntimeDriver(Protocol):
+    async def apply(self, spec: ServiceSpec) -> str:
+        """Create or update the service and return the revision for ``spec.spec_fingerprint``:
+        an existing one if there is one, else a new one. Never moves traffic: a new revision
+        gets none, except a new service's first revision, which is all there is to serve. Sets
+        the service's scaling and labels to the spec's and clears ``stopped``."""
+        ...
+
+    async def set_traffic(self, service: str, revision: str) -> None:
+        """Send 100% of the service's traffic to ``revision``."""
+        ...
+
+    async def scale_to_zero(self, service: str) -> None:
+        """Serve nothing and hold no instances until the next ``apply``. Revisions are kept."""
+        ...
+
+    async def observe(self, service: str) -> ServiceObservation | None:
+        """What is running, or None when the service does not exist."""
+        ...
+
+
+# ── wire form, between the control plane and the cell agent ─────────────────────────────────
+
+
+def spec_to_wire(spec: ServiceSpec) -> dict[str, object]:
+    return {
+        "service": spec.service,
+        "image_digest": spec.image_digest,
+        "port": spec.port,
+        "health_path": spec.health_path,
+        "resource_class": spec.resource_class,
+        "env": dict(spec.env),
+        "min_instances": spec.min_instances,
+        "max_instances": spec.max_instances,
+        "labels": dict(spec.labels),
+        "spec_fingerprint": spec.spec_fingerprint,
+    }
+
+
+def spec_from_wire(body: Mapping[str, Any]) -> ServiceSpec:
+    """Raises ``ValueError`` for anything malformed, including a fingerprint the fields do not
+    hash to (two sides that disagree on the fingerprint version)."""
+    try:
+        resource_class = body["resource_class"]
+        if resource_class not in RESOURCE_CLASSES:
+            raise ValueError(f"unknown resource class {resource_class!r}")
+        spec = ServiceSpec(
+            service=_str(body["service"]),
+            image_digest=_str(body["image_digest"]),
+            port=_int(body["port"]),
+            health_path=_str(body["health_path"]),
+            resource_class=resource_class,
+            env=_str_map(body["env"]),
+            min_instances=_int(body["min_instances"]),
+            max_instances=_int(body["max_instances"]),
+            labels=_str_map(body["labels"]),
+        )
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"malformed service spec: {exc}") from None
+    if body.get("spec_fingerprint") != spec.spec_fingerprint:
+        raise ValueError("spec_fingerprint does not match the spec's fields")
+    return spec
+
+
+def observation_to_wire(seen: ServiceObservation) -> dict[str, object]:
+    return {
+        "service": seen.service,
+        "revisions": [
+            {
+                "revision": r.revision,
+                "spec_fingerprint": r.spec_fingerprint,
+                "image_digest": r.image_digest,
+                "ready": r.ready,
+                "failed": r.failed,
+                "traffic_percent": r.traffic_percent,
+            }
+            for r in seen.revisions
+        ],
+        "min_instances": seen.min_instances,
+        "max_instances": seen.max_instances,
+        "stopped": seen.stopped,
+    }
+
+
+def observation_from_wire(body: Mapping[str, Any]) -> ServiceObservation:
+    try:
+        return ServiceObservation(
+            service=_str(body["service"]),
+            revisions=tuple(
+                RevisionObservation(
+                    revision=_str(r["revision"]),
+                    spec_fingerprint=_str(r["spec_fingerprint"]),
+                    image_digest=_str(r["image_digest"]),
+                    ready=_opt_bool(r["ready"]),
+                    failed=_bool(r["failed"]),
+                    traffic_percent=_int(r["traffic_percent"]),
+                )
+                for r in body["revisions"]
+            ),
+            min_instances=_int(body["min_instances"]),
+            max_instances=_int(body["max_instances"]),
+            stopped=_bool(body["stopped"]),
+        )
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"malformed service observation: {exc}") from None
+
+
+def _str(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"expected a string, got {type(value).__name__}")
+    return value
+
+
+def _int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"expected an integer, got {type(value).__name__}")
+    return value
+
+
+def _bool(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError(f"expected a boolean, got {type(value).__name__}")
+    return value
+
+
+def _opt_bool(value: object) -> bool | None:
+    return None if value is None else _bool(value)
+
+
+def _str_map(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise TypeError(f"expected an object, got {type(value).__name__}")
+    items = cast("dict[object, object]", value).items()
+    return {_str(k): _str(v) for k, v in items}

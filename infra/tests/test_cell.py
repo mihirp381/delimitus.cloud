@@ -5,11 +5,20 @@ from typing import Any, cast
 import pulumi
 import pytest
 
-from mockcloud import Declared, as_export, one, run
+import mockcloud
+from mockcloud import Declared, as_export, one, project_number, run
 from ssc_infra import cell, cell_diff, naming
 
 A, B = "testcell01", "testcell02"
 ALL = {"probe": "true"}
+AGENT_ENV = {  # what ssc_agent.__main__ reads
+    "SSC_CELL_PROJECT",
+    "SSC_CELL_REGION",
+    "SSC_CELL_NETWORK",
+    "SSC_CELL_SUBNETWORK",
+    "SSC_IMAGE_REPOSITORY",
+    "SSC_GATEWAY_SA",
+}
 
 
 @pytest.fixture(scope="module")
@@ -77,11 +86,10 @@ def test_the_database_is_private_encrypted_and_iam_only(cell_a: list[Declared]) 
     assert "password" not in user
 
 
-def test_the_registry_uses_the_cell_key(cell_a: list[Declared]) -> None:
-    assert (
-        one(cell_a, "gcp:artifactregistry/repository:Repository").inputs["kmsKeyName"]
-        == "key-registry-id"
-    )
+def test_the_registries_use_the_cell_key(cell_a: list[Declared]) -> None:
+    repos = [d.inputs for d in cell_a if d.type == "gcp:artifactregistry/repository:Repository"]
+    assert sorted(r["repositoryId"] for r in repos) == ["ssc-apps", "ssc-platform"]
+    assert all(r["kmsKeyName"] == "key-registry-id" for r in repos)
 
 
 def test_the_network_is_ipv4_with_a_fixed_ip_per_nat(cell_a: list[Declared]) -> None:
@@ -128,6 +136,67 @@ def test_the_cell_agent_scales_to_zero_with_a_pinned_ceiling(cell_a: list[Declar
     agent = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     assert agent["template"]["scaling"]["minInstanceCount"] == 0
     assert agent["scaling"]["maxInstanceCount"] == cell.AGENT_MAX
+
+
+def test_only_google_names_resolve_in_the_cell(cell_a: list[Declared]) -> None:
+    policy = one(cell_a, "gcp:dns/responsePolicy:ResponsePolicy").inputs
+    assert policy["networks"] == [{"networkUrl": "vpc-id"}]
+    rules = {
+        d.inputs["dnsName"]: d.inputs
+        for d in cell_a
+        if d.type == "gcp:dns/responsePolicyRule:ResponsePolicyRule"
+    }
+    sinkhole = rules.pop("*.")["localData"]["localDatas"]
+    assert sinkhole == [{"name": "*.", "type": "A", "ttl": 300, "rrdatas": [cell.SINKHOLE]}]
+    assert set(rules) == set(cell.GOOGLE_DNS_PASSTHRU)
+    assert {r["behavior"] for r in rules.values()} == {"bypassResponsePolicy"}
+
+
+def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
+    image = "us-central1-docker.pkg.dev/ssc-c-testcell05/ssc-platform/agent@sha256:" + "a" * 64
+    declared = run(naming.cell_stack("testcell05"), {"agent_image": image})
+    agent = one(declared, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
+    (container,) = agent["template"]["containers"]
+    assert container["image"] == image
+    env = {e["name"]: e["value"] for e in container["envs"]}
+    assert env["SSC_CELL_PROJECT"] == "ssc-c-testcell05"
+    assert env["SSC_IMAGE_REPOSITORY"] == (
+        "us-central1-docker.pkg.dev/ssc-c-testcell05/ssc-apps/apps"
+    )
+    assert env["SSC_GATEWAY_SA"] == naming.sa_email("ssc-gateway", "ssc-c-testcell05")
+    assert set(env) == AGENT_ENV
+    subnet = one(declared, "gcp:compute/subnetworkIAMMember:SubnetworkIAMMember").inputs
+    assert (subnet["subnetwork"], subnet["role"]) == ("apps", "roles/compute.networkUser")
+
+
+def test_without_an_agent_image_the_agent_is_a_placeholder(cell_a: list[Declared]) -> None:
+    agent = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
+    (container,) = agent["template"]["containers"]
+    assert container["image"] == cell.PLACEHOLDER_IMAGE
+    assert "envs" not in container
+
+
+def test_the_probe_runner_stands_where_the_gateway_stands() -> None:
+    digest = "sha256:" + "b" * 64
+    declared = run(naming.cell_stack("testcell06"), {"probe": "true", "probe_digest": digest})
+    job = one(declared, "gcp:cloudrunv2/job:Job").inputs["template"]["template"]
+    assert job["serviceAccount"] == naming.sa_email("ssc-gateway", "ssc-c-testcell06")
+    (nic,) = job["vpcAccess"]["networkInterfaces"]
+    assert (nic["subnetwork"], nic["tags"]) == ("subnet-gateway-id", ["ssc-gateway"])
+    (container,) = job["containers"]
+    assert container["image"].endswith("/ssc-apps/apps@" + digest)
+    env = {e["name"]: e["value"] for e in container["envs"]}
+    number = project_number("ssc-c-testcell06")
+    assert env["PROBE_URL"] == f"https://ssc-a-probe00000000000000a-{number}.us-central1.run.app"
+    assert env["PROBE_PEER_URL"].startswith("https://ssc-a-probe00000000000000b-")
+    nightly = f"serviceAccount:{mockcloud.NIGHTLY}"
+    executor = one(declared, "gcp:cloudrunv2/jobIamMember:JobIamMember").inputs
+    assert (executor["role"], executor["member"]) == ("roles/run.jobsExecutor", nightly)
+    assert sorted(_grants(declared, nightly)) == ["roles/logging.viewer", "roles/run.viewer"]
+
+
+def test_no_probe_runner_without_a_probe_digest(cell_a: list[Declared]) -> None:
+    assert not [d for d in cell_a if d.type == "gcp:cloudrunv2/job:Job"]
 
 
 def test_the_diff_ignores_assigned_ids_and_nulls(
