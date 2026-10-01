@@ -113,7 +113,7 @@ def test_env_mounts_and_sse() -> None:
         with pytest.raises(checks.ProbeFailedError, match=name):
             checks.no_platform_credentials_in_env({"names": ["HOME", name]})
     memory = {
-        "mounts": [["/", "overlay"], ["/tmp", "tmpfs"]],
+        "mounts": [["/", "overlay"], ["/tmp", "tmpfs"], ["/var/log", "fuse.loggingfs"]],
         "home": "/tmp",
         "home_writable": True,
     }
@@ -121,6 +121,8 @@ def test_env_mounts_and_sse() -> None:
     for fs in ("nfs4", "fuse.gcsfuse", "ext4"):
         with pytest.raises(checks.ProbeFailedError, match=fs):
             checks.no_write_outside_memory(memory | {"mounts": [["/data", fs]]})
+    with pytest.raises(checks.ProbeFailedError, match="loggingfs"):
+        checks.no_write_outside_memory(memory | {"mounts": [["/data", "fuse.loggingfs"]]})
     with pytest.raises(checks.ProbeFailedError, match="HOME"):
         checks.no_write_outside_memory(memory | {"home_writable": False})
     assert checks.sse_passthrough([0.1, 1.1, 2.1])
@@ -154,7 +156,7 @@ def test_runner_reports_every_probe_and_never_passes_off_cell(
     monkeypatch.setattr(
         app, "peer", lambda url: {"url": url, "attempts": {"by name": {"status": 200}}}
     )
-    results = runner.run(runner.Probe(local_app, "t"), local_app + "/", "/healthz")
+    results = runner.run(runner.Probe(local_app, "t"), local_app + "/", "/health")
     by_name = {r["probe"]: r for r in results}
     assert list(by_name) == list(checks.PROBES)
     for name in ("listens_on_PORT", "health_path", "sse_passthrough", "authorization_passthrough"):

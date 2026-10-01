@@ -4,7 +4,8 @@ It models what ``CloudRunDriver`` relies on, pessimistically where Cloud Run's b
 documented: a write leaves the service reconciling, and its revision does not exist yet, until
 ``settle()``; ``LATEST`` traffic statuses name no revision; traffic may only name revisions that
 exist; an ``etag`` that is not the current one is refused. ``unhealthy(digest)`` makes revisions
-of that image fail.
+of that image fail; ``index(digest, platform)`` makes revisions of that image index run, and
+report, its platform manifest, as Cloud Run does.
 """
 
 import copy
@@ -45,12 +46,16 @@ class CloudRunEmulator:
         self.calls: list[tuple[str, str]] = []
         self.auto_settle = auto_settle
         self._unhealthy: set[str] = set()
+        self._indexes: dict[str, str] = {}
         self._clock = itertools.count(1)
 
     # ── test controls ────────────────────────────────────────────────────────
 
     def unhealthy(self, digest: str) -> None:
         self._unhealthy.add(digest)
+
+    def index(self, digest: str, platform: str) -> None:
+        self._indexes[digest] = platform
 
     def settle(self) -> None:
         for svc in self.services.values():
@@ -187,8 +192,11 @@ class CloudRunEmulator:
         path = f"projects/{PROJECT}/locations/{REGION}/services/{service}"
         revision["name"] = f"{path}/revisions/{short}"
         revision["createTime"] = f"2026-09-30T00:00:{next(self._clock):05d}Z"
-        image = str(revision["containers"][0]["image"])
-        failed = image.rsplit("@", 1)[-1] in self._unhealthy
+        container = revision["containers"][0]
+        repository, _, digest = str(container["image"]).rpartition("@")
+        if digest in self._indexes:
+            container["image"] = f"{repository}@{self._indexes[digest]}"
+        failed = digest in self._unhealthy
         state = "CONDITION_FAILED" if failed else "CONDITION_SUCCEEDED"
         revision["conditions"] = [{"type": "Ready", "state": state}]
         return revision

@@ -9,10 +9,11 @@
    one minute, counted from the drift to the converged observation.
 
 Configuration, all required: ``SSC_PROBE_PROJECT`` (the cell project), ``SSC_PROBE_AGENT_URL``,
-``SSC_PROBE_DIGEST`` (the probe image in the cell's ``ssc-apps/apps`` repository) and
-``SSC_CONTROL_SA`` (whose ID tokens the agent accepts). The caller's access token comes from
-``SSC_ACCESS_TOKEN`` (the nightly workflow's federated token) or else ``gcloud``; it needs
-``getOpenIdToken`` on the control SA, the probe job, and read access to its logs.
+and ``SSC_PROBE_DIGEST`` (the probe image in the cell's ``ssc-apps/apps`` repository).
+``SSC_CONTROL_SA`` names the identity the agent accepts; the run mints its ID tokens. Without
+it, an operator calls the agent as themselves. The caller's access token comes from
+``SSC_ACCESS_TOKEN`` (the nightly workflow's federated token) or else ``gcloud``; it needs the
+probe job, read access to its logs, and ``getOpenIdToken`` on the control SA when one is named.
 Exits 1 when a probe fails or is missing, or when the drift outlives the minute.
 """
 
@@ -42,8 +43,8 @@ ENV: Final = {
     "project": "SSC_PROBE_PROJECT",
     "agent_url": "SSC_PROBE_AGENT_URL",
     "probe_digest": "SSC_PROBE_DIGEST",
-    "control_sa": "SSC_CONTROL_SA",
 }
+CONTROL_SA_ENV: Final = "SSC_CONTROL_SA"
 PROBE_ENVS: Final = ("env_probe00000000000000a", "env_probe00000000000000b")
 PROBE_JOB: Final = "ssc-probe-runner"
 REGION: Final = "us-central1"
@@ -72,14 +73,17 @@ class NightlyConfig:
     project: str
     agent_url: str
     probe_digest: str
-    control_sa: str
+    control_sa: str | None
 
 
 def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
     missing = [name for name in ENV.values() if not environ.get(name)]
     if missing:
         raise NightlyError(f"missing {', '.join(missing)}")
-    return NightlyConfig(**{field: environ[name] for field, name in ENV.items()})
+    return NightlyConfig(
+        **{field: environ[name] for field, name in ENV.items()},
+        control_sa=environ.get(CONTROL_SA_ENV) or None,
+    )
 
 
 def probe_spec(env_id: str, digest: str) -> ServiceSpec:
@@ -87,7 +91,7 @@ def probe_spec(env_id: str, digest: str) -> ServiceSpec:
         service=service_name(env_id),
         image_digest=digest,
         port=PORT,
-        health_path="/healthz",
+        health_path="/health",
         resource_class="small",
         env={app_env.PORT: str(PORT), app_env.HOME: app_env.HOME_VALUE},
         min_instances=0,
@@ -179,8 +183,9 @@ class ProbeJob:
         execution = str(_obj(operation.get("metadata")).get("name") or "")
         if "/executions/" not in execution:
             raise NightlyError(f"{PROBE_JOB}: the run named no execution")
-        await self._finished(execution)
-        return await self._results(execution.rsplit("/", 1)[1])
+        finished = await self._finished(execution)
+        since = str(finished.get("createTime") or "")
+        return await self._results(execution.rsplit("/", 1)[1], since)
 
     async def _finished(self, execution: str) -> Json:
         started = self._clock()
@@ -192,26 +197,38 @@ class ProbeJob:
                 raise NightlyError(f"{execution}: still running after {JOB_LIMIT_SECONDS:.0f} s")
             await self._sleep(POLL_SECONDS)
 
-    async def _results(self, execution: str) -> list[Json]:
+    async def _results(self, execution: str, since: str) -> list[Json]:
         """The job's ``ssc_probe`` lines once its summary line has been ingested."""
-        query = {
+        found = (
+            f'resource.type="cloud_run_job" AND resource.labels.job_name="{PROBE_JOB}" '
+            f'AND labels."run.googleapis.com/execution_name"="{execution}"'
+        )
+        query: Json = {
             "resourceNames": [f"projects/{self._project}"],
-            "filter": (
-                f'resource.type="cloud_run_job" AND resource.labels.job_name="{PROBE_JOB}" '
-                f'AND labels."run.googleapis.com/execution_name"="{execution}"'
-            ),
+            "filter": f'{found} AND timestamp>="{since}"' if since else found,
             "orderBy": "timestamp asc",
             "pageSize": 200,
         }
         started = self._clock()
         while True:
-            body = await self._call("POST", f"{LOGGING_API}/entries:list", query)
-            payloads = [_obj(e.get("jsonPayload")) for e in _objs(body.get("entries"))]
+            payloads = [_obj(e.get("jsonPayload")) for e in await self._entries(query)]
             if any("ssc_probe_summary" in p for p in payloads):
                 return [_obj(p["ssc_probe"]) for p in payloads if "ssc_probe" in p]
             if self._clock() - started > LOGS_LIMIT_SECONDS:
                 raise NightlyError(f"{execution}: no probe summary in the logs")
             await self._sleep(POLL_SECONDS)
+
+    async def _entries(self, query: Json) -> list[Json]:
+        """Every page: Logging may answer a page with no entries and a token for the next."""
+        entries: list[Json] = []
+        token = ""
+        while True:
+            page = query | {"pageToken": token} if token else query
+            body = await self._call("POST", f"{LOGGING_API}/entries:list", page)
+            entries.extend(_objs(body.get("entries")))
+            token = str(body.get("nextPageToken") or "")
+            if not token:
+                return entries
 
     async def _call(self, method: str, url: str, body: Json | None = None) -> Json:
         token = await self._access_tokens()
@@ -284,30 +301,41 @@ async def nightly(
     return Report(results, drift_seconds, failures)
 
 
+async def _gcloud(*args: str) -> str:
+    done = await asyncio.to_thread(
+        subprocess.run,
+        ["gcloud", "auth", *args],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise NightlyError(f"gcloud auth {args[0]} failed: log in to gcloud")
+    return done.stdout.strip()
+
+
 def gcloud_access_tokens() -> AccessTokens:
     """``SSC_ACCESS_TOKEN`` if set, else the operator's ``gcloud`` login. Never logged."""
 
     async def token() -> str:
-        if env := os.environ.get("SSC_ACCESS_TOKEN"):
-            return env
-        done = await asyncio.to_thread(
-            subprocess.run,
-            ["gcloud", "auth", "print-access-token"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if done.returncode != 0:
-            raise NightlyError("no access token: set SSC_ACCESS_TOKEN or log in to gcloud")
-        return done.stdout.strip()
+        return os.environ.get("SSC_ACCESS_TOKEN") or await _gcloud("print-access-token")
 
     return token
+
+
+async def operator_id_token(_audience: str) -> str:
+    """The operator's own ID token, for a run without the control SA: Cloud Run accepts it
+    when the operator may invoke the agent (the just-in-time ``writer`` grant on a cell)."""
+    return await _gcloud("print-identity-token")
 
 
 async def main_async(environ: Mapping[str, str]) -> Report:
     cfg = config_from_env(environ)
     access = gcloud_access_tokens()
-    driver = CellAgentDriver(cfg.agent_url, ImpersonatedIdTokens(cfg.control_sa, access))
+    id_tokens = (
+        ImpersonatedIdTokens(cfg.control_sa, access) if cfg.control_sa else operator_id_token
+    )
+    driver = CellAgentDriver(cfg.agent_url, id_tokens)
     job = ProbeJob(cfg.project, access)
     try:
         return await nightly(driver, job, cfg.probe_digest)

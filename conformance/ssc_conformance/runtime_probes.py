@@ -112,7 +112,7 @@ _LOCAL = {
 
 
 def run(
-    base_url: str, *, health_path: str = "/healthz", client: httpx2.Client | None = None
+    base_url: str, *, health_path: str = "/health", client: httpx2.Client | None = None
 ) -> list[ProbeResult]:
     """Every probe in ``PROBES`` order."""
     http = client or httpx2.Client(base_url=base_url, timeout=5.0)

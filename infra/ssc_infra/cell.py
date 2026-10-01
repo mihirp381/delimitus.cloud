@@ -7,6 +7,7 @@ project number and addresses; ``python -m ssc_infra.cell_diff`` checks exactly t
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 import pulumi
@@ -20,6 +21,8 @@ APIS: Final = (
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
     "cloudkms.googleapis.com",
+    # Answers testIamPermissions, which the metadata_token_no_roles probe asks as the app.
+    "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com",
     "dns.googleapis.com",
     "iam.googleapis.com",
@@ -53,6 +56,10 @@ GOOGLE_DNS_PASSTHRU: Final = (
     "*.internal.",
 )
 SINKHOLE: Final = "192.0.2.1"  # TEST-NET-1: never routed
+SINKHOLE_V6: Final = "100::1"  # the discard prefix
+SINKHOLE_NAME: Final = "sinkhole.ssc-cell."
+# IANA's list of top-level domains (https://data.iana.org/TLD/tlds-alpha-by-domain.txt), as fetched.
+TLDS_FILE: Final = Path(__file__).with_name("tlds.txt")
 APP_IMAGE: Final = "apps"
 APP_CONDITION: Final = 'resource.name.extract("/{kind}/{{name}}").startsWith("{prefix}")'
 CREATE_PERMISSIONS: Final = (
@@ -60,6 +67,18 @@ CREATE_PERMISSIONS: Final = (
     "run.services.create",
     "secretmanager.secrets.create",
     "cloudsql.databases.create",
+)
+# Cloud Run and service accounts take no resource-name IAM conditions (only Secret Manager of
+# the agent's APIs does), so these are granted on the project and the agent's code holds it to
+# ``ssc-a-`` names. Exactly what ``ssc_agent.cloud_run`` calls; no delete.
+RUNTIME_PERMISSIONS: Final = (
+    "run.services.get",
+    "run.services.update",
+    "run.services.getIamPolicy",
+    "run.services.setIamPolicy",
+    "run.revisions.get",
+    "run.revisions.list",
+    "iam.serviceAccounts.actAs",
 )
 
 
@@ -219,20 +238,23 @@ class Cell:
             permissions=list(CREATE_PERMISSIONS),
             opts=self._o(),
         )
-        gcp.projects.IAMMember(
-            "agent-create",
+        runtime_role = gcp.projects.IAMCustomRole(
+            "agent-runtime",
             project=self.pid,
-            member=agent,
-            role=create_role.name,
+            role_id="sscCellAgentRuntime",
+            title="SSC cell agent: run app services",
+            description="Cloud Run and service accounts take no name conditions; the agent's code "
+            "limits these to ssc-a- names.",
+            permissions=list(RUNTIME_PERMISSIONS),
             opts=self._o(),
         )
-        for name, role, kind in (
-            ("agent-secrets", "roles/secretmanager.admin", "secrets"),
-            ("agent-run", "roles/run.admin", "services"),
-            ("agent-sas", "roles/iam.serviceAccountAdmin", "serviceAccounts"),
-            ("agent-actas", "roles/iam.serviceAccountUser", "serviceAccounts"),
-        ):
-            self._project_role(name, agent, role, app_condition(kind))
+        for name, role in (("agent-create", create_role), ("agent-runtime", runtime_role)):
+            gcp.projects.IAMMember(
+                name, project=self.pid, member=agent, role=role.name, opts=self._o()
+            )
+        self._project_role(
+            "agent-secrets", agent, "roles/secretmanager.admin", app_condition("secrets")
+        )
         self._project_role("agent-sql", agent, "roles/cloudsql.admin")
         self._project_role("agent-sql-client", agent, "roles/cloudsql.client")
         self._project_role("agent-sql-login", agent, "roles/cloudsql.instanceUser")
@@ -513,11 +535,26 @@ class Cell:
             member=self.build_sa.member,
             opts=self._o(),
         )
+        # Cloud Run checks that whoever deploys an image may read it.
+        gcp.artifactregistry.RepositoryIamMember(
+            "registry-agent",
+            project=self.pid,
+            location=n.REGION,
+            repository=self.repo.name,
+            role="roles/artifactregistry.reader",
+            member=self.agent_sa.member,
+            opts=self._o(),
+        )
 
     def dns_policy(self) -> None:
         """Names resolve inside the cell only when Google serves them; every other name gets an
         unroutable answer from Cloud DNS itself, so no query leaves to a public resolver (the
-        ``no_dns_exfil`` probe). The egress gateway resolves allowed hosts itself."""
+        ``no_dns_exfil`` probe). The egress gateway resolves allowed hosts itself.
+
+        Measured in a probe cell: Cloud DNS ignores a ``*.`` rule, and a rule answers only the
+        record types it holds, passing others (AAAA, TXT) to public DNS. So each top-level domain
+        gets a ``*.<tld>.`` rule answering with a CNAME, which covers every type, to a name that
+        only this policy answers. Google's names bypass it by the longer match."""
         policy = gcp.dns.ResponsePolicy(
             "dns-policy",
             project=self.pid,
@@ -526,21 +563,38 @@ class Cell:
             networks=[gcp.dns.ResponsePolicyNetworkArgs(network_url=self.vpc.id)],
             opts=self._o(),
         )
-        gcp.dns.ResponsePolicyRule(
+        sink = gcp.dns.ResponsePolicyRule(
             "dns-sinkhole",
             project=self.pid,
             response_policy=policy.response_policy_name,
             rule_name="sinkhole",
-            dns_name="*.",
+            dns_name=SINKHOLE_NAME,
             local_data=gcp.dns.ResponsePolicyRuleLocalDataArgs(
                 local_datas=[
                     gcp.dns.ResponsePolicyRuleLocalDataLocalDataArgs(
-                        name="*.", type="A", ttl=300, rrdatas=[SINKHOLE]
+                        name=SINKHOLE_NAME, type=kind, ttl=300, rrdatas=[address]
                     )
+                    for kind, address in (("A", SINKHOLE), ("AAAA", SINKHOLE_V6))
                 ]
             ),
             opts=self._o(),
         )
+        for tld in tlds():
+            gcp.dns.ResponsePolicyRule(
+                f"dns-tld-{tld}",
+                project=self.pid,
+                response_policy=policy.response_policy_name,
+                rule_name=f"tld-{tld}",
+                dns_name=f"*.{tld}.",
+                local_data=gcp.dns.ResponsePolicyRuleLocalDataArgs(
+                    local_datas=[
+                        gcp.dns.ResponsePolicyRuleLocalDataLocalDataArgs(
+                            name=f"*.{tld}.", type="CNAME", ttl=300, rrdatas=[SINKHOLE_NAME]
+                        )
+                    ]
+                ),
+                opts=self._o(sink),
+            )
         for i, name in enumerate(GOOGLE_DNS_PASSTHRU):
             gcp.dns.ResponsePolicyRule(
                 f"dns-google-{i}",
@@ -887,3 +941,8 @@ class Cell:
 
 def build(stack: str) -> None:
     Cell(read_config(stack), pulumi.StackReference(n.platform_stack_ref())).build()
+
+
+def tlds() -> list[str]:
+    lines = TLDS_FILE.read_text(encoding="ascii").splitlines()
+    return [line.lower() for line in lines if line and not line.startswith("#")]

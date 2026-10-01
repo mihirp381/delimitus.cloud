@@ -5,7 +5,7 @@ the probe app the way the gateway calls an app: ``X-Serverless-Authorization`` c
 gateway's ID token, and ``Authorization`` carries the app's own credential.
 
 Configuration: ``PROBE_URL`` (the probe app), ``PROBE_PEER_URL`` (a second app the first must
-not reach), ``PROBE_HEALTH_PATH`` (default ``/healthz``). Prints one JSON line per probe and a
+not reach), ``PROBE_HEALTH_PATH`` (default ``/health``). Prints one JSON line per probe and a
 summary line, and exits 1 when any probe fails.
 """
 
@@ -119,7 +119,7 @@ def run(app: Probe, peer_url: str, health_path: str) -> list[dict[str, str]]:
 
 def main() -> int:
     url, peer_url = os.environ["PROBE_URL"], os.environ["PROBE_PEER_URL"]
-    health_path = os.environ.get("PROBE_HEALTH_PATH", "/healthz")
+    health_path = os.environ.get("PROBE_HEALTH_PATH", "/health")
     results = run(Probe(url, id_token(url)), peer_url, health_path)
     for result in results:
         print(json.dumps({"ssc_probe": result}), flush=True)  # noqa: T201

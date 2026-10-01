@@ -3,7 +3,7 @@
 Standard library only, so the image needs no package install. Listens on ``$PORT`` (no default:
 an app that ignores ``PORT`` is the failure this probes). Routes:
 
-- ``/`` and ``/healthz``: 200.
+- ``/`` and ``/health``: 200. (Cloud Run keeps some paths ending in ``z``, ``/healthz`` among them.)
 - ``/probe/uid``: the process's uid and gid.
 - ``/probe/env``: the environment's variable names, never their values.
 - ``/probe/write``: which of ``/``, ``/app`` and ``$HOME`` accept a new file.
@@ -34,6 +34,7 @@ TIMEOUT = 3.0
 METADATA = "http://metadata.google.internal/computeMetadata/v1"
 GOOGLE_VIP = "199.36.153.8"
 PUBLIC_NAME = "example.com"
+GOOGLE_API_NAME = "storage.googleapis.com"
 PROBE_SECRET = "ssc-a-probe"  # noqa: S105  (a secret name, not a value)
 SENSITIVE = (
     "iam.serviceAccounts.actAs",
@@ -105,11 +106,28 @@ def dns() -> dict[str, object]:
     names = [PUBLIC_NAME, f"ssc-probe-{secrets.token_hex(6)}.{PUBLIC_NAME}"]
     answers: dict[str, list[str]] = {}
     for name in names:
-        try:
-            answers[name] = sorted({str(i[4][0]) for i in socket.getaddrinfo(name, 443)})
-        except OSError:
-            answers[name] = []
-    return {"answers": answers, "direct": _udp("8.8.8.8", 53, _dns_query(names[1]))}
+        answers[name] = _addresses(name)
+    return {
+        "answers": answers,
+        "direct": _udp("8.8.8.8", 53, _dns_query(names[1])),
+        "resolvers": _resolvers(),
+        "google_api": _addresses(GOOGLE_API_NAME),
+    }
+
+
+def _addresses(name: str) -> list[str]:
+    try:
+        return sorted({str(i[4][0]) for i in socket.getaddrinfo(name, 443)})
+    except OSError:
+        return []
+
+
+def _resolvers() -> list[str]:
+    try:
+        with open("/etc/resolv.conf", encoding="utf-8") as f:
+            return [line.split()[1] for line in f if line.startswith("nameserver ")]
+    except OSError, IndexError:
+        return []
 
 
 def _http(
@@ -154,7 +172,10 @@ def identity() -> dict[str, object]:
             body=json.dumps({"permissions": list(SENSITIVE)}).encode(),
         )
         out["granted_status"] = status
-        out["granted"] = json.loads(body).get("permissions", []) if status == 200 else None  # noqa: PLR2004
+        decoded = json.loads(body)
+        out["granted"] = decoded.get("permissions", []) if status == 200 else None  # noqa: PLR2004
+        if status != 200:  # noqa: PLR2004
+            out["granted_reason"] = str(decoded.get("error", {}).get("message", ""))[:200]
     except (OSError, ValueError) as exc:
         out["error"] = f"testIamPermissions: {type(exc).__name__}"
     secrets_api = f"https://secretmanager.googleapis.com/v1/projects/{project}/secrets"
@@ -223,7 +244,7 @@ def probe(path: str, query: dict[str, list[str]], headers: dict[str, str]) -> ob
     home = os.environ.get("HOME", "")
     routes: dict[str, Callable[[], object]] = {
         "/": lambda: "ok",
-        "/healthz": lambda: "ok",
+        "/health": lambda: "ok",
         "/probe/uid": lambda: {"uid": os.getuid(), "gid": os.getgid()},
         "/probe/env": lambda: {"names": sorted(os.environ)},
         "/probe/write": lambda: {

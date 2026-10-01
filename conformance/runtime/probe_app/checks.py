@@ -37,6 +37,8 @@ PROBES: Final = LOCAL_PROBES + CELL_PROBES
 PERSISTENT_FS: Final = frozenset(
     {"nfs", "nfs4", "cifs", "smb3", "ceph", "glusterfs", "ext2", "ext3", "ext4", "xfs", "btrfs"}
 )
+# Cloud Run's own mount: files under /var/log go to the cell's Cloud Logging, as stdout does.
+CLOUD_RUN_LOGS: Final = ("/var/log", "fuse.loggingfs")
 GOOGLE_ISSUERS: Final = frozenset({"accounts.google.com", "https://accounts.google.com"})
 REMOVED_SIGNATURE: Final = "SIGNATURE_REMOVED_BY_GOOGLE"
 _JWT = re.compile(r"eyJ[\w-]+\.([\w-]+)\.([\w-]*)")
@@ -76,7 +78,7 @@ def no_write_outside_memory(body: Body) -> str:
     persistent = [
         f"{point} ({fs})"
         for point, fs in cast("list[list[str]]", mounts)
-        if fs in PERSISTENT_FS or fs.startswith("fuse")
+        if (fs in PERSISTENT_FS or fs.startswith("fuse")) and (point, fs) != CLOUD_RUN_LOGS
     ]
     if persistent:
         raise ProbeFailedError(f"persistent mounts: {', '.join(persistent)}")
@@ -108,10 +110,14 @@ def no_dns_exfil(body: Body) -> str:
         if any(_public(a) for a in cast("list[str]", addresses))
     }
     if leaked:
-        raise ProbeFailedError(f"public names resolve: {leaked}")
+        raise ProbeFailedError(f"public names resolve: {leaked}; seen: {_dns_context(body)}")
     if _map(body.get("direct"), "direct").get("blocked") is not True:
         raise ProbeFailedError("a public resolver answers directly")
     return "public names do not resolve; no public resolver answers"
+
+
+def _dns_context(body: Body) -> str:
+    return f"resolvers {body.get('resolvers')}, Google APIs at {body.get('google_api')}"
 
 
 def metadata_token_no_roles(body: Body) -> str:
@@ -119,7 +125,9 @@ def metadata_token_no_roles(body: Body) -> str:
         raise ProbeFailedError(str(body["error"]))
     granted = body.get("granted")
     if granted != []:
-        raise ProbeFailedError(f"granted {granted} (HTTP {body.get('granted_status')})")
+        raise ProbeFailedError(
+            f"granted {granted} (HTTP {body.get('granted_status')}: {body.get('granted_reason')})"
+        )
     return "the app's token holds none of the sensitive permissions"
 
 

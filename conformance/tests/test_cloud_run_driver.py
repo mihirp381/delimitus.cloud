@@ -218,6 +218,19 @@ async def test_failed_revision_reports_failed(
     assert traffic(seen) == {old: 100}
 
 
+async def test_an_image_index_is_refused_once_cloud_run_resolves_it(
+    cloud_run: CloudRunDriver, emulator: CloudRunEmulator
+) -> None:
+    spec = new_spec(FIRST)
+    emulator.index(FIRST, SECOND)
+    await cloud_run.apply(spec)
+    emulator.settle()
+    seen = await observed(cloud_run, spec.service)
+    assert [r.image_digest for r in seen.revisions] == [SECOND]
+    with pytest.raises(RuntimeDriverError, match=f"ran {SECOND} for {FIRST}"):
+        await cloud_run.apply(spec)
+
+
 async def test_drift_outside_ssc_shows_and_is_repaired(
     cloud_run: CloudRunDriver, emulator: CloudRunEmulator
 ) -> None:

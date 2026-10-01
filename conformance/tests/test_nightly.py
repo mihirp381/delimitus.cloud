@@ -84,11 +84,14 @@ class ScriptedJob:
         if url == f"{nightly.RUN_API}/{EXECUTION}":
             self.execution_polls += 1
             done = self.execution_polls > 2
-            return httpx2.Response(200, json={"completionTime": "t"} if done else {})
+            body = {"createTime": "2026-10-01T05:39:00Z"}
+            return httpx2.Response(200, json=body | ({"completionTime": "t"} if done else {}))
         if url == f"{nightly.LOGGING_API}/entries:list":
             self.log_polls += 1
             if self.log_polls == 1:
                 return httpx2.Response(200, json={})
+            if "pageToken" not in json.loads(request.content):
+                return httpx2.Response(200, json={"nextPageToken": "p2"})
             lines: list[dict[str, Any]] = [{"ssc_probe": r} for r in self.results]
             lines.append({"ssc_probe_summary": {"total": len(self.results)}})
             entries = [{"jsonPayload": line} for line in lines] + [{"textPayload": "boot"}]
@@ -111,7 +114,8 @@ def _job(script: ScriptedJob, clock: Clock) -> nightly.ProbeJob:
 
 def test_config_needs_every_variable() -> None:
     full = {name: "x" for name in nightly.ENV.values()}
-    assert nightly.config_from_env(full).control_sa == "x"
+    assert nightly.config_from_env(full).control_sa is None
+    assert nightly.config_from_env(full | {"SSC_CONTROL_SA": "sa"}).control_sa == "sa"
     for name in nightly.ENV.values():
         with pytest.raises(nightly.NightlyError, match=name):
             nightly.config_from_env({k: v for k, v in full.items() if k != name})
@@ -152,6 +156,8 @@ async def test_nightly_deploys_probes_and_times_the_drift(
     logged = json.loads(script.calls[-1].content)
     assert logged["resourceNames"] == [f"projects/{PROJECT}"]
     assert 'labels."run.googleapis.com/execution_name"="ssc-probe-runner-x7k2p"' in logged["filter"]
+    assert logged["filter"].endswith('timestamp>="2026-10-01T05:39:00Z"')
+    assert logged["pageToken"] == "p2"
     markdown = report.markdown()
     assert "| sse_passthrough | passed | r |" in markdown
     assert f"Drift repaired in: {report.drift_seconds:.0f} s (limit 60 s)" in markdown

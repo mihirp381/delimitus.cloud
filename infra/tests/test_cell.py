@@ -146,8 +146,17 @@ def test_only_google_names_resolve_in_the_cell(cell_a: list[Declared]) -> None:
         for d in cell_a
         if d.type == "gcp:dns/responsePolicyRule:ResponsePolicyRule"
     }
-    sinkhole = rules.pop("*.")["localData"]["localDatas"]
-    assert sinkhole == [{"name": "*.", "type": "A", "ttl": 300, "rrdatas": [cell.SINKHOLE]}]
+    sink = rules.pop(cell.SINKHOLE_NAME)["localData"]["localDatas"]
+    assert {(d["type"], *d["rrdatas"]) for d in sink} == {
+        ("A", cell.SINKHOLE),
+        ("AAAA", cell.SINKHOLE_V6),
+    }
+    tlds = cell.tlds()
+    assert len(tlds) > 1000 and {"com", "app", "io", "xn--p1ai"} <= set(tlds)
+    assert "ssc-cell" not in tlds
+    for tld in tlds:
+        (answer,) = rules.pop(f"*.{tld}.")["localData"]["localDatas"]
+        assert (answer["type"], answer["rrdatas"]) == ("CNAME", [cell.SINKHOLE_NAME])
     assert set(rules) == set(cell.GOOGLE_DNS_PASSTHRU)
     assert {r["behavior"] for r in rules.values()} == {"bypassResponsePolicy"}
 
@@ -240,20 +249,35 @@ def test_the_control_plane_only_adds_secret_versions(cell_a: list[Declared]) -> 
     assert '.startsWith("ssc-a-")' in condition["expression"]
 
 
-def test_the_cell_agent_manages_only_ssc_a_resources(cell_a: list[Declared]) -> None:
+def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared]) -> None:
     agent = f"serviceAccount:{naming.sa_email('ssc-cell-agent', naming.cell_project(A))}"
     grants = _grants(cell_a, agent)
-    for role in (
-        "roles/secretmanager.admin",
-        "roles/run.admin",
-        "roles/iam.serviceAccountAdmin",
-        "roles/iam.serviceAccountUser",
-    ):
-        condition = grants[role]
-        assert condition is not None, role
-        assert '.startsWith("ssc-a-")' in condition["expression"], role
-    create = one(cell_a, "gcp:projects/iAMCustomRole:IAMCustomRole").inputs
-    assert all(p.endswith(".create") for p in create["permissions"])
+    secrets = grants["roles/secretmanager.admin"]
+    assert secrets is not None
+    assert '.startsWith("ssc-a-")' in secrets["expression"]
+    assert not any("run." in role or "serviceAccount" in role for role in grants)
+    roles = {
+        d.inputs["roleId"]: d.inputs["permissions"]
+        for d in cell_a
+        if d.type == "gcp:projects/iAMCustomRole:IAMCustomRole"
+    }
+    assert all(p.endswith(".create") for p in roles["sscCellAgentCreate"])
+    runtime = roles["sscCellAgentRuntime"]
+    assert not any(p.endswith((".delete", ".create")) for p in runtime)
+    assert "iam.serviceAccounts.actAs" in runtime
+    assert {"run.services.setIamPolicy", "run.revisions.list"} <= set(runtime)
+
+
+def test_app_images_are_read_by_the_agent_and_written_by_builds(cell_a: list[Declared]) -> None:
+    grants = {
+        d.name: (d.inputs["member"].split("@")[0], d.inputs["role"])
+        for d in cell_a
+        if d.type == "gcp:artifactregistry/repositoryIamMember:RepositoryIamMember"
+    }
+    assert grants == {
+        "registry-build": ("serviceAccount:ssc-build", "roles/artifactregistry.writer"),
+        "registry-agent": ("serviceAccount:ssc-cell-agent", "roles/artifactregistry.reader"),
+    }
 
 
 def test_the_cell_deny_rule_names_every_ssc_identity(cell_a: list[Declared]) -> None:

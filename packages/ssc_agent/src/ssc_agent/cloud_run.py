@@ -225,6 +225,14 @@ class CloudRunDriver(RuntimeDriver):
             name = _short(revision["name"])
         elif self._fingerprint(template)[0] == spec.spec_fingerprint and template.get("revision"):
             name = template["revision"]  # asked for already, not made yet
+            made = [r for r in revisions if _short(r["name"]) == name]
+            if made:
+                # Cloud Run runs an image index's platform manifest under that manifest's digest.
+                ran = self._fingerprint(made[0])[1]
+                raise RuntimeDriverError(
+                    f"{spec.service}: Cloud Run ran {ran} for {spec.image_digest}; "
+                    "an app image must be a single-platform manifest"
+                )
         elif _reconciling(svc):
             # Pinning traffic needs the serving revision to exist: let the last change finish.
             await self.wait_settled(spec.service)
