@@ -104,6 +104,13 @@ class Cell:
         self.opts = pulumi.ResourceOptions(provider=provider())
         self.apis: list[gcp.projects.Service] = []
 
+    def _kept(self) -> pulumi.ResourceOptions:
+        """Cloud Run holds addresses in a subnet for up to 2 h after a service goes; the project's
+        deletion takes the network instead."""
+        return pulumi.ResourceOptions.merge(
+            self._o(), pulumi.ResourceOptions(retain_on_delete=True)
+        )
+
     def _o(self, *depends_on: pulumi.Resource) -> pulumi.ResourceOptions:
         """Everything in the cell waits for every API, which Google enables asynchronously."""
         return pulumi.ResourceOptions.merge(
@@ -264,7 +271,7 @@ class Cell:
             name="ssc-cell",
             auto_create_subnetworks=False,
             routing_mode="REGIONAL",
-            opts=self._o(),
+            opts=self._kept(),
         )
         self.apps_subnet = self._subnet("apps", APPS_RANGE)
         self.gateway_subnet = self._subnet("gateway", GATEWAY_RANGE)
@@ -351,7 +358,7 @@ class Cell:
             ip_cidr_range=cidr,
             stack_type="IPV4_ONLY",
             private_ip_google_access=True,
-            opts=self._o(),
+            opts=self._kept(),
         )
 
     def _egress(

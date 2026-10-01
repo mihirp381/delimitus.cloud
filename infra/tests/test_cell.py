@@ -1,6 +1,6 @@
 """The cell program, run against mocks: same shape for every label, and the rules SSC-013 names."""
 
-from typing import Any
+from typing import Any, cast
 
 import pulumi
 import pytest
@@ -235,8 +235,9 @@ def test_a_stack_must_name_a_valid_cell_label(stack: str) -> None:
         naming.label_of_stack(stack)
 
 
-def test_nothing_is_created_before_the_cell_apis_are_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    waits: dict[str, set[str]] = {}
+def _options(monkeypatch: pytest.MonkeyPatch) -> dict[str, pulumi.ResourceOptions]:
+    """Each resource's options, which the mocks do not see."""
+    seen: dict[str, pulumi.ResourceOptions] = {}
     create = pulumi.CustomResource.__init__
 
     def spy(
@@ -248,19 +249,31 @@ def test_nothing_is_created_before_the_cell_apis_are_on(monkeypatch: pytest.Monk
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        deps = (opts.depends_on if opts else None) or []
-        waits[f"{t}::{name}"] = {d._name for d in deps}  # pyright: ignore[reportPrivateUsage]
+        seen[f"{t}::{name}"] = opts or pulumi.ResourceOptions()
         create(self, t, name, props, opts, *args, **kwargs)
 
     monkeypatch.setattr(pulumi.CustomResource, "__init__", spy)
     run(naming.cell_stack(A), ALL)
+    return seen
+
+
+def test_nothing_is_created_before_the_cell_apis_are_on(monkeypatch: pytest.MonkeyPatch) -> None:
     apis = {api.split(".")[0] for api in cell.APIS}
     first = {"gcp:organizations/project:Project::project", "pulumi:providers:gcp::gcp"}
     first |= {f"gcp:projects/service:Service::{api}" for api in apis}
     late = {
-        k: apis - v
-        for k, v in waits.items()
+        k: apis - {d._name for d in cast(list[pulumi.Resource], o.depends_on or [])}  # pyright: ignore[reportPrivateUsage]
+        for k, o in _options(monkeypatch).items()
         if k not in first and not k.startswith("pulumi:pulumi")
     }
     assert late
     assert {k: v for k, v in late.items() if v} == {}
+
+
+def test_destroy_leaves_the_network_to_the_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    kept = {k for k, o in _options(monkeypatch).items() if o.retain_on_delete}
+    assert kept == {
+        "gcp:compute/network:Network::vpc",
+        "gcp:compute/subnetwork:Subnetwork::subnet-apps",
+        "gcp:compute/subnetwork:Subnetwork::subnet-gateway",
+    }
