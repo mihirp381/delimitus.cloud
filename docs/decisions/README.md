@@ -25,7 +25,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 019 | Sharing rules and access snapshots: floors (prod `user`, preview `builder`), sharing changed by an active admin, the app's owner or a builder on that environment, no owner grant and no owner shortcut, one evaluator for explain and the gateway, frozen `ssc-snapshot/v1` published content-addressed with a `latest.json` pointer, a per-org advisory lock handshake giving every change its version, operator-only directory sync, fail-closed confirmation | SSC-021 (`docs/contracts/access-snapshot.md`, `ssc_shared/access.py`, `ssc_control/snapshot/`) | decided 2026-09-29; `role` in whoami, admin email lookup and `?builder=me` 2026-09-29 (A4b); group lookup 2026-09-29 (A4c); gateway enforcement (018), cell fetch (013) and the sync worker (019) pending |
 | 020 | Timers: schedules from the manifest upserted by name at deploy, cron read in the schedule's IANA zone from pinned `tzdata`, one Procrastinate job per armed instant with no `lock`, missed instants coalesced into one late run, no overlap by partial unique index, a dispatch at most once, prod only with preview stored paused, paused when the owner or the declaring builder loses authority, paused and resumed by the kill switch | SSC-041 (`packages/ssc_control/src/ssc_control/timers/`) | decided 2026-09-29 |
 | 021 | Cell layout and log location on GCP: folders `ssc-platform`, `ssc-cells/{prod,staging}` and `ssc-sandbox` under the existing organisation; one project per customer cell named from its cell label; everything in `us-central1`, logs included, set on the folder before any project exists | SSC-006 on decision 001; built by SSC-013 | decided 2026-09-30 |
-| 022 | Cell bootstrap: Pulumi stacks `platform` and `c-<cell label>` with state in `ssc-platform-0`; secret reads denied on the folder for the control plane and on each cell for its own identities; the cell agent limited to `ssc-a-` names except on create; a $250 monthly budget over every SSC folder; just-in-time `editor` on `ssc-cells` for at most 1 h; cells fetch snapshots from their bucket every 2 s | SSC-013 (`infra/`, `ssc_shared/snapshot_feed.py`, `ssc_shared/blobstore_gcs.py`) | decided 2026-09-30; live run pending |
+| 022 | Cell bootstrap: Pulumi stacks `platform` and `c-<cell label>` with state in `ssc-platform-0`; secret reads denied on the folder for the control plane and on each cell for its own identities; the cell agent limited to `ssc-a-` names except on create; a $250 monthly budget over every SSC folder; just-in-time `writer` on `ssc-cells` for at most 1 h; cells fetch snapshots from their bucket every 2 s | SSC-013 (`infra/`, `ssc_shared/snapshot_feed.py`, `ssc_shared/blobstore_gcs.py`) | decided 2026-09-30; live checks passed 2026-09-30 |
 
 ## 001 Cloud and runtime
 
@@ -461,6 +461,16 @@ Choice: one Pulumi project, `infra/`, with a `platform` stack and one `c-<cell l
 - Snapshots: the compiler writes each org's snapshot to its cell's bucket, `SSC_CELL_BUCKET_TEMPLATE` with `{cell}`. A cell service runs `SnapshotFeed`, which reads `latest.json` every 2 seconds. It checks the object's sha256 against the pointer and keeps the last good view on any failure. `python -m ssc_infra.snapshot_rtt` times the round trip against a real cell bucket.
 - The bucket `BlobStore` (`GcsBlobStore`) passes the core contract. It signs no URLs yet: bundle uploads to a bucket arrive with SSC-014, and until then only the filesystem store serves signed URLs.
 - Test cells are `testcell01` and `testcell02`, because a cell label is 8 to 16 characters (decision 004). Their project IDs stay reserved for 30 days after deletion.
+- Live run, 2026-09-30. The platform stack holds 19 resources. Each cell holds 81 and took 9 to 11 minutes, most of it Cloud SQL. All three checks passed:
+  - `cell_diff`: 79 resources compared, 0 differences.
+  - `deny_probe`: `ssc-a-probe` read the secret; `ssc-deny-probe` got `IAM_PERMISSION_DENIED`.
+  - `snapshot_rtt`: worst 2.77 s over 10 rounds.
+- What the live run changed:
+  - PAM needs `roles/privilegedaccessmanager.folderServiceAgent` on the folder for its service agent, and refuses legacy basic roles.
+  - A deny rule names a permission as `secretmanager.googleapis.com/versions.access`, not by its IAM name.
+  - Every cell resource waits for all the cell's APIs.
+  - Google picks Cloud Run's service-level `maxInstanceCount` per project (20 in one cell, 3 in the other), so it is pinned: gateway 20 (`gateway_max`), cell agent 3.
+  - The billing account links at most 5 projects, and each cell takes one. The founder freed two for the test cells.
 
 Reason: the ticket's done-when needs repeatable cells, a secret-read refusal that no role grant can undo, and a snapshot round trip under 5 seconds. Deny rules are the only IAM control that wins over a grant. Naming everything from the label makes "identical" a mechanical check. The $250 budget matches spend while the only cells are test cells.
 
