@@ -471,6 +471,7 @@ Choice: one Pulumi project, `infra/`, with a `platform` stack and one `c-<cell l
   - Every cell resource waits for all the cell's APIs.
   - Google picks Cloud Run's service-level `maxInstanceCount` per project (20 in one cell, 3 in the other), so it is pinned: gateway 20 (`gateway_max`), cell agent 3.
   - The billing account links at most 5 projects, and each cell takes one. The founder freed two for the test cells.
+  - Destroy: Service Networking keeps the Cloud SQL peering in use after the instance is deleted, and Cloud Run keeps addresses in its egress subnet for up to 2 hours. So the peering is abandoned and the VPC and its egress subnets are retained on delete; deleting the project removes them. Both test cells were destroyed the same day; their projects are pending deletion.
 
 Reason: the ticket's done-when needs repeatable cells, a secret-read refusal that no role grant can undo, and a snapshot round trip under 5 seconds. Deny rules are the only IAM control that wins over a grant. Naming everything from the label makes "identical" a mechanical check. The $250 budget matches spend while the only cells are test cells.
 
