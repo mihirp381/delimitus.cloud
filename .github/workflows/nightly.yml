@@ -7,7 +7,7 @@ name: nightly
 on:
   schedule:
     - cron: "17 6 * * *"
-    - cron: "8 19 1 10 *" # one-off check of the scheduled trigger; remove after
+    - cron: "41 23 1 10 *" # one-off check of the scheduled trigger; remove after
   workflow_dispatch:
 
 permissions:
