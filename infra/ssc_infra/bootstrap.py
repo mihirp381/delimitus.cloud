@@ -1,6 +1,7 @@
 """Make what Pulumi itself needs before it can run: the ``ssc-platform`` folder (logs in-region
 first), the ``ssc-platform-0`` project, its APIs, the state bucket and the secrets key. Then the
-``platform`` stack with the folder's ID in its config. Safe to run again.
+``platform`` stack with the folder's ID in its config. Safe to run again, and on a fresh clone,
+where it rewrites the stack files (they are not committed).
 
     uv run python -m ssc_infra.bootstrap
 """
@@ -142,28 +143,25 @@ def secrets_key() -> None:
         )
 
 
-def platform_stack(folder_id: str) -> None:
+def stack(name: str, config: dict[str, str]) -> None:
+    """Stack files are not committed. A missing one gets the KMS secrets provider back, or
+    Pulumi would assume a passphrase; Pulumi then wraps a new data key with it."""
     stacks = pulumi("stack", "ls", "--json", cwd=INFRA_DIR)
-    if f'"name": "{n.PLATFORM_STACK}"' not in stacks:
-        pulumi(
-            "stack",
-            "init",
-            n.PLATFORM_STACK,
-            f"--secrets-provider={n.SECRETS_PROVIDER}",
-            cwd=INFRA_DIR,
-        )
-    pulumi(
-        "config", "set", "--stack", n.PLATFORM_STACK, "platform_folder_id", folder_id, cwd=INFRA_DIR
-    )
+    stack_file = Path(INFRA_DIR) / f"Pulumi.{name}.yaml"
+    if f'"name": "{name}"' not in stacks:
+        pulumi("stack", "init", name, f"--secrets-provider={n.SECRETS_PROVIDER}", cwd=INFRA_DIR)
+    elif not stack_file.exists():
+        stack_file.write_text(f"secretsprovider: {n.SECRETS_PROVIDER}\n")
+    for key, value in ({"gcp:disableGlobalProjectWarning": "true"} | config).items():
+        pulumi("config", "set", "--stack", name, key, value, cwd=INFRA_DIR)
+
+
+def platform_stack(folder_id: str) -> None:
+    stack(n.PLATFORM_STACK, {"platform_folder_id": folder_id})
 
 
 def cell_stack(label: str, *, probe: bool) -> None:
-    stack = n.cell_stack(label)
-    stacks = pulumi("stack", "ls", "--json", cwd=INFRA_DIR)
-    if f'"name": "{stack}"' not in stacks:
-        pulumi("stack", "init", stack, f"--secrets-provider={n.SECRETS_PROVIDER}", cwd=INFRA_DIR)
-    pulumi("config", "set", "--stack", stack, "stage", "staging", cwd=INFRA_DIR)
-    pulumi("config", "set", "--stack", stack, "probe", "true" if probe else "false", cwd=INFRA_DIR)
+    stack(n.cell_stack(label), {"stage": "staging", "probe": "true" if probe else "false"})
 
 
 def main(argv: list[str]) -> int:

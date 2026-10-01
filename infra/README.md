@@ -9,6 +9,8 @@ Pulumi in Python for SSC on Google Cloud (SSC-013, decisions 021 and 022). This 
 
 State lives in `gs://ssc-platform-0-pulumi`, and secrets are encrypted with the KMS key `ssc-platform/pulumi-secrets`. Every call's quota goes to `ssc-platform-0`. The tools refuse any command that names `ristretto-506621`.
 
+Stack files (`Pulumi.<stack>.yaml`) are not committed: each holds a data key that the secret scanner flags. On a fresh clone, `bootstrap` (and `bootstrap cell <label>`) writes them again with the KMS secrets provider and the stack's config.
+
 ## First run
 
 You need these org roles:
