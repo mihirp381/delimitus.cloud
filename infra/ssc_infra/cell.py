@@ -99,10 +99,12 @@ class Cell:
         self.cfg = cfg
         self.platform = platform
         self.opts = pulumi.ResourceOptions(provider=provider())
+        self.apis: list[gcp.projects.Service] = []
 
     def _o(self, *depends_on: pulumi.Resource) -> pulumi.ResourceOptions:
+        """Everything in the cell waits for every API, which Google enables asynchronously."""
         return pulumi.ResourceOptions.merge(
-            self.opts, pulumi.ResourceOptions(depends_on=list(depends_on))
+            self.opts, pulumi.ResourceOptions(depends_on=[*self.apis, *depends_on])
         )
 
     def build(self) -> None:
@@ -156,7 +158,7 @@ class Cell:
             project=self.pid,
             account_id=account,
             display_name=display,
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
 
     def _project_role(
@@ -172,7 +174,7 @@ class Cell:
             member=member,
             role=role,
             condition=condition,
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
 
     def identities(self) -> None:
@@ -187,14 +189,14 @@ class Cell:
             title="SSC cell agent: create app resources",
             description="Create calls cannot be limited by name in IAM; the agent's code does it.",
             permissions=list(CREATE_PERMISSIONS),
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
         gcp.projects.IAMMember(
             "agent-create",
             project=self.pid,
             member=agent,
             role=create_role.name,
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
         for name, role, kind in (
             ("agent-secrets", "roles/secretmanager.admin", "secrets"),
@@ -222,7 +224,7 @@ class Cell:
             project=self.pid,
             name="ssc-cell",
             location=n.REGION,
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
         self.sql_key = gcp.kms.CryptoKey(
             "key-sql", key_ring=ring.id, name="sql", rotation_period=KEY_ROTATION, opts=self._o()
@@ -240,7 +242,7 @@ class Cell:
             ("registry", "artifactregistry.googleapis.com", self.registry_key),
         ):
             agent = gcp.projects.ServiceIdentity(
-                f"{name}-agent", project=self.pid, service=service, opts=self._o(*self.apis)
+                f"{name}-agent", project=self.pid, service=service, opts=self._o()
             )
             self.key_grants.append(
                 gcp.kms.CryptoKeyIAMMember(
@@ -259,7 +261,7 @@ class Cell:
             name="ssc-cell",
             auto_create_subnetworks=False,
             routing_mode="REGIONAL",
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
         self.apps_subnet = self._subnet("apps", APPS_RANGE)
         self.gateway_subnet = self._subnet("gateway", GATEWAY_RANGE)
@@ -481,7 +483,7 @@ class Cell:
             public_access_prevention="enforced",
             versioning=gcp.storage.BucketVersioningArgs(enabled=True),
             force_destroy=cfg.disposable,
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
         for name, member, role in (
             (
@@ -525,7 +527,7 @@ class Cell:
                     )
                 ],
             ),
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
 
     def gateway(self) -> None:
@@ -634,7 +636,7 @@ class Cell:
                     ),
                 )
             ],
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
 
     def probe(self) -> None:
@@ -652,7 +654,7 @@ class Cell:
                 )
             ),
             deletion_protection=False,
-            opts=self._o(*self.apis),
+            opts=self._o(),
         )
         gcp.secretmanager.SecretVersion(
             "probe-secret-v1",

@@ -1,5 +1,8 @@
 """The cell program, run against mocks: same shape for every label, and the rules SSC-013 names."""
 
+from typing import Any
+
+import pulumi
 import pytest
 
 from mockcloud import Declared, as_export, one, run
@@ -201,3 +204,34 @@ def test_a_prod_cell_needs_a_prod_control_plane() -> None:
 def test_a_stack_must_name_a_valid_cell_label(stack: str) -> None:
     with pytest.raises(ValueError):
         naming.label_of_stack(stack)
+
+
+def test_nothing_is_created_before_the_cell_apis_are_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    waits: dict[str, set[str]] = {}
+    create = pulumi.CustomResource.__init__
+
+    def spy(
+        self: pulumi.CustomResource,
+        t: str,
+        name: str,
+        props: Any = None,
+        opts: Any = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        deps = (opts.depends_on if opts else None) or []
+        waits[f"{t}::{name}"] = {d._name for d in deps}  # pyright: ignore[reportPrivateUsage]
+        create(self, t, name, props, opts, *args, **kwargs)
+
+    monkeypatch.setattr(pulumi.CustomResource, "__init__", spy)
+    run(naming.cell_stack(A), ALL)
+    apis = {api.split(".")[0] for api in cell.APIS}
+    first = {"gcp:organizations/project:Project::project", "pulumi:providers:gcp::gcp"}
+    first |= {f"gcp:projects/service:Service::{api}" for api in apis}
+    late = {
+        k: apis - v
+        for k, v in waits.items()
+        if k not in first and not k.startswith("pulumi:pulumi")
+    }
+    assert late
+    assert {k: v for k, v in late.items() if v} == {}
