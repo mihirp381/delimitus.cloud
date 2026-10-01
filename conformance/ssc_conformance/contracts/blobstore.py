@@ -1,6 +1,8 @@
 """``BlobStore`` contract. The filesystem store and the bucket store pass all of it.
 ``BlobStoreCoreContract`` needs only the ``blob_store`` fixture. A store whose PUT URLs need the
-sha256 (the bucket store records it as object metadata) sets ``put_needs_sha256``.
+sha256 (the bucket store records it as object metadata) sets ``put_needs_sha256``; one whose
+bucket stores a PUT body without hashing it sets ``url_checks_sha256 = False``, and then such a
+body must be ``BlobCorruptError`` when read.
 
 Subclass ``BlobStoreContract`` as a ``Test*`` class and provide three fixtures: ``blob_store``,
 ``fetch`` (sends a request to a signed URL, real HTTP for a cloud store) and ``clock`` (the clock
@@ -19,6 +21,7 @@ import pytest
 
 from ssc_shared.blobstore import (
     MAX_URL_LIFETIME,
+    BlobCorruptError,
     BlobKeyError,
     BlobMismatchError,
     BlobNotFoundError,
@@ -210,6 +213,7 @@ class BlobStoreContract(BlobStoreCoreContract):
     """The core, plus signed URLs. Test methods take the three fixtures by name."""
 
     put_needs_sha256: bool = False
+    url_checks_sha256: bool = True
 
     def _sha(self, body: bytes) -> str | None:
         return sha(body) if self.put_needs_sha256 else None
@@ -321,8 +325,13 @@ class BlobStoreContract(BlobStoreCoreContract):
         put = await blob_store.signed_url(
             "u/k", method="PUT", content_length=10, sha256=sha(b"a" * 10)
         )
-        assert refused(await send(fetch, put, b"b" * 10))
-        assert await blob_store.stat("u/k") is None
+        result = await send(fetch, put, b"b" * 10)
+        if self.url_checks_sha256 or refused(result):
+            assert refused(result)
+            assert await blob_store.stat("u/k") is None
+            return
+        with pytest.raises(BlobCorruptError):
+            await read_all(blob_store.get("u/k"))
 
     async def test_a_url_allows_only_its_method(self, blob_store: BlobStore, fetch: Fetch) -> None:
         await blob_store.put("u/k", b"old")

@@ -6,11 +6,11 @@ as (Token Creator) and that may write the bucket."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-import hmac
 import os
 import uuid
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -39,6 +39,7 @@ from ssc_shared import blobstore_gcs
 from ssc_shared.blobstore import (
     BlobCorruptError,
     BlobError,
+    BlobInfo,
     BlobKeyError,
     BlobStore,
     check_key,
@@ -236,9 +237,6 @@ class FakeXmlApi:
         low, _, high = signed.get("x-goog-content-length-range", f"0,{len(body)}").partition(",")
         if not int(low) <= len(body) <= int(high):
             return _status(400)
-        want = signed.get("x-goog-content-sha256")
-        if want is not None and not hmac.compare_digest(sha(body), want):
-            return _status(400)
         if signed.get("x-goog-if-generation-match") == "0" and name in self._bucket.objects:
             return _status(412)
         metadata = {
@@ -253,6 +251,7 @@ class FakeXmlApi:
 
 class TestGcsBlobStoreInMemory(BlobStoreContract):
     put_needs_sha256 = True
+    url_checks_sha256 = False
 
     @pytest.fixture
     def bucket(self) -> FakeBucket:
@@ -308,7 +307,6 @@ class TestGcsBlobStoreInMemory(BlobStoreContract):
         assert dict(put.headers) == {
             "content-type": "application/octet-stream",
             "x-goog-content-length-range": "3,3",
-            "x-goog-content-sha256": digest,
             "x-goog-if-generation-match": "0",
             "x-goog-meta-sha256": digest,
         }
@@ -432,6 +430,7 @@ class TestGcsSignedUrlsLive(BlobStoreContract):
     """The signed-URL contract against the real XML API, signed through IAM ``signBlob``."""
 
     put_needs_sha256 = True
+    url_checks_sha256 = False
 
     @pytest.fixture
     def clock(self) -> ManualClock:
@@ -475,9 +474,16 @@ class _Prefixed:
             return self._list
 
         def call(key: str, *args: object, **kwargs: object) -> object:
-            return fn(self._k(key), *args, **kwargs)
+            result = fn(self._k(key), *args, **kwargs)
+            return self._unprefix(result) if asyncio.iscoroutine(result) else result
 
         return call
+
+    async def _unprefix(self, call: Awaitable[object]) -> object:
+        result = await call
+        if isinstance(result, BlobInfo):
+            return replace(result, key=result.key.removeprefix(self._root + "/"))
+        return result
 
     async def _list(self, prefix: str = "") -> AsyncIterator[object]:
         try:

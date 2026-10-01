@@ -297,13 +297,12 @@ Choice: a deploy uploads its source once, as a deterministic `.tar.gz` (`ssc_bun
   - `SSC_BLOB_BACKEND=gcs` is the bucket `SSC_BLOB_BUCKET`. Its URLs are V4 query-signed XML API URLs, signed by `ssc_shared.blobstore_gcs.v4_url` with the store's clock. The signature comes from IAM `signBlob` as `SSC_BLOB_SIGNER`. For the control plane that is its own account, which holds Token Creator on itself (`control-staging-signs-urls` in the platform stack); no key file exists. A test checks that the output is byte for byte what `google-cloud-storage` signs. One bucket per control deployment until placement (which cell holds an org) has its ticket, as for the runtime driver (SSC-017).
   - A PUT URL signs these headers, so a request without exactly these values is refused:
     - `x-goog-content-length-range: n,n` (the exact length)
-    - `x-goog-content-sha256` (the declared sha256)
     - `x-goog-meta-sha256` (what `stat` reports)
     - `x-goog-if-generation-match: 0` (create only, so a stored bundle cannot be replaced later through a URL still within its 10 minutes)
     - `content-type: application/octet-stream`
 
     A bucket PUT URL therefore needs the sha256.
-  - Whether GCS itself refuses a body whose sha256 differs from the signed `x-goog-content-sha256` is not yet confirmed: `conformance/tests/test_blobstore_gcs.py::TestGcsSignedUrlsLive` (`SSC_TEST_GCS_BUCKET`, `SSC_TEST_GCS_SIGNER`) settles it. Either way `complete` re-reads the object, and `get` hashes it range by range against the recorded sha256 (`BlobCorruptError`), so wrong bytes are refused before they are stored.
+  - GCS does not hash the body of a signed PUT: a signed `x-goog-content-sha256` that differs from the body is accepted (200), checked live 2026-10-01 by `conformance/tests/test_blobstore_gcs.py::TestGcsSignedUrlsLive` (`SSC_TEST_GCS_BUCKET`, `SSC_TEST_GCS_SIGNER`), so the URL does not sign it. The sha256 is checked when the object is read: `complete` re-reads it, and `get` hashes it range by range against the recorded sha256 (`BlobCorruptError`), so wrong bytes never become a stored bundle. This is the weaker binding decision 013's reverse-if clause names; the contract marks it with `url_checks_sha256 = False`, which accepts "stored, then corrupt on read".
   - `complete` deletes an object that is not the declared bytes (`BUNDLE_DIGEST_MISMATCH`), because a create-only URL could not replace it. The row stays `pending`, and the next `POST .../bundles` answers a fresh URL.
   - `ssc deploy` sends the exact `Content-Length` (never chunked) and treats `412` from the upload target as "an object is already there", going on to `complete`, which decides.
   - The bucket store's `get` reads 8 MiB ranges pinned to one generation, so a 100 MiB bundle is not held in memory.

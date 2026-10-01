@@ -8,10 +8,12 @@ small objects; ``get`` reads in ranges pinned to one generation, so bundles stre
 Signed URLs (SSC-014, decision 015) are V4 query-signed XML API URLs, signed here with this
 store's clock by a ``UrlSigner``: a service account's key, or IAM ``signBlob`` for the identity a
 Cloud Run service runs as. A PUT URL signs these headers, so the bucket refuses any other value:
-``x-goog-content-length-range: n,n`` (the exact length), ``x-goog-content-sha256`` (the body's
-sha256, checked by the bucket), ``x-goog-meta-sha256`` (what ``stat`` reports),
-``x-goog-if-generation-match: 0`` (create only: a stored object is never replaced through a URL)
-and ``content-type: application/octet-stream``. A PUT URL therefore needs the sha256.
+``x-goog-content-length-range: n,n`` (the exact length), ``x-goog-meta-sha256`` (what ``stat``
+reports), ``x-goog-if-generation-match: 0`` (create only: a stored object is never replaced
+through a URL) and ``content-type: application/octet-stream``. A PUT URL therefore needs the
+sha256. The bucket does not hash the body against it (a signed ``x-goog-content-sha256`` is not
+enforced; checked live 2026-10-01), so a body that differs is stored and is ``BlobCorruptError``
+when read: the reader re-hashes.
 """
 
 import asyncio
@@ -304,7 +306,6 @@ class GcsBlobStore:
             headers = {
                 "content-type": DEFAULT_CONTENT_TYPE,
                 "x-goog-content-length-range": f"{length},{length}",
-                "x-goog-content-sha256": digest,
                 "x-goog-if-generation-match": "0",
                 f"x-goog-meta-{SHA256_METADATA}": digest,
             }
