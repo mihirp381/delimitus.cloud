@@ -123,10 +123,15 @@ def test_the_cell_agent_scales_to_zero_with_a_pinned_ceiling(cell_a: list[Declar
     assert agent["scaling"]["maxInstanceCount"] == cell.AGENT_MAX
 
 
-def test_the_diff_ignores_ids_google_assigns(
+def test_the_diff_ignores_assigned_ids_and_nulls(
     cell_a: list[Declared], cell_b: list[Declared]
 ) -> None:
-    assigned = {"numericId": "1", "generatedId": 2, "creationTime": "2026-10-01T00:00:00Z"}
+    assigned = {
+        "numericId": "1",
+        "generatedId": 2,
+        "creationTime": "2026-10-01T00:00:00Z",
+        "annotations": None,
+    }
     renumbered = [Declared(d.type, d.name, d.inputs, {**d.outputs, **assigned}) for d in cell_b]
     first = cell_diff.normalise(as_export(cell_a, A), A)
     second = cell_diff.normalise(as_export(renumbered, B), B)

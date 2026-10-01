@@ -103,8 +103,13 @@ def _swap(value: str, label: str, number: str, *, outputs: bool) -> str:
 
 
 def flatten(value: Json, label: str, number: str, prefix: str = "", *, outputs: bool) -> Flat:
-    """Dotted paths to normalised scalars. For outputs, keys the cloud assigns are left out."""
+    """Dotted paths to normalised scalars. Null counts as absent, as the provider writes either.
+
+    For outputs, keys the cloud assigns are left out.
+    """
     flat: Flat = {}
+    if value is None:
+        return flat
     if isinstance(value, Mapping):
         items: Mapping[str, Json] = value  # pyright: ignore[reportUnknownVariableType]
         if "4dabf18193072939515e22adb298388d" in items:
