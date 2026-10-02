@@ -15,6 +15,8 @@ The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 | `identity_link` | `subject` | The identity provider's stable id for the person | The join between a login and a directory record | Delete the link |
 | `audit_event` | `actor_ip` | Client address at the time of an action | Security investigation | Cannot be edited (the log is immutable); redact on export |
 | `approval_request` | `decision_reason` | Free text an SSC operator writes when recording an approval decision; may name people from the email or chat exchange | The reason shown with the decision (SSC-045) | Overwrite on request; the audit row holds no reason |
+| `unlinked_login` | `subject` | The SSO login's `idp_id` (for Google Workspace SAML, the person's email) when it matched no one, or more than one active person, in the directory | Shown to active org admins in the Unlinked logins list so they can link it to a person (SSC-019) | Delete the row |
+| `unlinked_login` | `email` | The email the SSO login carried | The same list; display only | Delete the row |
 
 Also personal data, but not stored here:
 
@@ -56,6 +58,11 @@ reference and the actor tuple (opaque ids). `deployment.failure_code` is a reaso
 `ssc.audit_anchor` (SSC-012) holds no personal data: an org id, a seq, a hash, times, a reason
 and an object key. The anchor objects it names (`ssc-audit-anchor/v1`, decision 012) hold the
 same fields and nothing else.
+
+`ssc.directory_connection`, `ssc.auth_session`, `ssc.login_code`, `ssc.refresh_token` and
+`ssc.device_grant` (SSC-019) hold no personal data: WorkOS ids, opaque SSC ids, states, times, an
+app host and SHA-256 hashes of one-time codes and tokens (never the codes or tokens). A user code
+is eight random letters. `user_account.sessions_not_before` is a time.
 
 `ssc.kill_switch_run` (SSC-025) holds no personal data: ids, a mode, states, step timings,
 reason codes, schedule ids and the actor tuple (opaque ids). It has no free-text reason column.

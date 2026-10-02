@@ -16,7 +16,7 @@ from ssc_control.api.ratelimit import limit
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.common import Strict
 from ssc_control.api.runtime import runtime_of
-from ssc_control.api.uow import UnitOfWork, UserUoW
+from ssc_control.api.uow import UnitOfWork, UserUoW, check_session
 from ssc_control.audit.export import MEDIA_TYPES, stream_export
 from ssc_control.audit.search import AuditFilters, event_record, select_events
 from ssc_control.db.bind import bound_org
@@ -126,6 +126,7 @@ async def export_audit(
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "agent_session"})
     org_id, filters, engine = principal.org_id, params.filters(), runtime_of(request).engine
     async with bound_org(engine, org_id) as conn:
+        await check_session(conn, principal)
         uow = UnitOfWork(conn=conn, principal=principal, request_id=request_id_of(request))
         await require_admin(uow)
         await uow.audit(

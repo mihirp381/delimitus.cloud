@@ -297,7 +297,8 @@ def test_a_forbidden_app_answers_exactly_like_no_app(stack: Stack) -> None:
 def test_no_session_is_sent_to_login(stack: Stack) -> None:
     r = stack.get(HOST, "/x")
     assert r.status_code == 302
-    assert r.headers["location"].startswith("https://auth.example.test/login?return_to=")
+    assert r.headers["location"].startswith("https://auth.example.test/login?org=")
+    assert r.headers["set-cookie"].startswith("__Host-ssc-login=")
 
 
 def test_request_shape_is_refused_before_the_app(stack: Stack) -> None:

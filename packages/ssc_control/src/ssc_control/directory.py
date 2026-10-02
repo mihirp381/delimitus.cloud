@@ -5,8 +5,10 @@ change is audited in the caller's transaction. A change that alters what the gat
 new user, a status change, a membership change) also marks the org's access snapshot dirty in
 that transaction (decision 019). A deactivation, a role change or a removal from a group pauses the
 schedules whose owner or declarer lost authority by it (``timers.service.pause_blocked``, decision
-020). The database refuses demoting or deactivating the org's last
-active admin (SC002, ``LAST_ORG_ADMIN``). Two first syncs of one identity racing each other end
+020), and a deactivation revokes every session and token the person holds
+(``identity.sessions.revoke_user``, SSC-019). The database refuses demoting or deleting the org's
+last active admin (SC002, ``LAST_ORG_ADMIN``); deactivating them is allowed, and an operator
+restores an admin (decision 024). Two first syncs of one identity racing each other end
 with one unique violation (``ALREADY_EXISTS``); the directory retries and finds the user.
 """
 
@@ -20,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor, NewEvent, append_event
+from ssc_control.identity.sessions import revoke_user
 from ssc_control.snapshot.service import mark_dirty
 from ssc_control.timers.service import pause_blocked
 
@@ -234,6 +237,8 @@ async def upsert_user(
             after={"status": user.status},
         )
         await mark_dirty(conn, org_id)
+        if user.status == "deactivated":
+            await revoke_user(conn, org_id, user_id, "user_deactivated", actor=actor)
     if (role, status) != (user.role, user.status):
         await pause_blocked(conn, org_id)
     return UserResult(user_id=user_id, created=False)

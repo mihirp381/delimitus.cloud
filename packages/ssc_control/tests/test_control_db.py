@@ -606,7 +606,6 @@ def test_last_active_admin_cannot_be_removed(dsns: Dsns) -> None:
     org = make_org(dsns.app, "Solo")
     for sql in (
         "update ssc.user_account set role = 'member' where id = %s",
-        "update ssc.user_account set status = 'deactivated', deactivated_at = now() where id = %s",
         "delete from ssc.user_account where id = %s",
     ):
         assert (
@@ -621,6 +620,27 @@ def test_last_active_admin_cannot_be_removed(dsns: Dsns) -> None:
         with pytest.raises(psycopg.Error) as e, conn.transaction():
             conn.execute("delete from ssc.user_account where id = %s", (second,))
         assert sqlstate(e) == SqlState.LAST_ORG_ADMIN
+
+
+def test_deactivating_the_last_admin_is_allowed(dsns: Dsns) -> None:
+    # Directory sync is never blocked (SSC-019, revision 0014); an operator restores an admin.
+    org = make_org(dsns.app, "Leaver")
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, org.org_id)
+        conn.execute(
+            "update ssc.user_account set status = 'deactivated', deactivated_at = now() "
+            "where id = %s",
+            (org.admin_user_id,),
+        )
+        conn.execute(
+            "update ssc.user_account set status = 'active', deactivated_at = null where id = %s",
+            (org.admin_user_id,),
+        )
+        conn.execute(
+            "update ssc.user_account set role = 'member', status = 'deactivated', "
+            "deactivated_at = now() where id = %s",
+            (org.admin_user_id,),
+        )
 
 
 def test_two_admins_cannot_remove_each_other_at_once(dsns: Dsns) -> None:
@@ -1179,6 +1199,29 @@ def test_lane_vocab_revision_widens_the_action_check_and_downgrade_restores_it(
     assert after[1] is True
     downgrade(dsn, "0002_idempotency")
     assert action_check(dsn) == before
+    upgrade(dsn, "0003_lane_vocab")
+    assert action_check(dsn) == after
+
+
+IDENTITY_ACTIONS = {"directory.connected", "directory.frozen", "identity.linked"}
+
+
+def test_identity_revision_widens_the_action_check_and_downgrade_restores_it(
+    dsns: Dsns,
+) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database identity owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="identity").render_as_string(hide_password=False)
+    upgrade(dsn, "0013_timers")
+    before = action_check(dsn)
+    upgrade(dsn, "0014_identity")
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | IDENTITY_ACTIONS
+    assert {a.value for a in AuditAction} == old | IDENTITY_ACTIONS
+    downgrade(dsn, "0013_timers")
+    # The audit chain is append-only, so the old vocabulary comes back unvalidated.
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
     upgrade(dsn)
     assert action_check(dsn) == after
 

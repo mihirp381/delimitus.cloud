@@ -10,7 +10,7 @@ import httpx2
 
 from ssc_cli.api import ApiClient, Sleep
 from ssc_cli.config import Config, load_config
-from ssc_cli.credentials import read_token
+from ssc_cli.credentials import bearer
 
 
 @dataclass(slots=True)
@@ -26,7 +26,7 @@ class Session:
         api_url = self.config().api_url
         return ApiClient(
             api_url,
-            token if token is not None else read_token(api_url),
+            token if token is not None else bearer(api_url, transport=self.transport),
             transport=self.transport,
             sleep=self.sleep,
         )

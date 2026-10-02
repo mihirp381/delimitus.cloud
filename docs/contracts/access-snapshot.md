@@ -16,8 +16,10 @@ One JSON object, published as RFC 8785 canonical JSON (`ssc_shared.canonical`). 
 | `hosts` | object | host label → `env_…`. The host label is the first label of the environment's host (decision 004): the slug for prod, `<slug>--preview` for preview. An environment whose app's slug breaks the slug rule (stored before the rule) has no entry. Filled since SSC-018; the gateway finds an environment by it. |
 | `grants` | object | `env_…` → list of `{grant_id, role, subject_kind, subject_id}`. `role` is `builder` or `user`; `subject_kind` is `user` (`subject_id` a `usr_…`), `group` (a `grp_…`) or `org` (`subject_id` null). |
 | `groups_by_user` | object | `usr_…` → list of `grp_…`: every group membership in the org. |
-| `users` | object | `usr_…` → `{status}`, `active` or `deactivated`: every user in the org. |
+| `users` | object | `usr_…` → `{status, sessions_not_before?}`: `status` is `active` or `deactivated`, for every user in the org. `sessions_not_before` (Unix seconds, since SSC-019) is present only once the user's sessions were revoked; the gateway refuses a session issued before it, so a reactivated user's old sessions stay dead. |
 | `ceiling` | null | Reserved for the audience ceiling (SSC-052). Always null in v1. |
+
+Amendment SSC-019 (2026-10-01): `sessions_not_before` is an optional member, left out when unset, so a document without it keeps its bytes and digest. A reader older than SSC-019 refuses a document that carries it, so every cell runs the SSC-019 gateway before the control plane publishes one; no cell was serving users when it was added.
 
 References must resolve or the document is refused: every `grants` key and `hosts` value is in `environments`, every `groups_by_user` key and every user grant's subject is in `users`. The document holds ids and states only: no name, email, identity subject or group name.
 

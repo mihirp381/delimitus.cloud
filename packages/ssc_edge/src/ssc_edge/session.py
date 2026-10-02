@@ -23,6 +23,8 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 COOKIE_NAME: Final = "__Host-ssc-session"
+LOGIN_COOKIE: Final = "__Host-ssc-login"
+LOGIN_SECONDS: Final = 600
 PLATFORM_PREFIXES: Final = ("__host-ssc", "__secure-ssc")
 """Lower-cased name prefixes an app's ``Set-Cookie`` may not use (browsers compare prefixes
 without case)."""
@@ -115,6 +117,19 @@ def set_cookie(value: str, *, max_age: int) -> str:
 
 def clear_cookie() -> str:
     return set_cookie("", max_age=0)
+
+
+def login_cookie(nonce: str) -> str:
+    """The login nonce, set with the redirect to the auth host and read back on the hand-back.
+    ``SameSite=Lax``: the hand-back is a top-level navigation from the auth host."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{0,64}", nonce):
+        raise ValueError("a login nonce is URL-safe and at most 64 characters")
+    max_age = LOGIN_SECONDS if nonce else 0
+    return f"{LOGIN_COOKIE}={nonce}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax"
+
+
+def clear_login_cookie() -> str:
+    return login_cookie("")
 
 
 def cookie_values(header: str, name: str = COOKIE_NAME) -> list[str]:

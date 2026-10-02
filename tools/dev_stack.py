@@ -19,6 +19,18 @@ the way to a healthy deployment locally. Nothing is built or run: the fakes only
 
 Tokens name the issuer ``https://dev.invalid``, which a real API never trusts. The API itself is
 unchanged: it only verifies tokens against the JWKS it is given.
+
+Login against real WorkOS staging tenants (SSC-019, ``docs/runbooks/ssc-019-login.md``):
+
+    uv run python tools/dev_stack.py sso-org --workos-org org_01.. --directory directory_01.. \
+        --sso conn_01.. --join-rule idp_id --founder-subject 00u.. --founder-email a@example.com
+    uv run python tools/dev_stack.py auth --port 8100
+
+``sso-org`` creates an org whose founder is keyed under the WorkOS directory and records its
+connection. ``auth`` runs the auth host at ``--public-url`` (default ``http://localhost:<port>``,
+whose ``/callback`` must be a redirect URI in WorkOS) and the directory sync every minute. It
+reads ``SSC_WORKOS_API_KEY`` and ``SSC_WORKOS_CLIENT_ID`` from the environment only, and signs
+with the dev key under the dev issuer, so ``serve`` accepts what it issues.
 """
 
 import argparse
@@ -40,17 +52,28 @@ import psycopg
 import uvicorn
 from psycopg import sql
 
+from ssc_contracts.audit import ActorKind
 from ssc_control import worker
 from ssc_control.api import Settings, create_app
+from ssc_control.audit.chain import Actor
 from ssc_control.db import (
     APP_ROLE,
     MIGRATE_ROLE,
     NewOrg,
+    bound_org,
     create_org,
     ensure_roles,
     make_engine,
     upgrade,
 )
+from ssc_control.identity import connections
+from ssc_control.identity.__main__ import run_sync
+from ssc_control.identity.authhost import AuthHost, create_auth_app
+from ssc_control.identity.cell_callers import DevCallers
+from ssc_control.identity.connections import directory_issuer
+from ssc_control.identity.settings import AuthSettings
+from ssc_control.identity.tokens import Signer
+from ssc_control.identity.workos import WorkOSClient
 from ssc_control.worker_ports import Ports
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -60,6 +83,8 @@ ISSUER = "https://dev.invalid"
 KID = "dev-1"
 BLOB_KID = "dev-blob-1"
 ADMIN_SUBJECT = "dev-admin"
+DEV_OPERATOR = "op_dev"
+WORKOS_ENV = ("SSC_WORKOS_API_KEY", "SSC_WORKOS_CLIENT_ID")
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
 
@@ -292,6 +317,110 @@ async def _serve_with_worker(
             signal.signal(sig, handler)
 
 
+# ── login (SSC-019) ──────────────────────────────────────────────────────────
+
+
+def _auth_keys(d: Path) -> dict[str, str]:
+    state = load_state(d)
+    missing = [k for k in ("auth_state_key", "auth_cell_secret") if k not in state]
+    if missing:
+        state.update({k: _random_key() for k in missing})
+        _write_private(_state_path(d), json.dumps(state, indent=2, sort_keys=True).encode())
+    return {k: state[k] for k in ("auth_state_key", "auth_cell_secret")}
+
+
+def auth_settings(d: Path, public_url: str, env: dict[str, str] | None = None) -> AuthSettings:
+    e = dict(os.environ if env is None else env)
+    missing = [name for name in WORKOS_ENV if not e.get(name)]
+    if missing:
+        raise SystemExit(f"set {' and '.join(missing)} (WorkOS staging) in the environment")
+    state = load_state(d)
+    if "database_dsn" not in state:
+        raise SystemExit(f"no dev stack in {d}; run `up` first")
+    keys = _auth_keys(d)
+    return AuthSettings(
+        database_dsn=e.get("SSC_DATABASE_DSN", state["database_dsn"]),
+        workos_api_key=e["SSC_WORKOS_API_KEY"],
+        workos_client_id=e["SSC_WORKOS_CLIENT_ID"],
+        signing_pem=_signing_key(d).private_pem,
+        signing_kid=KID,
+        state_key=base64.b64decode(keys["auth_state_key"]),
+        auth_url=public_url.rstrip("/"),
+        environment="dev",
+        dev_cell_secret=keys["auth_cell_secret"],
+    )
+
+
+def auth(d: Path, host: str, port: int, public_url: str | None) -> None:
+    s = auth_settings(d, public_url or f"http://localhost:{port}")
+    workos = WorkOSClient(
+        api_key=s.workos_api_key, client_id=s.workos_client_id, base=s.workos_base
+    )
+    app = create_auth_app(
+        AuthHost(
+            settings=s,
+            engine=make_engine(s.database_dsn),
+            workos=workos,
+            signer=Signer(s.signing_pem, KID, ISSUER),
+            callers=DevCallers(s.dev_cell_secret),
+        )
+    )
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
+    print(f"SSC_AUTH_URL={s.auth_url}", flush=True)  # noqa: T201
+    asyncio.run(_auth_with_sync(server, s))
+
+
+async def _auth_with_sync(server: uvicorn.Server, s: AuthSettings) -> None:
+    client = WorkOSClient(
+        api_key=s.workos_api_key, client_id=s.workos_client_id, base=s.workos_base
+    )
+    task = asyncio.create_task(run_sync(s.database_dsn, client, org=None, loop=True))
+    try:
+        await server.serve()
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+def sso_org(d: Path, args: argparse.Namespace) -> str:
+    """A new org keyed under the WorkOS directory, with its connection recorded."""
+    state = load_state(d)
+    if "database_dsn" not in state:
+        raise SystemExit(f"no dev stack in {d}; run `up` first")
+
+    async def go() -> str:
+        engine = make_engine(state["database_dsn"])
+        try:
+            spec = NewOrg(
+                args.org_name,
+                args.founder_name,
+                args.founder_email,
+                directory_issuer(args.directory),
+                args.founder_subject,
+            )
+            created = await create_org(engine, spec)
+            async with bound_org(engine, created.org_id) as conn:
+                await connections.connect(
+                    conn,
+                    created.org_id,
+                    workos_organization_id=args.workos_org,
+                    workos_directory_id=args.directory,
+                    sso_connection_ids=args.sso,
+                    join_rule=args.join_rule,
+                    admin_group_ref=args.admin_group,
+                    actor=Actor(ActorKind.OPERATOR, DEV_OPERATOR),
+                )
+            return created.org_id
+        finally:
+            await engine.dispose()
+
+    org_id = asyncio.run(go())
+    state.setdefault("sso_orgs", []).append(org_id)
+    _write_private(_state_path(d), json.dumps(state, indent=2, sort_keys=True).encode())
+    return org_id
+
+
 # ── command line ─────────────────────────────────────────────────────────────
 
 
@@ -321,6 +450,22 @@ def main(argv: list[str] | None = None) -> None:
         "--worker", action="store_true", help="also run the worker, with fake builder and runtime"
     )
 
+    p_auth = sub.add_parser("auth", help="run the auth host and the directory sync (WorkOS)")
+    p_auth.add_argument("--host", default="127.0.0.1")
+    p_auth.add_argument("--port", type=int, default=8100)
+    p_auth.add_argument("--public-url", help="default http://localhost:<port>")
+
+    p_sso = sub.add_parser("sso-org", help="an org connected to a WorkOS directory")
+    p_sso.add_argument("--workos-org", required=True)
+    p_sso.add_argument("--directory", required=True)
+    p_sso.add_argument("--sso", action="append", required=True)
+    p_sso.add_argument("--join-rule", choices=["idp_id", "email"], required=True)
+    p_sso.add_argument("--founder-subject", required=True, help="the founder's directory idp_id")
+    p_sso.add_argument("--founder-email", required=True)
+    p_sso.add_argument("--founder-name", default="Founder")
+    p_sso.add_argument("--org-name", default="SSO org")
+    p_sso.add_argument("--admin-group")
+
     args = parser.parse_args(argv)
     d: Path = args.dir.resolve()
     if args.command == "up":
@@ -338,6 +483,10 @@ def main(argv: list[str] | None = None) -> None:
                 scope=args.scope,
             )
         )
+    elif args.command == "auth":
+        auth(d, args.host, args.port, args.public_url)
+    elif args.command == "sso-org":
+        print(f"SSC_ORG_ID={sso_org(d, args)}")  # noqa: T201
     else:
         serve(d, args.host, args.port, args.rate_capacity, args.rate_refill, args.worker)
 

@@ -58,3 +58,6 @@ class AuditAction(StrEnum):
     OPERATOR_ACCESS = "operator.access"
     AUDIT_EXPORTED = "audit.exported"
     AUDIT_REANCHORED = "audit.reanchored"
+    DIRECTORY_CONNECTED = "directory.connected"
+    DIRECTORY_FROZEN = "directory.frozen"
+    IDENTITY_LINKED = "identity.linked"

@@ -39,7 +39,7 @@ def load_config(api_override: str | None = None, env: Mapping[str, str] | None =
     return Config(api_url=normalise_api_url(raw))
 
 
-def normalise_api_url(raw: str) -> str:
+def normalise_api_url(raw: str, what: str = "API") -> str:
     url = raw.strip().rstrip("/")
     try:
         parts = urlsplit(url)
@@ -58,14 +58,14 @@ def normalise_api_url(raw: str) -> str:
     ):
         raise local_error(
             BAD_API_URL,
-            "The API address is not valid.",
+            f"The {what} address is not valid.",
             "Give an https:// address with no user name, query or fragment.",
             ExitCode.USAGE,
         )
     if parts.scheme == "http" and host not in LOOPBACK_HOSTS:
         raise local_error(
             BAD_API_URL,
-            "The API address must use https.",
+            f"The {what} address must use https.",
             "Plain http is allowed only for localhost, so a token never crosses the network "
             "unencrypted.",
             ExitCode.USAGE,

@@ -8,7 +8,8 @@ Claims we require: ``iss``, ``aud``, ``sub``, ``iat``, ``exp``, ``jti`` (the cre
 rate limits and idempotency keys are scoped to), ``org`` (an ``org_…`` id) and ``kind``. Optional:
 ``agent`` (true when an agent acts for the subject), ``client_id`` (which agent) and ``scope``
 (``preview``: the credential never touches production, enforced in ``uow``; any other value is
-refused).
+refused) and ``sid`` (the auth-host session the credential was issued from, SSC-019: ``uow``
+refuses it once that session is revoked or its person deactivated).
 """
 
 from dataclasses import dataclass
@@ -49,6 +50,8 @@ class Principal:
     client_id: str | None = None
     scope: CredentialScope | None = None
     """``None``: everything the subject may do. ``PREVIEW``: never production."""
+    session_id: str | None = None
+    """The ``ses_`` session the credential came from; checked live on every request."""
 
 
 class Verifier:
@@ -100,6 +103,9 @@ def principal_from_claims(claims: dict[str, Any]) -> Principal:
     except ValueError as e:
         raise Refusal(ErrorCode.UNAUTHENTICATED, evidence={"reason": "bad_claim"}) from e
     client_id = claims.get("client_id")
+    sid = claims.get("sid")
+    if sid is not None and (not isinstance(sid, str) or not sid.startswith("ses_")):
+        raise Refusal(ErrorCode.UNAUTHENTICATED, evidence={"reason": "bad_claim"})
     return Principal(
         org_id=org_id,
         subject=str(claims["sub"]),
@@ -108,6 +114,7 @@ def principal_from_claims(claims: dict[str, Any]) -> Principal:
         is_agent=bool(claims.get("agent", False)),
         client_id=str(client_id) if client_id is not None else None,
         scope=scope,
+        session_id=sid,
     )
 
 

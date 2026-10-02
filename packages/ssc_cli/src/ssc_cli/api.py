@@ -87,18 +87,20 @@ def _seg(value: str) -> str:
 
 
 class ApiClient:
-    """One API address and one token. Use as a context manager."""
+    """One API address and one token, or a callable that gives the current one (a login, whose
+    access token is replaced every few minutes). Use as a context manager."""
 
     def __init__(
         self,
         base_url: str,
-        token: str,
+        token: str | Callable[[], str],
         *,
         transport: httpx2.BaseTransport | None = None,
         sleep: Sleep = time.sleep,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         self.api_url = base_url
+        self._token = token
         self._sleep = sleep
         self._transport = transport
         self._upload_http: httpx2.Client | None = None
@@ -108,7 +110,6 @@ class ApiClient:
             timeout=timeout,
             follow_redirects=False,
             headers={
-                "Authorization": f"Bearer {token}",
                 "User-Agent": USER_AGENT,
                 SOURCE_TOOL_HEADER: SOURCE_TOOL,
                 "Accept": "application/json",
@@ -321,6 +322,8 @@ class ApiClient:
         waited_for_rate = False
         while True:
             try:
+                token = self._token if isinstance(self._token, str) else self._token()
+                sent["Authorization"] = f"Bearer {token}"
                 r = self._http.request(method, path, content=content, headers=sent)
             except httpx2.TransportError as e:
                 if retryable and retries < len(BACKOFF):

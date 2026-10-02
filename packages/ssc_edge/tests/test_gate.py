@@ -14,8 +14,11 @@ from edge_world import (
     HOST,
     LABEL,
     LEDGER,
+    LOGIN,
+    NONCE,
     NOW,
     NOWHERE_HOST,
+    ORG,
     OTHER_ORG,
     PAY_HOST,
     PREVIEW_HOST,
@@ -26,8 +29,10 @@ from edge_world import (
 )
 
 from ssc_app.identity import verify
-from ssc_edge.gate import IDENTITY_HEADER, UPSTREAM_HEADER, Allow, Deny, Facts
+from ssc_edge import pages
+from ssc_edge.gate import IDENTITY_HEADER, UPSTREAM_HEADER, Allow, Deny, Facts, binding_of
 from ssc_edge.identity_note import jwks
+from ssc_edge.session import clear_cookie, clear_login_cookie, login_cookie
 from ssc_shared.access import AccessView
 
 UPSTREAM = "ssc-a-" + "p" * 20 + "-123456789012.us-central1.run.app"
@@ -102,10 +107,12 @@ async def test_no_session_goes_to_login_whether_or_not_an_app_lives_there(world:
         assert out.status == 302 and out.reason == "no_session"
         location = dict(out.headers)["location"]
         assert location.startswith("https://auth.example.test/login?")
-        assert parse_qs(urlsplit(location).query)["return_to"] == [
-            f"https://{host}/books?year=2026"
-        ]
-        assert "set-cookie" not in dict(out.headers)
+        assert parse_qs(urlsplit(location).query) == {
+            "org": [ORG],
+            "return_to": [f"https://{host}/books?year=2026"],
+            "binding": [binding_of(NONCE)],
+        }
+        assert [v for k, v in out.headers if k == "set-cookie"] == [login_cookie(NONCE)]
 
 
 @pytest.mark.parametrize(
@@ -223,30 +230,69 @@ async def test_the_callback_sets_a_host_only_session_and_returns_to_a_local_path
     world: World,
 ) -> None:
     world.redeemer.sessions["c0de"] = session()
-    out = await denied(world, facts(path="/.ssc/callback?code=c0de&next=/books%3Fy%3D1"))
+    path = "/.ssc/callback?code=c0de&next=/books%3Fy%3D1"
+    out = await denied(world, facts(path=path, cookie=LOGIN))
     headers = dict(out.headers)
     assert (out.status, out.reason, headers["location"]) == (302, "signed_in", "/books?y=1")
-    assert world.redeemer.calls == [("c0de", HOST)]
-    value = headers["set-cookie"].split(";")[0].split("=", 1)[1]
+    assert world.redeemer.calls == [("c0de", HOST, NONCE)]
+    cookies = [v for k, v in out.headers if k == "set-cookie"]
+    assert cookies[1] == clear_login_cookie()
+    value = cookies[0].split(";")[0].split("=", 1)[1]
     assert world.codec.open(value, HOST, now=NOW) is not None
-    assert "domain" not in headers["set-cookie"].lower()
+    assert "domain" not in cookies[0].lower()
 
 
 @pytest.mark.parametrize("nxt", ["//evil.example", "https://evil.example/", "/\\evil.example", ""])
 async def test_the_callback_never_leaves_the_host(world: World, nxt: str) -> None:
     world.redeemer.sessions["c0de"] = session()
-    out = await denied(world, facts(path=f"/.ssc/callback?code=c0de&next={nxt}"))
+    out = await denied(world, facts(path=f"/.ssc/callback?code=c0de&next={nxt}", cookie=LOGIN))
     assert dict(out.headers)["location"] == "/"
 
 
 @pytest.mark.parametrize(
-    "path", ["/.ssc/callback?code=wrong", "/.ssc/callback", "/.ssc/callback?code=other-org"]
+    ("path", "cookie"),
+    [
+        ("/.ssc/callback?code=wrong", LOGIN),
+        ("/.ssc/callback", LOGIN),
+        ("/.ssc/callback?code=other-org", LOGIN),
+        ("/.ssc/callback?code=c0de", ""),  # no login nonce: started in another browser
+        ("/.ssc/callback?code=c0de", "__Host-ssc-login=" + "x" * 43),  # another login's nonce
+    ],
 )
-async def test_a_bad_code_goes_back_to_login(world: World, path: str) -> None:
+async def test_a_bad_callback_is_a_page_not_a_redirect_loop(
+    world: World, path: str, cookie: str
+) -> None:
+    world.redeemer.sessions["c0de"] = session()
     world.redeemer.sessions["other-org"] = session(org=OTHER_ORG)
-    out = await denied(world, facts(path=path))
-    assert out.status == 302 and "set-cookie" not in dict(out.headers)
-    assert dict(out.headers)["location"].startswith("https://auth.example.test/login?")
+    out = await denied(world, facts(path=path, cookie=cookie))
+    assert (out.status, out.reason, out.body) == (400, "bad_callback", pages.LOGIN_FAILED)
+    assert [v for k, v in out.headers if k == "set-cookie"] == [clear_login_cookie()]
+
+
+async def test_the_last_login_nonce_is_the_one_presented(world: World) -> None:
+    world.redeemer.sessions["c0de"] = session()
+    cookie = f"__Host-ssc-login=old; {LOGIN}"
+    out = await denied(world, facts(path="/.ssc/callback?code=c0de", cookie=cookie))
+    assert out.reason == "signed_in"
+
+
+async def test_a_session_from_before_a_revocation_is_sent_back_to_login(world: World) -> None:
+    s = session(iat=NOW - 600)
+    world.view = AccessView.from_document(
+        snapshot(
+            users={
+                ADA: {"status": "active", "sessions_not_before": NOW - 300},
+                BEN: {"status": "active"},
+                CY: {"status": "deactivated"},
+            }
+        )
+    )
+    out = await denied(world, facts(cookie=world.cookie(s)))
+    assert (out.status, out.reason) == (302, "revoked")
+    cookies = [v for k, v in out.headers if k == "set-cookie"]
+    assert cookies == [login_cookie(NONCE), clear_cookie()]
+    later = session(iat=NOW - 300)
+    assert isinstance(await check(world, facts(cookie=world.cookie(later))), Allow)
 
 
 async def test_logout_clears_the_session_only_from_the_app_itself(world: World) -> None:

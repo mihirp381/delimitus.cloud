@@ -96,6 +96,7 @@ class AccessView:
         "environments",
         "groups_by_user",
         "hosts",
+        "not_before",
         "org_id",
         "version",
     )
@@ -114,6 +115,13 @@ class AccessView:
             {u: frozenset(gs) for u, gs in doc.groups_by_user.items()}
         )
         self.hosts: Mapping[str, str] = MappingProxyType(dict(doc.hosts))
+        self.not_before: Mapping[str, int] = MappingProxyType(
+            {
+                u: info.sessions_not_before
+                for u, info in doc.users.items()
+                if info.sessions_not_before is not None
+            }
+        )
 
     @classmethod
     def from_document(cls, doc: SnapshotDoc | Mapping[str, object] | bytes | str) -> Self:

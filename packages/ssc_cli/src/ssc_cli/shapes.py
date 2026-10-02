@@ -40,6 +40,20 @@ class TokenClearResult(Shape):
     cleared: bool
 
 
+class LoginResult(Shape):
+    api_url: str
+    auth_url: str
+    org_id: str
+    subject: str
+    stored_in: Literal["keychain"]
+
+
+class LogoutResult(Shape):
+    api_url: str
+    revoked: bool
+    cleared: bool
+
+
 class AppRow(Shape):
     id: str
     slug: str
@@ -281,6 +295,8 @@ SHAPES: dict[str, type[BaseModel]] = {
         WhoamiResult,
         TokenSetResult,
         TokenClearResult,
+        LoginResult,
+        LogoutResult,
         AppRow,
         AppsResult,
         DeploymentRow,

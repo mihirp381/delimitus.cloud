@@ -54,6 +54,9 @@ const ACTIONS: Readonly<Record<AuditAction, true>> = {
   'operator.access': true,
   'audit.exported': true,
   'audit.reanchored': true,
+  'directory.connected': true,
+  'directory.frozen': true,
+  'identity.linked': true,
 };
 const KINDS: Readonly<Record<ActorKind, true>> = {
   user: true,

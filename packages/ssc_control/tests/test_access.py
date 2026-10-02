@@ -366,15 +366,14 @@ def test_the_owner_needs_no_grant_to_change_sharing(
     assert explain(client, w, prod, token).json()["reason"] == "no_grant"
 
 
-# ── done when: the last admin cannot be removed ──────────────────────────────
+# ── done when: the last admin cannot be demoted ──────────────────────────────
 
 
-def test_the_directory_cannot_remove_the_last_admin(
+def test_the_directory_cannot_demote_the_last_admin(
     client: TestClient, world: World, dsns: Dsns
 ) -> None:
-    for role, status in (("member", "active"), ("admin", "deactivated")):
-        r = sync_user(client, world, world.admin_subject, role=role, status=status)
-        assert_problem(r, ErrorCode.LAST_ORG_ADMIN)
+    r = sync_user(client, world, world.admin_subject, role="member", status="active")
+    assert_problem(r, ErrorCode.LAST_ORG_ADMIN)
     (row,) = sql(
         dsns.app,
         world.org,
@@ -388,6 +387,21 @@ def test_the_directory_cannot_remove_the_last_admin(
     stepped = sync_user(client, world, world.admin_subject, role="member", name="Ada Admin")
     assert stepped.status_code == 200, stepped.text
     assert stepped.json() == {"user_id": world.admin, "created": False}
+
+
+def test_the_directory_may_deactivate_the_last_admin(
+    client: TestClient, world: World, dsns: Dsns
+) -> None:
+    # SSC-019: directory sync is never blocked; an SSC operator restores an admin.
+    r = sync_user(client, world, world.admin_subject, role="admin", status="deactivated")
+    assert r.status_code == 200, r.text
+    (row,) = sql(
+        dsns.app,
+        world.org,
+        "select role, status from ssc.user_account where id = %s",
+        (world.admin,),
+    )
+    assert row == {"role": "admin", "status": "deactivated"}
 
 
 # ── the directory ────────────────────────────────────────────────────────────

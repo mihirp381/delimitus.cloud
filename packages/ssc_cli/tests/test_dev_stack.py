@@ -1,5 +1,6 @@
 """The dev stack's API: dev settings, a metrics key and a filesystem blob store by default."""
 
+import argparse
 import base64
 import json
 import stat
@@ -108,3 +109,50 @@ def test_live_share_records_the_cli_as_source_tool(cli, live, isolated):
             (created.json()["id"],),
         ).fetchall()
     assert tools == [("ssc-cli",)]
+
+
+def test_the_auth_host_signs_with_the_key_the_dev_api_trusts(dev_stack, tmp_path):
+    stack = dev_stack
+    try:
+        stack.auth_settings(tmp_path, "http://localhost:8100", {})
+    except SystemExit as e:
+        assert "SSC_WORKOS_API_KEY and SSC_WORKOS_CLIENT_ID" in str(e)
+    else:
+        raise AssertionError("WorkOS settings are required")
+    stack._write_private(
+        stack._state_path(tmp_path), json.dumps({"database_dsn": BASE["SSC_DATABASE_DSN"]}).encode()
+    )
+    env = {"SSC_WORKOS_API_KEY": "sk_test_x", "SSC_WORKOS_CLIENT_ID": "client_x"}
+    first = stack.auth_settings(tmp_path, "http://localhost:8100/", env)
+    again = stack.auth_settings(tmp_path, "http://localhost:8100", env)
+    assert first.auth_url == "http://localhost:8100" and first.environment == "dev"
+    assert first.state_key == again.state_key and len(first.state_key) == 32
+    assert first.dev_cell_secret == again.dev_cell_secret
+    trusted = json.loads((tmp_path / "jwks.json").read_text())
+    signer = stack.Signer(first.signing_pem, stack.KID, stack.ISSUER)
+    assert signer.jwks()["keys"][0]["x"] == trusted["keys"][0]["x"]
+
+
+def test_live_sso_org_keys_the_founder_under_the_directory(live):
+    args = argparse.Namespace(
+        workos_org="org_01DEVSTACK",
+        directory="directory_01DEVSTACK",
+        sso=["conn_01DEVSTACK"],
+        join_rule="idp_id",
+        founder_subject="00udevfounder",
+        founder_email="founder@example.com",
+        founder_name="Founder",
+        org_name="SSO org",
+        admin_group=None,
+    )
+    org_id = live.stack.sso_org(live.dir, args)
+    assert org_id in live.stack.load_state(live.dir)["sso_orgs"]
+    dsn = live.stack.load_state(live.dir)["database_dsn"]
+    with psycopg.connect(dsn) as conn:
+        conn.execute("select set_config('ssc.org', %s, true)", (org_id,))
+        link = conn.execute("select issuer, subject from ssc.identity_link").fetchone()
+        joined = conn.execute(
+            "select workos_directory_id, join_rule from ssc.directory_connection"
+        ).fetchone()
+    assert link == ("workos:directory_01DEVSTACK", "00udevfounder")
+    assert joined == ("directory_01DEVSTACK", "idp_id")

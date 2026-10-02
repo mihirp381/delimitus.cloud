@@ -12,6 +12,7 @@ from ssc_cli.commands.deploy import deploy
 from ssc_cli.commands.doctor import doctor
 from ssc_cli.commands.init import init
 from ssc_cli.commands.lifecycle import disable, enable
+from ssc_cli.commands.login import login, logout
 from ssc_cli.commands.mcp import mcp
 from ssc_cli.commands.promote import promote
 from ssc_cli.commands.releases import releases
@@ -58,6 +59,8 @@ def root(
         session(ctx).api_override = api
 
 
+app.command()(login)
+app.command()(logout)
 app.command()(whoami)
 app.add_typer(token_app)
 app.add_typer(apps_app)

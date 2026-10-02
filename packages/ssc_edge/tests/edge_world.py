@@ -25,6 +25,8 @@ HOST = f"ledger.{LABEL}.{DOMAIN}"
 PREVIEW_HOST = f"ledger--preview.{LABEL}.{DOMAIN}"
 PAY_HOST = f"payroll.{LABEL}.{DOMAIN}"
 NOWHERE_HOST = f"nothere.{LABEL}.{DOMAIN}"
+NONCE = "n" * 43
+LOGIN = f"__Host-ssc-login={NONCE}"
 
 
 def gnt(n: int) -> str:
@@ -97,11 +99,12 @@ def session(user: str = ADA, *, org: str = ORG, iat: int = NOW - 60, life: int =
 @dataclass
 class FakeRedeemer:
     sessions: dict[str, Session] = field(default_factory=dict)
-    calls: list[tuple[str, str]] = field(default_factory=list)
+    calls: list[tuple[str, str, str]] = field(default_factory=list)
+    nonce: str = NONCE
 
-    async def redeem(self, code: str, host: str) -> Session | None:
-        self.calls.append((code, host))
-        return self.sessions.get(code)
+    async def redeem(self, code: str, host: str, nonce: str) -> Session | None:
+        self.calls.append((code, host, nonce))
+        return self.sessions.get(code) if nonce == self.nonce else None
 
 
 @dataclass
@@ -122,6 +125,7 @@ class World:
             view=lambda: self.view,
             clock=lambda: self.now,
             redeemer=self.redeemer,
+            nonce=lambda: NONCE,
         )
 
     def cookie(self, s: Session | None = None, host: str = HOST) -> str:

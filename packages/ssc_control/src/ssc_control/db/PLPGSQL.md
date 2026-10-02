@@ -13,7 +13,7 @@ paging keys on `SC001`.
 | Function | Fires | Raises | Why it must be in the database |
 |---|---|---|---|
 | `current_org()` | inside every RLS policy | `SC001` when no org is bound | A NULL here would make every policy false and every query return zero rows with HTTP 200. Failing loud is the single most important line in the schema. |
-| `refuse_last_org_admin()` | `BEFORE UPDATE OR DELETE ON user_account` | `SC002` | Two admins removing each other at once both read "2 admins" and both proceed. The trigger locks the org row (`FOR UPDATE`) so the pair is serialised. |
+| `refuse_last_org_admin()` | `BEFORE UPDATE OR DELETE ON user_account` | `SC002` | Two admins removing each other at once both read "2 admins" and both proceed. The trigger locks the org row (`FOR UPDATE`) so the pair is serialised. Since 0014 (SSC-019) a deactivation is always allowed, so directory sync is never blocked; an SSC operator restores an admin. |
 | `owner_must_be_active()` | `BEFORE INSERT OR UPDATE OF owner_user_id ON app` | `SC003` | An app is created for, or transferred to, an active member. Deactivating an owner later is allowed so directory sync is never blocked. |
 | `refuse_row_change('SCxxx')` | `BEFORE UPDATE OR DELETE ON release` (`SC004`), `ON audit_event` (`SC005`) | argument | Privileges are the first guard (the app role has no UPDATE or DELETE on these tables). The trigger is the second, and it also binds the owner. |
 | `refuse_truncate()` | `BEFORE TRUNCATE ON release, audit_event, audit_head` | `SC006` | TRUNCATE is not covered by row triggers or by RLS. |
@@ -30,7 +30,7 @@ Mirrored in `ssc_control.db.errors.SqlState`.
 | Code | Meaning |
 |---|---|
 | `SC001` | No org bound to the transaction. A bug in the caller, never a normal outcome. |
-| `SC002` | The last active admin of an org cannot be demoted, deactivated or deleted. |
+| `SC002` | The last active admin of an org cannot be demoted or deleted (deactivation is allowed since 0014). |
 | `SC003` | The app owner is not an active member of the org. |
 | `SC004` | Release rows are immutable. |
 | `SC005` | Audit rows are immutable. |

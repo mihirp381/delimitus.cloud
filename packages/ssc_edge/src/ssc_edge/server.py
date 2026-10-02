@@ -17,14 +17,16 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Final, Protocol
 
+import httpx2
 import uvicorn
 from fastapi import FastAPI, Request, Response
 
 from ssc_contracts.identity import IdentityNote
 from ssc_edge import pages
-from ssc_edge.gate import Allow, Facts, Gate, GateConfig, Redeemer
+from ssc_edge.gate import Allow, Facts, Gate, GateConfig, Redeemer, new_nonce
 from ssc_edge.identity_note import sign_note
 from ssc_edge.keys import Keyring, KeyringError, kms_decrypt, parse_keyring
+from ssc_edge.redeemer import HttpRedeemer
 from ssc_edge.session import SessionCodec
 from ssc_edge.tokens import MetadataTokens
 from ssc_shared.access import AccessView, ViewHolder
@@ -55,6 +57,8 @@ class Settings:
     keyring_plain: str | None
     keyring_cipher: str | None
     kms_key: str | None
+    dev_cell_secret: str | None = None
+    """Dev and test only: redeem login codes with the rig's shared secret, not an ID token."""
 
 
 def _need(env: Mapping[str, str], name: str) -> str:
@@ -72,6 +76,9 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
     kms_key = env.get("SSC_GATEWAY_KMS_KEY") or None
     if plain is not None and environment not in DEV_ENVS:
         raise SettingsError("SSC_GATEWAY_KEYRING_PLAIN is for SSC_ENV dev or test only")
+    dev_secret = env.get("SSC_AUTH_DEV_CELL_SECRET") or None
+    if dev_secret is not None and environment not in DEV_ENVS:
+        raise SettingsError("SSC_AUTH_DEV_CELL_SECRET is for SSC_ENV dev or test only")
     if plain is None and (cipher is None or kms_key is None):
         raise SettingsError("SSC_GATEWAY_KEYRING and SSC_GATEWAY_KMS_KEY are required")
     try:
@@ -97,6 +104,22 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         keyring_plain=plain,
         keyring_cipher=cipher,
         kms_key=kms_key,
+        dev_cell_secret=dev_secret,
+    )
+
+
+def redeemer_for(
+    settings: Settings, tokens: IdTokens, transport: httpx2.AsyncBaseTransport | None = None
+) -> HttpRedeemer:
+    auth_url, secret = settings.gate.auth_url, settings.dev_cell_secret
+
+    async def bearer() -> str:
+        if secret is not None:
+            return f"dev.{secret}"
+        return await tokens.identity(auth_url)
+
+    return HttpRedeemer(
+        auth_url=auth_url, org_id=settings.gate.org_id, bearer=bearer, transport=transport
     )
 
 
@@ -107,12 +130,15 @@ def gate_for(  # noqa: PLR0913  (keyword-only collaborators)
     view: Callable[[], AccessView | None],
     clock: Callable[[], int] = lambda: int(time.time()),
     redeemer: Redeemer | None = None,
+    nonce: Callable[[], str] = new_nonce,
 ) -> Gate:
     def sign(note: IdentityNote) -> str:
         return sign_note(note, private_key=keyring.signing_key, kid=keyring.identity_kid)
 
     codec = SessionCodec(keyring.session, active=keyring.session_kid)
-    return Gate(config, codec=codec, view=view, sign=sign, clock=clock, redeemer=redeemer)
+    return Gate(
+        config, codec=codec, view=view, sign=sign, clock=clock, redeemer=redeemer, nonce=nonce
+    )
 
 
 def facts_of(request: Request) -> Facts:
@@ -202,13 +228,15 @@ def production_app(env: Mapping[str, str] | None = None) -> FastAPI:
     holder = ViewHolder(settings.gate.org_id)
     feed = SnapshotFeed(GcsBlobStore(bucket_of(settings.bucket)), holder)
     state: dict[str, Gate] = {}
+    redeemer = redeemer_for(settings, tokens)
 
     def view() -> AccessView | None:
         return holder.view if feed.fresh(settings.max_stale) else None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
-        state["gate"] = gate_for(settings.gate, await load_keyring(settings, tokens), view=view)
+        keyring = await load_keyring(settings, tokens)
+        state["gate"] = gate_for(settings.gate, keyring, view=view, redeemer=redeemer)
         stop = asyncio.Event()
         task = asyncio.create_task(feed.run(stop))
         try:
@@ -217,6 +245,7 @@ def production_app(env: Mapping[str, str] | None = None) -> FastAPI:
             stop.set()
             task.cancel()  # a poll can be mid-retry; Cloud Run allows 10 s after SIGTERM
             await asyncio.gather(task, return_exceptions=True)
+            await redeemer.aclose()
             await tokens.aclose()
 
     dev = settings.environment in DEV_ENVS

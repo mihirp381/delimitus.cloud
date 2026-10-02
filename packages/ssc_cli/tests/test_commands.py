@@ -29,6 +29,7 @@ from ssc_cli.shapes import (
     DoctorResult,
     ErrorResult,
     InitResult,
+    LogoutResult,
     PromoteResult,
     ReleasesResult,
     RollbackResult,
@@ -45,6 +46,8 @@ APP_ID = "app_aaaaaaaaaaaaaaaaaaaa"
 PROD = "env_prodprodprodprodprod"
 PREVIEW = "env_prevprevprevprevprev"
 ALLOWED = {
+    "login",
+    "logout",
     "whoami",
     "token",
     "apps",
@@ -100,6 +103,8 @@ def test_help_lists_exact_set(cli):
     listed = r.stdout.split("Commands:\n", 1)[1].splitlines()
     assert {line.split()[0] for line in listed if line.startswith("  ")} == ALLOWED
     assert _paths() == {
+        ("login",),
+        ("logout",),
         ("whoami",),
         ("token", "set"),
         ("token", "clear"),
@@ -870,9 +875,11 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),
+        ("logout",): ([], LogoutResult, None),
     }
-    # `mcp` serves stdio; its --json covers start-up refusals only (test_mcp_local.py).
-    assert set(cases) | {("mcp",)} == _paths()
+    # `mcp` serves stdio; its --json covers start-up refusals only (test_mcp_local.py). `login`
+    # needs an auth host and a browser; test_login.py covers its --json.
+    assert set(cases) | {("mcp",), ("login",)} == _paths()
     for path, (args, shape, stdin) in cases.items():
         r = on_live(*path, *args, "--json", input=stdin)
         assert r.code == 0, (path, r.stdout, r.stderr)

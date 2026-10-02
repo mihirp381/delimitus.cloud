@@ -57,7 +57,8 @@ _READ_ORG = text(
     "(select coalesce(jsonb_agg(jsonb_build_array(g.id, g.environment_id, g.role, "
     "g.subject_kind, coalesce(g.user_id, g.group_id)) order by g.environment_id, g.id), '[]') "
     "from ssc.app_grant g where g.org_id = :org), "
-    "(select coalesce(jsonb_agg(jsonb_build_array(u.id, u.status) order by u.id), '[]') "
+    "(select coalesce(jsonb_agg(jsonb_build_array(u.id, u.status, "
+    "ceil(extract(epoch from u.sessions_not_before))::bigint) order by u.id), '[]') "
     "from ssc.user_account u where u.org_id = :org), "
     "(select coalesce(jsonb_agg(jsonb_build_array(m.user_id, m.group_id) "
     "order by m.user_id, m.group_id), '[]') from ssc.group_member m where m.org_id = :org)"
@@ -107,7 +108,10 @@ async def compile_document(
             "hosts": hosts,
             "grants": by_env,
             "groups_by_user": groups,
-            "users": {user_id: {"status": status} for user_id, status in users},
+            "users": {
+                user_id: {"status": status, "sessions_not_before": not_before}
+                for user_id, status, not_before in users
+            },
             "ceiling": None,
         }
     )

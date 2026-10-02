@@ -10,7 +10,9 @@ and remembers it. The idempotency dependency stores exactly that rendering, so a
 same bytes the first caller received.
 
 A ``preview``-scoped credential never touches production (:func:`check_scope`), checked here so
-that every route, and every route added later, is covered before its handler runs.
+that every route, and every route added later, is covered before its handler runs. So is a
+credential's auth-host session (:func:`check_session`): once it is revoked, or its person is
+deactivated, every request with it is ``UNAUTHENTICATED``.
 """
 
 import json
@@ -33,6 +35,7 @@ from ssc_control.api.runtime import runtime_of
 from ssc_control.audit import Actor, AppendedEvent, NewEvent, append_event
 from ssc_control.db.bind import bound_org
 from ssc_control.domain.approval_rules import RequirementKind
+from ssc_control.identity.sessions import live_session
 from ssc_control.ports import MetricsPort, NullMetricsPort
 
 JSON_MEDIA_TYPE = "application/json"
@@ -161,6 +164,16 @@ async def check_scope(request: Request, conn: AsyncConnection, principal: Princi
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "preview_scope", "change": change})
 
 
+async def check_session(conn: AsyncConnection, principal: Principal) -> None:
+    """A credential issued from an auth-host session is good only while that session is live
+    and belongs to the subject."""
+    if principal.session_id is None:
+        return
+    live = await live_session(conn, principal.org_id, principal.session_id)
+    if live is None or live.user_id != principal.subject:
+        raise Refusal(ErrorCode.UNAUTHENTICATED, evidence={"reason": "session_not_live"})
+
+
 async def _share_environment(request: Request) -> str | None:
     """The environment a share ask names, or None when the body asks for anything else."""
     try:
@@ -185,6 +198,7 @@ def _make(
         limit(request, principal)
         rt = runtime_of(request)
         async with bound_org(rt.engine, principal.org_id) as conn:
+            await check_session(conn, principal)
             await check_scope(request, conn, principal)
             yield UnitOfWork(
                 conn=conn,

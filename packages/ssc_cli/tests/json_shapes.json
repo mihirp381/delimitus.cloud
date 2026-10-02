@@ -141,6 +141,18 @@
     "name": "string",
     "state": "string"
   },
+  "LoginResult": {
+    "api_url": "string",
+    "auth_url": "string",
+    "org_id": "string",
+    "stored_in": "string",
+    "subject": "string"
+  },
+  "LogoutResult": {
+    "api_url": "string",
+    "cleared": "boolean",
+    "revoked": "boolean"
+  },
   "PromoteResult": {
     "app_id": "string",
     "build_id": "string",

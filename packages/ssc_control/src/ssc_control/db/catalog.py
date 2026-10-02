@@ -23,6 +23,9 @@ so it is in ``UNKEYED_TABLES``.
 
 Revision 0012 adds ``kill_switch_run`` (SSC-025), an ordinary org-scoped table.
 Revision 0013 adds ``timer_run`` (SSC-041), an ordinary org-scoped table.
+Revision 0014 adds ``directory_connection``, ``auth_session``, ``login_code``,
+``refresh_token``, ``device_grant`` and ``unlinked_login`` (SSC-019), all ordinary org-scoped
+tables.
 """
 
 from collections.abc import Mapping
@@ -59,6 +62,12 @@ TABLES: Final[frozenset[str]] = frozenset(
         "audit_anchor",  # SSC-012, revision 0011
         "kill_switch_run",  # SSC-025, revision 0012
         "timer_run",  # SSC-041, revision 0013
+        "directory_connection",  # SSC-019, revision 0014
+        "auth_session",  # SSC-019, revision 0014
+        "login_code",  # SSC-019, revision 0014
+        "refresh_token",  # SSC-019, revision 0014
+        "device_grant",  # SSC-019, revision 0014
+        "unlinked_login",  # SSC-019, revision 0014
     }
 )
 
@@ -121,6 +130,12 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "audit_anchor": frozenset({"SELECT", "INSERT"}),  # append-only, like the log
     "kill_switch_run": frozenset({"SELECT", "INSERT", "UPDATE"}),  # evidence, never DELETE
     "timer_run": frozenset({"SELECT", "INSERT", "UPDATE"}),  # queued -> running -> done
+    "directory_connection": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "auth_session": frozenset({"SELECT", "INSERT", "UPDATE"}),  # revoked, never deleted
+    "login_code": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
+    "refresh_token": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # pruned with expiry
+    "device_grant": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
+    "unlinked_login": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 
@@ -147,6 +162,8 @@ PII_COLUMNS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("identity_link", "subject"),
         ("audit_event", "actor_ip"),
         ("approval_request", "decision_reason"),
+        ("unlinked_login", "subject"),
+        ("unlinked_login", "email"),
     }
 )
 PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(

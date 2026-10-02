@@ -66,7 +66,13 @@ class SnapshotGrant(_Frozen):
 
 
 class SnapshotUser(_Frozen):
+    """``sessions_not_before``: Unix seconds; a gateway session issued earlier is refused (SSC-019).
+    Left out of the document when unset, so documents without it keep their bytes."""
+
     status: UserStatus
+    sessions_not_before: int | None = Field(
+        default=None, ge=0, le=MAX_VERSION, exclude_if=lambda v: v is None
+    )
 
 
 class SnapshotDoc(_Frozen):

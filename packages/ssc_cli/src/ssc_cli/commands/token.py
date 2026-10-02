@@ -1,4 +1,5 @@
-"""``ssc token set`` and ``ssc token clear``: the stopgap until ``ssc login`` (SSC-019).
+"""``ssc token set`` and ``ssc token clear``: keep a token issued another way (an agent's, or a
+break-glass one); people sign in with ``ssc login`` (SSC-019).
 
 The token is read from stdin, never from the command line, so it stays out of shell history
 and process listings. It is checked against the API before it is kept.

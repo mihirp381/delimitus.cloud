@@ -5,21 +5,27 @@ Stages, in order, stopping at the first refusal:
 
 1. Host: lower-cased, port dropped. A host that is not an app host of this cell is ``404``.
 2. Own paths under ``/.ssc/``: the login hand-back (``/.ssc/callback``) and ``/.ssc/logout``.
-   Apps never receive these paths.
+   Apps never receive these paths. The hand-back redeems the code with the login nonce this
+   host set when it sent the browser to log in, so a code is good only in that browser.
 3. Request shape, the same for every host: a declared body over the cap is ``413``; a
    cross-origin request (Fetch-Metadata) that is not a top-level ``GET``/``HEAD`` navigation is
    ``403``; a WebSocket upgrade whose ``Origin`` is not the app's own origin is ``403``.
 4. Session: no valid session cookie for this host is a redirect to login, whether or not an app
-   lives at the host.
+   lives at the host. The redirect sets a fresh login nonce cookie and sends its SHA-256.
 5. Snapshot: none loaded is ``503`` for every host (fail closed).
-6. Environment and sharing rule (``ssc_shared.access.decide``): an unknown host label and any
+6. Revocation: a session issued before the person's ``sessions_not_before`` (deactivation,
+   SSC-019) is a redirect to login with the cookie cleared.
+7. Environment and sharing rule (``ssc_shared.access.decide``): an unknown host label and any
    refusal are the same ``404`` page.
-7. Allowed: the identity note is minted, and the request goes to the environment's service.
+8. Allowed: the identity note is minted, and the request goes to the environment's service.
 
 A refusal never names the reason to the caller; ``Deny.reason`` is for the gateway's own log.
 """
 
+import base64
+import hashlib
 import re
+import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -31,10 +37,13 @@ from ssc_edge import pages
 from ssc_edge.identity_note import compose_note
 from ssc_edge.session import (
     COOKIE_NAME,
+    LOGIN_COOKIE,
     Session,
     SessionCodec,
     clear_cookie,
+    clear_login_cookie,
     cookie_values,
+    login_cookie,
     set_cookie,
 )
 from ssc_shared.access import AccessView, decide
@@ -56,6 +65,7 @@ type Reason = Literal[
     "cross_origin",
     "websocket_origin",
     "no_session",
+    "revoked",
     "bad_callback",
     "no_view",
     "unknown_host_label",
@@ -105,9 +115,20 @@ class Deny:
 
 
 class Redeemer(Protocol):
-    """Turns the auth host's one-time code into a session for ``host`` (SSC-019)."""
+    """Turns the auth host's one-time code into a session for ``host``, presenting the login
+    nonce the code is bound to (SSC-019)."""
 
-    async def redeem(self, code: str, host: str) -> Session | None: ...
+    async def redeem(self, code: str, host: str, nonce: str) -> Session | None: ...
+
+
+def binding_of(nonce: str) -> str:
+    """What the auth host is told about a login nonce: its SHA-256, base64url."""
+    digest = hashlib.sha256(nonce.encode()).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+def new_nonce() -> str:
+    return secrets.token_urlsafe(32)
 
 
 def upstream_host(environment_id: str, *, project_number: str, region: str) -> str:
@@ -161,6 +182,7 @@ class Gate:
         sign: Callable[[IdentityNote], str],
         clock: Callable[[], int],
         redeemer: Redeemer | None = None,
+        nonce: Callable[[], str] = new_nonce,
     ) -> None:
         self._cfg = config
         self._codec = codec
@@ -168,6 +190,7 @@ class Gate:
         self._sign = sign
         self._clock = clock
         self._redeemer = redeemer
+        self._nonce = nonce
 
     async def check(self, facts: Facts) -> Allow | Deny:
         host = normal_host(facts.host)
@@ -184,7 +207,7 @@ class Gate:
         session, presented = self._session(facts, host)
         if session is None:
             return self._login(host, path, cleared=presented)
-        return self._decide(host, app, session)
+        return self._decide(host, path, app, session)
 
     def _shape(self, facts: Facts, host: str) -> Deny | None:
         h = facts.headers
@@ -213,34 +236,54 @@ class Gate:
                 return session, True
         return None, bool(values)
 
-    def _login(self, host: str, path: str, *, cleared: bool) -> Deny:
-        query = urlencode({"return_to": f"https://{host}{_local_path(path)}"})
-        extra = (("set-cookie", clear_cookie()),) if cleared else ()
-        return _redirect(f"{self._cfg.auth_url}/login?{query}", "no_session", *extra)
+    def _login(self, host: str, path: str, *, cleared: bool, reason: Reason = "no_session") -> Deny:
+        nonce = self._nonce()
+        query = urlencode(
+            {
+                "org": self._cfg.org_id,
+                "return_to": f"https://{host}{_local_path(path)}",
+                "binding": binding_of(nonce),
+            }
+        )
+        extra = [("set-cookie", login_cookie(nonce))]
+        if cleared:
+            extra.append(("set-cookie", clear_cookie()))
+        return _redirect(f"{self._cfg.auth_url}/login?{query}", reason, *extra)
 
     async def _own(self, own: str, path: str, host: str, facts: Facts) -> Deny:
         if own == CALLBACK_PATH and facts.method in SAFE_METHODS:
             query = parse_qs(urlsplit(path).query)
             code = (query.get("code") or [""])[0]
+            nonces = cookie_values(facts.headers.get("cookie", ""), LOGIN_COOKIE)
             session = None
-            if code and self._redeemer is not None:
-                session = await self._redeemer.redeem(code, host)
+            if code and nonces and self._redeemer is not None:
+                session = await self._redeemer.redeem(code, host, nonces[-1])
             if session is None or session.org != self._cfg.org_id:
-                return self._login(host, "/", cleared=False)
+                return _page(
+                    400, pages.LOGIN_FAILED, "bad_callback", ("set-cookie", clear_login_cookie())
+                )
             value = self._codec.seal(session, host)
             max_age = max(0, session.exp - self._clock())
             nxt = _local_path((query.get("next") or ["/"])[0])
-            return _redirect(nxt, "signed_in", ("set-cookie", set_cookie(value, max_age=max_age)))
+            return _redirect(
+                nxt,
+                "signed_in",
+                ("set-cookie", set_cookie(value, max_age=max_age)),
+                ("set-cookie", clear_login_cookie()),
+            )
         if own == LOGOUT_PATH and facts.headers.get("sec-fetch-site", "none") in _SAME_ORIGIN:
             return _redirect(
                 f"{self._cfg.auth_url}/logout", "signed_out", ("set-cookie", clear_cookie())
             )
         return not_found("unknown_host_label")
 
-    def _decide(self, host: str, app: AppHost, session: Session) -> Allow | Deny:
+    def _decide(self, host: str, path: str, app: AppHost, session: Session) -> Allow | Deny:
         view = self._view()
         if view is None:
             return _page(503, pages.UNAVAILABLE, "no_view")
+        not_before = view.not_before.get(session.sub)
+        if not_before is not None and session.iat < not_before:
+            return self._login(host, path, cleared=True, reason="revoked")
         label = host.split(".", 1)[0]
         env_id = view.hosts.get(label)
         if env_id is None:

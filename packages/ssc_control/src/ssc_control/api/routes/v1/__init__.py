@@ -16,6 +16,7 @@ from ssc_control.api.routes.v1.deployments import router as deployments_router
 from ssc_control.api.routes.v1.grants import router as grants_router
 from ssc_control.api.routes.v1.groups import router as groups_router
 from ssc_control.api.routes.v1.inventory import router as inventory_router
+from ssc_control.api.routes.v1.logins import router as logins_router
 from ssc_control.api.routes.v1.promote import router as promote_router
 from ssc_control.api.routes.v1.schedules import router as schedules_router
 from ssc_control.api.routes.v1.users import router as users_router
@@ -35,3 +36,4 @@ router.include_router(groups_router)
 router.include_router(inventory_router)
 router.include_router(schedules_router)
 router.include_router(promote_router)
+router.include_router(logins_router)

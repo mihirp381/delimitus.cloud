@@ -27,4 +27,9 @@ NOT_FOUND: Final = _page(
 )
 REFUSED: Final = _page("Request refused", "This request was refused.")
 TOO_LARGE: Final = _page("Request too large", "The request body is too large.")
+LOGIN_FAILED: Final = _page(
+    "Sign-in did not finish",
+    "This sign-in link has expired or was opened in another browser. Go"
+    " back to the app and try again.",
+)
 UNAVAILABLE: Final = _page("Unavailable", "This app cannot be reached right now. Try again soon.")

@@ -21,6 +21,12 @@ Prefix = Literal[
     "bdl",  # source bundle
     "bld",  # build
     "kil",  # kill-switch run
+    "dcn",  # directory connection (WorkOS organisation, directory, SSO connections)
+    "ses",  # auth-host sign-in session
+    "lgc",  # one-time login code
+    "rft",  # command-line refresh token
+    "dvg",  # device authorisation grant
+    "ulg",  # unlinked login
 ]
 PREFIXES: Final[tuple[str, ...]] = get_args(Prefix)
 _ALPHABET: Final = "abcdefghijklmnopqrstuvwxyz0123456789"
