@@ -92,15 +92,22 @@ def test_the_registries_use_the_cell_key(cell_a: list[Declared]) -> None:
     assert all(r["kmsKeyName"] == "key-registry-id" for r in repos)
 
 
-def test_the_network_is_ipv4_with_a_fixed_ip_per_nat(cell_a: list[Declared]) -> None:
+def test_the_network_is_ipv4_with_one_fixed_ip_for_the_gateway(cell_a: list[Declared]) -> None:
     subnets = {
         d.inputs["name"]: d.inputs for d in cell_a if d.type == "gcp:compute/subnetwork:Subnetwork"
     }
     assert subnets["apps"]["ipCidrRange"] == "10.20.0.0/22"
     assert subnets["apps"]["stackType"] == "IPV4_ONLY"
-    nats = [d.inputs for d in cell_a if d.type == "gcp:compute/routerNat:RouterNat"]
-    assert sorted(n["name"] for n in nats) == ["nat-apps", "nat-gateway"]
-    assert all(n["natIpAllocateOption"] == "MANUAL_ONLY" and len(n["natIps"]) == 1 for n in nats)
+    nat = one(cell_a, "gcp:compute/routerNat:RouterNat").inputs
+    assert nat["natIpAllocateOption"] == "MANUAL_ONLY"
+    assert len(nat["natIps"]) == 1
+    assert [s["name"] for s in nat["subnetworks"]] == ["subnet-gateway-id"]
+    assert len([d for d in cell_a if d.type == "gcp:compute/address:Address"]) == 1
+
+
+def test_the_database_is_a_zonal_shared_core_instance(cell_a: list[Declared]) -> None:
+    settings = one(cell_a, "gcp:sql/databaseInstance:DatabaseInstance").inputs["settings"]
+    assert (settings["tier"], settings["availabilityType"]) == ("db-g1-small", "ZONAL")
 
 
 def test_destroy_leaves_the_sql_peering_to_the_project(cell_a: list[Declared]) -> None:

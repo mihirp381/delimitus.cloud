@@ -44,7 +44,7 @@ GOOGLE_PRIVATE_RANGE: Final = "199.36.153.8/30"
 GATEWAY_TAG: Final = "ssc-gateway"
 AGENT_MAX: Final = 3
 KEY_ROTATION: Final = "7776000s"
-SQL_TIER: Final = "db-custom-1-3840"
+SQL_TIER: Final = "db-g1-small"  # shared core, zonal: see decision 022, 2026-10-01
 PLACEHOLDER_IMAGE: Final = "us-docker.pkg.dev/cloudrun/container/hello"
 GOOGLE_DNS_PASSTHRU: Final = (
     "googleapis.com.",
@@ -356,7 +356,6 @@ class Cell:
         self._egress("egress-google-private", 1000, ranges=[GOOGLE_PRIVATE_RANGE])
         self._egress("egress-gateway", 1000, ranges=["0.0.0.0/0"], tags=[GATEWAY_TAG])
         self._private_google_dns()
-        self.nat_ips: dict[str, gcp.compute.Address] = {}
         router = gcp.compute.Router(
             "router",
             project=self.pid,
@@ -365,33 +364,32 @@ class Cell:
             network=self.vpc.id,
             opts=self._o(),
         )
-        for name, subnet in (("apps", self.apps_subnet), ("gateway", self.gateway_subnet)):
-            ip = gcp.compute.Address(
-                f"nat-ip-{name}",
-                project=self.pid,
-                name=f"nat-{name}",
-                region=n.REGION,
-                address_type="EXTERNAL",
-                network_tier="PREMIUM",
-                opts=self._o(),
-            )
-            gcp.compute.RouterNat(
-                f"nat-{name}",
-                project=self.pid,
-                name=f"nat-{name}",
-                region=n.REGION,
-                router=router.name,
-                nat_ip_allocate_option="MANUAL_ONLY",
-                nat_ips=[ip.self_link],
-                source_subnetwork_ip_ranges_to_nat="LIST_OF_SUBNETWORKS",
-                subnetworks=[
-                    gcp.compute.RouterNatSubnetworkArgs(
-                        name=subnet.id, source_ip_ranges_to_nats=["ALL_IP_RANGES"]
-                    )
-                ],
-                opts=self._o(),
-            )
-            self.nat_ips[name] = ip
+        # Apps reach the internet only through the gateway, so only its subnet is NATed.
+        self.nat_ip = gcp.compute.Address(
+            "nat-ip-gateway",
+            project=self.pid,
+            name="nat-gateway",
+            region=n.REGION,
+            address_type="EXTERNAL",
+            network_tier="PREMIUM",
+            opts=self._o(),
+        )
+        gcp.compute.RouterNat(
+            "nat-gateway",
+            project=self.pid,
+            name="nat-gateway",
+            region=n.REGION,
+            router=router.name,
+            nat_ip_allocate_option="MANUAL_ONLY",
+            nat_ips=[self.nat_ip.self_link],
+            source_subnetwork_ip_ranges_to_nat="LIST_OF_SUBNETWORKS",
+            subnetworks=[
+                gcp.compute.RouterNatSubnetworkArgs(
+                    name=self.gateway_subnet.id, source_ip_ranges_to_nats=["ALL_IP_RANGES"]
+                )
+            ],
+            opts=self._o(),
+        )
 
     def _subnet(self, name: str, cidr: str) -> gcp.compute.Subnetwork:
         return gcp.compute.Subnetwork(
@@ -477,7 +475,7 @@ class Cell:
             settings=gcp.sql.DatabaseInstanceSettingsArgs(
                 tier=SQL_TIER,
                 edition="ENTERPRISE",
-                availability_type="REGIONAL",
+                availability_type="ZONAL",
                 deletion_protection_enabled=not cfg.disposable,
                 data_api_access="ALLOW_DATA_API",
                 ip_configuration=gcp.sql.DatabaseInstanceSettingsIpConfigurationArgs(
@@ -933,7 +931,7 @@ class Cell:
             self.project_.number.apply(lambda p: n.run_url("ssc-cell-agent", p)),
         )
         pulumi.export("gateway_ilb_ip", self.lb.ip_address)
-        pulumi.export("nat_ips", {k: ip.address for k, ip in self.nat_ips.items()})
+        pulumi.export("nat_ip", self.nat_ip.address)
         pulumi.export(
             "service_accounts",
             {
