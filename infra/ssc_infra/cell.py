@@ -110,11 +110,16 @@ def read_config(stack: str) -> CellConfig:
         label=n.label_of_stack(stack),
         stage=stage,
         probe=config.get_bool("probe") or False,
-        gateway_min=config.get_int("gateway_min") or 2,
-        gateway_max=config.get_int("gateway_max") or 20,
+        gateway_min=_int_or(config.get_int("gateway_min"), 2),
+        gateway_max=_int_or(config.get_int("gateway_max"), 20),
         agent_image=config.get("agent_image"),
         probe_digest=config.get("probe_digest"),
     )
+
+
+def _int_or(value: int | None, default: int) -> int:
+    """``value`` when set, 0 included."""
+    return default if value is None else value
 
 
 def app_condition(kind: str) -> gcp.projects.IAMMemberConditionArgs:

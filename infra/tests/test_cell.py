@@ -132,6 +132,13 @@ def test_the_gateway_is_internal_always_on_and_behind_the_load_balancer(
     assert rule["loadBalancingScheme"] == "INTERNAL_MANAGED"
 
 
+def test_a_cell_can_run_its_gateway_from_zero() -> None:
+    declared = run(naming.cell_stack("testcell07"), {"gateway_min": "0"})
+    gw = one(declared, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
+    assert gw["template"]["scaling"]["minInstanceCount"] == 0
+    assert gw["template"]["containers"][0]["resources"]["cpuIdle"] is True
+
+
 def test_the_cell_agent_scales_to_zero_with_a_pinned_ceiling(cell_a: list[Declared]) -> None:
     agent = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     assert agent["template"]["scaling"]["minInstanceCount"] == 0
