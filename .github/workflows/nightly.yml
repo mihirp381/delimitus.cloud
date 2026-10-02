@@ -4,9 +4,10 @@ name: nightly
 # becomes ssc-nightly (decision 022) only for this file on main; it may mint the control plane's
 # ID tokens for the cell agent, run the probe job, and read that job's logs.
 
+# The schedule is off while no probe cell exists (`c-probecell01` destroyed 2026-10-02 to stop its
+# cost). Deleted project IDs are not reused, so restore `schedule: - cron: "17 6 * * *"` after
+# creating a probe cell under a new label and updating the SSC_PROBE_* repo variables.
 on:
-  schedule:
-    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
