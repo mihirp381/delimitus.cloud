@@ -15,6 +15,7 @@ from edge_world import (
     NOW,
     NOWHERE_HOST,
     ORG,
+    PAY,
     PAY_HOST,
     PROD,
     FakeRedeemer,
@@ -419,6 +420,38 @@ async def test_steady_traffic_waits_at_most_the_short_wait(tmp_path: Path) -> No
     await snap.aclose()
 
 
+@pytest.mark.parametrize(
+    ("gap", "read_takes"),
+    [(0.25, 0.0), (1.0, 0.0), (1.75, 0.0), (1.0, FRESH_WAIT * 2), (1.75, FRESH_WAIT * 2)],
+)
+async def test_a_removed_grant_is_refused_within_the_recheck_and_one_gap(
+    tmp_path: Path, world: World, gap: float, read_takes: float
+) -> None:
+    """SSC-021: an awake gateway, a request every ``gap`` seconds, the grant removed just after a
+    read confirmed the view. Reads slower than ``FRESH_WAIT`` cost at most one more gap."""
+    store, clock = SlowStore(tmp_path), Clock()
+    await publish(store, 1)
+    snap = on_demand(store, clock)
+    assert await snap.first_read()
+    gate = gate_for(
+        config(), world.keyring, view=snap.view, clock=lambda: world.now, refresh=snap.refresh
+    )
+    cookie = world.cookie(session(), PAY_HOST)
+    paying = Facts(method="GET", host=PAY_HOST, path="/", headers={"cookie": cookie})
+    assert isinstance(await gate.check(paying), Allow)
+    await publish(store, 2, grants={**snapshot()["grants"], PAY: []})
+    store.delay = read_takes
+    removed_at = clock.t
+    while isinstance(outcome := await gate.check(paying), Allow):
+        await asyncio.sleep(read_takes)
+        clock.t += gap
+    assert isinstance(outcome, Deny) and outcome.reason == "not_granted"
+    took = clock.t - removed_at
+    assert took <= RECHECK_SECONDS + (2 if read_takes > FRESH_WAIT else 1) * gap
+    assert took + read_takes < 5
+    await snap.aclose()
+
+
 def dev_env(raw: bytes, **changes: str) -> dict[str, str]:
     return env(
         SSC_ENV="test",
@@ -427,6 +460,7 @@ def dev_env(raw: bytes, **changes: str) -> dict[str, str]:
         SSC_GATEWAY_KMS_KEY="",
         SSC_APPS_DOMAIN="apps.test",
         SSC_IDENTITY_ISSUER=f"https://keys.example.test/{LABEL}",
+        SSC_STREAM_PORT="0",
         **changes,
     )
 
@@ -453,6 +487,15 @@ def test_the_gateway_reads_the_snapshot_before_its_first_request(tmp_path: Path)
         assert r.status_code == 200, r.text
         assert r.headers[UPSTREAM_HEADER].startswith(service_name(PROD))
         assert len(store.reads) == 2
+
+
+def test_a_gateway_started_after_a_grant_went_refuses_its_first_request(tmp_path: Path) -> None:
+    world, store, test_client = started(tmp_path, published=True)
+    asyncio.run(publish(store, 2, grants={**snapshot()["grants"], PAY: []}))
+    with test_client as c:
+        r = c.get("/authz/", headers={"host": PAY_HOST, "cookie": world.cookie(host=PAY_HOST)})
+        assert r.status_code == 404, r.text
+        assert UPSTREAM_HEADER not in r.headers
 
 
 def test_a_gateway_that_cannot_read_the_snapshot_at_start_refuses_everything(

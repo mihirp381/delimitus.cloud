@@ -68,7 +68,15 @@ PSA_PREFIX: Final = 20
 GOOGLE_PRIVATE: Final = ("199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11")
 GOOGLE_PRIVATE_RANGE: Final = "199.36.153.8/30"
 GATEWAY_TAG: Final = "ssc-gateway"
-AGENT_MAX: Final = 3
+AGENT_MAX: Final = 1
+AGENT_CONCURRENCY: Final = 200
+AGENT_TIMEOUT: Final = "300s"
+LOG_BUCKET: Final = "_Default"
+LOG_VIEWS: Final = {
+    "ssc-run": 'resource.type = "cloud_run_revision"',
+    "ssc-build": 'resource.type = "build"',
+}
+LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
 INTAKE_MAX: Final = 3
 INTAKE_COMMAND: Final = ("python", "-m", "ssc_agent.intake")
 DATAGW_MAX: Final = 10
@@ -331,6 +339,7 @@ class Cell:
         self.registry()
         self.dns_policy()
         self.bucket()
+        self.log_views()
         self.gateway()
         self.cell_agent()
         self.secret_intake()
@@ -1000,6 +1009,33 @@ class Cell:
                 name, bucket=self.bucket_.name, role=role, member=member, opts=self._o()
             )
 
+    def log_views(self) -> None:
+        """The agent's only window on the cell's logs (SSC-024): one view per resource type on
+        ``_Default``, since a view's filter may not hold ``OR``, and ``logging.viewAccessor`` on
+        those two views by name. The cell folders set the default log location to the region
+        (``platform._log_location``), so ``_Default`` is made there with the project."""
+        bucket = log_bucket(self.cfg.project_id)
+        self.log_view_names = [f"{bucket}/views/{view}" for view in LOG_VIEWS]
+        for view, log_filter in LOG_VIEWS.items():
+            gcp.logging.LogView(
+                f"log-view-{view}",
+                name=view,
+                bucket=bucket,
+                location=n.REGION,
+                description="What the cell agent reads for app logs and health (SSC-024).",
+                filter=log_filter,
+                opts=self._o(),
+            )
+        self._project_role(
+            "agent-log-views",
+            self.agent_sa.member,
+            "roles/logging.viewAccessor",
+            gcp.projects.IAMMemberConditionArgs(
+                title="only the cell's log views",
+                expression=" || ".join(f'resource.name == "{v}"' for v in self.log_view_names),
+            ),
+        )
+
     def _run(  # noqa: PLR0913  (keyword-only)
         self,
         name: str,
@@ -1311,7 +1347,10 @@ class Cell:
         plane's API and worker (SSC-064), with an ID token whose audience is that host's URL
         (SSC-095). With both build images set it runs builds in the cell's Cloud Build as
         ``ssc-build`` (SSC-015); with the ``database`` flag it makes app databases on the cell's
-        instance (SSC-040)."""
+        instance (SSC-040). It reads app logs through the two log views (SSC-024) and keeps
+        under Cloud Logging's read quota per instance, so it runs one; its concurrency holds the
+        40 follows the agent allows at once beside every other call, and its timeout outlasts a
+        20 s follow and a 240 s traffic switch."""
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
             "SSC_CELL_REGION": n.REGION,
@@ -1319,6 +1358,7 @@ class Cell:
             "SSC_CELL_SUBNETWORK": self.apps_subnet.id,
             "SSC_IMAGE_REPOSITORY": self.app_images,
             "SSC_GATEWAY_SA": self.gateway_sa.email,
+            LOG_VIEW_ENV: ",".join(self.log_view_names),
         }
         tools, frontend = self.cfg.build_tools_image, self.cfg.build_frontend_image
         if tools and frontend:
@@ -1337,6 +1377,8 @@ class Cell:
             instances=(0, AGENT_MAX),
             image=self.cfg.agent_image,
             env=env if self.cfg.agent_image else None,
+            timeout=AGENT_TIMEOUT,
+            concurrency=AGENT_CONCURRENCY,
             audiences=[n.agent_url(self.cfg.label)],
         )
         gcp.compute.SubnetworkIAMMember(
@@ -1625,6 +1667,11 @@ def build(stack: str) -> None:
 def tlds() -> list[str]:
     lines = TLDS_FILE.read_text(encoding="ascii").splitlines()
     return [line.lower() for line in lines if line and not line.startswith("#")]
+
+
+def log_bucket(project_id: str) -> str:
+    """The project's ``_Default`` log bucket, in the region its folder's log setting names."""
+    return f"projects/{project_id}/locations/{n.REGION}/buckets/{LOG_BUCKET}"
 
 
 def edge_address(host: int) -> str:

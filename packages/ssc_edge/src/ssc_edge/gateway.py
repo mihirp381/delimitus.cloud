@@ -1,10 +1,10 @@
 """The gateway container's entry point: ``python -m ssc_edge.gateway`` (SSC-018, decision 023).
 
-Starts the authoriser (``ssc_edge.server``) on loopback and waits until it answers, which is
-after the keyring is loaded, then starts Envoy on ``PORT``. Cloud Run's startup probe opens
-``PORT``, so an instance takes traffic only once both run. When either process exits, the other
-is stopped and the container exits non-zero, so Cloud Run replaces the instance rather than
-running Envoy without its authoriser.
+Starts the authoriser (``ssc_edge.server``, with the stream relay) on loopback and waits until
+it answers, which is after the keyring is loaded, then starts Envoy on ``PORT``. Cloud Run's
+startup probe opens ``PORT``, so an instance takes traffic only once both run. When either
+process exits, the other is stopped and the container exits non-zero, so Cloud Run replaces the
+instance rather than running Envoy without its authoriser.
 """
 
 import json
@@ -59,9 +59,11 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO)
     port = int(os.environ.get("PORT", "8080"))
     authz_port = int(os.environ.get("SSC_AUTHZ_PORT", "9001"))
+    stream_port = int(os.environ.get("SSC_STREAM_PORT", "9002"))
     envoy_bin = os.environ.get("SSC_ENVOY_BIN", "envoy")
     config = Path(tempfile.mkdtemp(prefix="ssc-envoy-")) / "envoy.json"
-    config.write_text(json.dumps(render(EnvoyConfig(port=port, authz_port=authz_port))))
+    cfg = EnvoyConfig(port=port, authz_port=authz_port, stream_port=stream_port)
+    config.write_text(json.dumps(render(cfg)))
 
     authz = subprocess.Popen([sys.executable, "-m", "ssc_edge.server"])  # noqa: S603
     stopping = False

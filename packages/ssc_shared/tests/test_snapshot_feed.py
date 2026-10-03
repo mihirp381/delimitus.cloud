@@ -104,6 +104,24 @@ async def test_fresh_means_a_poll_confirmed_the_view_recently(store: FsBlobStore
     assert not feed.fresh(300) and feed.version == 1
 
 
+async def test_a_slow_poll_confirms_the_view_as_of_when_it_asked(
+    tmp_path: Path, store: FsBlobStore
+) -> None:
+    now = [100.0]
+
+    class SlowStore(FsBlobStore):
+        def get(self, key: str) -> Any:
+            now[0] += 5
+            return super().get(key)
+
+    signer = UrlSigner({"k1": SIGNING_KEY}, active="k1", clock=SystemClock())
+    slow = SlowStore(tmp_path, signer=signer, base_url="http://blobs.test")
+    feed = SnapshotFeed(slow, ViewHolder(ORG), monotonic=lambda: now[0])
+    await publish(store, 1)
+    await feed.poll_once()
+    assert feed.last_ok_at == 100.0 and now[0] == 110.0
+
+
 async def test_an_older_pointer_changes_nothing(store: FsBlobStore) -> None:
     feed = feed_for(store)
     await publish(store, 2)

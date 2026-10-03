@@ -9,14 +9,22 @@ Ticket "done when" checks:
         test_a_session_from_before_a_revocation_is_sent_back_to_login)
   * login with the Okta and Google Workspace tenants: the rules here; the live tenants are the
         runbook in docs/runbooks/ssc-019-login.md
+
+SSC-021 "a user removed from a group loses access on the next request after the snapshot update
+and their open session is dropped", from the directory to the gateway ->
+test_removal_from_a_group_reaches_the_gateway_and_closes_the_open_stream
 """
 
+import asyncio
 import secrets
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
 from fake_workos import FakeWorkOS
 from sqlalchemy import text
@@ -24,13 +32,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import Dsns
 
 from ssc_contracts.audit import ActorKind, AuditAction
+from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor
 from ssc_control.db import NewOrg, bound_org, create_org, make_engine
 from ssc_control.identity import connections, join, sessions, sync, tokens
 from ssc_control.identity.connections import ConnectError, directory_issuer
 from ssc_control.identity.rules import JoinRule, SsoProfile
-from ssc_control.snapshot.compiler import compile_document
-from ssc_shared.access import AccessView, decide
+from ssc_control.snapshot.compiler import compile_document, point_latest, publish
+from ssc_control.snapshot.service import compile_lock
+from ssc_edge.gate import STREAM_HEADER, Allow, Deny, Facts, GateConfig
+from ssc_edge.keys import new_keyring, parse_keyring
+from ssc_edge.server import RECHECK_SECONDS, OnDemandView, gate_for
+from ssc_edge.session import Session, SessionCodec, new_sid
+from ssc_edge.streams import WATCH_SECONDS, Streams
+from ssc_shared.access import AccessView, ViewHolder, decide
+from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
+from ssc_shared.clock import SystemClock
+from ssc_shared.snapshot_feed import SnapshotFeed
 
 OPERATOR = Actor(kind=ActorKind.OPERATOR, id="op_test")
 FOUNDER_UID, FOUNDER_IDP = "directory_user_01FOUNDER", "00ufounder"
@@ -405,6 +423,133 @@ async def test_deactivation_reaches_the_snapshot(world: World) -> None:
     view = AccessView.from_document(doc)
     assert bob not in view.active_users and bob in view.not_before
     assert decide(view, "env_" + "x" * 20, bob).allowed is False
+
+
+async def echo_app(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    await reader.readuntil(b"\r\n\r\n")
+    writer.write(b"HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\n\r\n")
+    while chunk := await reader.read(1024):
+        writer.write(chunk)
+    writer.close()
+
+
+async def test_removal_from_a_group_reaches_the_gateway_and_closes_the_open_stream(
+    world: World, dsns: Dsns, tmp_path: Path
+) -> None:
+    fin = "directory_group_01FIN"
+    world.wo.user(BOB_UID, BOB_IDP, "bob@example.com")
+    world.wo.group(fin, "Finance", BOB_UID)
+    await world.tick()
+    bob = (await world.person(BOB_IDP))[0]
+    ((group,),) = await world.rows(
+        "select id from ssc.user_group where org_id = :org and directory_ref = :ref", ref=fin
+    )
+    ((label,),) = await world.rows("select cell_label from ssc.org where id = :org")
+    app, prod = new_id("app"), new_id("env")
+    for sql in (
+        "insert into ssc.app (id, org_id, slug, owner_user_id) values (:app, :org, 'ledger', :by)",
+        "insert into ssc.environment (id, org_id, app_id, name) values (:env, :org, :app, 'prod')",
+        "insert into ssc.app_grant (id, org_id, environment_id, role, subject_kind, group_id, "
+        "granted_by_user_id) values (:gnt, :org, :env, 'user', 'group', :grp, :by)",
+    ):
+        await world.rows(sql, app=app, env=prod, gnt=new_id("gnt"), grp=group, by=world.founder)
+    signer = UrlSigner({"k1": secrets.token_bytes(32)}, active="k1", clock=SystemClock())
+    blob = FsBlobStore(tmp_path, signer=signer, base_url="http://blobs.test/v1/blobs/")
+
+    async def compile_and_point() -> None:
+        async with bound_org(world.engine, world.org) as conn:
+            await publish(conn, world.org, blob, at=datetime.now(UTC))
+        await point_latest(world.engine, world.org, blob)
+
+    await compile_and_point()
+    clock = [1000.0]
+    holder = ViewHolder(world.org)
+    snap = OnDemandView(
+        SnapshotFeed(blob, holder, monotonic=lambda: clock[0]), holder, max_stale=300
+    )
+    assert await snap.first_read()
+    keyring = parse_keyring(new_keyring())
+    config = GateConfig(
+        org_id=world.org,
+        cell_label=str(label),
+        apps_domain="apps.test",
+        auth_url="https://auth.example.test",
+        issuer=f"https://keys.example.test/{label}",
+        project_number="123456789012",
+        region="us-central1",
+        max_body_bytes=1024,
+    )
+    gate = gate_for(config, keyring, view=snap.view, refresh=snap.refresh)
+    host, now = f"ledger.{label}.apps.test", int(time.time())
+    who = Session(
+        sid=new_sid(), sub=bob, org=world.org, name="Bob", email="bob@example.com",
+        iat=now - 60, exp=now + 3600,
+    )  # fmt: skip
+    sealed = SessionCodec(keyring.session, active=keyring.session_kid).seal(who, host)
+    ws = {"upgrade": "websocket", "connection": "upgrade", "origin": f"https://{host}"}
+    facts = Facts(
+        method="GET",
+        host=host,
+        path="/ws",
+        headers={"cookie": f"__Host-ssc-session={sealed}", **ws},
+    )
+    allowed = await gate.check(facts)
+    assert isinstance(allowed, Allow) and allowed.user == bob
+
+    app_server = await asyncio.start_server(echo_app, "127.0.0.1", 0)
+    app_port = app_server.sockets[0].getsockname()[1]
+
+    async def dial(_: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        return await asyncio.open_connection("127.0.0.1", app_port)
+
+    streams = Streams(lambda: gate, dial=dial, refresh=snap.refresh)
+    relay = await streams.serve("127.0.0.1", 0)
+    try:
+        reader, writer = await asyncio.open_connection(
+            "127.0.0.1", relay.sockets[0].getsockname()[1]
+        )
+        writer.write(
+            f"GET /ws HTTP/1.1\r\nhost: {allowed.upstream}\r\n"
+            f"{STREAM_HEADER}: {streams.admit(allowed)}\r\n\r\n".encode()
+        )
+        assert (await reader.readuntil(b"\r\n\r\n")).startswith(b"HTTP/1.1 101 ")
+        writer.write(b"ping")
+        assert await reader.readexactly(4) == b"ping"
+
+        with psycopg.connect(dsns.superuser) as conn:
+            conn.execute("set search_path to procrastinate")
+            conn.execute(
+                "delete from procrastinate_jobs where queueing_lock = %s",
+                (compile_lock(world.org),),
+            )
+        world.wo.members[fin].discard(BOB_UID)
+        world.wo.event(
+            "dsync.group.user_removed", {"directory_id": world.wo.directory, "group": {"id": fin}}
+        )
+        await world.tick()
+        left = await world.rows(
+            "select 1 from ssc.group_member where org_id = :org and user_id = :bob", bob=bob
+        )
+        assert left == []
+        with psycopg.connect(dsns.superuser) as conn:
+            queued = conn.execute(
+                "select status from procrastinate.procrastinate_jobs where queueing_lock = %s",
+                (compile_lock(world.org),),
+            ).fetchall()
+        assert queued == [("todo",)]
+        await compile_and_point()
+        clock[0] += RECHECK_SECONDS + 0.1
+        started = time.monotonic()
+        assert await asyncio.wait_for(reader.read(), WATCH_SECONDS + 2) == b""
+        assert time.monotonic() - started <= WATCH_SECONDS + 0.5
+        assert not streams.open
+        refused = await gate.check(facts)
+        assert isinstance(refused, Deny) and refused.reason == "not_granted"
+    finally:
+        await streams.aclose()
+        relay.close()
+        app_server.close()
+        await snap.aclose()
 
 
 # ── joining a login to a person ──────────────────────────────────────────────

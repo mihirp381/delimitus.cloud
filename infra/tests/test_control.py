@@ -48,6 +48,17 @@ RELEASE = {
     "cell_jwks": CELL_JWKS,
     "deployer_image": DEPLOYER_IMAGE,
 }
+WORKER_CELL = {
+    "SSC_RUNTIME_DRIVER": "cell_agent",
+    "SSC_BUILD_DRIVER": "cell_agent",
+    "SSC_CELL_AGENT_URL": naming.agent_url(LABEL),
+    "SSC_IDENTITY_JWKS": CELL_JWKS,
+    "SSC_IDENTITY_ISSUER": f"https://keys.delimitus.com/{LABEL}",
+}
+API_CELL = {
+    "SSC_CELL_AGENT_URL": naming.agent_url(LABEL),
+    "SSC_SECRET_INTAKE_URL": naming.intake_url(LABEL),
+}
 SERVICE = "gcp:cloudrunv2/service:Service"
 POOL = "gcp:cloudrunv2/workerPool:WorkerPool"
 JOB = "gcp:cloudrunv2/job:Job"
@@ -205,8 +216,10 @@ def test_the_ticket_secrets_go_only_where_they_are_read(released: list[Declared]
 
 
 def test_every_setting_of_the_api_is_wired(released: list[Declared]) -> None:
+    """The cell's settings go to the public stage alone, ``prod`` here (test below)."""
     for stage in naming.STAGES:
         plain, secrets = _env(_workload(released, SERVICE, stage, "ssc-api"))
+        cell = API_CELL if stage == "prod" else {}
         assert plain == {
             "SSC_ENV": stage,
             "SSC_API_ISSUER": "https://auth.delimitus.com",
@@ -217,13 +230,13 @@ def test_every_setting_of_the_api_is_wired(released: list[Declared]) -> None:
             "SSC_BLOB_BACKEND": "gcs",
             "SSC_BLOB_BUCKET": f"ssc-control-{stage}-blobs",
             "SSC_BLOB_SIGNER": email(naming.CONTROL_SA, stage),
-            "SSC_CELL_AGENT_URL": naming.agent_url(LABEL),
-            "SSC_SECRET_INTAKE_URL": naming.intake_url(LABEL),
+            **cell,
         }
         assert secrets == {"SSC_DATABASE_DSN", "SSC_METRICS_KEY"}
 
 
 def test_every_setting_of_the_worker_is_wired(released: list[Declared]) -> None:
+    """The cell's settings go to the public stage alone, ``prod`` here (test below)."""
     for stage in naming.STAGES:
         plain, secrets = _env(_workload(released, POOL, stage, "ssc-worker"))
         assert plain == {
@@ -236,11 +249,7 @@ def test_every_setting_of_the_worker_is_wired(released: list[Declared]) -> None:
             "SSC_CELL_BUCKET_TEMPLATE": "ssc-c-{cell}-cell",
             "SSC_CELL_DEPLOYER": "cloud_run",
             "SSC_CELL_DEPLOYER_JOB": naming.deployer_job(),
-            "SSC_RUNTIME_DRIVER": "cell_agent",
-            "SSC_BUILD_DRIVER": "cell_agent",
-            "SSC_CELL_AGENT_URL": naming.agent_url(LABEL),
-            "SSC_IDENTITY_JWKS": CELL_JWKS,
-            "SSC_IDENTITY_ISSUER": f"https://keys.delimitus.com/{LABEL}",
+            **(WORKER_CELL if stage == "prod" else {}),
         }
         assert secrets == {
             "SSC_DATABASE_DSN",
@@ -269,6 +278,33 @@ def test_every_setting_of_the_auth_host_is_wired(released: list[Declared]) -> No
             "SSC_AUTH_SIGNING_KEY",
             "SSC_AUTH_STATE_KEY",
         }
+
+
+@pytest.mark.parametrize(("public", "other"), [("staging", "prod"), ("prod", "staging")])
+def test_only_the_stage_the_cells_trust_is_given_the_cell(
+    public: naming.Stage, other: naming.Stage
+) -> None:
+    """A cell grants its agent and bucket to ``control_public_stage``'s accounts alone
+    (``cell.control_for``), so another stage's API and worker would only be refused."""
+    declared = run(naming.PLATFORM_STACK, RELEASE | {"public_stage": public})
+    api, _ = _env(_workload(declared, SERVICE, public, "ssc-api"))
+    worker, _ = _env(_workload(declared, POOL, public, "ssc-worker"))
+    assert API_CELL.items() <= api.items()
+    assert WORKER_CELL.items() <= worker.items()
+    api, _ = _env(_workload(declared, SERVICE, other, "ssc-api"))
+    worker, _ = _env(_workload(declared, POOL, other, "ssc-worker"))
+    assert not set(API_CELL) & set(api)
+    assert not set(WORKER_CELL) & set(worker)
+    assert worker["SSC_CELL_DEPLOYER"] == "cloud_run"
+
+
+def test_with_no_public_stage_each_stage_is_given_the_cell() -> None:
+    cfg = control.ControlConfig(
+        stages=naming.STAGES, cell_label=LABEL, cell_jwks=CELL_JWKS, public=None
+    )
+    for stage in naming.STAGES:
+        assert API_CELL.items() <= control.api_env(cfg, stage, "signer").items()
+        assert WORKER_CELL.items() <= control.worker_env(cfg, stage, "signer").items()
 
 
 def test_without_a_cell_or_the_deployer_the_worker_runs_none_of_them() -> None:
