@@ -207,6 +207,65 @@ def test_a_bad_environment_timeout_is_refused(seconds: object) -> None:
         AccessView.from_document(json.dumps(doc(environments=envs)))
 
 
+SALES = "con_" + "s" * 20
+
+
+def connections(**changes: Any) -> dict[str, Any]:
+    sales: dict[str, Any] = {
+        "connection_id": SALES,
+        "status": "active",
+        "limits": {"max_rows": 0, "timeout_ms": 5000},
+        "grants": {PROD: {"limits": {"daily_rows": 10}}, PREVIEW: {}},
+    }
+    sales.update(changes)
+    return {"sales": sales}
+
+
+def test_connections_are_optional_and_a_document_without_them_keeps_its_bytes() -> None:
+    plain = doc()
+    parsed = SnapshotDoc.model_validate(plain)
+    assert parsed.connections is None
+    assert canonical_bytes(parsed.model_dump(mode="json")) == canonical_bytes(plain)
+    assert dict(view().connections) == {}
+
+
+def test_connections_reach_the_view_and_round_trip_with_absent_caps_left_out() -> None:
+    raw = doc(connections=connections())
+    parsed = SnapshotDoc.model_validate(raw)
+    assert canonical_bytes(parsed.model_dump(mode="json")) == canonical_bytes(raw)
+    sales = AccessView.from_document(raw).connections["sales"]
+    assert (sales.connection_id, sales.status) == (SALES, "active")
+    assert sales.limits is not None
+    assert (sales.limits.max_rows, sales.limits.max_bytes) == (0, None)
+    assert sales.grants[PROD].limits is not None
+    assert sales.grants[PROD].limits.daily_rows == 10
+    assert sales.grants[PREVIEW].limits is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"grants": {"env_" + "x" * 20: {}}},
+        {"status": "paused"},
+        {"connection_id": "con_short"},
+        {"limits": {"max_rows": -1}},
+        {"limits": {"rows": 5}},
+        {"grants": {PROD: {"limits": {"concurrency": 1.5}}}},
+    ],
+)
+def test_a_bad_connection_is_refused(bad: dict[str, Any]) -> None:
+    with pytest.raises(SnapshotInvalidError):
+        AccessView.from_document(json.dumps(doc(connections=connections(**bad))))
+
+
+def test_two_connection_names_may_not_share_an_id_or_break_the_name_rule() -> None:
+    shared = {**connections(), "sales-copy": connections()["sales"]}
+    with pytest.raises(SnapshotInvalidError):
+        AccessView.from_document(json.dumps(doc(connections=shared)))
+    with pytest.raises(SnapshotInvalidError):
+        AccessView.from_document(json.dumps(doc(connections={"Sales": connections()["sales"]})))
+
+
 def test_the_view_is_read_only() -> None:
     v = view()
     with pytest.raises(TypeError):

@@ -541,6 +541,87 @@ def test_the_gateway_settings_are_all_set_pinned_sealed_and_public(
         cell.gateway_settings(*(values[key] for key in cell.GATEWAY_SETTINGS))
 
 
+DATAGW_IMAGE = f"{naming.platform_registry()}/ssc-datagw@sha256:" + "c" * 64
+DATAGW_ENV = {
+    "SSC_ORG_ID",
+    "SSC_CELL_LABEL",
+    "SSC_PROJECT_ID",
+    "SSC_CELL_BUCKET",
+    "SSC_DATAGW_AUDIENCE",
+    "SSC_IDENTITY_JWKS",
+    "SSC_APPS_DOMAIN",
+    "SSC_IDENTITY_ISSUER",
+}
+
+
+def test_the_data_gateway_runs_its_image_with_the_cell_wired_in() -> None:
+    label = "testcell13"
+    project = naming.cell_project(label)
+    declared = run(
+        naming.cell_stack(label), GATEWAY | {"connections": "true", "datagw_image": DATAGW_IMAGE}
+    )
+    datagw = one(declared, "gcp:cloudrunv2/service:Service", naming.DATA_GATEWAY).inputs
+    (container,) = datagw["template"]["containers"]
+    assert container["image"] == DATAGW_IMAGE
+    env = {e["name"]: e["value"] for e in container["envs"]}
+    assert set(env) == DATAGW_ENV
+    assert (env["SSC_ORG_ID"], env["SSC_CELL_LABEL"], env["SSC_PROJECT_ID"]) == (
+        GATEWAY["org_id"],
+        label,
+        project,
+    )
+    assert env["SSC_CELL_BUCKET"] == one(declared, "gcp:storage/bucket:Bucket").inputs["name"]
+    assert env["SSC_DATAGW_AUDIENCE"] == naming.run_url(
+        naming.DATA_GATEWAY, project_number(project)
+    )
+    assert env["SSC_IDENTITY_JWKS"] == GATEWAY["gateway_jwks"]
+    assert env["SSC_APPS_DOMAIN"] == naming.APPS_DOMAIN
+    assert env["SSC_IDENTITY_ISSUER"] == f"https://{naming.KEYS_HOST}/{label}"
+
+
+def test_without_datagw_image_the_data_gateway_is_a_placeholder(cell_a: list[Declared]) -> None:
+    datagw = one(cell_a, "gcp:cloudrunv2/service:Service", naming.DATA_GATEWAY).inputs
+    (container,) = datagw["template"]["containers"]
+    assert container["image"] == cell.PLACEHOLDER_IMAGE
+    assert "envs" not in container
+    assert cell.datagw_settings(None, None) is None
+    assert cell.datagw_settings("", GATEWAY["org_id"]) is None
+
+
+@pytest.mark.parametrize(
+    ("image", "org", "problem"),
+    [
+        (DATAGW_IMAGE.replace("@sha256:" + "c" * 64, ":v1"), GATEWAY["org_id"], "datagw_image"),
+        ("ghcr.io/x/ssc-datagw@sha256:" + "c" * 64, GATEWAY["org_id"], "datagw_image"),
+        (DATAGW_IMAGE, None, "needs the gateway settings"),
+    ],
+)
+def test_datagw_image_is_pinned_and_needs_the_gateway_settings(
+    image: str, org: str | None, problem: str
+) -> None:
+    with pytest.raises(ValueError, match=problem):
+        cell.datagw_settings(image, org)
+
+
+def test_only_the_data_gateway_leaves_the_caller_check_to_itself(cell_a: list[Declared]) -> None:
+    """The data gateway checks each caller's Google ID token itself (SSC-050), so Cloud Run's
+    invoker check is off there alone. It stays internal only, with no invoker grant and no
+    public-invoker tag."""
+    services = {d.name: d.inputs for d in cell_a if d.type == "gcp:cloudrunv2/service:Service"}
+    assert {name for name, s in services.items() if s.get("invokerIamDisabled")} == {
+        naming.DATA_GATEWAY
+    }
+    assert services[naming.DATA_GATEWAY]["ingress"] == "INGRESS_TRAFFIC_INTERNAL_ONLY"
+    granted = {
+        d.inputs["name"]
+        for d in cell_a
+        if d.type == "gcp:cloudrunv2/serviceIamMember:ServiceIamMember"
+    }
+    assert naming.DATA_GATEWAY not in granted
+    tagged = [d.inputs["parent"] for d in cell_a if d.type == TAG_BINDING]
+    assert not [p for p in tagged if p.endswith(f"/services/{naming.DATA_GATEWAY}")]
+
+
 def test_only_the_gateway_decrypts_with_its_key_and_only_the_operator_seals(
     cell_a: list[Declared],
 ) -> None:
@@ -901,8 +982,9 @@ def test_the_control_plane_reads_and_writes_the_cell_bucket(cell_a: list[Declare
 
 def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Declared]) -> None:
     """Audit anchors sit in the cell bucket under ``audit-anchors/`` (SSC-012): only the control
-    plane's worker may write or delete there, the gateway and the agent only read, and no other
-    account of the cell holds a storage role or permission anywhere in the project."""
+    plane's worker may write or delete there, the gateway and the agent only read, the data
+    gateway reads ``snapshots/`` alone (SSC-050), and no other account of the cell holds a
+    storage role or permission anywhere in the project."""
     viewer = "roles/storage.objectViewer"
     on_bucket = {
         d.name: (d.inputs["member"], d.inputs["role"])
@@ -913,7 +995,15 @@ def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Decl
     assert {name: grant for name, grant in on_bucket.items() if grant[1] == viewer} == {
         "bucket-gateway": (f"serviceAccount:{naming.sa_email(naming.GATEWAY, project)}", viewer),
         "bucket-agent": (f"serviceAccount:{naming.sa_email(naming.CELL_AGENT, project)}", viewer),
+        "bucket-data": (f"serviceAccount:{naming.sa_email('ssc-data', project)}", viewer),
     }
+    data = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-data").inputs
+    snapshots = f"projects/_/buckets/{naming.cell_bucket(A)}/objects/snapshots/"
+    assert data["condition"]["expression"] == f'resource.name.startsWith("{snapshots}")'
+    assert (
+        "condition"
+        not in one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-gateway").inputs
+    )
     assert {member for member, role in on_bucket.values() if role != viewer} == {
         f"serviceAccount:{mockcloud.WORKERS['staging']}"
     }

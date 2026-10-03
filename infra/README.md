@@ -21,7 +21,7 @@ Five settings in a cell stack's config, all off by default. Turning one on adds 
 | --- | --- | --- | --- |
 | `database` | `false` | Cloud SQL Postgres 18 `ssc-cell`, zonal `db-f1-micro`, `max_connections` 25, private address in the database range, a CA-issued certificate for its DNS name and that name's record in `ssc-sql`, the Data API, customer-managed key, backups and point-in-time recovery, the cell agent's IAM database user in `cloudsqlsuperuser`, and `SSC_SQL_INSTANCE` on the agent (App databases, below) | $13 |
 | `egress` | `false` | The proxy machine: one `e2-micro` with no external address at the reserved proxy address, in a group of one that recreates it. Its proxy software is SSC-053 | $7 |
-| `connections` | `false` | The data gateway and file broker `ssc-datagw` on Cloud Run, minimum 0, as `ssc-data`, leaving through the cell NAT | usage |
+| `connections` | `false` | The data gateway and file broker `ssc-datagw` on Cloud Run, minimum 0, as `ssc-data`, leaving through the cell NAT (Data gateway, below) | usage |
 | `gateway_min` | `0` | The gateway's minimum instances | about $10 each |
 | `warm` | `false` | Keeps the gateway at one instance or more (SSC-092) | about $10 |
 
@@ -30,7 +30,7 @@ pulumi config set --stack c-<label> database true
 pulumi up --stack c-<label>
 ```
 
-Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below), `timer_jwks` (Timer calls, under Gateway), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
+Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below), `timer_jwks` (Timer calls, under Gateway), `datagw_image` (Data gateway, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
 
 The stack exports `flags`, so `cell_diff` compares two cells with different flags without their flagged resources.
 
@@ -278,6 +278,23 @@ pulumi up --stack c-<label>
 ```
 
 The PEM goes into the worker's `SSC_TIMER_SIGNING_KEY` secret, then is removed locally; the platform stack's `timer_key_id` makes that secret and gives the worker `SSC_TIMER_KEY_ID` and `SSC_TIMER_DISPATCHER=https` (Control plane, below). `docs/runbooks/ssc-064-control-plane.md` (step 7) does this without writing the PEM to a file. To rotate, set `timer_jwks` to both keys on every cell, move the worker to the new key, then drop the old one. Live check for the proof run: with the gateway and an app with a one-minute schedule at zero, wait for a run. Expected: `GET .../schedules/{id}/runs` shows it `succeeded` with `start_ms` the cold start and `duration_ms` the call alone, and the app's logs show a `GET` of its `health_path` and then the call, both with a note whose `role` is `schedule`.
+
+## Data gateway
+
+The `connections` flag's `ssc-datagw` (SSC-050, C19) runs a build of `packages/ssc_datagw/Dockerfile` once `datagw_image` is set; until then it is the placeholder image with no environment. The contract is `docs/contracts/data-gateway.md`.
+
+- **Setting.** `datagw_image`: `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/<image>@sha256:<digest>`, and only with the four gateway settings, whose `org_id` and `gateway_jwks` it reads too; anything else fails the stack before apply.
+- **Callers.** Ingress is internal only, so only the cell's VPC reaches it. Cloud Run's invoker check is off on this service alone (`invoker_iam_disabled`): an app sends its own Google ID token (audience `SSC_DATAGW_AUDIENCE`) in `Authorization`, and the data gateway admits only Google-signed tokens for that audience from an `ssc-a-<env>` account of this cell's project. No app holds `run.invoker`, and there is no `allUsers` grant and no public-invoker tag (`tests/test_cell.py`).
+- **Snapshot.** `ssc-data` holds `storage.objectViewer` on the cell bucket under an IAM condition, objects under `snapshots/` only (`bucket-data`, written at onboarding so the flag still adds the service alone). It reads the snapshot before its first request and again on demand; nothing runs between requests.
+- **Environment.** `SSC_ORG_ID`, `SSC_CELL_LABEL`, `SSC_PROJECT_ID`, `SSC_CELL_BUCKET`, `SSC_DATAGW_AUDIENCE` (`https://ssc-datagw-<project number>.us-central1.run.app`), `SSC_IDENTITY_JWKS`, `SSC_APPS_DOMAIN` and `SSC_IDENTITY_ISSUER`.
+
+**Live checks** (operator, not run by SSC-050), on a staging cell with `connections` on, an image built from this commit and an app given a connection (SSC-051 adds the Postgres connector; until then every granted connection answers `503 CONNECTION_UNAVAILABLE`, which is enough for 2 to 4):
+
+1. T6 (SSC-086): the customer's database sees the cell NAT's address and no other.
+2. Google's keys. The first query after a cold start verifies its workload token, so the data gateway reached `www.googleapis.com/oauth2/v3/certs` through Direct VPC egress (the cell NAT or Private Google Access). A `503 UNAVAILABLE` at stage `workload` means it did not.
+3. Invoker. An app's query reaches the container with no `403` from Cloud Run, and a request with no token answers the data gateway's own `401 UNAUTHENTICATED`.
+4. Kill at zero. Let the data gateway scale to zero, run `ssc disable <app>` (or suspend the connection), then have the app query: the first answer is `403 APP_NOT_ACTIVE` (or `CONNECTION_SUSPENDED`), under 5 s after `latest.json` moves.
+5. Cold start. After 15 idle minutes the first query is served; its `datagw query` log line has `cold: true`, `instance_started_at` and `ready_ms`. Note `ready_ms` and the query's `elapsed_ms`.
 
 ## Audit anchors
 
