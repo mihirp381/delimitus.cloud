@@ -1,5 +1,6 @@
 """The cell program, run against mocks: same shape for every label, and the rules SSC-013 names."""
 
+import base64
 import json
 from ipaddress import ip_address, ip_network
 from typing import Any, cast
@@ -72,6 +73,39 @@ TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
 BUILD = {"build_tools_image": TOOLS_IMAGE, "build_frontend_image": FRONTEND_IMAGE}
 BUILD_ENV = {"SSC_BUILD_SA", "SSC_BUILD_TOOLS_IMAGE", "SSC_BUILD_FRONTEND_IMAGE"}
+GATEWAY_IMAGE = f"{naming.platform_registry()}/ssc-gateway@sha256:" + "f" * 64
+POINT = "A" * 43
+
+
+def _jwks(kid: str) -> str:
+    key = {"kty": "EC", "crv": "P-256", "kid": kid, "x": POINT, "y": POINT, "alg": "ES256"}
+    return json.dumps({"keys": [key]}, separators=(",", ":"))
+
+
+def _gateway(org: str, kid: str, sealed: bytes) -> dict[str, str]:
+    return {
+        "gateway_image": GATEWAY_IMAGE,
+        "gateway_keyring": base64.b64encode(sealed).decode(),
+        "gateway_jwks": _jwks(kid),
+        "org_id": org,
+    }
+
+
+GATEWAY = _gateway("org_" + "a" * 20, "id-1", b"\x0a\x24sealed-a")
+GATEWAY_ENV = {  # what ssc_edge.server.settings_from_env reads in a cell
+    "SSC_CELL_LABEL",
+    "SSC_ORG_ID",
+    "SSC_PROJECT_NUMBER",
+    "SSC_REGION",
+    "SSC_CELL_BUCKET",
+    "SSC_GATEWAY_KEYRING",
+    "SSC_GATEWAY_KMS_KEY",
+    "SSC_IDENTITY_JWKS",
+    "SSC_APPS_DOMAIN",
+    "SSC_AUTH_URL",
+    "SSC_IDENTITY_ISSUER",
+}
+KEY_GRANT = "gcp:kms/cryptoKeyIAMMember:CryptoKeyIAMMember"
 NETWORK_FLOOR = {  # what SSC-027 writes once at onboarding
     "gcp:compute/network:Network",
     "gcp:compute/subnetwork:Subnetwork",
@@ -357,6 +391,108 @@ def test_the_gateway_is_request_billed_from_zero_with_an_hour_per_request(
     assert (nic["subnetwork"], nic["tags"]) == ("subnet-gateway-id", ["ssc-gateway"])
 
 
+def test_the_gateway_runs_its_image_with_the_cell_wired_in() -> None:
+    label = "testcell06"
+    declared = run(naming.cell_stack(label), GATEWAY)
+    gw = one(declared, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
+    (container,) = gw["template"]["containers"]
+    assert container["image"] == GATEWAY_IMAGE
+    env = {e["name"]: e["value"] for e in container["envs"]}
+    assert set(env) == GATEWAY_ENV
+    assert env["SSC_CELL_LABEL"] == label
+    assert env["SSC_ORG_ID"] == GATEWAY["org_id"]
+    assert env["SSC_PROJECT_NUMBER"] == project_number(naming.cell_project(label))
+    assert env["SSC_REGION"] == naming.REGION
+    assert env["SSC_CELL_BUCKET"] == one(declared, "gcp:storage/bucket:Bucket").inputs["name"]
+    assert env["SSC_GATEWAY_KEYRING"] == GATEWAY["gateway_keyring"]
+    assert env["SSC_GATEWAY_KMS_KEY"] == "key-gateway-id"
+    assert env["SSC_IDENTITY_JWKS"] == GATEWAY["gateway_jwks"]
+    assert env["SSC_APPS_DOMAIN"] == naming.APPS_DOMAIN
+    assert env["SSC_AUTH_URL"] == f"https://{naming.AUTH_HOST}"
+    assert env["SSC_IDENTITY_ISSUER"] == f"https://{naming.KEYS_HOST}/{label}"
+
+
+def test_without_the_gateway_settings_the_gateway_is_a_placeholder(cell_a: list[Declared]) -> None:
+    gw = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
+    (container,) = gw["template"]["containers"]
+    assert container["image"] == cell.PLACEHOLDER_IMAGE
+    assert "envs" not in container
+    assert cell.gateway_settings(None, None, None, None) == (None, None, None, None)
+    assert cell.gateway_settings("", "", "", "") == (None, None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("changes", "problem"),
+    [
+        ({"org_id": ""}, "set all of"),
+        ({"gateway_image": ""}, "set all of"),
+        ({"gateway_image": GATEWAY_IMAGE.replace("@sha256:" + "f" * 64, ":v1")}, "gateway_image"),
+        ({"gateway_image": "ghcr.io/x/ssc-gateway@sha256:" + "f" * 64}, "gateway_image"),
+        ({"org_id": "org_short"}, "org_id"),
+        ({"gateway_keyring": "not base64!"}, "gateway_keyring"),
+        ({"gateway_keyring": base64.b64encode(b'{"session": {}}').decode()}, "gateway_keyring"),
+        ({"gateway_jwks": "{"}, "gateway_jwks"),
+        ({"gateway_jwks": '{"keys": []}'}, "gateway_jwks"),
+        ({"gateway_jwks": '{"keys": [{"kty": "EC"}]}'}, "gateway_jwks"),
+        ({"gateway_jwks": _jwks("id-1").replace('"alg"', '"d":"secret","alg"')}, "gateway_jwks"),
+    ],
+)
+def test_the_gateway_settings_are_all_set_pinned_sealed_and_public(
+    changes: dict[str, str], problem: str
+) -> None:
+    values = GATEWAY | changes
+    with pytest.raises(ValueError, match=problem):
+        cell.gateway_settings(*(values[key] for key in cell.GATEWAY_SETTINGS))
+
+
+def test_only_the_gateway_decrypts_with_its_key_and_only_the_operator_seals(
+    cell_a: list[Declared],
+) -> None:
+    key = one(cell_a, "gcp:kms/cryptoKey:CryptoKey", "key-gateway").inputs
+    assert (key["keyRing"], key["name"], key["rotationPeriod"]) == (
+        "keyring-id",
+        "gateway",
+        cell.KEY_ROTATION,
+    )
+    grants = {
+        (d.inputs["member"].split("@")[0], d.inputs["role"])
+        for d in cell_a
+        if d.type == KEY_GRANT and d.inputs["cryptoKeyId"] == "key-gateway-id"
+    }
+    assert grants == {
+        ("serviceAccount:ssc-gateway", "roles/cloudkms.cryptoKeyDecrypter"),
+        (naming.OPERATOR.split("@")[0], "roles/cloudkms.cryptoKeyEncrypter"),
+    }
+
+
+def test_the_cell_exports_its_gateway_key_and_identity_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exported: dict[str, Any] = {}
+    monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
+    run(naming.cell_stack("testcell06"), GATEWAY)
+    assert exported["identity_jwks"] == GATEWAY["gateway_jwks"]
+    assert exported["config"]["gateway_jwks"] == GATEWAY["gateway_jwks"]
+    exported.clear()
+    run(naming.cell_stack("testcell06"))
+    assert "identity_jwks" not in exported
+    assert "gateway_kms_key" in exported
+
+
+def test_two_customers_gateways_differ_only_in_their_own_settings() -> None:
+    first, second = (
+        _gateway("org_" + "a" * 20, "id-1", b"\x0a\x24sealed-a"),
+        _gateway("org_" + "b" * 20, "id-2", b"\x0a\x24sealed-b"),
+    )
+    a = cell_diff.normalise(as_export(run(naming.cell_stack(A), first), A, config=first), A)
+    b = cell_diff.normalise(as_export(run(naming.cell_stack(B), second), B, config=second), B)
+    assert cell_diff.compare(a, b) == []
+    env = a["gcp:cloudrunv2/service:Service::ssc-gateway"]
+    assert '"<org>"' in env.values()
+    assert '"<identity-jwks>"' in env.values()
+    assert '"<gateway-keyring>"' in env.values()
+
+
 def test_no_internal_load_balancer_remains(cell_a: list[Declared]) -> None:
     kinds = {d.type for d in cell_a}
     regional = {k for k in kinds if "region" in k.lower() and "compute/" in k}
@@ -578,7 +714,25 @@ def test_app_images_are_read_by_the_agent_and_written_by_builds(cell_a: list[Dec
         "registry-build": ("serviceAccount:ssc-build", "roles/artifactregistry.writer"),
         "registry-build-tools": ("serviceAccount:ssc-build", "roles/artifactregistry.reader"),
         "registry-agent": ("serviceAccount:ssc-cell-agent", "roles/artifactregistry.reader"),
+        "registry-gateway-image": (
+            f"serviceAccount:service-{project_number(naming.cell_project(A))}",
+            "roles/artifactregistry.reader",
+        ),
     }
+
+
+def test_cloud_run_pulls_the_gateway_image_from_the_platform_registry(
+    cell_a: list[Declared],
+) -> None:
+    kind = "gcp:artifactregistry/repositoryIamMember:RepositoryIamMember"
+    pull = one(cell_a, kind, "registry-gateway-image").inputs
+    assert (pull["project"], pull["location"], pull["repository"]) == (
+        naming.BOOTSTRAP_PROJECT,
+        naming.REGION,
+        naming.PLATFORM_REPOSITORY,
+    )
+    agent = one(cell_a, "gcp:projects/serviceIdentity:ServiceIdentity", "run-agent").inputs
+    assert agent["service"] == "run.googleapis.com"
 
 
 def test_builds_read_the_platform_registry_and_push_to_the_cell_s_own(

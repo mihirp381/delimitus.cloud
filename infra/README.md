@@ -30,7 +30,7 @@ pulumi config set --stack c-<label> database true
 pulumi up --stack c-<label>
 ```
 
-Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
+Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
 
 The stack exports `flags`, so `cell_diff` compares two cells with different flags without their flagged resources.
 
@@ -137,6 +137,45 @@ pulumi up --stack c-<label>
 ```
 
 Railpack tags its frontend `v0.40.1`; there is no `0.40.1` tag.
+
+## Gateway
+
+The cell's gateway (SSC-018, decision 023) runs a build of `packages/ssc_edge/Dockerfile` once its four settings are set; until then it is the placeholder image with no environment.
+
+- **Settings.** All four or none; anything else fails the stack before apply.
+  - `gateway_image`: `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/<image>@sha256:<digest>`.
+  - `org_id`: the cell's customer, `org_` and 20 lowercase letters or digits.
+  - `gateway_keyring`: the keyring sealed with the cell's `gateway` key, in base64. It is ciphertext, so it is an ordinary setting; the stack refuses a value that decodes to JSON, which would be the plain keyring.
+  - `gateway_jwks`: the keyring's public JWKS. The stack refuses a key with a private member.
+- **Key.** `gateway` in the ring `ssc-cell`, rotated every 90 days like the others. `cryptoKeyDecrypter` for `ssc-gateway` alone, and the gateway waits for that grant; `cryptoKeyEncrypter` for the operator, to seal. The stack exports its name as `gateway_kms_key`.
+- **Image.** The cell's Cloud Run service agent gets `artifactregistry.reader` on `ssc-platform` in `ssc-platform-0`. Like the build grant, the operator's run writes it.
+- **Environment.** `SSC_CELL_LABEL`, `SSC_ORG_ID`, `SSC_PROJECT_NUMBER`, `SSC_REGION`, `SSC_CELL_BUCKET`, `SSC_GATEWAY_KEYRING`, `SSC_GATEWAY_KMS_KEY`, `SSC_IDENTITY_JWKS`, `SSC_APPS_DOMAIN`, `SSC_AUTH_URL` (`https://auth.delimitus.com`) and `SSC_IDENTITY_ISSUER` (`https://keys.delimitus.com/<label>`).
+- **Start.** The gateway decrypts its keyring, refuses to start if it does not match `SSC_IDENTITY_JWKS`, and reads the snapshot before it takes a request; with no readable snapshot it answers `503` to everything.
+- **Identity keys.** With the settings, the stack exports `identity_jwks`. Apps have no internet, so each app gets it inline as `SSC_IDENTITY_KEYS_URL=data:application/json;base64,<JWKS>` (`docs/contracts/identity-note.md`).
+
+**Live steps** (operator, not run by SSC-018). The plain keyring stays on the operator's machine for these lines only:
+
+```
+REG=us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform
+docker buildx build --platform linux/amd64 --provenance=false --metadata-file /tmp/gateway.json \
+  -f packages/ssc_edge/Dockerfile --tag $REG/ssc-gateway:<commit> --push .
+jq -r '."containerimage.digest"' /tmp/gateway.json
+pulumi up --stack c-<label>
+KEY=$(pulumi stack output --stack c-<label> gateway_kms_key)
+umask 077
+uv run python -m ssc_edge.keys new > keyring.json
+uv run python -m ssc_edge.keys jwks < keyring.json > jwks.json
+gcloud kms encrypt --key "$KEY" --plaintext-file keyring.json --ciphertext-file - \
+  | base64 | tr -d '\n' > keyring.sealed
+rm keyring.json
+pulumi config set --stack c-<label> gateway_image $REG/ssc-gateway@<digest>
+pulumi config set --stack c-<label> org_id <org id>
+pulumi config set --stack c-<label> gateway_keyring "$(cat keyring.sealed)"
+pulumi config set --stack c-<label> gateway_jwks "$(cat jwks.json)"
+pulumi up --stack c-<label>
+```
+
+The first `pulumi up` creates the key on a cell made before it. Still live-only: Cloud Run accepting the gateway's ID token for an app's `run.app` URL (T3), the cold start (T7), the browser suite (SSC-029), and the `auth` and `keys` records in the `delimitus` zone, whose target addresses do not exist yet.
 
 ## Public entry
 

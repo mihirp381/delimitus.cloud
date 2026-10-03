@@ -22,7 +22,7 @@ APP_ORIGIN: Final = "SSC_APP_ORIGIN"
 """The app's exact origin, ``https://<host>`` with no path: the identity note's audience."""
 
 IDENTITY_KEYS_URL: Final = "SSC_IDENTITY_KEYS_URL"
-"""The JWKS address that verifies identity notes, ``https://keys.delimitus.com/<cell>/jwks.json``."""
+"""The cell's JWKS that verifies identity notes, inline as a ``data:`` URL (no internet needed)."""
 
 PLATFORM_ENV_NAMES: Final[frozenset[str]] = frozenset(
     {PORT, HOME, DATABASE_URL, APP_ORIGIN, IDENTITY_KEYS_URL}

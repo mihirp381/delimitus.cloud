@@ -12,7 +12,7 @@ import pytest
 import mockcloud
 from mockcloud import Declared, run
 from ssc_contracts.cells import CellResource
-from ssc_infra import deployer, naming, stack_config
+from ssc_infra import cell, deployer, naming, stack_config
 from ssc_infra.deployer import Deployer, RefusedError, parse
 
 LABEL = "testcell05"
@@ -152,9 +152,16 @@ def test_the_applied_config_restores_the_same_cell(monkeypatch: pytest.MonkeyPat
         "build_tools_image": f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64,
         "build_frontend_image": f"{naming.platform_registry()}/railpack-frontend@sha256:"
         + "e" * 64,
+        "gateway_image": f"{naming.platform_registry()}/ssc-gateway@sha256:" + "f" * 64,
+        "gateway_keyring": "CiQAc2VhbGVkLWtleXJpbmc=",
+        "gateway_jwks": '{"keys":[{"kty":"EC","crv":"P-256","kid":"id-1","x":"AA","y":"AA"}]}',
+        "org_id": "org_" + "a" * 20,
     }
     first = _exported(applied, monkeypatch)["config"]
     assert first["build_tools_image"] == applied["build_tools_image"]
+    assert {k: first[k] for k in cell.GATEWAY_SETTINGS} == {
+        k: applied[k] for k in cell.GATEWAY_SETTINGS
+    }
     assert all(isinstance(v, str) for v in first.values())
     assert _exported(first, monkeypatch)["config"] == first
     assert _names(run(STACK, first)) == _names(run(STACK, applied))

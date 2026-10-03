@@ -82,3 +82,11 @@ test('JWKS over HTTP, rotation to the second key, unknown kid', async () => {
     server.close();
   }
 });
+
+test('JWKS inline as a data: URL needs no network', async () => {
+  const url = `data:application/json;base64,${Buffer.from(JSON.stringify(VECTORS.jwks)).toString('base64')}`;
+  const v = new IdentityVerifier({ audience: VECTORS.audiences.app_a, keys: url });
+  assert.match((await v.verify(CASES['user note'].token, { now: VECTORS.now })).sub, /^usr_/);
+  assert.ok(await v.verify(CASES['user note signed by the second key'].token, { now: VECTORS.now }));
+  await assert.rejects(v.verify(CASES['unknown kid'].token, { now: VECTORS.now }), (e) => e.code === 'unknown_key');
+});

@@ -7,7 +7,7 @@ import { IdentityRefused, IdentityVerifier } from '@delimitus/ssc-identity';
 
 const verifier = new IdentityVerifier({
   audience: 'https://quiet-river-7f3k.delimitusapps.com',   // this app's exact origin
-  keys: 'https://keys.delimitus.com/cell-01/jwks.json',      // or a JWKS object
+  keys: process.env.SSC_IDENTITY_KEYS_URL,  // a data: URL in a cell; or a JWKS URL or object
 });
 
 const note = await verifier.fromHeaders(req.headers);

@@ -38,8 +38,10 @@ No other claim is allowed; a note with an unknown claim is refused. Schedule not
 ## Keys
 
 - The cell signing key is an EC P-256 private key, loaded by the gateway at start. It never appears in a snapshot, a log or the control database. It is not in Secret Manager: the cell's own identities may not read secrets (decision 022), so it reaches the gateway inside a keyring encrypted with a Cloud KMS key only the gateway may decrypt with (decision 010 amendment, decision 023).
-- The public half is a JWKS at `https://keys.delimitus.com/<cell label>/jwks.json`, a static file served by the platform, so verification never depends on the gateway being up. Nothing public is stored in a cell bucket: cells are under public access prevention (SSC-095). Cache it; refetch when a `kid` is unknown.
-- Rotation: publish the new key beside the old one, start signing with the new `kid`, remove the old key after a day. The JWKS therefore holds one or two keys.
+- The public half reaches each app inline, as a `data:` URL in `SSC_IDENTITY_KEYS_URL` (`data:application/json;base64,<JWKS>`). An app has no internet and cannot reach the gateway (SSC-027), so it never fetches keys, and verification never depends on the gateway being up. Pass the variable as `keys`; both helpers read a `data:` URL without a network call. Nothing public is stored in a cell bucket: cells are under public access prevention (SSC-095).
+- The operator makes the keyring and its JWKS once per cell with `python -m ssc_edge.keys` and sets the JWKS as the cell's `gateway_jwks` (`infra/README.md`); the cell stack exports it as `identity_jwks`. The gateway refuses to start when its keyring does not match it.
+- Code outside a cell may use a URL instead (`https://keys.delimitus.com/<cell label>/jwks.json`); the helpers fetch and cache it and refetch when a `kid` is unknown.
+- Rotation: publish the new key beside the old one and redeploy the cell's apps so their `SSC_IDENTITY_KEYS_URL` holds both, start signing with the new `kid`, remove the old key after a day. The JWKS therefore holds one or two keys.
 
 ## Refusal codes
 
@@ -67,11 +69,13 @@ Treat every code the same way: this request is not from a signed-in user of this
 Python (`ssc_app`, depends on `pyjwt[crypto]` only):
 
 ```python
+import os
+
 from ssc_app.identity import IdentityRefused, IdentityVerifier
 
 verifier = IdentityVerifier(
-    audience="https://quiet-river-7f3k.delimitusapps.com",
-    keys="https://keys.delimitus.com/cell-01/jwks.json",
+    audience=os.environ["SSC_APP_ORIGIN"],
+    keys=os.environ["SSC_IDENTITY_KEYS_URL"],
 )
 
 
@@ -89,8 +93,8 @@ Node (`@delimitus/ssc-identity`, zero dependencies, Node 22+):
 import { IdentityRefused, IdentityVerifier } from '@delimitus/ssc-identity';
 
 const verifier = new IdentityVerifier({
-  audience: 'https://quiet-river-7f3k.delimitusapps.com',
-  keys: 'https://keys.delimitus.com/cell-01/jwks.json',
+  audience: process.env.SSC_APP_ORIGIN,
+  keys: process.env.SSC_IDENTITY_KEYS_URL,
 });
 
 app.use(async (req, res, next) => {
@@ -112,7 +116,8 @@ app.use(async (req, res, next) => {
 
 ## Still owed by other tickets
 
-- Cell infrastructure (after SSC-017): the gateway KMS key and keyring, `jwks.json` served by the platform at `keys.delimitus.com/<cell_label>/jwks.json`, never from a cell bucket (not built by SSC-013 or SSC-095), and rotation.
-- SSC-018 mints on every admitted request (`ssc_edge.gate`) and strips inbound `X-SSC-*` headers (`ssc_edge.envoy`).
+- Setting `SSC_APP_ORIGIN` and `SSC_IDENTITY_KEYS_URL` in each app's environment from the cell's `identity_jwks` (`ssc_contracts.app_env`; the ticket that owns those values).
+- SSC-064: the copy at `keys.delimitus.com/<cell_label>/jwks.json` for code outside a cell, never from a cell bucket, and the rotation runbook.
+- SSC-018 mints on every admitted request (`ssc_edge.gate`) and strips inbound `X-SSC-*` headers (`ssc_edge.envoy`); the cell's `gateway` KMS key, sealed keyring and `gateway_jwks` are wired in `infra/ssc_infra/cell.py`.
 - SSC-050: the data gateway accepts this same note with the calling app's origin as `aud`, alongside the app's own workload token.
 - Open design item (build plan §3.3): a bounded stream token for app-to-data-gateway calls from long streams.

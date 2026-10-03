@@ -14,10 +14,10 @@ CLIENT_HEADERS: Final = (*(name for name, _ in HEADERS), "location", "set-cookie
 """Every header a gateway answer may carry to the browser; Envoy passes these and no others."""
 
 
-def _page(title: str, text: str) -> bytes:
+def _page(title: str, text: str, head: str = "") -> bytes:
     return (
         "<!doctype html><html lang=en><meta charset=utf-8>"
-        "<meta name=viewport content='width=device-width'>"
+        f"<meta name=viewport content='width=device-width'>{head}"
         f"<title>{title}</title><h1>{title}</h1><p>{text}</p></html>\n"
     ).encode()
 
@@ -33,3 +33,10 @@ LOGIN_FAILED: Final = _page(
     " back to the app and try again.",
 )
 UNAVAILABLE: Final = _page("Unavailable", "This app cannot be reached right now. Try again soon.")
+WAKE_RETRY_SECONDS: Final = 2
+WAKING: Final = _page(
+    "Waking up",
+    "This app was asleep and is starting. The page will load by itself in a few seconds.",
+    f"<meta http-equiv=refresh content={WAKE_RETRY_SECONDS}>",
+)
+"""A browser page load that the app has not answered within 2 seconds (``ssc_edge.envoy``)."""

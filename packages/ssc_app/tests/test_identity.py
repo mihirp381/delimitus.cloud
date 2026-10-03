@@ -1,5 +1,6 @@
 """The Python verifier against the shared vectors, plus the live JWKS-over-HTTP path."""
 
+import base64
 import http.server
 import importlib.util
 import json
@@ -156,6 +157,21 @@ def test_jwks_over_http_and_rotation_to_second_key() -> None:
         assert e.value.code == "unknown_key"
     finally:
         server.shutdown()
+
+
+def test_jwks_inline_as_a_data_url_needs_no_network() -> None:
+    """Apps have no internet (SSC-027), so the cell hands them the JWKS inline in
+    ``SSC_IDENTITY_KEYS_URL`` (docs/contracts/identity-note.md)."""
+    url = (
+        "data:application/json;base64,"
+        + base64.b64encode(json.dumps(VECTORS["jwks"]).encode()).decode()
+    )
+    v = IdentityVerifier(audience=VECTORS["audiences"]["app_a"], keys=url)
+    assert v.verify(CASES["user note"]["token"], now=VECTORS["now"]).sub.startswith("usr_")
+    assert v.verify(CASES["user note signed by the second key"]["token"], now=VECTORS["now"])
+    with pytest.raises(IdentityRefused) as e:
+        v.verify(CASES["unknown kid"]["token"], now=VECTORS["now"])
+    assert e.value.code == "unknown_key"
 
 
 def test_key_sources_accept_pyjwkset() -> None:

@@ -128,7 +128,10 @@ def one(declared: list[Declared], type_: str, name: str | None = None) -> Declar
 
 
 def as_export(
-    declared: list[Declared], label: str, flags: dict[str, Any] | None = None
+    declared: list[Declared],
+    label: str,
+    flags: dict[str, Any] | None = None,
+    config: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """The shape of ``pulumi stack export`` for ``cell_diff``."""
     stack = naming.cell_stack(label)
@@ -139,6 +142,8 @@ def as_export(
     }
     if flags is not None:
         outputs["flags"] = flags
+    if config is not None:
+        outputs["config"] = config
     resources: list[dict[str, Any]] = [
         {
             "type": "pulumi:pulumi:Stack",

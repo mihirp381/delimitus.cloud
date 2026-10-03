@@ -3,11 +3,13 @@
 The tiny helper an app installs to read the SSC identity note (`X-SSC-Identity`). Depends on `pyjwt[crypto]` and `ssc-contracts` only.
 
 ```python
+import os
+
 from ssc_app.identity import IdentityRefused, IdentityVerifier
 
 verifier = IdentityVerifier(
     audience="https://quiet-river-7f3k.delimitusapps.com",  # this app's exact origin
-    keys="https://keys.delimitus.com/cell-01/jwks.json",  # or a JWKS dict
+    keys=os.environ["SSC_IDENTITY_KEYS_URL"],  # a data: URL in a cell; or a JWKS URL or dict
 )
 note = verifier.from_headers(request.headers)
 note.sub  # "usr_…" or "sch_…": key on this
