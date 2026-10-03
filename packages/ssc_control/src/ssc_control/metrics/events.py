@@ -3,6 +3,9 @@
 A user id is stored only as its org-scoped pseudonym. ``properties`` are flat scalars under
 short snake_case keys, and never carry a user id, an email or a key that names one; a call that
 tries is a bug and raises :class:`MetricsPropertyError` before anything is written.
+
+:func:`record_once` writes the usage events (SSC-028, 2026-10-03), which carry no person at all:
+each has a ``dedup_key`` that makes it one of a kind in its org, so writing it twice is a no-op.
 """
 
 import json
@@ -25,12 +28,22 @@ _KEY: Final = re.compile(r"[a-z][a-z0-9_]{0,39}")
 _EMAIL: Final = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 _USER_ID: Final = re.compile(r"usr_[a-z0-9]{20}")
 _APP_ID: Final = re.compile(r"app_[a-z0-9]{20}")
+_ENV_ID: Final = re.compile(r"env_[a-z0-9]{20}")
+_DEDUP_KEY: Final = re.compile(r"[a-z0-9_:]{1,64}")
 _NAMES_A_PERSON: Final = ("email", "user", "pseudonym", "name")
 
 _INSERT: Final = text(
     "insert into ssc.metrics_event (org_id, at, kind, pseudonym, app_id, source_tool, "
     "properties) values (:org, coalesce(:at, now()), :kind, :pseudonym, :app, :tool, "
     "cast(:properties as jsonb))"
+)
+
+_INSERT_ONCE: Final = text(
+    "insert into ssc.metrics_event (org_id, at, kind, app_id, environment_id, dedup_key, "
+    "properties) values (:org, coalesce(:at, now()), :kind, :app, :env, :dedup, "
+    "cast(:properties as jsonb)) "
+    "on conflict (org_id, kind, dedup_key) where dedup_key is not null do nothing "
+    "returning id"
 )
 
 
@@ -96,6 +109,45 @@ class Metrics(MetricsPort):
                 "properties": json.dumps(checked, sort_keys=True, allow_nan=False),
             },
         )
+
+
+async def record_once(  # noqa: PLR0913  (keyword-only)
+    conn: AsyncConnection,
+    *,
+    org_id: str,
+    kind: MetricKind,
+    dedup_key: str,
+    app_id: str | None = None,
+    environment_id: str | None = None,
+    properties: Mapping[str, MetricValue] | None = None,
+    at: datetime | None = None,
+) -> bool:
+    """Write one usage event unless its org already has one of ``kind`` with ``dedup_key``.
+
+    True when this call wrote it. No user id and no pseudonym: usage events count, never name.
+    """
+    checked = _checked_properties(properties)
+    if not _DEDUP_KEY.fullmatch(dedup_key):
+        raise MetricsPropertyError("dedup_key is not a key")
+    if app_id is not None and not _APP_ID.fullmatch(app_id):
+        raise MetricsPropertyError("app_id is not an app id")
+    if environment_id is not None and not _ENV_ID.fullmatch(environment_id):
+        raise MetricsPropertyError("environment_id is not an environment id")
+    if at is not None and at.utcoffset() is None:
+        raise MetricsPropertyError("at must carry a time zone")
+    written = await conn.execute(
+        _INSERT_ONCE,
+        {
+            "org": org_id,
+            "at": at,
+            "kind": MetricKind(kind).value,
+            "app": app_id,
+            "env": environment_id,
+            "dedup": dedup_key,
+            "properties": json.dumps(checked, sort_keys=True, allow_nan=False),
+        },
+    )
+    return written.first() is not None
 
 
 def metrics_port(master_key: bytes | None) -> MetricsPort:

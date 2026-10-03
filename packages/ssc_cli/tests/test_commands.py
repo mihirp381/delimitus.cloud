@@ -965,6 +965,34 @@ def test_status_without_a_health_route_still_answers(cli, scripted):
     assert all(e["health"] is None for e in r.json()["environments"])
 
 
+def test_status_shows_this_months_usage_type_and_session_hours(cli, scripted):
+    usage = {
+        "environment_id": PROD,
+        "app_id": APP_ID,
+        "month": "2026-10",
+        "usage_type": "session",
+        "session_hours": 1.02,
+        "instance_hours": 1.25,
+        "cold_starts": 1,
+        "cold_start_p50_seconds": None,
+        "cold_start_p95_seconds": None,
+        "small_sample": True,
+        "active_days": 1,
+    }
+    path = f"/v1/apps/{APP_ID}/environments"
+    scripted.add("GET", f"{path}/{PROD}/usage", httpx2.Response(200, json=usage))
+    r = cli("status", APP_ID, "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    envs = {e.name: e for e in AppResult.model_validate(r.json()).environments}
+    assert envs["prod"].usage is not None
+    assert (envs["prod"].usage.usage_type, envs["prod"].usage.session_hours) == ("session", 1.02)
+    assert (envs["prod"].usage.month, envs["prod"].usage.cold_starts) == ("2026-10", 1)
+    assert envs["preview"].usage is None
+    human = cli("status", APP_ID, session=scripted.session()).stdout
+    assert "USAGE THIS MONTH" in human
+    assert "session, 1.0 session h" in human
+
+
 LOGS = f"/v1/apps/{APP_ID}/environments/{PROD}/logs"
 
 

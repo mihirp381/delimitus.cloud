@@ -1,7 +1,8 @@
 """SSC-028: metrics events, org-scoped pseudonyms and the report with the pilot kill criteria.
 
 Ticket "done when" (the report shows every metric) -> test_report_shows_every_metric_at_n40 and
-test_report_flags_every_small_sample_at_n5, on a synthetic dataset holding all seven kinds.
+test_report_flags_every_small_sample_at_n5, on a synthetic dataset holding every kind. The usage
+part (2026-10-03): test_report_shows_usage_and_flags_cold_starts_under_20.
 Plus: the pseudonym scheme, key handling, refused properties, the 0007 checks, the source tool
 and the share events PUT grants records.
 """
@@ -52,6 +53,7 @@ from ssc_control.metrics import (
     metrics_port,
     parse_master_key,
     pseudonym,
+    record_once,
     source_tool_of,
 )
 from ssc_control.metrics import report as rep
@@ -594,9 +596,71 @@ async def seed(dsn: str, n: int) -> str:
                         MetricKind.DEPLOY, START + timedelta(days=36), second, builder, "lovable"
                     )
             await event(MetricKind.TIMER_RUN, START + timedelta(days=5), apps[0])
+            await seed_usage(conn, org, apps[0], apps[1 % n])
     finally:
         await engine.dispose()
     return org
+
+
+USAGE_SESSION_ENV = "env_" + "s" * 20
+USAGE_RARE_ENV = "env_" + "r" * 20
+
+
+async def seed_usage(conn: Any, org: str, session_app: str, rare_app: str) -> None:
+    """In June: a session app open 1.5 hours with 21 cold starts of 1 to 21 seconds, a rarely
+    used app with 3 cold starts, and the cell's database."""
+    day = START + timedelta(days=1, hours=10)
+
+    async def once(kind: MetricKind, key: str, at: datetime, **fields: Any) -> None:
+        assert await record_once(conn, org_id=org, kind=kind, dedup_key=key, at=at, **fields)
+
+    for i, (session, instance) in enumerate(((3600, 3600.0), (1800, 2700.0))):
+        hour = day + timedelta(hours=i)
+        await once(
+            MetricKind.USAGE_HOUR,
+            f"{USAGE_SESSION_ENV}:{int(hour.timestamp())}",
+            hour,
+            app_id=session_app,
+            environment_id=USAGE_SESSION_ENV,
+            properties={
+                "instance_seconds": instance,
+                "session_seconds": session,
+                "billing": "instance",
+            },
+        )
+    for i in range(21):
+        minute = day + timedelta(minutes=i)
+        await once(
+            MetricKind.COLD_START,
+            f"{USAGE_SESSION_ENV}:{int(minute.timestamp())}",
+            minute,
+            app_id=session_app,
+            environment_id=USAGE_SESSION_ENV,
+            properties={"count": 1, "duration_ms": 1000.0 * (i + 1)},
+        )
+    rare = START + timedelta(days=2)
+    await once(
+        MetricKind.USAGE_HOUR,
+        f"{USAGE_RARE_ENV}:{int(rare.timestamp())}",
+        rare,
+        app_id=rare_app,
+        environment_id=USAGE_RARE_ENV,
+        properties={"instance_seconds": 13.0, "session_seconds": 0, "billing": "request"},
+    )
+    await once(
+        MetricKind.COLD_START,
+        f"{USAGE_RARE_ENV}:{int(rare.timestamp())}",
+        rare,
+        app_id=rare_app,
+        environment_id=USAGE_RARE_ENV,
+        properties={"count": 3, "duration_ms": 1500.0},
+    )
+    await once(
+        MetricKind.FIXED_RESOURCE,
+        "database",
+        START + timedelta(hours=1),
+        properties={"resource": "database"},
+    )
 
 
 @pytest.fixture(scope="module")
@@ -630,6 +694,8 @@ HEADINGS = (
     "4. Share of apps using data or state",
     "5. Source tool mix",
     "6. Weekly active builders",
+    "7. Usage per environment",
+    "8. Fixed resources of the cell",
 )
 
 
@@ -673,6 +739,22 @@ CRITERION_KEYS = dict.fromkeys(
 )
 
 
+USAGE_KEYS = dict.fromkeys(
+    (
+        "environment_id",
+        "app_id",
+        "usage_type",
+        "session_hours",
+        "instance_hours",
+        "cold_starts",
+        "small_sample",
+        "cold_start_p50_seconds",
+        "cold_start_p95_seconds",
+        "active_days",
+    )
+)
+
+
 def test_report_shows_every_metric_at_n40(
     pilot40: str, dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -700,6 +782,9 @@ def test_report_shows_every_metric_at_n40(
         "data_query": 14,
         "database_use": 8,
         "timer_run": 1,
+        "usage_hour": 3,
+        "cold_start": 22,
+        "fixed_resource": 1,
     }
     m = body["metrics"]
     assert m["time_to_first_url"] == {
@@ -755,6 +840,8 @@ def test_report_json_shape_is_pinned(
             "apps_using_data_or_state": RATE_KEYS,
             "source_tool_mix": {"n": None, "tools": [{"tool": None, "deploys": None, **RATE_KEYS}]},
             "weekly_active_builders": [{"week": None, "builders": None}],
+            "usage": [{"month": None, "environments": [USAGE_KEYS]}],
+            "fixed_resources": [{"resource": None, "created_at": None}],
         },
         "kill_criteria": [CRITERION_KEYS],
         "stop_rule": {"misses": None, "open": None, "decision": None},
@@ -768,6 +855,44 @@ def test_report_json_shape_is_pinned(
         "paid_conversion",
     ]
     assert body["min_n"] == 20
+
+
+def test_report_shows_usage_and_flags_cold_starts_under_20(
+    pilot40: str, dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = ("--org", pilot40, "--since", DAY0.isoformat(), "--as-of", DAY60)
+    out = report(monkeypatch, capsys, dsns.app, *args)
+    lines = out.splitlines()
+    assert f"      {USAGE_RARE_ENV} rare: session 0.00 h, instance 0.00 h, cold starts 3, " in out
+    assert "cold starts 3, insufficient data (n=3, need 20), 1 active days" in out
+    assert (
+        f"      {USAGE_SESSION_ENV} session: session 1.50 h, instance 1.75 h, "
+        "cold starts 21, p50 11.0s, p95 20.0s, 1 active days"
+    ) in lines
+    assert lines[lines.index("   2026-07") + 1] == "      none: no usage_hour or cold_start events"
+    assert under(out, HEADINGS[7]) == "database 2026-06-01 01:00 UTC"
+    m = report_json(monkeypatch, capsys, dsns.app, *args)["metrics"]
+    june, july = m["usage"]
+    assert (june["month"], july) == ("2026-06", {"month": "2026-07", "environments": []})
+    got = {e["environment_id"]: e for e in june["environments"]}
+    assert got[USAGE_SESSION_ENV] == {
+        "environment_id": USAGE_SESSION_ENV,
+        "app_id": got[USAGE_SESSION_ENV]["app_id"],
+        "usage_type": "session",
+        "session_hours": 1.5,
+        "instance_hours": 1.75,
+        "cold_starts": 21,
+        "small_sample": False,
+        "cold_start_p50_seconds": 11.0,
+        "cold_start_p95_seconds": 20.0,
+        "active_days": 1,
+    }
+    rare = got[USAGE_RARE_ENV]
+    assert (rare["usage_type"], rare["cold_starts"], rare["small_sample"]) == ("rare", 3, True)
+    assert (rare["cold_start_p50_seconds"], rare["cold_start_p95_seconds"]) == (None, None)
+    assert m["fixed_resources"] == [
+        {"resource": "database", "created_at": "2026-06-01T01:00:00+00:00"}
+    ]
 
 
 def test_kill_criteria_and_the_stop_rule_at_n40(

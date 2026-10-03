@@ -111,7 +111,8 @@
     "health": "HealthRow|null",
     "id": "string",
     "name": "string",
-    "url": "string|null"
+    "url": "string|null",
+    "usage": "UsageRow|null"
   },
   "ErrorBody": {
     "code": "string",
@@ -283,6 +284,13 @@
     "org_id": "string",
     "stored_in": "string",
     "subject": "string"
+  },
+  "UsageRow": {
+    "cold_starts": "integer",
+    "instance_hours": "number",
+    "month": "string",
+    "session_hours": "number",
+    "usage_type": "string|null"
   },
   "WhoamiResult": {
     "api_url": "string",

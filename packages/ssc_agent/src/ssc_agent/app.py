@@ -18,6 +18,9 @@ Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FO
 ``DATABASES_NOT_CONFIGURED`` when the agent runs without a builder, secret custody or a Cloud SQL
 instance. Logs add 429 ``LOGS_RATE_LIMITED`` (with ``retry_after``), 502 ``LOGS_ERROR`` and 503
 ``LOGS_NOT_CONFIGURED`` without a log view; health still answers then, from the service alone.
+Usage (SSC-028) has ``read``: counts and durations for every app service in the cell over whole
+hours, from Cloud Monitoring, never from an app; 502 ``USAGE_ERROR``, and 503
+``USAGE_NOT_CONFIGURED`` without a usage source or the right to read it.
 """
 
 import logging
@@ -36,6 +39,7 @@ from ssc_agent.app_database import (
     TierFullError,
 )
 from ssc_agent.cloud_logging import CellLogHub
+from ssc_agent.cloud_monitoring import CellUsageReader
 from ssc_agent.secret_manager import SecretCustody, SecretsError
 from ssc_shared.build import (
     BuildDriverError,
@@ -64,6 +68,13 @@ from ssc_shared.runtime import (
     observation_to_wire,
     spec_from_wire,
 )
+from ssc_shared.usage import (
+    CellUsage,
+    UsageError,
+    UsageNotConfiguredError,
+    report_to_wire,
+    window_from_wire,
+)
 
 log = logging.getLogger(__name__)
 
@@ -72,16 +83,19 @@ BUILD_PREFIX: Final = "/v1/build"
 SECRETS_PREFIX: Final = "/v1/secrets"
 DATABASES_PREFIX: Final = "/v1/databases"
 LOGS_PREFIX: Final = "/v1/logs"
+USAGE_PREFIX: Final = "/v1/usage"
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
 
 
-def create_app(
+def create_app(  # noqa: PLR0913  (usage is keyword-only)
     driver: RuntimeDriver,
     builder: CellBuilder | None = None,
     secrets: SecretCustody | None = None,
     databases: CellAppDatabases | None = None,
     logs: CellLogs | None = None,
+    *,
+    usage: CellUsage | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -161,6 +175,7 @@ def create_app(
     _secret_routes(app, secrets)
     _database_routes(app, driver, databases)
     _log_routes(app, CellLogHub(None, driver) if logs is None else logs)
+    _usage_routes(app, CellUsageReader(None) if usage is None else usage)
     return app
 
 
@@ -284,6 +299,29 @@ def _log_routes(app: FastAPI, logs: CellLogs) -> None:
         except RuntimeDriverError as exc:
             log.warning("logs call failed", extra={"method": method, "error": str(exc)})
             return _error(502, "RUNTIME_ERROR", str(exc))
+        return JSONResponse(result)
+
+
+def _usage_routes(app: FastAPI, usage: CellUsage) -> None:
+    """``read``: the usage of every app service in the cell over whole hours."""
+
+    @app.post(USAGE_PREFIX + "/{method}")
+    async def usage_call(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        if method != "read":
+            return _error(404, "NOT_FOUND", f"no method {method}")
+        try:
+            body: object = await request.json()
+            if not isinstance(body, dict):
+                raise TypeError("the body is not a JSON object")
+            window = window_from_wire(cast("dict[str, Any]", body)["window"])
+            result = report_to_wire(await usage.read(window))
+        except (ValueError, TypeError, KeyError) as exc:
+            return _error(400, "INVALID_REQUEST", str(exc))
+        except UsageNotConfiguredError as exc:
+            return _error(503, "USAGE_NOT_CONFIGURED", str(exc))
+        except UsageError as exc:
+            log.warning("usage call failed", extra={"error": str(exc)})
+            return _error(502, "USAGE_ERROR", str(exc))
         return JSONResponse(result)
 
 

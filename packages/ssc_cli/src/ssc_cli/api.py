@@ -70,6 +70,7 @@ from ssc_cli.models import (
     SecretSet,
     SecretSetOut,
     UploadTarget,
+    UsageOut,
     UserMatches,
     Whoami,
 )
@@ -329,6 +330,10 @@ class ApiClient:
     def get_health(self, app_id: str, environment_id: str) -> HealthOut:
         path = f"{_environment_path(app_id, environment_id)}/health"
         return _parse(self._send("GET", path), HealthOut)
+
+    def get_usage(self, app_id: str, environment_id: str) -> UsageOut:
+        path = f"{_environment_path(app_id, environment_id)}/usage"
+        return _parse(self._send("GET", path), UsageOut)
 
     def grant_secret_upload(self, app_id: str, environment_id: str, name: str) -> SecretGrantOut:
         path = f"{_secret_path(app_id, environment_id, name)}/grants"

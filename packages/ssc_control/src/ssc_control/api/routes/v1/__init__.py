@@ -23,6 +23,7 @@ from ssc_control.api.routes.v1.logs import router as logs_router
 from ssc_control.api.routes.v1.promote import router as promote_router
 from ssc_control.api.routes.v1.schedules import router as schedules_router
 from ssc_control.api.routes.v1.secrets import router as secrets_router
+from ssc_control.api.routes.v1.usage import router as usage_router
 from ssc_control.api.routes.v1.users import router as users_router
 from ssc_control.api.routes.v1.whoami import router as whoami_router
 
@@ -45,3 +46,4 @@ router.include_router(cell_router)
 router.include_router(secrets_router)
 router.include_router(databases_router)
 router.include_router(logs_router)
+router.include_router(usage_router)

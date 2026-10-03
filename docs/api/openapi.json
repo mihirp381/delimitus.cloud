@@ -1221,6 +1221,36 @@
         "title": "CellResourceOut",
         "type": "object"
       },
+      "CellUsageOut": {
+        "additionalProperties": false,
+        "properties": {
+          "environments": {
+            "items": {
+              "$ref": "#/components/schemas/UsageOut"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "fixed_resources": {
+            "items": {
+              "$ref": "#/components/schemas/FixedResourceOut"
+            },
+            "title": "Fixed Resources",
+            "type": "array"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          }
+        },
+        "required": [
+          "month",
+          "environments",
+          "fixed_resources"
+        ],
+        "title": "CellUsageOut",
+        "type": "object"
+      },
       "CurrentRelease": {
         "additionalProperties": false,
         "properties": {
@@ -1869,6 +1899,27 @@
           "group_name"
         ],
         "title": "ExplainedGrant",
+        "type": "object"
+      },
+      "FixedResourceOut": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "resource": {
+            "description": "`database`, `egress` or `connections`.",
+            "title": "Resource",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource",
+          "created_at"
+        ],
+        "title": "FixedResourceOut",
         "type": "object"
       },
       "GrantIn": {
@@ -3722,6 +3773,113 @@
           "expires_at"
         ],
         "title": "UploadTarget",
+        "type": "object"
+      },
+      "UsageOut": {
+        "additionalProperties": false,
+        "properties": {
+          "active_days": {
+            "description": "Days with any running instance.",
+            "title": "Active Days",
+            "type": "integer"
+          },
+          "app_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Id"
+          },
+          "cold_start_p50_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Median start time; null under 20 cold starts (`small_sample`).",
+            "title": "Cold Start P50 Seconds"
+          },
+          "cold_start_p95_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "95th percentile start time; null under 20 cold starts (`small_sample`).",
+            "title": "Cold Start P95 Seconds"
+          },
+          "cold_starts": {
+            "description": "How many times an instance started.",
+            "title": "Cold Starts",
+            "type": "integer"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "instance_hours": {
+            "description": "Hours of running instance the cell counted.",
+            "title": "Instance Hours",
+            "type": "number"
+          },
+          "month": {
+            "description": "`YYYY-MM` (UTC).",
+            "title": "Month",
+            "type": "string"
+          },
+          "session_hours": {
+            "description": "Hours with at least one session open.",
+            "title": "Session Hours",
+            "type": "number"
+          },
+          "small_sample": {
+            "description": "Fewer than 20 cold starts: no percentiles.",
+            "title": "Small Sample",
+            "type": "boolean"
+          },
+          "usage_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rare",
+                  "daily",
+                  "session",
+                  "heavy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`rare`, `daily`, `session` or `heavy`, read from this month's usage after the fact; null with no usage. Never used to size or bill anything.",
+            "title": "Usage Type"
+          }
+        },
+        "required": [
+          "environment_id",
+          "app_id",
+          "month",
+          "usage_type",
+          "session_hours",
+          "instance_hours",
+          "cold_starts",
+          "cold_start_p50_seconds",
+          "cold_start_p95_seconds",
+          "small_sample",
+          "active_days"
+        ],
+        "title": "UsageOut",
         "type": "object"
       },
       "UserMatch": {
@@ -8069,6 +8227,109 @@
         ]
       }
     },
+    "/v1/apps/{app_id}/environments/{environment_id}/usage": {
+      "get": {
+        "description": "One environment's usage this month, or in ``month``. Zero when none was recorded.",
+        "operationId": "get_usage_v1_apps__app_id__environments__environment_id__usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`YYYY-MM` (UTC); this month if left out.",
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`YYYY-MM` (UTC); this month if left out.",
+              "title": "Month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Usage",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
     "/v1/apps/{app_id}/kill-switch": {
       "post": {
         "description": "Stop the app now: 202 plus a ``Location`` to follow the steps.\n\n``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``\nwhile an earlier pull is still running.",
@@ -9850,6 +10111,89 @@
           }
         },
         "summary": "Link Login",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "description": "Every environment's usage in the month and the cell's fixed resources. Admins only.",
+        "operationId": "get_cell_usage_v1_usage_get",
+        "parameters": [
+          {
+            "description": "`YYYY-MM` (UTC); this month if left out.",
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`YYYY-MM` (UTC); this month if left out.",
+              "title": "Month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CellUsageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Cell Usage",
         "tags": [
           "v1"
         ]

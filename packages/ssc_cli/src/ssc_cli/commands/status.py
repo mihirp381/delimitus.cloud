@@ -10,7 +10,14 @@ from ssc_cli.errors import CliError
 from ssc_cli.models import AppOut
 from ssc_cli.output import dash, print_json, say, table
 from ssc_cli.resolve import resolve_app
-from ssc_cli.shapes import AppResult, DatabaseRow, DeploymentRow, EnvironmentRow, HealthRow
+from ssc_cli.shapes import (
+    AppResult,
+    DatabaseRow,
+    DeploymentRow,
+    EnvironmentRow,
+    HealthRow,
+    UsageRow,
+)
 from ssc_contracts import app_database
 from ssc_contracts.app_database import POOL_FIX_IT
 
@@ -18,7 +25,8 @@ AppArg = Annotated[str, typer.Argument(help="App slug or app_ id.")]
 
 
 def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
-    """Show an app's environments: what runs, how it is billed, its health and its database."""
+    """Show an app's environments: what runs, how it is billed, its health, its database and this
+    month's usage."""
     with handled(json_mode), session(ctx).client() as client:
         result = app_result(
             client,
@@ -26,6 +34,7 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
             with_deployments=True,
             with_databases=True,
             with_health=True,
+            with_usage=True,
         )
     if json_mode:
         print_json(result)
@@ -43,6 +52,7 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
             dash(e.url),
             health_text(e.health),
             database_text(e.database),
+            usage_text(e.usage),
         )
         for e in result.environments
     ]
@@ -56,6 +66,7 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
         "URL",
         "HEALTH",
         "DATABASE",
+        "USAGE THIS MONTH",
     )
     say(table(headers, rows))
     databases = [e.database for e in result.environments if e.database is not None]
@@ -88,6 +99,28 @@ def _health(client: ApiClient, app_id: str, environment_id: str) -> HealthRow | 
         reason=out.reason,
         last_request_at=out.last_request_at,
         checked_at=out.checked_at,
+    )
+
+
+def usage_text(usage: UsageRow | None) -> str:
+    """The usage type and session hours, or a dash when the API did not say."""
+    if usage is None:
+        return "-"
+    kind = usage.usage_type or "no use yet"
+    return f"{kind}, {usage.session_hours:.1f} session h"
+
+
+def _usage(client: ApiClient, app_id: str, environment_id: str) -> UsageRow | None:
+    try:
+        out = client.get_usage(app_id, environment_id)
+    except CliError:
+        return None
+    return UsageRow(
+        month=out.month,
+        usage_type=out.usage_type,
+        session_hours=out.session_hours,
+        instance_hours=out.instance_hours,
+        cold_starts=out.cold_starts,
     )
 
 
@@ -130,13 +163,14 @@ def _billing(value: str | None) -> Literal["request", "instance"] | None:
             return None
 
 
-def app_result(
+def app_result(  # noqa: PLR0913  (keyword-only)
     client: ApiClient,
     app: AppOut,
     *,
     with_deployments: bool,
     with_databases: bool = False,
     with_health: bool = False,
+    with_usage: bool = False,
 ) -> AppResult:
     envs: list[EnvironmentRow] = []
     for e in app.environments:
@@ -163,6 +197,7 @@ def app_result(
                 url=e.url,
                 database=_database(client, app.id, e.id) if with_databases else None,
                 health=_health(client, app.id, e.id) if with_health else None,
+                usage=_usage(client, app.id, e.id) if with_usage else None,
             )
         )
     return AppResult(

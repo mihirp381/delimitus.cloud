@@ -14,6 +14,8 @@ Ticket "done when" checks that run without a cloud:
   * nothing turns a resource off             -> test_nothing_turns_a_ready_resource_off
   * the worker passes only a label and a resource
                                             -> test_the_job_is_started_with_exactly_two_arguments
+SSC-028: creating a cell's database writes exactly one fixed-resource event
+                                            -> test_creating_the_cells_database_writes_exactly_...
 The deployer's own refusals and its single flag are in ``infra/tests/test_deployer.py``.
 """
 
@@ -67,6 +69,8 @@ from ssc_control.cell.deployer import (
 from ssc_control.cell.resources import CELL_RESOURCE_FAILED
 from ssc_control.db import bound_org
 from ssc_control.domain.approval_rules import Requirement, RequirementKind
+from ssc_control.metrics import record_once
+from ssc_control.ports import MetricKind
 from ssc_control.runtime.app_databases import FakeAppDatabases
 from ssc_control.worker import CompositionError, Ports, build_app, compose_ports
 
@@ -341,6 +345,57 @@ async def test_a_step_killed_before_recording_its_run_converges(cell: Cell) -> N
         "cell.resource_requested",
         "cell.resource_ready",
     ]
+
+
+def fixed_resource_events(b: Bench) -> list[dict[str, Any]]:
+    return rows_of(
+        b.dsn,
+        b.w.org,
+        "select dedup_key, properties, app_id, environment_id, pseudonym "
+        "from ssc.metrics_event where kind = 'fixed_resource' order by at",
+    )
+
+
+async def test_creating_the_cells_database_writes_exactly_one_fixed_resource_event(
+    cell: Cell,
+) -> None:
+    b = cell.b
+    op = await stateful_deploy(cell, b.w.preview)
+    assert await run(b, op, cell.ports) == "running"
+    assert await cell.step() == "creating"
+    cell.fake.fail_next = 1
+    cell.fake.finish()
+    assert await cell.step() == "creating"
+    assert fixed_resource_events(b) == []
+    assert await cell.step() == "creating"
+    cell.fake.finish()
+    assert await cell.step() == "ready"
+    assert await cell.step() == "ready"
+    async with bound_org(b.ports.engine, b.w.org) as conn:
+        again_once = await record_once(
+            conn,
+            org_id=b.w.org,
+            kind=MetricKind.FIXED_RESOURCE,
+            dedup_key="database",
+            properties={"resource": "database"},
+        )
+    assert again_once is False
+    assert fixed_resource_events(b) == [
+        {
+            "dedup_key": "database",
+            "properties": {"resource": "database"},
+            "app_id": None,
+            "environment_id": None,
+            "pseudonym": None,
+        }
+    ]
+    again = await stateful_deploy(cell, b.w.prod)
+    assert await run(b, again, cell.ports) == "healthy"
+    await approve(b, RequirementKind.ENABLE_INTERNET_HOSTS, "api.stripe.com")
+    assert await cell.step(CellResource.EGRESS) == "creating"
+    cell.fake.finish()
+    assert await cell.step(CellResource.EGRESS) == "ready"
+    assert [e["dedup_key"] for e in fixed_resource_events(b)] == ["database", "egress"]
 
 
 async def test_a_resource_that_keeps_failing_fails_its_waiters_and_a_later_deploy_asks_again(

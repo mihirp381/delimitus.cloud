@@ -177,6 +177,16 @@ LOGS_UNAVAILABLE`. `GET .../health` answers `running`, `asleep` (starts on the n
 `failing`, with a reason, from Cloud Run's revision state and the cell's own request and error
 logs: no request ever reaches the app. Anyone who can see the app may ask.
 
+**Usage is read from the control database, never from the cell or the app** (SSC-028). `GET
+/v1/apps/{app}/environments/{env}/usage?month=YYYY-MM` (UTC, this month by default) answers one
+environment's session hours, instance hours, cold starts with their p50 and p95 start time (null
+under 20 cold starts, `small_sample: true`), active days and `usage_type`: `rare`, `daily`,
+`session` or `heavy`, read from that month's events after the fact, null with no usage. Anyone
+who can see the app may ask. `GET /v1/usage?month=YYYY-MM` answers every environment with usage
+that month and when each of the cell's fixed resources (`database`, `egress`, `connections`) was
+created; active org admins only (`403 FORBIDDEN`). The numbers are for metrics and the cost view
+only. Nothing bills from them.
+
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's
 call once there is more than one replica.

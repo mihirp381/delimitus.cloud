@@ -32,6 +32,9 @@ Revision 0021 adds columns only (SSC-026): ``secret_ref.updated_at`` and
 ``deployment.secret_refs``, references and version numbers, never a secret value.
 Revision 0022 adds ``app_database`` (SSC-040), keyed by org and environment, so it is in
 ``UNKEYED_TABLES``: where an app database is, never its password.
+Revision 0023 adds ``usage_collection`` (SSC-028), keyed by org alone, so it is in
+``UNKEYED_TABLES``, and ``environment_id`` and ``dedup_key`` on ``metrics_event``: counts and
+durations of usage, never request content, paths, user ids or IP addresses.
 """
 
 from collections.abc import Mapping
@@ -77,6 +80,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "cell_resource",  # SSC-087, revision 0020
         "cell_resource_waiter",  # SSC-087, revision 0020
         "app_database",  # SSC-040, revision 0022
+        "usage_collection",
     }
 )
 
@@ -98,6 +102,7 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "cell_resource",
         "cell_resource_waiter",
         "app_database",
+        "usage_collection",
     }
 )
 
@@ -151,6 +156,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "cell_resource": frozenset({"SELECT", "INSERT", "UPDATE"}),  # never turned off, never DELETE
     "cell_resource_waiter": frozenset({"SELECT", "INSERT", "DELETE"}),
     "app_database": frozenset({"SELECT", "INSERT", "UPDATE"}),  # never removed by the app
+    "usage_collection": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

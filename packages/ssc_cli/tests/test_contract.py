@@ -55,6 +55,7 @@ RESPONSES = (
     models.LogLineOut,
     models.LogPageOut,
     models.HealthOut,
+    models.UsageOut,
 )
 REQUESTS = (
     models.AppCreate,

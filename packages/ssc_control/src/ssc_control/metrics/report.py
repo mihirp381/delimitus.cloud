@@ -16,6 +16,10 @@ threshold agreed in writing on a known population.
 Kill criteria: pilot week 6 is days 36 to 42 and every builder active in it counts as invited;
 the day-60 criteria count days 1 to 60; "side by side" reads each active app's latest deploy up
 to ``--as-of``, with the app's status as it is now. Two misses by day 60 means stop (SSC-060).
+
+Usage (2026-10-03) is per environment per UTC month, for every month the window touches, and the
+cell's fixed resources with the time each was created (``metrics.usage``). It is for metrics and
+the cost view only; nothing bills from it.
 """
 
 from __future__ import annotations
@@ -49,6 +53,14 @@ from ssc_control.domain.stats import (
     wilson,
 )
 from ssc_control.metrics.source_tool import OTHER
+from ssc_control.metrics.usage import (
+    EnvironmentUsage,
+    FixedResource,
+    environment_usage,
+    fixed_resources,
+    month_of,
+    month_span,
+)
 from ssc_control.ports import MetricKind
 
 FORMAT: Final = "ssc-metrics-report/v1"
@@ -158,6 +170,8 @@ class Facts:
     day60_apps_per_builder: tuple[int, ...]
     day60_app_usage: tuple[int, int]
     running_tools: Counts
+    usage: tuple[tuple[date, tuple[EnvironmentUsage, ...]], ...] = ()
+    fixed_resources: tuple[FixedResource, ...] = ()
 
 
 class ReportError(Exception):
@@ -194,7 +208,21 @@ async def gather(conn: AsyncConnection, org_id: str, window: Window) -> Facts:
         day60_apps_per_builder=tuple(int(n) for (n,) in await rows(_APPS_PER_BUILDER, *d60)),
         day60_app_usage=await usage(*d60),
         running_tools=_counts(await rows(_RUNNING_TOOLS, lo, hi)),
+        usage=tuple(
+            [(m, tuple(await environment_usage(conn, org_id, m))) for m in window_months(window)]
+        ),
+        fixed_resources=tuple(await fixed_resources(conn, org_id)),
     )
+
+
+def window_months(window: Window) -> tuple[date, ...]:
+    """The first day of every UTC month from ``day0`` through ``as_of``."""
+    months: list[date] = []
+    month, last = window.day0.replace(day=1), window.as_of.replace(day=1)
+    while month <= last:
+        months.append(month)
+        month = month_of(month_span(month)[1])
+    return tuple(months)
 
 
 def _counts(rows: Sequence[Any]) -> Counts:
@@ -439,6 +467,14 @@ def as_json(report: Report) -> dict[str, Any]:
                 ],
             },
             "weekly_active_builders": [{"week": w, "builders": n} for w, n in f.weekly_builders],
+            "usage": [
+                {"month": m.strftime("%Y-%m"), "environments": [_usage_json(u) for u in found]}
+                for m, found in f.usage
+            ],
+            "fixed_resources": [
+                {"resource": r.resource, "created_at": r.created_at.isoformat()}
+                for r in f.fixed_resources
+            ],
         },
         "kill_criteria": [
             {
@@ -461,6 +497,43 @@ def as_json(report: Report) -> dict[str, Any]:
         ],
         "stop_rule": {"misses": stop.misses, "open": stop.open, "decision": stop.decision},
     }
+
+
+def _usage_json(u: EnvironmentUsage) -> dict[str, Any]:
+    return {
+        "environment_id": u.environment_id,
+        "app_id": u.app_id,
+        "usage_type": u.usage_type,
+        "session_hours": u.session_hours,
+        "instance_hours": u.instance_hours,
+        "cold_starts": u.cold_starts,
+        "small_sample": u.small_sample,
+        "cold_start_p50_seconds": u.cold_start_p50_seconds,
+        "cold_start_p95_seconds": u.cold_start_p95_seconds,
+        "active_days": u.active_days,
+    }
+
+
+def _usage_lines(f: Facts) -> list[str]:
+    out: list[str] = []
+    for month, found in f.usage:
+        out.append(f"   {month:%Y-%m}")
+        if not found:
+            out.append("      none: no usage_hour or cold_start events")
+        for u in found:
+            starts = (
+                f"cold starts {u.cold_starts}, insufficient data (n={u.cold_starts}, "
+                f"need {NO_RATE_BELOW_N})"
+                if u.small_sample
+                else f"cold starts {u.cold_starts}, p50 {u.cold_start_p50_seconds:.1f}s, "
+                f"p95 {u.cold_start_p95_seconds:.1f}s"
+            )
+            out.append(
+                f"      {u.environment_id} {u.usage_type or 'no usage'}: "
+                f"session {u.session_hours:.2f} h, instance {u.instance_hours:.2f} h, "
+                f"{starts}, {u.active_days} active days"
+            )
+    return out
 
 
 def _duration(seconds: float) -> str:
@@ -549,6 +622,16 @@ def render(report: Report) -> str:
     out += [
         "6. Weekly active builders (distinct pseudonyms deploying or sharing, ISO weeks)",
         _weeks(f.weekly_builders, "builders", "deploy or share"),
+        "7. Usage per environment (UTC months; for the cost view, never for billing)",
+        *_usage_lines(f),
+        "8. Fixed resources of the cell (when each was created)",
+        *(
+            [
+                f"   {r.resource} {r.created_at.astimezone(UTC):%Y-%m-%d %H:%M} UTC"
+                for r in f.fixed_resources
+            ]
+            or ["   none: no fixed_resource events"]
+        ),
         "",
         "Pilot kill criteria (Build Path §3.6, SSC-060)",
     ]

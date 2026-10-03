@@ -106,6 +106,17 @@ class HealthRow(Shape):
     checked_at: str
 
 
+class UsageRow(Shape):
+    """``status``: this month's usage (UTC), for metrics only and never a bill. ``usage_type`` is
+    ``rare``, ``daily``, ``session`` or ``heavy``, read from the month's usage; null with none."""
+
+    month: str
+    usage_type: str | None
+    session_hours: float
+    instance_hours: float
+    cold_starts: int
+
+
 class EnvironmentRow(Shape):
     id: str
     name: str
@@ -118,6 +129,9 @@ class EnvironmentRow(Shape):
         default=None, description="Only from ``status``; null when there is none."
     )
     health: HealthRow | None = Field(
+        default=None, description="Only from ``status``; null when the API did not say."
+    )
+    usage: UsageRow | None = Field(
         default=None, description="Only from ``status``; null when the API did not say."
     )
 
@@ -399,6 +413,7 @@ SHAPES: dict[str, type[BaseModel]] = {
         DeploymentRow,
         DatabaseRow,
         HealthRow,
+        UsageRow,
         EnvironmentRow,
         AppResult,
         GrantRow,

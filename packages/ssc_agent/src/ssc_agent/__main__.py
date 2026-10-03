@@ -9,7 +9,9 @@ region. App databases (SSC-040) need ``SSC_SQL_INSTANCE``, the name of the cell'
 instance; unset, the agent refuses them. App logs (SSC-024) need ``SSC_LOG_VIEW``, the full names
 of the cell's log views (``projects/<p>/locations/<l>/buckets/<b>/views/<v>``), separated by
 commas; unset, the agent refuses log reads and health uses the service alone. Log records are
-redacted (``ssc_shared.redaction``).
+redacted (``ssc_shared.redaction``). App usage (SSC-028) needs ``SSC_USAGE_SOURCE=monitoring``,
+set once the agent may read the cell's Cloud Monitoring; unset, the agent refuses usage reads and
+the control plane records no usage events.
 """
 
 import logging
@@ -24,6 +26,7 @@ from ssc_agent.app import create_app
 from ssc_agent.app_database import CellAppDatabases
 from ssc_agent.cloud_build import CellBuildConfig, CloudBuildDriver
 from ssc_agent.cloud_logging import LOG_VIEW, CellLogHub, CloudLoggingEntries
+from ssc_agent.cloud_monitoring import CellUsageReader, CloudMonitoringSeries
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_agent.cloud_sql import CloudSqlAdmin
 from ssc_agent.metadata import MetadataAccessTokens
@@ -45,6 +48,8 @@ BUILD_ENV: Final = {
 }
 SQL_INSTANCE_ENV: Final = "SSC_SQL_INSTANCE"
 LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
+USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
+USAGE_SOURCES: Final = ("monitoring",)
 
 
 class ConfigError(ValueError):
@@ -87,11 +92,22 @@ def log_views_from_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
     return views
 
 
+def usage_source_from_env(env: Mapping[str, str]) -> str | None:
+    """None when unset; ``ConfigError`` for a source the agent cannot read."""
+    value = env.get(USAGE_SOURCE_ENV, "")
+    if not value:
+        return None
+    if value not in USAGE_SOURCES:
+        raise ConfigError(f"{USAGE_SOURCE_ENV} is one of {', '.join(USAGE_SOURCES)}")
+    return value
+
+
 def main() -> int:
     try:
         cell = cell_from_env(os.environ)
         build = build_config_from_env(os.environ, cell)
         views = log_views_from_env(os.environ)
+        usage_source = usage_source_from_env(os.environ)
     except ConfigError as exc:
         print(f"ssc-agent: {exc}", file=sys.stderr)  # noqa: T201
         return 2
@@ -108,7 +124,11 @@ def main() -> int:
         writer = CellSecretWriter(cell.project, tokens)
         databases = CellAppDatabases(sql, custody, writer)
     entries = None if views is None else CloudLoggingEntries(views, tokens)
-    app = create_app(driver, builder, custody, databases, CellLogHub(entries, driver))
+    series = None if usage_source is None else CloudMonitoringSeries(cell.project, tokens)
+    if series is None:
+        logging.getLogger(__name__).info("usage reads are off: %s is not set", USAGE_SOURCE_ENV)
+    hub = CellLogHub(entries, driver)
+    app = create_app(driver, builder, custody, databases, hub, usage=CellUsageReader(series))
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
     return 0
 
