@@ -2,13 +2,14 @@
 
 Frozen contract in ``docs/contracts/access-snapshot.md`` (decision 019). The control plane
 compiles and publishes it; ``ssc_shared.access`` evaluates it, in the control plane's explain
-endpoint and in the gateway. A change that would refuse a valid document or change what one
-means needs ``ssc-snapshot/v2`` beside this module.
+endpoint, in the gateway and in the data gateway. A change that would refuse a valid document or
+change what one means needs ``ssc-snapshot/v2`` beside this module.
 
-Ids and states only: no names, emails or group names, so a document holds no personal data.
+Ids, states and the names admins give hosts and connections only: no people's names, emails or
+group names, so a document holds no personal data.
 """
 
-from typing import Annotated, Final, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -24,11 +25,14 @@ GrantId = Annotated[str, StringConstraints(pattern=r"^gnt_[a-z0-9]{20}$")]
 UserId = Annotated[str, StringConstraints(pattern=r"^usr_[a-z0-9]{20}$")]
 GroupId = Annotated[str, StringConstraints(pattern=r"^grp_[a-z0-9]{20}$")]
 HostName = Annotated[str, StringConstraints(pattern=r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")]
+ConnectionId = Annotated[str, StringConstraints(pattern=r"^con_[a-z0-9]{20}$")]
+ConnectionName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,62}$")]
 
 GrantRole = Literal["builder", "user"]
 SubjectKind = Literal["user", "group", "org"]
 AppStatus = Literal["active", "disabled", "quarantined"]
 UserStatus = Literal["active", "deactivated"]
+ConnectionStatus = Literal["active", "suspended"]
 
 _SUBJECT_PREFIX: Final = {"user": "usr_", "group": "grp_"}
 
@@ -80,6 +84,38 @@ class SnapshotUser(_Frozen):
     )
 
 
+def _cap() -> Any:
+    return Field(default=None, ge=0, le=MAX_VERSION, exclude_if=lambda v: v is None)
+
+
+class SnapshotLimits(_Frozen):
+    """The caps one layer puts on a data gateway query (SSC-050). A member left out puts no cap
+    at this layer; 0 is a cap of zero, so absent and 0 never mean the same."""
+
+    max_rows: int | None = _cap()
+    max_bytes: int | None = _cap()
+    timeout_ms: int | None = _cap()
+    concurrency: int | None = _cap()
+    daily_rows: int | None = _cap()
+    daily_bytes: int | None = _cap()
+
+
+class SnapshotConnectionGrant(_Frozen):
+    """One environment's use of a connection; ``limits`` are the grant's own caps."""
+
+    limits: SnapshotLimits | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
+class SnapshotConnection(_Frozen):
+    """A company data connection the data gateway serves (SSC-050). ``suspended`` refuses every
+    query on it and ends the running ones; ``grants`` lists the environments that may query it."""
+
+    connection_id: ConnectionId
+    status: ConnectionStatus
+    limits: SnapshotLimits | None = Field(default=None, exclude_if=lambda v: v is None)
+    grants: dict[EnvId, SnapshotConnectionGrant]
+
+
 class SnapshotDoc(_Frozen):
     """One org's snapshot. ``version`` 0 is a live evaluation that was never published."""
 
@@ -95,6 +131,11 @@ class SnapshotDoc(_Frozen):
     groups_by_user: dict[UserId, tuple[GroupId, ...]]
     users: dict[UserId, SnapshotUser]
     ceiling: None
+    connections: dict[ConnectionName, SnapshotConnection] | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description="Connection name to the connection the data gateway serves (SSC-050).",
+    )
 
     @model_validator(mode="after")
     def _references_resolve(self) -> Self:
@@ -108,4 +149,10 @@ class SnapshotDoc(_Frozen):
             for g in grants:
                 if g.subject_kind == "user" and g.subject_id not in self.users:
                     raise ValueError(f"grant {g.grant_id} names a user that is not in users")
+        connections = (self.connections or {}).values()
+        if any(not c.grants.keys() <= self.environments.keys() for c in connections):
+            raise ValueError("a connection grant names an environment that is not in environments")
+        ids = [c.connection_id for c in connections]
+        if len(ids) != len(set(ids)):
+            raise ValueError("two connection names share a connection_id")
         return self

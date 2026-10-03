@@ -1,0 +1,14 @@
+# Build context is the repository root; send only what the data gateway image needs.
+*
+!pyproject.toml
+!uv.lock
+!packages/
+!conformance/pyproject.toml
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.hypothesis
+**/node_modules
+**/.DS_Store
+**/tests

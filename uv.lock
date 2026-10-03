@@ -1667,9 +1667,11 @@ dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "httpx2" },
+    { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "sqlglot" },
     { name = "ssc-contracts" },
-    { name = "ssc-shared" },
+    { name = "ssc-shared", extra = ["gcs"] },
     { name = "uvicorn" },
 ]
 
@@ -1678,9 +1680,11 @@ requires-dist = [
     { name = "asyncpg", specifier = "==0.31.0" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "httpx2", specifier = "==2.13.0" },
+    { name = "pydantic", specifier = "==2.13.5" },
+    { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },
     { name = "sqlglot", specifier = "==28.0.0" },
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
-    { name = "ssc-shared", editable = "packages/ssc_shared" },
+    { name = "ssc-shared", extras = ["gcs"], editable = "packages/ssc_shared" },
     { name = "uvicorn", specifier = "==0.38.0" },
 ]
 

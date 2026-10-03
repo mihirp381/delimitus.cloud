@@ -161,6 +161,7 @@ class CellConfig:
     gateway_keyring: str | None = None
     gateway_jwks: str | None = None
     org_id: str | None = None
+    datagw_image: str | None = None
 
     @property
     def project_id(self) -> str:
@@ -203,6 +204,7 @@ class CellConfig:
             "gateway_keyring": self.gateway_keyring,
             "gateway_jwks": self.gateway_jwks,
             "org_id": self.org_id,
+            "datagw_image": self.datagw_image,
             **self.flags,
         }
         return {
@@ -238,6 +240,7 @@ def read_config(stack: str) -> CellConfig:
         gateway_keyring=keyring,
         gateway_jwks=jwks,
         org_id=org,
+        datagw_image=datagw_settings(config.get("datagw_image"), org),
     )
 
 
@@ -276,6 +279,18 @@ def gateway_settings(
         raise ValueError("gateway_keyring must be the keyring's KMS ciphertext, in base64")
     _check_public_jwks(jwks)
     return image, keyring, jwks, org
+
+
+def datagw_settings(image: str | None, org: str | None) -> str | None:
+    """``datagw_image`` pinned in the platform registry, and only with the gateway settings: the
+    data gateway reads the same customer and identity JWKS (SSC-050)."""
+    if not image:
+        return None
+    if not PINNED_IMAGE.fullmatch(image):
+        raise ValueError(f"datagw_image must be {n.platform_registry()}/<image>@sha256:<digest>")
+    if not org:
+        raise ValueError(f"datagw_image needs the gateway settings: {', '.join(GATEWAY_SETTINGS)}")
+    return image
 
 
 def _check_public_jwks(jwks: str) -> None:
@@ -1017,6 +1032,18 @@ class Cell:
             gcp.storage.BucketIAMMember(
                 name, bucket=self.bucket_.name, role=role, member=member, opts=self._o()
             )
+        snapshots = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/snapshots/"
+        gcp.storage.BucketIAMMember(
+            "bucket-data",
+            bucket=self.bucket_.name,
+            role="roles/storage.objectViewer",
+            member=self.data_sa.member,
+            condition=gcp.storage.BucketIAMMemberConditionArgs(
+                title="only access snapshots",
+                expression=f'resource.name.startsWith("{snapshots}")',
+            ),
+            opts=self._o(),
+        )
 
     def log_views(self) -> None:
         """The agent's only window on the cell's logs (SSC-024): one view per resource type on
@@ -1059,9 +1086,11 @@ class Cell:
         timeout: str | None = None,
         concurrency: int | None = None,
         audiences: Sequence[str] | None = None,
+        invoker_iam: bool = True,
         after: Sequence[pulumi.Resource] = (),
     ) -> gcp.cloudrunv2.Service:
-        """A request-billed service: CPU only while a request is open."""
+        """A request-billed service: CPU only while a request is open. ``invoker_iam=False``
+        leaves the caller check to the service itself."""
         min_instances, max_instances = instances
         return gcp.cloudrunv2.Service(
             name,
@@ -1070,6 +1099,7 @@ class Cell:
             location=n.REGION,
             ingress=ingress,
             custom_audiences=list(audiences) if audiences else None,
+            invoker_iam_disabled=None if invoker_iam else True,
             deletion_protection=not self.cfg.disposable,
             scaling=gcp.cloudrunv2.ServiceScalingArgs(max_instance_count=max_instances),
             template=gcp.cloudrunv2.ServiceTemplateArgs(
@@ -1490,14 +1520,44 @@ class Cell:
         )
 
     def data_gateway(self) -> None:
-        """The ``connections`` flag: the data gateway and file broker, leaving through the NAT."""
+        """The ``connections`` flag: the data gateway and file broker, leaving through the NAT.
+
+        Ingress is internal only, so only the cell's VPC reaches it. Cloud Run's invoker check is
+        off: the gateway checks each caller's Google ID token itself and admits only the cell's
+        app accounts (SSC-050, ``ssc_datagw.workload``), so no app needs ``run.invoker`` and no
+        ``allUsers`` grant or public-invoker tag is involved. With ``datagw_image`` it runs a
+        build of ``packages/ssc_datagw/Dockerfile``, which reads its snapshot from the cell
+        bucket's ``snapshots/`` (``bucket-data``)."""
         self.data_gateway_ = self._run(
             n.DATA_GATEWAY,
             self.data_sa,
             ingress="INGRESS_TRAFFIC_INTERNAL_ONLY",
             vpc=self._edge_vpc(DATA_TAG),
             instances=(0, DATAGW_MAX),
+            image=self.cfg.datagw_image,
+            env=self._datagw_env(),
+            invoker_iam=False,
         )
+
+    def _datagw_env(self) -> dict[str, pulumi.Input[str]] | None:
+        """What ``ssc_datagw.settings.settings_from_env`` reads, once ``datagw_image`` is set.
+        ``SSC_DATAGW_AUDIENCE`` is the service's own ``run.app`` URL, the audience apps mint
+        their workload token for."""
+        cfg = self.cfg
+        if not (cfg.datagw_image and cfg.org_id and cfg.gateway_jwks):
+            return None
+        return {
+            "SSC_ORG_ID": cfg.org_id,
+            "SSC_CELL_LABEL": cfg.label,
+            "SSC_PROJECT_ID": cfg.project_id,
+            "SSC_CELL_BUCKET": self.bucket_.name,
+            "SSC_DATAGW_AUDIENCE": self.project_.number.apply(
+                lambda p: n.run_url(n.DATA_GATEWAY, p)
+            ),
+            "SSC_IDENTITY_JWKS": cfg.gateway_jwks,
+            "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
+            "SSC_IDENTITY_ISSUER": n.identity_issuer(cfg.label),
+        }
 
     def deny(self) -> None:
         """The folder rule names the control plane; this one names the cell's own identities."""

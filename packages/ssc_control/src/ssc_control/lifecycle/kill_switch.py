@@ -13,8 +13,10 @@ transaction locks the run's row and checks ``steps`` is still what it read. The 
    ``latest.json`` names it, which an awake gateway, or one starting from zero, reads before
    it decides) and ``unconfirmed`` after ``confirm_within``; the job re-defers its own poll
    instead of holding a worker.
-2. ``datagw_suspend`` and 3. ``egress_remove`` do nothing yet (SSC-050, SSC-053); the same
-   version confirms them.
+2. ``datagw_suspend`` is the same version: the data gateway (SSC-050) reads it on demand, so it
+   refuses each of the app's connections with ``APP_NOT_ACTIVE`` and its kill watch ends the
+   queries already running; the version confirms it. 3. ``egress_remove`` does nothing yet
+   (SSC-053); the same version confirms it.
 4. ``scale_to_zero`` stops each environment, prod first, in a job holding that environment's
    lock; ``observe`` must then report it stopped or gone.
 5. ``pause_timers`` pauses the app's schedules and keeps their ids for ``enable``.
@@ -464,7 +466,7 @@ async def _work(job: _Job, run: _Run, step: Step) -> str | None:
 
 async def _confirm(job: _Job, run: _Run, step: Step) -> str | None:
     """Done once the org's cell has the step's snapshot version. Only the gateway waits for it,
-    polling until ``confirm_by``; the no-op steps take the answer as it is."""
+    polling until ``confirm_by``; the steps after it take the answer as it is."""
     version = step.snapshot_version
     confirmed = version is not None and await job.ports.snapshot.confirmed(job.org_id, version)
     async with job.tx() as conn:
