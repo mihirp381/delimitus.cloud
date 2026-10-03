@@ -38,6 +38,8 @@ from ssc_control.deploy import jobs as deploy_jobs
 from ssc_control.deploy.build_driver import BuildDriver, FakeBuildDriver
 from ssc_control.deploy.cell_build import CellAgentBuildDriver
 from ssc_control.deploy.gates import approvals_prod_gate
+from ssc_control.identity import jobs as identity_jobs
+from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
 from ssc_control.lifecycle import jobs as lifecycle_jobs
 from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
 from ssc_control.ports import MetricsPort
@@ -77,6 +79,9 @@ IDENTITY_ISSUER_ENV: Final = "SSC_IDENTITY_ISSUER"
 APPS_DOMAIN_ENV: Final = "SSC_APPS_DOMAIN"
 APPS_DOMAIN: Final = "delimitusapps.com"
 ISSUER_PREFIX: Final = "https://keys.delimitus.com/"
+WORKOS_KEY_ENV: Final = "SSC_WORKOS_API_KEY"
+WORKOS_CLIENT_ENV: Final = "SSC_WORKOS_CLIENT_ID"
+WORKOS_BASE_ENV: Final = "SSC_WORKOS_BASE"
 FAKE_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 SWEEP_CRON: Final = "* * * * * */30"
 """Every 30 seconds."""
@@ -168,6 +173,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(lifecycle_jobs.blueprint(), namespace="lifecycle")
     app.add_tasks_from(timers_jobs.blueprint(), namespace="timers")
     app.add_tasks_from(cell_jobs.blueprint(), namespace="cell")
+    app.add_tasks_from(identity_jobs.blueprint(), namespace="identity")
     return app
 
 
@@ -308,6 +314,19 @@ def app_identity_from_env(env: Mapping[str, str]) -> AppIdentity | None:
     return AppIdentity(keys_url=keys_url, cell_label=label, apps_domain=domain)
 
 
+def directory_from_env(env: Mapping[str, str]) -> WorkOSClient | None:
+    """``SSC_WORKOS_API_KEY`` and ``SSC_WORKOS_CLIENT_ID``, both or neither, and optionally
+    ``SSC_WORKOS_BASE``: the client the directory sync reads WorkOS with. None skips the sync."""
+    key, client_id = env.get(WORKOS_KEY_ENV, ""), env.get(WORKOS_CLIENT_ENV, "")
+    if not key and not client_id:
+        return None
+    if not (key and client_id):
+        raise CompositionError(f"set both {WORKOS_KEY_ENV} and {WORKOS_CLIENT_ENV}, or neither")
+    return WorkOSClient(
+        api_key=key, client_id=client_id, base=env.get(WORKOS_BASE_ENV, DEFAULT_BASE)
+    )
+
+
 def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
     """Refuse any fake port unless ``SSC_ENV`` is ``dev`` or ``test``."""
     fakes = [
@@ -353,6 +372,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         cell_deployer=_cell_deployer(env),
         app_databases=app_databases_from_env(env),
         app_identity=app_identity_from_env(env),
+        directory=directory_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports
@@ -390,6 +410,8 @@ async def run(env: Mapping[str, str] | None = None) -> None:
     try:
         await run_worker(build_app(e[DSN_ENV]), ports)
     finally:
+        if ports.directory is not None:
+            await ports.directory.aclose()
         await ports.engine.dispose()
 
 
@@ -417,6 +439,7 @@ __all__ = [
     "build_driver_from_env",
     "compose_ports",
     "core_blueprint",
+    "directory_from_env",
     "metrics_from_env",
     "ports_of",
     "queue_conninfo",

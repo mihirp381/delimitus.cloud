@@ -767,6 +767,8 @@ def test_the_diff_ignores_assigned_ids_and_nulls(
 
 
 def test_only_the_control_plane_invokes_the_cell_agent(cell_a: list[Declared]) -> None:
+    """The API (secrets, app databases) and the worker (runtime, builds) each call the agent as
+    their own account (SSC-064)."""
     invoker = one(
         cell_a, "gcp:cloudrunv2/serviceIamMember:ServiceIamMember", "agent-invoker"
     ).inputs
@@ -774,6 +776,31 @@ def test_only_the_control_plane_invokes_the_cell_agent(cell_a: list[Declared]) -
         invoker["member"]
         == "serviceAccount:ssc-control@ssc-control-staging.iam.gserviceaccount.com"
     )
+    worker = one(
+        cell_a, "gcp:cloudrunv2/serviceIamMember:ServiceIamMember", "agent-invoker-worker"
+    ).inputs
+    assert (
+        worker["member"]
+        == "serviceAccount:ssc-control-worker@ssc-control-staging.iam.gserviceaccount.com"
+    )
+    assert worker["role"] == invoker["role"] == "roles/run.invoker"
+
+
+def test_the_control_plane_reads_and_writes_the_cell_bucket(cell_a: list[Declared]) -> None:
+    """Snapshots go to the cell bucket from the worker's jobs (SSC-064)."""
+    grants = {
+        d.name: (d.inputs["member"], d.inputs["role"])
+        for d in cell_a
+        if d.type == "gcp:storage/bucketIAMMember:BucketIAMMember"
+        and d.name.startswith("bucket-control")
+    }
+    assert grants == {
+        "bucket-control": (CONTROL_MEMBER, "roles/storage.objectUser"),
+        "bucket-control-worker": (
+            f"serviceAccount:{mockcloud.WORKERS['staging']}",
+            "roles/storage.objectUser",
+        ),
+    }
 
 
 def _grants(declared: list[Declared], member: str) -> dict[str, dict[str, str] | None]:
@@ -974,6 +1001,31 @@ def test_a_prod_cell_needs_a_prod_control_plane() -> None:
     assert cell.control_for({"prod": "x"}, "prod") == "x"
     with pytest.raises(ValueError, match="no prod control plane"):
         cell.control_for({"staging": "x"}, "prod")
+
+
+def test_a_cell_trusts_the_control_plane_behind_the_public_hosts() -> None:
+    """The gateway logs in at ``auth`` and its keys are at ``keys``, so the control plane behind
+    them runs the cell, whatever the cell's stage (SSC-064)."""
+    assert cell.control_for({"prod": "p", "staging": "s"}, "staging", "prod") == "p"
+    assert cell.control_for({"prod": "p", "staging": "s"}, "prod", None) == "p"
+    with pytest.raises(ValueError, match="no prod control plane"):
+        cell.control_for({"staging": "s"}, "staging", "prod")
+    declared = run(
+        naming.cell_stack("testcell11"), platform_outputs={"control_public_stage": "prod"}
+    )
+    members = {
+        d.name: d.inputs["member"]
+        for d in declared
+        if d.name
+        in {"agent-invoker", "agent-invoker-worker", "bucket-control", "bucket-control-worker"}
+    }
+    prod = (mockcloud.CONTROL["prod"], mockcloud.WORKERS["prod"])
+    assert members == {
+        "agent-invoker": f"serviceAccount:{prod[0]}",
+        "agent-invoker-worker": f"serviceAccount:{prod[1]}",
+        "bucket-control": f"serviceAccount:{prod[0]}",
+        "bucket-control-worker": f"serviceAccount:{prod[1]}",
+    }
 
 
 @pytest.mark.parametrize("stack", ["c-t01", "cell-testcell01", "c-TESTCELL01"])
@@ -1424,7 +1476,12 @@ def test_the_agent_is_internal_and_load_balancer_with_the_host_as_audience(
         if d.type == "gcp:cloudrunv2/serviceIamMember:ServiceIamMember"
         and d.inputs["name"] == naming.CELL_AGENT
     ]
-    assert invokers == [f"serviceAccount:{mockcloud.CONTROL['staging']}"]
+    assert sorted(invokers) == sorted(
+        [
+            f"serviceAccount:{mockcloud.CONTROL['staging']}",
+            f"serviceAccount:{mockcloud.WORKERS['staging']}",
+        ]
+    )
     gateway = one(bare, "gcp:cloudrunv2/service:Service", naming.GATEWAY).inputs
     assert "customAudiences" not in gateway
 

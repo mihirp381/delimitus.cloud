@@ -13,6 +13,9 @@ from ssc_infra import cell, naming, platform
 FOLDERS = {"prod": "111111111111", "staging": "222222222222"}
 NIGHTLY = naming.sa_email(naming.NIGHTLY_SA, naming.control_project("staging"))
 CONTROL = {s: naming.sa_email(naming.CONTROL_SA, naming.control_project(s)) for s in naming.STAGES}
+WORKERS = {
+    s: naming.sa_email(naming.CONTROL_WORKER_SA, naming.control_project(s)) for s in naming.STAGES
+}
 PUBLIC_TAG = "tagValues/555555555555"
 DEPLOYER = naming.sa_email(naming.DEPLOYER, naming.BOOTSTRAP_PROJECT)
 
@@ -36,17 +39,20 @@ def entry_address(project_id: str) -> str:
 
 
 class Recorder(pulumi.runtime.Mocks):
-    def __init__(self) -> None:
+    def __init__(self, platform_outputs: dict[str, Any] | None = None) -> None:
         self.declared: list[Declared] = []
+        self.platform_outputs = platform_outputs or {}
 
     def new_resource(self, args: pulumi.runtime.MockResourceArgs) -> tuple[str, dict[str, Any]]:
         if args.typ == "pulumi:pulumi:StackReference":
             outputs = {
                 "stage_folder_ids": FOLDERS,
                 "control_service_accounts": CONTROL,
+                "control_workers": WORKERS,
                 "nightly_service_account": NIGHTLY,
                 "public_invoker_tag": PUBLIC_TAG,
                 "cell_deployer": {"service_account": DEPLOYER},
+                **self.platform_outputs,
             }
             return f"{args.name}-id", {"name": args.name, "outputs": outputs}
         state = dict(args.inputs)
@@ -113,8 +119,12 @@ class Recorder(pulumi.runtime.Mocks):
         return {}, None
 
 
-def run(stack: str, config: dict[str, str] | None = None) -> list[Declared]:
-    recorder = Recorder()
+def run(
+    stack: str,
+    config: dict[str, str] | None = None,
+    platform_outputs: dict[str, Any] | None = None,
+) -> list[Declared]:
+    recorder = Recorder(platform_outputs)
     asyncio.set_event_loop(asyncio.new_event_loop())  # 3.14 makes no loop implicitly
     pulumi.runtime.set_mocks(recorder, project=naming.PROJECT, stack=stack, preview=False)
     runtime_config.set_all_config({f"{naming.PROJECT}:{k}": v for k, v in (config or {}).items()})
