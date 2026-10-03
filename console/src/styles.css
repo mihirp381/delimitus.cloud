@@ -402,6 +402,10 @@ details pre {
   color: var(--ssc-feedback-info);
 }
 
+.notice-warning {
+  color: var(--ssc-feedback-warning);
+}
+
 /* Dialog */
 
 .dialog {

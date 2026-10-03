@@ -53,8 +53,10 @@ production. It checks the folder first and uploads nothing if it holds a secret.
 build; add `--wait` to also wait until the new release is live. A failed build or deployment exits
 1 with the reason as `code` (for example `HEALTH_CHECK_FAILED`) and the next step in the error.
 `ssc releases` lists the numbered releases and `ssc rollback <app> R<number>` deploys an earlier
-one again, keeping today's sharing and secrets. `ssc promote <app> --wait` is the only way to
-production: it builds for production the source preview runs now and puts it live there.
+one again, keeping today's sharing and secrets. If the database has run migrations that release
+lacks, it stops with `SCHEMA_AHEAD` and names them; add `--confirm` only when the person agrees
+the older code works with them. `ssc promote <app> --wait` is the only way to production: it
+builds for production the source preview runs now and puts it live there.
 Promoting is the person's decision, so run it only when they ask for it.
 
 A sharing change made with an agent's token waits for another admin: `ssc share` and

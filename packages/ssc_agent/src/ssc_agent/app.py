@@ -5,9 +5,10 @@ Cloud Run lets only the control plane's service account invoke the agent (decisi
 every request here already passed IAM. The agent still refuses any service or secret name that
 is not an SSC app's, because its own IAM cannot limit a create by name. Secrets have one method,
 ``ensure``; nothing here reads, returns or receives a secret value. App databases have
-``ensure``, ``rotate``, ``usage`` and ``drop``; their passwords stay in the agent and the cell's
-Secret Manager, and the answers carry secret versions only. ``drop`` runs only while the
-service is gone or stopped (``SERVICE_LIVE`` otherwise), so no running app loses its database.
+``ensure``, ``rotate``, ``usage``, ``recovery_point`` and ``drop``; their passwords stay in the
+agent and the cell's Secret Manager, and the answers carry secret versions only. ``drop`` runs
+only while the service is gone or stopped (``SERVICE_LIVE`` otherwise), so no running app loses
+its database.
 Logs (SSC-024) have ``read``, ``follow`` and ``health`` of one service; the agent builds the
 filter, redacts every line, and keeps the cell under Cloud Logging's quota.
 
@@ -205,12 +206,12 @@ def _secret_routes(app: FastAPI, secrets: SecretCustody | None) -> None:
 def _database_routes(
     app: FastAPI, driver: RuntimeDriver, databases: CellAppDatabases | None
 ) -> None:
-    """``ensure``, ``rotate``, ``usage`` and ``drop`` of one service's database; no answer holds
-    a value."""
+    """``ensure``, ``rotate``, ``usage``, ``recovery_point`` and ``drop`` of one service's
+    database; no answer holds a value."""
 
     @app.post(DATABASES_PREFIX + "/{method}")
     async def database(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
-        if method not in ("ensure", "rotate", "usage", "drop"):
+        if method not in ("ensure", "rotate", "usage", "recovery_point", "drop"):
             return _error(404, "NOT_FOUND", f"no method {method}")
         if databases is None:
             return _error(503, "DATABASES_NOT_CONFIGURED", "this agent has no Cloud SQL instance")
@@ -225,19 +226,7 @@ def _database_routes(
                     return _error(409, "SERVICE_LIVE", f"{service} still runs; stop it first")
                 await databases.drop(service)
                 return JSONResponse({"dropped": service})
-            if method == "usage":
-                seen = await databases.usage(service)
-                result: dict[str, object] = {
-                    "present": seen.present,
-                    "size_bytes": seen.size_bytes,
-                    "connection_limit": seen.connection_limit,
-                    "connections": seen.connections,
-                    "environments": seen.environments,
-                    "ceiling": seen.ceiling,
-                }
-            else:
-                made = await (databases.ensure if method == "ensure" else databases.rotate)(service)
-                result = _database_to_wire(made)
+            result = await _database_answer(databases, method, service)
         except (ValueError, TypeError, KeyError) as exc:
             return _error(400, "INVALID_REQUEST", str(exc))
         except TierFullError as exc:
@@ -251,6 +240,27 @@ def _database_routes(
             log.warning("database call failed", extra={"method": method, "error": str(exc)})
             return _error(502, "DATABASE_ERROR", str(exc))
         return JSONResponse(result)
+
+
+async def _database_answer(
+    databases: CellAppDatabases, method: str, service: str
+) -> dict[str, object]:
+    """The answer to ``ensure``, ``rotate``, ``usage`` or ``recovery_point``; none holds a value."""
+    if method == "recovery_point":
+        point = await databases.recovery_point(service)
+        return {"at": point.at, "lsn": point.lsn}
+    if method == "usage":
+        seen = await databases.usage(service)
+        return {
+            "present": seen.present,
+            "size_bytes": seen.size_bytes,
+            "connection_limit": seen.connection_limit,
+            "connections": seen.connections,
+            "environments": seen.environments,
+            "ceiling": seen.ceiling,
+        }
+    made = await (databases.ensure if method == "ensure" else databases.rotate)(service)
+    return _database_to_wire(made)
 
 
 def _log_routes(app: FastAPI, logs: CellLogs) -> None:

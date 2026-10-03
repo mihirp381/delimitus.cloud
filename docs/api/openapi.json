@@ -1484,6 +1484,12 @@
       "DeploymentCreate": {
         "additionalProperties": false,
         "properties": {
+          "confirm": {
+            "default": false,
+            "description": "For a rollback: go ahead although the environment's database has migrations the release lacks (`SCHEMA_AHEAD` otherwise). Ignored for a deploy.",
+            "title": "Confirm",
+            "type": "boolean"
+          },
           "kind": {
             "default": "deploy",
             "enum": [
@@ -1573,6 +1579,17 @@
           "operation_id": {
             "title": "Operation Id",
             "type": "string"
+          },
+          "recovery_point": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecoveryPointOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the environment's database was before this production deployment started; null for any other deployment."
           },
           "release_id": {
             "title": "Release Id",
@@ -1837,6 +1854,7 @@
           "DB_TIER_FULL",
           "DATABASE_UNAVAILABLE",
           "SNAPSHOT_UNCONFIRMED",
+          "SCHEMA_AHEAD",
           "LOGS_RATE_LIMITED",
           "LOGS_UNAVAILABLE",
           "INTERNAL"
@@ -2677,6 +2695,30 @@
         "title": "LastDeploy",
         "type": "object"
       },
+      "LedgerAhead": {
+        "additionalProperties": false,
+        "properties": {
+          "ledger": {
+            "description": "The migration tool: `prisma`, `alembic`, `django`, `drizzle` or `knex`.",
+            "title": "Ledger",
+            "type": "string"
+          },
+          "names": {
+            "description": "The migrations the database may have run that the release lacks, in the order the tool applies them.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ledger",
+          "names"
+        ],
+        "title": "LedgerAhead",
+        "type": "object"
+      },
       "LinkIn": {
         "additionalProperties": false,
         "properties": {
@@ -2790,6 +2832,34 @@
         ],
         "type": "string"
       },
+      "MigrationsAhead": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "ledgers": {
+            "description": "Empty when a rollback to the release needs no `confirm`: the environment has no database, the database has run nothing the release lacks, or the release was made before migrations were recorded.",
+            "items": {
+              "$ref": "#/components/schemas/LedgerAhead"
+            },
+            "title": "Ledgers",
+            "type": "array"
+          },
+          "release_id": {
+            "title": "Release Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment_id",
+          "release_id",
+          "ledgers"
+        ],
+        "title": "MigrationsAhead",
+        "type": "object"
+      },
       "OperationAccepted": {
         "additionalProperties": false,
         "properties": {
@@ -2896,6 +2966,17 @@
           "operation_id": {
             "title": "Operation Id",
             "type": "string"
+          },
+          "recovery_point": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecoveryPointOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the environment's database was before this production deployment started; null for any other deployment."
           },
           "release_id": {
             "title": "Release Id",
@@ -3052,6 +3133,35 @@
         "title": "PromoteIn",
         "type": "object"
       },
+      "RecoveryPointOut": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "description": "When the database was at this point.",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "lsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The instance's write-ahead log position then; null when the cell could not say and `at` is the control plane's time.",
+            "title": "Lsn"
+          }
+        },
+        "required": [
+          "at",
+          "lsn"
+        ],
+        "title": "RecoveryPointOut",
+        "type": "object"
+      },
       "ReleaseList": {
         "additionalProperties": false,
         "properties": {
@@ -3114,6 +3224,21 @@
             "description": "How the number is shown: `R<number>`.",
             "title": "Label",
             "type": "string"
+          },
+          "latest_migrations": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The latest migration of each migration tool the build found in the source, such as `{\"prisma\": \"20261003120000_add_total\"}`; null when the build did not read the source.",
+            "title": "Latest Migrations"
           },
           "manifest_digest": {
             "title": "Manifest Digest",
@@ -6312,7 +6437,7 @@
         ]
       },
       "post": {
-        "description": "Start a deployment: 202 plus a ``Location`` to poll. The deploy job runs it.\n\nA release a build made for another environment is ``RELEASE_ENVIRONMENT_MISMATCH``: prod\nbuilds separately from the same source. A second forward deploy while one is in flight is\n``DEPLOYMENT_IN_FLIGHT``; a rollback supersedes the in-flight forward deploy instead.",
+        "description": "Start a deployment: 202 plus a ``Location`` to poll. The deploy job runs it.\n\nA release a build made for another environment is ``RELEASE_ENVIRONMENT_MISMATCH``: prod\nbuilds separately from the same source. A second forward deploy while one is in flight is\n``DEPLOYMENT_IN_FLIGHT``; a rollback supersedes the in-flight forward deploy instead. A\nrollback to a release that lacks migrations the environment's database may have run is\n``SCHEMA_AHEAD`` without ``confirm``; ``GET .../migrations-ahead`` names them.",
         "operationId": "create_deployment_v1_apps__app_id__environments__environment_id__deployments_post",
         "parameters": [
           {
@@ -6439,7 +6564,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`, `RELEASE_ENVIRONMENT_MISMATCH`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`, `RELEASE_ENVIRONMENT_MISMATCH`, `SCHEMA_AHEAD`"
           },
           "422": {
             "content": {
@@ -6992,6 +7117,112 @@
           }
         },
         "summary": "Get Logs",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/migrations-ahead": {
+      "get": {
+        "description": "The migrations the environment's database may have run that ``release_id`` lacks: what a\nrollback to it goes back past, and why it is ``SCHEMA_AHEAD`` without ``confirm``.",
+        "operationId": "migrations_ahead_v1_apps__app_id__environments__environment_id__migrations_ahead_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "A release id.",
+            "in": "query",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "description": "A release id.",
+              "pattern": "^rel_[a-z0-9]{20}$",
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationsAhead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Migrations Ahead",
         "tags": [
           "v1"
         ]

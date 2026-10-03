@@ -637,9 +637,10 @@ async def test_a_failed_build_records_its_reason(b: Bench) -> None:
     assert start_build(b, b.w.preview, bundle).status_code == 202
 
 
-async def stored_fixture(b: Bench, name: str, root: Path) -> tuple[Ports, str]:
-    """``conformance/build_fixtures/<name>`` packed and stored as ``complete`` leaves it."""
-    prepared = prepare(FIXTURES / name, root / "bundle.tar.gz")
+async def stored_fixture(b: Bench, name: str | Path, root: Path) -> tuple[Ports, str]:
+    """``conformance/build_fixtures/<name>``, or the source at a path, packed and stored as
+    ``complete`` leaves it."""
+    prepared = prepare(name if isinstance(name, Path) else FIXTURES / name, root / "bundle.tar.gz")
     digest = prepared.bundle.digest
     signer = UrlSigner({"k1": MASTER}, active="k1", clock=SystemClock())
     store = FsBlobStore(root / "blobs", signer=signer, base_url="https://blobs.test/v1/blobs")

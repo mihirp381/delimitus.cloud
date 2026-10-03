@@ -13,7 +13,8 @@ Before the builder is first called the job reads the stored bundle (``ssc_bundle
 SSC-015): a refusal fails the build with its code (``STATE_SQLITE_EPHEMERAL``,
 ``BUILD_PRIVATE_REGISTRY`` and the rest of ``ssc_contracts.build``), notices go to the log with
 the build id, and the session framework found is kept on the build and then on its release, where
-``desired_for`` reads it. The analysis needs the blob store; only a development or test
+``desired_for`` reads it. So are the migrations of each ledger tool in the source (SSC-043),
+which a rollback is checked against. The analysis needs the blob store; only a development or test
 composition with the fake builder runs without one, and then skips it.
 
 On success one transaction numbers and writes the release (``source_digest`` is the bundle's
@@ -21,7 +22,9 @@ digest, ``manifest_digest`` the stored bundle's), marks the build ``succeeded`` 
 ``release.created`` as the build's actor.
 """
 
+import json
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Final
@@ -62,7 +65,7 @@ NOT_RUNNING: Final = "not_running"
 
 _LOAD = text(
     "select b.state, b.app_id, b.environment_id, b.bundle_id, b.driver_ref, b.started_at, "
-    "b.framework, b.actor_kind, b.actor_id, b.actor_via_agent, b.actor_client_id, "
+    "b.framework, b.migrations, b.actor_kind, b.actor_id, b.actor_via_agent, b.actor_client_id, "
     "e.name as env_name, "
     "d.digest, d.manifest, d.manifest_digest, d.source_commit, a.status as app_status "
     "from ssc.build b "
@@ -79,8 +82,8 @@ _SET_REF = text(
     "update ssc.build set driver_ref = :ref "
     "where org_id = :org and id = :id and state = 'running' and driver_ref is null"
 )
-_SET_FRAMEWORK = text(
-    "update ssc.build set framework = :framework "
+_SET_SOURCE = text(
+    "update ssc.build set framework = :framework, migrations = cast(:migrations as jsonb) "
     "where org_id = :org and id = :id and state = 'running' and driver_ref is null"
 )
 _LOCK_RUNNING = text(
@@ -106,6 +109,7 @@ class _Build:
     driver_ref: str | None
     started_at: datetime | None
     framework: str | None
+    migrations: Mapping[str, Sequence[str]] | None
     actor: Actor
     env_name: str
     digest: str
@@ -137,6 +141,7 @@ async def _load(conn: AsyncConnection, org_id: str, build_id: str) -> _Build | N
         driver_ref=row.driver_ref,
         started_at=row.started_at,
         framework=row.framework,
+        migrations=row.migrations,
         actor=_actor(row),
         env_name=str(row.env_name),
         digest=str(row.digest),
@@ -244,8 +249,8 @@ async def _claim(ports: Ports, org_id: str, build_id: str) -> _Build | str:
 async def _check_source(
     ports: Ports, org_id: str, build: _Build, request: BuildRequest
 ) -> _Build | Failed | None:
-    """Analyse the bundle before the builder is first called: the build with its framework, a
-    refusal, or None when the bundle could not be read (try again later)."""
+    """Analyse the bundle before the builder is first called: the build with its framework and
+    migrations, a refusal, or None when the bundle could not be read (try again later)."""
     store = ports.blob_store
     if store is None or build.driver_ref is not None:
         return build
@@ -259,11 +264,16 @@ async def _check_source(
     if found.refusal is not None:
         why = f"{found.refusal.detail} ({found.refusal.path})"
         return Failed(code=found.refusal.code, message=why)
-    if found.framework is not None:
-        async with bound_org(ports.engine, org_id) as conn:
-            params = {"org": org_id, "id": build.id, "framework": found.framework}
-            await conn.execute(_SET_FRAMEWORK, params)
-    return replace(build, framework=found.framework)
+    migrations = {ledger: list(names) for ledger, names in found.migrations.items()}
+    async with bound_org(ports.engine, org_id) as conn:
+        params = {
+            "org": org_id,
+            "id": build.id,
+            "framework": found.framework,
+            "migrations": json.dumps(migrations),
+        }
+        await conn.execute(_SET_SOURCE, params)
+    return replace(build, framework=found.framework, migrations=migrations)
 
 
 async def _step(
@@ -309,6 +319,7 @@ async def _succeed(ports: Ports, org_id: str, build: _Build, result: Succeeded) 
             source_commit=build.source_commit,
             scan_refs=result.scan_refs,
             framework=build.framework,
+            migrations=build.migrations,
             actor=build.actor,
         )
         allocated = await allocate_and_insert(conn, org_id=org_id, release=release)

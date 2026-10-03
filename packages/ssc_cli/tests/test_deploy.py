@@ -843,6 +843,32 @@ def test_rollback_across_environments_is_the_apis_refusal(cli, history, fake_pro
     assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "RELEASE_ENVIRONMENT_MISMATCH")
 
 
+def test_a_rollback_past_migrations_names_them_and_needs_confirm(cli, history, fake_problem):
+    history.routes[("GET", RELEASES)] = [_page(_release(2, PROD))]
+    history.add("POST", PROD_DEPLOYMENTS, fake_problem(409, "SCHEMA_AHEAD"), _accepted())
+    ahead = {
+        "environment_id": PROD,
+        "release_id": "rel_00000000000000000002",
+        "ledgers": [
+            {"ledger": "prisma", "names": ["20261002090000_add_total", "20261003090000_index"]}
+        ],
+    }
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/migrations-ahead"
+    history.add("GET", path, httpx2.Response(200, json=ahead))
+    r = cli("rollback", APP_ID, "R2", session=history.session())
+    assert r.code == ExitCode.FAILED
+    fix = next(line for line in r.stderr.splitlines() if line.startswith("Fix: "))
+    assert "prisma: 20261002090000_add_total, 20261003090000_index" in fix
+    assert "`ssc rollback demo R2 --env prod --confirm`" in fix
+    (asked,) = [q for q in history.seen if q.url.path == path]
+    assert dict(asked.url.params) == {"release_id": "rel_00000000000000000002"}
+
+    r = cli("rollback", APP_ID, "R2", "--confirm", "--json", session=history.session())
+    assert r.code == 0, r.stdout
+    posted = [q for q in history.seen if q.method == "POST"]
+    assert [_body(q).get("confirm") for q in posted] == [None, True]
+
+
 # ── promote ─────────────────────────────────────────────────────────────────
 
 LIVE = "dep_livelivelivelivelive"

@@ -28,6 +28,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
+from ssc_contracts.errors import ErrorCode
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.problems import REQUEST_ID_HEADER, REQUEST_ID_SCOPE_KEY
 from ssc_control.api.settings import Settings
@@ -99,6 +100,13 @@ IdempotencyKey = Annotated[
         min_length=1,
         max_length=200,
         description="Send the same key to retry safely; a new one is made when absent.",
+    ),
+]
+Confirm = Annotated[
+    bool,
+    Field(
+        description="Go back although the environment's database has migrations the release "
+        "lacks. Set it only after a `SCHEMA_AHEAD` refusal, once you have told the person."
     ),
 ]
 
@@ -199,6 +207,38 @@ async def run(api: FastAPI, ctx: Context, work: Callable[[V1], Awaitable[Body]])
             return ok(await work(c))
     except Refused as e:
         return refused(e.error)
+
+
+def ahead_note(ledgers: list[Body]) -> str:
+    """The migrations of a ``SCHEMA_AHEAD`` refusal, for its detail: the problem's own text is
+    fixed, so a tool names them from ``migrations-ahead``."""
+    named = "; ".join(f"{x['ledger']} {', '.join(x['names'])}" for x in ledgers)
+    return (
+        f"The database may have run: {named or 'none listed'}. If the release works with them, "
+        "call rollback again with confirm=true; otherwise deploy a fix forward."
+    )
+
+
+async def rollback_to(  # noqa: PLR0913  (the rollback tool's arguments)
+    c: V1, app: str, release: str, env: str, *, key: str, confirm: bool
+) -> Body:
+    """Post the rollback; a ``SCHEMA_AHEAD`` refusal comes back with the migrations named."""
+    found = await resolve_app(c, app)
+    env_path = f"/v1/apps/{found['id']}/environments/{environment_id(found, env)}"
+    sent: Body = {"release_id": release, "kind": "rollback"}
+    if confirm:
+        sent["confirm"] = True
+    try:
+        r = await c.post(f"{env_path}/deployments", sent, key)
+    except Refused as e:
+        if e.error.get("code") == ErrorCode.SCHEMA_AHEAD:
+            query = urlencode({"release_id": release})
+            ahead = await c.get(f"{env_path}/migrations-ahead?{query}")
+            note = ahead_note(ahead["ledgers"])
+            raise Refused({**e.error, "detail": f"{e.error['detail']} {note}"}) from None
+        raise
+    body: Body = r.json()
+    return {**body, "location": r.headers["Location"], "idempotency_key": key}
 
 
 async def resolve_app(c: V1, ref: str) -> Body:
@@ -546,27 +586,24 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         from and the environment it was built for. Pass `next_before` as `before` for more."""
         return await run(api, ctx, lambda c: list_releases_of(c, app, limit, before))
 
-    async def rollback(
+    async def rollback(  # noqa: PLR0913, PLR0917  (each parameter is a tool argument)
         app: AppRef,
         release: ReleaseId,
         env: Literal["prod", "preview"],
         ctx: Context,
         idempotency_key: IdempotencyKey | None = None,
+        confirm: Confirm = False,
     ) -> CallToolResult:
         """Put an earlier release back in one environment. This starts an operation and returns
         its id at once; follow it with get_status(app, operation=...). Only one deployment runs
         per environment at a time. To retry after an error, send the same idempotency_key: the
-        same operation comes back and nothing starts twice."""
+        same operation comes back and nothing starts twice. A rollback does not undo database
+        migrations: when the database has some the release lacks, it is refused with
+        SCHEMA_AHEAD naming them, and goes ahead only with confirm=true."""
         key = idempotency_key or fresh_key()
-
-        async def work(c: V1) -> Body:
-            found = await resolve_app(c, app)
-            path = f"/v1/apps/{found['id']}/environments/{environment_id(found, env)}/deployments"
-            r = await c.post(path, {"release_id": release, "kind": "rollback"}, key)
-            body: Body = r.json()
-            return {**body, "location": r.headers["Location"], "idempotency_key": key}
-
-        return await run(api, ctx, work)
+        return await run(
+            api, ctx, lambda c: rollback_to(c, app, release, env, key=key, confirm=confirm)
+        )
 
     async def deploy(
         app: AppRef,

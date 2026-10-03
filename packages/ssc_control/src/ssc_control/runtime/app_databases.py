@@ -8,10 +8,14 @@ URL that holds it, or any other value, and nothing here could carry one.
 ``record_database`` keeps what came back: ``ssc.app_database`` and one ``ssc.secret_ref`` per
 database secret, audited ``secret.bound`` or ``secret.rotated`` like a secret set by a person
 (SSC-026), so the deployment that follows pins the versions.
+
+``recovery_point`` asks the cell where the instance is now, its time and write-ahead log
+position, which a production deployment records before it starts (SSC-043).
 """
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Final, Literal, Protocol, cast
 
 import httpx2
@@ -54,6 +58,14 @@ class MadeDatabase:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class RecoveryPoint:
+    """Where the instance was: the database server's time and its write-ahead log position."""
+
+    at: datetime
+    lsn: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DatabaseUsage:
     present: bool
     size_bytes: int | None
@@ -74,6 +86,10 @@ class AppDatabases(Protocol):
 
     async def usage(self, service: str) -> DatabaseUsage:
         """The database as the instance sees it now."""
+        ...
+
+    async def recovery_point(self, service: str) -> RecoveryPoint:
+        """Where the instance holding the service's database is now."""
         ...
 
 
@@ -106,6 +122,23 @@ class CellAppDatabases(AppDatabases):
             )
         except (KeyError, TypeError) as exc:
             raise AppDatabaseError("DATABASE_UNAVAILABLE", f"cell agent usage: {exc}") from None
+
+    async def recovery_point(self, service: str) -> RecoveryPoint:
+        body = await self._call("recovery_point", service)
+        try:
+            at, lsn = body["at"], body["lsn"]
+            if not isinstance(at, str) or not isinstance(lsn, str):
+                raise TypeError("at and lsn must be strings")
+            if app_database.LSN.fullmatch(lsn) is None:
+                raise TypeError("lsn is not a log position")
+            when = datetime.fromisoformat(at)
+            if when.tzinfo is None:
+                raise TypeError("at has no time zone")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AppDatabaseError(
+                "DATABASE_UNAVAILABLE", f"cell agent recovery_point: {exc}"
+            ) from None
+        return RecoveryPoint(at=when, lsn=lsn)
 
     async def _call(self, method: str, service: str) -> dict[str, Any]:
         token = await self._id_tokens(self._url)
@@ -146,11 +179,13 @@ class CellAppDatabases(AppDatabases):
 @dataclass(slots=True)
 class FakeAppDatabases(AppDatabases):
     """In memory, for tests and local development: a database per service up to ``ceiling``,
-    and secret versions that count up. It holds no password at all."""
+    secret versions that count up, and a log position that moves on at each recovery point. It
+    holds no password at all."""
 
     ceiling: int = 10
     host: str = "10.0.0.5"
     calls: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    lsn: int = 0x16B3748
     _versions: dict[str, int] = field(default_factory=dict[str, int])
 
     async def ensure(self, service: str) -> MadeDatabase:
@@ -175,6 +210,13 @@ class FakeAppDatabases(AppDatabases):
             environments=len(self._versions),
             ceiling=self.ceiling,
         )
+
+    async def recovery_point(self, service: str) -> RecoveryPoint:
+        self.calls.append(("recovery_point", service))
+        if service not in self._versions:
+            raise AppDatabaseError("DATABASE_NOT_FOUND", f"{service} has no app database")
+        self.lsn += 0x100
+        return RecoveryPoint(at=datetime.now(UTC), lsn=f"0/{self.lsn:X}")
 
     def _next(self, service: str) -> MadeDatabase:
         version = self._versions.get(service, 0) + 1
@@ -319,6 +361,7 @@ __all__ = [
     "DatabaseUsage",
     "FakeAppDatabases",
     "MadeDatabase",
+    "RecoveryPoint",
     "database_of",
     "database_record",
     "problem_code",

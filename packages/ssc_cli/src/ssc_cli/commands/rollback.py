@@ -3,6 +3,11 @@
 A rollback keeps the environment's current sharing and secrets and never touches schedules
 (decision 014). The environment defaults to the one the release was built for, since a release
 built for one environment is refused in another.
+
+A rollback does not undo database migrations. When the environment's database may have run
+migrations the release lacks, the API refuses with ``SCHEMA_AHEAD`` until ``--confirm`` (SSC-043);
+its problem carries fixed text, so the migrations are read from ``migrations-ahead`` and named in
+the ``Fix:`` line.
 """
 
 import re
@@ -16,14 +21,16 @@ from ssc_cli.errors import (
     ENVIRONMENT_NOT_FOUND,
     ENVIRONMENT_REQUIRED,
     RELEASE_NOT_FOUND,
+    CliError,
     ExitCode,
     local_error,
 )
-from ssc_cli.models import AppOut, EnvironmentOut, ReleaseOut
+from ssc_cli.models import AppOut, EnvironmentOut, OperationAccepted, ReleaseOut
 from ssc_cli.output import print_json, say
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import RollbackResult
 from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_operation
+from ssc_contracts.errors import ErrorCode
 
 ROLLBACK: Final = "rollback"
 RELEASE_PREFIX: Final = "rel_"
@@ -53,6 +60,13 @@ WaitOpt = Annotated[bool, typer.Option("--wait", help="Wait until the release is
 TimeoutOpt = Annotated[
     int, typer.Option("--timeout", min=1, metavar="SECONDS", help="Give up waiting after this.")
 ]
+ConfirmOpt = Annotated[
+    bool,
+    typer.Option(
+        "--confirm",
+        help="Roll back although the database has migrations the release does not have.",
+    ),
+]
 
 
 def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
@@ -62,6 +76,7 @@ def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option
     env: EnvOpt = None,
     wait: WaitOpt = False,
     timeout: TimeoutOpt = DEFAULT_TIMEOUT,
+    confirm: ConfirmOpt = False,
     json_mode: JsonOpt = False,
 ) -> None:
     """Deploy an earlier release of an app again."""
@@ -70,7 +85,7 @@ def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option
         target = resolve_app(client, app)
         rel = _find_release(client, target, release)
         where = environment(target, env) if env is not None else _built_for(target, rel)
-        op = client.create_deployment(target.id, where.id, rel.release_id, ROLLBACK)
+        op = _start(client, target, where, rel, confirm=confirm)
         state = op.state
         if wait:
             state = wait_for_operation(
@@ -101,6 +116,25 @@ def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option
         say(f"Follow it with `ssc status {target.slug}`.")
     if where.url:
         say(f"URL: {where.url}")
+
+
+def _start(
+    client: ApiClient, app: AppOut, where: EnvironmentOut, rel: ReleaseOut, *, confirm: bool
+) -> OperationAccepted:
+    """Post the rollback; on ``SCHEMA_AHEAD``, name the migrations in the fix."""
+    try:
+        return client.create_deployment(app.id, where.id, rel.release_id, ROLLBACK, confirm=confirm)
+    except CliError as e:
+        if e.body.code == ErrorCode.SCHEMA_AHEAD:
+            ahead = client.migrations_ahead(app.id, where.id, rel.release_id).ledgers
+            names = "; ".join(f"{a.ledger}: {', '.join(a.names)}" for a in ahead)
+            e.fix = (
+                f"The {where.name} database may have run migrations {rel.label} does not have "
+                f"({names or 'none listed'}). If {rel.label} works with them, run "
+                f"`ssc rollback {app.slug} {rel.label} --env {where.name} --confirm`; otherwise "
+                "deploy a fix forward."
+            )
+        raise
 
 
 def _find_release(client: ApiClient, app: AppOut, ref: str) -> ReleaseOut:

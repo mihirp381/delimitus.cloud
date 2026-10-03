@@ -112,6 +112,18 @@ deployment that shortens the request timeout (a session app becoming request-bil
 `SNAPSHOT_UNCONFIRMED` when the org's gateway does not confirm the new limit within 60 seconds;
 the previous version keeps serving (SSC-090).
 
+**A rollback past migrations needs `confirm`** (SSC-043). A release has `latest_migrations`, the
+last migration name per ledger its build found (`prisma`, `alembic`, `django`, `drizzle`,
+`knex`), or null when the build did not read the source. A rollback to a release that lacks
+migrations the environment's database may have run is `409 SCHEMA_AHEAD`; its evidence has
+`release_id` and the count per ledger. `GET .../environments/{env}/migrations-ahead?release_id=`
+names them. The same POST with `confirm: true` goes ahead and audits the names
+(`migrations_ahead`, as `ledger:name`). Only `kind: rollback` is checked. A prod deployment of
+an environment with a database carries `recovery_point` `{at, lsn}`, recorded before the
+runtime is called. It is the time to restore to if the deployment harms the data
+(`docs/runbooks/ssc-043-restore-database.md`). `lsn` is null when the cell agent did not
+answer.
+
 **A `scope: preview` credential never touches production** (decision 011, SSC-042). Before any
 handler runs, the unit of work refuses it with `403 FORBIDDEN` on any path naming the prod
 environment, whatever the method, and on any other change except those in
@@ -229,7 +241,9 @@ stateless, JSON replies. Code: `api/mcp/`.
   - `get_status(app, operation?, build?)`: the app, the operation behind each environment's
     current release, and optionally one operation (`GET /v1/operations/{id}`) or one build
     (`GET /v1/builds/{id}`).
-  - `rollback(app, release, env)`: a `kind: rollback` deployment; returns the operation.
+  - `rollback(app, release, env, confirm?)`: a `kind: rollback` deployment; returns the
+    operation. A `SCHEMA_AHEAD` refusal's detail names the migrations, and the agent calls again
+    with `confirm: true` only if the release works with them (SSC-043).
   - `deploy(app, bundle_digest?, size_bytes?)`, preview only, one step per call; the agent calls
     again with the same arguments and key and gets a `stage` and a `next` line. No digest:
     `pack` (the archive rules and the `SSC_BUNDLE_MAX_*` limits). Digest without `size_bytes`:

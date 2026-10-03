@@ -60,6 +60,7 @@ from ssc_cli.models import (
     KillSwitchCreate,
     KillSwitchRun,
     LogPageOut,
+    MigrationsAhead,
     OperationAccepted,
     OperationOut,
     PromoteIn,
@@ -249,11 +250,19 @@ class ApiClient:
         return _parse(self._send("GET", f"/v1/builds/{_seg(build_id)}"), BuildOut)
 
     def create_deployment(
-        self, app_id: str, environment_id: str, release_id: str, kind: str
+        self, app_id: str, environment_id: str, release_id: str, kind: str, *, confirm: bool = False
     ) -> OperationAccepted:
         path = f"{_environment_path(app_id, environment_id)}/deployments"
-        body = DeploymentCreate(release_id=release_id, kind=kind)
+        body = DeploymentCreate(release_id=release_id, kind=kind, confirm=confirm)
         return _parse(self._send("POST", path, body=body), OperationAccepted)
+
+    def migrations_ahead(
+        self, app_id: str, environment_id: str, release_id: str
+    ) -> MigrationsAhead:
+        """The migrations the environment's database may have run that the release lacks."""
+        query = urlencode({"release_id": release_id})
+        path = f"{_environment_path(app_id, environment_id)}/migrations-ahead?{query}"
+        return _parse(self._send("GET", path), MigrationsAhead)
 
     def promote(self, app_id: str, preview_release_id: str | None) -> BuildAccepted:
         body = PromoteIn(preview_release_id=preview_release_id)

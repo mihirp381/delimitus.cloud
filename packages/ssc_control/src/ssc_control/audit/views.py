@@ -18,6 +18,7 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "secret_ref": frozenset({"environment_id", "name", "version"}),  # SSC-026: never a value
     "deployment": frozenset(
         {"kind", "state", "release_id", "environment_id", "failure_code", "superseded"}
+        | {"migrations_ahead", "confirmed"}  # SSC-043
     ),
     "build": frozenset(
         {

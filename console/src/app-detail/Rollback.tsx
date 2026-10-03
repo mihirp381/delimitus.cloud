@@ -5,12 +5,15 @@ import { must } from '../api/client';
 import {
   type AppOut,
   type EnvironmentOut,
+  type LedgerAhead,
+  migrationsAhead,
   operationFinished,
   POLL_MS,
   type Release,
   rollBack,
   runsIn,
 } from '../api/lifecycle';
+import { ApiProblem } from '../api/problem';
 import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
@@ -30,11 +33,18 @@ interface Started {
   readonly label: string;
 }
 
+interface Ahead {
+  readonly releaseId: string;
+  readonly ledgers: readonly LedgerAhead[];
+}
+
 /**
  * Deploys an earlier release again, keeping today's config and sharing. Only releases that may
  * run in the environment can be picked: production runs only releases built for production.
  * A stopped app cannot be rolled back (APP_NOT_ACTIVE), so the button is off until it is enabled.
- * Releases are app-wide, newest first, so older pages load on request.
+ * Releases are app-wide, newest first, so older pages load on request. A rollback does not undo
+ * database migrations: on SCHEMA_AHEAD the dialog lists the ones the release lacks and goes
+ * ahead only once the person ticks that the release works with them.
  */
 export function Rollback({ app, env }: { readonly app: AppOut; readonly env: EnvironmentOut }) {
   const [open, setOpen] = useState(false);
@@ -100,23 +110,40 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [ahead, setAhead] = useState<Ahead | null>(null);
+  const [accepted, setAccepted] = useState(false);
   const name = useId();
   const confirmId = useId();
+  const acceptId = useId();
 
   const live = deployments.data?.items.find((d) => d.current)?.release_id ?? null;
   const items = releases.data?.pages.flatMap((p) => p.items) ?? [];
   const picked = items.find((r) => r.release_id === choice) ?? null;
+  const warned = ahead !== null && ahead.releaseId === choice ? ahead : null;
+  const ready = picked !== null && typed === app.slug && (warned === null || accepted);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!picked || typed !== app.slug || busy) return;
+    if (!picked || !ready || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const operationId = await rollBack(api, app.id, env.id, picked.release_id);
+      const operationId = await rollBack(api, app.id, env.id, picked.release_id, warned !== null);
       onStarted({ operationId, label: `${ENV_TITLE[env.name]} to ${picked.label}` });
     } catch (e) {
-      setError(e);
+      if (e instanceof ApiProblem && e.code === 'SCHEMA_AHEAD') {
+        try {
+          setAccepted(false);
+          setAhead({
+            releaseId: picked.release_id,
+            ledgers: await migrationsAhead(api, app.id, env.id, picked.release_id),
+          });
+        } catch (inner) {
+          setError(inner);
+        }
+      } else {
+        setError(e);
+      }
     } finally {
       setBusy(false);
     }
@@ -196,10 +223,36 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
         />
       </label>
       {error ? <ProblemNotice error={error} /> : null}
+      {warned && picked ? (
+        <div className="notice notice-warning" role="alert">
+          <p>
+            The database may have run migrations {picked.label} does not have. A rollback does not
+            undo them, so {picked.label} may not work against the database as it is now.
+          </p>
+          <ul>
+            {warned.ledgers.flatMap((l) =>
+              l.names.map((n) => (
+                <li key={`${l.ledger}:${n}`}>
+                  <code>{n}</code> <span className="muted">({l.ledger})</span>
+                </li>
+              )),
+            )}
+          </ul>
+          <label className="check" htmlFor={acceptId}>
+            <input
+              id={acceptId}
+              type="checkbox"
+              checked={accepted}
+              onChange={(e) => setAccepted(e.target.checked)}
+            />
+            <span>{picked.label} works with these migrations</span>
+          </label>
+        </div>
+      ) : null}
       <div className="actions">
         <Button onClick={onClose}>Cancel</Button>
-        <Button type="submit" variant="danger" disabled={!picked || typed !== app.slug || busy}>
-          Roll back
+        <Button type="submit" variant="danger" disabled={!ready || busy}>
+          {warned ? 'Roll back anyway' : 'Roll back'}
         </Button>
       </div>
     </form>

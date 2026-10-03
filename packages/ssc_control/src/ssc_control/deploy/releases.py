@@ -8,6 +8,7 @@ number is never reused.
 """
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -22,9 +23,10 @@ _NEXT_NUMBER = text(
 )
 _INSERT = text(
     "insert into ssc.release (id, org_id, app_id, number, image_digest, manifest_digest, "
-    "source_digest, source_commit, scan_refs, framework, actor_kind, actor_id, actor_via_agent, "
-    "actor_client_id) values (:id, :org, :app, :number, :image, :manifest, :source, :commit, "
-    "cast(:scan_refs as jsonb), :framework, :actor_kind, :actor_id, :via_agent, :client_id)"
+    "source_digest, source_commit, scan_refs, framework, migrations, actor_kind, actor_id, "
+    "actor_via_agent, actor_client_id) values (:id, :org, :app, :number, :image, :manifest, "
+    ":source, :commit, cast(:scan_refs as jsonb), :framework, cast(:migrations as jsonb), "
+    ":actor_kind, :actor_id, :via_agent, :client_id)"
 )
 
 
@@ -39,6 +41,9 @@ class NewRelease:
     actor: Actor
     framework: str | None = None
     """The session framework the build found (SSC-015); ``desired_for`` reads it."""
+    migrations: Mapping[str, Sequence[str]] | None = None
+    """The migrations of each ledger tool the build found (SSC-043); None when it did not read
+    the source."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +78,9 @@ async def allocate_and_insert(
             "commit": release.source_commit,
             "scan_refs": json.dumps(list(release.scan_refs)),
             "framework": release.framework,
+            "migrations": None
+            if release.migrations is None
+            else json.dumps({k: list(v) for k, v in release.migrations.items()}),
             "actor_kind": actor.kind.value,
             "actor_id": actor.id,
             "via_agent": actor.via_agent,
