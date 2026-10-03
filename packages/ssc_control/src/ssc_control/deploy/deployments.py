@@ -89,7 +89,7 @@ _CLAIM = text(
 _LOAD = text(
     "select d.state, d.kind, d.app_id, d.environment_id, d.release_id, d.actor_kind, "
     "d.actor_id, d.actor_via_agent, d.actor_client_id, e.name as env_name, "
-    "a.status as app_status, a.owner_user_id, r.image_digest "
+    "a.status as app_status, a.owner_user_id, a.slug as app_slug, r.image_digest "
     "from ssc.deployment d "
     "join ssc.environment e on e.org_id = d.org_id and e.id = d.environment_id "
     "join ssc.app a on a.org_id = d.org_id and a.id = d.app_id "
@@ -313,6 +313,8 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         framework=spec.framework,
         secrets=secrets,
         database=database,
+        slug=row.app_slug,
+        identity=ports.app_identity,
     )
     if not isinstance(desired, ServiceSpec):
         raise AssertionError("an active app has a service spec")

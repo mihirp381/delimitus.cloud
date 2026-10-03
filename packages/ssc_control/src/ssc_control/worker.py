@@ -14,6 +14,8 @@ production worker can silently drive an in-memory runtime.
 """
 
 import asyncio
+import base64
+import json
 import logging
 import os
 import sys
@@ -42,7 +44,7 @@ from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases, FakeAppDatabases
 from ssc_control.runtime.cell_agent import CellAgentDriver, MetadataIdTokens
-from ssc_control.runtime.driver import RuntimeDriver
+from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.snapshot import jobs as snapshot_jobs
@@ -59,6 +61,7 @@ from ssc_control.timers.service import Timers
 from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_of
 from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
+from ssc_shared.hosts import check_apps_domain, check_cell_label
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +72,11 @@ CELL_AGENT_URL_ENV: Final = "SSC_CELL_AGENT_URL"
 BUILD_DRIVER_ENV: Final = "SSC_BUILD_DRIVER"
 METRICS_KEY_ENV: Final = "SSC_METRICS_KEY"
 TIMER_DISPATCHER_ENV: Final = "SSC_TIMER_DISPATCHER"
+IDENTITY_JWKS_ENV: Final = "SSC_IDENTITY_JWKS"
+IDENTITY_ISSUER_ENV: Final = "SSC_IDENTITY_ISSUER"
+APPS_DOMAIN_ENV: Final = "SSC_APPS_DOMAIN"
+APPS_DOMAIN: Final = "delimitusapps.com"
+ISSUER_PREFIX: Final = "https://keys.delimitus.com/"
 FAKE_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 SWEEP_CRON: Final = "* * * * * */30"
 """Every 30 seconds."""
@@ -267,6 +275,39 @@ def _cell_deployer(env: Mapping[str, str]) -> CellDeployer | None:
         raise CompositionError(str(exc)) from None
 
 
+def app_identity_from_env(env: Mapping[str, str]) -> AppIdentity | None:
+    """``SSC_IDENTITY_JWKS``, the cell's public JWKS (stack output ``identity_jwks``), and
+    ``SSC_IDENTITY_ISSUER``, ``https://keys.delimitus.com/<cell label>``: one cell, as for
+    ``SSC_CELL_AGENT_URL``. Either may be unset; None when both are. The JWKS is re-serialised
+    compactly, so its whitespace never changes an app's spec."""
+    jwks, issuer = env.get(IDENTITY_JWKS_ENV, ""), env.get(IDENTITY_ISSUER_ENV, "")
+    if not jwks and not issuer:
+        return None
+    keys_url = None
+    if jwks:
+        try:
+            parsed: object = json.loads(jwks)
+        except ValueError:
+            parsed = None
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("keys"), list):  # pyright: ignore[reportUnknownMemberType]
+            raise CompositionError(f'{IDENTITY_JWKS_ENV} must be a JSON object with "keys"')
+        compact = json.dumps(parsed, separators=(",", ":"), sort_keys=True).encode()
+        keys_url = "data:application/json;base64," + base64.b64encode(compact).decode()
+    label = None
+    if issuer:
+        try:
+            label = check_cell_label(issuer.removeprefix(ISSUER_PREFIX))
+        except ValueError:
+            raise CompositionError(
+                f"{IDENTITY_ISSUER_ENV} must be {ISSUER_PREFIX}<label>"
+            ) from None
+    try:
+        domain = check_apps_domain(env.get(APPS_DOMAIN_ENV, APPS_DOMAIN))
+    except ValueError as exc:
+        raise CompositionError(str(exc)) from None
+    return AppIdentity(keys_url=keys_url, cell_label=label, apps_domain=domain)
+
+
 def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
     """Refuse any fake port unless ``SSC_ENV`` is ``dev`` or ``test``."""
     fakes = [
@@ -311,6 +352,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         timer_dispatcher=timer_dispatcher_from_env(env),
         cell_deployer=_cell_deployer(env),
         app_databases=app_databases_from_env(env),
+        app_identity=app_identity_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports

@@ -13,6 +13,7 @@ from typing import Final, Literal
 
 from ssc_contracts import app_database, app_env
 from ssc_contracts.manifest import Manifest, is_session_app, max_instances
+from ssc_shared.hosts import app_origin, slug_problem
 from ssc_shared.runtime import (
     FINGERPRINT_VERSION,
     SERVICE_PREFIX,
@@ -68,6 +69,30 @@ class DatabaseRow:
     port: int
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AppIdentity:
+    """The cell's identity settings (SSC-018). ``keys_url`` is its public JWKS as a ``data:``
+    URL; ``cell_label`` and ``apps_domain`` make each app's origin. Either is None when its
+    setting is unset, and the variable it makes is then left out."""
+
+    keys_url: str | None
+    cell_label: str | None
+    apps_domain: str
+
+
+def identity_env(identity: AppIdentity | None, slug: str | None, env: EnvName) -> dict[str, str]:
+    """``SSC_IDENTITY_KEYS_URL`` and ``SSC_APP_ORIGIN``, the identity note's keys and audience.
+    No origin for a slug stored before the host rule refused it."""
+    if identity is None:
+        return {}
+    plain: dict[str, str] = {}
+    if identity.keys_url:
+        plain[app_env.IDENTITY_KEYS_URL] = identity.keys_url
+    if identity.cell_label and slug and slug_problem(slug) is None:
+        plain[app_env.APP_ORIGIN] = app_origin(slug, env, identity.cell_label, identity.apps_domain)
+    return plain
+
+
 def max_instances_for(manifest: Manifest, framework: str | None) -> int:
     """The class limit, or 1 for a session app (C11), detected by
     ``ssc_contracts.manifest.is_session_app``. An app with a database runs at most
@@ -99,6 +124,8 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
     framework: str | None = None,
     secrets: Mapping[str, str] | None = None,
     database: DatabaseRow | None = None,
+    slug: str | None = None,
+    identity: AppIdentity | None = None,
 ) -> ServiceSpec | Stopped:
     """What should be running for one app environment. Pure: rows in, spec out. ``framework`` is
     what the build detected (SSC-015 records it on the release), or None. Every environment
@@ -107,7 +134,8 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
     is request-billed with 5 minutes and 80. ``secrets`` are the versions the deployment runs
     (``deployment.secret_refs``), each mounted as its variable (SSC-026). With ``[state] postgres
     = true`` and its ``database``, the ``PG*`` parts join them (SSC-040); without, the database's
-    secrets are left out."""
+    secrets are left out. Every app gets ``identity_env`` from ``identity`` and its ``slug``, as
+    plain values: the keys are public."""
     service = service_name(env.id)
     if app_status != "active":
         return Stopped(service=service, reason=app_status)
@@ -115,6 +143,7 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
     session = is_session_app(runtime, framework)
     billing: Billing = "instance" if session else "request"
     plain = {app_env.PORT: str(runtime.port), app_env.HOME: app_env.HOME_VALUE}
+    plain |= identity_env(identity, slug, env.name)
     mounted = dict(secrets or {})
     if manifest.state.postgres and database is not None:
         plain |= database_env(service, database)
@@ -144,6 +173,7 @@ __all__ = [
     "SERVICE_PREFIX",
     "SESSION_CONCURRENCY",
     "SESSION_TIMEOUT_SECONDS",
+    "AppIdentity",
     "AppStatus",
     "Billing",
     "DatabaseRow",
@@ -160,6 +190,7 @@ __all__ = [
     "Stopped",
     "database_env",
     "desired_for",
+    "identity_env",
     "max_instances_for",
     "revision_fingerprint",
     "service_name",
