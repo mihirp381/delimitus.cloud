@@ -3,9 +3,14 @@
 import json
 
 import pytest
-from datagw_world import ENV, NOTE_JWKS, SETTINGS
+from datagw_world import ENV, NOTE_JWKS, SALES, SETTINGS
 
+from ssc_datagw.postgres import PostgresTarget
 from ssc_datagw.settings import MAX_STALE_SECONDS, SettingsError, settings_from_env
+
+PASSWORD = "fake-" + "connection-" + "password"
+TARGET = {"host": "10.0.0.5", "database": "sales", "user": "ssc_datagw", "password": PASSWORD}
+CONNECTION_VAR = "SSC_CONNECTION_" + SALES.upper()
 
 
 def test_the_cell_environment_reads_as_the_settings() -> None:
@@ -37,6 +42,15 @@ BAD = {
     "a max age over 120": {"SSC_SNAPSHOT_MAX_AGE": "121"},
     "a max age of 0": {"SSC_SNAPSHOT_MAX_AGE": "0"},
     "a max age not a number": {"SSC_SNAPSHOT_MAX_AGE": "soon"},
+    "a connection not json": {CONNECTION_VAR: "{" + PASSWORD},
+    "a connection without a host": {
+        CONNECTION_VAR: json.dumps({k: v for k, v in TARGET.items() if k != "host"})
+    },
+    "a connection with an unknown field": {
+        CONNECTION_VAR: json.dumps({**TARGET, "sslmode": "disable"})
+    },
+    "a connection with a bad port": {CONNECTION_VAR: json.dumps({**TARGET, "port": 0})},
+    "a connection with a bad id": {"SSC_CONNECTION_SALES": json.dumps(TARGET)},
 }
 
 
@@ -45,3 +59,12 @@ def test_a_bad_environment_is_refused(case: str) -> None:
     with pytest.raises(SettingsError) as e:
         settings_from_env({**ENV, **BAD[case]})
     assert "secret-part" not in str(e.value)
+    assert PASSWORD not in str(e.value)
+
+
+def test_each_connection_variable_is_a_target_and_its_password_is_never_shown() -> None:
+    got = settings_from_env({**ENV, CONNECTION_VAR: json.dumps({**TARGET, "port": 6432})})
+    assert got.connections == {SALES: PostgresTarget.model_validate({**TARGET, "port": 6432})}
+    assert got.connections[SALES].password.get_secret_value() == PASSWORD
+    assert PASSWORD not in repr(got)
+    assert settings_from_env(ENV).connections == {}

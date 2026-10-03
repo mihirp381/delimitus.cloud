@@ -1,6 +1,6 @@
 # Data gateway v1 (`POST /v1/connections/{name}/query`)
 
-How an app reads a database its org connected, through the cell's data gateway `ssc-datagw` (SSC-050, C19). One service per customer, in the cell, on Cloud Run at minimum 0 and request-billed; it leaves through Direct VPC egress and the cell NAT, so the customer's database sees the cell's one fixed address. Implementations: `ssc_datagw.server` (the pipeline), `ssc_datagw.workload` (the caller), `ssc_datagw.note` (the identity note), `ssc_datagw.admission` (the snapshot), `ssc_datagw.limits` (limits, budget, slots), `ssc_datagw.connectors` (the connector seam; the Postgres connector is SSC-051). Cell wiring: `infra/README.md`, "Data gateway".
+How an app reads a database its org connected, through the cell's data gateway `ssc-datagw` (SSC-050, C19). One service per customer, in the cell, on Cloud Run at minimum 0 and request-billed; it leaves through Direct VPC egress and the cell NAT, so the customer's database sees the cell's one fixed address. Implementations: `ssc_datagw.server` (the pipeline), `ssc_datagw.workload` (the caller), `ssc_datagw.note` (the identity note), `ssc_datagw.admission` (the snapshot), `ssc_datagw.limits` (limits, budget, slots), `ssc_datagw.connectors` (the connector seam), `ssc_datagw.postgres` and `ssc_datagw.classify` (the Postgres connector, SSC-051). Cell wiring: `infra/README.md`, "Data gateway".
 
 ## Request
 
@@ -8,7 +8,7 @@ How an app reads a database its org connected, through the cell's data gateway `
 
 | Header | Rule |
 |---|---|
-| `Authorization` | `Bearer <Google ID token>`, minted by the app's own service account from the metadata server for the audience `SSC_DATAGW_AUDIENCE` (the data gateway's `run.app` URL). Required. Cloud Run's invoker check is off on this service; the data gateway checks the token itself. |
+| `Authorization` | `Bearer <Google ID token>`, minted by the app's own service account from the metadata server for the audience `SSC_DATAGW_AUDIENCE` (the data gateway's `run.app` URL), asked for with `format=full`. Required. Cloud Run's invoker check is off on this service; the data gateway checks the token itself. |
 | `X-SSC-Identity` | Optional. The identity note the app received on the request it is answering, forwarded unchanged. Absent means the app acts for itself (`app_only`). |
 | `X-Request-Id` | Optional. `[A-Za-z0-9._:-]{1,128}`; anything else is replaced by a fresh id. Echoed in the response header and body. |
 
@@ -68,17 +68,42 @@ Every refusal has one body, and the first check that refuses answers:
 | `QUERY_REFUSED` | 422 | classify | app | The connector's classifier refused the statement (not one plain read). |
 | `QUERY_FAILED` | 422 | execute | app | The database refused the statement. |
 | `QUERY_TIMEOUT` | 408 | execute | app | The read ran past `timeout_ms` plus a 2 s grace. |
-| `CONNECTION_UNAVAILABLE` | 503 | execute | platform | The database could not be reached, or the cell has no connector for it yet. |
+| `CONNECTION_UNAVAILABLE` | 503 | execute | platform | The database could not be reached, the cell has no `SSC_CONNECTION_*` for it, or the session is not what it must be (see the Postgres connector). |
 
 When a running query is ended because a newer snapshot no longer admits it, the answer is that snapshot's refusal (`APP_NOT_ACTIVE`, `CONNECTION_SUSPENDED`, `CONNECTION_NOT_GRANTED`, `UNKNOWN_ENVIRONMENT` or `DATA_SNAPSHOT_STALE`) with stage `execute`.
 
 ## The workload token
 
-A Google ID token (RS256, keys from `https://www.googleapis.com/oauth2/v3/certs`, cached for an hour and fetched again at most every 30 s for an unknown `kid`) with `iss` `https://accounts.google.com` or `accounts.google.com`, `aud` exactly `SSC_DATAGW_AUDIENCE`, `exp`, `iat`, `sub`, `email_verified` true, and `email` `ssc-a-<20>@<cell project>.iam.gserviceaccount.com`, which names the environment `env_<20>`. Any service account anywhere can mint a token for the audience, so a token from another project, another account of the cell or a person is refused.
+A Google ID token (RS256, keys from `https://www.googleapis.com/oauth2/v3/certs`, cached for an hour and fetched again at most every 30 s for an unknown `kid`) with `iss` `https://accounts.google.com` or `accounts.google.com`, `aud` exactly `SSC_DATAGW_AUDIENCE`, `exp`, `iat`, `sub`, `email_verified` true, and `email` `ssc-a-<20>@<cell project>.iam.gserviceaccount.com`, which names the environment `env_<20>`. The metadata server leaves `email` and `email_verified` out unless the app asks with `format=full` (`/computeMetadata/v1/instance/service-accounts/default/identity?audience=...&format=full`), and such a token is refused; `ssc_app.workload.WorkloadToken` asks correctly and caches the token until 5 minutes before it expires. Any service account anywhere can mint a token for the audience, so a token from another project, another account of the cell or a person is refused.
 
 ## The identity note
 
 When present, `X-SSC-Identity` is verified as in `docs/contracts/identity-note.md`, with the cell JWKS (`SSC_IDENTITY_JWKS`), the cell issuer, and the caller environment's own origin as the audience (its host label from the snapshot's `hosts`). Its `org`, `app` and `env` must be the caller's. A `usr_` subject must be active in the snapshot; a schedule (`sch_`) note is logged as `schedule`. The note is optional, so the app can query for itself (`app_only`); a note that is present and does not verify is refused.
+
+## The Postgres connector
+
+Each `SSC_CONNECTION_CON_<20>` variable on the service (the connection id in upper case) is JSON `{host, port, database, user, password, ca}` and makes that connection a Postgres connection (`ssc_datagw.postgres.PostgresTarget`; unknown members are refused, and a bad variable stops the service at start, naming the variable and the fields, never the value). Each query gets its own connection and runs in this order; the first step that refuses answers:
+
+1. **Classify.** sqlglot parses the text as Postgres; anything but exactly one `SELECT` (or `UNION`, `INTERSECT`, `EXCEPT` of them) is `QUERY_REFUSED`: a second statement, a data-changing `WITH`, `SELECT INTO`, `FOR UPDATE`/`SHARE`, `SET`, `NOTIFY`, `LISTEN`, `COPY`, `DO`, and any call to a function that writes, signals or ends other sessions, reads server files, or runs a query given as text (`query_to_xml` and the other `*_to_xml`, `ts_stat`, `ts_rewrite`, `pg_terminate_backend`, `pg_cancel_backend`, `pg_notify`, `set_config`, `nextval`, `dblink*`, `lo_*`, `pg_advisory*`, `pg_read_*`, `pg_ls_*`, and others: `ssc_datagw.classify.DENIED`). `E'...'` strings, dollar-quoted strings and `U&"..."` function names are refused, since sqlglot and Postgres can read them apart; text sqlglot cannot parse is refused.
+2. **Connect over TLS.** With a pasted `ca`, the server's chain must lead to it and the name is not checked (`verify-ca`, as for a Cloud SQL certificate); without one, the system trust store and the host name decide (`verify-full`). There is no plaintext and no unverified mode. The startup packet sets `application_name=ssc-datagw`, `default_transaction_read_only=on`, `standard_conforming_strings=on` and `idle_in_transaction_session_timeout=60s`. 10 s to connect.
+3. **`BEGIN READ ONLY`, then read the session back** in one statement that also sets the transaction's `statement_timeout` (`timeout_ms`) and `application_name` (the query's tag, at most 63 bytes). `CONNECTION_UNAVAILABLE` when the backend pid differs from the one the server announced at startup or `default_transaction_read_only` did not land (a pooler is in between: PgBouncer in transaction mode and the like break the session guarantees and are refused; point the connection at the database or a replica), when the transaction is not read-only, or when the role is a superuser or may create objects or temporary tables.
+4. **Prepare and read.** The statement is prepared, so Postgres itself refuses a second statement (42601), and read through a cursor 500 rows at a time, at most `max_rows` plus one, which is how the gateway knows to say `truncated`. Parameters bind by their placeholder types: a JSON string bound to `date`, `timestamp`, `timestamptz`, `time`, `timetz` or `uuid` is parsed as ISO 8601 or a UUID, a JSON number or string bound to `numeric` is an exact decimal; a wrong count is `QUERY_FAILED` 08P01, a value that does not parse 22P02. `json` and `jsonb` columns arrive as nested JSON.
+5. **`ROLLBACK`**, always, and the connection is closed; nothing a read did is ever committed (a `NOTIFY` is delivered only at commit).
+
+SQLSTATE 57014 (`statement_timeout`) is `QUERY_TIMEOUT`; classes 08, 53, 57P and 58 are `CONNECTION_UNAVAILABLE`; any other database error is `QUERY_FAILED` with its SQLSTATE. When the gateway cancels a read (the kill watch or its deadline) the connector ends the backend with `pg_terminate_backend` from a second connection as the same role (5 s at most), which may end only its own sessions.
+
+**The role.** `packages/ssc_datagw/src/ssc_datagw/postgres_setup.sql` is the script the customer runs, as the database owner, on the primary: `psql "<dsn>" -v schemas=reporting,finance [-v relations=s.view] [-v role=ssc_datagw] -f postgres_setup.sql`. It makes a login role that is no superuser, creates nothing, inherits nothing, starts read-only, and may `SELECT` from the named schemas' tables and views (or the named relations) only. Postgres gives every role `TEMPORARY` (and, in a database first made before Postgres 15, `CREATE` on `public`) through `PUBLIC`; the script grants those to every role that exists, then revokes them from `PUBLIC`. It is safe to run again, which is how tables added later become readable. A read replica is preferred. The password is prompted for (`\password`, so only a SCRAM verifier reaches the server) unless `-v password=` is given.
+
+What stops each attack, tested on Postgres 17 and 18 (`packages/ssc_datagw/tests/test_postgres.py`):
+
+| Attack | Classifier | Database alone |
+|---|---|---|
+| `SET TRANSACTION READ WRITE` | refused | 25001: the transaction has already read |
+| `CREATE TEMP TABLE` | refused | 25006 read-only transaction; 42501 for the role outside one |
+| `SELECT 1; DELETE ...` | refused | 42601: a prepared statement holds one command |
+| `query_to_xml('DELETE ...')`, `ts_stat('DELETE ...')` | refused | 0A000: the text runs read-only |
+| `NOTIFY` | refused | runs, never delivered: the transaction rolls back |
+| `pg_terminate_backend(pid)` | refused | 42501 for another role's session; the role's own sessions only by the classifier |
 
 ## Limits
 

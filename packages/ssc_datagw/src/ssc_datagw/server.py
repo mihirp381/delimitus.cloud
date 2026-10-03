@@ -76,6 +76,7 @@ from ssc_datagw.limits import (
     compose,
 )
 from ssc_datagw.note import NoteRefusedError, verify_note
+from ssc_datagw.postgres import PostgresConnector
 from ssc_datagw.settings import Settings, settings_from_env
 from ssc_datagw.workload import (
     GoogleWorkloads,
@@ -101,7 +102,7 @@ MAX_PARAMS: Final = 1000
 WATCH_SECONDS: Final = 1.0
 TIMEOUT_GRACE_SECONDS: Final = 2.0
 """Beyond ``timeout_ms`` before the gateway cancels a read itself; the database's own statement
-timeout (SSC-051) should end it first."""
+timeout (``ssc_datagw.postgres``) should end it first."""
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 Stage = Literal["request", "workload", "user", "admission", "limits", "classify", "execute"]
@@ -576,9 +577,9 @@ def production_app(
     connectors: Mapping[str, Connector] | None = None,
     workloads: Workloads | None = None,
 ) -> FastAPI:
-    """``store`` replaces the cell bucket and ``workloads`` Google's keys (tests). No connector
-    is built in yet: the Postgres connector is SSC-051, so every granted connection answers
-    ``CONNECTION_UNAVAILABLE`` until then."""
+    """``store`` replaces the cell bucket and ``workloads`` Google's keys (tests). Each
+    ``SSC_CONNECTION_*`` variable becomes a :class:`PostgresConnector`; ``connectors`` adds to or
+    replaces them (tests). A granted connection with neither answers ``CONNECTION_UNAVAILABLE``."""
     settings = settings_from_env(os.environ if env is None else env)
     holder = ViewHolder(settings.org_id)
     feed = SnapshotFeed(store or GcsBlobStore(bucket_of(settings.bucket)), holder)
@@ -588,7 +589,10 @@ def production_app(
         settings=settings,
         workloads=workloads or google,
         snapshot=snapshot,
-        connectors=connectors or {},
+        connectors={
+            **{cid: PostgresConnector(t) for cid, t in settings.connections.items()},
+            **(connectors or {}),
+        },
     )
 
     @asynccontextmanager
