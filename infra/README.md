@@ -7,6 +7,8 @@ Pulumi in Python for SSC on Google Cloud (SSC-013, decisions 021 and 022). This 
 | `platform` | Folders `ssc-cells/{prod,staging}` and `ssc-sandbox`, with logs in `us-central1`. The location policy. `ssc-control-staging` and its `ssc-control` identity. The folder rule denying secret reads. Just-in-time staff access. The $250 monthly budget. |
 | `c-<cell label>` | One cell: project `ssc-c-<label>`, VPC, NATs, Cloud SQL, Artifact Registry, KMS, bucket, gateway, cell agent, internal load balancer and the cell's own deny rule. |
 
+**Pending (architecture review 2026-10-03, decision 025; not yet in `cell.py`).** The cell stack is reopened in SSC-013. It will lose the internal load balancer and its proxy-only subnet, and gain stack flags that default to off: `database`, `egress`, `connections`, plus `gateway_min` (exists today) and `warm`. An external load balancer per cell is SSC-088; the flags are turned on by the control plane in SSC-087. `cell_diff` must learn the flags, since a full cell and an empty one will differ by design. The table above describes the code as it is today.
+
 State lives in `gs://ssc-platform-0-pulumi`, and secrets are encrypted with the KMS key `ssc-platform/pulumi-secrets`. Every call's quota goes to `ssc-platform-0`. The tools refuse any command that names `ristretto-506621`.
 
 Stack files (`Pulumi.<stack>.yaml`) are not committed: each holds a data key that the secret scanner flags. On a fresh clone, `bootstrap` (and `bootstrap cell <label>`) writes them again with the KMS secrets provider and the stack's config.

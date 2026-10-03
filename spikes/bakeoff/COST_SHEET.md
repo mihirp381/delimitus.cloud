@@ -1,5 +1,7 @@
 # Empty-cell monthly cost (SSC-001, assumption A7: under $450)
 
+**Superseded as the cost model on 2026-10-03.** This sheet is the bake-off's measurement and is kept as the record of it. The current model is section 10 of `Cloud_for_small_soft/SSC_Final_Architecture_2026-10-03.md` (decision 025): an empty GCP cell about $19 a month, with a database about $32, full about $43, plus usage. The internal load balancer, the regional HA database, the two always-on gateway instances and the always-on proxy priced below are retired. A7 becomes "under $25 empty, under $50 full" once SSC-086 measures it.
+
 USD per month (730 h) for one idle customer cell. Regions: GCP us-central1, AWS us-east-1, Azure eastus, Fly iad. List prices fetched 2026-09-29 from the machine-readable catalogs: GCP Cloud Billing Catalog API, AWS Price List API, Azure Retail Prices API, and the Fly pricing page source. Free tiers are **not** applied, because most are per billing account and do not repeat per cell. Blank means Unknown. Fly is the control column.
 
 | Line item | GCP | AWS | Azure | Fly (control) | Price-list URL used |

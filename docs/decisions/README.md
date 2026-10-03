@@ -28,8 +28,11 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 022 | Cell bootstrap: Pulumi stacks `platform` and `c-<cell label>` with state in `ssc-platform-0`; secret reads denied on the folder for the control plane and on each cell for its own identities; the cell agent limited to `ssc-a-` names except on create; a $250 monthly budget over every SSC folder; just-in-time `writer` on `ssc-cells` for at most 1 h; cells fetch snapshots from their bucket every 2 s | SSC-013 (`infra/`, `ssc_shared/snapshot_feed.py`, `ssc_shared/blobstore_gcs.py`) | decided 2026-09-30; live checks passed 2026-09-30; agent runtime role, TLD DNS sinkhole, probe cell and nightly identity 2026-10-01 (SSC-017); zonal shared-core database and one NAT 2026-10-01 (cost) |
 | 023 | Gateway: Envoy 1.39 with an HTTP `ext_authz` service on loopback (`ssc_edge`), config rendered from Python and validated; fixed check order; a forbidden app answered byte for byte like an address with no app; host-only `__Host-ssc-session` sealed per host with AES-GCM; Fetch-Metadata and WebSocket `Origin` rules; platform cookies stripped both ways; apps reached at their `run.app` host with the gateway's ID token; fail closed on a stopped authoriser, no snapshot, or a snapshot unconfirmed for 5 minutes | SSC-018 (`packages/ssc_edge/`) | decided 2026-10-01; cell wiring, JWKS publication and the live check wait for SSC-017; login hand-back built 2026-10-01 (decision 024) |
 | 024 | Login and directory sync: the auth host `auth.delimitus.com` with WorkOS SSO (SAML) only, a profile accepted only from the org's WorkOS organisation and SSO connections, consumer connection types refused; people keyed by `(workos:<directory id>, idp_id)`, joined by `idp_id` (Okta) or by the one active directory person with the email (Google SAML), unmatched logins listed for an admin; 12-hour sessions never extended; one-time 60 s codes bound to the app host and the gateway's login nonce; RFC 8628 device flow with rotated refresh tokens for the command line; directory events as triggers, a full reconcile every 6 h; deactivation revokes sessions and sets `sessions_not_before` for the gateway | SSC-019 (`packages/ssc_control/src/ssc_control/identity/`, `ssc_edge/redeemer.py`, `ssc_cli/login.py`) | decided 2026-10-01; Okta live check passed 2026-10-01, Google moved to SSC-064 (`docs/runbooks/ssc-019-login.md`); deploy waits for SSC-064 |
+| 025 | Architecture review of 2026-10-03: isolation first, cost second; project, VPC, gateway, database and outbound IP per customer kept; one external load balancer per cell; everything at minimum 0; database, proxy and NAT created on first use; no warm instances by default. Amendments to 001, 004, 006, 014, 021, 022 and 023 are pending the staging proof run (SSC-086) | `Cloud_for_small_soft/SSC_Final_Architecture_2026-10-03.md`; tickets SSC-086 to SSC-096 | direction agreed by the founder 2026-10-03; amendments pending SSC-086 |
 
 ## 001 Cloud and runtime
+
+**Amendment pending (decision 025, 2026-10-03).** The choice of GCP and Cloud Run gen2 stands. Pending: no warm prod instances, no internal load balancer, one external Application Load Balancer per cell (SSC-088). The $199.37 and $9.86 figures below price the retired design. Nothing below is rewritten until SSC-086 reports.
 
 Choice: Google Cloud. Each customer cell is its own project, with apps on Cloud Run gen2 in `us-central1`.
 - Apps attach to a custom VPC with Direct VPC egress (`--vpc-egress all-traffic`). The VPC denies all egress except to the cell's egress proxy. A private Cloud DNS zone answers NXDOMAIN for the canary zone. Cloud NAT holds the cell's one fixed outbound IP.
@@ -78,6 +81,8 @@ Reverse if: a pilot framework can use neither the URL nor the `PG*` parts. Also 
 
 ## 004 Domains and app hosts
 
+**Amendment pending (decision 025, 2026-10-03).** The host rule stands. Pending: the wildcard certificate is a Certificate Manager certificate with DNS authorisation, one per cell (SSC-088). Nothing below is rewritten until SSC-086 reports.
+
 Choice: `delimitus.com` carries the platform hosts (`api.`, `auth.`, `keys.`, `console.`). Apps are served on `delimitusapps.com`, already registered and used for nothing else; `delimitus.app` is not used. The API reads it from `SSC_APPS_DOMAIN` (default `delimitusapps.com`; tests use `apps.test`) and refuses to start on a value that is not a lower-case DNS name of at most 186 characters. Every app environment has one host (`ssc_shared/hosts.py`):
 
 - prod: `<slug>.<cell label>.<apps domain>`; preview: `<slug>--preview.<cell label>.<apps domain>`.
@@ -106,6 +111,8 @@ Reason: each rule is expensive to retrofit. Isolation, cookie scope, permission 
 Reverse if: a paying customer requires their own domain (rule 2; a separate security design), or a bought service cannot meet a stated requirement and no other vendor can (rule 7, for that one service only).
 
 ## 006 Assumptions A1 to A7
+
+**Amendment pending (decision 025, 2026-10-03).** Pending: A7 becomes "an empty cell costs under $25 a month and a full cell under $50, before usage", measured in SSC-086 (T1). A5's fixed IP exists from the first connection or allowed host, not from cell creation. Nothing below is rewritten until SSC-086 reports.
 
 Choice: build on these until buyers exist. There are no customers yet, and buyer conversations start after the MVP.
 
@@ -243,6 +250,8 @@ Reason: the manifest is the contract between the CLI, the control plane, the doc
 Reverse if: a change would refuse or re-digest a manifest v1 accepts (then `ssc/v2` is added beside v1 and `load_manifest` dispatches on `schema`), a customer needs a key-value store the Postgres fix-it cannot cover (then a `[state]` key is added in v2 with its own decision), or the chosen cloud cannot honour exact length and sha256 on a signed upload (then decision 015 records the weaker binding and the contract suite marks it).
 
 ## 014 Runtime driver and worker
+
+**Amendment pending (decision 025, 2026-10-03).** Pending: the warm rule is deleted from `desired_for`; every environment is minimum 0 unless named by the org's warm flag (SSC-092); `ServiceSpec` gains `billing`; session environments need a 60-minute request timeout (the driver sets 300 s today). Nothing below is rewritten until SSC-086 reports.
 
 Choice: the control plane reaches a container runtime only through `ssc_control.runtime.driver.RuntimeDriver`, and runs every background job in one Procrastinate worker, `python -m ssc_control.worker`. `FakeRuntimeDriver` (`runtime/fake.py`) implements the protocol until the Cloud Run driver arrives with a cell (SSC-001, SSC-013). Every implementation runs `conformance/ssc_conformance/contracts/runtime_driver.py`.
 
@@ -453,6 +462,8 @@ Reverse if: builders need at-least-once runs with retries (then a retry policy p
 
 ## 021 Cell layout and log location on GCP
 
+**Amendment pending (decision 025, 2026-10-03).** The layout stands. Pending: the per-cell budget alert is sized from the new A7; organisation policies on the `ssc-cells` folder (SSC-095). Nothing below is rewritten until SSC-086 reports.
+
 Choice: SSC lives under the existing Google Cloud organisation, in folders created before the first cell.
 - `ssc-platform`: the control plane projects (`ssc-control-prod`, `ssc-control-staging`).
 - `ssc-cells/prod` and `ssc-cells/staging`: one project per customer cell. The project ID is `ssc-c-<cell label>` (the org's opaque label, decision 004), never the customer's name. The staging folder holds our own test cells, including the one for the outside security test (SSC-008).
@@ -470,6 +481,8 @@ Reason: there are no customers yet, so there is nothing to migrate and no data-l
 Reverse if: a customer needs data in another region (then add `ssc-cells/<region>` folders with their own location policy; existing cells stay put). Or the per-project quota on the billing account blocks growth (then request a raise before moving to shared projects).
 
 ## 022 Cell bootstrap
+
+**Amendment pending (decision 025, 2026-10-03).** Pending: the cell's contents and cost. Database (`db-f1-micro`), proxy, NAT and data gateway are created on first use behind stack flags (SSC-087); the internal load balancer is removed; snapshots are read per request, not polled every 2 s. Nothing below is rewritten until SSC-086 reports.
 
 Choice: one Pulumi project, `infra/`, with a `platform` stack and one `c-<cell label>` stack per cell. Everything in a cell is named from its label, so two cells differ only in label, project number and assigned addresses. `python -m ssc_infra.cell_diff` checks exactly that.
 - Bootstrap: `python -m ssc_infra.bootstrap` creates the `ssc-platform` folder, sets its log location, then creates project `ssc-platform-0`. That project holds the Pulumi state bucket and the KMS key for stack secrets, and every API call's quota goes to it. The `platform` stack creates the other folders, their log location, the location policy, `ssc-control-staging` and the budget. A prod control project waits for a prod cell.
@@ -527,6 +540,8 @@ Reverse if: IAM deny gains a principal set for "SSC's service accounts only" (th
 
 ## 023 Gateway
 
+**Amendment pending (decision 025, 2026-10-03).** Pending: one Cloud Run service per cell at minimum 0, request-billed, behind the cell's external load balancer with an `allUsers` invoker and ingress `internal-and-cloud-load-balancing`; a "waking up" page; the 60-minute connection limit. Nothing below is rewritten until SSC-086 reports.
+
 Choice: every request to an app host passes one Envoy 1.39 in the gateway container, which asks an HTTP `ext_authz` service on loopback (`ssc_edge.server`) before forwarding. The Envoy config is rendered from Python (`python -m ssc_edge.envoy`) and checked with `envoy --mode validate` in the test suite.
 - Filters, in order: a per-instance token bucket (`429`); a Lua filter that drops every request header starting `x-ssc-` or `x-envoy-`, and `X-Serverless-Authorization`; `ext_authz` with `failure_mode_allow: false` and `503` on error; a Lua filter that moves the request to the service host the check named and drops platform cookies from `Cookie`; dynamic forward proxy; router. No admin listener.
 - Check order (`ssc_edge.gate`), first refusal wins: (1) the host must be an app host of this cell, else `404`; (2) `/.ssc/callback` and `/.ssc/logout` are the gateway's own and never reach an app; (3) request shape, the same for every host: a declared body over 32 MiB is `413`, a cross-origin request that is not a top-level `GET`/`HEAD` navigation is `403` (all apps share the site `delimitusapps.com`, so `same-site` counts as cross-origin), a WebSocket whose `Origin` is not the app's own origin is `403`; (4) no valid session for this host goes to login, whether or not an app lives there; (5) no snapshot, or one no poll has confirmed for 5 minutes (`SSC_SNAPSHOT_MAX_AGE`), is `503` for every host; (6) the host label is looked up in the snapshot's `hosts` and `ssc_shared.access.decide` runs; an unknown label and every refusal are the same `404` page, byte for byte; (7) the identity note is minted with `aud` the app's origin and `groups` cut to the groups the environment's grants name.
@@ -564,3 +579,17 @@ Not yet: deploying the auth host, the sync worker, the API's trust of the auth h
 Live check, Okta, 2026-10-01 (`docs/runbooks/ssc-019-login.md`): six directory people synced, the founder linked, not duplicated; CLI login through Okta SAML; Okta Deactivate and app unassign both reach WorkOS as `dsync.user.deleted`, and SSC deactivated the person and revoked the session 23 s and 11 s after the WorkOS event; a primary email change updated the same person. Okta Suspend never reaches WorkOS, so it does not lock anyone out of SSC.
 
 Reverse if: WorkOS SSO stops returning the organisation and connection on the profile; a buyer needs SCIM straight into SSC; or the 60 s tick cannot keep the 5-minute bound at pilot scale (then use WorkOS webhooks as the trigger).
+
+## 025 Architecture review of 2026-10-03
+
+Choice: the architecture in `Cloud_for_small_soft/SSC_Final_Architecture_2026-10-03.md`, agreed by the founder on 2026-10-03. Two rules order it. First, two customers never collide, and the boundary between them is a separate resource wherever one exists, not a rule on a shared resource. Second, cost follows from the first rule; $50 a month for 200 apps is an aim at scale, not an MVP constraint, and stays out of sales material.
+- Kept: one project and one VPC per customer; Cloud Run gen2; no Shared VPC, no shared gateway, database or outbound IP; SQLite on disk refused.
+- Changed: one global external Application Load Balancer per cell with a Certificate Manager wildcard certificate (about $18 a month); the gateway, the data gateway and every app at minimum 0; a zonal `db-f1-micro` created on the first stateful deploy (about $13); one `e2-micro` proxy with NAT and a reserved IP created on the first allowed host or connection (about $11); session apps on one instance, instance-billed, with a 60-minute connection limit; a paid warm option per app.
+- Cost: an empty cell about $19 a month, with a database about $32, full about $43, plus usage. Ten customers and 200 apps: about $890 to $1,420 a month. The isolation premium against the shared-host design is about $340 to $410 a month at ten customers, accepted.
+- Limits accepted: five projects on the billing account, two free, no raise requested (SSC-089); cold starts of 5 to 20 seconds; one proxy machine per cell, so a zone loss stops outbound calls until it is recreated.
+
+Considered and rejected: a Shared VPC host project (proposed 2026-10-02, withdrawn), a shared public edge, public `run.app` hosts, an always-on `db-g1-small`, warm production instances by default, dropping the project per customer. A VM pool (GKE Sandbox) is kept as a lever that opens above 500 apps or $300 a month of Cloud Run compute (SSC-094).
+
+Order: the staging proof run (SSC-086, tests T1 to T12) runs first. Decisions 001, 004, 006, 014, 021, 022 and 023 carry an "amendment pending" line until it reports; each is then amended from the results, not from the model. Points where the code and the architecture document disagree are listed in the tickets (section 9, "Open") and are settled in the tickets named there.
+
+Reverse if: a proof-run test fails with no fallback (SSC-086 names one per test); the first reconciled bills (SSC-096) put a cell more than 20 % over the model with no fixable cause; or the billing-slot limit cannot be solved without sharing a project between customers.

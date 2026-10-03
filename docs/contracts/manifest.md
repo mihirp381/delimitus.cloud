@@ -4,6 +4,12 @@ What an app asks the platform for. Contract of SSC-044 and decision 013: a draft
 
 A manifest is a **request, never enforcement**. A deploy that asks for something the environment does not grant still goes ahead; the builder sees the [capability diff](#capability-diff) and the platform decides each item.
 
+**Pending changes (architecture review 2026-10-03, decision 025; not yet in the code or in this contract).** SSC-044 is reopened to add them, and nothing below changes until that ticket lands.
+- **Session apps.** `sessions = true` stays the key (the architecture document writes `session`; the ticket settles the name). It will also be set by detection for Streamlit, Gradio, Dash and Shiny start commands. A session app runs on one instance, is instance-billed, and its connections end at 60 minutes.
+- **`billing`.** A new optional `[runtime]` key, `"request"` or `"instance"`, with no default in the file: unset means the platform chooses (instance for session apps, request for the rest). To settle in SSC-044: an unset key must stay out of the digest so no v1 manifest changes digest, which makes this a widening change under [Versioning](#versioning). An agent session cannot change it (SSC-048).
+- **State.** `postgres = true` stays the only state. SQLite on disk will be refused at build with `STATE_SQLITE_EPHEMERAL` (SSC-015), because the file system is memory and does not persist.
+- **Files.** There is no manifest key for file storage yet; SSC-046 decides whether one is needed.
+
 ## Example
 
 ```toml
