@@ -9,8 +9,10 @@ puts an app back and resumes, once, the timers its runs paused.
 transaction locks the run's row and checks ``steps`` is still what it read. The steps, in order:
 
 1. ``gateway_deny`` asks for the next snapshot version, which carries the new status. It is
-   ``done`` once the org's cell confirms that version and ``unconfirmed`` after
-   ``confirm_within``; the job re-defers its own poll instead of holding a worker.
+   ``done`` once the org's cell has that version (``SnapshotPort.confirmed``: its
+   ``latest.json`` names it, which an awake gateway, or one starting from zero, reads before
+   it decides) and ``unconfirmed`` after ``confirm_within``; the job re-defers its own poll
+   instead of holding a worker.
 2. ``datagw_suspend`` and 3. ``egress_remove`` do nothing yet (SSC-050, SSC-053); the same
    version confirms them.
 4. ``scale_to_zero`` stops each environment, prod first, in a job holding that environment's
@@ -19,7 +21,8 @@ transaction locks the run's row and checks ``steps`` is still what it read. The 
 
 A step that raises is tried again after a doubling backoff; after ``max_attempts`` tries it is
 ``failed``, the later steps still run and the run ends ``failed``. Each finished step writes one
-``kill_switch.step`` audit row in the transaction that records it.
+``kill_switch.step`` audit row in the transaction that records it, with the step's own time
+and the time since the command: the last step's is the drill's.
 
 ``sweep`` re-defers a running run whose job is gone (one that raised, say while the database was
 down), so no run stays ``running`` for ever and blocks ``enable``.
@@ -198,7 +201,8 @@ def steps_of(raw: object) -> tuple[Step, ...]:
 
 _SELECT_RUN = text(
     "select id, app_id, mode, state, steps, paused_schedule_ids, actor_kind, actor_id, "
-    "actor_via_agent, actor_client_id from ssc.kill_switch_run where org_id = :org and id = :id"
+    "actor_via_agent, actor_client_id, started_at from ssc.kill_switch_run "
+    "where org_id = :org and id = :id"
 )
 _SELECT_RUNNING = text(
     "select id from ssc.kill_switch_run where org_id = :org and app_id = :app and state = 'running'"
@@ -233,6 +237,7 @@ class _Run:
     paused: tuple[str, ...]
     actor: Actor
     env_ids: tuple[str, ...]
+    started_at: datetime
 
     @property
     def current(self) -> Step | None:
@@ -264,6 +269,7 @@ async def _load(conn: AsyncConnection, org_id: str, run_id: str) -> _Run | None:
             client_id=None if row.actor_client_id is None else str(row.actor_client_id),
         ),
         env_ids=tuple(str(e) for e in envs.scalars()),
+        started_at=cast("datetime", row.started_at),
     )
 
 
@@ -314,6 +320,9 @@ async def _record(
         "state": step.state,
         "snapshot_version": step.snapshot_version,
         "elapsed_ms": step.elapsed_ms,
+        "since_command_ms": None
+        if step.finished_at is None
+        else span_ms(run.started_at, step.finished_at),
         "attempts": step.attempts,
     }
     if step.error is not None:

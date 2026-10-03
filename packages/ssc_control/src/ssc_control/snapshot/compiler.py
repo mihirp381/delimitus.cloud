@@ -163,7 +163,7 @@ async def point_latest(engine: AsyncEngine, org_id: str, blob: BlobStore) -> int
     return written
 
 
-async def _pointed_version(blob: BlobStore, org_id: str) -> int | None:
+async def pointed_version(blob: BlobStore, org_id: str) -> int | None:
     """The version ``latest.json`` names; None when it is missing or unreadable."""
     try:
         raw = b"".join([chunk async for chunk in blob.get(latest_key(org_id))])
@@ -181,4 +181,4 @@ async def is_stale(engine: AsyncEngine, org_id: str, blob: BlobStore) -> bool:
         live = await compile_document(conn, org_id, version=0, compiled_at=_EPOCH)
     if newest is None or newest[3] != content_digest(live):
         return True
-    return await _pointed_version(blob, org_id) != int(newest[0])
+    return await pointed_version(blob, org_id) != int(newest[0])

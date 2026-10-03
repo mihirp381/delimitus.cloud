@@ -74,6 +74,7 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_IMAGE_REPOSITORY",
     "SSC_GATEWAY_SA",
     "SSC_LOG_VIEW",
+    "SSC_USAGE_SOURCE",
 }
 TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
@@ -658,6 +659,20 @@ def test_the_agent_may_read_the_two_log_views_and_no_other_log(cell_a: list[Decl
     assert held == logging_roles
 
 
+def test_the_agent_reads_usage_from_the_cell_s_monitoring_on_google_s_own_path() -> None:
+    """``ssc_agent.cloud_monitoring`` calls ``monitoring.googleapis.com`` (SSC-028). The agent
+    has no VPC egress, like its Logging and Cloud Run calls, so the cell's DNS policy and
+    Private Google Access never stand in its way."""
+    declared = run(naming.cell_stack(A), {"agent_image": AGENT_IMAGE})
+    assert "monitoring.googleapis.com" in cell.APIS
+    services = {d.inputs["service"] for d in declared if d.type == "gcp:projects/service:Service"}
+    assert "monitoring.googleapis.com" in services
+    agent = one(declared, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
+    env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
+    assert env["SSC_USAGE_SOURCE"] == "monitoring"
+    assert "vpcAccess" not in agent["template"]
+
+
 def test_only_google_names_and_the_gateway_s_platform_hosts_resolve_in_the_cell(
     cell_a: list[Declared],
 ) -> None:
@@ -919,6 +934,8 @@ def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared])
         "cloudsql.databases.delete",
     }
     assert not any(p.startswith("cloudsql.") for p in roles["sscCellAgentCreate"])
+    assert roles["sscCellAgentUsage"] == ["monitoring.timeSeries.list"]
+    assert not any("monitoring" in role for role in grants if role.startswith("roles/"))
     custom = {f"projects/{naming.cell_project(A)}/roles/{r}" for r in roles}
     assert {r for r in grants if r.startswith("projects/")} == custom - {
         f"projects/{naming.cell_project(A)}/roles/sscDeployerRecords"

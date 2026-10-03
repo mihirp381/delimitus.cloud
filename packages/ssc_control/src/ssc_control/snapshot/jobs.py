@@ -14,13 +14,12 @@ import logging
 from typing import Final
 
 from procrastinate import Blueprint, JobContext, RetryStrategy
-from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
 from ssc_control.snapshot.compiler import is_stale, point_latest, publish
-from ssc_control.snapshot.service import mark_dirty
+from ssc_control.snapshot.service import mark_dirty, published_store
 from ssc_control.worker_ports import Ports, ports_of
 from ssc_shared.blobstore import BlobError, BlobStore
 
@@ -34,16 +33,13 @@ RETRY: Final = RetryStrategy(
     linear_wait=2,
     retry_exceptions=[DBAPIError, BlobError, OSError, TimeoutError],
 )
-_CELL_LABEL = text("select cell_label from ssc.org where id = :org")
 
 
 async def snapshot_store(ports: Ports, org_id: str) -> BlobStore | None:
     """Where the org's snapshots are published: its cell's bucket, else the one blob store."""
-    if ports.cell_stores is None:
-        return ports.blob_store
-    async with bound_org(ports.engine, org_id) as conn:
-        label = (await conn.execute(_CELL_LABEL, {"org": org_id})).scalar_one()
-    return ports.cell_stores(str(label))
+    return await published_store(
+        ports.engine, org_id, blob_store=ports.blob_store, cell_stores=ports.cell_stores
+    )
 
 
 def blueprint(*, sweep_cron: str = SWEEP_CRON) -> Blueprint:

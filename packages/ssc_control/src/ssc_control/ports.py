@@ -70,7 +70,8 @@ class SnapshotPort(Protocol):
         ...
 
     async def confirmed(self, org_id: str, version: int) -> bool:
-        """Whether every cell has acknowledged ``version`` in its heartbeat."""
+        """Whether the org's cell has ``version`` or later: its ``latest.json`` names it, or its
+        heartbeat reported it."""
         ...
 
 

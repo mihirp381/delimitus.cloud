@@ -31,7 +31,17 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
         }
     ),
     "kill_switch_run": frozenset(
-        {"app_id", "mode", "step", "state", "snapshot_version", "elapsed_ms", "attempts", "error"}
+        {
+            "app_id",
+            "mode",
+            "step",
+            "state",
+            "snapshot_version",
+            "elapsed_ms",
+            "since_command_ms",
+            "attempts",
+            "error",
+        }
     ),
     "release": frozenset(
         {"number", "image_digest", "manifest_digest", "source_digest", "source_commit"}

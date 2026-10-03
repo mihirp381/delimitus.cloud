@@ -371,14 +371,14 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
 def compose_ports(env: Mapping[str, str]) -> Ports:
     """The production ``Ports`` from the environment. The one place ports are chosen."""
     engine = make_engine(env[DSN_ENV])
-    blob_store = blob_store_of(env)
+    blob_store, cell_stores = blob_store_of(env), cell_stores_of(env)
     ports = Ports(
         engine=engine,
         runtime_driver=runtime_driver_from_env(env),
         release_specs=BundleReleaseSpecs(),
         blob_store=blob_store,
-        cell_stores=cell_stores_of(env),
-        snapshot=Snapshots(engine),
+        cell_stores=cell_stores,
+        snapshot=Snapshots(engine, blob_store=blob_store, cell_stores=cell_stores),
         prod_gate=approvals_prod_gate(),
         build_driver=build_driver_from_env(env, blob_store),
         metrics=metrics_from_env(env),

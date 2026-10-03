@@ -5,7 +5,7 @@ Pulumi in Python for SSC on Google Cloud (SSC-013, decisions 021, 022 and 025). 
 | Stack | What it holds |
 | --- | --- |
 | `platform` | Folders `ssc-cells/{prod,staging}` and `ssc-sandbox`, with logs in `us-central1`. The location policy on `ssc-platform`, the cell policy table on `ssc-cells` and the public-invoker tag (SSC-095). The control projects `ssc-control-<stage>`, their four identities and, for each stage in `control_stages`, the control plane (SSC-064: API, worker, auth host, database, secrets; the public hosts in `public_stage`). The folder rule denying secret reads. Just-in-time staff access. The $250 monthly budget. The public DNS zones `delimitusapps.com.` and `delimitus.com.` in `ssc-platform-0`. |
-| `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build`, `ssc-data` and `ssc-secret-intake`, KMS, bucket, Artifact Registry, the VPC with its firewall floor, DNS sinkhole and the empty database zone `ssc-sql`, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests), the cell agent (one instance at most) with its two log views and the secret intake behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
+| `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build`, `ssc-data` and `ssc-secret-intake`, KMS, bucket, Artifact Registry, the VPC with its firewall floor, DNS sinkhole and the empty database zone `ssc-sql`, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests), the cell agent (one instance at most) with its two log views and its Monitoring read and the secret intake behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
 
 The lazy flags are turned on by the cell deployer when the control plane asks (SSC-087, below). The operator can still set any flag by hand.
 
@@ -197,6 +197,21 @@ The cell agent reads app, build and health logs from the cell's own Cloud Loggin
 5. `source=build` shows a build's lines through `ssc-build`, and `GET .../health` shows `running` or `asleep` without waking the app.
 6. The agent service shows max instances 1, concurrency 200 and timeout 300 s (`gcloud run services describe ssc-cell-agent`).
 
+## App usage
+
+The cell agent reads Cloud Run's own metrics for every `ssc-a-` service from the cell's Cloud Monitoring (SSC-028, `ssc_agent.cloud_monitoring`): three `timeSeries.list` calls an hour, for `container/billable_instance_time`, `container/instance_count` (`state = active`) and `container/startup_latencies`.
+
+- **API.** `monitoring.googleapis.com` is on in every cell, with the other APIs at onboarding.
+- **Identity.** The custom role `sscCellAgentUsage` holds `monitoring.timeSeries.list` alone, granted to `ssc-cell-agent` on the project; no `monitoring.viewer` or any other Monitoring role (`tests/test_cell.py`).
+- **Agent environment.** `SSC_USAGE_SOURCE=monitoring` with `agent_image` set; unset, the agent refuses usage reads and the control plane records no usage events.
+- **Network.** The agent has no VPC egress, so it reaches `monitoring.googleapis.com` on Google's own path, as it reaches Logging, Cloud Run and Cloud SQL Admin. The cell's DNS policy and Private Google Access apply only to traffic in the VPC, so neither changes.
+- **Cost.** Cloud Run's metrics are free, and about 2,200 read calls a month stay inside Monitoring's free read allowance.
+
+**Live checks** (operator, not run by this change), on a staging cell with an `agent_image` built from SSC-028 and one Streamlit app deployed:
+1. The custom role is enough: the agent's usage read answers with no `403`, and `gcloud projects get-iam-policy ssc-c-<label>` shows `ssc-cell-agent` with `sscCellAgentUsage` and no `roles/monitoring.*`.
+2. Data within 15 minutes: open the app, then read the agent's usage for the current hour; `billable_instance_time` and `startup_latencies` show the service within 15 minutes of the first request. Note the delay seen.
+3. `instance_count` stays `active` while a WebSocket is open: keep the Streamlit page open with no clicks for 20 minutes, then read `instance_count` with `state = active` for that window (Metrics Explorer, or the agent's busy minutes). Expected: every minute of the window counts as active. If the idle minutes show as `idle`, session hours undercount open pages, and SSC-028's busy-minute rule needs another source.
+
 ## Gateway
 
 The cell's gateway (SSC-018, decision 023) runs a build of `packages/ssc_edge/Dockerfile` once its four settings are set; until then it is the placeholder image with no environment.
@@ -234,7 +249,7 @@ pulumi config set --stack c-<label> gateway_jwks "$(cat jwks.json)"
 pulumi up --stack c-<label>
 ```
 
-The first `pulumi up` creates the key on a cell made before it. Still live-only: Cloud Run accepting the gateway's ID token for an app's `run.app` URL (T3), the cold start (T7), the browser suite (SSC-029), and the `auth` and `keys` records in the `delimitus` zone, which exist once the control plane's public stage is applied (Control plane, below).
+The first `pulumi up` creates the key on a cell made before it. Still live-only: Cloud Run accepting the gateway's ID token for an app's `run.app` URL (T3), the cold start (T7), the first drill against a cold gateway (T8, below), the browser suite (SSC-029), and the `auth` and `keys` records in the `delimitus` zone, which exist once the control plane's public stage is applied (Control plane, below).
 
 **Removing access (SSC-021, decision 023 amendment).** An allowed WebSocket or event stream goes through the gateway's stream relay (loopback port 9002, `SSC_STREAM_PORT`). While any stream is open, the relay re-reads the snapshot every second and closes each stream its person may no longer open. Nothing in the stack changes. Live checks for the proof run, on a staging cell with a Streamlit app shared with one test person through a group, then by a direct grant:
 
@@ -244,6 +259,14 @@ The first `pulumi up` creates the key on a cell made before it. Still live-only:
 4. Group removal. Remove the person from the group in the directory. Expected: after the next sync tick (60 s) and the compile, the page gets `404` and the open websocket closes, as in 1 and 3.
 5. Gateway at zero. Let the gateway scale to zero, remove a grant, then open the app. Expected: the first answer is `404`.
 6. The relay's path. Open a websocket through the load balancer and confirm it reaches the app with `X-Serverless-Authorization` accepted. This checks TLS from the relay to `run.app` with the image's CA bundle (`/etc/ssl/certs/ca-certificates.crt`), the ID token, and WebSockets through Envoy to the relay behind the serverless NEG. Also confirm that server-sent events still arrive unbuffered.
+
+**Kill switch (SSC-025, decision 014 amendment).** The kill goes through the snapshot, so nothing in the stack changes. The saga's `gateway_deny` step is `done` once `latest.json` names its version, and no cell process reports back. Each `kill_switch.step` audit row has `since_command_ms`; the last row's figure is the drill's time. Live checks for the proof run (T8), on a staging cell with a Streamlit app open in a browser:
+
+1. First drill, gateway cold. Let the gateway and the app scale to zero, run `ssc disable <app>` and note when the command returns. Expected: `gateway_deny` is `done`, not `unconfirmed`, with `since_command_ms` under 10,000. Then open the app: the first answer is `404`, and the app's service logs no request and no new instance.
+2. Awake gateway. Keep a page polling the app once a second with the Streamlit page open, then disable it. Expected: the first `404` arrives at most 3.3 s after `latest.json` moves (when the gateway last read it, plus its 0.3 s wait), and under 10 s after the command. The websocket closes about 3 s after the pointer moves.
+3. Time from the command to the pointer. Compare the `disable` response with the `update_time` of `latest.json`: this is the worker's compile, the term no local test measures.
+4. Full stop. Expected: `scale_to_zero` is `done` and the last step's `since_command_ms` is under 60,000. Cloud Run's settle time for manual scaling to 0 sets this bound (the agent waits up to 180 s), and it is known only from this run. `gcloud run services describe` shows the manual instance count at 0.
+5. Enable. Run `ssc enable <app>`. Expected: the next request after the following compile is admitted, and the app starts from zero.
 
 ## Public entry
 
