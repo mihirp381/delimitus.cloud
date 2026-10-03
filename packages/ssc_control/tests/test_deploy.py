@@ -974,7 +974,24 @@ async def test_a_release_without_a_manifest_never_boots(b: Bench) -> None:
     op = start_deploy(b, b.w.prod, release).json()["operation_id"]
     assert await run(b, op) == "failed"
     assert operation(b, op)["failure_code"] == RELEASE_SPEC_UNAVAILABLE
+    assert operation(b, op)["billing"] is None
     assert b.runtime.calls == []
+
+
+@pytest.mark.parametrize(
+    ("runtime", "billing"),
+    [
+        ({}, "request"),
+        ({"sessions": True}, "instance"),
+        ({"start": "streamlit run app.py --server.port $PORT"}, "instance"),
+    ],
+)
+async def test_an_operation_says_how_its_release_is_billed(
+    b: Bench, runtime: dict[str, Any], billing: str
+) -> None:
+    release = await build_release(b, b.w.preview, manifest_of(runtime=runtime))
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    assert operation(b, op)["billing"] == billing
 
 
 async def test_the_production_gate_end_to_end(b: Bench) -> None:

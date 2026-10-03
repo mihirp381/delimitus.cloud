@@ -311,6 +311,7 @@ async def test_mutations_audited_as_agent(world: World) -> None:
         "state": "pending",
         "location": f"/v1/operations/{op}",
         "idempotency_key": key,
+        "notice": None,
     }
     assert again.structured_content == first.structured_content
     assert second.is_error

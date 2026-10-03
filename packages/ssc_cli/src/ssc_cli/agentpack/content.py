@@ -27,7 +27,7 @@ name: ssc
 description: How this internal app runs on SSC (Small Software Cloud) and how to use its \
 command line tool, ssc. Use when changing how the app starts, signs people in or stores \
 data, when checking it with `ssc doctor`, when deploying it to preview or rolling it back, or \
-when sharing it or checking its status.
+when sharing it, checking its status or reading its logs.
 ---
 """
 
@@ -45,8 +45,8 @@ app from its source in a container. Follow these rules when you change it.
 Every command takes `--json` and then prints one JSON object on stdout; a failure prints
 `{{"error": {{...}}}}` with a stable `code`. Exit codes: 0 ok, 1 refused or failed, 2 bad usage,
 3 no token or token refused, 4 blocked on this machine before anything was sent (`ssc doctor`
-found a blocking problem, or `ssc deploy` found a secret, an invalid `ssc.toml` or a folder it
-cannot upload), 5 network error.
+found a blocking problem, or `ssc deploy` found a secret, SQLite on disk, an invalid `ssc.toml`
+or a folder it cannot upload), 5 network error.
 
 `ssc deploy --app <slug>` deploys the folder to the app's preview environment, never to
 production. It checks the folder first and uploads nothing if it holds a secret. It waits for the
@@ -65,6 +65,11 @@ admin's approval first; without `--json` the error says how to ask.
 
 `ssc share` names a person by `usr_` id or email address (looking up an email needs an org admin's
 token) and a group by `grp_` id or name. When more than one fits, it exits 2 and lists their ids.
+
+`ssc status <app>` shows each environment: what runs, its billing (`request`, or `instance` for
+a session app), its health (`running`, `asleep` or `failing`) and the database places used.
+`ssc logs <app> --env preview` shows what the app printed; `--source build` or `--source deploy`
+shows the build or the deployment, and `--follow` keeps printing new lines.
 
 `ssc apps --mine` lists the apps you can deploy to. `ssc access explain <app> [person]` says
 whether someone can open an environment and which grants decide it. `ssc disable` stops an app at
@@ -115,6 +120,22 @@ finding marked `block`.
 - Values the browser needs at build time (`VITE_*`, `NEXT_PUBLIC_*`) go under
   `[build.public_env.preview]` and `[build.public_env.prod]` in `ssc.toml`; any other name must
   also be listed in `public_names` under `[build]`. Anyone who can open the app can read them.
+
+### Sleeping, sessions and limits
+
+- Every app sleeps when nobody uses it and wakes on the next request, which takes a few seconds.
+  A browser loading a page meanwhile sees a "waking up" page that reloads itself; script calls
+  and WebSockets wait instead. Do not ping the app to keep it awake: every request wakes it and
+  is billed.
+- Streamlit, Gradio, Dash and Shiny apps, and any app with `sessions = true` under `[runtime]`,
+  are session apps. A session app runs as one instance, billed while it runs, and each
+  connection is closed after 60 minutes. Streamlit loses its session state when that happens, so
+  keep anything that must last in Postgres. `ssc doctor` notes this as `SESSION_FRAMEWORK`.
+- SQLite on disk is refused (`STATE_SQLITE_EPHEMERAL`) by `ssc doctor`, `ssc deploy` and the
+  build, because the disk is memory. Use Postgres with `postgres = true` under `[state]`.
+  SQLite in memory (`:memory:`) and in test files is fine.
+- The first deploy that asks for a database creates the company's database, which takes about
+  ten minutes and happens once. `ssc deploy` says so; the app goes live when it is ready.
 
 ### Who is signed in: the identity note
 

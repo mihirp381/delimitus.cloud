@@ -25,6 +25,7 @@ from ssc_shared.runtime import (
     ServiceNotFoundError,
     ServiceObservation,
     ServiceSpec,
+    billing_for,
     database_name,
     revision_fingerprint,
     service_name,
@@ -141,7 +142,7 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
         return Stopped(service=service, reason=app_status)
     runtime = manifest.runtime
     session = is_session_app(runtime, framework)
-    billing: Billing = "instance" if session else "request"
+    billing = billing_for(runtime, framework)
     plain = {app_env.PORT: str(runtime.port), app_env.HOME: app_env.HOME_VALUE}
     plain |= identity_env(identity, slug, env.name)
     mounted = dict(secrets or {})

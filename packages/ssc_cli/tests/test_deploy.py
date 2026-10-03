@@ -9,6 +9,7 @@ import pytest
 
 from ssc_bundle.limits import BundleTooLargeError
 from ssc_cli.commands import deploy as deploy_module
+from ssc_cli.commands.deploy import WAKING
 from ssc_cli.credentials import SERVICE
 from ssc_cli.errors import ExitCode
 from ssc_cli.session import Session
@@ -150,10 +151,10 @@ def _operation(
     )
 
 
-def _accepted() -> httpx2.Response:
+def _accepted(notice: str | None = None) -> httpx2.Response:
     return httpx2.Response(
         202,
-        json={"operation_id": DEP, "state": "pending"},
+        json={"operation_id": DEP, "state": "pending", "notice": notice},
         headers={"location": f"/v1/operations/{DEP}"},
     )
 
@@ -295,13 +296,51 @@ def test_a_commit_is_sent_with_the_bundle(cli, api, folder):
 def test_deploy_human_output(cli, api, folder):
     r = cli("deploy", str(folder), "--app", "demo", "--wait", session=api.session())
     assert r.code == 0
-    assert r.stdout == f"R7 is live in preview of demo.\nPreview: {PREVIEW_URL}\n"
+    assert r.stdout == f"R7 is live in preview of demo.\nPreview: {PREVIEW_URL}\n{WAKING}\n"
     assert "Packed 2 files" in r.stderr
     assert "Uploading." in r.stderr
     assert CHANGE["consequence"] in r.stderr
     assert SIGNATURE not in r.stdout + r.stderr
     pending = cli("deploy", str(folder), "--app", "demo", session=api.session())
     assert pending.stdout.splitlines()[0] == f"Deploying R7 to preview of demo ({DEP})."
+
+
+def test_waking_up_is_explained_only_on_the_first_deploy(cli, api, folder):
+    api.routes[("GET", f"/v1/apps/{APP_ID}")] = [
+        httpx2.Response(200, json=_app(preview_live="dep_bbbbbbbbbbbbbbbbbbbb"))
+    ]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", session=api.session())
+    assert r.code == 0, r.stderr
+    assert '"waking up"' not in r.stdout + r.stderr
+    assert '"waking up" page' in WAKING
+
+
+def test_the_first_deploy_of_a_database_says_what_it_sets_off_once(cli, api, folder):
+    notice = "Creating your company's database, about ten minutes, this happens once."
+    (folder / "ssc.toml").write_text('schema = "ssc/v1"\n[state]\npostgres = true\n')
+    api.routes[("POST", PREVIEW_DEPLOYMENTS)] = [_accepted(notice)]
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("running", notice=notice),
+        _operation("healthy"),
+    ]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", session=api.session())
+    assert r.code == 0, r.stderr
+    assert r.stderr.count(notice) == 1
+    pending = cli("deploy", str(folder), "--app", "demo", session=api.session())
+    assert pending.stderr.count(notice) == 1
+    quiet = cli("deploy", str(folder), "--app", "demo", "--json", session=api.session())
+    assert DeployResult.model_validate(quiet.json()).notice == notice
+    assert notice not in quiet.stderr
+
+
+def test_a_streamlit_folder_still_deploys(cli, api, folder):
+    (folder / "app.py").write_text("import streamlit as st\nst.title('hi')\n")
+    (folder / "requirements.txt").write_text("streamlit\n")
+    start = '[runtime]\nstart = "streamlit run app.py --server.port $PORT"\n'
+    (folder / "ssc.toml").write_text('schema = "ssc/v1"\n' + start)
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", "--json", session=api.session())
+    assert r.code == 0, r.stdout
+    assert DeployResult.model_validate(r.json()).state == "healthy"
 
 
 def test_a_deploy_waiting_for_the_company_database_says_so_once(cli, api, folder):
@@ -343,12 +382,17 @@ def _link(root: Path) -> None:
     (root / "elsewhere").symlink_to("/etc/hosts")
 
 
+def _sqlite(root: Path) -> None:
+    (root / "db.py").write_text("import sqlite3\ndb = sqlite3.connect('data.db')\n")
+
+
 @pytest.mark.parametrize(
     ("spoil", "code"),
     [
         (_secret, "SECRET_IN_BUNDLE"),
         (_bad_manifest, "MANIFEST_INVALID"),
         (_link, "BUNDLE_MALFORMED"),
+        (_sqlite, "STATE_SQLITE_EPHEMERAL"),
     ],
 )
 def test_local_refusals_exit_4_before_any_request(cli, api, folder, spoil, code):
@@ -426,6 +470,19 @@ def test_a_failed_build_names_its_code_and_build(cli, api, folder):
     assert ("POST", PREVIEW_DEPLOYMENTS) not in _calls(api)
     human = cli("deploy", str(folder), "--app", "demo", session=api.session())
     assert "Fix: Run `ssc doctor`" in human.stderr
+
+
+def test_sqlite_on_disk_is_refused_before_upload_with_the_postgres_fix(cli, api, folder):
+    _sqlite(folder)
+    r = cli("deploy", str(folder), "--app", "demo", session=api.session())
+    assert r.code == ExitCode.BLOCKED
+    assert "a SQLite connect on a file at db.py" in r.stderr
+    assert "[state]\npostgres = true" in r.stderr
+    assert api.seen == []
+    (folder / "tests").mkdir()
+    (folder / "db.py").rename(folder / "tests" / "test_db.py")
+    (folder / "mem.py").write_text("db = sqlite3.connect(':memory:')\n")
+    assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
 
 
 def test_a_sqlite_build_failure_shows_the_postgres_fix(cli, api, folder):

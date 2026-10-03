@@ -42,6 +42,7 @@ from ssc_cli.shapes import (
     TokenSetResult,
     WhoamiResult,
 )
+from ssc_contracts import app_database
 from ssc_contracts.app_database import POOL_FIX_IT
 
 CLEAN = Path(__file__).resolve().parent / "fixtures" / "doctor" / "clean"
@@ -843,9 +844,40 @@ def test_status_reads_the_current_deployment(cli, fake_api, isolated):
     assert envs["preview"].deployment is None
     assert envs["prod"].deployment is not None
     assert envs["prod"].deployment.state == "healthy"
+    assert envs["prod"].deployment.billing is None
     human = cli("status", APP_ID, session=fake_api.session())
     assert "healthy" in human.stdout
     assert "rel_aaaaaaaaaaaaaaaaaaaa" in human.stdout
+
+
+@pytest.mark.parametrize("billing", ["instance", "request"])
+def test_status_shows_how_each_environment_is_billed(cli, fake_api, isolated, billing):
+    isolated.set_password(SERVICE, "https://api.test", "tok")
+    dep = "dep_aaaaaaaaaaaaaaaaaaaa"
+    fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=_app(dep)))
+    operation = {
+        "operation_id": dep,
+        "kind": "deploy",
+        "state": "healthy",
+        "app_id": APP_ID,
+        "environment_id": PROD,
+        "release_id": "rel_aaaaaaaaaaaaaaaaaaaa",
+        "started_at": "2026-09-29T00:00:00Z",
+        "finished_at": "2026-09-29T00:01:00Z",
+        "billing": billing,
+    }
+    fake_api.add("GET", f"/v1/operations/{dep}", httpx2.Response(200, json=operation))
+    r = cli("status", APP_ID, "--json", session=fake_api.session())
+    envs = {e.name: e for e in AppResult.model_validate(r.json()).environments}
+    assert envs["prod"].deployment is not None
+    assert envs["prod"].deployment.billing == billing
+    human = cli("status", APP_ID, session=fake_api.session()).stdout
+    header, prod = (
+        human.splitlines()[2],
+        next(x for x in human.splitlines() if x.startswith("prod")),
+    )
+    assert header.split()[2] == "BILLING"
+    assert prod.split()[2] == billing
 
 
 def test_status_shows_each_environments_database(cli, fake_api, isolated):
@@ -881,8 +913,15 @@ def test_status_shows_each_environments_database(cli, fake_api, isolated):
     human = cli("status", APP_ID, session=fake_api.session()).stdout
     assert "DATABASE" in human
     assert "8.4 MB, 1/2 connections" in human
-    assert "3 of 10, previews included" in human
+    assert "instance (db-f1-micro): 3 of 10, previews included" in human
+    assert envs["prod"].database.tier == "db-f1-micro"
     assert POOL_FIX_IT in human
+
+
+def test_the_tier_is_named_only_when_the_places_match_the_base_tier():
+    assert app_database.tier_for(10) == app_database.BASE_TIER
+    assert app_database.tier_for(22) is None
+    assert app_database.tier_for(None) is None
 
 
 def test_status_without_a_database_route_still_answers(cli, scripted):

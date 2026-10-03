@@ -37,7 +37,11 @@ def doctor(path: PathArg = Path(), json_mode: JsonOpt = False) -> None:
             if i + 1 == len(findings) or findings[i + 1].fix != f.fix:
                 say(f"       Fix: {f.fix}")
         blocks = sum(f.severity == "block" for f in findings)
-        warns = len(findings) - blocks
-        say(f"\n{blocks} blocking, {warns} {'warning' if warns == 1 else 'warnings'}.")
+        notes = sum(f.severity == "info" for f in findings)
+        warns = len(findings) - blocks - notes
+        summary = f"{blocks} blocking, {warns} {'warning' if warns == 1 else 'warnings'}"
+        if notes:
+            summary += f", {notes} {'note' if notes == 1 else 'notes'}"
+        say(f"\n{summary}.")
     if result.blocking:
         raise typer.Exit(int(ExitCode.BLOCKED))

@@ -104,7 +104,10 @@ pseudonym; properties are flat scalars and never carry a user id or an email.
 **A deployment is a long-running operation.** `POST .../deployments` answers `202` with
 `Location: /v1/operations/{id}`; `GET /v1/operations/{id}` reports `pending`, `running`,
 `healthy`, `failed` or `superseded`. A second deployment while one is in flight is
-`409 DEPLOYMENT_IN_FLIGHT`. Running the deployment is the reconciler's job (SSC-016).
+`409 DEPLOYMENT_IN_FLIGHT`. Running the deployment is the reconciler's job (SSC-016). The `202`
+carries `notice` when the deployment sets off a cell resource that is not ready yet, such as the
+company's database (SSC-087); the operation carries `notice` while it waits, and `billing`
+(`instance` for a session app, `request` for any other) from its release's manifest.
 
 **A `scope: preview` credential never touches production** (decision 011, SSC-042). Before any
 handler runs, the unit of work refuses it with `403 FORBIDDEN` on any path naming the prod

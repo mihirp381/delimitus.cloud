@@ -2050,6 +2050,11 @@ export interface components {
         LogSource: "app" | "build" | "deploy";
         /** OperationAccepted */
         OperationAccepted: {
+            /**
+             * Notice
+             * @description What this deployment sets off and waits for, such as the company's database being created the first time an app asks for one.
+             */
+            notice?: string | null;
             /** Operation Id */
             operation_id: string;
             /**
@@ -2062,6 +2067,11 @@ export interface components {
         OperationOut: {
             /** App Id */
             app_id: string;
+            /**
+             * Billing
+             * @description How the release is billed while it runs: `instance` for a session app, `request` for any other. Null when its manifest cannot be read.
+             */
+            billing?: ("instance" | "request") | null;
             /** Environment Id */
             environment_id: string;
             /**

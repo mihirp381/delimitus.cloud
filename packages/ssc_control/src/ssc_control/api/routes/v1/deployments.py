@@ -24,6 +24,7 @@ from sqlalchemy import RowMapping, text
 
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.capabilities import CapabilityDiff, EnvironmentCapabilities, diff_capabilities
+from ssc_contracts.cells import CellResourceState
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import Manifest
@@ -34,10 +35,12 @@ from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_re
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
-from ssc_control.cell.resources import notice_for, waiting_on
+from ssc_control.cell.resources import needs_for, notice_for, states, waiting_on
 from ssc_control.deploy.tasks import defer_build, defer_deployment
 from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
 from ssc_control.ports import MetricKind
+from ssc_control.runtime.specs import release_spec
+from ssc_shared.runtime import Billing, billing_for
 
 router = APIRouter()
 
@@ -58,6 +61,11 @@ class DeploymentCreate(Strict):
 class OperationAccepted(Strict):
     operation_id: str
     state: Literal["pending"]
+    notice: str | None = Field(
+        default=None,
+        description="What this deployment sets off and waits for, such as the company's "
+        "database being created the first time an app asks for one.",
+    )
 
 
 class OperationOut(Strict):
@@ -76,6 +84,11 @@ class OperationOut(Strict):
         default=None,
         description="What a `running` deployment is waiting for, such as the company's "
         "database being created.",
+    )
+    billing: Billing | None = Field(
+        default=None,
+        description="How the release is billed while it runs: `instance` for a session app, "
+        "`request` for any other. Null when its manifest cannot be read.",
     )
 
 
@@ -356,9 +369,28 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
             properties={"environment": str(env["name"]), "via_agent": uow.principal.is_agent},
         )
     return uow.reply(
-        OperationAccepted(operation_id=dep_id, state="pending"),
+        OperationAccepted(
+            operation_id=dep_id,
+            state="pending",
+            notice=await _first_use_notice(uow, body.release_id),
+        ),
         status=202,
         headers={"Location": f"/v1/operations/{dep_id}"},
+    )
+
+
+async def _first_use_notice(uow: UnitOfWork, release_id: str) -> str | None:
+    """What deploying ``release_id`` sets off: the cell resources it needs that are not ready."""
+    spec = await release_spec(uow.conn, uow.org_id, release_id)
+    if spec is None:
+        return None
+    have = await states(uow.conn, uow.org_id)
+    return notice_for(
+        [
+            r
+            for r in needs_for(spec.manifest)
+            if r not in have or have[r].state is not CellResourceState.READY
+        ]
     )
 
 
@@ -436,7 +468,9 @@ async def get_operation(operation_id: Id, uow: UserUoW) -> OperationOut:
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"operation_id": operation_id})
     waiting = await waiting_on(uow.conn, uow.org_id, operation_id)
-    return OperationOut(**dict(row), notice=notice_for(waiting))
+    spec = await release_spec(uow.conn, uow.org_id, str(row["release_id"]))
+    billing = None if spec is None else billing_for(spec.manifest.runtime, spec.framework)
+    return OperationOut(**dict(row), notice=notice_for(waiting), billing=billing)
 
 
 @router.get(

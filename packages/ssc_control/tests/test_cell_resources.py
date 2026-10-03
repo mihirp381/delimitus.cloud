@@ -235,6 +235,28 @@ async def test_a_stateless_deploy_asks_for_nothing(cell: Cell) -> None:
     assert operation(b, op)["notice"] is None
 
 
+async def test_the_accepted_deploy_says_what_it_sets_off_until_the_database_is_ready(
+    cell: Cell,
+) -> None:
+    b = cell.b
+    stateful = await build_release(b, b.w.preview, manifest_of(**STATEFUL))
+    stateless = await build_release(b, b.w.preview)
+    first = start_deploy(b, b.w.preview, stateful)
+    assert first.status_code == 202, first.text
+    assert first.json()["notice"] == NOTICE[DB]
+    op = str(first.json()["operation_id"])
+    done(b.dsn, f"dep:{op}")
+    assert await run(b, op, cell.ports) == "running"
+    await finish_creation(cell)
+    assert await run(b, op, cell.ports) == "healthy"
+    again = start_deploy(b, b.w.preview, stateful)
+    assert again.status_code == 202, again.text
+    assert again.json()["notice"] is None
+    assert await run(b, again.json()["operation_id"], cell.ports) == "healthy"
+    plain = start_deploy(b, b.w.preview, stateless)
+    assert plain.json()["notice"] is None
+
+
 async def test_two_stateful_deploys_started_together_create_one_database(cell: Cell) -> None:
     b = cell.b
     first = await stateful_deploy(cell, b.w.preview)

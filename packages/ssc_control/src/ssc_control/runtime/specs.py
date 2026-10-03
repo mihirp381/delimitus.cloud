@@ -51,11 +51,12 @@ class ReleaseSpecs(Protocol):
 async def release_manifest(conn: AsyncConnection, org_id: str, release_id: str) -> Manifest | None:
     """The manifest of the bundle ``release_id`` was built from, or None when there is none or it
     does not hash to the release's ``manifest_digest``. An approvals ``ManifestLoader``."""
-    spec = await _release_spec(conn, org_id, release_id)
+    spec = await release_spec(conn, org_id, release_id)
     return None if spec is None else spec.manifest
 
 
-async def _release_spec(conn: AsyncConnection, org_id: str, release_id: str) -> ReleaseSpec | None:
+async def release_spec(conn: AsyncConnection, org_id: str, release_id: str) -> ReleaseSpec | None:
+    """The manifest and framework of ``release_id``, or None as for ``release_manifest``."""
     row = (await conn.execute(_RELEASE_MANIFEST, {"org": org_id, "rel": release_id})).first()
     if row is None:
         return None
@@ -77,7 +78,7 @@ class BundleReleaseSpecs(ReleaseSpecs):
     async def get(
         self, conn: AsyncConnection, *, org_id: str, app_id: str, release_id: str
     ) -> ReleaseSpec:
-        spec = await _release_spec(conn, org_id, release_id)
+        spec = await release_spec(conn, org_id, release_id)
         if spec is None:
             raise ReleaseSpecUnavailableError(f"no stored bundle manifest for {release_id}")
         return spec

@@ -2,7 +2,7 @@
 
 import pytest
 
-from ssc_bundle.analyze import Analysis, analyze
+from ssc_bundle.analyze import Analysis, analyze, sqlite_on_disk
 from ssc_contracts.build import FIX_ITS, NOTICES, SQLITE_ON_DISK
 from ssc_contracts.manifest import Manifest, is_session_app
 
@@ -50,13 +50,31 @@ def test_sqlite_on_disk_is_refused_with_the_postgres_fix(files: dict[str, str | 
     "files",
     [
         {"app.py": "db = sqlite3.connect(':memory:')\n"},
+        {"app.py": "db = sqlite3.connect('file::memory:?cache=shared', uri=True)\n"},
+        {"app.py": "db = sqlite3.connect('file:x?mode=memory', uri=True)\n"},
+        {"app.py": "engine = create_engine('sqlite:///:memory:')\n"},
         {"tests/test_db.py": "db = sqlite3.connect('t.db')\n"},
+        {"tests/fixtures/sample.sqlite": b"SQLite format 3\x00rest"},
+        {"src/test_seed.db": b"SQLite format 3\x00rest"},
         {"app.py": "# a note about sqlite\nprint('hi')\n"},
         {"server.js": "const db = new Database('app.db');\n"},
     ],
 )
 def test_memory_test_and_unrelated_sqlite_pass(files: dict[str, str | bytes]) -> None:
     assert code(files, manifest(**START)) is None
+
+
+def test_sqlite_on_disk_alone_gives_what_analyze_gives() -> None:
+    files = [
+        ("pom.xml", b"<project/>"),
+        ("app.py", b"import sqlite3\ndb = sqlite3.connect('data.db')\n"),
+    ]
+    refusal = sqlite_on_disk(files, manifest())
+    assert refusal is not None
+    assert (refusal.code, refusal.path) == ("STATE_SQLITE_EPHEMERAL", "app.py")
+    assert analyze(files[1:], manifest()).refusal == refusal
+    assert analyze(files, manifest()).refusal != refusal
+    assert sqlite_on_disk([("app.py", b"print(1)\n")], manifest()) is None
 
 
 def test_a_sqlite_url_is_a_fallback_once_postgres_is_on() -> None:

@@ -72,6 +72,12 @@ class DeploymentRow(Shape):
     release_id: str | None
     started_at: str
     finished_at: str | None
+    billing: Literal["request", "instance"] | None = Field(
+        default=None,
+        description="Only from ``status``: ``instance`` for a session app, billed while its one "
+        "instance runs; ``request`` for any other, billed while it answers; null when the API "
+        "did not say.",
+    )
 
 
 class DatabaseRow(Shape):
@@ -85,6 +91,9 @@ class DatabaseRow(Shape):
     connections: int | None
     places_used: int | None
     places_total: int | None
+    tier: str | None = Field(
+        default=None, description="The instance's tier, such as db-f1-micro; null when unknown."
+    )
 
 
 class HealthRow(Shape):
@@ -207,6 +216,11 @@ class DeployResult(Shape):
     url: str | None
     warnings: list[BundleWarning]
     capability_changes: list[CapabilityChangeRow]
+    notice: str | None = Field(
+        default=None,
+        description="What the deployment sets off, such as the company's database being "
+        "created the first time; null when nothing.",
+    )
 
 
 class ReleaseRow(Shape):

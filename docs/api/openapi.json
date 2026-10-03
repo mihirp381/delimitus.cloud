@@ -2741,6 +2741,18 @@
       "OperationAccepted": {
         "additionalProperties": false,
         "properties": {
+          "notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What this deployment sets off and waits for, such as the company's database being created the first time an app asks for one.",
+            "title": "Notice"
+          },
           "operation_id": {
             "title": "Operation Id",
             "type": "string"
@@ -2764,6 +2776,22 @@
           "app_id": {
             "title": "App Id",
             "type": "string"
+          },
+          "billing": {
+            "anyOf": [
+              {
+                "enum": [
+                  "instance",
+                  "request"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the release is billed while it runs: `instance` for a session app, `request` for any other. Null when its manifest cannot be read.",
+            "title": "Billing"
           },
           "environment_id": {
             "title": "Environment Id",
