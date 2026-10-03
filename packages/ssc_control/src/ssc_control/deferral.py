@@ -11,7 +11,8 @@ back after it (a rolled-back savepoint puts it back by itself), so the caller's 
 engine are left as they were.
 
 The API imports this module and nothing from ``ssc_control.worker``: tasks are named by string
-(``"<namespace>:<task>"``) and need not be importable here.
+(``"<namespace>:<task>"``) and need not be importable here. The job priorities are all here, so
+their order is in one place.
 """
 
 from datetime import datetime
@@ -29,6 +30,11 @@ from ssc_control.db.catalog import QUEUE_SCHEMA
 _APP: Final = App(connector=PsycopgConnector())
 _CURRENT_PATH: Final = text("select current_setting('search_path')")
 _SET_PATH: Final = text("select set_config('search_path', :path, true)")
+KILL_SWITCH_PRIORITY: Final = 20
+ROLLBACK_PRIORITY: Final = 10
+MANUAL_TIMER_PRIORITY: Final = 1
+"""Job priorities, highest first; every other job has Procrastinate's default 0. A worker
+takes the highest waiting job, and among jobs waiting on one ``lock`` the highest goes first."""
 
 
 class DeferralError(RuntimeError):

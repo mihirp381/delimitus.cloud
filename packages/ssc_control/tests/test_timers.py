@@ -76,6 +76,7 @@ from ssc_control.db import (
     make_engine,
     upgrade,
 )
+from ssc_control.deferral import MANUAL_TIMER_PRIORITY
 from ssc_control.lifecycle import kill_switch
 from ssc_control.lifecycle import tasks as lifecycle_tasks
 from ssc_control.lifecycle.kill_switch import Timings
@@ -521,7 +522,7 @@ async def test_preview_schedules_are_paused_and_run_by_hand(b: Bench) -> None:
     )
     job = manual(b, sid)
     assert job["queueing_lock"] == f"tmr:{run_id}"
-    assert (job["lock"], job["priority"]) == (None, tasks.MANUAL_PRIORITY)
+    assert (job["lock"], job["priority"]) == (None, MANUAL_TIMER_PRIORITY)
     assert job["args"] == {"org_id": b.w.org, "schedule_id": sid, "run_id": run_id}
     queued = get(b, r.headers["location"], b.t.builder).json()
     assert (queued["state"], queued["trigger"], queued["requested_by_user_id"]) == (

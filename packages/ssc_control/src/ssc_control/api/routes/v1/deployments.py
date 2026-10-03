@@ -371,7 +371,11 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
             properties={"environment": str(env["name"]), "via_agent": uow.principal.is_agent},
         )
     await defer_deployment(
-        uow.conn, org_id=uow.org_id, environment_id=environment_id, deployment_id=dep_id
+        uow.conn,
+        org_id=uow.org_id,
+        environment_id=environment_id,
+        deployment_id=dep_id,
+        rollback=body.kind == "rollback",
     )
     return uow.reply(
         OperationAccepted(operation_id=dep_id, state="pending"),
