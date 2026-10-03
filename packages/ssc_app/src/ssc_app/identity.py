@@ -20,9 +20,12 @@ Every refusal is an :class:`IdentityRefused` carrying one code from :data:`REFUS
 all of them the same way: the request is not from a signed-in user of this app.
 """
 
+import base64
+import json
 import time
 from collections.abc import Mapping
 from typing import Any, Final, Literal, cast
+from urllib.parse import unquote_to_bytes
 
 import jwt
 from pydantic import ValidationError
@@ -194,11 +197,18 @@ def token_from_headers(headers: Mapping[str, str]) -> str | None:
     return None
 
 
+def _inline_jwks(url: str) -> dict[str, Any]:
+    header, _, payload = url.removeprefix("data:").partition(",")
+    raw = base64.b64decode(payload) if header.endswith(";base64") else unquote_to_bytes(payload)
+    return cast(dict[str, Any], json.loads(raw))
+
+
 class IdentityVerifier:
     """One verifier per app process. Holds the audience and the key source.
 
     ``keys`` is the JWKS URL (``<issuer>/jwks.json``; fetched and cached, refreshed when an
-    unknown ``kid`` shows up during a key rotation) or an already loaded JWKS dict.
+    unknown ``kid`` shows up during a key rotation), the JWKS inline as a ``data:`` URL (how the
+    platform hands it to an app, which has no internet), or an already loaded JWKS dict.
     """
 
     def __init__(
@@ -212,6 +222,8 @@ class IdentityVerifier:
         self.audience = audience
         self.issuer = issuer
         self.leeway = leeway
+        if isinstance(keys, str) and keys.startswith("data:"):
+            keys = _inline_jwks(keys)
         self._keys: KeySource = (
             jwt.PyJWKClient(keys, cache_keys=True, lifespan=300)
             if isinstance(keys, str)

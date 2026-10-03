@@ -1,14 +1,16 @@
 """The gateway keyring (SSC-018, decision 010 amended): one JSON document, KMS-wrapped."""
 
 import base64
+import io
 import json
+import sys
 
 import httpx2
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from ssc_edge.keys import KeyringError, kms_decrypt, new_keyring, parse_keyring
+from ssc_edge.keys import KeyringError, kms_decrypt, main, new_keyring, parse_keyring, public_jwks
 
 KEY = "projects/p/locations/us-central1/keyRings/r/cryptoKeys/gateway"
 
@@ -76,3 +78,16 @@ async def test_a_kms_refusal_is_a_keyring_error() -> None:
     transport = httpx2.MockTransport(lambda _: httpx2.Response(403, json={"error": {}}))
     with pytest.raises(KeyringError, match="403"):
         await kms_decrypt(KEY, "Y2lwaGVy", access_token="tok", transport=transport)
+
+
+def test_the_operator_tool_makes_a_keyring_and_prints_only_its_public_half(
+    monkeypatch: pytest.MonkeyPatch, capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    main(["new"])
+    raw = capsysbinary.readouterr().out
+    ring = parse_keyring(raw)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw)))
+    main(["jwks"])
+    out = capsysbinary.readouterr().out
+    assert json.loads(out) == public_jwks(ring)
+    assert b"PRIVATE" not in out and b'"d"' not in out

@@ -34,10 +34,13 @@ from edge_world import (
 )
 
 from ssc_app.identity import verify
-from ssc_edge.envoy import ENVOY_VERSION, EnvoyConfig, render
+from ssc_edge import pages
+from ssc_edge.envoy import ENVOY_VERSION, WAKE_SECONDS, EnvoyConfig, render
+from ssc_edge.gate import DEADLINE_HEADER, REQUEST_SECONDS, WAKE_HEADER
 from ssc_edge.identity_note import jwks
 from ssc_edge.keys import new_keyring, parse_keyring
 from ssc_edge.server import create_app
+from ssc_edge.session import WAKE_COOKIE, wake_cookie
 from ssc_shared.access import AccessView
 
 ENVOY_IMAGE = (
@@ -68,6 +71,8 @@ class Echo(BaseHTTPRequestHandler):
     def _go(self):
         if self.path.startswith("/events"):
             return self._events()
+        if self.path.startswith("/slow/"):
+            time.sleep(3)
         n = int(self.headers.get("content-length") or 0)
         self.rfile.read(n)
         seen = [[k.lower(), v] for k, v in self.headers.items()]
@@ -79,6 +84,9 @@ class Echo(BaseHTTPRequestHandler):
         self.send_header("set-cookie", "app=2; Path=/")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
+        if self.path.startswith("/slow-body/"):
+            self.wfile.flush()
+            time.sleep(3)
         self.wfile.write(body)
     do_GET = do_POST = _go
     def log_message(self, *a): pass
@@ -159,6 +167,29 @@ def test_the_check_fails_closed_and_cannot_be_skipped() -> None:
     routes = hcm["route_config"]["virtual_hosts"][0]["routes"]
     assert all("typed_per_filter_config" not in r for r in routes)
     assert "admin" not in cfg
+
+
+def test_only_a_marked_page_load_is_cut_at_two_seconds() -> None:
+    hcm = render(EnvoyConfig())["static_resources"]["listeners"][0]["filter_chains"][0]
+    hcm = hcm["filters"][0]["typed_config"]
+    wake, rest = hcm["route_config"]["virtual_hosts"][0]["routes"]
+    assert wake["match"]["headers"] == [{"name": WAKE_HEADER, "present_match": True}]
+    assert wake["route"]["retry_policy"] == {"num_retries": 0, "per_try_timeout": "2s"}
+    assert wake["route"]["timeout"] == rest["route"]["timeout"] == "0s"
+    assert wake["request_headers_to_remove"] == [WAKE_HEADER]
+    assert rest == {"match": {"prefix": "/"}, "route": {"cluster": "apps", "timeout": "0s"}}
+    (mapper,) = hcm["local_reply_config"]["mappers"]
+    assert mapper["filter"] == {"response_flag_filter": {"flags": ["UT"]}}
+    assert (mapper["status_code"], mapper["body"]["inline_string"]) == (
+        503,
+        pages.WAKING.decode(),
+    )
+    authz = hcm["http_filters"][2]["typed_config"]
+    assert authz["clear_route_cache"] is True
+    on_success = authz["http_service"]["authorization_response"]
+    assert on_success["allowed_client_headers_on_success"] == {
+        "patterns": [{"exact": "set-cookie"}]
+    }
 
 
 @dataclass
@@ -344,6 +375,77 @@ def test_server_sent_events_stream_through_unbuffered(stack: Stack) -> None:
     assert [line for line, _ in arrived] == ["data: 0", "data: 1", "data: 2"]
     assert arrived[0][1] < 0.9, arrived  # before the app sent the second event
     assert arrived[2][1] - arrived[0][1] > 1.5, arrived
+
+
+PAGE_LOAD = {
+    "sec-fetch-site": "none",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "document",
+    "accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+}
+
+
+def timed(stack: Stack, path: str, headers: dict[str, str]) -> tuple[httpx2.Response, float]:
+    started = time.monotonic()
+    r = stack.get(HOST, path, headers={"cookie": stack.world.cookie(), **headers})
+    return r, time.monotonic() - started
+
+
+def test_a_slow_app_shows_a_page_load_the_waking_page(stack: Stack) -> None:
+    r, took = timed(stack, "/slow/a", PAGE_LOAD)
+    assert r.status_code == 503
+    assert r.content == pages.WAKING
+    assert WAKE_SECONDS <= took < WAKE_SECONDS + 0.8
+    assert r.headers["content-type"] == "text/html; charset=utf-8"
+    assert r.headers["cache-control"] == "no-store"
+    assert r.headers.get_list("set-cookie") == [wake_cookie()]
+
+
+def test_the_retry_with_the_wake_cookie_waits_for_the_app(stack: Stack) -> None:
+    w = stack.world
+    cookie = f"{w.cookie()}; {WAKE_COOKIE}=1"
+    r, took = timed(stack, "/slow/b", {**PAGE_LOAD, "cookie": cookie})
+    assert r.status_code == 200, r.text
+    assert took >= 3
+    seen = echoed(r)
+    assert WAKE_HEADER not in seen
+    assert "cookie" not in seen
+    assert r.headers.get_list("set-cookie") == ["app=2; Path=/"]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"accept": "application/json", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty"},
+        {**PAGE_LOAD, "sec-fetch-dest": "iframe"},
+        {**PAGE_LOAD, "accept": "*/*"},
+    ],
+    ids=["script", "fetch", "frame", "no-html"],
+)
+def test_anything_but_a_page_load_waits_for_a_slow_app(
+    stack: Stack, headers: dict[str, str]
+) -> None:
+    r, took = timed(stack, "/slow/c", headers)
+    assert r.status_code == 200, r.text
+    assert took >= 3
+    assert r.headers.get_list("set-cookie") == ["app=2; Path=/"]
+
+
+def test_an_answer_that_has_started_is_never_cut(stack: Stack) -> None:
+    r, took = timed(stack, "/slow-body/d", PAGE_LOAD)
+    assert r.status_code == 200, r.text
+    assert took >= 3
+    assert r.json()["path"] == "/slow-body/d"
+    assert sorted(r.headers.get_list("set-cookie")) == sorted(["app=2; Path=/", wake_cookie()])
+
+
+def test_the_app_learns_when_cloud_run_will_end_the_request(stack: Stack) -> None:
+    r, _ = timed(stack, "/limit", PAGE_LOAD)
+    assert r.status_code == 200, r.text
+    seen = echoed(r)
+    assert seen[DEADLINE_HEADER] == [str(stack.world.now + REQUEST_SECONDS)]
+    assert WAKE_HEADER not in seen
 
 
 def test_everything_is_refused_when_the_authoriser_stops(stack: Stack) -> None:

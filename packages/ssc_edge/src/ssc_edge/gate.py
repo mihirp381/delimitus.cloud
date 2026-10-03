@@ -17,16 +17,17 @@ Stages, in order, stopping at the first refusal:
    SSC-019) is a redirect to login with the cookie cleared.
 7. Environment and sharing rule (``ssc_shared.access.decide``): an unknown host label and any
    refusal are the same ``404`` page.
-8. Allowed: the identity note is minted, and the request goes to the environment's service.
+8. Allowed: the identity note is minted, and the request goes to the environment's service with
+   the time Cloud Run will end it (``X-SSC-Request-Deadline``). A browser page load without the
+   wake cookie is marked for the "waking up" page (``ssc_edge.envoy``).
 
 A refusal never names the reason to the caller; ``Deny.reason`` is for the gateway's own log.
 """
 
 import base64
 import hashlib
-import re
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, Protocol
@@ -38,6 +39,7 @@ from ssc_edge.identity_note import compose_note
 from ssc_edge.session import (
     COOKIE_NAME,
     LOGIN_COOKIE,
+    WAKE_COOKIE,
     Session,
     SessionCodec,
     clear_cookie,
@@ -45,9 +47,11 @@ from ssc_edge.session import (
     cookie_values,
     login_cookie,
     set_cookie,
+    wake_cookie,
 )
 from ssc_shared.access import AccessView, decide
 from ssc_shared.hosts import AppHost, parse_app_host
+from ssc_shared.runtime import MAX_TIMEOUT_SECONDS, service_name
 
 OWN_PREFIX: Final = "/.ssc/"
 CALLBACK_PATH: Final = "/.ssc/callback"
@@ -55,9 +59,15 @@ LOGOUT_PATH: Final = "/.ssc/logout"
 IDENTITY_HEADER: Final = "x-ssc-identity"
 UPSTREAM_HEADER: Final = "x-ssc-upstream"
 """Internal: the service host Envoy forwards to. Envoy removes it before forwarding."""
+DEADLINE_HEADER: Final = "x-ssc-request-deadline"
+"""Unix seconds by which Cloud Run will have ended the request: the gateway's 3600-second request
+timeout from the check. An app's own timeout may end it sooner."""
+WAKE_HEADER: Final = "x-ssc-wake"
+"""Internal: a browser page load that gets the "waking up" page when the app is slow. Envoy
+removes it before forwarding."""
+REQUEST_SECONDS: Final = MAX_TIMEOUT_SECONDS
 SAFE_METHODS: Final = frozenset({"GET", "HEAD"})
 _SAME_ORIGIN: Final = frozenset({"same-origin", "none"})
-_ENV_ID: Final = re.compile(r"env_([a-z0-9]{20})")
 
 type Reason = Literal[
     "not_app_host",
@@ -100,10 +110,14 @@ class Facts:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Allow:
+    """``headers`` go to the app; ``client_headers`` are added to whatever answer the browser
+    gets, the app's or the gateway's own."""
+
     upstream: str
     headers: Mapping[str, str]
     user: str
     environment: str
+    client_headers: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -132,12 +146,21 @@ def new_nonce() -> str:
 
 
 def upstream_host(environment_id: str, *, project_number: str, region: str) -> str:
-    """The deterministic ``run.app`` host of the environment's Cloud Run service, ``ssc-a-``
-    plus the id's 20 characters (decision 014)."""
-    m = _ENV_ID.fullmatch(environment_id)
-    if m is None:
-        raise ValueError(f"not an environment id: {environment_id!r}")
-    return f"ssc-a-{m.group(1)}-{project_number}.{region}.run.app"
+    """The deterministic ``run.app`` host of the environment's Cloud Run service (decision 014)."""
+    return f"{service_name(environment_id)}-{project_number}.{region}.run.app"
+
+
+def page_load(facts: Facts) -> bool:
+    """A browser loading a page into a tab (Fetch-Metadata and ``Accept``); never a script, a
+    WebSocket or a timer call."""
+    h = facts.headers
+    return (
+        facts.method == "GET"
+        and h.get("sec-fetch-mode") == "navigate"
+        and h.get("sec-fetch-dest") == "document"
+        and "text/html" in h.get("accept", "")
+        and "upgrade" not in h
+    )
 
 
 def normal_host(raw: str) -> str:
@@ -183,7 +206,9 @@ class Gate:
         clock: Callable[[], int],
         redeemer: Redeemer | None = None,
         nonce: Callable[[], str] = new_nonce,
+        refresh: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        """``refresh`` runs only when a check reaches the snapshot (``OnDemandView.refresh``)."""
         self._cfg = config
         self._codec = codec
         self._view = view
@@ -191,6 +216,7 @@ class Gate:
         self._clock = clock
         self._redeemer = redeemer
         self._nonce = nonce
+        self._refresh = refresh
 
     async def check(self, facts: Facts) -> Allow | Deny:
         host = normal_host(facts.host)
@@ -207,7 +233,9 @@ class Gate:
         session, presented = self._session(facts, host)
         if session is None:
             return self._login(host, path, cleared=presented)
-        return self._decide(host, path, app, session)
+        if self._refresh is not None:
+            await self._refresh()
+        return self._decide(host, path, app, session, facts)
 
     def _shape(self, facts: Facts, host: str) -> Deny | None:
         h = facts.headers
@@ -277,7 +305,9 @@ class Gate:
             )
         return not_found("unknown_host_label")
 
-    def _decide(self, host: str, path: str, app: AppHost, session: Session) -> Allow | Deny:
+    def _decide(  # noqa: PLR0913  (one request's parts)
+        self, host: str, path: str, app: AppHost, session: Session, facts: Facts
+    ) -> Allow | Deny:
         view = self._view()
         if view is None:
             return _page(503, pages.UNAVAILABLE, "no_view")
@@ -296,6 +326,7 @@ class Gate:
             return not_found("unknown_host_label")
         mine = view.groups_by_user.get(session.sub, frozenset())
         groups = tuple(sorted(mine & env.by_group.keys()))[:MAX_GROUPS]
+        now = self._clock()
         note = compose_note(
             issuer=self._cfg.issuer,
             audience=f"https://{host}",
@@ -304,7 +335,7 @@ class Gate:
             app=env.app_id,
             env=env.name,
             role=decision.role,
-            now=self._clock(),
+            now=now,
             groups=groups,
             name=session.name or None,
             email=session.email or None,
@@ -312,10 +343,19 @@ class Gate:
         upstream = upstream_host(
             env_id, project_number=self._cfg.project_number, region=self._cfg.region
         )
-        headers = {IDENTITY_HEADER: self._sign(note), UPSTREAM_HEADER: upstream}
+        headers = {
+            IDENTITY_HEADER: self._sign(note),
+            UPSTREAM_HEADER: upstream,
+            DEADLINE_HEADER: str(now + REQUEST_SECONDS),
+        }
+        client: tuple[tuple[str, str], ...] = ()
+        if page_load(facts) and not cookie_values(facts.headers.get("cookie", ""), WAKE_COOKIE):
+            headers[WAKE_HEADER] = "1"
+            client = (("set-cookie", wake_cookie()),)
         return Allow(
             upstream=upstream,
             headers=MappingProxyType(headers),
             user=session.sub,
             environment=env_id,
+            client_headers=client,
         )

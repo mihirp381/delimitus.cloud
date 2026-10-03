@@ -8,18 +8,28 @@ keyring is accepted only when ``SSC_ENV`` is ``dev`` or ``test``.
 Keyring JSON: ``{"session": {kid: base64 32 bytes}, "session_kid": kid,
 "identity": {kid: PKCS#8 PEM, EC P-256}, "identity_kid": kid}``. Two keys of a kind are held
 during a rotation; the ``*_kid`` one is used for new values.
+
+The operator makes a keyring and its public JWKS once per cell, offline, and seals the keyring
+with the cell's ``gateway`` KMS key (``infra/README.md``):
+
+    uv run python -m ssc_edge.keys new > keyring.json
+    uv run python -m ssc_edge.keys jwks < keyring.json
 """
 
+import argparse
 import base64
 import json
 import secrets
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Any, Final, cast
 
 import httpx2
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+
+from ssc_edge.identity_note import jwks
 
 KMS_API: Final = "https://cloudkms.googleapis.com/v1"
 KEY_BYTES: Final = 32
@@ -104,3 +114,41 @@ async def kms_decrypt(
     if r.status_code != 200:  # noqa: PLR2004
         raise KeyringError(f"KMS decrypt failed with HTTP {r.status_code}")
     return base64.b64decode(cast(dict[str, str], r.json())["plaintext"])
+
+
+def public_jwks(keyring: Keyring) -> dict[str, Any]:
+    """The public half of every identity key in the keyring: the JWKS apps verify notes with."""
+    return jwks(*((key.public_key(), kid) for kid, key in sorted(keyring.identity.items())))
+
+
+def _public_points(doc: Any) -> set[tuple[str, str, str]]:
+    return {(str(k["kid"]), str(k["x"]), str(k["y"])) for k in doc["keys"]}
+
+
+def check_published(keyring: Keyring, published: str) -> None:
+    """Refuses a keyring whose identity keys are not exactly the published JWKS, so the JWKS the
+    cell hands to apps (``SSC_IDENTITY_JWKS``) is the one the gateway signs with."""
+    try:
+        theirs = _public_points(json.loads(published))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise KeyringError("the published JWKS is not a JWKS") from exc
+    if theirs != _public_points(public_jwks(keyring)):
+        raise KeyringError("the keyring's identity keys are not the published JWKS")
+
+
+def main(argv: list[str] | None = None) -> None:
+    """``new`` writes a fresh keyring to stdout; ``jwks`` reads a keyring on stdin and writes
+    only its public JWKS."""
+    parser = argparse.ArgumentParser(prog="python -m ssc_edge.keys")
+    parser.add_argument("command", choices=("new", "jwks"))
+    args = parser.parse_args(argv)
+    if args.command == "new":
+        sys.stdout.buffer.write(new_keyring())
+        return
+    keyring = parse_keyring(sys.stdin.buffer.read())
+    json.dump(public_jwks(keyring), sys.stdout, separators=(",", ":"), sort_keys=True)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -5,9 +5,10 @@ timestamps are taken out, apart from what their flags name.
 
 Compares ``pulumi stack export`` of both stacks: the same resources, the same inputs, and the same
 outputs apart from values the cloud assigns. A stack's own cloud-assigned values (project number,
-load balancer address, certificate authorisation record) become placeholders wherever they appear,
-so a record pointing at another cell's address still shows. Where the stacks' ``flags`` output
-differ, the lazy resources of a differing flag and the gateway's minimum (``gateway_min``,
+load balancer address, certificate authorisation record) and its customer's settings (``org_id``,
+``gateway_keyring``, ``gateway_jwks``) become placeholders wherever they appear, so a record
+pointing at another cell's address still shows. Where the stacks' ``flags`` output differ, the
+lazy resources of a differing flag and the gateway's minimum (``gateway_min``,
 ``warm``) are left out. Prints each difference; exit 1 if there is any.
 
 Then, for each cell, the organisation policies in force (SSC-095): the table the platform stack
@@ -113,6 +114,11 @@ FLAG_DEFAULTS: Final[dict[str, Json]] = {
     "warm": False,
 }
 IPV4: Final = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+OWN_SETTINGS: Final = {
+    "org_id": "<org>",
+    "gateway_keyring": "<gateway-keyring>",
+    "gateway_jwks": "<identity-jwks>",
+}
 
 
 def export(stack: str) -> Json:
@@ -162,9 +168,16 @@ def _stack_outputs(state: Json) -> Mapping[str, Json]:
 
 
 def _own_values(state: Json, label: str) -> Swaps:
-    """The label and the values the cloud gave this stack, each with its placeholder."""
+    """The label, the customer's own settings and the values the cloud gave this stack, each with
+    its placeholder. Settings are matched as ``flatten`` writes them, inside a JSON string."""
     outputs = _stack_outputs(state)
-    found = [(label, "<cell>"), (str(outputs.get("project_number") or ""), "<number>")]
+    settings: Mapping[str, Json] = outputs.get("config") or {}
+    found = [
+        (json.dumps(str(settings[key]))[1:-1], placeholder)
+        for key, placeholder in OWN_SETTINGS.items()
+        if settings.get(key)
+    ]
+    found += [(label, "<cell>"), (str(outputs.get("project_number") or ""), "<number>")]
     for res in state["deployment"].get("resources", []):
         if res["type"] == DNS_AUTHORIZATION:
             records: list[Mapping[str, Json]] = res.get("outputs", {}).get("dnsResourceRecords")

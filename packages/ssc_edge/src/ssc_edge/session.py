@@ -25,6 +25,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 COOKIE_NAME: Final = "__Host-ssc-session"
 LOGIN_COOKIE: Final = "__Host-ssc-login"
 LOGIN_SECONDS: Final = 600
+WAKE_COOKIE: Final = "__Host-ssc-wake"
+WAKE_SECONDS: Final = 120
 PLATFORM_PREFIXES: Final = ("__host-ssc", "__secure-ssc")
 """Lower-cased name prefixes an app's ``Set-Cookie`` may not use (browsers compare prefixes
 without case)."""
@@ -130,6 +132,12 @@ def login_cookie(nonce: str) -> str:
 
 def clear_login_cookie() -> str:
     return login_cookie("")
+
+
+def wake_cookie() -> str:
+    """Set with a page load that may get the "waking up" page; while it lives, page loads on
+    this host wait for the app instead (``ssc_edge.envoy``). It carries nothing but its name."""
+    return f"{WAKE_COOKIE}=1; Path=/; Max-Age={WAKE_SECONDS}; Secure; HttpOnly; SameSite=Lax"
 
 
 def cookie_values(header: str, name: str = COOKIE_NAME) -> list[str]:

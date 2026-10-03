@@ -24,16 +24,36 @@ from edge_world import (
     PREVIEW_HOST,
     PROD,
     World,
+    config,
     session,
     snapshot,
 )
 
 from ssc_app.identity import verify
 from ssc_edge import pages
-from ssc_edge.gate import IDENTITY_HEADER, UPSTREAM_HEADER, Allow, Deny, Facts, binding_of
+from ssc_edge.gate import (
+    DEADLINE_HEADER,
+    IDENTITY_HEADER,
+    REQUEST_SECONDS,
+    UPSTREAM_HEADER,
+    WAKE_HEADER,
+    Allow,
+    Deny,
+    Facts,
+    binding_of,
+    upstream_host,
+)
 from ssc_edge.identity_note import jwks
-from ssc_edge.session import clear_cookie, clear_login_cookie, login_cookie
+from ssc_edge.server import gate_for
+from ssc_edge.session import (
+    WAKE_COOKIE,
+    clear_cookie,
+    clear_login_cookie,
+    login_cookie,
+    wake_cookie,
+)
 from ssc_shared.access import AccessView
+from ssc_shared.runtime import MAX_TIMEOUT_SECONDS, service_name
 
 UPSTREAM = "ssc-a-" + "p" * 20 + "-123456789012.us-central1.run.app"
 
@@ -144,6 +164,27 @@ async def test_a_new_snapshot_takes_effect_on_the_next_request(world: World) -> 
         snapshot(2, grants={**snapshot()["grants"], "env_" + "y" * 20: []})
     )
     assert (await denied(world, f)).reason == "not_granted"
+
+
+async def test_only_a_check_that_reaches_the_snapshot_refreshes_it(world: World) -> None:
+    refreshed: list[int] = []
+
+    async def refresh() -> None:
+        refreshed.append(world.now)
+
+    gate = gate_for(
+        config(), world.keyring, view=lambda: world.view, clock=lambda: world.now, refresh=refresh
+    )
+    for early in (
+        facts(HOST),
+        facts("example.com", cookie=world.cookie()),
+        facts(HOST, "/.ssc/logout"),
+        facts(HOST, method="POST", cookie=world.cookie(), **{"sec-fetch-site": "cross-site"}),
+    ):
+        await gate.check(early)
+    assert refreshed == []
+    assert isinstance(await gate.check(facts(HOST, cookie=world.cookie())), Allow)
+    assert refreshed == [world.now]
 
 
 async def test_a_host_label_pointing_at_the_wrong_environment_is_not_found(world: World) -> None:
@@ -311,3 +352,76 @@ async def test_other_platform_paths_are_never_sent_to_the_app(world: World) -> N
 async def test_host_case_port_and_trailing_dot_are_normalised(world: World) -> None:
     for host in (HOST.upper(), f"{HOST}:443", f"{HOST}."):
         assert isinstance(await check(world, facts(host, cookie=world.cookie())), Allow)
+
+
+def test_the_upstream_is_the_service_the_agent_names() -> None:
+    assert upstream_host(PROD, project_number="123456789012", region="us-central1") == (
+        f"{service_name(PROD)}-123456789012.us-central1.run.app"
+    )
+    assert UPSTREAM.startswith(service_name(PROD) + "-")
+    with pytest.raises(ValueError, match="not an environment id"):
+        upstream_host("env_short", project_number="1", region="us-central1")
+
+
+async def test_the_app_learns_when_cloud_run_will_end_the_request(world: World) -> None:
+    out = await check(world, facts(cookie=world.cookie()))
+    assert isinstance(out, Allow)
+    assert REQUEST_SECONDS == MAX_TIMEOUT_SECONDS == 3600
+    assert out.headers[DEADLINE_HEADER] == str(NOW + 3600)
+
+
+PAGE_LOAD = {
+    "sec_fetch_site": "none",
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+}
+
+
+async def test_a_page_load_is_marked_for_the_waking_page_and_gets_the_cookie(
+    world: World,
+) -> None:
+    out = await check(world, facts(cookie=world.cookie(), **PAGE_LOAD))
+    assert isinstance(out, Allow)
+    assert out.headers[WAKE_HEADER] == "1"
+    assert out.client_headers == (("set-cookie", wake_cookie()),)
+    assert wake_cookie() == (
+        f"{WAKE_COOKIE}=1; Path=/; Max-Age=120; Secure; HttpOnly; SameSite=Lax"
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "changes"),
+    [
+        ("GET", {"cookie_wake": True}),
+        ("POST", {}),
+        ("HEAD", {}),
+        ("GET", {"sec_fetch_mode": "cors", "sec_fetch_dest": "empty"}),
+        ("GET", {"sec_fetch_dest": "iframe"}),
+        ("GET", {"accept": "*/*"}),
+        ("GET", {"accept": "application/json"}),
+        ("GET", {"upgrade": "websocket", "origin": f"https://{HOST}"}),
+        ("GET", {"sec_fetch_mode": None, "sec_fetch_dest": None, "sec_fetch_site": None}),
+    ],
+    ids=["has-cookie", "post", "head", "fetch", "frame", "any", "json", "websocket", "no-meta"],
+)
+async def test_nothing_else_is_marked(world: World, method: str, changes: dict[str, Any]) -> None:
+    cookie = world.cookie()
+    if changes.pop("cookie_wake", False):
+        cookie += f"; {WAKE_COOKIE}=1"
+    headers = {k: v for k, v in (PAGE_LOAD | changes).items() if v is not None}
+    out = await check(world, facts(method=method, cookie=cookie, **headers))
+    assert isinstance(out, Allow), out
+    assert WAKE_HEADER not in out.headers
+    assert out.client_headers == ()
+
+
+async def test_a_refused_page_load_is_never_marked(world: World) -> None:
+    forbidden = await denied(
+        world, facts(PAY_HOST, cookie=world.cookie(session(BEN), PAY_HOST), **PAGE_LOAD)
+    )
+    nowhere = await denied(
+        world, facts(NOWHERE_HOST, cookie=world.cookie(session(BEN), NOWHERE_HOST), **PAGE_LOAD)
+    )
+    assert forbidden.status == 404 and same_answer(forbidden, nowhere)
+    assert all(name != "set-cookie" for name, _ in forbidden.headers)

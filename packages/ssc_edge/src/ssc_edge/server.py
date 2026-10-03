@@ -6,14 +6,18 @@ headers in ``envoy.ALLOWED_HEADERS``. A ``200`` lets the request through with th
 the upstream host and Cloud Run's ``X-Serverless-Authorization``; any other answer goes to the
 browser as it is. An exception is ``503`` here, and Envoy answers ``503`` when this service is
 down or slow, so the gateway fails closed.
+
+The gateway runs request-billed from zero (decision 023 amendment), so nothing runs between
+requests: the snapshot is read once before the first request is accepted and then on demand by
+the checks themselves (``OnDemandView``). There is no background poll.
 """
 
 import asyncio
 import logging
 import os
 import time
-from collections.abc import AsyncGenerator, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Final, Protocol
 
@@ -25,13 +29,14 @@ from ssc_contracts.identity import IdentityNote
 from ssc_edge import pages
 from ssc_edge.gate import Allow, Facts, Gate, GateConfig, Redeemer, new_nonce
 from ssc_edge.identity_note import sign_note
-from ssc_edge.keys import Keyring, KeyringError, kms_decrypt, parse_keyring
+from ssc_edge.keys import Keyring, KeyringError, check_published, kms_decrypt, parse_keyring
 from ssc_edge.redeemer import HttpRedeemer
 from ssc_edge.session import SessionCodec
 from ssc_edge.tokens import MetadataTokens
 from ssc_shared.access import AccessView, ViewHolder
+from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of
-from ssc_shared.snapshot_feed import SnapshotFeed
+from ssc_shared.snapshot_feed import POLL_SECONDS, SnapshotFeed
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +46,11 @@ LENGTH_HEADER: Final = "x-ssc-content-length"
 SERVERLESS_AUTH: Final = "x-serverless-authorization"
 DEFAULT_MAX_BODY: Final = 32 * 1024 * 1024
 DEFAULT_MAX_STALE: Final = 300.0
+RECHECK_SECONDS: Final = POLL_SECONDS
+FRESH_WAIT: Final = 0.3
+SETTLED_SECONDS: Final = 30.0
+STALE_WAIT: Final = 4.0
+FIRST_READ_WAIT: Final = 10.0
 DEV_ENVS: Final = frozenset({"dev", "test"})
 
 
@@ -59,6 +69,8 @@ class Settings:
     kms_key: str | None
     dev_cell_secret: str | None = None
     """Dev and test only: redeem login codes with the rig's shared secret, not an ID token."""
+    published_jwks: str | None = None
+    """The JWKS the cell hands to apps; the gateway refuses to start with other identity keys."""
 
 
 def _need(env: Mapping[str, str], name: str) -> str:
@@ -105,6 +117,7 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         keyring_cipher=cipher,
         kms_key=kms_key,
         dev_cell_secret=dev_secret,
+        published_jwks=env.get("SSC_IDENTITY_JWKS") or None,
     )
 
 
@@ -131,13 +144,21 @@ def gate_for(  # noqa: PLR0913  (keyword-only collaborators)
     clock: Callable[[], int] = lambda: int(time.time()),
     redeemer: Redeemer | None = None,
     nonce: Callable[[], str] = new_nonce,
+    refresh: Callable[[], Awaitable[None]] | None = None,
 ) -> Gate:
     def sign(note: IdentityNote) -> str:
         return sign_note(note, private_key=keyring.signing_key, kid=keyring.identity_kid)
 
     codec = SessionCodec(keyring.session, active=keyring.session_kid)
     return Gate(
-        config, codec=codec, view=view, sign=sign, clock=clock, redeemer=redeemer, nonce=nonce
+        config,
+        codec=codec,
+        view=view,
+        sign=sign,
+        clock=clock,
+        redeemer=redeemer,
+        nonce=nonce,
+        refresh=refresh,
     )
 
 
@@ -164,6 +185,54 @@ class IdTokens(Protocol):
 
 def _unavailable() -> Response:
     return Response(pages.UNAVAILABLE, status_code=503, headers=dict(pages.HEADERS))
+
+
+class OnDemandView:
+    """The snapshot as a check needs it. A check that gets as far as the snapshot re-reads
+    ``latest.json`` when no read has confirmed the view for ``RECHECK_SECONDS``, one read at a
+    time. It waits for that read up to ``FRESH_WAIT`` when a read confirmed the view within
+    ``SETTLED_SECONDS`` and up to ``STALE_WAIT`` otherwise, so a check after idle decides on the
+    new snapshot; a read still running finishes for the next check."""
+
+    def __init__(self, feed: SnapshotFeed, holder: ViewHolder, *, max_stale: float) -> None:
+        self._feed = feed
+        self._holder = holder
+        self._max_stale = max_stale
+        self._read: asyncio.Task[None] | None = None
+
+    async def _poll(self) -> None:
+        try:
+            await self._feed.poll_once()
+        except Exception:
+            log.exception("snapshot read failed")
+
+    async def first_read(self) -> bool:
+        """The read before the first request, waited for up to ``FIRST_READ_WAIT``; False leaves
+        every check at ``503`` until a later read succeeds."""
+        self._read = asyncio.create_task(self._poll())
+        with suppress(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(self._read), FIRST_READ_WAIT)
+        if self.view() is None:
+            log.warning("no snapshot at start: every request is 503 until one is read")
+            return False
+        return True
+
+    async def refresh(self) -> None:
+        if self._feed.fresh(RECHECK_SECONDS):
+            return
+        if self._read is None or self._read.done():
+            self._read = asyncio.create_task(self._poll())
+        wait = FRESH_WAIT if self._feed.fresh(SETTLED_SECONDS) else STALE_WAIT
+        with suppress(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(self._read), wait)
+
+    def view(self) -> AccessView | None:
+        return self._holder.view if self._feed.fresh(self._max_stale) else None
+
+    async def aclose(self) -> None:
+        if self._read is not None:
+            self._read.cancel()
+            await asyncio.gather(self._read, return_exceptions=True)
 
 
 def create_app(
@@ -198,7 +267,10 @@ def create_app(
                 if tokens is not None:
                     token = await tokens.identity(f"https://{outcome.upstream}")
                     headers[SERVERLESS_AUTH] = f"Bearer {token}"
-                return Response(status_code=200, headers=headers)
+                allowed = Response(status_code=200, headers=headers)
+                for name, value in outcome.client_headers:
+                    allowed.headers.append(name, value)
+                return allowed
         except Exception:
             log.exception("authz check failed for %s", facts.host)
             return _unavailable()
@@ -213,43 +285,55 @@ def create_app(
 
 async def load_keyring(settings: Settings, tokens: MetadataTokens) -> Keyring:
     if settings.keyring_plain is not None:
-        return parse_keyring(settings.keyring_plain.encode())
-    if settings.keyring_cipher is None or settings.kms_key is None:
+        keyring = parse_keyring(settings.keyring_plain.encode())
+    elif settings.keyring_cipher is None or settings.kms_key is None:
         raise KeyringError("no keyring configured")
-    plain = await kms_decrypt(
-        settings.kms_key, settings.keyring_cipher, access_token=await tokens.access()
-    )
-    return parse_keyring(plain)
+    else:
+        plain = await kms_decrypt(
+            settings.kms_key, settings.keyring_cipher, access_token=await tokens.access()
+        )
+        keyring = parse_keyring(plain)
+    if settings.published_jwks is not None:
+        check_published(keyring, settings.published_jwks)
+    return keyring
 
 
-def production_app(env: Mapping[str, str] | None = None) -> FastAPI:
+def production_app(
+    env: Mapping[str, str] | None = None, *, store: BlobStore | None = None
+) -> FastAPI:
+    """``store`` replaces the cell bucket (tests)."""
     settings = settings_from_env(os.environ if env is None else env)
     tokens = MetadataTokens()
     holder = ViewHolder(settings.gate.org_id)
-    feed = SnapshotFeed(GcsBlobStore(bucket_of(settings.bucket)), holder)
+    feed = SnapshotFeed(store or GcsBlobStore(bucket_of(settings.bucket)), holder)
+    snapshot = OnDemandView(feed, holder, max_stale=settings.max_stale)
     state: dict[str, Gate] = {}
     redeemer = redeemer_for(settings, tokens)
-
-    def view() -> AccessView | None:
-        return holder.view if feed.fresh(settings.max_stale) else None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         keyring = await load_keyring(settings, tokens)
-        state["gate"] = gate_for(settings.gate, keyring, view=view, redeemer=redeemer)
-        stop = asyncio.Event()
-        task = asyncio.create_task(feed.run(stop))
+        await snapshot.first_read()
+        state["gate"] = gate_for(
+            settings.gate,
+            keyring,
+            view=snapshot.view,
+            redeemer=redeemer,
+            refresh=snapshot.refresh,
+        )
         try:
             yield
         finally:
-            stop.set()
-            task.cancel()  # a poll can be mid-retry; Cloud Run allows 10 s after SIGTERM
-            await asyncio.gather(task, return_exceptions=True)
+            await snapshot.aclose()
             await redeemer.aclose()
             await tokens.aclose()
 
     dev = settings.environment in DEV_ENVS
-    return create_app(lambda: state.get("gate"), tokens=None if dev else tokens, lifespan=lifespan)
+    return create_app(
+        lambda: state.get("gate"),
+        tokens=None if dev else tokens,
+        lifespan=lifespan,
+    )
 
 
 def main() -> None:

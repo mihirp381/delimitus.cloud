@@ -5,13 +5,16 @@ project number, addresses and the resources their flags name; ``python -m ssc_in
 checks exactly that.
 """
 
+import base64
+import binascii
+import json
 import re
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 from ipaddress import ip_network
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 import pulumi
 import pulumi_gcp as gcp
@@ -111,6 +114,9 @@ BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
 PINNED_IMAGE: Final = re.compile(
     rf"{re.escape(n.platform_registry())}(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{{64}}"
 )
+GATEWAY_SETTINGS: Final = ("gateway_image", "gateway_keyring", "gateway_jwks", "org_id")
+CUSTOMER_ORG: Final = re.compile(r"org_[a-z0-9]{20}")
+PRIVATE_JWK_MEMBERS: Final = frozenset({"d", "p", "q", "dp", "dq", "qi", "k"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +135,10 @@ class CellConfig:
     warm: bool
     build_tools_image: str | None = None
     build_frontend_image: str | None = None
+    gateway_image: str | None = None
+    gateway_keyring: str | None = None
+    gateway_jwks: str | None = None
+    org_id: str | None = None
 
     @property
     def project_id(self) -> str:
@@ -156,7 +166,8 @@ class CellConfig:
     @property
     def settings(self) -> dict[str, str]:
         """Every setting as ``pulumi config set`` takes it, so the deployer can restore the
-        config this stack was last applied with (SSC-087). No setting is a secret."""
+        config this stack was last applied with (SSC-087). No setting is a secret: the gateway
+        keyring is KMS ciphertext only the gateway may decrypt."""
         values: dict[str, str | int | bool | None] = {
             "stage": self.stage,
             "probe": self.probe,
@@ -166,6 +177,10 @@ class CellConfig:
             "billing_account": self.billing_account,
             "build_tools_image": self.build_tools_image,
             "build_frontend_image": self.build_frontend_image,
+            "gateway_image": self.gateway_image,
+            "gateway_keyring": self.gateway_keyring,
+            "gateway_jwks": self.gateway_jwks,
+            "org_id": self.org_id,
             **self.flags,
         }
         return {
@@ -181,6 +196,7 @@ def read_config(stack: str) -> CellConfig:
     if stage != "prod" and stage != "staging":  # noqa: PLR1714  (narrows to Stage)
         raise ValueError(f"stage must be one of {n.STAGES}, not {stage!r}")
     tools, frontend = build_images(config.get(BUILD_IMAGES[0]), config.get(BUILD_IMAGES[1]))
+    image, keyring, jwks, org = gateway_settings(*(config.get(key) for key in GATEWAY_SETTINGS))
     return CellConfig(
         label=n.label_of_stack(stack),
         stage=stage,
@@ -196,6 +212,10 @@ def read_config(stack: str) -> CellConfig:
         warm=config.get_bool("warm") or False,
         build_tools_image=tools,
         build_frontend_image=frontend,
+        gateway_image=image,
+        gateway_keyring=keyring,
+        gateway_jwks=jwks,
+        org_id=org,
     )
 
 
@@ -211,6 +231,45 @@ def build_images(tools: str | None, frontend: str | None) -> tuple[str | None, s
                 f"{' or '.join(BUILD_IMAGES)} is set"
             )
     return tools, frontend
+
+
+def gateway_settings(
+    image: str | None, keyring: str | None, jwks: str | None, org: str | None
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """All four gateway settings or none (``infra/README.md``): the image pinned in the platform
+    registry, the keyring as base64 KMS ciphertext, its public JWKS and the customer's org."""
+    if not (image or keyring or jwks or org):
+        return None, None, None, None
+    if not (image and keyring and jwks and org):
+        raise ValueError(f"set all of {', '.join(GATEWAY_SETTINGS)} or none")
+    if not PINNED_IMAGE.fullmatch(image):
+        raise ValueError(f"gateway_image must be {n.platform_registry()}/<image>@sha256:<digest>")
+    if not CUSTOMER_ORG.fullmatch(org):
+        raise ValueError("org_id must be org_ followed by 20 lowercase letters or digits")
+    try:
+        sealed = base64.b64decode(keyring, validate=True)
+    except binascii.Error:
+        sealed = b""
+    if not sealed or sealed.lstrip().startswith(b"{"):
+        raise ValueError("gateway_keyring must be the keyring's KMS ciphertext, in base64")
+    _check_public_jwks(jwks)
+    return image, keyring, jwks, org
+
+
+def _check_public_jwks(jwks: str) -> None:
+    """A JWKS of named keys with no private member, as ``python -m ssc_edge.keys jwks`` prints."""
+    problem = ValueError("gateway_jwks must be the public JWKS of the gateway keyring")
+    try:
+        doc: object = json.loads(jwks)
+    except ValueError:
+        raise problem from None
+    keys = cast(dict[str, object], doc).get("keys") if isinstance(doc, dict) else None
+    if not isinstance(keys, list) or not keys:
+        raise problem
+    for key in cast(list[object], keys):
+        members = set(cast(dict[str, object], key)) if isinstance(key, dict) else set[str]()
+        if "kid" not in members or PRIVATE_JWK_MEMBERS & members:
+            raise problem
 
 
 def _int_or(value: int | None, default: int) -> int:
@@ -420,6 +479,27 @@ class Cell:
             key_ring=ring.id,
             name="registry",
             rotation_period=KEY_ROTATION,
+            opts=self._o(),
+        )
+        self.gateway_key = gcp.kms.CryptoKey(
+            "key-gateway",
+            key_ring=ring.id,
+            name="gateway",
+            rotation_period=KEY_ROTATION,
+            opts=self._o(),
+        )
+        self.gateway_key_grant = gcp.kms.CryptoKeyIAMMember(
+            "gateway-key",
+            crypto_key_id=self.gateway_key.id,
+            role="roles/cloudkms.cryptoKeyDecrypter",
+            member=self.gateway_sa.member,
+            opts=self._o(),
+        )
+        gcp.kms.CryptoKeyIAMMember(
+            "operator-gateway-key",
+            crypto_key_id=self.gateway_key.id,
+            role="roles/cloudkms.cryptoKeyEncrypter",
+            member=n.OPERATOR,
             opts=self._o(),
         )
         self.key_grants: list[pulumi.Resource] = []
@@ -698,6 +778,18 @@ class Cell:
             member=self.build_sa.member,
             opts=self._o(),
         )
+        run_agent = gcp.projects.ServiceIdentity(
+            "run-agent", project=self.pid, service="run.googleapis.com", opts=self._o()
+        )
+        gcp.artifactregistry.RepositoryIamMember(
+            "registry-gateway-image",
+            project=n.BOOTSTRAP_PROJECT,
+            location=n.REGION,
+            repository=n.PLATFORM_REPOSITORY,
+            role="roles/artifactregistry.reader",
+            member=run_agent.member,
+            opts=self._o(),
+        )
         # Cloud Run checks that whoever deploys an image may read it.
         gcp.artifactregistry.RepositoryIamMember(
             "registry-agent",
@@ -824,6 +916,7 @@ class Cell:
         timeout: str | None = None,
         concurrency: int | None = None,
         audiences: Sequence[str] | None = None,
+        after: Sequence[pulumi.Resource] = (),
     ) -> gcp.cloudrunv2.Service:
         """A request-billed service: CPU only while a request is open."""
         min_instances, max_instances = instances
@@ -857,7 +950,7 @@ class Cell:
                     )
                 ],
             ),
-            opts=self._o(),
+            opts=self._o(*after),
         )
 
     def _edge_vpc(self, tag: str) -> gcp.cloudrunv2.ServiceTemplateVpcAccessArgs:
@@ -875,15 +968,22 @@ class Cell:
         """Internal and load-balancer ingress keeps the ``run.app`` host closed, so the invoker
         is ``allUsers`` and the authoriser refuses requests without a session (SSC-088). The
         folder's member policy allows ``allUsers`` only where the platform's public-invoker tag is
-        bound, so the tag goes on this service, and only this one, before the grant (SSC-095)."""
+        bound, so the tag goes on this service, and only this one, before the grant (SSC-095).
+
+        With the gateway settings it runs ``gateway_image``, a build of
+        ``packages/ssc_edge/Dockerfile`` that decrypts its keyring with the cell's ``gateway`` key
+        at start (SSC-018)."""
         self.gateway_ = self._run(
             n.GATEWAY,
             self.gateway_sa,
             ingress="INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
             vpc=self._edge_vpc(GATEWAY_TAG),
             instances=(self.cfg.gateway_floor, self.cfg.gateway_max),
+            image=self.cfg.gateway_image,
+            env=self._gateway_env(),
             timeout=GATEWAY_TIMEOUT,
             concurrency=GATEWAY_CONCURRENCY,
+            after=[self.gateway_key_grant],
         )
         public = gcp.tags.LocationTagBinding(
             "gateway-public-tag",
@@ -906,6 +1006,25 @@ class Cell:
             member="allUsers",
             opts=self._o(public),
         )
+
+    def _gateway_env(self) -> dict[str, pulumi.Input[str]] | None:
+        """What ``ssc_edge.server.settings_from_env`` reads, once the gateway settings are set."""
+        cfg = self.cfg
+        if not (cfg.gateway_image and cfg.gateway_keyring and cfg.gateway_jwks and cfg.org_id):
+            return None
+        return {
+            "SSC_CELL_LABEL": cfg.label,
+            "SSC_ORG_ID": cfg.org_id,
+            "SSC_PROJECT_NUMBER": self.project_.number,
+            "SSC_REGION": n.REGION,
+            "SSC_CELL_BUCKET": self.bucket_.name,
+            "SSC_GATEWAY_KEYRING": cfg.gateway_keyring,
+            "SSC_GATEWAY_KMS_KEY": self.gateway_key.id,
+            "SSC_IDENTITY_JWKS": cfg.gateway_jwks,
+            "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
+            "SSC_AUTH_URL": f"https://{n.AUTH_HOST}",
+            "SSC_IDENTITY_ISSUER": f"https://{n.KEYS_HOST}/{cfg.label}",
+        }
 
     def entry(self) -> None:
         """The cell's own public door: a global external Application Load Balancer on one
@@ -1337,6 +1456,9 @@ class Cell:
         pulumi.export("proxy_ip", self.proxy_ip.address)
         pulumi.export("datagw_ip", self.datagw_ip.address)
         pulumi.export("database_range", f"{PSA_ADDRESS}/{PSA_PREFIX}")
+        pulumi.export("gateway_kms_key", self.gateway_key.id)
+        if self.cfg.gateway_jwks:
+            pulumi.export("identity_jwks", self.cfg.gateway_jwks)
         pulumi.export("flags", self.cfg.flags)
         pulumi.export("config", self.cfg.settings)
         pulumi.export(

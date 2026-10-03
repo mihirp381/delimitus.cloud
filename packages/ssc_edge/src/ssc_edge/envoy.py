@@ -7,11 +7,18 @@ Filters, in order:
    ``X-Serverless-Authorization``, so nothing a caller sends is mistaken for the platform's, then
    copies ``Content-Length`` for the check.
 3. ``ext_authz`` (HTTP) to ``ssc_edge.server`` on loopback. Fails closed: an unreachable, slow
-   or failing service is ``503``.
+   or failing service is ``503``. Its answer may mark a browser page load (``x-ssc-wake``), which
+   then takes the wake route, and may add the wake cookie to the browser's answer.
 4. ``route`` (Lua): moves the request to the service host the check named, keeps the app host
    in ``X-Forwarded-Host`` and drops platform cookies from ``Cookie``. On the response, and only
    for responses from an app, drops ``Set-Cookie`` values that use a platform name.
 5. ``dynamic_forward_proxy`` and ``router``: forwards to that host over TLS, the name checked.
+
+Routes: the wake route gives the app 2 seconds to start answering (a per-try timeout, which stops
+counting once the answer has started), and the local reply for that timeout is the "waking up"
+page (``pages.WAKING``), which retries by itself; the retry carries the wake cookie, so it takes
+the other route and waits for the app. Every other request waits for the app with no route
+timeout; Cloud Run's 3600-second request timeout bounds it.
 
 ``python -m ssc_edge.envoy`` prints the JSON; CI checks it with ``envoy --mode validate``.
 """
@@ -24,12 +31,13 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from ssc_edge import pages
-from ssc_edge.gate import IDENTITY_HEADER, UPSTREAM_HEADER
+from ssc_edge.gate import DEADLINE_HEADER, IDENTITY_HEADER, UPSTREAM_HEADER, WAKE_HEADER
 from ssc_edge.server import AUTHZ_PREFIX, LENGTH_HEADER, SERVERLESS_AUTH
 from ssc_edge.session import PLATFORM_PREFIXES
 
 ENVOY_VERSION: Final = "1.39.0"
 ALLOWED_HEADERS: Final = (
+    "accept",
     "cookie",
     "origin",
     "upgrade",
@@ -39,7 +47,16 @@ ALLOWED_HEADERS: Final = (
     LENGTH_HEADER,
 )
 """Request headers the check sees, besides ``Host``, method and path."""
-UPSTREAM_HEADERS: Final = (IDENTITY_HEADER, UPSTREAM_HEADER, SERVERLESS_AUTH)
+UPSTREAM_HEADERS: Final = (
+    IDENTITY_HEADER,
+    UPSTREAM_HEADER,
+    DEADLINE_HEADER,
+    WAKE_HEADER,
+    SERVERLESS_AUTH,
+)
+ON_SUCCESS_CLIENT_HEADERS: Final = ("set-cookie",)
+"""Headers an allowing answer adds to the browser's response: the wake cookie only."""
+WAKE_SECONDS: Final = 2
 CA_BUNDLE: Final = "/etc/ssl/certs/ca-certificates.crt"
 
 _T = "type.googleapis.com/envoy.extensions."
@@ -115,7 +132,7 @@ class EnvoyConfig:
     port: int = 8080
     authz_host: str = "127.0.0.1"
     authz_port: int = 9001
-    authz_timeout_ms: int = 500
+    authz_timeout_ms: int = 5000
     upstream_tls: bool = True
     rate_per_second: int = 500
     rate_burst: int = 1000
@@ -192,6 +209,24 @@ def _apps_cluster(cfg: EnvoyConfig) -> dict[str, Any]:
     return cluster
 
 
+def _waking_mapper() -> dict[str, Any]:
+    """Only the wake route's per-try timeout sets ``UT``: the other route has no timeout."""
+    content_type, *others = pages.HEADERS
+    return {
+        "filter": {"response_flag_filter": {"flags": ["UT"]}},
+        "status_code": 503,
+        "body": {"inline_string": pages.WAKING.decode()},
+        "body_format_override": {
+            "text_format_source": {"inline_string": "%LOCAL_REPLY_BODY%"},
+            "content_type": content_type[1],
+        },
+        "headers_to_add": [
+            {"header": {"key": k, "value": v}, "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"}
+            for k, v in others
+        ],
+    }
+
+
 def render(cfg: EnvoyConfig) -> dict[str, Any]:
     ext_authz = {
         "name": "envoy.filters.http.ext_authz",
@@ -200,6 +235,7 @@ def render(cfg: EnvoyConfig) -> dict[str, Any]:
             "transport_api_version": "V3",
             "failure_mode_allow": False,
             "status_on_error": {"code": "ServiceUnavailable"},
+            "clear_route_cache": True,
             "allowed_headers": {"patterns": _exact(ALLOWED_HEADERS)},
             "http_service": {
                 "server_uri": {
@@ -211,6 +247,9 @@ def render(cfg: EnvoyConfig) -> dict[str, Any]:
                 "authorization_response": {
                     "allowed_upstream_headers": {"patterns": _exact(UPSTREAM_HEADERS)},
                     "allowed_client_headers": {"patterns": _exact(pages.CLIENT_HEADERS)},
+                    "allowed_client_headers_on_success": {
+                        "patterns": _exact(ON_SUCCESS_CLIENT_HEADERS)
+                    },
                 },
             },
         },
@@ -250,11 +289,28 @@ def render(cfg: EnvoyConfig) -> dict[str, Any]:
                     "name": "apps",
                     "domains": ["*"],
                     "routes": [
-                        {"match": {"prefix": "/"}, "route": {"cluster": "apps", "timeout": "0s"}}
+                        {
+                            "name": "wake",
+                            "match": {
+                                "prefix": "/",
+                                "headers": [{"name": WAKE_HEADER, "present_match": True}],
+                            },
+                            "route": {
+                                "cluster": "apps",
+                                "timeout": "0s",
+                                "retry_policy": {
+                                    "num_retries": 0,
+                                    "per_try_timeout": f"{WAKE_SECONDS}s",
+                                },
+                            },
+                            "request_headers_to_remove": [WAKE_HEADER],
+                        },
+                        {"match": {"prefix": "/"}, "route": {"cluster": "apps", "timeout": "0s"}},
                     ],
                 }
             ],
         },
+        "local_reply_config": {"mappers": [_waking_mapper()]},
         "http_filters": [
             ratelimit,
             _lua("ssc.strip", STRIP_LUA),
