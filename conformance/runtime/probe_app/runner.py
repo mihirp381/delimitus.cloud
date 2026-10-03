@@ -5,8 +5,11 @@ the probe app the way the gateway calls an app: ``X-Serverless-Authorization`` c
 gateway's ID token, and ``Authorization`` carries the app's own credential.
 
 Configuration: ``PROBE_URL`` (the probe app), ``PROBE_PEER_URL`` (a second app the first must
-not reach), ``PROBE_HEALTH_PATH`` (default ``/health``). Prints one JSON line per probe and a
-summary line, and exits 1 when any probe fails.
+not reach), ``PROBE_HEALTH_PATH`` (default ``/health``). For ``cannot_reach_peer_cell``, all of
+``PROBE_PEER_CELL_APP_URL``, ``PROBE_PEER_CELL_GATEWAY_URL`` (another cell's app and gateway
+``run.app`` URLs) and ``PROBE_PEER_CELL_RANGE`` (that cell's address range); without them the
+probe is skipped (``no peer cell``), never passed. Prints one JSON line per probe and a summary
+line, and exits 1 when any probe fails.
 """
 
 import json
@@ -16,12 +19,18 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import checks
 
 METADATA = "http://metadata.google.internal/computeMetadata/v1"
 TIMEOUT = 60.0
+NO_PEER_CELL = "no peer cell"
+PEER_CELL_ENV = ("PROBE_PEER_CELL_APP_URL", "PROBE_PEER_CELL_GATEWAY_URL", "PROBE_PEER_CELL_RANGE")
+
+
+class ProbeSkippedError(Exception):
+    pass
 
 
 class Probe:
@@ -72,7 +81,22 @@ def id_token(audience: str) -> str:
         return response.read().decode()
 
 
-def plan(app: Probe, peer_url: str, health_path: str) -> dict[str, Callable[[], str]]:
+def peer_cell_from(environ: Mapping[str, str]) -> tuple[str, str, str] | None:
+    """The peer cell's app URL, gateway URL and range, or None unless all three are set."""
+    app_url, gateway_url, cidr = (environ.get(name, "") for name in PEER_CELL_ENV)
+    return (app_url, gateway_url, cidr) if app_url and gateway_url and cidr else None
+
+
+def _peer_cell(app: Probe, peer_cell: tuple[str, str, str] | None) -> str:
+    if peer_cell is None:
+        raise ProbeSkippedError(NO_PEER_CELL)
+    query = urllib.parse.urlencode(dict(zip(("app", "gateway", "range"), peer_cell, strict=True)))
+    return checks.cannot_reach_peer_cell(app.body(f"/probe/peer-cell?{query}"))
+
+
+def plan(
+    app: Probe, peer_url: str, health_path: str, peer_cell: tuple[str, str, str] | None = None
+) -> dict[str, Callable[[], str]]:
     peer = urllib.parse.urlencode({"url": peer_url})
     return {
         "non_root_10001": lambda: checks.non_root(app.body("/probe/uid")),
@@ -92,6 +116,7 @@ def plan(app: Probe, peer_url: str, health_path: str) -> dict[str, Callable[[], 
         "cannot_reach_peer_app": lambda: checks.cannot_reach_peer_app(
             app.body(f"/probe/peer?{peer}")
         ),
+        "cannot_reach_peer_cell": lambda: _peer_cell(app, peer_cell),
         "header_echo_no_google_jwt": lambda: checks.header_echo_no_google_jwt(
             app.body("/probe/headers")
         ),
@@ -106,25 +131,35 @@ def plan(app: Probe, peer_url: str, health_path: str) -> dict[str, Callable[[], 
     }
 
 
-def run(app: Probe, peer_url: str, health_path: str) -> list[dict[str, str]]:
-    steps = plan(app, peer_url, health_path)
+def run(
+    app: Probe, peer_url: str, health_path: str, peer_cell: tuple[str, str, str] | None = None
+) -> list[dict[str, str]]:
+    steps = plan(app, peer_url, health_path, peer_cell)
     results: list[dict[str, str]] = []
     for name in checks.PROBES:
         try:
             results.append({"probe": name, "status": "passed", "reason": steps[name]()})
         except checks.ProbeFailedError as exc:
             results.append({"probe": name, "status": "failed", "reason": str(exc)})
+        except ProbeSkippedError as exc:
+            results.append({"probe": name, "status": "skipped", "reason": str(exc)})
     return results
 
 
 def main() -> int:
     url, peer_url = os.environ["PROBE_URL"], os.environ["PROBE_PEER_URL"]
     health_path = os.environ.get("PROBE_HEALTH_PATH", "/health")
-    results = run(Probe(url, id_token(url)), peer_url, health_path)
+    results = run(Probe(url, id_token(url)), peer_url, health_path, peer_cell_from(os.environ))
     for result in results:
         print(json.dumps({"ssc_probe": result}), flush=True)  # noqa: T201
-    failed = [r["probe"] for r in results if r["status"] != "passed"]
-    summary = {"passed": len(results) - len(failed), "failed": failed, "total": len(results)}
+    failed = [r["probe"] for r in results if r["status"] == "failed"]
+    skipped = [r["probe"] for r in results if r["status"] == "skipped"]
+    summary = {
+        "passed": len(results) - len(failed) - len(skipped),
+        "failed": failed,
+        "skipped": skipped,
+        "total": len(results),
+    }
     print(json.dumps({"ssc_probe_summary": summary}), flush=True)  # noqa: T201
     return 1 if failed else 0
 

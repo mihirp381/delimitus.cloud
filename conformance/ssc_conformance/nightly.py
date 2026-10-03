@@ -3,7 +3,7 @@
 1. Deploys the two probe apps through the cell agent, as the control plane does: the reconciler
    (``reconcile_once``) drives ``CellAgentDriver`` until each has converged.
 2. Runs the cell's ``ssc-probe-runner`` job, which calls probe app ``a`` from where the gateway
-   stands, and reads its fourteen results from Cloud Logging.
+   stands, and reads its fifteen results from Cloud Logging.
 3. Drifts probe app ``a`` (a revision with an extra variable takes all traffic) and runs the
    reconciler at its tick until the service is back on the desired revision. The ticket allows
    one minute, counted from the drift to the converged observation.
@@ -14,6 +14,13 @@ and ``SSC_PROBE_DIGEST`` (the probe image in the cell's ``ssc-apps/apps`` reposi
 it, an operator calls the agent as themselves. The caller's access token comes from
 ``SSC_ACCESS_TOKEN`` (the nightly workflow's federated token) or else ``gcloud``; it needs the
 probe job, read access to its logs, and ``getOpenIdToken`` on the control SA when one is named.
+
+``cannot_reach_peer_cell`` needs a second cell: ``SSC_PROBE_PEER_APP_URL``,
+``SSC_PROBE_PEER_GATEWAY_URL`` and ``SSC_PROBE_PEER_RANGE``, all or none. Set, they reach the job
+as overrides (which needs ``run.jobs.runWithOverrides``) and the probe must pass. Unset, the job
+reports it skipped (``no peer cell``), which is not a failure.
+``ssc-nightly`` keeps its role without that permission: ordinary nights have no peer cell, and
+an operator makes the peer runs in the proof run.
 Exits 1 when a probe fails or is missing, or when the drift outlives the minute.
 """
 
@@ -33,6 +40,7 @@ import httpx2
 from ssc_conformance.runtime_probes import PROBES
 from ssc_contracts import app_env
 from ssc_control.runtime.cell_agent import AccessTokens, CellAgentDriver, ImpersonatedIdTokens
+from ssc_control.runtime.driver import REQUEST_CONCURRENCY, REQUEST_TIMEOUT_SECONDS
 from ssc_control.runtime.jobs import TICK_CRON
 from ssc_control.runtime.reconciler import Outcome, plan_one_change, reconcile_once
 from ssc_shared.runtime import RuntimeDriver, RuntimeDriverError, ServiceSpec, service_name
@@ -45,6 +53,12 @@ ENV: Final = {
     "probe_digest": "SSC_PROBE_DIGEST",
 }
 CONTROL_SA_ENV: Final = "SSC_CONTROL_SA"
+PEER_CELL_ENV: Final = {
+    "SSC_PROBE_PEER_APP_URL": "PROBE_PEER_CELL_APP_URL",
+    "SSC_PROBE_PEER_GATEWAY_URL": "PROBE_PEER_CELL_GATEWAY_URL",
+    "SSC_PROBE_PEER_RANGE": "PROBE_PEER_CELL_RANGE",
+}
+PEER_CELL_PROBE: Final = "cannot_reach_peer_cell"
 PROBE_ENVS: Final = ("env_probe00000000000000a", "env_probe00000000000000b")
 PROBE_JOB: Final = "ssc-probe-runner"
 REGION: Final = "us-central1"
@@ -74,15 +88,20 @@ class NightlyConfig:
     agent_url: str
     probe_digest: str
     control_sa: str | None
+    peer_cell: Mapping[str, str] | None
 
 
 def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
     missing = [name for name in ENV.values() if not environ.get(name)]
     if missing:
         raise NightlyError(f"missing {', '.join(missing)}")
+    peer = {job: environ[name] for name, job in PEER_CELL_ENV.items() if environ.get(name)}
+    if peer and len(peer) != len(PEER_CELL_ENV):
+        raise NightlyError(f"set all of {', '.join(PEER_CELL_ENV)} or none")
     return NightlyConfig(
         **{field: environ[name] for field, name in ENV.items()},
         control_sa=environ.get(CONTROL_SA_ENV) or None,
+        peer_cell=peer or None,
     )
 
 
@@ -94,6 +113,9 @@ def probe_spec(env_id: str, digest: str) -> ServiceSpec:
         health_path="/health",
         resource_class="small",
         env={app_env.PORT: str(PORT), app_env.HOME: app_env.HOME_VALUE},
+        billing="request",
+        timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+        concurrency=REQUEST_CONCURRENCY,
         min_instances=0,
         max_instances=1,
         labels={"ssc-env": env_id, "ssc-probe": "true"},
@@ -177,9 +199,12 @@ class ProbeJob:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def run(self) -> list[Json]:
+    async def run(self, env: Mapping[str, str] | None = None) -> list[Json]:
+        """Runs the job, with ``env`` added to its container when given."""
         job = f"projects/{self._project}/locations/{REGION}/jobs/{PROBE_JOB}"
-        operation = await self._call("POST", f"{RUN_API}/{job}:run", {})
+        variables = [{"name": k, "value": v} for k, v in sorted((env or {}).items())]
+        body: Json = {"overrides": {"containerOverrides": [{"env": variables}]}} if env else {}
+        operation = await self._call("POST", f"{RUN_API}/{job}:run", body)
         execution = str(_obj(operation.get("metadata")).get("name") or "")
         if "/executions/" not in execution:
             raise NightlyError(f"{PROBE_JOB}: the run named no execution")
@@ -243,8 +268,9 @@ class ProbeJob:
         return _obj(response.json())
 
 
-def verdict(results: list[Json]) -> list[str]:
-    """Every probe must report, exactly once, and pass. Returns the failures."""
+def verdict(results: list[Json], *, peer_cell: bool = False) -> list[str]:
+    """Every probe must report, exactly once, and pass; without a peer cell the peer-cell probe
+    may report skipped instead. Returns the failures."""
     by_name: dict[str, list[Json]] = {}
     for result in results:
         by_name.setdefault(str(result.get("probe")), []).append(result)
@@ -254,7 +280,9 @@ def verdict(results: list[Json]) -> list[str]:
     failures += [
         f"{name}: {r[0].get('reason')}"
         for name, r in by_name.items()
-        if name in PROBES and r[0].get("status") != "passed"
+        if name in PROBES
+        and r[0].get("status") != "passed"
+        and not (name == PEER_CELL_PROBE and not peer_cell and r[0].get("status") == "skipped")
     ]
     return failures
 
@@ -277,11 +305,12 @@ class Report:
         return "\n".join(lines) + "\n"
 
 
-async def nightly(
+async def nightly(  # noqa: PLR0913  (keyword-only)
     driver: RuntimeDriver,
     job: ProbeJob,
     digest: str,
     *,
+    peer_cell: Mapping[str, str] | None = None,
     sleep: Sleep = asyncio.sleep,
     clock: Clock = time.monotonic,
 ) -> Report:
@@ -291,8 +320,8 @@ async def nightly(
             driver, spec, every=POLL_SECONDS, limit=DEPLOY_LIMIT_SECONDS, sleep=sleep, clock=clock
         )
         log.info("probe app ready", extra={"service": spec.service})
-    results = await job.run()
-    failures = verdict(results)
+    results = await job.run(peer_cell)
+    failures = verdict(results, peer_cell=peer_cell is not None)
     drift_seconds: float | None = None
     try:
         drift_seconds = await drift(driver, specs[0], sleep=sleep, clock=clock)
@@ -338,7 +367,7 @@ async def main_async(environ: Mapping[str, str]) -> Report:
     driver = CellAgentDriver(cfg.agent_url, id_tokens)
     job = ProbeJob(cfg.project, access)
     try:
-        return await nightly(driver, job, cfg.probe_digest)
+        return await nightly(driver, job, cfg.probe_digest, peer_cell=cfg.peer_cell)
     finally:
         await driver.aclose()
         await job.aclose()

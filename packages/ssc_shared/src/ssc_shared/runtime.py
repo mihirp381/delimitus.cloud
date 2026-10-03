@@ -10,12 +10,17 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Final, Protocol, cast
+from typing import Any, Final, Literal, Protocol, cast, get_args
 
 from ssc_contracts.manifest import RESOURCE_CLASSES, ResourceClass, ResourceClassName
 
 SERVICE_PREFIX: Final = "ssc-a-"
-FINGERPRINT_VERSION: Final = "ssc-spec-v1"
+FINGERPRINT_VERSION: Final = "ssc-spec-v2"
+MAX_TIMEOUT_SECONDS: Final = 3600
+MAX_CONCURRENCY: Final = 1000
+
+Billing = Literal["instance", "request"]
+BILLINGS: Final[tuple[Billing, ...]] = get_args(Billing)
 
 _ENV_ID = re.compile(r"env_([a-z0-9]{20})")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -38,7 +43,9 @@ def is_image_digest(value: str) -> bool:
 class ServiceSpec:
     """One app environment's service as it should be. Images are by digest only; a tag can never
     reach a runtime. ``spec_fingerprint`` covers what defines a revision (image, port, health
-    path, class, environment); scaling and labels are service settings outside it."""
+    path, class, environment, billing, request timeout, concurrency); scaling and labels are
+    service settings outside it. ``billing`` is ``instance`` (CPU always allocated) or
+    ``request``; ``concurrency`` is the most requests one instance takes at once."""
 
     service: str
     image_digest: str
@@ -46,6 +53,9 @@ class ServiceSpec:
     health_path: str
     resource_class: ResourceClassName
     env: Mapping[str, str]
+    billing: Billing
+    timeout_seconds: int
+    concurrency: int
     min_instances: int
     max_instances: int
     labels: Mapping[str, str]
@@ -58,6 +68,12 @@ class ServiceSpec:
             raise ValueError(f"images are pinned by sha256 digest only: {self.image_digest!r}")
         if not 0 <= self.min_instances <= self.max_instances:
             raise ValueError("need 0 <= min_instances <= max_instances")
+        if self.billing not in BILLINGS:
+            raise ValueError(f"billing is one of {', '.join(BILLINGS)}: {self.billing!r}")
+        if not 1 <= self.timeout_seconds <= MAX_TIMEOUT_SECONDS:
+            raise ValueError(f"need 1 <= timeout_seconds <= {MAX_TIMEOUT_SECONDS}")
+        if not 1 <= self.concurrency <= MAX_CONCURRENCY:
+            raise ValueError(f"need 1 <= concurrency <= {MAX_CONCURRENCY}")
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
         object.__setattr__(self, "labels", MappingProxyType(dict(self.labels)))
         object.__setattr__(
@@ -69,6 +85,9 @@ class ServiceSpec:
                 health_path=self.health_path,
                 resource_class=self.resource_class,
                 env=self.env,
+                billing=self.billing,
+                timeout_seconds=self.timeout_seconds,
+                concurrency=self.concurrency,
             ),
         )
 
@@ -77,13 +96,16 @@ class ServiceSpec:
         return RESOURCE_CLASSES[self.resource_class]
 
 
-def revision_fingerprint(
+def revision_fingerprint(  # noqa: PLR0913  (keyword-only)
     *,
     image_digest: str,
     port: int,
     health_path: str,
     resource_class: ResourceClassName,
     env: Mapping[str, str],
+    billing: Billing,
+    timeout_seconds: int,
+    concurrency: int,
 ) -> str:
     """What makes two revisions the same. A driver computes this from a revision's actual
     configuration when it observes one, never from a label it wrote, so drift in any field shows."""
@@ -95,6 +117,9 @@ def revision_fingerprint(
         vcpu=size.vcpu,
         memory_mib=size.memory_mib,
         env=env,
+        billing=billing,
+        timeout_seconds=timeout_seconds,
+        concurrency=concurrency,
     )
 
 
@@ -106,6 +131,9 @@ def fingerprint_of(  # noqa: PLR0913  (keyword-only)
     vcpu: float,
     memory_mib: int,
     env: Mapping[str, str],
+    billing: Billing,
+    timeout_seconds: int,
+    concurrency: int,
 ) -> str:
     """``revision_fingerprint`` over raw sizes, for a revision whose size is no class at all."""
     if float(vcpu).is_integer():
@@ -118,6 +146,9 @@ def fingerprint_of(  # noqa: PLR0913  (keyword-only)
         "vcpu": vcpu,
         "memory_mib": memory_mib,
         "env": dict(sorted(env.items())),
+        "billing": billing,
+        "timeout_seconds": timeout_seconds,
+        "concurrency": concurrency,
     }
     raw = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return "sha256:" + hashlib.sha256(raw.encode("ascii")).hexdigest()
@@ -186,6 +217,9 @@ def spec_to_wire(spec: ServiceSpec) -> dict[str, object]:
         "health_path": spec.health_path,
         "resource_class": spec.resource_class,
         "env": dict(spec.env),
+        "billing": spec.billing,
+        "timeout_seconds": spec.timeout_seconds,
+        "concurrency": spec.concurrency,
         "min_instances": spec.min_instances,
         "max_instances": spec.max_instances,
         "labels": dict(spec.labels),
@@ -200,6 +234,9 @@ def spec_from_wire(body: Mapping[str, Any]) -> ServiceSpec:
         resource_class = body["resource_class"]
         if resource_class not in RESOURCE_CLASSES:
             raise ValueError(f"unknown resource class {resource_class!r}")
+        billing = body["billing"]
+        if billing not in BILLINGS:
+            raise ValueError(f"unknown billing {billing!r}")
         spec = ServiceSpec(
             service=_str(body["service"]),
             image_digest=_str(body["image_digest"]),
@@ -207,6 +244,9 @@ def spec_from_wire(body: Mapping[str, Any]) -> ServiceSpec:
             health_path=_str(body["health_path"]),
             resource_class=resource_class,
             env=_str_map(body["env"]),
+            billing=billing,
+            timeout_seconds=_int(body["timeout_seconds"]),
+            concurrency=_int(body["concurrency"]),
             min_instances=_int(body["min_instances"]),
             max_instances=_int(body["max_instances"]),
             labels=_str_map(body["labels"]),

@@ -1,4 +1,4 @@
-"""The fourteen runtime probes as pure checks over what the probe app reports (SSC-017).
+"""The fifteen runtime probes as pure checks over what the probe app reports (SSC-017).
 
 Each check takes the decoded body of one probe-app route (or what the runner measured) and
 returns the reason it passed, or raises ``ProbeFailed``. Standard library only: the runner job
@@ -26,6 +26,7 @@ CELL_PROBES: Final = (
     "metadata_token_no_roles",
     "metadata_identity_is_own",
     "cannot_reach_peer_app",
+    "cannot_reach_peer_cell",
     "header_echo_no_google_jwt",
     "authorization_passthrough",
     "cannot_read_secrets",
@@ -47,6 +48,16 @@ _CREDENTIAL_NAME = re.compile(
     r"|CREDENTIAL|SECRET|TOKEN|PASSWORD|PRIVATE_KEY|API_KEY"
 )
 SSE_SPREAD_SECONDS: Final = 1.5
+INGRESS_REFUSED: Final = 404
+SAME_RANGE: Final = "range leg not applicable: same range, separate networks"
+PROBE_APP_BODIES: Final = frozenset({'"ok"', "null"})
+GATEWAY_PAGE: Final = "There is no app at this address"
+GATEWAY_HEADERS: Final = {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+}
 
 
 class ProbeFailedError(Exception):
@@ -150,6 +161,61 @@ def cannot_reach_peer_app(body: Body) -> str:
     if answered:
         raise ProbeFailedError(f"the peer answered: {', '.join(answered)}")
     return "; ".join(f"{k}: {v}" for k, v in attempts.items())
+
+
+def cannot_reach_peer_cell(body: Body) -> str:
+    """Another cell's app and gateway refuse this app before IAM: no connection, or Cloud Run's
+    ingress refusal (404). An IAM refusal (401, 403), or a 404 the peer app or gateway sent itself,
+    means the network let the call through. When the peer's range holds this app's own address
+    the cells are separate networks on the same range: the range leg is not applicable, not
+    counted, and said so in the reason."""
+    if body.get("error"):
+        raise ProbeFailedError(str(body["error"]))
+    peer_range, overlap = body.get("range"), body.get("own_in_range")
+    if overlap not in {True, False}:
+        raise ProbeFailedError(f"cannot tell whether {peer_range} holds this app's own address")
+    attempts = {
+        name: _map(attempt, name)
+        for name, attempt in _map(body.get("attempts"), "/probe/peer-cell attempts").items()
+        if not (overlap and name.startswith("tcp "))
+    }
+    if not attempts:
+        raise ProbeFailedError("no attempts")
+    reached = [r for name, attempt in attempts.items() if (r := _let_through(name, attempt))]
+    if reached:
+        raise ProbeFailedError(f"the peer cell let calls through: {', '.join(reached)}")
+    legs = [f"{k}: {_outcome(v)}" for k, v in attempts.items()]
+    return "; ".join([*legs, SAME_RANGE] if overlap else legs)
+
+
+def _let_through(name: str, attempt: Body) -> str | None:
+    if "status" not in attempt:
+        refused = attempt.get("blocked") is True or bool(attempt.get("error"))
+        return None if refused else f"{name}: {dict(attempt)}"
+    if attempt["status"] != INGRESS_REFUSED:
+        return f"{name}: HTTP {attempt['status']}"
+    marker = _peer_marker(attempt)
+    return f"{name}: HTTP 404 from the peer itself ({marker})" if marker else None
+
+
+def _peer_marker(attempt: Body) -> str | None:
+    """What shows an answer came from the peer probe app or gateway, not from Google's ingress."""
+    headers = {k: str(v) for k, v in _map(attempt.get("headers") or {}, "headers").items()}
+    server = headers.get("server", "").lower()
+    body = str(attempt.get("body") or "")
+    found = (
+        ("probe app server header", server.startswith("basehttp/")),
+        ("Envoy server header", "envoy" in server),
+        ("probe app JSON", headers.get("content-type", "").startswith("application/json")),
+        ("probe app body", body.strip() in PROBE_APP_BODIES),
+        ("gateway page headers", headers.items() >= GATEWAY_HEADERS.items()),
+        ("gateway page", GATEWAY_PAGE in body),
+    )
+    return ", ".join(name for name, hit in found if hit) or None
+
+
+def _outcome(attempt: Body) -> str:
+    return f"HTTP {attempt['status']}" if "status" in attempt else str(dict(attempt))
 
 
 def _claims(segment: str) -> dict[str, object]:

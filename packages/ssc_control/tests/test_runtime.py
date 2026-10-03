@@ -1,9 +1,13 @@
 """SSC-017: desired state, the one-change-per-pass plan, and convergence against the fake driver.
 
 Ticket "done when" checks (the Postgres half is in test_worker.py):
-  * min instances 1 only for prod apps with a database, connections or egress (C10)
-                                  -> test_min_instances_rule
+  * every environment is minimum 0, no warm instances  -> test_min_instances_is_always_zero
   * max instances 1 for sessions or Streamlit (C11)   -> test_max_instances_rule
+  * a session environment is instance-billed, one instance, 3600 s, concurrency 1000; any
+    other is request-billed, 300 s, 80, minimum 0
+                                  -> test_billing_and_timeout_follow_the_session_rule
+  * billing, timeout and concurrency define the revision
+                                  -> test_fingerprint_covers_the_revision_and_not_the_scaling
   * images by digest only                          -> test_images_are_pinned_by_digest_only
   * a disabled app is never started                -> test_stopped_beats_a_missing_service
   * the plan table, one change per pass            -> test_plan_table
@@ -24,6 +28,10 @@ from ssc_contracts import app_env
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import RESOURCE_CLASSES, Manifest
 from ssc_control.runtime.driver import (
+    REQUEST_CONCURRENCY,
+    REQUEST_TIMEOUT_SECONDS,
+    SESSION_CONCURRENCY,
+    SESSION_TIMEOUT_SECONDS,
     EnvironmentRow,
     ReleaseRow,
     RevisionObservation,
@@ -82,19 +90,56 @@ def test_spec_carries_the_platform_env_and_labels() -> None:
         spec.env["X"] = "y"
 
 
+@pytest.mark.parametrize("env_name", ["prod", "preview"])
 @pytest.mark.parametrize(
-    ("env_name", "tables", "expected"),
+    "tables",
     [
-        ("prod", {}, 0),
-        ("prod", {"state": {"postgres": True}}, 1),
-        ("prod", {"connections": {"names": ["crm"]}}, 1),
-        ("prod", {"egress": {"hosts": ["api.example.com"]}}, 1),
-        ("preview", {"state": {"postgres": True}}, 0),
-        ("preview", {"egress": {"hosts": ["api.example.com"]}}, 0),
+        {},
+        {"state": {"postgres": True}},
+        {"connections": {"names": ["crm"]}},
+        {"egress": {"hosts": ["api.example.com"]}},
+        {"runtime": {"sessions": True}, "state": {"postgres": True}},
     ],
 )
-def test_min_instances_rule(env_name: str, tables: dict[str, Any], expected: int) -> None:
-    assert spec_for(manifest(**tables), name=env_name).min_instances == expected
+def test_min_instances_is_always_zero(env_name: str, tables: dict[str, Any]) -> None:
+    assert spec_for(manifest(**tables), name=env_name).min_instances == 0
+
+
+@pytest.mark.parametrize("env_name", ["prod", "preview"])
+@pytest.mark.parametrize(
+    ("runtime", "framework", "session"),
+    [
+        ({"sessions": True}, None, True),
+        ({"class": "large"}, "streamlit", True),
+        ({"start": "streamlit run app.py"}, None, True),
+        ({"start": "gradio app.py"}, None, True),
+        ({"start": "gunicorn app:server"}, "dash", True),
+        ({"start": "shiny run app.py"}, None, True),
+        ({}, None, False),
+        ({"class": "large"}, "fastapi", False),
+        ({"start": "python -m uvicorn app:app"}, None, False),
+    ],
+)
+def test_billing_and_timeout_follow_the_session_rule(
+    env_name: str, runtime: dict[str, Any], framework: str | None, session: bool
+) -> None:
+    desired = desired_for(
+        env=env_row(env_name),
+        release=ReleaseRow(id=new_id("rel"), image_digest=IMAGE),
+        manifest=manifest(runtime=runtime, state={"postgres": True}),
+        app_status="active",
+        framework=framework,
+    )
+    assert isinstance(desired, ServiceSpec)
+    if session:
+        assert (desired.billing, desired.min_instances, desired.max_instances) == ("instance", 0, 1)
+        assert desired.timeout_seconds == SESSION_TIMEOUT_SECONDS == 3600
+        assert desired.concurrency == SESSION_CONCURRENCY == 1000
+    else:
+        assert (desired.billing, desired.min_instances) == ("request", 0)
+        assert desired.max_instances > 1
+        assert desired.timeout_seconds == REQUEST_TIMEOUT_SECONDS == 300
+        assert desired.concurrency == REQUEST_CONCURRENCY == 80
 
 
 @pytest.mark.parametrize(
@@ -146,10 +191,22 @@ def test_spec_refuses_bad_scaling_and_foreign_names() -> None:
         "env": {},
         "labels": {},
     }
+    ok: dict[str, Any] = {"billing": "request", "timeout_seconds": 300, "concurrency": 80}
     with pytest.raises(ValueError, match="min_instances"):
-        ServiceSpec(service=spec.service, min_instances=2, max_instances=1, **fields)
+        ServiceSpec(service=spec.service, min_instances=2, max_instances=1, **fields, **ok)
     with pytest.raises(ValueError, match="ssc-a-"):
-        ServiceSpec(service="other", min_instances=0, max_instances=1, **fields)
+        ServiceSpec(service="other", min_instances=0, max_instances=1, **fields, **ok)
+    for bad in (
+        {"billing": "always"},
+        {"timeout_seconds": 0},
+        {"timeout_seconds": 3601},
+        {"concurrency": 0},
+        {"concurrency": 1001},
+    ):
+        with pytest.raises(ValueError, match="billing|timeout_seconds|concurrency"):
+            ServiceSpec(
+                service=spec.service, min_instances=0, max_instances=1, **fields, **ok | bad
+            )
     with pytest.raises(ValueError, match="environment id"):
         service_name(new_id("app"))
 
@@ -175,11 +232,18 @@ def test_fingerprint_covers_the_revision_and_not_the_scaling() -> None:
         health_path=base.health_path,
         resource_class=base.resource_class,
         env=dict(base.env),
+        billing=base.billing,
+        timeout_seconds=base.timeout_seconds,
+        concurrency=base.concurrency,
         min_instances=1,
         max_instances=2,
         labels={"other": "label"},
     )
     assert same.spec_fingerprint == base.spec_fingerprint
+    assert replace(base, billing="instance").spec_fingerprint != base.spec_fingerprint
+    assert replace(base, timeout_seconds=3600).spec_fingerprint != base.spec_fingerprint
+    assert replace(base, concurrency=1000).spec_fingerprint != base.spec_fingerprint
+    assert spec_for(manifest(runtime={"sessions": True})).spec_fingerprint != base.spec_fingerprint
     for m in (
         manifest(runtime={"port": 9000}),
         manifest(runtime={"health_path": "/up"}),
@@ -308,6 +372,9 @@ DRIFTS = st.one_of(
     st.fixed_dictionaries({"port": st.sampled_from([3000, 8080])}),
     st.fixed_dictionaries({"env": st.just({"PORT": "1", "HOME": "/"})}),
     st.fixed_dictionaries({"resource_class": st.sampled_from(["small", "large"])}),
+    st.fixed_dictionaries({"billing": st.sampled_from(["instance", "request"])}),
+    st.fixed_dictionaries({"timeout_seconds": st.sampled_from([300, 3600])}),
+    st.fixed_dictionaries({"concurrency": st.sampled_from([80, 1000])}),
     st.fixed_dictionaries({"min_instances": st.integers(0, 1), "max_instances": st.integers(1, 8)}),
     st.fixed_dictionaries({"stopped": st.booleans()}),
     st.just({"delete_revision": True}),

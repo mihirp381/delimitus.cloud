@@ -121,11 +121,25 @@ def test_config_needs_every_variable() -> None:
             nightly.config_from_env({k: v for k, v in full.items() if k != name})
 
 
+def test_config_takes_a_peer_cell_whole_or_not_at_all() -> None:
+    full = {name: "x" for name in nightly.ENV.values()}
+    assert nightly.config_from_env(full).peer_cell is None
+    peer = dict(zip(nightly.PEER_CELL_ENV, ("https://a", "https://g", "10.30.0.0/22"), strict=True))
+    assert nightly.config_from_env(full | peer).peer_cell == {
+        "PROBE_PEER_CELL_APP_URL": "https://a",
+        "PROBE_PEER_CELL_GATEWAY_URL": "https://g",
+        "PROBE_PEER_CELL_RANGE": "10.30.0.0/22",
+    }
+    with pytest.raises(nightly.NightlyError, match="or none"):
+        nightly.config_from_env(full | {"SSC_PROBE_PEER_RANGE": "10.30.0.0/22"})
+
+
 def test_probe_apps_are_the_cell_runner_targets() -> None:
     a, b = (nightly.probe_spec(env, DIGEST) for env in nightly.PROBE_ENVS)
     assert (a.service, b.service) == ("ssc-a-probe00000000000000a", "ssc-a-probe00000000000000b")
     assert a.env == {"PORT": "8080", "HOME": "/tmp"}  # noqa: S108
     assert (a.resource_class, a.min_instances, a.max_instances) == ("small", 0, 1)
+    assert (a.billing, a.timeout_seconds, a.concurrency) == ("request", 300, 80)
 
 
 def test_reconciler_tick() -> None:
@@ -170,6 +184,55 @@ async def test_failed_probe_fails_the_night(driver: CloudRunDriver, clock: Clock
     )
     assert report.failures == ["non_root_10001: did not report", "no_dns_exfil: r"]
     assert "- FAILED no_dns_exfil: r" in report.markdown()
+
+
+def _peer_cell_skipped() -> list[dict[str, str]]:
+    return [
+        r | {"status": "skipped", "reason": "no peer cell"}
+        if r["probe"] == nightly.PEER_CELL_PROBE
+        else r
+        for r in _results()
+    ]
+
+
+async def test_no_peer_cell_is_a_skip_not_a_failure(driver: CloudRunDriver, clock: Clock) -> None:
+    script = ScriptedJob(_peer_cell_skipped())
+    report = await nightly.nightly(
+        driver, _job(script, clock), DIGEST, sleep=clock.sleep, clock=clock
+    )
+    assert report.failures == []
+    assert json.loads(script.calls[0].content) == {}
+    assert "| cannot_reach_peer_cell | skipped | no peer cell |" in report.markdown()
+
+
+async def test_a_named_peer_cell_reaches_the_job_and_must_pass(
+    driver: CloudRunDriver, clock: Clock
+) -> None:
+    script = ScriptedJob(_peer_cell_skipped())
+    peer = {"PROBE_PEER_CELL_APP_URL": "https://a", "PROBE_PEER_CELL_RANGE": "10.30.0.0/22"}
+    report = await nightly.nightly(
+        driver, _job(script, clock), DIGEST, peer_cell=peer, sleep=clock.sleep, clock=clock
+    )
+    assert report.failures == ["cannot_reach_peer_cell: no peer cell"]
+    assert json.loads(script.calls[0].content) == {
+        "overrides": {
+            "containerOverrides": [
+                {
+                    "env": [
+                        {"name": "PROBE_PEER_CELL_APP_URL", "value": "https://a"},
+                        {"name": "PROBE_PEER_CELL_RANGE", "value": "10.30.0.0/22"},
+                    ]
+                }
+            ]
+        }
+    }
+
+
+def test_only_the_peer_cell_probe_may_skip() -> None:
+    skipped = [r | {"status": "skipped", "reason": "no peer cell"} for r in _results()]
+    failures = nightly.verdict(skipped)
+    assert len(failures) == len(PROBES) - 1
+    assert not any(f.startswith(nightly.PEER_CELL_PROBE) for f in failures)
 
 
 def test_verdict_refuses_duplicates_and_strangers() -> None:

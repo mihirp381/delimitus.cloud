@@ -12,10 +12,16 @@ an app that ignores ``PORT`` is the failure this probes). Routes:
 - ``/probe/dns``: what public names resolve to, and whether a public resolver answers.
 - ``/probe/identity``: the metadata server's identity and what it may do. The token stays here.
 - ``/probe/peer?url=``: whether another app answers this one, by name and by Google's VIP.
+- ``/probe/peer-cell?app=&gateway=&range=``: the same for another cell's probe app (on
+  ``/health``) and gateway (on its own ``/.ssc/logout``), keeping the headers and body start that
+  show who answered, and direct connections into that cell's address range unless the range
+  holds this app's own address.
 - ``/probe/headers``: the request's headers, as received.
 - ``/probe/sse``: three server-sent events a second apart.
 """
 
+import ipaddress
+import itertools
 import json
 import os
 import secrets
@@ -27,7 +33,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TIMEOUT = 3.0
@@ -36,6 +42,19 @@ GOOGLE_VIP = "199.36.153.8"
 PUBLIC_NAME = "example.com"
 GOOGLE_API_NAME = "storage.googleapis.com"
 PROBE_SECRET = "ssc-a-probe"  # noqa: S105  (a secret name, not a value)
+PEER_CELL_HOSTS = 2
+PEER_CELL_PORTS = (443, 8080)
+PEER_CELL_PATHS = {"app": "/health", "gateway": "/.ssc/logout"}
+PEER_CELL_HEADERS = (
+    "server",
+    "content-type",
+    "cache-control",
+    "x-content-type-options",
+    "referrer-policy",
+    "via",
+)
+PEER_CELL_BODY = 256
+VIP_READ = 4096
 SENSITIVE = (
     "iam.serviceAccounts.actAs",
     "iam.serviceAccounts.getAccessToken",
@@ -130,6 +149,25 @@ def _resolvers() -> list[str]:
         return []
 
 
+def _exchange(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    body: bytes | None = None,
+) -> tuple[int, dict[str, str], bytes]:
+    request = urllib.request.Request(url, data=body, method=method, headers=headers or {})  # noqa: S310
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310
+            return response.status, _lower(response.headers.items()), response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, _lower(exc.headers.items() if exc.headers else []), exc.read()
+
+
+def _lower(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
+    return {k.lower(): v.strip() for k, v in headers}
+
+
 def _http(
     url: str,
     *,
@@ -137,12 +175,8 @@ def _http(
     headers: dict[str, str] | None = None,
     body: bytes | None = None,
 ) -> tuple[int, bytes]:
-    request = urllib.request.Request(url, data=body, method=method, headers=headers or {})  # noqa: S310
-    try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310
-            return response.status, response.read()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()
+    status, _, data = _exchange(url, method=method, headers=headers, body=body)
+    return status, data
 
 
 def _metadata(path: str) -> str:
@@ -190,8 +224,8 @@ def identity() -> dict[str, object]:
     return out
 
 
-def _vip_get(host: str, token: str) -> dict[str, object]:
-    """GET https://<host>/ through Google's private VIP, where internal ingress may answer."""
+def _vip_get(host: str, token: str, path: str = "/", *, full: bool = False) -> dict[str, object]:
+    """GET https://<host><path> through Google's private VIP, where internal ingress may answer."""
     try:
         context = ssl.create_default_context()
         with (
@@ -199,16 +233,37 @@ def _vip_get(host: str, token: str) -> dict[str, object]:
             context.wrap_socket(raw, server_hostname=host) as tls,
         ):
             tls.sendall(
-                f"GET / HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\n"
+                f"GET {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\n"
                 "Connection: close\r\n\r\n".encode()
             )
-            status_line = tls.recv(64).split(b"\r\n", 1)[0].decode(errors="replace")
-        return {"status": int(status_line.split()[1])}
+            data = b""
+            while len(data) < VIP_READ and (chunk := tls.recv(VIP_READ)):
+                data += chunk
+        return _answer(*_parse_response(data), full=full)
     except (OSError, ValueError, IndexError) as exc:
         return {"error": type(exc).__name__}
 
 
-def peer(url: str) -> dict[str, object]:
+def _parse_response(data: bytes) -> tuple[int, dict[str, str], bytes]:
+    """Status, lower-cased headers and body of a raw HTTP/1.1 response."""
+    head, _, body = data.partition(b"\r\n\r\n")
+    status_line, *lines = head.decode(errors="replace").split("\r\n")
+    headers = _lower((k, v) for k, _, v in (line.partition(":") for line in lines))
+    return int(status_line.split()[1]), headers, body
+
+
+def _answer(status: int, headers: dict[str, str], body: bytes, *, full: bool) -> dict[str, object]:
+    """The status, and with ``full`` the headers and body start that show who answered."""
+    if not full:
+        return {"status": status}
+    return {
+        "status": status,
+        "headers": {k: v for k, v in headers.items() if k in PEER_CELL_HEADERS},
+        "body": body[:PEER_CELL_BODY].decode(errors="replace"),
+    }
+
+
+def peer(url: str, path: str = "/", *, full: bool = False) -> dict[str, object]:
     host = urllib.parse.urlsplit(url).hostname or ""
     if not host:
         return {"url": url, "error": "no url"}
@@ -216,17 +271,51 @@ def peer(url: str) -> dict[str, object]:
         token = _metadata(f"instance/service-accounts/default/identity?audience={url}")
     except OSError:
         token = ""
+    target = urllib.parse.urljoin(url, path)
     attempts: dict[str, object] = {}
     for name, headers in (
         ("by name", {}),
         ("by name with ID token", {"Authorization": f"Bearer {token}"}),
     ):
         try:
-            attempts[name] = {"status": _http(url, headers=headers)[0]}
+            attempts[name] = _answer(*_exchange(target, headers=headers), full=full)
         except OSError as exc:
             attempts[name] = {"error": type(exc).__name__}
-    attempts["by Google VIP with ID token"] = _vip_get(host, token)
+    attempts["by Google VIP with ID token"] = _vip_get(host, token, path, full=full)
     return {"url": url, "attempts": attempts}
+
+
+def _own_address(toward: str) -> str | None:
+    """The address this app sends from toward ``toward``. A UDP connect sends no packet."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((toward, 9))
+            return str(s.getsockname()[0])
+    except OSError:
+        return None
+
+
+def peer_cell(app_url: str, gateway_url: str, cidr: str) -> dict[str, object]:
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return {"range": cidr, "error": f"not an address range: {cidr!r}"}
+    hosts = [str(a) for a in itertools.islice(network.hosts(), 1, 1 + PEER_CELL_HOSTS)]
+    hosts = hosts or [str(network.network_address)]
+    own = _own_address(hosts[0])
+    own_in_range = None if own is None else ipaddress.ip_address(own) in network
+    attempts: dict[str, object] = {}
+    for name, url in (("app", app_url), ("gateway", gateway_url)):
+        found = peer(url, PEER_CELL_PATHS[name], full=True)
+        tried = found.get("attempts")
+        if not isinstance(tried, dict):
+            return {"range": cidr, "error": f"{name}: {found.get('error')}"}
+        attempts.update({f"{name} {k}": v for k, v in tried.items()})
+    if own_in_range is not True:
+        for host in hosts:
+            for port in PEER_CELL_PORTS:
+                attempts[f"tcp {host}:{port}"] = _tcp(host, port)
+    return {"range": cidr, "own": own, "own_in_range": own_in_range, "attempts": attempts}
 
 
 def mounts() -> dict[str, object]:
@@ -256,6 +345,9 @@ def probe(path: str, query: dict[str, list[str]], headers: dict[str, str]) -> ob
         "/probe/dns": dns,
         "/probe/identity": identity,
         "/probe/peer": lambda: peer(query.get("url", [""])[0]),
+        "/probe/peer-cell": lambda: peer_cell(
+            query.get("app", [""])[0], query.get("gateway", [""])[0], query.get("range", [""])[0]
+        ),
         "/probe/headers": lambda: headers,
     }
     route = routes.get(path)

@@ -45,6 +45,9 @@ def new_spec(image_digest: str, *, service: str | None = None) -> ServiceSpec:
         health_path="/healthz",
         resource_class="small",
         env={"PORT": "8080", "HOME": "/tmp"},  # noqa: S108  (the platform's HOME)
+        billing="request",
+        timeout_seconds=300,
+        concurrency=80,
         min_instances=0,
         max_instances=2,
         labels={"ssc-env": env, "ssc-contract": "runtime-driver"},
@@ -114,6 +117,24 @@ class RuntimeDriverContract:
         assert revision(seen, new).spec_fingerprint == changed.spec_fingerprint
         assert revision(seen, new).image_digest == images.second
         assert traffic(seen) == {old: 100}
+
+    async def test_billing_timeout_and_concurrency_define_the_revision(
+        self, runtime_driver: RuntimeDriver, images: Images, settle: Settle
+    ) -> None:
+        spec = new_spec(images.first)
+        old = await runtime_driver.apply(spec)
+        session = replace(
+            spec, billing="instance", timeout_seconds=3600, concurrency=1000, max_instances=1
+        )
+        assert session.spec_fingerprint != spec.spec_fingerprint
+        new = await runtime_driver.apply(session)
+        assert new != old
+        await settle()
+        seen = await observed(runtime_driver, spec.service)
+        assert revision(seen, new).spec_fingerprint == session.spec_fingerprint
+        assert revision(seen, old).spec_fingerprint == spec.spec_fingerprint
+        assert await runtime_driver.apply(replace(session, timeout_seconds=300)) not in {old, new}
+        assert await runtime_driver.apply(replace(session, concurrency=80)) not in {old, new}
 
     async def test_set_traffic_moves_everything(
         self, runtime_driver: RuntimeDriver, images: Images, settle: Settle
