@@ -1,9 +1,11 @@
 """The build driver seam: one stored bundle in, one image for one environment out (SSC-016).
 
-Cloud Build with Railpack waits for SSC-015. Until then ``FakeBuildDriver`` implements the
-protocol, and every implementation must pass ``conformance/ssc_conformance/contracts/
+``FakeBuildDriver`` is the in-memory builder for tests and development; the real one is
+``ssc_control.deploy.cell_build.CellAgentBuildDriver`` (SSC-015), Cloud Build with Railpack in
+the cell. Every implementation must pass ``conformance/ssc_conformance/contracts/
 build_driver.py``. Failure codes are Delimitus' ``contracts.intake-build-reasons`` build codes
-(``BUILD_REASONS``) plus the two this seam adds, so SSC-015 can reuse its fixtures.
+(``BUILD_REASONS``) plus the two this seam adds, so SSC-015 reuses its fixtures. The status
+types live in ``ssc_shared.build`` because the cell agent speaks them too.
 
 Each environment builds separately from the same source (C08): public build values differ per
 environment, so the image does too.
@@ -17,6 +19,15 @@ from types import MappingProxyType
 from typing import Final, Literal, Protocol, get_args
 
 from ssc_contracts.manifest import Manifest
+from ssc_shared.build import (
+    MAX_REF_CHARS,
+    BuildDriverError,
+    BuildNotFoundError,
+    BuildStatus,
+    Failed,
+    Running,
+    Succeeded,
+)
 from ssc_shared.canonical import canonical_bytes
 
 BUILD_REASONS: Final = frozenset(
@@ -29,9 +40,7 @@ BUILD_REASONS: Final = frozenset(
 )
 BUILD_TIMED_OUT: Final = "BUILD_TIMED_OUT"
 BUILD_DRIVER_ERROR: Final = "BUILD_DRIVER_ERROR"
-MAX_REF_CHARS: Final = 512
 
-_CODE = re.compile(r"[A-Z][A-Z0-9_]{1,63}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -52,44 +61,6 @@ class BuildRequest:
         if not _DIGEST.fullmatch(self.source_digest):
             raise ValueError(f"not a sha256 digest: {self.source_digest!r}")
         object.__setattr__(self, "public_env", MappingProxyType(dict(self.public_env)))
-
-
-@dataclass(frozen=True, slots=True)
-class Running:
-    pass
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Succeeded:
-    image_digest: str
-    scan_refs: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not _DIGEST.fullmatch(self.image_digest):
-            raise ValueError(f"images are pinned by sha256 digest: {self.image_digest!r}")
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Failed:
-    """``message`` is for the build log; it never reaches an audit row."""
-
-    code: str
-    message: str
-
-    def __post_init__(self) -> None:
-        if not _CODE.fullmatch(self.code):
-            raise ValueError(f"not a reason code: {self.code!r}")
-
-
-type BuildStatus = Running | Succeeded | Failed
-
-
-class BuildDriverError(Exception):
-    """The builder refused or failed a call; the job retries until its deadline."""
-
-
-class BuildNotFoundError(BuildDriverError):
-    pass
 
 
 class BuildDriver(Protocol):
@@ -173,3 +144,21 @@ class FakeBuildDriver(BuildDriver):
             build.polls_left -= 1
             return Running()
         return build.result
+
+
+__all__ = [
+    "BUILD_DRIVER_ERROR",
+    "BUILD_REASONS",
+    "BUILD_TIMED_OUT",
+    "MAX_REF_CHARS",
+    "BuildDriver",
+    "BuildDriverError",
+    "BuildNotFoundError",
+    "BuildRequest",
+    "BuildStatus",
+    "Failed",
+    "FakeBuildDriver",
+    "Running",
+    "Succeeded",
+    "fake_image_digest",
+]

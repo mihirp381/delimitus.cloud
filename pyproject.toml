@@ -53,7 +53,7 @@ ssc-conformance = { workspace = true }
 
 [tool.ruff]
 line-length = 100
-extend-exclude = ["spikes", "gates", "console", "infra/node_modules"]
+extend-exclude = ["spikes", "gates", "console", "infra/node_modules", "conformance/build_fixtures"]
 target-version = "py314"
 src = ["packages/*/src", "conformance", "tools", "infra", "infra/tests"]
 

@@ -2,9 +2,10 @@
 
 ``run(base_url)`` asks the probe app (``conformance/runtime/probe_app``) running behind
 ``base_url`` and returns one ``ProbeResult`` per entry of ``PROBES``. Four probes run anywhere a
-container runs. The other ten need the real network path of a cell: here they report
-``skipped``, never ``passed``. In a staging cell the probe image's runner job runs all fourteen
-(``conformance/runtime/probe_app/runner.py``, started by ``python -m ssc_conformance.nightly``).
+container runs. The other eleven need the real network path of a cell: here they report
+``skipped``, never ``passed``. In a staging cell the probe image's runner job runs all fifteen
+(``conformance/runtime/probe_app/runner.py``, started by ``python -m ssc_conformance.nightly``);
+``cannot_reach_peer_cell`` needs a second cell and is skipped there without one.
 
 A local run starts the image with ``--read-only --tmpfs /tmp``, ``HOME=/tmp`` and a ``PORT`` other
 than 8080, and publishes only that port, so ``listens_on_PORT`` fails for an app that ignores it.
@@ -32,6 +33,7 @@ CELL_PROBES: Final = (
     "metadata_token_no_roles",
     "metadata_identity_is_own",
     "cannot_reach_peer_app",
+    "cannot_reach_peer_cell",
     "header_echo_no_google_jwt",
     "authorization_passthrough",
     "cannot_read_secrets",

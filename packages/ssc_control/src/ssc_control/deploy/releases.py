@@ -22,9 +22,9 @@ _NEXT_NUMBER = text(
 )
 _INSERT = text(
     "insert into ssc.release (id, org_id, app_id, number, image_digest, manifest_digest, "
-    "source_digest, source_commit, scan_refs, actor_kind, actor_id, actor_via_agent, "
+    "source_digest, source_commit, scan_refs, framework, actor_kind, actor_id, actor_via_agent, "
     "actor_client_id) values (:id, :org, :app, :number, :image, :manifest, :source, :commit, "
-    "cast(:scan_refs as jsonb), :actor_kind, :actor_id, :via_agent, :client_id)"
+    "cast(:scan_refs as jsonb), :framework, :actor_kind, :actor_id, :via_agent, :client_id)"
 )
 
 
@@ -37,6 +37,8 @@ class NewRelease:
     source_commit: str | None
     scan_refs: tuple[str, ...]
     actor: Actor
+    framework: str | None = None
+    """The session framework the build found (SSC-015); ``desired_for`` reads it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +72,7 @@ async def allocate_and_insert(
             "source": release.source_digest,
             "commit": release.source_commit,
             "scan_refs": json.dumps(list(release.scan_refs)),
+            "framework": release.framework,
             "actor_kind": actor.kind.value,
             "actor_id": actor.id,
             "via_agent": actor.via_agent,

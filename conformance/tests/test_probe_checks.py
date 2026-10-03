@@ -40,7 +40,7 @@ def _jwt(claims: dict[str, object], signature: str) -> str:
 def test_probe_lists_agree() -> None:
     assert checks.LOCAL_PROBES == runtime_probes.LOCAL_PROBES
     assert checks.CELL_PROBES == runtime_probes.CELL_PROBES
-    assert len(checks.PROBES) == len(set(checks.PROBES)) == 14
+    assert len(checks.PROBES) == len(set(checks.PROBES)) == 15
 
 
 def test_egress_and_dns() -> None:
@@ -89,6 +89,103 @@ def test_peer_must_never_answer() -> None:
         checks.cannot_reach_peer_app({"attempts": refused | {"by name": {"status": 200}}})
     with pytest.raises(checks.ProbeFailedError):
         checks.cannot_reach_peer_app({"attempts": {}, "error": "no url"})
+
+
+GOOGLE_404 = {
+    "status": 404,
+    "headers": {"content-type": "text/html; charset=UTF-8", "referrer-policy": "no-referrer"},
+    "body": "<!DOCTYPE html><html lang=en><title>Error 404 (Not Found)!!1</title>",
+}
+GATEWAY_404_HEADERS = {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+}
+
+
+def test_peer_cell_must_refuse_before_iam() -> None:
+    refused = {
+        "app by name": {"error": "URLError"},
+        "app by Google VIP with ID token": GOOGLE_404,
+        "gateway by name": {"error": "TimeoutError"},
+        "gateway by name with ID token": {"status": 404},
+        "tcp 10.30.0.2:443": {"blocked": True, "detail": "TimeoutError"},
+    }
+    body = {"range": "10.30.0.0/22", "own": "10.20.0.5", "own_in_range": False}
+    passed = checks.cannot_reach_peer_cell(body | {"attempts": refused})
+    assert "app by Google VIP with ID token: HTTP 404" in passed
+    assert checks.SAME_RANGE not in passed
+    for name, attempt in (
+        ("app by name with ID token", {"status": 403}),
+        ("gateway by name", {"status": 401}),
+        ("gateway by name", {"status": 302}),
+        ("app by name", {"status": 200, "body": '"ok"'}),
+        ("tcp 10.30.0.2:8080", {"blocked": False, "detail": "connected"}),
+        ("app by name", {}),
+    ):
+        with pytest.raises(checks.ProbeFailedError, match="let calls through"):
+            checks.cannot_reach_peer_cell(body | {"attempts": refused | {name: attempt}})
+    with pytest.raises(checks.ProbeFailedError, match="own address"):
+        checks.cannot_reach_peer_cell(body | {"own_in_range": None, "attempts": refused})
+    with pytest.raises(checks.ProbeFailedError, match="no attempts"):
+        checks.cannot_reach_peer_cell(body | {"attempts": {}})
+    with pytest.raises(checks.ProbeFailedError, match="not an address range"):
+        checks.cannot_reach_peer_cell({"error": "not an address range: 'x'"})
+
+
+@pytest.mark.parametrize(
+    ("answer", "marker"),
+    [
+        ({"headers": {"server": "BaseHTTP/0.6 Python/3.14.0"}}, "probe app server header"),
+        ({"headers": {"content-type": "application/json"}}, "probe app JSON"),
+        ({"body": "null"}, "probe app body"),
+        ({"headers": {"server": "envoy"}}, "Envoy server header"),
+        ({"headers": GATEWAY_404_HEADERS}, "gateway page headers"),
+        ({"body": "<h1>Not found</h1><p>There is no app at this address, or"}, "gateway page"),
+    ],
+)
+def test_a_404_from_the_peer_itself_is_a_failure(answer: dict[str, Any], marker: str) -> None:
+    body = {"range": "10.30.0.0/22", "own": "10.20.0.5", "own_in_range": False}
+    attempts = {"gateway by name": {"status": 404} | answer}
+    with pytest.raises(checks.ProbeFailedError, match=f"from the peer itself \\({marker}"):
+        checks.cannot_reach_peer_cell(body | {"attempts": attempts})
+
+
+def test_the_same_range_leg_is_not_applicable_and_said_so() -> None:
+    body = {"range": "10.20.0.0/22", "own": "10.20.0.5", "own_in_range": True}
+    attempts = {
+        "app by name": GOOGLE_404,
+        "gateway by name": {"error": "TimeoutError"},
+        "tcp 10.20.0.2:443": {"blocked": False, "detail": "connected"},
+    }
+    passed = checks.cannot_reach_peer_cell(body | {"attempts": attempts})
+    assert passed.endswith("; range leg not applicable: same range, separate networks")
+    assert "tcp" not in passed
+    with pytest.raises(checks.ProbeFailedError, match="gateway by name: HTTP 403"):
+        checks.cannot_reach_peer_cell(
+            body | {"attempts": attempts | {"gateway by name": {"status": 403}}}
+        )
+    with pytest.raises(checks.ProbeFailedError, match="no attempts"):
+        checks.cannot_reach_peer_cell(body | {"attempts": {"tcp 10.20.0.2:443": {"blocked": True}}})
+
+
+def test_the_probe_app_answers_with_its_own_marks(local_app: str) -> None:
+    for path in ("/health", "/no-such-path"):
+        answer = app._answer(*app._exchange(local_app + path), full=True)
+        assert answer["headers"]["server"].startswith("BaseHTTP/")
+        assert checks._peer_marker(answer)
+    assert app._answer(*app._exchange(local_app + "/health"), full=True)["body"] == '"ok"'
+    assert app._answer(404, {"server": "x"}, b"", full=False) == {"status": 404}
+    raw = (
+        b"HTTP/1.1 404 Not Found\r\nServer: envoy\r\nContent-Type: text/html; charset=utf-8\r\n"
+        b"Set-Cookie: s=1\r\n\r\n<h1>Not found</h1>"
+    )
+    status, headers, data = app._parse_response(raw)
+    assert (status, headers["server"], data) == (404, "envoy", b"<h1>Not found</h1>")
+    answer = app._answer(status, headers, data, full=True)
+    assert "set-cookie" not in answer["headers"]
+    assert checks._peer_marker(answer) == "Envoy server header"
 
 
 def test_google_tokens_must_arrive_unsigned() -> None:
@@ -163,3 +260,58 @@ def test_runner_reports_every_probe_and_never_passes_off_cell(
         assert by_name[name]["status"] == "passed", by_name[name]
     for name in ("metadata_token_no_roles", "metadata_identity_is_own", "cannot_reach_peer_app"):
         assert by_name[name]["status"] == "failed", by_name[name]
+    assert by_name["cannot_reach_peer_cell"] == {
+        "probe": "cannot_reach_peer_cell",
+        "status": "skipped",
+        "reason": "no peer cell",
+    }
+
+
+def test_the_peer_cell_comes_from_three_variables() -> None:
+    full = dict(zip(runner.PEER_CELL_ENV, ("https://a", "https://g", "10.30.0.0/22"), strict=True))
+    assert runner.peer_cell_from(full) == ("https://a", "https://g", "10.30.0.0/22")
+    assert runner.peer_cell_from({}) is None
+    for name in runner.PEER_CELL_ENV:
+        assert runner.peer_cell_from(full | {name: ""}) is None
+
+
+@pytest.mark.parametrize(
+    ("own", "status", "legs"),
+    [
+        ("10.20.0.5", "passed", ("tcp 10.30.0.2:443", "tcp 10.30.0.3:8080")),
+        ("10.30.1.7", "passed", (checks.SAME_RANGE,)),
+        (None, "failed", ()),
+    ],
+)
+def test_runner_drives_the_peer_cell_probe_through_the_app(  # noqa: PLR0913  (fixtures)
+    local_app: str,
+    monkeypatch: pytest.MonkeyPatch,
+    own: str | None,
+    status: str,
+    legs: tuple[str, ...],
+) -> None:
+    called: list[tuple[str, str, bool]] = []
+    tcp: list[str] = []
+
+    def peer(url: str, path: str = "/", *, full: bool = False) -> dict[str, object]:
+        called.append((url, path, full))
+        return {"url": url, "attempts": {"by name": GOOGLE_404}}
+
+    def connect(host: str, port: int, family: int = 0) -> dict[str, object]:
+        tcp.extend([f"{host}:{port}"] if host.startswith("10.30.") else [])
+        return {"blocked": True, "detail": f"Timeout {family}"}
+
+    monkeypatch.setattr(app, "peer", peer)
+    monkeypatch.setattr(app, "_tcp", connect)
+    monkeypatch.setattr(app, "_own_address", lambda toward: own)
+    peer_cell = ("https://ssc-a-x.run.app", "https://ssc-gateway-x.run.app", "10.30.0.0/22")
+    results = runner.run(runner.Probe(local_app, "t"), local_app + "/", "/health", peer_cell)
+    (result,) = [r for r in results if r["probe"] == "cannot_reach_peer_cell"]
+    assert result["status"] == status, result
+    assert [c for c in called if c[2]] == [
+        ("https://ssc-a-x.run.app", "/health", True),
+        ("https://ssc-gateway-x.run.app", "/.ssc/logout", True),
+    ]
+    assert bool(tcp) is (own != "10.30.1.7")
+    for leg in ("app by name", "gateway by name", *legs) if status == "passed" else ():
+        assert leg in result["reason"]

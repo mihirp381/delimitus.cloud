@@ -34,6 +34,7 @@ from ssc_control.db.catalog import QUEUE_SCHEMA
 from ssc_control.db.engine import make_engine
 from ssc_control.deploy import jobs as deploy_jobs
 from ssc_control.deploy.build_driver import BuildDriver, FakeBuildDriver
+from ssc_control.deploy.cell_build import CellAgentBuildDriver
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.lifecycle import jobs as lifecycle_jobs
 from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
@@ -178,14 +179,25 @@ def runtime_driver_from_env(env: Mapping[str, str]) -> RuntimeDriver | None:
             raise CompositionError(f"unknown {RUNTIME_DRIVER_ENV} {other!r}")
 
 
-def build_driver_from_env(env: Mapping[str, str]) -> BuildDriver | None:
+def build_driver_from_env(
+    env: Mapping[str, str], blob_store: BlobStore | None = None
+) -> BuildDriver | None:
     """``SSC_BUILD_DRIVER``: unset means none (builds fail with ``BUILD_DRIVER_UNAVAILABLE``),
-    ``fake`` the in-memory builder. Cloud Build arrives with SSC-015."""
+    ``fake`` the in-memory builder, ``cell_agent`` Cloud Build in the cell through its agent at
+    ``SSC_CELL_AGENT_URL`` (SSC-015). The real builder needs the blob store: it signs the
+    bundle's URL there, and the build job analyses the bundle from it."""
     match env.get(BUILD_DRIVER_ENV, ""):
         case "":
             return None
         case "fake":
             return FakeBuildDriver()
+        case "cell_agent":
+            url = env.get(CELL_AGENT_URL_ENV, "")
+            if not url.startswith("https://"):
+                raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
+            if blob_store is None:
+                raise CompositionError(f"{BUILD_DRIVER_ENV}=cell_agent needs SSC_BLOB_* set")
+            return CellAgentBuildDriver(url, MetadataIdTokens(), blob_store)
         case other:
             raise CompositionError(f"unknown {BUILD_DRIVER_ENV} {other!r}")
 
@@ -262,15 +274,16 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
 def compose_ports(env: Mapping[str, str]) -> Ports:
     """The production ``Ports`` from the environment. The one place ports are chosen."""
     engine = make_engine(env[DSN_ENV])
+    blob_store = blob_store_of(env)
     ports = Ports(
         engine=engine,
         runtime_driver=runtime_driver_from_env(env),
         release_specs=BundleReleaseSpecs(),
-        blob_store=blob_store_of(env),
+        blob_store=blob_store,
         cell_stores=cell_stores_of(env),
         snapshot=Snapshots(engine),
         prod_gate=approvals_prod_gate(),
-        build_driver=build_driver_from_env(env),
+        build_driver=build_driver_from_env(env, blob_store),
         metrics=metrics_from_env(env),
         timers=Timers(),
         timer_dispatcher=timer_dispatcher_from_env(env),

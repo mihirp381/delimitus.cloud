@@ -19,6 +19,11 @@ SSC-025 (a stopped app, decision 014):
   * a deploy stops within one poll               -> test_a_stopped_app_ends_a_deploy_within_one_poll
   * and when going live                          -> test_a_stop_while_observing_is_caught_when_...
   * a build fails when claimed                   -> test_a_build_of_a_stopped_app_fails_when_claimed
+SSC-015 (the build reads the stored bundle first):
+  * a Dash app is a session app without sessions -> test_a_dash_bundle_deploys_as_a_session_app
+  * SQLite on disk is refused                    -> test_sqlite_on_disk_fails_the_build_before_...
+  * the framework migration                      -> test_0015_downgrades_and_upgrades,
+                                                    test_a_framework_must_be_a_short_lowercase_name
 Plus: the build API and job, build failures and timeouts, the health timeout, going live locking
 schedule rows before ``audit_head``, the deploy and first_url metrics, history and release
 listings, and the worker's wiring.
@@ -29,8 +34,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import importlib
 import json
 import re
+import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -44,6 +51,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from psycopg.rows import dict_row
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_testkit import (
@@ -60,6 +68,7 @@ from ssc_testkit import (
 )
 
 import ssc_control.api
+from ssc_bundle.client import prepare
 from ssc_contracts.audit import ActorKind
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
@@ -71,7 +80,16 @@ from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.approvals import service
 from ssc_control.approvals.gate import ApprovalsProdGate
 from ssc_control.audit import Actor
-from ssc_control.db import NewOrg, bind_org_sync, bound_org, create_org, make_engine
+from ssc_control.db import (
+    MIGRATE_ROLE,
+    NewOrg,
+    bind_org_sync,
+    bound_org,
+    create_org,
+    downgrade,
+    make_engine,
+    upgrade,
+)
 from ssc_control.deploy import tasks
 from ssc_control.deploy.build_driver import (
     BUILD_TIMED_OUT,
@@ -80,6 +98,8 @@ from ssc_control.deploy.build_driver import (
     fake_image_digest,
 )
 from ssc_control.deploy.builds import BUILD_DRIVER_UNAVAILABLE, run_build
+from ssc_control.deploy.bundles import bundle_key
+from ssc_control.deploy.cell_build import CellAgentBuildDriver
 from ssc_control.deploy.deployments import (
     APP_NOT_ACTIVE,
     APPROVAL_REQUIRED,
@@ -97,11 +117,14 @@ from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.timers.service import Timers
 from ssc_control.worker import CompositionError, Ports, build_app, compose_ports
+from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.canonical import manifest_digest
+from ssc_shared.clock import SystemClock
 
 MASTER = bytes(range(32))
 FAST = HealthWait(within=2.0, every=0.01)
 FINANCE = {"connections": {"names": ["finance"]}}
+FIXTURES = Path(__file__).resolve().parents[3] / "conformance" / "build_fixtures"
 NIGHTLY = {"schedules": [{"name": "nightly", "cron": "0 3 * * *", "path": "/tasks/nightly"}]}
 
 # ── world ────────────────────────────────────────────────────────────────────
@@ -555,6 +578,95 @@ async def test_a_failed_build_records_its_reason(b: Bench) -> None:
     assert rows_of(b.dsn, b.w.org, "select count(*) as n from ssc.release") == [{"n": 0}]
     # The bundle may build again once nothing is in flight.
     assert start_build(b, b.w.preview, bundle).status_code == 202
+
+
+async def stored_fixture(b: Bench, name: str, root: Path) -> tuple[Ports, str]:
+    """``conformance/build_fixtures/<name>`` packed and stored as ``complete`` leaves it."""
+    prepared = prepare(FIXTURES / name, root / "bundle.tar.gz")
+    digest = prepared.bundle.digest
+    signer = UrlSigner({"k1": MASTER}, active="k1", clock=SystemClock())
+    store = FsBlobStore(root / "blobs", signer=signer, base_url="https://blobs.test/v1/blobs")
+    await store.put(bundle_key(b.w.org, b.w.app, digest), prepared.bundle.path.read_bytes())
+    bid = new_id("bdl")
+    m = prepared.manifest
+    with psycopg.connect(b.dsn) as conn:
+        bind_org_sync(conn, b.w.org)
+        conn.execute(
+            "insert into ssc.bundle (id, org_id, app_id, digest, size_bytes, actor_kind, "
+            "actor_id, state, manifest, manifest_digest, file_count, stored_at) values "
+            "(%s, %s, %s, %s, %s, 'user', %s, 'stored', %s::jsonb, %s, %s, now())",
+            (
+                bid,
+                b.w.org,
+                b.w.app,
+                digest,
+                prepared.bundle.size,
+                b.w.builder,
+                json.dumps(m.model_dump(mode="json", by_alias=True)),
+                manifest_digest(m),
+                prepared.bundle.file_count,
+            ),
+        )
+    return replace(b.ports, blob_store=store), bid
+
+
+async def test_a_dash_bundle_deploys_as_a_session_app(b: Bench, tmp_path: Path) -> None:
+    ports, bundle = await stored_fixture(b, "dash-app", tmp_path)
+    build = start_build(b, b.w.preview, bundle).json()["build_id"]
+    assert await run_build(ports, org_id=b.w.org, build_id=build) == "succeeded"
+    release = get(b, f"/v1/builds/{build}").json()["release_id"]
+    rows = rows_of(b.dsn, b.w.org, "select framework from ssc.release where id = %s", release)
+    assert rows == [{"framework": "dash"}]
+    assert (await deploy(b, b.w.preview, release))[1] == "healthy"
+    svc = b.runtime.services[service_name(b.w.preview)]
+    (revision,) = svc.revisions
+    assert (revision.billing, revision.timeout_seconds, revision.concurrency) == (
+        "instance",
+        3600,
+        1000,
+    )
+    assert svc.max_instances == 1
+
+
+async def test_sqlite_on_disk_fails_the_build_before_the_builder(b: Bench, tmp_path: Path) -> None:
+    ports, bundle = await stored_fixture(b, "sqlite-on-disk", tmp_path)
+    build = start_build(b, b.w.preview, bundle).json()["build_id"]
+    assert await run_build(ports, org_id=b.w.org, build_id=build) == "failed"
+    out = get(b, f"/v1/builds/{build}").json()
+    assert (out["state"], out["failure_code"]) == ("failed", "STATE_SQLITE_EPHEMERAL")
+    assert b.builds.requests == []
+
+
+def test_0015_downgrades_and_upgrades(dsns: Dsns) -> None:
+    rev = importlib.import_module("ssc_control.db.migrations.versions.0015_build_framework")
+    name = f"m{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database {name} owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database=name).render_as_string(hide_password=False)
+    columns = (
+        "select table_name from information_schema.columns where table_schema = 'ssc' "
+        "and table_name in ('build', 'release') and column_name = 'framework' order by 1"
+    )
+
+    def tables() -> list[str]:
+        with psycopg.connect(dsn) as conn:
+            return [r[0] for r in conn.execute(columns).fetchall()]
+
+    upgrade(dsn)
+    assert tables() == ["build", "release"]
+    downgrade(dsn, rev.down_revision)
+    assert tables() == []
+    upgrade(dsn)
+    assert tables() == ["build", "release"]
+
+
+async def test_a_framework_must_be_a_short_lowercase_name(b: Bench) -> None:
+    bundle, _ = seed_bundle(b)
+    build = start_build(b, b.w.preview, bundle).json()["build_id"]
+    with psycopg.connect(b.dsn) as conn:
+        bind_org_sync(conn, b.w.org)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute("update ssc.build set framework = 'Dash App' where id = %s", (build,))
 
 
 async def test_a_build_polls_later_then_times_out(b: Bench) -> None:
@@ -1042,6 +1154,14 @@ def test_the_worker_registers_the_deploy_tasks_and_ports() -> None:
     assert isinstance(fake.build_driver, FakeBuildDriver)
     with pytest.raises(CompositionError, match="unknown"):
         worker.build_driver_from_env({"SSC_BUILD_DRIVER": "cloudbuild"})
+    agent = {"SSC_BUILD_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": "https://agent.test"}
+    with pytest.raises(CompositionError, match="SSC_BLOB_"):
+        worker.build_driver_from_env(agent)
+    with pytest.raises(CompositionError, match="https"):
+        worker.build_driver_from_env({**agent, "SSC_CELL_AGENT_URL": "http://agent.test"})
+    signer = UrlSigner({"k1": MASTER}, active="k1", clock=SystemClock())
+    store = FsBlobStore(Path("/nonexistent"), signer=signer, base_url="https://blobs.test")
+    assert isinstance(worker.build_driver_from_env(agent, store), CellAgentBuildDriver)
     key = base64.b64encode(MASTER).decode()
     assert not isinstance(compose_ports({**base, "SSC_METRICS_KEY": key}).metrics, NullMetricsPort)
     with pytest.raises(CompositionError, match="base64"):

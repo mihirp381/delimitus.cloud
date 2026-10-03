@@ -1,7 +1,7 @@
 """``CloudRunDriver`` passes the ``RuntimeDriver`` contract against the Cloud Run emulator, both
 directly and as the control plane reaches it: ``CellAgentDriver`` → agent app → driver."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from typing import Any
 
@@ -17,12 +17,14 @@ from ssc_conformance.contracts.runtime_driver import (
     Settle,
     new_spec,
     observed,
+    revision,
     traffic,
 )
 from ssc_contracts.manifest import ResourceClassName
 from ssc_control.runtime.cell_agent import CellAgentDriver
 from ssc_control.runtime.driver import RuntimeDriverError, ServiceNotFoundError
 from ssc_control.runtime.reconciler import reconcile_once
+from ssc_shared.runtime import Billing
 
 FIRST = "sha256:" + "1" * 64
 SECOND = "sha256:" + "2" * 64
@@ -150,6 +152,94 @@ async def test_resource_classes_and_scaling(
         "minInstanceCount": 1,
         "maxInstanceCount": 1,
     }
+
+
+@pytest.mark.parametrize(
+    ("billing", "seconds", "concurrency", "cpu_idle"),
+    [("instance", 3600, 1000, False), ("request", 300, 80, True)],
+)
+async def test_billing_timeout_and_concurrency_reach_the_revision(  # noqa: PLR0913  (fixtures)
+    cloud_run: CloudRunDriver,
+    emulator: CloudRunEmulator,
+    billing: Billing,
+    seconds: int,
+    concurrency: int,
+    cpu_idle: bool,
+) -> None:
+    spec = replace(
+        new_spec(FIRST),
+        billing=billing,
+        timeout_seconds=seconds,
+        concurrency=concurrency,
+        max_instances=1,
+    )
+    rev = await cloud_run.apply(spec)
+    emulator.settle()
+    template = _body(emulator, spec.service)["template"]
+    assert template["timeout"] == f"{seconds}s"
+    assert template["maxInstanceRequestConcurrency"] == concurrency
+    assert template["containers"][0]["resources"]["cpuIdle"] is cpu_idle
+    assert revision(await observed(cloud_run, spec.service), rev).spec_fingerprint == (
+        spec.spec_fingerprint
+    )
+
+
+async def test_cpu_idle_left_out_reads_as_instance_billing(
+    cloud_run: CloudRunDriver, emulator: CloudRunEmulator
+) -> None:
+    spec = replace(new_spec(FIRST), billing="instance", timeout_seconds=3600)
+    await cloud_run.apply(spec)
+    emulator.settle()
+    for r in emulator.services[spec.service].revisions:
+        del r["containers"][0]["resources"]["cpuIdle"]
+    (seen,) = (await observed(cloud_run, spec.service)).revisions
+    assert seen.spec_fingerprint == spec.spec_fingerprint
+
+
+async def test_concurrency_left_out_reads_as_80_and_needs_no_new_revision(
+    cloud_run: CloudRunDriver, emulator: CloudRunEmulator
+) -> None:
+    spec = new_spec(FIRST)
+    rev = await cloud_run.apply(spec)
+    emulator.settle()
+    for r in emulator.services[spec.service].revisions:
+        del r["maxInstanceRequestConcurrency"]
+    (seen,) = (await observed(cloud_run, spec.service)).revisions
+    assert seen.spec_fingerprint == spec.spec_fingerprint
+    assert (await reconcile_once(cloud_run, spec)).change is None
+    assert traffic(await observed(cloud_run, spec.service)) == {rev: 100}
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda t: t["containers"][0]["resources"].update(cpuIdle=True),
+        lambda t: t.update(timeout="300s"),
+        lambda t: t.update(maxInstanceRequestConcurrency=80),
+    ],
+)
+async def test_reconciler_repairs_billing_timeout_and_concurrency_drift(
+    cloud_run: CloudRunDriver, emulator: CloudRunEmulator, edit: Callable[[Any], None]
+) -> None:
+    spec = replace(
+        new_spec(FIRST), billing="instance", timeout_seconds=3600, concurrency=1000, max_instances=1
+    )
+    rev = await cloud_run.apply(spec)
+    emulator.settle()
+
+    def console_edit(body: dict[str, Any]) -> None:
+        body["template"]["revision"] = None
+        edit(body["template"])
+        body["traffic"] = [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}]
+
+    emulator.edit(spec.service, console_edit)
+    (serving,) = [
+        r for r in (await observed(cloud_run, spec.service)).revisions if r.traffic_percent == 100
+    ]
+    assert serving.spec_fingerprint != spec.spec_fingerprint
+    kinds = [(await reconcile_once(cloud_run, spec)).change for _ in range(3)]
+    assert [c.kind if c else None for c in kinds] == ["set_traffic", None, None]
+    assert traffic(await observed(cloud_run, spec.service)) == {rev: 100}
 
 
 async def test_invoker_policy_is_restored_on_apply(
@@ -324,6 +414,9 @@ async def test_agent_refuses_bad_requests(cloud_run: CloudRunDriver) -> None:
                 "health_path": "/healthz",
                 "resource_class": "small",
                 "env": {},
+                "billing": "request",
+                "timeout_seconds": 300,
+                "concurrency": 80,
                 "min_instances": 0,
                 "max_instances": 1,
                 "labels": {},

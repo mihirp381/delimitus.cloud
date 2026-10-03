@@ -19,6 +19,7 @@ from ssc_shared.runtime import (
     ServiceSpec,
     observation_to_wire,
     spec_from_wire,
+    spec_to_wire,
 )
 
 AGENT = "https://ssc-cell-agent-123.us-central1.run.app"
@@ -30,6 +31,9 @@ SPEC = ServiceSpec(
     health_path="/healthz",
     resource_class="small",
     env={"PORT": "8080"},
+    billing="instance",
+    timeout_seconds=3600,
+    concurrency=1000,
     min_instances=0,
     max_instances=1,
     labels={"ssc-env": "e"},
@@ -90,6 +94,27 @@ async def test_each_call_is_one_post_with_an_id_token_for_the_agent() -> None:
         "service": SERVICE,
         "revision": f"{SERVICE}-00001-abcdef",
     }
+
+
+def test_the_wire_spec_carries_billing_timeout_and_concurrency() -> None:
+    wire = spec_to_wire(SPEC)
+    assert (wire["billing"], wire["timeout_seconds"], wire["concurrency"]) == (
+        "instance",
+        3600,
+        1000,
+    )
+    assert spec_from_wire(wire) == SPEC
+    for bad in (
+        {"billing": "always"},
+        {"timeout_seconds": "3600"},
+        {"timeout_seconds": 300},
+        {"concurrency": 80},
+        {"concurrency": 1001},
+    ):
+        with pytest.raises(ValueError):
+            spec_from_wire(wire | bad)
+    with pytest.raises(ValueError, match="malformed"):
+        spec_from_wire({k: v for k, v in wire.items() if k != "billing"})
 
 
 async def test_a_missing_service_observes_as_none() -> None:

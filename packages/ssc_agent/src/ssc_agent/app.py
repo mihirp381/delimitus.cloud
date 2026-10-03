@@ -1,11 +1,13 @@
-"""The cell agent's HTTP surface: the ``RuntimeDriver`` protocol, one POST per method.
+"""The cell agent's HTTP surface: the ``RuntimeDriver`` protocol and the ``CellBuilder``
+protocol (SSC-015), one POST per method.
 
 Cloud Run lets only the control plane's service account invoke the agent (decision 022), so
 every request here already passed IAM. The agent still refuses any service name that is not an
 SSC app's, because its own IAM cannot limit a create by name.
 
-Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND`` or ``REVISION_NOT_FOUND``, 400
-``INVALID_REQUEST``, 502 ``RUNTIME_ERROR``.
+Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FOUND`` or
+``BUILD_NOT_FOUND``, 400 ``INVALID_REQUEST``, 502 ``RUNTIME_ERROR`` or ``BUILD_ERROR``, 503
+``BUILD_NOT_CONFIGURED`` when the agent runs without a builder.
 """
 
 import logging
@@ -15,6 +17,13 @@ from typing import Any, Final, cast
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from ssc_shared.build import (
+    BuildDriverError,
+    BuildNotFoundError,
+    CellBuilder,
+    build_from_wire,
+    status_to_wire,
+)
 from ssc_shared.runtime import (
     SERVICE_NAME,
     RevisionNotFoundError,
@@ -28,11 +37,12 @@ from ssc_shared.runtime import (
 log = logging.getLogger(__name__)
 
 PREFIX: Final = "/v1/runtime"
+BUILD_PREFIX: Final = "/v1/build"
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
 
 
-def create_app(driver: RuntimeDriver) -> FastAPI:
+def create_app(driver: RuntimeDriver, builder: CellBuilder | None = None) -> FastAPI:
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
 
     async def apply(body: dict[str, Any]) -> dict[str, object]:
@@ -80,6 +90,32 @@ def create_app(driver: RuntimeDriver) -> FastAPI:
         except RuntimeDriverError as exc:
             log.warning("runtime call failed", extra={"method": method, "error": str(exc)})
             return _error(502, "RUNTIME_ERROR", str(exc))
+        return JSONResponse(result)
+
+    @app.post(BUILD_PREFIX + "/{method}")
+    async def build(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        if method not in ("start", "poll"):
+            return _error(404, "NOT_FOUND", f"no method {method}")
+        if builder is None:
+            return _error(503, "BUILD_NOT_CONFIGURED", "this agent runs no builds")
+        try:
+            body: object = await request.json()
+            if not isinstance(body, dict):
+                raise TypeError("the body is not a JSON object")
+            fields = cast("dict[str, Any]", body)
+            if method == "start":
+                result: dict[str, object] = {
+                    "ref": await builder.start(build_from_wire(fields["build"]))
+                }
+            else:
+                result = {"status": status_to_wire(await builder.poll(_str(fields, "ref")))}
+        except (ValueError, TypeError, KeyError) as exc:
+            return _error(400, "INVALID_REQUEST", str(exc))
+        except BuildNotFoundError as exc:
+            return _error(404, "BUILD_NOT_FOUND", str(exc))
+        except BuildDriverError as exc:
+            log.warning("build call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "BUILD_ERROR", str(exc))
         return JSONResponse(result)
 
     return app

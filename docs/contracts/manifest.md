@@ -4,12 +4,6 @@ What an app asks the platform for. Contract of SSC-044 and decision 013: a draft
 
 A manifest is a **request, never enforcement**. A deploy that asks for something the environment does not grant still goes ahead; the builder sees the [capability diff](#capability-diff) and the platform decides each item.
 
-**Pending changes (architecture review 2026-10-03, decision 025; not yet in the code or in this contract).** SSC-044 is reopened to add them, and nothing below changes until that ticket lands.
-- **Session apps.** `sessions = true` stays the key (the architecture document writes `session`; the ticket settles the name). It will also be set by detection for Streamlit, Gradio, Dash and Shiny start commands. A session app runs on one instance, is instance-billed, and its connections end at 60 minutes.
-- **`billing`.** A new optional `[runtime]` key, `"request"` or `"instance"`, with no default in the file: unset means the platform chooses (instance for session apps, request for the rest). To settle in SSC-044: an unset key must stay out of the digest so no v1 manifest changes digest, which makes this a widening change under [Versioning](#versioning). An agent session cannot change it (SSC-048).
-- **State.** `postgres = true` stays the only state. SQLite on disk will be refused at build with `STATE_SQLITE_EPHEMERAL` (SSC-015), because the file system is memory and does not persist.
-- **Files.** There is no manifest key for file storage yet; SSC-046 decides whether one is needed.
-
 ## Example
 
 ```toml
@@ -68,7 +62,7 @@ Every table refuses unknown keys, and every value has one TOML type: `port = "80
 | `port` | integer | `8080` | 1 to 65535. The platform sets `PORT` to it (17 of 20 corpus apps never read `PORT`). |
 | `health_path` | string | `"/"` | Starts with a single `/`, URL path characters only, no `?query` or `#`, at most 256 characters. |
 | `start` | string | none | Start command, one line, at most 1024 characters (the Streamlit fix-it). |
-| `sessions` | boolean | `false` | `true` for an app that keeps sessions in process memory: it then runs at most 1 instance. |
+| `sessions` | boolean | `false` | `true` for an app that keeps sessions in process memory: it then runs at most 1 instance. Also detected; see [Session apps](#session-apps). |
 
 `[build]`, public build-time values:
 
@@ -86,6 +80,8 @@ A name is `^[A-Z][A-Z0-9_]{0,127}$` and must start with `VITE_` or `NEXT_PUBLIC_
 | `postgres` | boolean | `false` | Ask for the environment's Postgres database (`DATABASE_URL`). |
 
 Postgres is the only state offered. A key-value request (`kv`, `redis`, `valkey`, `memcached`, `cache`, `keyvalue`, `key_value`, in any case, or `state = "redis"`) is refused with the fix-it `STATE_KV_UNSUPPORTED`: set `postgres = true` and keep the data in a table; for a cache, an `UNLOGGED` table with an `expires_at` column.
+
+SQLite on disk (a `sqlite` or `sqlite3` key in `[state]`, in any case, or `state = "sqlite"`) is refused with the fix-it `STATE_SQLITE_EPHEMERAL`: the file system is memory and is lost when the instance stops, so set `postgres = true`. There is no manifest key for file storage yet; SSC-046 decides whether one is needed.
 
 `[connections]`:
 
@@ -122,7 +118,17 @@ The sizes behind a class name are platform policy, not manifest data: they are n
 | `medium` | 1 | 2 GiB | 4 |
 | `large` | 2 | 4 GiB | 8 |
 
-`sessions = true` caps any class at 1 instance.
+A [session app](#session-apps) is capped at 1 instance in any class.
+
+## Session apps
+
+A session app keeps each user's state in process memory, so a second instance would break it. An app is a session app when it sets `sessions = true`, or when the platform detects Streamlit, Gradio, Dash or Shiny. Detection reads the start command (`streamlit run`, `gradio`, `shiny run`, also behind `python -m`, `uv run`, `sh -c` or a full path, and R's `shiny::runApp`) and the framework the build detects from the source (SSC-015 records it on the release). Dash has no start command of its own, so a Dash app is a session app through that detection, without `sessions = true`. Detection is derived, never written into the manifest, so it changes neither the file nor its digest. One list and one rule serve the manifest, `ssc doctor` and the runtime driver: `SESSION_FRAMEWORKS` and `is_session_app` in `ssc_contracts.manifest`.
+
+A session app runs on at most one instance, and each connection to it, a WebSocket or a stream, ends at 60 minutes. Streamlit loses its session state when that happens.
+
+Every app sleeps at zero instances when nobody uses it, so its first request after a quiet spell is slow.
+
+There is no `billing` key. How an app is billed is the platform's choice; a manifest that has the key is refused like any unknown key.
 
 ## Refusals
 

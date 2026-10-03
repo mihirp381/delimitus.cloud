@@ -1,0 +1,7 @@
+{
+  "name": "cf-unresolvable-dep",
+  "version": "1.0.0",
+  "dependencies": {
+    "this-package-does-not-exist-ristretto-control": "^9.9.9"
+  }
+}

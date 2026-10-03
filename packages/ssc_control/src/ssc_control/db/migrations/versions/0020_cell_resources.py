@@ -2,10 +2,7 @@
 or are being created, the deployments waiting for one, and three audit actions.
 
 Revision ID: 0020_cell_resources
-Revises: 0014_identity
-
-Numbered 0020 so it cannot collide with revisions written alongside it; ``down_revision`` is
-re-pointed at whichever revision is the head when it merges.
+Revises: 0015_build_framework
 
 Downgrade drops the two tables and restores the audit vocabulary (development databases only),
 ``NOT VALID`` because audit rows already written with a new action stay.
@@ -16,7 +13,7 @@ from pathlib import Path
 from alembic import context, op
 
 revision = "0020_cell_resources"
-down_revision = "0014_identity"
+down_revision = "0015_build_framework"
 branch_labels = None
 depends_on = None
 

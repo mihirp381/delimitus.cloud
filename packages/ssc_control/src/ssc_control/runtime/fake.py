@@ -12,6 +12,7 @@ from typing import Final, Literal, get_args
 
 from ssc_contracts.manifest import ResourceClassName
 from ssc_control.runtime.driver import (
+    Billing,
     RevisionNotFoundError,
     RevisionObservation,
     RuntimeDriver,
@@ -33,6 +34,9 @@ class _Revision:
     health_path: str
     resource_class: ResourceClassName
     env: tuple[tuple[str, str], ...]
+    billing: Billing
+    timeout_seconds: int
+    concurrency: int
 
     @property
     def fingerprint(self) -> str:
@@ -42,6 +46,9 @@ class _Revision:
             health_path=self.health_path,
             resource_class=self.resource_class,
             env=dict(self.env),
+            billing=self.billing,
+            timeout_seconds=self.timeout_seconds,
+            concurrency=self.concurrency,
         )
 
 
@@ -110,6 +117,9 @@ class FakeRuntimeDriver(RuntimeDriver):
         health_path: str | None = None,
         resource_class: ResourceClassName | None = None,
         env: Mapping[str, str] | None = None,
+        billing: Billing | None = None,
+        timeout_seconds: int | None = None,
+        concurrency: int | None = None,
         min_instances: int | None = None,
         max_instances: int | None = None,
         stopped: bool | None = None,
@@ -118,7 +128,8 @@ class FakeRuntimeDriver(RuntimeDriver):
         manual deploy: a new revision copied from the serving one, given all traffic. The other
         three change the service's own settings."""
         svc = self._service(service)
-        if any(v is not None for v in (image_digest, port, health_path, resource_class, env)):
+        fields = (image_digest, port, health_path, resource_class, env, billing, timeout_seconds)
+        if any(v is not None for v in (*fields, concurrency)):
             serving = max(svc.revisions, key=lambda r: svc.traffic.get(r.name, 0))
             revision = svc.add(
                 replace(
@@ -128,6 +139,9 @@ class FakeRuntimeDriver(RuntimeDriver):
                     health_path=health_path or serving.health_path,
                     resource_class=resource_class or serving.resource_class,
                     env=serving.env if env is None else tuple(sorted(env.items())),
+                    billing=billing or serving.billing,
+                    timeout_seconds=timeout_seconds or serving.timeout_seconds,
+                    concurrency=concurrency or serving.concurrency,
                 )
             )
             svc.route_all(revision.name)
@@ -169,6 +183,9 @@ class FakeRuntimeDriver(RuntimeDriver):
                     health_path=spec.health_path,
                     resource_class=spec.resource_class,
                     env=tuple(sorted(spec.env.items())),
+                    billing=spec.billing,
+                    timeout_seconds=spec.timeout_seconds,
+                    concurrency=spec.concurrency,
                 )
             )
         svc.min_instances, svc.max_instances = spec.min_instances, spec.max_instances

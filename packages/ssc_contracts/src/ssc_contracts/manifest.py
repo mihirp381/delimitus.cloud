@@ -50,6 +50,10 @@ KV_FIX_IT: Final = (
     "a key-value store is not offered (STATE_KV_UNSUPPORTED); set postgres = true and keep the "
     "data in a table (for a cache, an UNLOGGED table with an expires_at column)"
 )
+SQLITE_FIX_IT: Final = (
+    "SQLite on disk does not last (STATE_SQLITE_EPHEMERAL): the file system is memory and is lost "
+    "when the instance stops; set postgres = true and keep the data in Postgres"
+)
 
 ResourceClassName = Literal["small", "medium", "large"]
 _Loc = tuple[str | int, ...]
@@ -72,6 +76,9 @@ RESOURCE_CLASSES: Final[Mapping[ResourceClassName, ResourceClass]] = MappingProx
     }
 )
 SESSION_MAX_INSTANCES: Final = 1
+SESSION_FRAMEWORKS: Final = frozenset({"streamlit", "gradio", "dash", "shiny"})
+_SESSION_COMMANDS: Final = frozenset({"streamlit", "gradio", "shiny"})
+_SHINY_R: Final = re.compile(r"\bshiny::runApp\b")
 
 
 class NestedFieldError(ValueError):
@@ -92,6 +99,11 @@ _ZONE = re.compile(r"UTC|[A-Z][A-Za-z]+(/[A-Za-z0-9_+-]+){1,2}")
 _RESERVED_ENV = frozenset({"PORT", "HOME", "PATH", "DATABASE_URL"})
 _SECRET_WORDS = ("SECRET", "PASSWORD", "PASSWD", "SERVICE_ROLE", "PRIVATE_KEY")
 _KV_WORDS = frozenset({"kv", "redis", "valkey", "memcached", "keyvalue", "key_value", "cache"})
+_SQLITE_WORDS = frozenset({"sqlite", "sqlite3"})
+_TABLE_HINT: Final = "write [state] with postgres = true"
+_STATE_FIX_ITS: Final[Mapping[str, str]] = MappingProxyType(
+    {**dict.fromkeys(_KV_WORDS, KV_FIX_IT), **dict.fromkeys(_SQLITE_WORDS, SQLITE_FIX_IT)}
+)
 
 
 def _name(value: str) -> str:
@@ -324,7 +336,7 @@ class Build(_Table):
 
 
 class State(_Table):
-    """Durable state. Postgres only; a key-value request gets the fix-it."""
+    """Durable state. Postgres only; a key-value or SQLite request gets its fix-it."""
 
     postgres: StrictBool = False
 
@@ -332,17 +344,16 @@ class State(_Table):
     @classmethod
     def _only_postgres(cls, data: Any) -> Any:
         if isinstance(data, str):
-            hint = KV_FIX_IT if data.lower() in _KV_WORDS else "write [state] with postgres = true"
-            raise ValueError(f"must be a table; {hint}")
-        key = _kv_key(data)
+            raise ValueError(f"must be a table; {_STATE_FIX_ITS.get(data.lower(), _TABLE_HINT)}")
+        key = _state_key(data)
         if key is not None:
-            raise NestedFieldError(KV_FIX_IT, at=(key,))
+            raise NestedFieldError(_STATE_FIX_ITS[key.lower()], at=(key,))
         return data
 
 
-def _kv_key(data: object) -> str | None:
+def _state_key(data: object) -> str | None:
     keys: Iterable[object] = cast("dict[object, object]", data) if isinstance(data, dict) else ()
-    return next((k for k in keys if isinstance(k, str) and k.lower() in _KV_WORDS), None)
+    return next((k for k in keys if isinstance(k, str) and k.lower() in _STATE_FIX_ITS), None)
 
 
 class Connections(_Table):
@@ -403,9 +414,29 @@ def default_manifest() -> Manifest:
     return Manifest.model_validate({"schema": SCHEMA_V1})
 
 
-def max_instances(runtime: Runtime) -> int:
-    """The instance ceiling the manifest implies: one for session apps, else the class limit."""
-    if runtime.sessions:
+def session_framework(start: str | None) -> str | None:
+    """The session framework a start command runs (``uv run streamlit run app.py``), or None."""
+    if start is None:
+        return None
+    for token in start.split():
+        name = token.strip("\"'`").rsplit("/", 1)[-1].lower()
+        if name in _SESSION_COMMANDS:
+            return name
+    return "shiny" if _SHINY_R.search(start) else None
+
+
+def is_session_app(runtime: Runtime, framework: str | None = None) -> bool:
+    """Whether the app runs as a session app: ``sessions = true``, a session framework the build
+    detected (``framework``), or a session framework's start command. Derived, never written into
+    the manifest, so it does not change the digest."""
+    if runtime.sessions or session_framework(runtime.start) is not None:
+        return True
+    return framework is not None and framework.lower() in SESSION_FRAMEWORKS
+
+
+def max_instances(runtime: Runtime, framework: str | None = None) -> int:
+    """The instance ceiling: one for a session app (``is_session_app``), else the class limit."""
+    if is_session_app(runtime, framework):
         return SESSION_MAX_INSTANCES
     return RESOURCE_CLASSES[runtime.class_].max_instances
 

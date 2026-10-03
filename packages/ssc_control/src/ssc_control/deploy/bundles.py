@@ -3,7 +3,8 @@
 The server never trusts the client's packing or scan: it re-reads the stored object, checks its
 size and sha256, inspects the tar (``ssc_bundle.tarcheck``), reads ``ssc.toml`` from the bundle
 itself and repeats the secret scan. Every refusal carries an ``ErrorCode`` and log-only evidence;
-evidence never holds a secret value, masked or not.
+evidence never holds a secret value, masked or not. A build reads the stored bundle once more for
+``ssc_bundle.analyze`` (SSC-015).
 """
 
 import asyncio
@@ -14,9 +15,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import IO, Final
 
-from ssc_bundle.limits import BundleMalformedError, BundleTooLargeError, Limits
+from ssc_bundle.analyze import MAX_ANALYZE_BYTES, Analysis, analyze
+from ssc_bundle.limits import DEFAULT_LIMITS, BundleMalformedError, BundleTooLargeError, Limits
 from ssc_bundle.secrets import MAX_SCAN_BYTES, allowed_values, scan
-from ssc_bundle.tarcheck import inspect, iter_files
+from ssc_bundle.tarcheck import inspect, iter_entries, iter_files
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.manifest import Manifest, ManifestError, default_manifest, load_manifest
 from ssc_shared.blobstore import BlobCorruptError, BlobNotFoundError, BlobStore, check_key
@@ -117,6 +119,22 @@ def _inspect(tmp: IO[bytes], limits: Limits) -> CheckedBundle:
     return CheckedBundle(
         manifest, manifest_digest(manifest), report.file_count, report.unpacked_bytes
     )
+
+
+async def analyze_stored(
+    store: BlobStore, key: str, manifest: Manifest, *, limits: Limits = DEFAULT_LIMITS
+) -> Analysis:
+    """``ssc_bundle.analyze`` over the stored bundle at ``key``. A bundle that no longer reads
+    raises ``BlobError`` or ``BundleError``; ``complete`` checked it, so neither is the app's."""
+    with tempfile.TemporaryFile() as tmp:
+        async for chunk in store.get(key):
+            await asyncio.to_thread(tmp.write, chunk)
+        return await asyncio.to_thread(_analyze, tmp, manifest, limits)
+
+
+def _analyze(tmp: IO[bytes], manifest: Manifest, limits: Limits) -> Analysis:
+    tmp.seek(0)
+    return analyze(iter_entries(tmp, limits, MAX_ANALYZE_BYTES), manifest)
 
 
 def _manifest(text: bytes | None) -> Manifest:

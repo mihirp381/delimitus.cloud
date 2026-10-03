@@ -12,6 +12,8 @@ Each app environment's service:
   alone (``setIamPolicy`` replaces the policy on every ``apply``);
 - sends all egress into the cell's ``apps`` subnet (Direct VPC egress), where the firewall
   allows only the cell and Google's private range;
+- bills per request (``cpuIdle``) or per instance, with the spec's request timeout and
+  concurrency;
 - names its revisions ``<service>-<generation>-<fingerprint>``, so ``apply`` knows the revision
   it asked for before Cloud Run has made it;
 - pins traffic to named revisions after the first, so a new revision never takes traffic;
@@ -31,6 +33,7 @@ import httpx2
 
 from ssc_shared.runtime import (
     SERVICE_NAME,
+    Billing,
     RevisionNotFoundError,
     RevisionObservation,
     RuntimeDriver,
@@ -55,7 +58,8 @@ LATEST_TRAFFIC: Final = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
 STARTUP_PERIOD_SECONDS: Final = 5
 STARTUP_TIMEOUT_SECONDS: Final = 3
 STARTUP_FAILURES: Final = 24  # two minutes to start
-REQUEST_TIMEOUT: Final = "300s"
+DEFAULT_TIMEOUT_SECONDS: Final = 300
+DEFAULT_CONCURRENCY: Final = 80
 CALL_TIMEOUT_SECONDS: Final = 30.0
 SETTLE_TIMEOUT_SECONDS: Final = 180.0
 RESERVED_ENV: Final = frozenset({"PORT", "K_SERVICE", "K_REVISION", "K_CONFIGURATION"})
@@ -276,7 +280,8 @@ class CloudRunDriver(RuntimeDriver):
             "revision": revision,
             "serviceAccount": self.cell.identity(spec.service),
             "executionEnvironment": "EXECUTION_ENVIRONMENT_GEN2",
-            "timeout": REQUEST_TIMEOUT,
+            "timeout": f"{spec.timeout_seconds}s",
+            "maxInstanceRequestConcurrency": spec.concurrency,
             "vpcAccess": {
                 "egress": "ALL_TRAFFIC",
                 "networkInterfaces": [
@@ -294,7 +299,7 @@ class CloudRunDriver(RuntimeDriver):
                     ],
                     "resources": {
                         "limits": {"cpu": str(size.vcpu), "memory": f"{size.memory_mib}Mi"},
-                        "cpuIdle": True,
+                        "cpuIdle": spec.billing == "request",
                         "startupCpuBoost": True,
                     },
                     "startupProbe": {
@@ -431,7 +436,9 @@ class CloudRunDriver(RuntimeDriver):
         digest = image.removeprefix(prefix) if image.startswith(prefix) else image
         ports = _objs(container.get("ports")) or [{}]
         probe = _obj(_obj(container.get("startupProbe")).get("httpGet"))
-        limits = _obj(_obj(container.get("resources")).get("limits"))
+        resources = _obj(container.get("resources"))
+        limits = _obj(resources.get("limits"))
+        billing: Billing = "request" if resources.get("cpuIdle") else "instance"
         env: dict[str, str] = {}
         for var in _objs(container.get("env")):
             source = var.get("valueSource")
@@ -445,6 +452,9 @@ class CloudRunDriver(RuntimeDriver):
             vcpu=_cpu(str(limits.get("cpu") or "1")),
             memory_mib=_memory_mib(str(limits.get("memory") or "512Mi")),
             env=env,
+            billing=billing,
+            timeout_seconds=_seconds(revision.get("timeout")),
+            concurrency=int(revision.get("maxInstanceRequestConcurrency") or DEFAULT_CONCURRENCY),
         )
         return fingerprint, digest
 
@@ -569,6 +579,16 @@ def _readiness(revision: Json) -> tuple[bool | None, bool]:
 
 def _cpu(value: str) -> float:
     return float(value[:-1]) / 1000 if value.endswith("m") else float(value)
+
+
+def _seconds(value: object) -> int:
+    """A Duration such as ``"300s"``; Cloud Run's default when absent."""
+    if not isinstance(value, str) or not value.endswith("s"):
+        return DEFAULT_TIMEOUT_SECONDS
+    try:
+        return int(float(value.removesuffix("s")))
+    except ValueError:
+        return DEFAULT_TIMEOUT_SECONDS
 
 
 def _memory_mib(value: str) -> int:

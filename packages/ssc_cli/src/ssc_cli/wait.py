@@ -23,6 +23,7 @@ from ssc_cli.errors import (
     local_error,
 )
 from ssc_cli.models import OperationOut
+from ssc_contracts.build import FIX_ITS
 
 POLL_SECONDS: Final = 2.0
 DEFAULT_TIMEOUT: Final = 1800
@@ -40,6 +41,7 @@ FIXES: Final = {
     "status; an org admin can tell you why.",
     "CELL_RESOURCE_FAILED": "Your company's database could not be created. Deploy again to retry; "
     "if it fails again, tell an org admin.",
+    **FIX_ITS,
 }
 
 
