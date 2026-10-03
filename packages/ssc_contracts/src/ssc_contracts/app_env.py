@@ -2,8 +2,8 @@
 
 Names only; the values are per app environment. The CLI's agent pack, ``ssc doctor`` and the
 control plane read the names from here so that they cannot drift apart. A manifest can never set
-any of them: ``PORT``, ``HOME`` and ``DATABASE_URL`` are reserved and every ``SSC_*`` name belongs
-to the platform (``ssc_contracts.manifest``).
+any of them: ``PORT``, ``HOME``, ``DATABASE_URL`` and its ``PG*`` parts are reserved and every
+``SSC_*`` name belongs to the platform (``ssc_contracts.manifest``).
 """
 
 import re
@@ -17,7 +17,23 @@ HOME_VALUE: Final = "/tmp"  # noqa: S108  (in-memory in the container; the corpu
 """Always ``/tmp``: the root filesystem is read-only and ``/tmp`` is memory, lost on restart."""
 
 DATABASE_URL: Final = "DATABASE_URL"
-"""The app's own Postgres, only when ``[state] postgres = true`` is granted (SSC-026)."""
+"""The app's own Postgres, only with ``[state] postgres = true``: a pinned secret in the form of
+decision 003, ``postgresql://...?sslmode=verify-full&sslrootcert=...`` (SSC-040)."""
+
+PGHOST: Final = "PGHOST"
+PGPORT: Final = "PGPORT"
+PGDATABASE: Final = "PGDATABASE"
+PGUSER: Final = "PGUSER"
+PGPASSWORD: Final = "PGPASSWORD"  # noqa: S105  (a variable name, not a password)
+PGSSLMODE: Final = "PGSSLMODE"
+PGSSLROOTCERT: Final = "PGSSLROOTCERT"
+DATABASE_PARTS: Final = (PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD, PGSSLMODE, PGSSLROOTCERT)
+"""``DATABASE_URL`` in parts, set with it, for frameworks with no URL parser (Django)."""
+
+DATABASE_CA: Final = "DATABASE_CA"
+"""Not a variable: the secret holding the database's CA certificates, a file at
+``DATABASE_CA_PATH`` that ``sslrootcert`` names."""
+DATABASE_CA_PATH: Final = "/etc/ssc/db-ca.crt"
 
 APP_ORIGIN: Final = "SSC_APP_ORIGIN"
 """The app's exact origin, ``https://<host>`` with no path: the identity note's audience."""
@@ -26,13 +42,13 @@ IDENTITY_KEYS_URL: Final = "SSC_IDENTITY_KEYS_URL"
 """The cell's JWKS that verifies identity notes, inline as a ``data:`` URL (no internet needed)."""
 
 PLATFORM_ENV_NAMES: Final[frozenset[str]] = frozenset(
-    {PORT, HOME, DATABASE_URL, APP_ORIGIN, IDENTITY_KEYS_URL}
+    {PORT, HOME, DATABASE_URL, *DATABASE_PARTS, APP_ORIGIN, IDENTITY_KEYS_URL}
 )
 
 SECRET_NAME: Final = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 """An app secret's name, which is also the environment variable it arrives in (SSC-026)."""
 
-_NOT_SECRET_NAMES: Final = PLATFORM_ENV_NAMES | {"PATH"}
+_NOT_SECRET_NAMES: Final = PLATFORM_ENV_NAMES | {DATABASE_CA, "PATH"}
 _NOT_SECRET_PREFIXES: Final = ("SSC_", "K_", "X_GOOGLE_")
 
 

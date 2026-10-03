@@ -24,7 +24,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from ssc_contracts import app_env
+from ssc_contracts import app_database, app_env
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import RESOURCE_CLASSES, Manifest
 from ssc_control.runtime.driver import (
@@ -137,7 +137,16 @@ def test_billing_and_timeout_follow_the_session_rule(
         assert desired.concurrency == SESSION_CONCURRENCY == 1000
     else:
         assert (desired.billing, desired.min_instances) == ("request", 0)
-        assert desired.max_instances > 1
+        assert desired.max_instances == app_database.MAX_INSTANCES
+        stateless = desired_for(
+            env=env_row(env_name),
+            release=ReleaseRow(id=new_id("rel"), image_digest=IMAGE),
+            manifest=manifest(runtime=runtime),
+            app_status="active",
+            framework=framework,
+        )
+        assert isinstance(stateless, ServiceSpec)
+        assert stateless.max_instances > 1
         assert desired.timeout_seconds == REQUEST_TIMEOUT_SECONDS == 300
         assert desired.concurrency == REQUEST_CONCURRENCY == 80
 

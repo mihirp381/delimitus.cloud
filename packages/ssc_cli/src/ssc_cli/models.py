@@ -257,6 +257,20 @@ class SecretSetOut(Wire):
     operation_id: str | None = None
 
 
+class DatabaseOut(Wire):
+    """An environment's database as the API knows it. Never a password or a URL."""
+
+    environment_id: str
+    present: bool
+    database: str | None = None
+    connection_limit: int | None = None
+    pool_size: int
+    size_bytes: int | None = None
+    connections: int | None = None
+    places_used: int | None = None
+    places_total: int | None = None
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

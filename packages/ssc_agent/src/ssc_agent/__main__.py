@@ -5,7 +5,8 @@ Configuration, all required and set by the cell stack: ``SSC_CELL_PROJECT``,
 ``SSC_GATEWAY_SA``. Builds (SSC-015) need all of ``SSC_BUILD_SA``, ``SSC_BUILD_TOOLS_IMAGE`` and
 ``SSC_BUILD_FRONTEND_IMAGE``, or none, and then the agent refuses builds. Exits 2 when one is
 missing or malformed. Secrets (SSC-026) need nothing more: they live in the cell's project and
-region. Log records are redacted (``ssc_shared.redaction``).
+region. App databases (SSC-040) need ``SSC_SQL_INSTANCE``, the name of the cell's Cloud SQL
+instance; unset, the agent refuses them. Log records are redacted (``ssc_shared.redaction``).
 """
 
 import logging
@@ -17,10 +18,12 @@ from typing import Final
 import uvicorn
 
 from ssc_agent.app import create_app
+from ssc_agent.app_database import CellAppDatabases
 from ssc_agent.cloud_build import CellBuildConfig, CloudBuildDriver
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
+from ssc_agent.cloud_sql import CloudSqlAdmin
 from ssc_agent.metadata import MetadataAccessTokens
-from ssc_agent.secret_manager import CellSecretCustody
+from ssc_agent.secret_manager import CellSecretCustody, CellSecretWriter
 from ssc_shared import redaction
 
 ENV: Final = {
@@ -36,6 +39,7 @@ BUILD_ENV: Final = {
     "tools_image": "SSC_BUILD_TOOLS_IMAGE",
     "frontend_image": "SSC_BUILD_FRONTEND_IMAGE",
 }
+SQL_INSTANCE_ENV: Final = "SSC_SQL_INSTANCE"
 
 
 class ConfigError(ValueError):
@@ -80,7 +84,13 @@ def main() -> int:
     builder = None if build is None else CloudBuildDriver(build, tokens)
     driver = CloudRunDriver(cell, tokens)
     custody = CellSecretCustody(cell, tokens, driver.ensure_identity)
-    app = create_app(driver, builder, custody)
+    instance = os.environ.get(SQL_INSTANCE_ENV, "")
+    databases = None
+    if instance:
+        sql = CloudSqlAdmin(cell.project, instance, tokens)
+        writer = CellSecretWriter(cell.project, tokens)
+        databases = CellAppDatabases(sql, custody, writer)
+    app = create_app(driver, builder, custody, databases)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
     return 0
 

@@ -39,6 +39,7 @@ from ssc_cli.shapes import (
     TokenSetResult,
     WhoamiResult,
 )
+from ssc_contracts.app_database import POOL_FIX_IT
 
 CLEAN = Path(__file__).resolve().parent / "fixtures" / "doctor" / "clean"
 ORG = "org_aaaaaaaaaaaaaaaaaaaa"
@@ -840,6 +841,49 @@ def test_status_reads_the_current_deployment(cli, fake_api, isolated):
     human = cli("status", APP_ID, session=fake_api.session())
     assert "healthy" in human.stdout
     assert "rel_aaaaaaaaaaaaaaaaaaaa" in human.stdout
+
+
+def test_status_shows_each_environments_database(cli, fake_api, isolated):
+    isolated.set_password(SERVICE, "https://api.test", "tok")
+    fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=_app()))
+    database = {
+        "environment_id": PROD,
+        "present": True,
+        "database": "app_aaaaaaaaaaaaaaaaaaaa",
+        "connection_limit": 2,
+        "pool_size": 1,
+        "max_instances": 1,
+        "size_bytes": 8_400_000,
+        "connections": 1,
+        "places_used": 3,
+        "places_total": 10,
+        "created_at": "2026-10-03T00:00:00Z",
+        "rotated_at": None,
+    }
+    path = f"/v1/apps/{APP_ID}/environments"
+    fake_api.add("GET", f"{path}/{PROD}/database", httpx2.Response(200, json=database))
+    none = {**database, "environment_id": PREVIEW, "present": False, "database": None}
+    fake_api.add("GET", f"{path}/{PREVIEW}/database", httpx2.Response(200, json=none))
+    r = cli("status", APP_ID, "--json", session=fake_api.session())
+    assert r.code == 0, r.stdout
+    envs = {e.name: e for e in AppResult.model_validate(r.json()).environments}
+    assert envs["preview"].database is None
+    assert envs["prod"].database is not None
+    assert (envs["prod"].database.size_bytes, envs["prod"].database.connection_limit) == (
+        8_400_000,
+        2,
+    )
+    human = cli("status", APP_ID, session=fake_api.session()).stdout
+    assert "DATABASE" in human
+    assert "8.4 MB, 1/2 connections" in human
+    assert "3 of 10, previews included" in human
+    assert POOL_FIX_IT in human
+
+
+def test_status_without_a_database_route_still_answers(cli, scripted):
+    r = cli("status", APP_ID, "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    assert all(e["database"] is None for e in r.json()["environments"])
 
 
 # ── against the live API ────────────────────────────────────────────────────

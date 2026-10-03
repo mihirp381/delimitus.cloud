@@ -15,7 +15,8 @@ Each app environment's service:
 - bills per request (``cpuIdle``) or per instance, with the spec's request timeout and
   concurrency;
 - takes each secret as an environment variable pinned to one version of
-  ``ssc-a-<env>-<NAME>`` (SSC-026), never a value;
+  ``ssc-a-<env>-<NAME>`` (SSC-026), never a value; ``DATABASE_CA`` alone is a file instead, the
+  CA certificates at ``/etc/ssc/db-ca.crt`` that ``DATABASE_URL`` names (SSC-040);
 - names its revisions ``<service>-<generation>-<fingerprint>``, so ``apply`` knows the revision
   it asked for before Cloud Run has made it;
 - pins traffic to named revisions after the first, so a new revision never takes traffic;
@@ -33,6 +34,7 @@ from typing import Any, Final, cast
 
 import httpx2
 
+from ssc_contracts.app_env import DATABASE_CA, DATABASE_CA_PATH
 from ssc_shared.runtime import (
     SERVICE_NAME,
     Billing,
@@ -68,6 +70,8 @@ SETTLE_TIMEOUT_SECONDS: Final = 180.0
 RESERVED_ENV: Final = frozenset({"PORT", "K_SERVICE", "K_REVISION", "K_CONFIGURATION"})
 """Cloud Run sets these itself and refuses them in a template; ``PORT`` is the container port."""
 CONFLICT_TRIES: Final = 6
+CA_VOLUME: Final = "ssc-db-ca"
+CA_DIR, _, CA_FILE = DATABASE_CA_PATH.rpartition("/")
 IDENTITY_TRIES: Final = 6
 _HTTP_NOT_FOUND: Final = 404
 _HTTP_CONFLICT: Final = 409
@@ -284,6 +288,9 @@ class CloudRunDriver(RuntimeDriver):
 
     def _template(self, spec: ServiceSpec, revision: str) -> Json:
         size = spec.resources
+        ca = spec.secrets.get(DATABASE_CA)
+        container: Json = {} if ca is None else {"volumeMounts": [_CA_MOUNT]}
+        volumes: Json = {} if ca is None else {"volumes": [_ca_volume(spec.service, ca)]}
         return {
             "revision": revision,
             "serviceAccount": self.cell.identity(spec.service),
@@ -309,8 +316,10 @@ class CloudRunDriver(RuntimeDriver):
                         *(
                             {"name": k, "valueSource": {"secretKeyRef": _secret_ref(spec, k, v)}}
                             for k, v in sorted(spec.secrets.items())
+                            if k != DATABASE_CA
                         ),
                     ],
+                    **container,
                     "resources": {
                         "limits": {"cpu": str(size.vcpu), "memory": f"{size.memory_mib}Mi"},
                         "cpuIdle": spec.billing == "request",
@@ -324,6 +333,7 @@ class CloudRunDriver(RuntimeDriver):
                     },
                 }
             ],
+            **volumes,
         }
 
     async def ensure_identity(self, service: str) -> None:
@@ -468,6 +478,14 @@ class CloudRunDriver(RuntimeDriver):
                 secrets[name] = str(ref.get("version") or "")
             else:
                 env[name] = f"source:{source}"
+        mounts = _objs(container.get("volumeMounts"))
+        volumes = _objs(revision.get("volumes"))
+        if mounts or volumes:
+            ca = _mounted_ca(mounts, volumes, service, own)
+            if ca is None:
+                env["volumes:"] = f"{mounts}{volumes}"
+            else:
+                secrets[DATABASE_CA] = ca
         port = int(ports[0].get("containerPort") or 8080)
         env["PORT"] = str(port)
         fingerprint = fingerprint_of(
@@ -497,6 +515,38 @@ def _check_env(spec: ServiceSpec) -> None:
 
 def _secret_ref(spec: ServiceSpec, name: str, version: str) -> Json:
     return {"secret": secret_id(spec.service, name), "version": version}
+
+
+_CA_MOUNT: Final[Json] = {"name": CA_VOLUME, "mountPath": CA_DIR}
+
+
+def _ca_volume(service: str, version: str) -> Json:
+    items = [{"path": CA_FILE, "version": version}]
+    source = {"secret": secret_id(service, DATABASE_CA), "items": items}
+    return {"name": CA_VOLUME, "secret": source}
+
+
+def _mounted_ca(mounts: list[Json], volumes: list[Json], service: str, own: str) -> str | None:
+    """The ``DATABASE_CA`` version a revision mounts, or None when its volumes are anything but
+    that one file where ``_template`` puts it. File modes are not compared."""
+    if len(mounts) != 1 or len(volumes) != 1:
+        return None
+    mount, volume = mounts[0], volumes[0]
+    source = _obj(volume.get("secret"))
+    items = _objs(source.get("items"))
+    secret = str(source.get("secret") or "").removeprefix(own)
+    if (
+        {k: mount.get(k) for k in ("name", "mountPath", "subPath")}
+        != {**_CA_MOUNT, "subPath": None}
+        or volume.get("name") != CA_VOLUME
+        or set(volume) - {"name", "secret"}
+        or secret != _own_secret(service, DATABASE_CA)
+        or len(items) != 1
+        or items[0].get("path") != CA_FILE
+        or not items[0].get("version")
+    ):
+        return None
+    return str(items[0]["version"])
 
 
 def _own_secret(service: str, name: str) -> str | None:

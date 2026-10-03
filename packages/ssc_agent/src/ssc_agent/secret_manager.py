@@ -5,7 +5,8 @@ Two narrow seams, each with one write and no read:
 - ``SecretCustody.ensure``, in the cell agent: create the secret ``ssc-a-<env>-<NAME>`` in the
   cell's region if it is missing, make sure the environment's own service account exists, and
   set the secret's policy so that account alone may read it, which is how Cloud Run mounts it.
-- ``SecretWriter.add_version``, in the secret intake: add a version and return its number.
+- ``SecretWriter.add_version``, in the secret intake: add a version and return its number. The
+  cell agent uses it too, for the app database secrets it makes itself (SSC-040).
 
 Neither has a method that reads a value, and ``test_secrets`` fails if one is added. The cell's
 deny rule refuses ``secretmanager.versions.access`` to every SSC service identity regardless.

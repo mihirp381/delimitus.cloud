@@ -1,15 +1,18 @@
 """The cell agent's HTTP surface: the ``RuntimeDriver`` protocol, the ``CellBuilder``
-protocol (SSC-015) and ``SecretCustody`` (SSC-026), one POST per method.
+protocol (SSC-015), ``SecretCustody`` (SSC-026) and app databases (SSC-040), one POST per method.
 
 Cloud Run lets only the control plane's service account invoke the agent (decision 022), so
 every request here already passed IAM. The agent still refuses any service or secret name that
 is not an SSC app's, because its own IAM cannot limit a create by name. Secrets have one method,
-``ensure``; nothing here reads, returns or receives a secret value.
+``ensure``; nothing here reads, returns or receives a secret value. App databases have
+``ensure``, ``rotate`` and ``usage``; their passwords stay in the agent and the cell's Secret
+Manager, and the answers carry secret versions only.
 
-Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FOUND`` or
-``BUILD_NOT_FOUND``, 400 ``INVALID_REQUEST``, 502 ``RUNTIME_ERROR``, ``BUILD_ERROR`` or
-``SECRETS_ERROR``, 503 ``BUILD_NOT_CONFIGURED`` or ``SECRETS_NOT_CONFIGURED`` when the agent runs
-without a builder or secret custody.
+Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FOUND``,
+``BUILD_NOT_FOUND`` or ``DATABASE_NOT_FOUND``, 400 ``INVALID_REQUEST``, 409 ``DB_TIER_FULL``,
+502 ``RUNTIME_ERROR``, ``BUILD_ERROR``, ``SECRETS_ERROR`` or ``DATABASE_ERROR``, 503
+``BUILD_NOT_CONFIGURED``, ``SECRETS_NOT_CONFIGURED`` or ``DATABASES_NOT_CONFIGURED`` when the
+agent runs without a builder, secret custody or a Cloud SQL instance.
 """
 
 import logging
@@ -19,6 +22,14 @@ from typing import Any, Final, cast
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from ssc_agent.app_database import (
+    AdminSqlError,
+    AppDatabase,
+    AppDatabaseError,
+    CellAppDatabases,
+    DatabaseMissingError,
+    TierFullError,
+)
 from ssc_agent.secret_manager import SecretCustody, SecretsError
 from ssc_shared.build import (
     BuildDriverError,
@@ -43,6 +54,7 @@ log = logging.getLogger(__name__)
 PREFIX: Final = "/v1/runtime"
 BUILD_PREFIX: Final = "/v1/build"
 SECRETS_PREFIX: Final = "/v1/secrets"
+DATABASES_PREFIX: Final = "/v1/databases"
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
 
@@ -51,6 +63,7 @@ def create_app(
     driver: RuntimeDriver,
     builder: CellBuilder | None = None,
     secrets: SecretCustody | None = None,
+    databases: CellAppDatabases | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -128,6 +141,7 @@ def create_app(
         return JSONResponse(result)
 
     _secret_routes(app, secrets)
+    _database_routes(app, databases)
     return app
 
 
@@ -152,6 +166,56 @@ def _secret_routes(app: FastAPI, secrets: SecretCustody | None) -> None:
             log.warning("secret call failed", extra={"method": method, "error": str(exc)})
             return _error(502, "SECRETS_ERROR", str(exc))
         return JSONResponse({"secret": name})
+
+
+def _database_routes(app: FastAPI, databases: CellAppDatabases | None) -> None:
+    """``ensure``, ``rotate`` and ``usage`` of one service's database; no answer holds a value."""
+
+    @app.post(DATABASES_PREFIX + "/{method}")
+    async def database(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
+        if method not in ("ensure", "rotate", "usage"):
+            return _error(404, "NOT_FOUND", f"no method {method}")
+        if databases is None:
+            return _error(503, "DATABASES_NOT_CONFIGURED", "this agent has no Cloud SQL instance")
+        try:
+            body: object = await request.json()
+            if not isinstance(body, dict):
+                raise TypeError("the body is not a JSON object")
+            service = _service(cast("dict[str, Any]", body))
+            if method == "usage":
+                seen = await databases.usage(service)
+                result: dict[str, object] = {
+                    "present": seen.present,
+                    "size_bytes": seen.size_bytes,
+                    "connection_limit": seen.connection_limit,
+                    "connections": seen.connections,
+                    "environments": seen.environments,
+                    "ceiling": seen.ceiling,
+                }
+            else:
+                made = await (databases.ensure if method == "ensure" else databases.rotate)(service)
+                result = _database_to_wire(made)
+        except (ValueError, TypeError, KeyError) as exc:
+            return _error(400, "INVALID_REQUEST", str(exc))
+        except TierFullError as exc:
+            return _error(409, "DB_TIER_FULL", str(exc))
+        except DatabaseMissingError as exc:
+            return _error(404, "DATABASE_NOT_FOUND", str(exc))
+        except (AppDatabaseError, AdminSqlError, SecretsError) as exc:
+            log.warning("database call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "DATABASE_ERROR", str(exc))
+        return JSONResponse(result)
+
+
+def _database_to_wire(made: AppDatabase) -> dict[str, object]:
+    return {
+        "database": made.database,
+        "user": made.user,
+        "host": made.host,
+        "port": made.port,
+        "connection_limit": made.connection_limit,
+        "versions": dict(made.versions),
+    }
 
 
 def _service(body: dict[str, Any]) -> str:

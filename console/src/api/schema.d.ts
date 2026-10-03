@@ -333,6 +333,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app_id}/environments/{environment_id}/database": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Database
+         * @description The environment's database as far as it is known: never a password or a URL.
+         */
+        get: operations["get_database_v1_apps__app_id__environments__environment_id__database_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/environments/{environment_id}/database/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate Database
+         * @description A new password for the app's login role, then a deployment of the live release that pins
+         *     it (202); 200 when nothing is live. ``DEPLOYMENT_IN_FLIGHT`` while a deployment runs.
+         */
+        post: operations["rotate_database_v1_apps__app_id__environments__environment_id__database_rotate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app_id}/environments/{environment_id}/deployments": {
         parameters: {
             query?: never;
@@ -1381,6 +1422,75 @@ export interface components {
             /** Release Id */
             release_id: string;
         };
+        /** DatabaseOut */
+        DatabaseOut: {
+            /**
+             * Connection Limit
+             * @description Connections the app may hold at once, across all its instances.
+             */
+            connection_limit: number | null;
+            /**
+             * Connections
+             * @description Open now; null when the cell did not say.
+             */
+            connections: number | null;
+            /** Created At */
+            created_at: string | null;
+            /**
+             * Database
+             * @description The database's name, which is also its user.
+             */
+            database: string | null;
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Max Instances
+             * @description The most instances a stateful app runs; the connection left over is kept for a new revision during a deploy or rotation.
+             */
+            max_instances: number;
+            /**
+             * Places Total
+             * @description App databases the instance's tier holds; null when the cell did not say.
+             */
+            places_total: number | null;
+            /**
+             * Places Used
+             * @description App databases on the company's instance; null when the cell did not say.
+             */
+            places_used: number | null;
+            /**
+             * Pool Size
+             * @description Connections each instance of the app should keep.
+             */
+            pool_size: number;
+            /**
+             * Present
+             * @description False until a deployment that declares Postgres made it.
+             */
+            present: boolean;
+            /** Rotated At */
+            rotated_at: string | null;
+            /**
+             * Size Bytes
+             * @description Null when the cell did not say.
+             */
+            size_bytes: number | null;
+        };
+        /** DatabaseRotateOut */
+        DatabaseRotateOut: {
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Operation Id
+             * @description The deployment that puts the new password live; null when the environment has no live deployment (its next deployment takes it).
+             */
+            operation_id: string | null;
+            /**
+             * Rotated At
+             * Format: date-time
+             */
+            rotated_at: string;
+        };
         /** DecisionIn */
         DecisionIn: {
             /**
@@ -1530,7 +1640,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "SECRETS_UNAVAILABLE" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -3679,6 +3789,171 @@ export interface operations {
             };
             /** @description `RATE_LIMITED` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_database_v1_apps__app_id__environments__environment_id__database_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    rotate_database_v1_apps__app_id__environments__environment_id__database_rotate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseRotateOut"];
+                };
+            };
+            /** @description Rotated; a deployment of the live release started to put the new password live. Poll the `Location`. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseRotateOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `DATABASE_UNAVAILABLE` */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

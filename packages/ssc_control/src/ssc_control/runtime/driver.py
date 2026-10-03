@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from ssc_contracts import app_env
+from ssc_contracts import app_database, app_env
 from ssc_contracts.manifest import Manifest, is_session_app, max_instances
 from ssc_shared.runtime import (
     FINGERPRINT_VERSION,
@@ -24,6 +24,7 @@ from ssc_shared.runtime import (
     ServiceNotFoundError,
     ServiceObservation,
     ServiceSpec,
+    database_name,
     revision_fingerprint,
     service_name,
 )
@@ -59,10 +60,34 @@ class ReleaseRow:
     image_digest: str
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DatabaseRow:
+    """Where the environment's app database is (``ssc.app_database``, SSC-040)."""
+
+    host: str
+    port: int
+
+
 def max_instances_for(manifest: Manifest, framework: str | None) -> int:
     """The class limit, or 1 for a session app (C11), detected by
-    ``ssc_contracts.manifest.is_session_app``."""
-    return max_instances(manifest.runtime, framework)
+    ``ssc_contracts.manifest.is_session_app``. An app with a database runs at most
+    ``app_database.MAX_INSTANCES``, which leaves a connection of its login role's limit for the
+    next revision."""
+    limit = max_instances(manifest.runtime, framework)
+    return min(limit, app_database.MAX_INSTANCES) if manifest.state.postgres else limit
+
+
+def database_env(service: str, database: DatabaseRow) -> dict[str, str]:
+    """The plain ``PG*`` variables beside the ``DATABASE_URL`` and ``PGPASSWORD`` secrets."""
+    name = database_name(service)
+    return {
+        app_env.PGHOST: database.host,
+        app_env.PGPORT: str(database.port),
+        app_env.PGDATABASE: name,
+        app_env.PGUSER: name,
+        app_env.PGSSLMODE: "verify-full",
+        app_env.PGSSLROOTCERT: app_env.DATABASE_CA_PATH,
+    }
 
 
 def desired_for(  # noqa: PLR0913  (keyword-only)
@@ -73,33 +98,42 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
     app_status: AppStatus,
     framework: str | None = None,
     secrets: Mapping[str, str] | None = None,
+    database: DatabaseRow | None = None,
 ) -> ServiceSpec | Stopped:
     """What should be running for one app environment. Pure: rows in, spec out. ``framework`` is
     what the build detected (SSC-015 records it on the release), or None. Every environment
     scales to zero. A session environment is instance-billed with the 60-minute timeout and
     takes 1000 requests at once, since its one instance holds every user's WebSocket; any other
     is request-billed with 5 minutes and 80. ``secrets`` are the versions the deployment runs
-    (``deployment.secret_refs``), each mounted as its variable (SSC-026)."""
+    (``deployment.secret_refs``), each mounted as its variable (SSC-026). With ``[state] postgres
+    = true`` and its ``database``, the ``PG*`` parts join them (SSC-040); without, the database's
+    secrets are left out."""
     service = service_name(env.id)
     if app_status != "active":
         return Stopped(service=service, reason=app_status)
     runtime = manifest.runtime
     session = is_session_app(runtime, framework)
     billing: Billing = "instance" if session else "request"
+    plain = {app_env.PORT: str(runtime.port), app_env.HOME: app_env.HOME_VALUE}
+    mounted = dict(secrets or {})
+    if manifest.state.postgres and database is not None:
+        plain |= database_env(service, database)
+    else:
+        mounted = {k: v for k, v in mounted.items() if k not in app_database.SECRETS}
     return ServiceSpec(
         service=service,
         image_digest=release.image_digest,
         port=runtime.port,
         health_path=runtime.health_path,
         resource_class=runtime.class_,
-        env={app_env.PORT: str(runtime.port), app_env.HOME: app_env.HOME_VALUE},
+        env=plain,
         billing=billing,
         timeout_seconds=SESSION_TIMEOUT_SECONDS if session else REQUEST_TIMEOUT_SECONDS,
         concurrency=SESSION_CONCURRENCY if session else REQUEST_CONCURRENCY,
         min_instances=0,
         max_instances=max_instances_for(manifest, framework),
         labels={"ssc-org": env.org_id, "ssc-app": env.app_id, "ssc-env": env.id},
-        secrets=dict(secrets or {}),
+        secrets=mounted,
     )
 
 
@@ -112,6 +146,7 @@ __all__ = [
     "SESSION_TIMEOUT_SECONDS",
     "AppStatus",
     "Billing",
+    "DatabaseRow",
     "EnvName",
     "EnvironmentRow",
     "ReleaseRow",
@@ -123,6 +158,7 @@ __all__ = [
     "ServiceObservation",
     "ServiceSpec",
     "Stopped",
+    "database_env",
     "desired_for",
     "max_instances_for",
     "revision_fingerprint",

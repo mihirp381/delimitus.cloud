@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, cast, get_args
 
+from ssc_contracts import app_database
 from ssc_contracts.app_env import secret_name_problem
 from ssc_contracts.manifest import RESOURCE_CLASSES, ResourceClass, ResourceClassName
 
@@ -40,12 +41,25 @@ def service_name(environment_id: str) -> str:
 
 def secret_id(service: str, name: str) -> str:
     """The cell Secret Manager id of one app environment's secret: ``<service>-<NAME>``, so the
-    ``ssc-a-*`` IAM conditions cover it and the service it belongs to is its prefix."""
+    ``ssc-a-*`` IAM conditions cover it and the service it belongs to is its prefix. The app
+    database's own secrets (``app_database.SECRETS``) are the only platform names allowed."""
     if SERVICE_NAME.fullmatch(service) is None:
         raise ValueError(f"not an SSC app service name: {service!r}")
-    if (problem := secret_name_problem(name)) is not None:
+    if (problem := _secret_problem(name)) is not None:
         raise ValueError(f"secret name {name!r} {problem}")
     return f"{service}-{name}"
+
+
+def database_name(service: str) -> str:
+    """The app database of a service, and its login role: ``app_`` plus the environment id's 20
+    characters (decision 003)."""
+    if SERVICE_NAME.fullmatch(service) is None:
+        raise ValueError(f"not an SSC app service name: {service!r}")
+    return "app_" + service.removeprefix(SERVICE_PREFIX)
+
+
+def _secret_problem(name: str) -> str | None:
+    return None if name in app_database.SECRETS else secret_name_problem(name)
 
 
 def is_image_digest(value: str) -> bool:
@@ -117,7 +131,7 @@ class ServiceSpec:
 
 def _check_secrets(secrets: Mapping[str, str], env: Mapping[str, str]) -> None:
     for name, version in secrets.items():
-        if (problem := secret_name_problem(name)) is not None:
+        if (problem := _secret_problem(name)) is not None:
             raise ValueError(f"secret name {name!r} {problem}")
         if name in env:
             raise ValueError(f"{name!r} is both a plain variable and a secret")

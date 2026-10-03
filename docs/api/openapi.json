@@ -1240,6 +1240,175 @@
         "title": "CurrentRelease",
         "type": "object"
       },
+      "DatabaseOut": {
+        "additionalProperties": false,
+        "properties": {
+          "connection_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Connections the app may hold at once, across all its instances.",
+            "title": "Connection Limit"
+          },
+          "connections": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Open now; null when the cell did not say.",
+            "title": "Connections"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "database": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The database's name, which is also its user.",
+            "title": "Database"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "max_instances": {
+            "description": "The most instances a stateful app runs; the connection left over is kept for a new revision during a deploy or rotation.",
+            "title": "Max Instances",
+            "type": "integer"
+          },
+          "places_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "App databases the instance's tier holds; null when the cell did not say.",
+            "title": "Places Total"
+          },
+          "places_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "App databases on the company's instance; null when the cell did not say.",
+            "title": "Places Used"
+          },
+          "pool_size": {
+            "description": "Connections each instance of the app should keep.",
+            "title": "Pool Size",
+            "type": "integer"
+          },
+          "present": {
+            "description": "False until a deployment that declares Postgres made it.",
+            "title": "Present",
+            "type": "boolean"
+          },
+          "rotated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rotated At"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when the cell did not say.",
+            "title": "Size Bytes"
+          }
+        },
+        "required": [
+          "environment_id",
+          "present",
+          "database",
+          "connection_limit",
+          "pool_size",
+          "max_instances",
+          "size_bytes",
+          "connections",
+          "places_used",
+          "places_total",
+          "created_at",
+          "rotated_at"
+        ],
+        "title": "DatabaseOut",
+        "type": "object"
+      },
+      "DatabaseRotateOut": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The deployment that puts the new password live; null when the environment has no live deployment (its next deployment takes it).",
+            "title": "Operation Id"
+          },
+          "rotated_at": {
+            "format": "date-time",
+            "title": "Rotated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment_id",
+          "rotated_at",
+          "operation_id"
+        ],
+        "title": "DatabaseRotateOut",
+        "type": "object"
+      },
       "DecisionIn": {
         "additionalProperties": false,
         "properties": {
@@ -1634,6 +1803,8 @@
           "NOTHING_TO_PROMOTE",
           "PROD_REQUIRES_PROMOTE",
           "SECRETS_UNAVAILABLE",
+          "DB_TIER_FULL",
+          "DATABASE_UNAVAILABLE",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -5455,6 +5626,240 @@
           }
         },
         "summary": "Create Build",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/database": {
+      "get": {
+        "description": "The environment's database as far as it is known: never a password or a URL.",
+        "operationId": "get_database_v1_apps__app_id__environments__environment_id__database_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Database",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/database/rotate": {
+      "post": {
+        "description": "A new password for the app's login role, then a deployment of the live release that pins\nit (202); 200 when nothing is live. ``DEPLOYMENT_IN_FLIGHT`` while a deployment runs.",
+        "operationId": "rotate_database_v1_apps__app_id__environments__environment_id__database_rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseRotateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseRotateOut"
+                }
+              }
+            },
+            "description": "Rotated; a deployment of the live release started to put the new password live. Poll the `Location`."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`DATABASE_UNAVAILABLE`"
+          }
+        },
+        "summary": "Rotate Database",
         "tags": [
           "v1"
         ]

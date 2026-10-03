@@ -56,8 +56,9 @@ class Settings:
     apps_domain: str = APPS_DOMAIN
     """``SSC_APPS_DOMAIN``: the registrable domain apps are served on (decision 004)."""
     cell_agent_url: str = ""
-    """``SSC_CELL_AGENT_URL``: the cell agent, which prepares each secret (SSC-026). One cell
-    until placement has its ticket, as for the worker."""
+    """``SSC_CELL_AGENT_URL``: the cell agent, which prepares each secret (SSC-026) and rotates
+    and reads app databases (SSC-040). One cell until placement has its ticket, as for the
+    worker."""
     secret_intake_url: str = ""
     """``SSC_SECRET_INTAKE_URL``: the cell's secret intake origin, where ``ssc secret set`` sends
     the value. Unset, with or without the agent: secret writes refuse ``SECRETS_UNAVAILABLE``."""

@@ -147,6 +147,18 @@ deployment pins the references at its first claim (`deployment.secret_refs`) and
 mounts each as an env var at that version. No route, CLI command or MCP tool returns a value;
 `503 SECRETS_UNAVAILABLE` when the cell agent or intake is not configured or fails.
 
+**An app database is shown, never its password** (SSC-040). `GET
+/v1/apps/{app}/environments/{env}/database` answers whether the environment has one, its name,
+connection limit, the pool size and instance count each app should keep to, and, when the cell
+agent answers within 10 seconds, its size, open connections and the places used of the instance's
+tier (null otherwise); anyone who can see the app may ask. `POST .../database/rotate` needs a
+person who may change the environment (`require_builder`; an agent credential is `403
+AGENT_SESSION_REFUSED`): the cell agent sets a new password, the new secret versions are recorded
+(`secret.rotated`) and the live release is deployed again (`202` with `Location`, or `200` when
+nothing is live); `404 NOT_FOUND` without a database, `409 DEPLOYMENT_IN_FLIGHT` while one runs,
+`503 DATABASE_UNAVAILABLE` when the cell agent is not configured or fails. A deployment that
+needs a database the instance has no room for fails with `DB_TIER_FULL`.
+
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's
 call once there is more than one replica.

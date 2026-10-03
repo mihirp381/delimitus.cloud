@@ -40,6 +40,7 @@ from ssc_control.lifecycle import jobs as lifecycle_jobs
 from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
 from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
+from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases, FakeAppDatabases
 from ssc_control.runtime.cell_agent import CellAgentDriver, MetadataIdTokens
 from ssc_control.runtime.driver import RuntimeDriver
 from ssc_control.runtime.fake import FakeRuntimeDriver
@@ -180,6 +181,21 @@ def runtime_driver_from_env(env: Mapping[str, str]) -> RuntimeDriver | None:
             raise CompositionError(f"unknown {RUNTIME_DRIVER_ENV} {other!r}")
 
 
+def app_databases_from_env(env: Mapping[str, str]) -> AppDatabases | None:
+    """App databases (SSC-040) go with ``SSC_RUNTIME_DRIVER``: none without a runtime, in
+    memory with ``fake``, and through the same cell agent with ``cell_agent``."""
+    match env.get(RUNTIME_DRIVER_ENV, ""):
+        case "fake":
+            return FakeAppDatabases()
+        case "cell_agent":
+            url = env.get(CELL_AGENT_URL_ENV, "")
+            if not url.startswith("https://"):
+                raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
+            return CellAppDatabases(url, MetadataIdTokens())
+        case _:
+            return None
+
+
 def build_driver_from_env(
     env: Mapping[str, str], blob_store: BlobStore | None = None
 ) -> BuildDriver | None:
@@ -260,10 +276,15 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             ("build_driver", ports.build_driver),
             ("timer_dispatcher", ports.timer_dispatcher),
             ("cell_deployer", ports.cell_deployer),
+            ("app_databases", ports.app_databases),
         )
         if isinstance(
             value,
-            FakeRuntimeDriver | FakeBuildDriver | FakeScheduleDispatcher | FakeCellDeployer,
+            FakeRuntimeDriver
+            | FakeBuildDriver
+            | FakeScheduleDispatcher
+            | FakeCellDeployer
+            | FakeAppDatabases,
         )
     ]
     if fakes and env.get(ENV_ENV) not in FAKE_ENVIRONMENTS:
@@ -289,6 +310,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         timers=Timers(),
         timer_dispatcher=timer_dispatcher_from_env(env),
         cell_deployer=_cell_deployer(env),
+        app_databases=app_databases_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports
@@ -346,6 +368,7 @@ __all__ = [
     "Ports",
     "PortsMissingError",
     "WorkerSettings",
+    "app_databases_from_env",
     "blob_store_of",
     "cell_stores_of",
     "build_app",

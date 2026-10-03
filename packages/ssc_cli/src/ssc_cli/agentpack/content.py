@@ -3,13 +3,17 @@ the runtime environment names from ``ssc_contracts.app_env`` (decision 014)."""
 
 from typing import Final
 
-from ssc_contracts import app_env
+from ssc_contracts import app_database, app_env
 
 ENV_NAMES: Final = {
     "port": app_env.PORT,
     "home": app_env.HOME,
     "home_value": app_env.HOME_VALUE,
     "database_url": app_env.DATABASE_URL,
+    "database_parts": ", ".join(f"`{name}`" for name in app_env.DATABASE_PARTS),
+    "pool_size": str(app_database.POOL_SIZE),
+    "connection_limit": str(app_database.CONNECTION_LIMIT),
+    "max_instances": str(app_database.MAX_INSTANCES),
     "app_origin": app_env.APP_ORIGIN,
     "keys_url": app_env.IDENTITY_KEYS_URL,
 }
@@ -131,7 +135,15 @@ finding marked `block`.
 ### Data
 
 - For a database, add `[state]` with `postgres = true` to `ssc.toml` and connect with the
-  `{database_url}` environment variable.
+  `{database_url}` environment variable exactly as given: it checks the server's certificate.
+  {database_parts} are set too, for tools that read those instead.
+- The database refuses more than {connection_limit} connections from the app at once and the
+  app runs {max_instances} instance, so set every connection pool to {pool_size}: the other
+  connection must stay free for the new version during a deploy or a rotation, while the old one
+  still serves, and for a migration run at start. node-pg:
+  `new Pool({{ connectionString: process.env.DATABASE_URL, max: {pool_size} }})`. Prisma 7:
+  `new PrismaPg({{ connectionString: process.env.DATABASE_URL, max: {pool_size} }})`. Django: one
+  worker with one thread (`gunicorn --workers 1 --threads 1`).
 - SSC offers no key-value store such as Redis. Keep that data in a Postgres table; for a cache,
   use an `UNLOGGED` table with an `expires_at` column.
 - Company data connections are not live yet. Do not write code against them until SSC documents
@@ -153,9 +165,9 @@ start = "uvicorn main:app --host 0.0.0.0 --port ${port}"
 postgres = true
 ```
 
-SSC sets `{port}`, `{home}`, `{database_url}` (only with `postgres = true`), `{app_origin}` and
-`{keys_url}` itself; the last three are not set in every environment yet. `ssc.toml` cannot set
-them, nor any other name that starts with `SSC_`.
+SSC sets `{port}`, `{home}`, `{database_url}` and the `PG` names (only with `postgres = true`),
+`{app_origin}` and `{keys_url}` itself; the last two are not set in every environment yet.
+`ssc.toml` cannot set them, nor any other name that starts with `SSC_`.
 """
 
 CLAUDE_IMPORT: Final = "@AGENTS.md\n"
