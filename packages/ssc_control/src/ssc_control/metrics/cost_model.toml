@@ -1,0 +1,146 @@
+format = "ssc-cost-model/v1"
+region = "us-central1"
+month_hours = 730
+tolerance = 0.20
+min_usd = 1.0
+adds_up_within = 0.02
+adds_up_usd = 0.50
+source = "Architecture 2026-10-03 section 10 and the tickets' decided lines, list prices in us-central1, free tiers ignored. The one copy of these figures: ssc_control.metrics.cost_model reads it, and so does the proof-run kit (spikes/proofrun/proofrun/cost.py). tolerance: SSC-096 amends the model when a line is more than 20 % off. min_usd: a project line under $1 on both sides is not flagged. adds_up_within and adds_up_usd: a stated 'about' figure adds up when the parts come within 2 % or 50 cents of it."
+
+[cloud_run.request]
+vcpu_second = 0.000024
+gib_second = 0.0000025
+source = "Architecture section 10.1: request-billed rates, Cloud Run list price us-central1 (tier 1). Billed while serving, startup included."
+
+[cloud_run.instance]
+vcpu_second = 0.000018
+gib_second = 0.000002
+source = "Architecture section 10.1: instance-billed rates, for the instance's whole life. Session apps are instance-billed."
+
+[cloud_run.worker_pool]
+vcpu_second = 0.0000108
+gib_second = 0.0000012
+source = "infra/README.md, control plane, Worker (SSC-064)."
+
+[cloud_run.reference]
+vcpu = 1.0
+gib = 0.5
+request_hourly = 0.0909
+instance_hourly = 0.0684
+source = "Architecture section 10.1 usage table: one instance of 1 vCPU and 512 MiB. SSC-086 T9 checks the bill against the two hourly figures. Usage events carry no size, so every app is priced at this one."
+
+[cell.parts.load_balancer]
+usd = 18.25
+created_with = "cell"
+label = "Load balancer and wildcard certificate"
+source = "infra/README.md, the cell entry: about $18.25 a month plus $0.008 per GB (decision 025 rounds it to about $18)."
+
+[cell.parts.nat]
+usd = 4.0
+created_with = "cell"
+label = "Cloud NAT and the fixed IP"
+source = "SSC-087: NAT and fixed IP about $4. Decided 2026-10-03: created at onboarding, so part of the empty cell."
+
+[cell.parts.basics]
+usd = 2.0
+created_with = "cell"
+label = "DNS, KMS, registry, bucket and logs"
+source = "Decision 022, amendment 2026-10-01: DNS, KMS, registry, bucket and logs about $2. The bill's Cloud Logging line is shown as not attributed, not as fixed."
+
+[cell.parts.database]
+usd = 13.0
+created_with = "database"
+label = "Cloud SQL db-f1-micro, zonal"
+source = "Decision 025 and infra/README.md flag table: about $13. Equals ssc_contracts.cells.MONTHLY_USD (the console's figure)."
+
+[cell.parts.proxy]
+usd = 7.0
+created_with = "egress"
+label = "Egress proxy, one e2-micro"
+source = "SSC-053 and infra/README.md flag table: the machine $7. Equals ssc_contracts.cells.MONTHLY_USD."
+
+[cell.parts.data_gateway]
+usd = 0.0
+created_with = "connections"
+label = "Data gateway and file broker at minimum 0"
+source = "infra/README.md flag table and SSC-087: usage only, no fixed cost. Equals ssc_contracts.cells.MONTHLY_USD."
+
+[cell.stated]
+empty = 23.0
+database = 36.0
+full = 43.0
+source = "SSC-096, decided 2026-10-03: with NAT at onboarding about $23 empty, $36 with a database and $43 full. Architecture section 10 and decision 025 still say $19, $32 and $43, from before that decision."
+
+[platform.ssc-control-prod]
+stated = 70.0
+in_target = true
+source = "infra/README.md, control plane, Cost a month (SSC-064): about $70. Architecture section 10 budgets $75 for it."
+parts = [
+  { name = "worker", usd = 30.0, service = "Cloud Run", source = "infra/README.md: one worker-pool instance, 1 vCPU 512 MiB, always on." },
+  { name = "api_minimum_instance", usd = 10.0, service = "Cloud Run", source = "infra/README.md: the API's idle minimum instance." },
+  { name = "database", usd = 10.0, service = "Cloud SQL", source = "infra/README.md: Cloud SQL about $10." },
+  { name = "entry", usd = 18.25, service = "Networking", source = "infra/README.md: the entry, about $18.25 plus $0.008 per GB." },
+  { name = "secrets", usd = 0.42, service = "Secret Manager", source = "infra/README.md: secrets $0.42." },
+]
+
+[platform.ssc-control-staging]
+stated = 40.0
+in_target = false
+source = "infra/README.md, control plane, Cost a month (SSC-064): staging without the entry about $40; with it about $59. Edit the parts if public_stage moves the entry here."
+parts = [
+  { name = "worker", usd = 30.0, service = "Cloud Run", source = "infra/README.md: one worker-pool instance, always on." },
+  { name = "database", usd = 10.0, service = "Cloud SQL", source = "infra/README.md: Cloud SQL about $10." },
+  { name = "secrets", usd = 0.42, service = "Secret Manager", source = "infra/README.md: secrets $0.42." },
+]
+
+[services]
+"Cloud Run" = "apps"
+"Networking" = "fixed"
+"Compute Engine" = "fixed"
+"Cloud SQL" = "fixed"
+"Cloud Key Management Service (KMS)" = "fixed"
+"Cloud DNS" = "fixed"
+"Artifact Registry" = "fixed"
+"Cloud Storage" = "fixed"
+"Certificate Manager" = "fixed"
+"Secret Manager" = "fixed"
+"Cloud Build" = "unattributed"
+"Cloud Logging" = "unattributed"
+"Cloud Monitoring" = "unattributed"
+
+[target]
+per_app_low = 4.50
+per_app_high = 7.10
+source = "Architecture section 10: ten customers and 200 apps, about $890 to $1,420 a month, $4.50 to $7.10 per app (platform prod and cells, before WorkOS)."
+
+[split]
+rare = 0.70
+daily = 0.20
+heavy = 0.10
+source = "Founder's workload assumption, 2026-10-02 (architecture section 10.1): 140 rare, 40 daily of which 20 session apps, 20 heavy. Session apps count as daily here."
+
+[scenario]
+customers = 10
+apps = 200
+rare_apps = 140
+daily_apps = 20
+session_apps = 20
+heavy_apps = 20
+session_hours = [88.0, 176.0]
+heavy_busy = [0.10, 0.25]
+heavy_gib = 1.0
+rare_seconds = [7800.0, 19500.0]
+daily_usd = 2.0
+cells_without_proxy = [4, 0]
+source = "Architecture section 10, the ten-customer table. Low: 4 hours of sessions a weekday (88 h), heavy apps a tenth busy, four cells without a proxy. High: 8 hours (176 h), a quarter busy, every cell full. Rare apps: 20 to 50 opens a day of 13 seconds. Daily API apps: a few dollars each."
+
+[scenario.stated]
+platform_prod = [75.0, 75.0]
+cells_fixed = [367.0, 437.0]
+gateway = [80.0, 160.0]
+rare = [28.0, 42.0]
+session = [160.0, 320.0]
+daily = [40.0, 40.0]
+heavy = [140.0, 348.0]
+total = [890.0, 1420.0]
+per_app = [4.50, 7.10]

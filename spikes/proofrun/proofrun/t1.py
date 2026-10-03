@@ -11,10 +11,10 @@ import argparse
 import re
 from typing import Final
 
+from proofrun import cost
 from proofrun.common import REPO, Outcome, Run, last_line, run_command
 
 DAILY_LIMIT_USD: Final = 1.0
-EMPTY_CELL_MONTH_USD: Final = 23.0
 DAYS_PER_MONTH: Final = 30.4
 _COUNT: Final = re.compile(r"(\d+) resources compared, (\d+) difference\(s\)")
 _LEFT_OUT: Final = re.compile(r"flags differ, their resources left out: (.+)")
@@ -25,9 +25,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     diff = sub.add_parser("diff", help="cell_diff between the full and the empty cell")
     diff.add_argument("full", help="cell 1's label (every flag on)")
     diff.add_argument("empty", help="cell 2's label (every flag off)")
-    cost = sub.add_parser("cost", help="the empty cell's cost per day")
-    cost.add_argument("--usd", type=float, required=True, help="cost before credits, whole days")
-    cost.add_argument("--days", type=float, required=True)
+    price = sub.add_parser("cost", help="the empty cell's cost per day")
+    price.add_argument("--usd", type=float, required=True, help="cost before credits, whole days")
+    price.add_argument("--days", type=float, required=True)
 
 
 def read_diff(returncode: int, stdout: str, stderr: str) -> Outcome:
@@ -65,7 +65,7 @@ def daily_cost(usd: float, days: float) -> Outcome:
         per_day < DAILY_LIMIT_USD,
         [
             f"${usd:.2f} over {days:g} day(s), before credits",
-            f"implies ${month:.2f} a month against the model's ${EMPTY_CELL_MONTH_USD:.0f}",
+            f"implies ${month:.2f} a month against the model's ${cost.EMPTY_CELL_MONTH_USD:.0f}",
         ],
         {"per_day_usd": round(per_day, 4), "month_usd": round(month, 2)},
     )
