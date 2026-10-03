@@ -4,7 +4,7 @@ Pulumi in Python for SSC on Google Cloud (SSC-013, decisions 021, 022 and 025). 
 
 | Stack | What it holds |
 | --- | --- |
-| `platform` | Folders `ssc-cells/{prod,staging}` and `ssc-sandbox`, with logs in `us-central1`. The location policy on `ssc-platform`, the cell policy table on `ssc-cells` and the public-invoker tag (SSC-095). `ssc-control-staging` and its `ssc-control` identity. The folder rule denying secret reads. Just-in-time staff access. The $250 monthly budget. The public DNS zones `delimitusapps.com.` and `delimitus.com.` in `ssc-platform-0`. |
+| `platform` | Folders `ssc-cells/{prod,staging}` and `ssc-sandbox`, with logs in `us-central1`. The location policy on `ssc-platform`, the cell policy table on `ssc-cells` and the public-invoker tag (SSC-095). The control projects `ssc-control-<stage>`, their four identities and, for each stage in `control_stages`, the control plane (SSC-064: API, worker, auth host, database, secrets; the public hosts in `public_stage`). The folder rule denying secret reads. Just-in-time staff access. The $250 monthly budget. The public DNS zones `delimitusapps.com.` and `delimitus.com.` in `ssc-platform-0`. |
 | `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build`, `ssc-data` and `ssc-secret-intake`, KMS, bucket, Artifact Registry, the VPC with its firewall floor, DNS sinkhole and the empty database zone `ssc-sql`, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests), the cell agent and the secret intake behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
 
 The lazy flags are turned on by the cell deployer when the control plane asks (SSC-087, below). The operator can still set any flag by hand.
@@ -55,7 +55,7 @@ Apps carry no tag, so an app reaches the two reserved addresses (a dead end unti
 
 **Why apps stay blocked.** A response policy belongs to the whole VPC: Cloud DNS cannot answer the apps subnet differently from the gateway subnet, so an app resolves the two platform hosts too. Resolving is not reaching. Their addresses are public, no allow rule names them for an untagged source, so `egress-deny-all` drops the packet; and the apps subnet is not behind the NAT, so there would be no route out even if a rule were wrong. The probe checks it: the probe runner job sets `PROBE_EGRESS_HOSTS` to the two hosts, and `no_direct_egress` dials each on 443 from the app, as well as its five fixed attempts (tcp 443 and 80, udp 53 and 443, IPv6).
 
-Keep `auth` and `keys` as A records. Neither record is in the platform stack yet; a CNAME to a name outside the bypass lists may be answered with the sinkhole.
+Keep `auth` and `keys` as A records. The platform stack writes both, with `api`, to the control plane's entry address (Control plane, below); a CNAME to a name outside the bypass lists may be answered with the sinkhole.
 
 **What SSC-053 must do** (the proxy machine; nothing here blocks it):
 - Run the proxy at the reserved address 10.20.4.10, listening on tcp 3128, with its health check on the same port. The ingress rules (`ingress-proxy`, `ingress-proxy-health`) and `PROXY_PORT` already say so; a different port changes `PROXY_PORT` only.
@@ -90,7 +90,7 @@ The control plane turns on a cell's `database`, `egress` or `connections` flag w
 - **Trigger.** In the control plane, the job `cell:create_resource` (`ssc_control/cell/`), one per cell and resource. It is asked for by the first deploy whose manifest has `[state] postgres = true` (database), the first approved internet host (egress), the first approved data source (connections), or an org admin (`POST /v1/cell/resources/{resource}/enable`, audited). A second request joins the one in flight. Each request, success and failure is an audit row (`cell.resource_requested`, `cell.resource_ready`, `cell.resource_failed`). Nothing turns a flag off: removing a resource is a runbook step.
 - **Runner.** The Cloud Run job `ssc-cell-deployer` in `ssc-platform-0`, image `infra/deployer/Dockerfile`, running `python -I -m ssc_infra.deployer <cell label> <database|egress|connections>` as `ssc-cell-deployer@ssc-platform-0.iam.gserviceaccount.com`. It reads the config the stack was last applied with (the stack's `config` output), sets the one flag to `true` and runs `pulumi up` on that one stack. It refuses any third argument, any flag outside the three, a malformed label and any environment variable it does not expect, and gives Pulumi an environment of its own. A run killed halfway is converged by the next one: a state lock older than 3 hours is cancelled, and a create Pulumi never saw finish is imported or dropped.
 - **Deployer roles.** On `ssc-cells`: `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.networkUser`, `iam.serviceAccountUser`, `resourcemanager.tagUser`, `run.admin`. In `ssc-platform-0`: `storage.objectAdmin` on the state bucket, `cloudkms.cryptoKeyEncrypterDecrypter` on the secrets key, `serviceusage.serviceUsageConsumer`. Also the public-invoker tag (above), the apps zone's record writer, and in each cell the custom role `sscDeployerRecords` (record permissions only) on the zone `ssc-sql` alone, which the cell stack grants at onboarding so the `database` flag can write the database's record. No billing, project-creation, deny-rule, IAM or secret-value role.
-- **The control plane's part.** `ssc-control` holds `run.jobsExecutorWithOverrides` and `run.viewer` on that one job, nothing more. It starts a run with exactly two arguments, a cell label and a resource, and reads how the run went. Worker settings: `SSC_CELL_DEPLOYER=cloud_run` and `SSC_CELL_DEPLOYER_JOB=projects/ssc-platform-0/locations/us-central1/jobs/ssc-cell-deployer` (unset means none, and a lazy resource fails with `CELL_DEPLOYER_UNAVAILABLE`; `fake` only in `dev` and `test`).
+- **The control plane's part.** The worker, which runs the cell jobs, holds `run.jobsExecutorWithOverrides` and `run.viewer` on that one job, nothing more: `ssc-control-worker` of each control project (SSC-064; it was `ssc-control` before). It starts a run with exactly two arguments, a cell label and a resource, and reads how the run went. Worker settings: `SSC_CELL_DEPLOYER=cloud_run` and `SSC_CELL_DEPLOYER_JOB=projects/ssc-platform-0/locations/us-central1/jobs/ssc-cell-deployer` (unset means none, and a lazy resource fails with `CELL_DEPLOYER_UNAVAILABLE`; `fake` only in `dev` and `test`).
 - **The operator's access** is unchanged.
 
 **Why this keeps the control plane without a path to app data.** The control plane gains no role in any cell. It cannot choose what the deployer applies, only which cell and which of three flags, and the deployer's code, image and identity are not the control plane's to change. The flag turns on the same resources the operator would, from the same program, so a compromised control plane can at worst create a database, a proxy or a data gateway that a cell was going to have anyway, and pay for it.
@@ -105,7 +105,7 @@ The control plane turns on a cell's `database`, `egress` or `connections` flag w
 1. `pulumi up --stack platform`: the identity, its roles and the registry.
 2. Build and push `infra/deployer/Dockerfile` (from the repository root) to `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-cell-deployer`, then `pulumi config set --stack platform deployer_image <image@digest>` and `pulumi up --stack platform` again: the job and the control plane's grants.
 3. Re-apply each existing cell once (`pulumi up --stack c-<label>`) so its state exports `config`.
-4. Set the two worker settings above on the control plane.
+4. The platform stack sets the two worker settings above on the control plane's worker once `deployer_image` is set (SSC-064).
 5. Deploy a stateful app into an empty staging cell, then run `cell_diff` and `pulumi preview --stack c-<label> --expect-no-changes`.
 
 ## Builds
@@ -215,7 +215,7 @@ pulumi config set --stack c-<label> gateway_jwks "$(cat jwks.json)"
 pulumi up --stack c-<label>
 ```
 
-The first `pulumi up` creates the key on a cell made before it. Still live-only: Cloud Run accepting the gateway's ID token for an app's `run.app` URL (T3), the cold start (T7), the browser suite (SSC-029), and the `auth` and `keys` records in the `delimitus` zone, whose target addresses do not exist yet.
+The first `pulumi up` creates the key on a cell made before it. Still live-only: Cloud Run accepting the gateway's ID token for an app's `run.app` URL (T3), the cold start (T7), the browser suite (SSC-029), and the `auth` and `keys` records in the `delimitus` zone, which exist once the control plane's public stage is applied (Control plane, below).
 
 ## Public entry
 
@@ -230,13 +230,56 @@ Each cell has its own door (SSC-088), created at onboarding with no flag:
 - The cell agent's ingress is internal and load balancer too, and its invoker is still only the control plane's identity. Its custom audience is `https://ssc--agent.<label>.delimitusapps.com`, so an ID token for that URL is accepted through the load balancer; its `run.app` host is closed. No slug can claim the agent host: slugs never contain `--`.
 - The secret intake's ingress is internal and load balancer, and its invoker is `allUsers` under the same tag as the gateway (Secrets, below).
 
-The cell stack exports `entry_address`, `public_host_suffix` (`<label>.delimitusapps.com`), `certificate_id`, `agent_host`, `agent_url`, `intake_host` and `intake_url`. `agent_url` is `https://ssc--agent.<label>.delimitusapps.com`, the URL the control plane calls and the audience of its ID token; it was the agent's `run.app` URL before SSC-095. Set `SSC_CELL_AGENT_URL` (worker and API) and the GitHub variable `SSC_PROBE_AGENT_URL` (nightly) to it. `intake_url` is `https://ssc--secrets.<label>.delimitusapps.com`; set `SSC_SECRET_INTAKE_URL` (API) to it.
+The cell stack exports `entry_address`, `public_host_suffix` (`<label>.delimitusapps.com`), `certificate_id`, `agent_host`, `agent_url`, `intake_host` and `intake_url`. `agent_url` is `https://ssc--agent.<label>.delimitusapps.com`, the URL the control plane calls and the audience of its ID token; it was the agent's `run.app` URL before SSC-095. The platform stack sets `SSC_CELL_AGENT_URL` (worker and API) to it from `cell_label` (SSC-064); set the GitHub variable `SSC_PROBE_AGENT_URL` (nightly) to it. `intake_url` is `https://ssc--secrets.<label>.delimitusapps.com`, which the platform stack sets as `SSC_SECRET_INTAKE_URL` (API) the same way.
 
-**Zones and the registrar step.** The platform stack owns two public zones in `ssc-platform-0`: `delimitusapps` (`delimitusapps.com.`, the cells' records) and `delimitus` (`delimitus.com.`, for `api`, `auth` and `keys`, whose records come later). Both are protected from deletion. A cell stack runs as the operator, who may write records in the apps zone only, through the custom role `sscZoneRecords` granted on that zone. After `pulumi up --stack platform`, the founder sets each domain's name servers at the registrar from `pulumi stack output apps_zone_name_servers` and `platform_zone_name_servers`, and deletes the domain's DS records there. Both domains still carry DS records from zones that no longer exist; with them left in place, validating resolvers fail every lookup and no certificate is issued. The `.com` delegation is cached for up to 48 hours, so do this well before the first cell.
+**Zones and the registrar step.** The platform stack owns two public zones in `ssc-platform-0`: `delimitusapps` (`delimitusapps.com.`, the cells' records) and `delimitus` (`delimitus.com.`, for `api`, `auth` and `keys`, whose A records the control plane's entry writes). Both are protected from deletion. A cell stack runs as the operator, who may write records in the apps zone only, through the custom role `sscZoneRecords` granted on that zone. After `pulumi up --stack platform`, the founder sets each domain's name servers at the registrar from `pulumi stack output apps_zone_name_servers` and `platform_zone_name_servers`, and deletes the domain's DS records there. Both domains still carry DS records from zones that no longer exist; with them left in place, validating resolvers fail every lookup and no certificate is issued. The `.com` delegation is cached for up to 48 hours, so do this well before the first cell.
 
 **DNSSEC** is off on both zones for now. Turning it on later is a zone setting plus a new DS record at the registrar.
 
 **Certificate issue time.** Google issues the certificate once the authorisation CNAME resolves publicly, usually within minutes; the done-when allows 30 minutes from the record. Until then the HTTPS rule answers with a TLS failure. `entry_probe` waits up to 30 minutes and prints how long it took.
+
+## Control plane
+
+The platform stack runs the control plane in `ssc-control-<stage>` for each stage named in `control_stages` (SSC-064, `ssc_infra/control.py`). The live runbook is `docs/runbooks/ssc-064-control-plane.md`.
+
+- **Settings** (platform stack config):
+  - `control_stages`: a list, `["prod"]`, `["staging"]` or both. Unset or empty: no control plane, only the staging project and its identities, as before. `ssc-control-prod` is made only once `prod` is named.
+  - `public_stage`: the stage that holds `api`, `auth` and `keys.delimitus.com`; defaults to `prod` when named, else `staging`. One stage at a time: the three hosts have one A record each.
+  - `control_image`, `auth_jwks`, `auth_signing_kid`: the release, all or none. `control_image` is a build of `packages/ssc_control/Dockerfile` pinned by digest in `ssc-platform`; `auth_jwks` is the auth host's public JWKS and must hold `auth_signing_kid`. Until they are set every service runs the placeholder image with no settings, the worker pool runs no instance and there is no migration job.
+  - `cell_label`, `cell_jwks`: the one cell until placement, both or neither. `cell_jwks` is that cell stack's `identity_jwks` output. Every per-cell setting derives from the label through `naming`: the agent and intake URLs, the cell bucket and the issuer `https://keys.delimitus.com/<label>`. The cell's `sql_instance` output is not used: the control plane talks to the cell's database only through the agent, and the agent's own `SSC_SQL_INSTANCE` is the cell stack's.
+  - `worker_instances`: the worker pool's instance count, 1 by default.
+- **Processes**, one account each, all from one image:
+
+  | Process | Cloud Run | Account | Command |
+  | --- | --- | --- | --- |
+  | API | service `ssc-api`, request-billed, min 0 in staging and 1 in prod, max 3 | `ssc-control` | `python -m ssc_control.api` |
+  | Auth host | service `ssc-auth`, request-billed, min 0, max 2 | `ssc-auth` | `python -m ssc_control.identity serve` |
+  | Worker | worker pool `ssc-worker`, manual scaling, `worker_instances` | `ssc-control-worker` | `python -m ssc_control.worker` |
+  | Migrations | job `ssc-control-migrate`, run by the operator | `ssc-control-migrate` | `ssc_control.db.migrate.upgrade` |
+
+  The services' ingress is internal and load balancer. Each has 1 vCPU and 512 MiB.
+- **Worker.** Procrastinate polls the database, so the worker cannot scale to zero on requests; it runs always-on in a worker pool. One instance of 1 vCPU and 512 MiB at the worker-pool rates ($0.0000108 per vCPU-second, $0.0000012 per GiB-second) is about $30 a month.
+- **Database.** Cloud SQL `ssc-control`, Postgres 18 on `db-f1-micro`, `max_connections=50`, database `ssc`, protected from deletion, point-in-time recovery in prod. It has a public address with no authorised network, and both `connector_enforcement=REQUIRED` and client certificates are required, so only the Cloud SQL connector reaches it. Every process mounts it at `/cloudsql`, and each account holds `cloudsql.client`. The roles `ssc_app` and `ssc_migrate` are made by the operator, so no password is in state.
+- **Secrets.** Each is an empty container in `us-central1`, and the operator adds every version. Each is readable only by the accounts that take it, granted on the secret:
+
+  | Secret | Read by |
+  | --- | --- |
+  | `SSC_DATABASE_DSN` | API, worker, auth host |
+  | `SSC_MIGRATE_DSN` | migrations |
+  | `SSC_METRICS_KEY` | API, worker |
+  | `SSC_WORKOS_API_KEY`, `SSC_WORKOS_CLIENT_ID` | worker (directory sync), auth host |
+  | `SSC_AUTH_SIGNING_KEY`, `SSC_AUTH_STATE_KEY` | auth host |
+
+  Services read `latest` at start, so a new version needs a new revision. The cell deny rule names all four accounts of every control project.
+- **Blobs.** The private bucket `ssc-control-<stage>-blobs`, with signed URLs only. The API and the worker each hold `storage.objectUser` there and sign as themselves (`iam.serviceAccountTokenCreator` on their own account).
+- **Entry**, in the public stage only. A global external Application Load Balancer on the address `ssc-control-entry`, with HTTPS on 443 and a redirect on 80. The SSL policy requires TLS 1.2 and the `MODERN` profile. The URL map sends `api` to `ssc-api`, `auth` to `ssc-auth`, and `keys` to the backend bucket `ssc-keys`. One Google-managed certificate names the three hosts. The three A records go in the `delimitus` zone. The two services' invoker is `allUsers`; the `ssc-platform` folder does not carry the cells' members policy.
+- **Keys.** `keys.delimitus.com/<label>/jwks.json` is the object `<label>/jwks.json` in the bucket `ssc-control-<stage>-keys`, whose objects are public. It is written from `cell_jwks`, which the stack refuses if it has a private member, and is served with `Cache-Control: public, max-age=300`. The gateway reaches `auth` and `keys` through the cell's two bypass rules and its NAT.
+- **Who calls the cells.** Two accounts. The API calls the agent and mints intake grants, so the intake's `SSC_CONTROL_SA` stays `ssc-control`. The worker calls the agent for runtime, builds and databases, uses the cell bucket and starts the deployer. The cell stack reads `control_workers` from the platform stack and grants the worker `run.invoker` on the agent (`agent-invoker-worker`) and `storage.objectUser` on the cell bucket (`bucket-control-worker`), so apply the platform stack before the cells. A cell trusts the accounts of `control_public_stage` whatever its own stage, because that control plane serves its gateway's login and keys; with no public stage, its own stage's (`cell.control_for`). Re-apply each cell after the public stage first appears or moves.
+- **Outputs.** The stack exports:
+  - `control_service_accounts` (the API's), `control_workers` and `control_accounts`, per stage;
+  - `control_sql_instances`, the connection names;
+  - `control_public_stage` and `control_entry_address`, once a public stage exists.
+- **Cost a month.** Prod, with the entry: worker $30, Cloud SQL about $10, entry $18.25, the API's idle minimum instance about $10, secrets $0.42, so about $70 against $75. Staging without the entry is about $40 against $40. With the entry it is about $59, so keep the entry in prod. Set `worker_instances` to 0 to stop a stage's worker.
 
 ## Organisation policies
 

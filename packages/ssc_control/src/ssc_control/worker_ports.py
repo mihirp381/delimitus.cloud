@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.cell.deployer import CellDeployer
 from ssc_control.deploy.build_driver import BuildDriver
+from ssc_control.identity.workos import WorkOSClient
 from ssc_control.ports import (
     MetricsPort,
     NullMetricsPort,
@@ -49,7 +50,8 @@ class Ports:
     with ``dispatch_unavailable``. ``cell_deployer`` None fails a lazy cell resource with
     ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087). ``app_databases`` None fails the first deployment
     of an environment that declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040).
-    ``app_identity`` None gives apps no identity keys and no origin (SSC-018)."""
+    ``app_identity`` None gives apps no identity keys and no origin (SSC-018). ``directory`` None
+    skips the directory sync (SSC-064)."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -66,6 +68,7 @@ class Ports:
     cell_deployer: CellDeployer | None = None
     app_databases: AppDatabases | None = None
     app_identity: AppIdentity | None = None
+    directory: WorkOSClient | None = None
 
 
 class PortsMissingError(RuntimeError):

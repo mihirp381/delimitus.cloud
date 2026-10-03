@@ -30,6 +30,9 @@ PLATFORM_STACK: Final = "platform"
 CELL_STACK_PREFIX: Final = "c-"
 
 CONTROL_SA: Final = "ssc-control"
+CONTROL_WORKER_SA: Final = "ssc-control-worker"
+AUTH_SA: Final = "ssc-auth"
+MIGRATE_SA: Final = "ssc-control-migrate"
 CELL_LABEL_KEY: Final = "ssc-cell"
 APP_PREFIX: Final = "ssc-a-"
 PROBE_SECRET: Final = f"{APP_PREFIX}probe"
@@ -74,8 +77,10 @@ SQL_INSTANCE_ENV: Final = "SSC_SQL_INSTANCE"
 
 APPS_DOMAIN: Final = "delimitusapps.com"
 PLATFORM_DOMAIN: Final = "delimitus.com"
+API_HOST: Final = f"api.{PLATFORM_DOMAIN}"
 AUTH_HOST: Final = f"auth.{PLATFORM_DOMAIN}"
 KEYS_HOST: Final = f"keys.{PLATFORM_DOMAIN}"
+CONTROL_HOSTS: Final = (API_HOST, AUTH_HOST, KEYS_HOST)
 GATEWAY_PLATFORM_HOSTS: Final = (AUTH_HOST, KEYS_HOST)
 APPS_ZONE: Final = "delimitusapps"
 PLATFORM_ZONE: Final = "delimitus"
@@ -93,6 +98,13 @@ def cell_project(label: str) -> str:
 
 def cell_bucket(label: str) -> str:
     return f"{cell_project(label)}-cell"
+
+
+CELL_BUCKET_TEMPLATE: Final = "ssc-c-{cell}-cell"
+
+
+def control_bucket(stage: Stage, purpose: str) -> str:
+    return f"{control_project(stage)}-{purpose}"
 
 
 def cell_stack(label: str) -> str:
@@ -141,6 +153,20 @@ def intake_host(label: str) -> str:
 def intake_url(label: str) -> str:
     """The secret intake's origin through the cell's load balancer, the audience of each grant."""
     return f"https://{intake_host(label)}"
+
+
+def origin(host: str) -> str:
+    return f"https://{host}"
+
+
+def identity_issuer(label: str) -> str:
+    """The ``iss`` of a cell's app identity tokens; ``<this>/jwks.json`` serves its public keys."""
+    return f"https://{KEYS_HOST}/{check_cell_label(label)}"
+
+
+def deployer_job() -> str:
+    """The cell deployer job's full name, as the worker's ``SSC_CELL_DEPLOYER_JOB``."""
+    return f"projects/{BOOTSTRAP_PROJECT}/locations/{REGION}/jobs/{DEPLOYER}"
 
 
 def platform_registry() -> str:

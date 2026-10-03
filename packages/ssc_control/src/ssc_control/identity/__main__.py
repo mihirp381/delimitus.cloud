@@ -2,8 +2,8 @@
 
 * ``serve [--host H] [--port P]``: the auth host (settings: ``identity.settings``).
 * ``sync [--org ID] [--loop]``: one directory sync tick for every org with a connection (or one
-  org); ``--loop`` repeats every :data:`INTERVAL_SECONDS` until stopped. Registration in the
-  control-plane worker waits for SSC-017.
+  org); ``--loop`` repeats every :data:`INTERVAL_SECONDS` until stopped. In production the
+  worker runs the same tick every minute (``identity.jobs``).
 * ``connect --org ID --operator ID --workos-org ID --directory ID --sso ID [--sso ID]
   --join-rule idp_id|email [--admin-group ID]``: record an org's directory connection.
 

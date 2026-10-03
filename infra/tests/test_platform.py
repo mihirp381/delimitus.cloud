@@ -156,6 +156,7 @@ def test_only_the_operator_and_the_deployer_may_bind_the_public_invoker_tag(
 
 
 def test_the_folder_deny_rule_names_the_control_plane(declared: list[Declared]) -> None:
+    """Every control-plane account: the API, the worker, the auth host and the migration job."""
     deny = one(declared, "gcp:iam/denyPolicy:DenyPolicy").inputs
     cells = _folders(declared)["ssc-cells"].outputs["folderId"]
     assert deny["parent"] == f"cloudresourcemanager.googleapis.com%2Ffolders%2F{cells}"
@@ -163,7 +164,8 @@ def test_the_folder_deny_rule_names_the_control_plane(declared: list[Declared]) 
     assert rule["deniedPermissions"] == ["secretmanager.googleapis.com/versions.access"]
     assert rule["deniedPrincipals"] == [
         "principal://iam.googleapis.com/projects/-/serviceAccounts/"
-        "ssc-control@ssc-control-staging.iam.gserviceaccount.com"
+        f"{account}@ssc-control-staging.iam.gserviceaccount.com"
+        for account in ("ssc-control", "ssc-control-worker", "ssc-auth", "ssc-control-migrate")
     ]
 
 
@@ -366,7 +368,8 @@ def test_no_deployer_job_until_its_image_is_named(declared: list[Declared]) -> N
     )
 
 
-def test_the_control_plane_may_only_start_the_deployer_job_and_read_it() -> None:
+def test_the_worker_may_only_start_the_deployer_job_and_read_it() -> None:
+    """The worker runs the cell jobs (SSC-087), so it alone starts the job (SSC-064)."""
     declared = run(
         naming.PLATFORM_STACK,
         {"platform_folder_id": PLATFORM_FOLDER, "deployer_image": DEPLOYER_IMAGE},
@@ -380,10 +383,14 @@ def test_the_control_plane_may_only_start_the_deployer_job_and_read_it() -> None
     assert container["image"] == DEPLOYER_IMAGE
     assert "commands" not in container
     assert "args" not in container
-    control = f"serviceAccount:{mockcloud.CONTROL['staging']}"
-    assert _grants_to(declared, control) == {
+    worker = f"serviceAccount:{mockcloud.WORKERS['staging']}"
+    assert _grants_to(declared, worker) == {
         ("cloudrunv2/jobIamMember", "roles/run.jobsExecutorWithOverrides"),
         ("cloudrunv2/jobIamMember", "roles/run.viewer"),
+        ("serviceaccount/iAMMember", "roles/iam.serviceAccountTokenCreator"),
+    }
+    control = f"serviceAccount:{mockcloud.CONTROL['staging']}"
+    assert _grants_to(declared, control) == {
         ("serviceaccount/iAMMember", "roles/iam.serviceAccountTokenCreator"),
     }
 
@@ -395,3 +402,4 @@ def test_the_deployer_is_exported(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exported["cell_deployer"]["job"] == (
         f"projects/{naming.BOOTSTRAP_PROJECT}/locations/{naming.REGION}/jobs/ssc-cell-deployer"
     )
+    assert exported["cell_deployer"]["job"] == naming.deployer_job()

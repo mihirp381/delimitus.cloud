@@ -1,20 +1,21 @@
-"""The ``platform`` stack: folders, folder policies, the staging control identity, the secret-read
-deny rule, just-in-time staff access, the budget (decisions 021 and 022), the public DNS zones
-(SSC-088), the cells' organisation policies with the gateway's public-invoker tag (SSC-095) and
-the cell deployer that turns on a cell's lazy resources (SSC-087).
+"""The ``platform`` stack: folders, folder policies, the control projects and their identities,
+the secret-read deny rule, just-in-time staff access, the budget (decisions 021 and 022), the
+public DNS zones (SSC-088), the cells' organisation policies with the gateway's public-invoker tag
+(SSC-095), the cell deployer that turns on a cell's lazy resources (SSC-087) and the control plane
+itself (SSC-064, ``control.py``).
 
 The ``ssc-platform`` folder and the ``ssc-platform-0`` project that holds this program's state are
 made by ``python -m ssc_infra.bootstrap`` first; this stack takes the folder's ID from config.
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import pulumi
 import pulumi_gcp as gcp
 
+from ssc_infra import control, policies
 from ssc_infra import naming as n
-from ssc_infra import policies
 from ssc_infra.policies import LOCATIONS, PUBLIC_TAG_KEY, PUBLIC_TAG_VALUE, Rule
 
 BUDGET_USD = 250
@@ -48,6 +49,7 @@ DEPLOYER_FOLDER_ROLES = (
     "roles/run.admin",
 )
 DEPLOYER_TIMEOUT = "3600s"
+NIGHTLY_APIS = ("sts.googleapis.com", "iamcredentials.googleapis.com", "logging.googleapis.com")
 
 
 def provider() -> gcp.Provider:
@@ -203,7 +205,7 @@ def _nightly(
             disable_on_destroy=False,
             opts=opts,
         )
-        for api in ("sts.googleapis.com", "iamcredentials.googleapis.com", "logging.googleapis.com")
+        for api in NIGHTLY_APIS
     ]
     after = pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=apis))
     pool = gcp.iam.WorkloadIdentityPool(
@@ -360,13 +362,13 @@ def _deployer_cells(
 
 def _deployer_job(
     deployer: gcp.serviceaccount.Account,
-    control: gcp.serviceaccount.Account,
+    workers: Mapping[str, gcp.serviceaccount.Account],
     image: str | None,
     opts: pulumi.ResourceOptions,
 ) -> None:
     """The job runs ``infra/deployer/Dockerfile`` once ``deployer_image`` names a build of it in
-    this project's registry. The control plane may start it, with its own arguments, and read
-    its executions; nothing else."""
+    this project's registry. Each control plane's worker, which runs the cell jobs, may start it
+    with its own arguments and read its executions; nothing else."""
     gcp.artifactregistry.Repository(
         "platform-registry",
         project=n.BOOTSTRAP_PROJECT,
@@ -403,19 +405,20 @@ def _deployer_job(
         ),
         opts=opts,
     )
-    for name, role in (
-        ("runs", "roles/run.jobsExecutorWithOverrides"),
-        ("reads", "roles/run.viewer"),
-    ):
-        gcp.cloudrunv2.JobIamMember(
-            f"cell-deployer-control-{name}",
-            project=n.BOOTSTRAP_PROJECT,
-            location=n.REGION,
-            name=job.name,
-            role=role,
-            member=control.member,
-            opts=opts,
-        )
+    for stage, worker in workers.items():
+        for name, role in (
+            ("runs", "roles/run.jobsExecutorWithOverrides"),
+            ("reads", "roles/run.viewer"),
+        ):
+            gcp.cloudrunv2.JobIamMember(
+                f"cell-deployer-{stage}-worker-{name}",
+                project=n.BOOTSTRAP_PROJECT,
+                location=n.REGION,
+                name=job.name,
+                role=role,
+                member=worker.member,
+                opts=opts,
+            )
 
 
 def build() -> None:
@@ -438,36 +441,33 @@ def build() -> None:
     }
     sandbox = _folder(n.SANDBOX_FOLDER, n.SANDBOX_FOLDER, org, opts)
 
-    control_project = gcp.organizations.Project(
-        "control-staging",
-        project_id=n.control_project("staging"),
-        name=n.control_project("staging"),
-        folder_id=platform_folder,
-        billing_account=n.BILLING_ACCOUNT,
-        auto_create_network=False,
-        deletion_policy="PREVENT",
-        opts=opts,
-    )
-    iam_api = gcp.projects.Service(
-        "control-staging-iam",
-        project=control_project.project_id,
-        service="iam.googleapis.com",
-        disable_on_destroy=False,
-        opts=opts,
-    )
-    control = gcp.serviceaccount.Account(
-        "control-staging-sa",
-        project=control_project.project_id,
-        account_id=n.CONTROL_SA,
-        display_name="SSC control plane (staging)",
-        opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=[iam_api])),
-    )
+    deployer_image = config.get("deployer_image")
+    cfg = control.read_config(config, deployer=deployer_image is not None)
+    controls = {
+        stage: control.ControlProject(stage, platform_folder, opts)
+        for stage in n.STAGES
+        if stage == "staging" or stage in cfg.stages
+    }
+    staging = controls["staging"]
 
-    nightly = _nightly(control_project.project_id, control, opts)
+    nightly = _nightly(staging.project.project_id, staging.api, opts)
     zones = _zones(
         {"apps-zone-cell-deployer": operator, "apps-zone-deployer": deployer.member}, opts
     )
-    _deployer_job(deployer, control, config.get("deployer_image"), opts)
+    _deployer_job(deployer, {s: c.worker for s, c in controls.items()}, deployer_image, opts)
+    planes = {
+        stage: control.ControlPlane(
+            controls[stage],
+            cfg,
+            pulumi.ResourceOptions.merge(
+                opts, pulumi.ResourceOptions(depends_on=[zones["platform"]])
+            ),
+            enabled=NIGHTLY_APIS if stage == "staging" else (),
+        )
+        for stage in cfg.stages
+    }
+    for plane in planes.values():
+        plane.build()
 
     gcp.iam.DenyPolicy(
         "cells-secret-read",
@@ -478,7 +478,11 @@ def build() -> None:
             gcp.iam.DenyPolicyRuleArgs(
                 description="The control plane only adds versions; apps read their own.",
                 deny_rule=gcp.iam.DenyPolicyRuleDenyRuleArgs(
-                    denied_principals=[sa_principal(control.email)],
+                    denied_principals=[
+                        sa_principal(account.email)
+                        for c in controls.values()
+                        for account in c.accounts.values()
+                    ],
                     denied_permissions=[n.SECRET_READ],
                 ),
             )
@@ -517,14 +521,6 @@ def build() -> None:
         opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=[pam_agent])),
     )
 
-    gcp.serviceaccount.IAMMember(
-        "control-staging-signs-urls",
-        service_account_id=control.name,
-        role="roles/iam.serviceAccountTokenCreator",
-        member=control.member,
-        opts=opts,
-    )
-
     gcp.billing.Budget(
         "ssc-monthly",
         billing_account=n.BILLING_ACCOUNT,
@@ -553,7 +549,16 @@ def build() -> None:
     pulumi.export("cells_folder_id", cells.folder_id)
     pulumi.export("stage_folder_ids", {s: f.folder_id for s, f in stages.items()})
     pulumi.export("sandbox_folder_id", sandbox.folder_id)
-    pulumi.export("control_service_accounts", {"staging": control.email})
+    pulumi.export("control_service_accounts", {s: c.api.email for s, c in controls.items()})
+    pulumi.export("control_workers", {s: c.worker.email for s, c in controls.items()})
+    pulumi.export(
+        "control_accounts",
+        {s: {r: a.email for r, a in c.accounts.items()} for s, c in controls.items()},
+    )
+    pulumi.export("control_sql_instances", {s: p.sql.connection_name for s, p in planes.items()})
+    if cfg.public is not None:
+        pulumi.export("control_public_stage", cfg.public)
+        pulumi.export("control_entry_address", planes[cfg.public].entry_ip.address)
     pulumi.export("nightly_service_account", nightly.email)
     pulumi.export("apps_zone_name_servers", zones["apps"].name_servers)
     pulumi.export("platform_zone_name_servers", zones["platform"].name_servers)
@@ -563,6 +568,6 @@ def build() -> None:
         "cell_deployer",
         {
             "service_account": deployer.email,
-            "job": f"projects/{n.BOOTSTRAP_PROJECT}/locations/{n.REGION}/jobs/{n.DEPLOYER}",
+            "job": n.deployer_job(),
         },
     )

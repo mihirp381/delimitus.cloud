@@ -7,19 +7,19 @@ checks exactly that.
 
 import base64
 import binascii
-import json
 import re
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 from ipaddress import ip_network
 from pathlib import Path
-from typing import Final, cast
+from typing import Final
 
 import pulumi
 import pulumi_gcp as gcp
 
 from ssc_infra import naming as n
+from ssc_infra.control import PINNED_IMAGE, PLACEHOLDER_IMAGE, public_jwks_kids
 from ssc_infra.platform import BUDGET_THRESHOLDS, ZONE_RECORD_PERMISSIONS, provider, sa_principal
 from ssc_shared.runtime import service_name
 
@@ -79,7 +79,6 @@ SQL_MAX_CONNECTIONS: Final = "25"
 SQL_CA_MODE: Final = "GOOGLE_MANAGED_CAS_CA"
 SQL_DNS_ZONE: Final = "sql.goog."
 SQL_DNS_NAMES: Final = f"*.{SQL_DNS_ZONE}"
-PLACEHOLDER_IMAGE: Final = "us-docker.pkg.dev/cloudrun/container/hello"
 GOOGLE_DNS_PASSTHRU: Final = (
     "googleapis.com.",
     "*.googleapis.com.",
@@ -126,12 +125,8 @@ DATABASE_PERMISSIONS: Final = (
     "cloudsql.databases.delete",
 )
 BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
-PINNED_IMAGE: Final = re.compile(
-    rf"{re.escape(n.platform_registry())}(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{{64}}"
-)
 GATEWAY_SETTINGS: Final = ("gateway_image", "gateway_keyring", "gateway_jwks", "org_id")
 CUSTOMER_ORG: Final = re.compile(r"org_[a-z0-9]{20}")
-PRIVATE_JWK_MEMBERS: Final = frozenset({"d", "p", "q", "dp", "dq", "qi", "k"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,18 +268,8 @@ def gateway_settings(
 
 def _check_public_jwks(jwks: str) -> None:
     """A JWKS of named keys with no private member, as ``python -m ssc_edge.keys jwks`` prints."""
-    problem = ValueError("gateway_jwks must be the public JWKS of the gateway keyring")
-    try:
-        doc: object = json.loads(jwks)
-    except ValueError:
-        raise problem from None
-    keys = cast(dict[str, object], doc).get("keys") if isinstance(doc, dict) else None
-    if not isinstance(keys, list) or not keys:
-        raise problem
-    for key in cast(list[object], keys):
-        members = set(cast(dict[str, object], key)) if isinstance(key, dict) else set[str]()
-        if "kid" not in members or PRIVATE_JWK_MEMBERS & members:
-            raise problem
+    if public_jwks_kids(jwks) is None:
+        raise ValueError("gateway_jwks must be the public JWKS of the gateway keyring")
 
 
 def _int_or(value: int | None, default: int) -> int:
@@ -299,10 +284,13 @@ def app_condition(kind: str) -> gcp.projects.IAMMemberConditionArgs:
     )
 
 
-def control_for(accounts: dict[str, str], stage: n.Stage) -> str:
-    if stage not in accounts:
-        raise ValueError(f"the platform stack has no {stage} control plane yet")
-    return accounts[stage]
+def control_for(accounts: dict[str, str], stage: n.Stage, public: str | None = None) -> str:
+    """The control account a cell trusts: the public stage's, which serves the cell's login and
+    keys (SSC-064), else the cell's own stage's."""
+    trusted = public or stage
+    if trusted not in accounts:
+        raise ValueError(f"the platform stack has no {trusted} control plane yet")
+    return accounts[trusted]
 
 
 class Cell:
@@ -382,9 +370,13 @@ class Cell:
             )
             for api in APIS
         ]
-        self.control_sa = self.platform.require_output("control_service_accounts").apply(
-            lambda m: control_for(m, cfg.stage)
-        )
+        public = self.platform.get_output("control_public_stage")
+        self.control_sa = pulumi.Output.all(
+            self.platform.require_output("control_service_accounts"), public
+        ).apply(lambda a: control_for(a[0], cfg.stage, a[1]))
+        self.control_worker = pulumi.Output.all(
+            self.platform.require_output("control_workers"), public
+        ).apply(lambda a: control_for(a[0], cfg.stage, a[1]))
 
     def budget(self) -> None:
         """An alert on the cell project itself, sized to a full cell (A7)."""
@@ -996,6 +988,11 @@ class Cell:
                 pulumi.Output.concat("serviceAccount:", self.control_sa),
                 "roles/storage.objectUser",
             ),
+            (
+                "bucket-control-worker",
+                pulumi.Output.concat("serviceAccount:", self.control_worker),
+                "roles/storage.objectUser",
+            ),
             ("bucket-gateway", self.gateway_sa.member, "roles/storage.objectViewer"),
             ("bucket-agent", self.agent_sa.member, "roles/storage.objectViewer"),
         ):
@@ -1131,7 +1128,7 @@ class Cell:
             "SSC_IDENTITY_JWKS": cfg.gateway_jwks,
             "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
             "SSC_AUTH_URL": f"https://{n.AUTH_HOST}",
-            "SSC_IDENTITY_ISSUER": f"https://{n.KEYS_HOST}/{cfg.label}",
+            "SSC_IDENTITY_ISSUER": n.identity_issuer(cfg.label),
         }
 
     def entry(self) -> None:
@@ -1311,9 +1308,10 @@ class Cell:
         """Runs ``python -m ssc_agent`` (decision 014) once ``agent_image`` names a build of
         ``packages/ssc_agent/Dockerfile`` in the cell's ``ssc-platform`` repository. Reached only
         through the cell's load balancer on its reserved host, and invoked only by the control
-        plane, with an ID token whose audience is that host's URL (SSC-095). With both build images
-        set it runs builds in the cell's Cloud Build as ``ssc-build`` (SSC-015); with the
-        ``database`` flag it makes app databases on the cell's instance (SSC-040)."""
+        plane's API and worker (SSC-064), with an ID token whose audience is that host's URL
+        (SSC-095). With both build images set it runs builds in the cell's Cloud Build as
+        ``ssc-build`` (SSC-015); with the ``database`` flag it makes app databases on the cell's
+        instance (SSC-040)."""
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
             "SSC_CELL_REGION": n.REGION,
@@ -1350,15 +1348,19 @@ class Cell:
             member=self.agent_sa.member,
             opts=self._o(),
         )
-        gcp.cloudrunv2.ServiceIamMember(
-            "agent-invoker",
-            project=self.pid,
-            location=n.REGION,
-            name=self.agent_.name,
-            role="roles/run.invoker",
-            member=pulumi.Output.concat("serviceAccount:", self.control_sa),
-            opts=self._o(),
-        )
+        for name, account in (
+            ("agent-invoker", self.control_sa),
+            ("agent-invoker-worker", self.control_worker),
+        ):
+            gcp.cloudrunv2.ServiceIamMember(
+                name,
+                project=self.pid,
+                location=n.REGION,
+                name=self.agent_.name,
+                role="roles/run.invoker",
+                member=pulumi.Output.concat("serviceAccount:", account),
+                opts=self._o(),
+            )
 
     def secret_intake(self) -> None:
         """Runs ``python -m ssc_agent.intake`` from ``agent_image`` (SSC-026): the one door a
