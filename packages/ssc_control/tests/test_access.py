@@ -70,6 +70,7 @@ from ssc_control.snapshot.service import COMPILE_TASK, Snapshots, compile_lock, 
 from ssc_control.worker import build_app, queue_conninfo
 from ssc_control.worker_ports import PORTS_KEY, Ports
 from ssc_shared.access import ViewHolder, decide
+from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
 from ssc_shared.snapshot_feed import SnapshotFeed
@@ -1192,6 +1193,40 @@ def test_heartbeats_acknowledge_published_versions(
     assert asyncio.run(confirmed(version)) is False
     assert heartbeat(client, world, "cellwxyz", version).status_code == 200
     assert asyncio.run(confirmed(version)) is True
+
+
+def test_the_pointer_confirms_with_no_heartbeat(world: World, dsns: Dsns, tmp_path: Path) -> None:
+    """The on-demand gateway sends no heartbeat: ``latest.json`` in the org's own cell bucket
+    naming the version, or a later one, confirms it."""
+    with psycopg.connect(dsns.superuser) as conn:
+        row = conn.execute("select cell_label from ssc.org where id = %s", (world.org,)).fetchone()
+    assert row is not None
+    label = row[0]
+    mine, other = blob_store(tmp_path / "mine"), blob_store(tmp_path / "other")
+
+    def cells(cell: str) -> BlobStore:
+        return mine if cell == label else other
+
+    async def confirmed(version: int, **stores: Any) -> bool:
+        engine = make_engine(dsns.app)
+        try:
+            return await Snapshots(engine, **stores).confirmed(world.org, version)
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(confirmed(1, blob_store=mine)) is False
+    version, _ = asyncio.run(publish_now(dsns.app, world.org, mine))
+    assert asyncio.run(confirmed(version)) is False
+    assert asyncio.run(confirmed(version, blob_store=mine)) is True
+    assert asyncio.run(confirmed(version - 1, cell_stores=cells)) is True
+    assert asyncio.run(confirmed(version + 1, cell_stores=cells)) is False
+    assert asyncio.run(confirmed(version, blob_store=other)) is False
+    with psycopg.connect(dsns.superuser) as conn:
+        conn.execute(
+            "update ssc.org set cell_label = %s where id = %s",
+            (f"c{uuid.uuid4().hex[:7]}", world.org),
+        )
+    assert asyncio.run(confirmed(version, cell_stores=cells)) is False
 
 
 # ── migration 0009 ───────────────────────────────────────────────────────────

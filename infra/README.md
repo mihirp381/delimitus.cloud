@@ -249,7 +249,7 @@ pulumi config set --stack c-<label> gateway_jwks "$(cat jwks.json)"
 pulumi up --stack c-<label>
 ```
 
-The first `pulumi up` creates the key on a cell made before it. Still live-only: Cloud Run accepting the gateway's ID token for an app's `run.app` URL (T3), the cold start (T7), the browser suite (SSC-029), and the `auth` and `keys` records in the `delimitus` zone, which exist once the control plane's public stage is applied (Control plane, below).
+The first `pulumi up` creates the key on a cell made before it. Still live-only: Cloud Run accepting the gateway's ID token for an app's `run.app` URL (T3), the cold start (T7), the first drill against a cold gateway (T8, below), the browser suite (SSC-029), and the `auth` and `keys` records in the `delimitus` zone, which exist once the control plane's public stage is applied (Control plane, below).
 
 **Removing access (SSC-021, decision 023 amendment).** An allowed WebSocket or event stream goes through the gateway's stream relay (loopback port 9002, `SSC_STREAM_PORT`). While any stream is open, the relay re-reads the snapshot every second and closes each stream its person may no longer open. Nothing in the stack changes. Live checks for the proof run, on a staging cell with a Streamlit app shared with one test person through a group, then by a direct grant:
 
@@ -259,6 +259,14 @@ The first `pulumi up` creates the key on a cell made before it. Still live-only:
 4. Group removal. Remove the person from the group in the directory. Expected: after the next sync tick (60 s) and the compile, the page gets `404` and the open websocket closes, as in 1 and 3.
 5. Gateway at zero. Let the gateway scale to zero, remove a grant, then open the app. Expected: the first answer is `404`.
 6. The relay's path. Open a websocket through the load balancer and confirm it reaches the app with `X-Serverless-Authorization` accepted. This checks TLS from the relay to `run.app` with the image's CA bundle (`/etc/ssl/certs/ca-certificates.crt`), the ID token, and WebSockets through Envoy to the relay behind the serverless NEG. Also confirm that server-sent events still arrive unbuffered.
+
+**Kill switch (SSC-025, decision 014 amendment).** The kill goes through the snapshot, so nothing in the stack changes. The saga's `gateway_deny` step is `done` once `latest.json` names its version, and no cell process reports back. Each `kill_switch.step` audit row has `since_command_ms`; the last row's figure is the drill's time. Live checks for the proof run (T8), on a staging cell with a Streamlit app open in a browser:
+
+1. First drill, gateway cold. Let the gateway and the app scale to zero, run `ssc disable <app>` and note when the command returns. Expected: `gateway_deny` is `done`, not `unconfirmed`, with `since_command_ms` under 10,000. Then open the app: the first answer is `404`, and the app's service logs no request and no new instance.
+2. Awake gateway. Keep a page polling the app once a second with the Streamlit page open, then disable it. Expected: the first `404` arrives at most 3.3 s after `latest.json` moves (when the gateway last read it, plus its 0.3 s wait), and under 10 s after the command. The websocket closes about 3 s after the pointer moves.
+3. Time from the command to the pointer. Compare the `disable` response with the `update_time` of `latest.json`: this is the worker's compile, the term no local test measures.
+4. Full stop. Expected: `scale_to_zero` is `done` and the last step's `since_command_ms` is under 60,000. Cloud Run's settle time for manual scaling to 0 sets this bound (the agent waits up to 180 s), and it is known only from this run. `gcloud run services describe` shows the manual instance count at 0.
+5. Enable. Run `ssc enable <app>`. Expected: the next request after the following compile is admitted, and the app starts from zero.
 
 ## Public entry
 

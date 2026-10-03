@@ -1,12 +1,21 @@
 """SSC-025 (B5): the admin's inventory, the kill switch, enable and owner transfer, against the
-fake runtime driver, spy snapshot and timers ports, and postgres:18.
+fake runtime driver, spy snapshot and timers ports, and postgres:18; the end-to-end kills add
+the real snapshot port, a published snapshot and the gateway's gate and stream relay.
 
 Ticket "done when" checks:
   * inventory lists an app within 1 s  -> test_inventory_lists_a_new_app_within_a_second
   * inventory fields and paging        -> test_inventory_shows_owner_releases_sharing_and_last_use,
                                           test_inventory_pages_by_slug
   * saga order, step audits, timings   -> test_the_saga_runs_in_order_and_times_each_step
+  * the time each drill takes          -> test_the_saga_runs_in_order_and_times_each_step
   * deny comes first                   -> test_the_deny_is_committed_before_any_step
+  * end to end, awake gateway: denial -> test_kill_end_to_end_with_an_awake_gateway
+    within 10 s, open stream cut, full
+    stop within 60 s (fakes)
+  * end to end, gateway and app at zero
+                                       -> test_kill_end_to_end_with_the_gateway_and_app_at_zero
+  * each step confirmed by the next    -> both above, test_a_deny_no_pointer_names_is_unconfirmed,
+    snapshot version, no heartbeat        test_the_pointer_confirms_with_no_heartbeat (test_access)
   * full stop within 60 s (fakes)      -> test_the_saga_runs_in_order_and_times_each_step
   * a failed scale is retried          -> test_a_failed_scale_is_retried_and_completes
   * the reconciler keeps it stopped    -> test_the_reconciler_keeps_a_stopped_app_down
@@ -74,13 +83,20 @@ from ssc_control.runtime.driver import RuntimeDriverError, service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver, changed
 from ssc_control.runtime.reconciler import reconcile_env
 from ssc_control.runtime.specs import ReleaseSpec, StaticReleaseSpecs
-from ssc_control.snapshot.compiler import publish
+from ssc_control.snapshot.compiler import point_latest, publish
 from ssc_control.snapshot.service import Snapshots, record_ack
 from ssc_control.worker import WorkerSettings, build_app, run_worker
 from ssc_control.worker_ports import Ports
+from ssc_edge.gate import STREAM_HEADER, Allow, Deny, Facts, Gate, GateConfig
+from ssc_edge.keys import new_keyring, parse_keyring
+from ssc_edge.server import RECHECK_SECONDS, OnDemandView, gate_for
+from ssc_edge.session import Session, SessionCodec, new_sid
+from ssc_edge.streams import WATCH_SECONDS, Streams
+from ssc_shared.access import ViewHolder
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.canonical import manifest_digest
 from ssc_shared.clock import SystemClock
+from ssc_shared.snapshot_feed import SnapshotFeed
 
 MASTER = bytes(range(32))
 IMAGE = "sha256:" + "a" * 64
@@ -624,8 +640,13 @@ async def test_the_saga_runs_in_order_and_times_each_step(b: Bench) -> None:
         "state": "done",
         "snapshot_version": v,
         "elapsed_ms": got["steps"][0]["elapsed_ms"],
+        "since_command_ms": audits[0]["after"]["since_command_ms"],
         "attempts": 1,
     }
+    since = [a["after"]["since_command_ms"] for a in audits]
+    assert all(isinstance(ms, int) for ms in since) and since == sorted(since)
+    assert since[0] >= got["steps"][0]["elapsed_ms"]
+    assert since[-1] == got["total_ms"]
     (paused,) = rows_of(
         b.dsn, b.w.org, "select paused_schedule_ids from ssc.kill_switch_run where id = %s", run_id
     )
@@ -755,6 +776,180 @@ async def test_the_deny_rides_the_next_snapshot_version(b: Bench, tmp_path: Path
     got = run_of(b, run_id)
     assert [s["state"] for s in got["steps"][:3]] == ["done", "done", "done"]
     assert got["steps"][0]["snapshot_version"] == version
+
+
+def fs_blob(root: Path) -> FsBlobStore:
+    clock = SystemClock()
+    signer = UrlSigner({"k1": secrets.token_bytes(32)}, active="k1", clock=clock)
+    return FsBlobStore(root, signer=signer, base_url="http://blobs.test/v1/blobs/", clock=clock)
+
+
+async def compile_and_point(b: Bench, blob: FsBlobStore) -> int:
+    """What the worker's compile does: publish the next version, then move ``latest.json``."""
+    async with bound_org(b.ports.engine, b.w.org) as conn:
+        version = await publish(conn, b.w.org, blob, at=datetime.now(UTC))
+    await point_latest(b.ports.engine, b.w.org, blob)
+    return version
+
+
+def pointer_ports(b: Bench, blob: FsBlobStore) -> Ports:
+    """The bench's ports with the real ``Snapshots``, confirming from ``blob``'s pointer."""
+    return replace(b.ports, blob_store=blob, snapshot=Snapshots(b.ports.engine, blob_store=blob))
+
+
+@dataclass
+class Edge:
+    """The cell's gateway on ``blob`` and the builder's WebSocket request to prod.
+    ``clock`` is the snapshot feed's monotonic clock."""
+
+    view: OnDemandView
+    gate: Gate
+    facts: Facts
+    clock: list[float]
+
+
+async def gateway_starts(b: Bench, blob: FsBlobStore) -> Edge:
+    """A gateway starting from zero: it reads ``latest.json`` before its first check."""
+    (org,) = rows_of(b.dsn, b.w.org, "select cell_label from ssc.org where id = %s", b.w.org)
+    label = str(org["cell_label"])
+    clock = [1000.0]
+    holder = ViewHolder(b.w.org)
+    view = OnDemandView(
+        SnapshotFeed(blob, holder, monotonic=lambda: clock[0]), holder, max_stale=300
+    )
+    assert await view.first_read()
+    keyring = parse_keyring(new_keyring())
+    config = GateConfig(
+        org_id=b.w.org,
+        cell_label=label,
+        apps_domain="apps.test",
+        auth_url="https://auth.example.test",
+        issuer=f"https://keys.example.test/{label}",
+        project_number="123456789012",
+        region="us-central1",
+        max_body_bytes=1024,
+    )
+    gate = gate_for(config, keyring, view=view.view, refresh=view.refresh)
+    host, now = f"ledger.{label}.apps.test", int(time.time())
+    who = Session(
+        sid=new_sid(), sub=b.w.builder, org=b.w.org, name="Bo", email="bo@example.com",
+        iat=now - 60, exp=now + 3600,
+    )  # fmt: skip
+    sealed = SessionCodec(keyring.session, active=keyring.session_kid).seal(who, host)
+    headers = {
+        "cookie": f"__Host-ssc-session={sealed}",
+        "upgrade": "websocket",
+        "connection": "upgrade",
+        "origin": f"https://{host}",
+    }
+    return Edge(view, gate, Facts(method="GET", host=host, path="/ws", headers=headers), clock)
+
+
+async def echo_app(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    await reader.readuntil(b"\r\n\r\n")
+    writer.write(b"HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\n\r\n")
+    while chunk := await reader.read(1024):
+        writer.write(chunk)
+    writer.close()
+
+
+PROD_TIMINGS = replace(FAST, confirm_within=kill_switch.TIMINGS.confirm_within)
+
+
+async def test_kill_end_to_end_with_an_awake_gateway(b: Bench, tmp_path: Path) -> None:
+    await bring_up(b)
+    blob = fs_blob(tmp_path)
+    ports = pointer_ports(b, blob)
+    await compile_and_point(b, blob)
+    edge = await gateway_starts(b, blob)
+    allowed = await edge.gate.check(edge.facts)
+    assert isinstance(allowed, Allow) and allowed.user == b.w.builder
+    app_server = await asyncio.start_server(echo_app, "127.0.0.1", 0)
+    app_port = app_server.sockets[0].getsockname()[1]
+
+    async def dial(_: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        return await asyncio.open_connection("127.0.0.1", app_port)
+
+    streams = Streams(lambda: edge.gate, dial=dial, refresh=edge.view.refresh)
+    relay = await streams.serve("127.0.0.1", 0)
+    try:
+        reader, writer = await asyncio.open_connection(
+            "127.0.0.1", relay.sockets[0].getsockname()[1]
+        )
+        writer.write(
+            f"GET /ws HTTP/1.1\r\nhost: {allowed.upstream}\r\n"
+            f"{STREAM_HEADER}: {streams.admit(allowed)}\r\n\r\n".encode()
+        )
+        assert (await reader.readuntil(b"\r\n\r\n")).startswith(b"HTTP/1.1 101 ")
+        writer.write(b"ping")
+        assert await reader.readexactly(4) == b"ping"
+
+        commanded = time.monotonic()
+        run_id = pulled(b)
+        assert await drain(b, ports, timings=PROD_TIMINGS, most=1) == [Ran(None, None, "running")]
+        gateway = run_of(b, run_id)["steps"][0]
+        assert gateway["state"] == "running"
+        assert await compile_and_point(b, blob) == gateway["snapshot_version"]
+        edge.clock[0] += RECHECK_SECONDS + 0.1
+        refused = await edge.gate.check(edge.facts)
+        denied = time.monotonic() - commanded
+        assert isinstance(refused, Deny) and refused.reason == "not_granted"
+        cut = time.monotonic()
+        assert await asyncio.wait_for(reader.read(), WATCH_SECONDS + 2) == b""
+        assert time.monotonic() - cut <= WATCH_SECONDS + 0.5
+        assert not streams.open
+        await drain(b, ports, timings=PROD_TIMINGS)
+        full_stop = time.monotonic() - commanded
+    finally:
+        await streams.aclose()
+        relay.close()
+        app_server.close()
+        await edge.view.aclose()
+    got = run_of(b, run_id)
+    assert got["state"] == "completed"
+    assert [s["state"] for s in got["steps"]] == ["done"] * 5
+    assert got["steps"][0]["snapshot_version"] == gateway["snapshot_version"]
+    assert [e for e in b.events if e[0] == "scale_to_zero"] == [
+        ("scale_to_zero", service_name(b.w.prod)),
+        ("scale_to_zero", service_name(b.w.preview)),
+    ]
+    assert stopped(b, b.w.prod) and stopped(b, b.w.preview)
+    assert denied < 10.0 and full_stop < 60.0
+    assert got["total_ms"] < 60_000
+
+
+async def test_kill_end_to_end_with_the_gateway_and_app_at_zero(b: Bench, tmp_path: Path) -> None:
+    await bring_up(b)
+    blob = fs_blob(tmp_path)
+    ports = pointer_ports(b, blob)
+    await compile_and_point(b, blob)
+    commanded = time.monotonic()
+    run_id = pulled(b)
+    await drain(b, ports, timings=PROD_TIMINGS, most=1)
+    await compile_and_point(b, blob)
+    await drain(b, ports, timings=PROD_TIMINGS)
+    full_stop = time.monotonic() - commanded
+    got = run_of(b, run_id)
+    assert [s["state"] for s in got["steps"]] == ["done"] * 5
+    assert stopped(b, b.w.prod) and stopped(b, b.w.preview)
+    assert full_stop < 60.0
+    edge = await gateway_starts(b, blob)
+    try:
+        refused = await edge.gate.check(edge.facts)
+    finally:
+        await edge.view.aclose()
+    assert isinstance(refused, Deny) and refused.reason == "not_granted"
+    assert refused.status == 404
+
+
+async def test_a_deny_no_pointer_names_is_unconfirmed(b: Bench, tmp_path: Path) -> None:
+    blob = fs_blob(tmp_path)
+    await compile_and_point(b, blob)
+    run_id = pulled(b)
+    await drain(b, pointer_ports(b, blob), timings=replace(FAST, confirm_within=timedelta(0)))
+    got = run_of(b, run_id)
+    assert [s["state"] for s in got["steps"][:3]] == ["unconfirmed"] * 3
+    assert got["state"] == "completed" and app_status(b) == "disabled"
 
 
 # ── what a stopped app refuses ───────────────────────────────────────────────
