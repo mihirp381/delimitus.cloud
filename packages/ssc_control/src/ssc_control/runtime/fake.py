@@ -34,6 +34,7 @@ class _Revision:
     health_path: str
     resource_class: ResourceClassName
     env: tuple[tuple[str, str], ...]
+    secrets: tuple[tuple[str, str], ...]
     billing: Billing
     timeout_seconds: int
     concurrency: int
@@ -46,6 +47,7 @@ class _Revision:
             health_path=self.health_path,
             resource_class=self.resource_class,
             env=dict(self.env),
+            secrets=dict(self.secrets),
             billing=self.billing,
             timeout_seconds=self.timeout_seconds,
             concurrency=self.concurrency,
@@ -183,6 +185,7 @@ class FakeRuntimeDriver(RuntimeDriver):
                     health_path=spec.health_path,
                     resource_class=spec.resource_class,
                     env=tuple(sorted(spec.env.items())),
+                    secrets=tuple(sorted(spec.secrets.items())),
                     billing=spec.billing,
                     timeout_seconds=spec.timeout_seconds,
                     concurrency=spec.concurrency,

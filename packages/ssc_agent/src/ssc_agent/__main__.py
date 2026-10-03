@@ -4,9 +4,11 @@ Configuration, all required and set by the cell stack: ``SSC_CELL_PROJECT``,
 ``SSC_CELL_REGION``, ``SSC_CELL_NETWORK``, ``SSC_CELL_SUBNETWORK``, ``SSC_IMAGE_REPOSITORY``,
 ``SSC_GATEWAY_SA``. Builds (SSC-015) need all of ``SSC_BUILD_SA``, ``SSC_BUILD_TOOLS_IMAGE`` and
 ``SSC_BUILD_FRONTEND_IMAGE``, or none, and then the agent refuses builds. Exits 2 when one is
-missing or malformed.
+missing or malformed. Secrets (SSC-026) need nothing more: they live in the cell's project and
+region. Log records are redacted (``ssc_shared.redaction``).
 """
 
+import logging
 import os
 import sys
 from collections.abc import Mapping
@@ -18,6 +20,8 @@ from ssc_agent.app import create_app
 from ssc_agent.cloud_build import CellBuildConfig, CloudBuildDriver
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_agent.metadata import MetadataAccessTokens
+from ssc_agent.secret_manager import CellSecretCustody
+from ssc_shared import redaction
 
 ENV: Final = {
     "project": "SSC_CELL_PROJECT",
@@ -70,9 +74,13 @@ def main() -> int:
     except ConfigError as exc:
         print(f"ssc-agent: {exc}", file=sys.stderr)  # noqa: T201
         return 2
+    logging.basicConfig(level=logging.INFO)
+    redaction.install()
     tokens = MetadataAccessTokens()
     builder = None if build is None else CloudBuildDriver(build, tokens)
-    app = create_app(CloudRunDriver(cell, tokens), builder)
+    driver = CloudRunDriver(cell, tokens)
+    custody = CellSecretCustody(cell, tokens, driver.ensure_identity)
+    app = create_app(driver, builder, custody)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
     return 0
 

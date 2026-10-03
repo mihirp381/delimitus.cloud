@@ -106,6 +106,8 @@ finding marked `block`.
   lasting data in Postgres.
 - Keep the lock file in step with the dependency list; the build installs with it frozen.
 - Never put secrets in code, in `ssc.toml` or anywhere in the repository.
+- Read each secret from the environment variable of its name. A person sets it with
+  `ssc secret set <app> NAME --env <env>`; never ask for, type or pass on a secret's value.
 - Values the browser needs at build time (`VITE_*`, `NEXT_PUBLIC_*`) go under
   `[build.public_env.preview]` and `[build.public_env.prod]` in `ssc.toml`; any other name must
   also be listed in `public_names` under `[build]`. Anyone who can open the app can read them.

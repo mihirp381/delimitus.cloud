@@ -91,7 +91,7 @@ class OperationAccepted(Wire):
 
 
 class UploadTarget(Wire):
-    """Where to PUT a bundle. ``url`` is a credential: never print or log it."""
+    """Where to PUT a bundle or a secret's value. ``url`` is a credential: never print or log it."""
 
     method: str
     url: str
@@ -231,6 +231,32 @@ class AccessExplained(Wire):
     published_version: int | None = None
 
 
+class SecretOut(Wire):
+    name: str
+    version: str
+    live_version: str | None = None
+    updated_at: str
+
+
+class SecretList(Wire):
+    environment_id: str
+    items: list[SecretOut]
+
+
+class SecretGrantOut(Wire):
+    """Where to PUT a secret's value, straight to the cell. A credential: never print or log it."""
+
+    name: str
+    upload: UploadTarget
+
+
+class SecretSetOut(Wire):
+    name: str
+    version: str
+    changed: bool
+    operation_id: str | None = None
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -270,3 +296,7 @@ class PromoteIn(Body):
 
 class KillSwitchCreate(Body):
     mode: str
+
+
+class SecretSet(Body):
+    version: str

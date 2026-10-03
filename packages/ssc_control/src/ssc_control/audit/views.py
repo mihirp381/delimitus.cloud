@@ -15,6 +15,7 @@ from typing import Any, Final, cast
 VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "app": frozenset({"slug", "owner_user_id", "status"}),
     "app_grant": frozenset({"environment_id", "role", "subject_kind", "subject_id"}),
+    "secret_ref": frozenset({"environment_id", "name", "version"}),  # SSC-026: never a value
     "deployment": frozenset(
         {"kind", "state", "release_id", "environment_id", "failure_code", "superseded"}
     ),

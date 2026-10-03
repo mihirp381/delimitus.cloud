@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, cast, get_args
 
+from ssc_contracts.app_env import secret_name_problem
 from ssc_contracts.manifest import RESOURCE_CLASSES, ResourceClass, ResourceClassName
 
 SERVICE_PREFIX: Final = "ssc-a-"
@@ -25,6 +26,8 @@ BILLINGS: Final[tuple[Billing, ...]] = get_args(Billing)
 _ENV_ID = re.compile(r"env_([a-z0-9]{20})")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 SERVICE_NAME: Final = re.compile(re.escape(SERVICE_PREFIX) + r"[a-z0-9]{20}")
+SECRET_ID: Final = re.compile(re.escape(SERVICE_PREFIX) + r"[a-z0-9]{20}-[A-Z][A-Z0-9_]{0,63}")
+SECRET_VERSION: Final = re.compile(r"[1-9][0-9]{0,18}")
 
 
 def service_name(environment_id: str) -> str:
@@ -35,6 +38,16 @@ def service_name(environment_id: str) -> str:
     return SERVICE_PREFIX + m.group(1)
 
 
+def secret_id(service: str, name: str) -> str:
+    """The cell Secret Manager id of one app environment's secret: ``<service>-<NAME>``, so the
+    ``ssc-a-*`` IAM conditions cover it and the service it belongs to is its prefix."""
+    if SERVICE_NAME.fullmatch(service) is None:
+        raise ValueError(f"not an SSC app service name: {service!r}")
+    if (problem := secret_name_problem(name)) is not None:
+        raise ValueError(f"secret name {name!r} {problem}")
+    return f"{service}-{name}"
+
+
 def is_image_digest(value: str) -> bool:
     return _DIGEST.fullmatch(value) is not None
 
@@ -43,9 +56,11 @@ def is_image_digest(value: str) -> bool:
 class ServiceSpec:
     """One app environment's service as it should be. Images are by digest only; a tag can never
     reach a runtime. ``spec_fingerprint`` covers what defines a revision (image, port, health
-    path, class, environment, billing, request timeout, concurrency); scaling and labels are
-    service settings outside it. ``billing`` is ``instance`` (CPU always allocated) or
-    ``request``; ``concurrency`` is the most requests one instance takes at once."""
+    path, class, environment, secrets, billing, request timeout, concurrency); scaling and labels
+    are service settings outside it. ``billing`` is ``instance`` (CPU always allocated) or
+    ``request``; ``concurrency`` is the most requests one instance takes at once. ``secrets``
+    maps an environment variable to the pinned version of the secret ``secret_id(service,
+    name)``: references only, never a value (SSC-026)."""
 
     service: str
     image_digest: str
@@ -59,6 +74,7 @@ class ServiceSpec:
     min_instances: int
     max_instances: int
     labels: Mapping[str, str]
+    secrets: Mapping[str, str] = field(default_factory=dict[str, str])
     spec_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -74,7 +90,9 @@ class ServiceSpec:
             raise ValueError(f"need 1 <= timeout_seconds <= {MAX_TIMEOUT_SECONDS}")
         if not 1 <= self.concurrency <= MAX_CONCURRENCY:
             raise ValueError(f"need 1 <= concurrency <= {MAX_CONCURRENCY}")
+        _check_secrets(self.secrets, self.env)
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+        object.__setattr__(self, "secrets", MappingProxyType(dict(self.secrets)))
         object.__setattr__(self, "labels", MappingProxyType(dict(self.labels)))
         object.__setattr__(
             self,
@@ -85,6 +103,7 @@ class ServiceSpec:
                 health_path=self.health_path,
                 resource_class=self.resource_class,
                 env=self.env,
+                secrets=self.secrets,
                 billing=self.billing,
                 timeout_seconds=self.timeout_seconds,
                 concurrency=self.concurrency,
@@ -96,6 +115,16 @@ class ServiceSpec:
         return RESOURCE_CLASSES[self.resource_class]
 
 
+def _check_secrets(secrets: Mapping[str, str], env: Mapping[str, str]) -> None:
+    for name, version in secrets.items():
+        if (problem := secret_name_problem(name)) is not None:
+            raise ValueError(f"secret name {name!r} {problem}")
+        if name in env:
+            raise ValueError(f"{name!r} is both a plain variable and a secret")
+        if SECRET_VERSION.fullmatch(version) is None:
+            raise ValueError(f"secret {name!r} needs a numbered version, not {version!r}")
+
+
 def revision_fingerprint(  # noqa: PLR0913  (keyword-only)
     *,
     image_digest: str,
@@ -103,6 +132,7 @@ def revision_fingerprint(  # noqa: PLR0913  (keyword-only)
     health_path: str,
     resource_class: ResourceClassName,
     env: Mapping[str, str],
+    secrets: Mapping[str, str],
     billing: Billing,
     timeout_seconds: int,
     concurrency: int,
@@ -117,6 +147,7 @@ def revision_fingerprint(  # noqa: PLR0913  (keyword-only)
         vcpu=size.vcpu,
         memory_mib=size.memory_mib,
         env=env,
+        secrets=secrets,
         billing=billing,
         timeout_seconds=timeout_seconds,
         concurrency=concurrency,
@@ -131,6 +162,7 @@ def fingerprint_of(  # noqa: PLR0913  (keyword-only)
     vcpu: float,
     memory_mib: int,
     env: Mapping[str, str],
+    secrets: Mapping[str, str],
     billing: Billing,
     timeout_seconds: int,
     concurrency: int,
@@ -146,6 +178,7 @@ def fingerprint_of(  # noqa: PLR0913  (keyword-only)
         "vcpu": vcpu,
         "memory_mib": memory_mib,
         "env": dict(sorted(env.items())),
+        "secrets": dict(sorted(secrets.items())),
         "billing": billing,
         "timeout_seconds": timeout_seconds,
         "concurrency": concurrency,
@@ -223,6 +256,7 @@ def spec_to_wire(spec: ServiceSpec) -> dict[str, object]:
         "min_instances": spec.min_instances,
         "max_instances": spec.max_instances,
         "labels": dict(spec.labels),
+        "secrets": dict(spec.secrets),
         "spec_fingerprint": spec.spec_fingerprint,
     }
 
@@ -250,6 +284,7 @@ def spec_from_wire(body: Mapping[str, Any]) -> ServiceSpec:
             min_instances=_int(body["min_instances"]),
             max_instances=_int(body["max_instances"]),
             labels=_str_map(body["labels"]),
+            secrets=_str_map(body["secrets"]),
         )
     except (KeyError, TypeError) as exc:
         raise ValueError(f"malformed service spec: {exc}") from None

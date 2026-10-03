@@ -10,6 +10,8 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    reason code and commits, keeping the approval requests the gate opened. The driver is never
    called before the gate clears. A manifest that needs a lazy cell resource not yet ready
    (SSC-087) leaves the deployment ``running`` and waiting; the resource's job re-defers it.
+   The first claim copies the environment's secret versions onto the deployment
+   (``secret_refs``, SSC-026); a rerun keeps the copy, so the spec never changes under it.
 2. ``apply`` the release's spec, then poll ``observe`` until the new revision is ready, fails, or
    the health timeout passes. A deployment another one pre-empted (``superseded``) stops at the
    next poll without touching traffic. So does one whose app stopped (the kill switch): it
@@ -86,6 +88,13 @@ _LOAD = text(
     "where d.org_id = :org and d.id = :id for update of d"
 )
 _STATE = text("select state from ssc.deployment where org_id = :org and id = :id")
+_PIN_SECRETS = text(
+    "update ssc.deployment set secret_refs = coalesce(("
+    "select jsonb_object_agg(name, secret_version) from ssc.secret_ref "
+    "where org_id = :org and environment_id = :env), '{}'::jsonb) "
+    "where org_id = :org and id = :id and secret_refs is null"
+)
+_SECRET_REFS = text("select secret_refs from ssc.deployment where org_id = :org and id = :id")
 _POLL = text(
     "select d.state, a.status as app_status from ssc.deployment d "
     "join ssc.app a on a.org_id = d.org_id and a.id = d.app_id "
@@ -215,7 +224,7 @@ async def _prepare(
     conn: AsyncConnection, ports: Ports, org_id: str, dep: _Deployment, row: Any
 ) -> _Ready | _Refused | Literal["running"]:
     """The checks before any runtime call: an active app, a manifest, the production gate for
-    ``prod``, a driver, the cell resources the manifest needs."""
+    ``prod``, a driver, the cell resources the manifest needs. Then the pinned secrets."""
     if row.app_status != "active":
         return _Refused(APP_NOT_ACTIVE)
     try:
@@ -243,6 +252,9 @@ async def _prepare(
     )
     if held is not None:
         return "running" if held.failure_code is None else _Refused(held.failure_code, decision)
+    params = {"org": org_id, "id": dep.id, "env": dep.environment_id}
+    await conn.execute(_PIN_SECRETS, params)
+    secrets = (await conn.execute(_SECRET_REFS, params)).scalar_one()
     desired = desired_for(
         env=EnvironmentRow(
             id=dep.environment_id, org_id=org_id, app_id=dep.app_id, name=row.env_name
@@ -251,6 +263,7 @@ async def _prepare(
         manifest=spec.manifest,
         app_status="active",
         framework=spec.framework,
+        secrets=secrets,
     )
     if not isinstance(desired, ServiceSpec):
         raise AssertionError("an active app has a service spec")

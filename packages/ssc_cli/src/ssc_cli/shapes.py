@@ -285,6 +285,39 @@ class AccessResult(Shape):
     published_version: int | None
 
 
+class SecretSetResult(Shape):
+    """``secret set``: the version now recorded, never the value. ``operation_id`` is the
+    deployment that puts it live (null when nothing changed or nothing is live yet); ``state`` is
+    that deployment's, ``pending`` unless ``--wait`` was given."""
+
+    app_id: str
+    slug: str
+    environment: str
+    environment_id: str
+    name: str
+    version: str
+    changed: bool
+    operation_id: str | None
+    state: str | None
+
+
+class SecretRow(Shape):
+    name: str
+    version: str
+    live_version: str | None
+    updated_at: str
+
+
+class SecretsResult(Shape):
+    """``secret list``: names and versions only."""
+
+    app_id: str
+    slug: str
+    environment: str
+    environment_id: str
+    secrets: list[SecretRow]
+
+
 class ErrorResult(Shape):
     error: ErrorBody
 
@@ -320,6 +353,9 @@ SHAPES: dict[str, type[BaseModel]] = {
         DisableResult,
         AccessGrantRow,
         AccessResult,
+        SecretSetResult,
+        SecretRow,
+        SecretsResult,
         ErrorBody,
         ErrorResult,
     )

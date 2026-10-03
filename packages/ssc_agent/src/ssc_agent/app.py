@@ -1,13 +1,15 @@
-"""The cell agent's HTTP surface: the ``RuntimeDriver`` protocol and the ``CellBuilder``
-protocol (SSC-015), one POST per method.
+"""The cell agent's HTTP surface: the ``RuntimeDriver`` protocol, the ``CellBuilder``
+protocol (SSC-015) and ``SecretCustody`` (SSC-026), one POST per method.
 
 Cloud Run lets only the control plane's service account invoke the agent (decision 022), so
-every request here already passed IAM. The agent still refuses any service name that is not an
-SSC app's, because its own IAM cannot limit a create by name.
+every request here already passed IAM. The agent still refuses any service or secret name that
+is not an SSC app's, because its own IAM cannot limit a create by name. Secrets have one method,
+``ensure``; nothing here reads, returns or receives a secret value.
 
 Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FOUND`` or
-``BUILD_NOT_FOUND``, 400 ``INVALID_REQUEST``, 502 ``RUNTIME_ERROR`` or ``BUILD_ERROR``, 503
-``BUILD_NOT_CONFIGURED`` when the agent runs without a builder.
+``BUILD_NOT_FOUND``, 400 ``INVALID_REQUEST``, 502 ``RUNTIME_ERROR``, ``BUILD_ERROR`` or
+``SECRETS_ERROR``, 503 ``BUILD_NOT_CONFIGURED`` or ``SECRETS_NOT_CONFIGURED`` when the agent runs
+without a builder or secret custody.
 """
 
 import logging
@@ -17,6 +19,7 @@ from typing import Any, Final, cast
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from ssc_agent.secret_manager import SecretCustody, SecretsError
 from ssc_shared.build import (
     BuildDriverError,
     BuildNotFoundError,
@@ -24,6 +27,7 @@ from ssc_shared.build import (
     build_from_wire,
     status_to_wire,
 )
+from ssc_shared.redaction import redact
 from ssc_shared.runtime import (
     SERVICE_NAME,
     RevisionNotFoundError,
@@ -38,11 +42,16 @@ log = logging.getLogger(__name__)
 
 PREFIX: Final = "/v1/runtime"
 BUILD_PREFIX: Final = "/v1/build"
+SECRETS_PREFIX: Final = "/v1/secrets"
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
 
 
-def create_app(driver: RuntimeDriver, builder: CellBuilder | None = None) -> FastAPI:
+def create_app(
+    driver: RuntimeDriver,
+    builder: CellBuilder | None = None,
+    secrets: SecretCustody | None = None,
+) -> FastAPI:
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
 
     async def apply(body: dict[str, Any]) -> dict[str, object]:
@@ -118,7 +127,31 @@ def create_app(driver: RuntimeDriver, builder: CellBuilder | None = None) -> Fas
             return _error(502, "BUILD_ERROR", str(exc))
         return JSONResponse(result)
 
+    _secret_routes(app, secrets)
     return app
+
+
+def _secret_routes(app: FastAPI, secrets: SecretCustody | None) -> None:
+    """``ensure`` and nothing else: no route reads, returns or receives a secret value."""
+
+    @app.post(SECRETS_PREFIX + "/{method}")
+    async def secret(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        if method != "ensure":
+            return _error(404, "NOT_FOUND", f"no method {method}")
+        if secrets is None:
+            return _error(503, "SECRETS_NOT_CONFIGURED", "this agent keeps no secrets")
+        try:
+            body: object = await request.json()
+            if not isinstance(body, dict):
+                raise TypeError("the body is not a JSON object")
+            name = _str(cast("dict[str, Any]", body), "secret")
+            await secrets.ensure(name)
+        except (ValueError, TypeError, KeyError) as exc:
+            return _error(400, "INVALID_REQUEST", str(exc))
+        except SecretsError as exc:
+            log.warning("secret call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "SECRETS_ERROR", str(exc))
+        return JSONResponse({"secret": name})
 
 
 def _service(body: dict[str, Any]) -> str:
@@ -136,4 +169,4 @@ def _str(body: dict[str, Any], key: str) -> str:
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse({"code": code, "message": message}, status_code=status)
+    return JSONResponse({"code": code, "message": redact(message)}, status_code=status)

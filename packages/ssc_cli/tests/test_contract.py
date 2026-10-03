@@ -47,6 +47,10 @@ RESPONSES = (
     models.KillSwitchRun,
     models.ExplainedGrant,
     models.AccessExplained,
+    models.SecretOut,
+    models.SecretList,
+    models.SecretGrantOut,
+    models.SecretSetOut,
 )
 REQUESTS = (
     models.AppCreate,
@@ -57,6 +61,7 @@ REQUESTS = (
     models.DeploymentCreate,
     models.PromoteIn,
     models.KillSwitchCreate,
+    models.SecretSet,
 )
 
 

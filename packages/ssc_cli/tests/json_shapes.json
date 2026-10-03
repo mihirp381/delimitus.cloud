@@ -199,6 +199,30 @@
     "state": "string",
     "url": "string|null"
   },
+  "SecretRow": {
+    "live_version": "string|null",
+    "name": "string",
+    "updated_at": "string",
+    "version": "string"
+  },
+  "SecretSetResult": {
+    "app_id": "string",
+    "changed": "boolean",
+    "environment": "string",
+    "environment_id": "string",
+    "name": "string",
+    "operation_id": "string|null",
+    "slug": "string",
+    "state": "string|null",
+    "version": "string"
+  },
+  "SecretsResult": {
+    "app_id": "string",
+    "environment": "string",
+    "environment_id": "string",
+    "secrets": "array<SecretRow>",
+    "slug": "string"
+  },
   "ShareResult": {
     "app_id": "string",
     "changed": "boolean",

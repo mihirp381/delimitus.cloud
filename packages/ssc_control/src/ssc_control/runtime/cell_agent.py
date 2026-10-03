@@ -95,11 +95,13 @@ class CellAgentDriver(RuntimeDriver):
 
 
 class MetadataIdTokens:
-    """ID tokens for this instance's identity, one cache entry per audience."""
+    """ID tokens for this instance's identity, one cache entry per audience. ``cache=False``
+    mints a fresh token every call, for audiences used once (secret grants, SSC-026)."""
 
-    def __init__(self, client: httpx2.AsyncClient | None = None) -> None:
+    def __init__(self, client: httpx2.AsyncClient | None = None, *, cache: bool = True) -> None:
         self._client = client or httpx2.AsyncClient(timeout=5.0)
         self._cache: dict[str, tuple[str, float]] = {}
+        self._caching = cache
         self._lock = asyncio.Lock()
 
     async def __call__(self, audience: str) -> str:
@@ -117,7 +119,8 @@ class MetadataIdTokens:
             except httpx2.HTTPError as exc:
                 raise RuntimeDriverError(f"no ID token: {type(exc).__name__}") from None
             token = response.text.strip()
-            self._cache[audience] = (token, time.monotonic() + TOKEN_SECONDS)
+            if self._caching:
+                self._cache[audience] = (token, time.monotonic() + TOKEN_SECONDS)
             return token
 
 

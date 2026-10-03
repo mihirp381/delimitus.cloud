@@ -10,6 +10,8 @@
 * Every request names the tool in ``X-SSC-Source-Tool`` for the API's source tool mix.
 * A bundle goes to the signed upload URL the API hands out, from a separate client that sends
   no token. The URL is a credential and never appears in an error.
+* A secret's value goes the same way, to the cell's secret intake with the grant the API hands
+  out, and never to the API. Neither the value nor the grant appears in an error.
 """
 
 import json
@@ -59,6 +61,10 @@ from ssc_cli.models import (
     PromoteIn,
     ReleaseList,
     ReleaseOut,
+    SecretGrantOut,
+    SecretList,
+    SecretSet,
+    SecretSetOut,
     UploadTarget,
     UserMatches,
     Whoami,
@@ -183,16 +189,13 @@ class ApiClient:
         API asked for and without the API token. Transport errors and 5xx are retried like a GET.
         A 412 means a bucket already holds an object there (its URLs only create), so ``complete``
         decides whether it is these bytes."""
-        if self._upload_http is None:
-            self._upload_http = httpx2.Client(
-                transport=self._transport, timeout=UPLOAD_TIMEOUT, follow_redirects=False
-            )
+        upload = self._upload_client()
         asked = {k: v for k, v in target.headers.items() if k.lower() != "content-length"}
         headers = {**asked, "Content-Length": str(path.stat().st_size), "User-Agent": USER_AGENT}
         retries = 0
         while True:
             try:
-                r = self._upload_http.request(
+                r = upload.request(
                     target.method,
                     target.url,
                     content=_chunks(path),
@@ -223,6 +226,14 @@ class ApiClient:
                     "it asks for a fresh address.",
                 )
             return
+
+    def _upload_client(self) -> httpx2.Client:
+        """A client with no API token, for addresses the API hands out."""
+        if self._upload_http is None:
+            self._upload_http = httpx2.Client(
+                transport=self._transport, timeout=UPLOAD_TIMEOUT, follow_redirects=False
+            )
+        return self._upload_http
 
     def create_build(self, app_id: str, environment_id: str, bundle_id: str) -> BuildAccepted:
         path = f"{_environment_path(app_id, environment_id)}/builds"
@@ -281,6 +292,48 @@ class ApiClient:
         query = "" if user_id is None else f"?{urlencode({'user_id': user_id})}"
         path = f"{_environment_path(app_id, environment_id)}/access{query}"
         return _parse(self._send("GET", path), AccessExplained)
+
+    def list_secrets(self, app_id: str, environment_id: str) -> SecretList:
+        """Names and versions; there is no way to read a value back."""
+        path = f"{_environment_path(app_id, environment_id)}/secrets"
+        return _parse(self._send("GET", path), SecretList)
+
+    def grant_secret_upload(self, app_id: str, environment_id: str, name: str) -> SecretGrantOut:
+        path = f"{_secret_path(app_id, environment_id, name)}/grants"
+        return _parse(self._send("POST", path), SecretGrantOut)
+
+    def upload_secret(self, target: UploadTarget, value: bytes) -> str:
+        """PUT ``value`` to the cell's secret intake with the grant's headers and no API token;
+        the version it added. Not retried: run the command again for a fresh grant."""
+        try:
+            r = self._upload_client().request(
+                target.method,
+                target.url,
+                content=value,
+                headers={**target.headers, "User-Agent": USER_AGENT},
+            )
+        except httpx2.TransportError as e:
+            raise local_error(
+                NETWORK_ERROR,
+                "The secret could not be sent.",
+                f"{type(e).__name__} reaching the cell's secret intake. Nothing was recorded; "
+                "check your connection, then run the command again.",
+                ExitCode.NETWORK,
+            ) from None
+        version = _intake_version(r)
+        if version is None:
+            raise local_error(
+                UPLOAD_FAILED,
+                "The secret was not stored.",
+                f"The cell's secret intake answered HTTP {r.status_code}"
+                f"{_intake_code(r)}. Run the command again; it asks for a fresh grant.",
+            )
+        return version
+
+    def set_secret(self, app_id: str, environment_id: str, name: str, version: str) -> SecretSetOut:
+        """Record the version the intake added; a deployment starts when one is live."""
+        path = _secret_path(app_id, environment_id, name)
+        return _parse(self._send("PUT", path, body=SecretSet(version=version)), SecretSetOut)
 
     # ── transport ────────────────────────────────────────────────────────────
 
@@ -352,6 +405,30 @@ class ApiClient:
 
 def _environment_path(app_id: str, environment_id: str) -> str:
     return f"/v1/apps/{_seg(app_id)}/environments/{_seg(environment_id)}"
+
+
+def _secret_path(app_id: str, environment_id: str, name: str) -> str:
+    return f"{_environment_path(app_id, environment_id)}/secrets/{_seg(name)}"
+
+
+def _intake_version(r: httpx2.Response) -> str | None:
+    if r.status_code != 201:
+        return None
+    try:
+        data = r.json()
+    except ValueError:
+        return None
+    version = cast("dict[str, Any]", data).get("version") if isinstance(data, dict) else None
+    return version if isinstance(version, str) and version.isdigit() else None
+
+
+def _intake_code(r: httpx2.Response) -> str:
+    try:
+        data = r.json()
+    except ValueError:
+        return ""
+    code = cast("dict[str, Any]", data).get("code") if isinstance(data, dict) else None
+    return f" {code}" if isinstance(code, str) and code.isidentifier() else ""
 
 
 def _grants_path(app_id: str, environment_id: str) -> str:

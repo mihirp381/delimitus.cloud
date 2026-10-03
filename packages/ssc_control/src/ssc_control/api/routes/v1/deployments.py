@@ -334,37 +334,16 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
         superseded = [
             str(i) for i in (await uow.conn.execute(_SUPERSEDE_IN_FLIGHT_DEPLOY, params)).scalars()
         ]
-    dep_id = new_id("dep")
-    await uow.conn.execute(
-        _INSERT_DEPLOYMENT,
-        {
-            **params,
-            "id": dep_id,
-            "kind": body.kind,
-            "cv": int(env["config_version"]),
-            "gv": int(env["grants_version"]),
-            **_actor_params(uow),
-        },
-    )
-    policy_decision_id: str | None = None
-    if env["name"] == "prod":
-        gate = await runtime_of(request).prod_gate.check(
-            uow.conn,
-            org_id=uow.org_id,
-            app_id=app_id,
-            environment_id=environment_id,
-            release_id=body.release_id,
-        )
-        policy_decision_id = gate.policy_decision_id
-    after: dict[str, object] = {"environment_id": environment_id, "release_id": body.release_id}
-    if superseded:
-        after["superseded"] = superseded
-    await uow.audit(
-        _STARTED[body.kind],
-        target_kind="deployment",
-        target_id=dep_id,
-        after=after,
-        policy_decision_id=policy_decision_id,
+    dep_id = await start_deployment(
+        uow,
+        request,
+        app_id=app_id,
+        environment_id=environment_id,
+        env_name=str(env["name"]),
+        versions=(int(env["config_version"]), int(env["grants_version"])),
+        release_id=body.release_id,
+        kind=body.kind,
+        superseded=superseded,
     )
     if body.kind == "deploy":
         await uow.metrics.record_event(
@@ -376,18 +355,71 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
             source_tool=source_tool_of(uow.principal, source_tool),
             properties={"environment": str(env["name"]), "via_agent": uow.principal.is_agent},
         )
-    await defer_deployment(
-        uow.conn,
-        org_id=uow.org_id,
-        environment_id=environment_id,
-        deployment_id=dep_id,
-        rollback=body.kind == "rollback",
-    )
     return uow.reply(
         OperationAccepted(operation_id=dep_id, state="pending"),
         status=202,
         headers={"Location": f"/v1/operations/{dep_id}"},
     )
+
+
+async def start_deployment(  # noqa: PLR0913  (keyword-only)
+    uow: UnitOfWork,
+    request: Request,
+    *,
+    app_id: str,
+    environment_id: str,
+    env_name: str,
+    versions: tuple[int, int],
+    release_id: str,
+    kind: DeploymentKind,
+    superseded: list[str] | None = None,
+) -> str:
+    """Insert a ``pending`` deployment with the environment's config and sharing ``versions``, open
+    the production gate's approvals for ``prod``, audit it and defer its job. The caller has
+    checked the environment, the caller, the app's status and the release."""
+    dep_id = new_id("dep")
+    await uow.conn.execute(
+        _INSERT_DEPLOYMENT,
+        {
+            "org": uow.org_id,
+            "app": app_id,
+            "env": environment_id,
+            "rel": release_id,
+            "id": dep_id,
+            "kind": kind,
+            "cv": versions[0],
+            "gv": versions[1],
+            **_actor_params(uow),
+        },
+    )
+    policy_decision_id: str | None = None
+    if env_name == "prod":
+        gate = await runtime_of(request).prod_gate.check(
+            uow.conn,
+            org_id=uow.org_id,
+            app_id=app_id,
+            environment_id=environment_id,
+            release_id=release_id,
+        )
+        policy_decision_id = gate.policy_decision_id
+    after: dict[str, object] = {"environment_id": environment_id, "release_id": release_id}
+    if superseded:
+        after["superseded"] = superseded
+    await uow.audit(
+        _STARTED[kind],
+        target_kind="deployment",
+        target_id=dep_id,
+        after=after,
+        policy_decision_id=policy_decision_id,
+    )
+    await defer_deployment(
+        uow.conn,
+        org_id=uow.org_id,
+        environment_id=environment_id,
+        deployment_id=dep_id,
+        rollback=kind == "rollback",
+    )
+    return dep_id
 
 
 @router.get(

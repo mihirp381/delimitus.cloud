@@ -6,6 +6,7 @@ any of them: ``PORT``, ``HOME`` and ``DATABASE_URL`` are reserved and every ``SS
 to the platform (``ssc_contracts.manifest``).
 """
 
+import re
 from typing import Final
 
 PORT: Final = "PORT"
@@ -27,3 +28,19 @@ IDENTITY_KEYS_URL: Final = "SSC_IDENTITY_KEYS_URL"
 PLATFORM_ENV_NAMES: Final[frozenset[str]] = frozenset(
     {PORT, HOME, DATABASE_URL, APP_ORIGIN, IDENTITY_KEYS_URL}
 )
+
+SECRET_NAME: Final = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+"""An app secret's name, which is also the environment variable it arrives in (SSC-026)."""
+
+_NOT_SECRET_NAMES: Final = PLATFORM_ENV_NAMES | {"PATH"}
+_NOT_SECRET_PREFIXES: Final = ("SSC_", "K_", "X_GOOGLE_")
+
+
+def secret_name_problem(name: str) -> str | None:
+    """Why ``name`` cannot name a secret, or None. Names the platform or Cloud Run sets are
+    refused, so a secret can never shadow one."""
+    if SECRET_NAME.fullmatch(name) is None:
+        return "must be an upper-case name of A-Z, 0-9 and _, at most 64 characters"
+    if name in _NOT_SECRET_NAMES or name.startswith(_NOT_SECRET_PREFIXES):
+        return "is set by the platform"
+    return None

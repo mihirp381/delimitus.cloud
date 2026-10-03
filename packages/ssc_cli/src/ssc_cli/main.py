@@ -17,6 +17,7 @@ from ssc_cli.commands.mcp import mcp
 from ssc_cli.commands.promote import promote
 from ssc_cli.commands.releases import releases
 from ssc_cli.commands.rollback import rollback
+from ssc_cli.commands.secret import secret_app
 from ssc_cli.commands.share import share, unshare
 from ssc_cli.commands.status import status
 from ssc_cli.commands.token import token_app
@@ -77,3 +78,4 @@ app.command()(promote)
 app.command()(disable)
 app.command()(enable)
 app.add_typer(access_app)
+app.add_typer(secret_app)
