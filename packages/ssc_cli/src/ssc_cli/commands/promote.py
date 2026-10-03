@@ -20,11 +20,13 @@ from ssc_cli.output import print_json, say
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import PromoteResult
 from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_build, wait_for_operation
+from ssc_contracts import app_database
 
 PROD: Final = "prod"
 PREVIEW: Final = "preview"
 DEPLOY: Final = "deploy"
 APPROVAL_REQUIRED: Final = "APPROVAL_REQUIRED"
+PROD_SECRET_MISSING: Final = "PROD_SECRET_MISSING"  # noqa: S105  (an error code, not a secret)
 BUILD_ID: Final = re.compile(r"bld_[a-z0-9]{20}")
 
 
@@ -68,8 +70,9 @@ def promote(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
         target = resolve_app(client, app)
         prod = environment(target, PROD)
         if build is None:
-            source = _live_release(client, environment(target, PREVIEW))
-            build_id = client.promote(target.id, source).build_id
+            preview = environment(target, PREVIEW)
+            source = _live_release(client, preview)
+            build_id = _promote(client, target, preview, prod, source)
             if not json_mode:
                 say(f"Building for prod what preview runs ({build_id}).")
         else:
@@ -137,6 +140,37 @@ def _wait_live(  # noqa: PLR0913, PLR0917
                 "without building again."
             )
         raise
+
+
+def _promote(
+    client: ApiClient,
+    app: AppOut,
+    preview: EnvironmentOut,
+    prod: EnvironmentOut,
+    source: str | None,
+) -> str:
+    """The prod build's id. ``PROD_SECRET_MISSING`` names the secrets to set on prod: the API's
+    problem carries fixed text only, so the names come from the two secret lists."""
+    try:
+        return client.promote(app.id, source).build_id
+    except CliError as e:
+        if e.body.code == PROD_SECRET_MISSING:
+            missing = _missing_secrets(client, app, preview, prod)
+            if missing:
+                e.fix = (
+                    f"Set {', '.join(missing)} on prod, for example `ssc secret set {app.slug} "
+                    f"{missing[0]} --env prod`, then promote again. Secrets are never copied "
+                    "from preview."
+                )
+        raise
+
+
+def _missing_secrets(
+    client: ApiClient, app: AppOut, preview: EnvironmentOut, prod: EnvironmentOut
+) -> list[str]:
+    names = {s.name for s in client.list_secrets(app.id, preview.id).items}
+    names -= {s.name for s in client.list_secrets(app.id, prod.id).items}
+    return sorted(names - set(app_database.SECRETS))
 
 
 def _live_release(client: ApiClient, preview: EnvironmentOut) -> str | None:

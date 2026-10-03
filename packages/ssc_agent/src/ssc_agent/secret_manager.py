@@ -1,10 +1,11 @@
 """App secrets in the cell's Secret Manager (SSC-026, decision 022).
 
-Two narrow seams, each with one write and no read:
+Two narrow seams, neither with a read:
 
 - ``SecretCustody.ensure``, in the cell agent: create the secret ``ssc-a-<env>-<NAME>`` in the
   cell's region if it is missing, make sure the environment's own service account exists, and
   set the secret's policy so that account alone may read it, which is how Cloud Run mounts it.
+  ``SecretCustody.remove`` deletes one, for an app database the agent drops (SSC-042).
 - ``SecretWriter.add_version``, in the secret intake: add a version and return its number. The
   cell agent uses it too, for the app database secrets it makes itself (SSC-040).
 
@@ -29,6 +30,7 @@ ACCESSOR_ROLE: Final = "roles/secretmanager.secretAccessor"
 CALL_TIMEOUT_SECONDS: Final = 30.0
 POLICY_TRIES: Final = 6
 _HTTP_BAD_REQUEST: Final = 400
+_HTTP_NOT_FOUND: Final = 404
 _HTTP_CONFLICT: Final = 409
 
 type Identities = Callable[[str], Awaitable[None]]
@@ -46,6 +48,10 @@ class SecretsError(Exception):
 class SecretCustody(Protocol):
     async def ensure(self, secret: str) -> None:
         """Create ``secret`` if missing and let only its environment's identity read it."""
+        ...
+
+    async def remove(self, secret: str) -> None:
+        """Delete ``secret`` with every version; one already gone is fine."""
         ...
 
 
@@ -68,14 +74,20 @@ class _Api:
         self._client = client or httpx2.AsyncClient(timeout=CALL_TIMEOUT_SECONDS)
 
     async def call(
-        self, path: str, *, json: Mapping[str, object], params: Mapping[str, str] | None = None
+        self,
+        path: str,
+        *,
+        json: Mapping[str, object] | None = None,
+        params: Mapping[str, str] | None = None,
+        method: str = "POST",
     ) -> dict[str, Any]:
-        what = f"POST {path.rsplit('/', 1)[-1]}"
+        what = f"{method} {path.rsplit('/', 1)[-1]}"
         headers = {"Authorization": f"Bearer {await self._tokens()}"}
         try:
-            response = await self._client.post(
+            response = await self._client.request(
+                method,
                 f"{MANAGER_API}/{path}",
-                json=dict(json),
+                json=None if json is None else dict(json),
                 params=dict(params or {}),
                 headers=headers,
             )
@@ -136,6 +148,14 @@ class CellSecretCustody(SecretCustody):
                 raise
             return
         raise SecretsError(f"{secret}: its service account is still not usable")
+
+    async def remove(self, secret: str) -> None:
+        service_of(secret)
+        try:
+            await self._api.call(f"projects/{self._cell.project}/secrets/{secret}", method="DELETE")
+        except SecretsError as exc:
+            if exc.status != _HTTP_NOT_FOUND:
+                raise
 
     async def aclose(self) -> None:
         await self._api.aclose()

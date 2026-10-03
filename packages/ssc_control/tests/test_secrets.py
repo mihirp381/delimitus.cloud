@@ -105,9 +105,9 @@ SECRETS_ROOT = Path(__file__).resolve().parents[3] / "packages"
 
 
 class SecretManagerEmulator:
-    """Secret Manager v1's create, setIamPolicy and addVersion, for ``httpx2.MockTransport``.
-    It has no route that returns a value, as no SSC identity may call one. A policy may only
-    name a service account the Cloud Run emulator has made."""
+    """Secret Manager v1's create, setIamPolicy, addVersion and delete, for
+    ``httpx2.MockTransport``. It has no route that returns a value, as no SSC identity may call
+    one. A policy may only name a service account the Cloud Run emulator has made."""
 
     def __init__(self, accounts: dict[str, Any]) -> None:
         self.accounts = accounts
@@ -119,6 +119,9 @@ class SecretManagerEmulator:
         body = json.loads(request.content) if request.content else {}
         parent = f"/v1/projects/{PROJECT}/secrets"
         path = request.url.path
+        if request.method == "DELETE" and path.startswith(parent + "/"):
+            gone = self.secrets.pop(path.removeprefix(parent + "/"), None)
+            return httpx2.Response(200, json={}) if gone else _sm_error(404, "NOT_FOUND", path)
         if request.method != "POST" or not path.startswith(parent):
             return _sm_error(404, "NOT_FOUND", path)
         if path == parent:
@@ -677,7 +680,7 @@ async def test_the_agent_has_one_secret_method(cell: Cell) -> None:
     async with httpx2.AsyncClient(
         transport=httpx2.ASGITransport(app=app), base_url=AGENT
     ) as client:
-        for method in ("access", "get", "read", "versions", "addVersion"):
+        for method in ("access", "get", "read", "versions", "addVersion", "remove", "delete"):
             assert (await client.post(f"/v1/secrets/{method}", json={})).status_code == 404
         r = await client.post("/v1/secrets/ensure", json={"secret": "projects-x"})
         assert r.status_code == 400
@@ -688,6 +691,35 @@ async def test_the_agent_has_one_secret_method(cell: Cell) -> None:
     ) as client:
         r = await client.post("/v1/secrets/ensure", json={"secret": "x"})
         assert (r.status_code, r.json()["code"]) == (503, "SECRETS_NOT_CONFIGURED")
+
+
+async def test_custody_removes_a_secret_once_and_only_an_apps() -> None:
+    run = CloudRunEmulator()
+    sm = SecretManagerEmulator(run.accounts)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == "secretmanager.googleapis.com":
+            return sm.handler(request)
+        return run.handler(request)
+
+    def mock() -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+
+    cloud_run = CloudRunDriver(CELL_RUNTIME, access_token, client=mock())
+    custody = CellSecretCustody(
+        CELL_RUNTIME, access_token, cloud_run.ensure_identity, client=mock()
+    )
+    secret = secret_id(service_name("env_" + "r" * 20), NAME)
+    await custody.ensure(secret)
+    assert secret in sm.secrets
+    await custody.remove(secret)
+    assert secret not in sm.secrets
+    await custody.remove(secret)
+    assert [c for c in sm.calls if c[0] == "DELETE"] == [
+        ("DELETE", f"/v1/projects/{PROJECT}/secrets/{secret}")
+    ] * 2
+    with pytest.raises(ValueError, match="not an SSC app secret id"):
+        await custody.remove("ssc-control-key")
 
 
 # ── no read, anywhere ────────────────────────────────────────────────────────
@@ -738,8 +770,8 @@ def test_no_mcp_tool_touches_secrets() -> None:
 
 
 SEAMS = (
-    (SecretCustody, {"ensure"}),
-    (CellSecretCustody, {"ensure", "aclose"}),
+    (SecretCustody, {"ensure", "remove"}),
+    (CellSecretCustody, {"ensure", "remove", "aclose"}),
     (SecretWriter, {"add_version"}),
     (CellSecretWriter, {"add_version", "aclose"}),
     (SecretGrants, {"grant"}),

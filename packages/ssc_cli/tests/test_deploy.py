@@ -920,6 +920,25 @@ def test_promote_held_for_approval_names_the_resume_command(cli, promoting):
     assert f"then run `ssc promote demo --build {BUILD} --wait`" in fix
 
 
+def _secrets(env: str, *names: str) -> httpx2.Response:
+    items = [{"name": n, "version": "1", "updated_at": "2026-09-29T00:00:00Z"} for n in names]
+    return httpx2.Response(200, json={"environment_id": env, "items": items})
+
+
+def test_promote_refused_for_a_missing_prod_secret_names_it(cli, promoting, fake_problem):
+    promoting.routes[("POST", PROMOTE)] = [fake_problem(409, "PROD_SECRET_MISSING")]
+    preview = _secrets(PREVIEW, "API_TOKEN", "DATABASE_URL", "SMTP_PASSWORD", "STRIPE_KEY")
+    promoting.add("GET", f"/v1/apps/{APP_ID}/environments/{PREVIEW}/secrets", preview)
+    prod = _secrets(PROD, "DATABASE_URL", "STRIPE_KEY")
+    promoting.add("GET", f"/v1/apps/{APP_ID}/environments/{PROD}/secrets", prod)
+    r = cli("promote", "demo", session=promoting.session())
+    assert r.code == ExitCode.FAILED
+    fix = next(line for line in r.stderr.splitlines() if line.startswith("Fix: "))
+    assert "Set API_TOKEN, SMTP_PASSWORD on prod" in fix
+    assert "`ssc secret set demo API_TOKEN --env prod`" in fix
+    assert ("GET", f"/v1/builds/{BUILD}") not in _calls(promoting)
+
+
 def test_promote_with_nothing_live_is_the_apis_refusal(cli, promoting, fake_problem):
     promoting.routes[("GET", f"/v1/operations/{LIVE}")] = [_operation("running", rel=SOURCE)]
     promoting.routes[("POST", PROMOTE)] = [fake_problem(409, "NOTHING_TO_PROMOTE")]

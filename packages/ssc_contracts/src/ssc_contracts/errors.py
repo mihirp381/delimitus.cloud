@@ -77,6 +77,7 @@ class ErrorCode(StrEnum):
     # promote (SSC-042)
     NOTHING_TO_PROMOTE = "NOTHING_TO_PROMOTE"
     PROD_REQUIRES_PROMOTE = "PROD_REQUIRES_PROMOTE"
+    PROD_SECRET_MISSING = "PROD_SECRET_MISSING"  # noqa: S105  (an error code, not a secret)
     # secrets (SSC-026)
     SECRETS_UNAVAILABLE = "SECRETS_UNAVAILABLE"
     # app databases (SSC-040)
@@ -310,6 +311,14 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         409,
         "Production builds only through promote.",
         "Production runs only source that ran in preview. Deploy to preview, then promote the app.",
+    ),
+    ErrorCode.PROD_SECRET_MISSING: CatalogueEntry(
+        409,
+        "Production lacks a secret that preview has.",
+        "Secrets are never copied from preview to production, and production would run code "
+        "that reads a secret it does not have. Nothing was built. Compare ssc secret list for "
+        "both environments, set each missing one with ssc secret set and --env prod, then "
+        "promote again.",
     ),
     ErrorCode.SECRETS_UNAVAILABLE: CatalogueEntry(
         503,

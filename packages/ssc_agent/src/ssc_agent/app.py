@@ -5,14 +5,16 @@ Cloud Run lets only the control plane's service account invoke the agent (decisi
 every request here already passed IAM. The agent still refuses any service or secret name that
 is not an SSC app's, because its own IAM cannot limit a create by name. Secrets have one method,
 ``ensure``; nothing here reads, returns or receives a secret value. App databases have
-``ensure``, ``rotate`` and ``usage``; their passwords stay in the agent and the cell's Secret
-Manager, and the answers carry secret versions only.
+``ensure``, ``rotate``, ``usage`` and ``drop``; their passwords stay in the agent and the cell's
+Secret Manager, and the answers carry secret versions only. ``drop`` runs only while the
+service is gone or stopped (``SERVICE_LIVE`` otherwise), so no running app loses its database.
 
 Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FOUND``,
-``BUILD_NOT_FOUND`` or ``DATABASE_NOT_FOUND``, 400 ``INVALID_REQUEST``, 409 ``DB_TIER_FULL``,
-502 ``RUNTIME_ERROR``, ``BUILD_ERROR``, ``SECRETS_ERROR`` or ``DATABASE_ERROR``, 503
-``BUILD_NOT_CONFIGURED``, ``SECRETS_NOT_CONFIGURED`` or ``DATABASES_NOT_CONFIGURED`` when the
-agent runs without a builder, secret custody or a Cloud SQL instance.
+``BUILD_NOT_FOUND`` or ``DATABASE_NOT_FOUND``, 400 ``INVALID_REQUEST``, 409 ``DB_TIER_FULL`` or
+``SERVICE_LIVE``, 502 ``RUNTIME_ERROR``, ``BUILD_ERROR``, ``SECRETS_ERROR`` or
+``DATABASE_ERROR``, 503 ``BUILD_NOT_CONFIGURED``, ``SECRETS_NOT_CONFIGURED`` or
+``DATABASES_NOT_CONFIGURED`` when the agent runs without a builder, secret custody or a Cloud SQL
+instance.
 """
 
 import logging
@@ -141,7 +143,7 @@ def create_app(
         return JSONResponse(result)
 
     _secret_routes(app, secrets)
-    _database_routes(app, databases)
+    _database_routes(app, driver, databases)
     return app
 
 
@@ -168,12 +170,15 @@ def _secret_routes(app: FastAPI, secrets: SecretCustody | None) -> None:
         return JSONResponse({"secret": name})
 
 
-def _database_routes(app: FastAPI, databases: CellAppDatabases | None) -> None:
-    """``ensure``, ``rotate`` and ``usage`` of one service's database; no answer holds a value."""
+def _database_routes(
+    app: FastAPI, driver: RuntimeDriver, databases: CellAppDatabases | None
+) -> None:
+    """``ensure``, ``rotate``, ``usage`` and ``drop`` of one service's database; no answer holds
+    a value."""
 
     @app.post(DATABASES_PREFIX + "/{method}")
     async def database(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
-        if method not in ("ensure", "rotate", "usage"):
+        if method not in ("ensure", "rotate", "usage", "drop"):
             return _error(404, "NOT_FOUND", f"no method {method}")
         if databases is None:
             return _error(503, "DATABASES_NOT_CONFIGURED", "this agent has no Cloud SQL instance")
@@ -182,6 +187,12 @@ def _database_routes(app: FastAPI, databases: CellAppDatabases | None) -> None:
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             service = _service(cast("dict[str, Any]", body))
+            if method == "drop":
+                seen = await driver.observe(service)
+                if seen is not None and not seen.stopped:
+                    return _error(409, "SERVICE_LIVE", f"{service} still runs; stop it first")
+                await databases.drop(service)
+                return JSONResponse({"dropped": service})
             if method == "usage":
                 seen = await databases.usage(service)
                 result: dict[str, object] = {
@@ -201,6 +212,9 @@ def _database_routes(app: FastAPI, databases: CellAppDatabases | None) -> None:
             return _error(409, "DB_TIER_FULL", str(exc))
         except DatabaseMissingError as exc:
             return _error(404, "DATABASE_NOT_FOUND", str(exc))
+        except RuntimeDriverError as exc:
+            log.warning("database call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "RUNTIME_ERROR", str(exc))
         except (AppDatabaseError, AdminSqlError, SecretsError) as exc:
             log.warning("database call failed", extra={"method": method, "error": str(exc)})
             return _error(502, "DATABASE_ERROR", str(exc))

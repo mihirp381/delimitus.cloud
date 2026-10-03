@@ -12,6 +12,10 @@ instance holds its pool                          -> test_a_new_revision_connects
 Plus: the recipe, re-running it after a failure, rotation, what an app role cannot do, the
 connection limit, usage, the URL form, the password in no statement and no reply, the agent's
 routes and the Admin API client.
+
+SSC-042: dropping an environment's database frees its place, is safe to re-run and is refused
+while the environment's service still runs -> test_a_drop_frees_the_place_..., test_the_agent_
+drops_only_a_database_whose_service_is_gone_or_stopped.
 """
 
 import json
@@ -44,7 +48,7 @@ from ssc_agent.app_database import (
 from ssc_agent.cloud_sql import SQL_API, CloudSqlAdmin
 from ssc_contracts import app_database
 from ssc_contracts.app_env import DATABASE_CA, DATABASE_CA_PATH, DATABASE_URL, PGPASSWORD
-from ssc_shared.runtime import database_name, secret_id
+from ssc_shared.runtime import ServiceObservation, ServiceSpec, database_name, secret_id
 
 PROJECT = "cell-project-test"
 
@@ -299,6 +303,50 @@ async def test_the_eleventh_environment_is_refused_before_anything_is_made(
     assert (await dbs.usage(service(0))).environments == 10
 
 
+async def test_a_drop_frees_the_place_and_running_it_again_is_fine(
+    dbs: CellAppDatabases, sql: LocalAdminSql, vault: MemoryVault, instance: CloudSqlLike
+) -> None:
+    for i in range(10):
+        await dbs.ensure(service(i))
+    gone = service(3)
+    name = database_name(gone)
+    old_url = url_of(vault, gone)
+    await dbs.drop(gone)
+    assert rows(instance, "select count(*) from pg_roles where rolname like %s", f"{name}%") == [
+        (0,)
+    ]
+    assert rows(instance, "select count(*) from pg_database where datname = %s", name) == [(0,)]
+    assert not [s for s in vault.secrets if s.startswith(f"{gone}-")]
+    with pytest.raises(psycopg.OperationalError):
+        psycopg.connect(dsn_of(instance, old_url))
+    assert (await dbs.usage(gone)).present is False
+    assert (await dbs.usage(service(0))).environments == 9
+
+    before = len(sql.statements)
+    await dbs.drop(gone)
+    assert not [s for s in sql.statements[before:] if "DROP" in s or "ALTER" in s]
+    await dbs.drop(service(19))
+
+    assert (await dbs.ensure(service(10))).versions[DATABASE_URL] == "1"
+    with pytest.raises(TierFullError):
+        await dbs.ensure(service(11))
+
+
+async def test_a_half_made_database_can_be_dropped(
+    dbs: CellAppDatabases, sql: LocalAdminSql, vault: MemoryVault, instance: CloudSqlLike
+) -> None:
+    svc = service(1)
+    sql.fail_creates = 1
+    with pytest.raises(AdminSqlError, match="injected"):
+        await dbs.ensure(svc)
+    await dbs.drop(svc)
+    name = database_name(svc)
+    assert rows(instance, "select count(*) from pg_roles where rolname like %s", f"{name}%") == [
+        (0,)
+    ]
+    assert vault.secrets == {}
+
+
 async def test_ten_apps_at_their_limit_leave_room_for_administration(
     dbs: CellAppDatabases, vault: MemoryVault, instance: CloudSqlLike
 ) -> None:
@@ -386,7 +434,7 @@ async def test_the_agent_answers_references_never_a_value(
     assert (missing.status_code, missing.json()["code"]) == (404, "DATABASE_NOT_FOUND")
     bad = await agent.post("/v1/databases/ensure", json={"service": "postgres"})
     assert (bad.status_code, bad.json()["code"]) == (400, "INVALID_REQUEST")
-    unknown = await agent.post("/v1/databases/drop", json={"service": svc})
+    unknown = await agent.post("/v1/databases/delete", json={"service": svc})
     assert unknown.status_code == 404
 
 
@@ -395,6 +443,61 @@ async def test_a_full_instance_is_db_tier_full_at_the_agent(agent: httpx2.AsyncC
         assert (await agent.post("/v1/databases/ensure", json={"service": service(i)})).is_success
     full = await agent.post("/v1/databases/ensure", json={"service": service(10)})
     assert (full.status_code, full.json()["code"]) == (409, "DB_TIER_FULL")
+
+
+class Runtime:
+    """Only ``observe``: what the agent checks before it drops a database."""
+
+    def __init__(self) -> None:
+        self.services: dict[str, bool] = {}
+
+    async def apply(self, spec: ServiceSpec) -> str:
+        raise AssertionError(spec.service)
+
+    async def set_traffic(self, service: str, revision: str) -> None:
+        raise AssertionError(service)
+
+    async def scale_to_zero(self, service: str) -> None:
+        raise AssertionError(service)
+
+    async def observe(self, service: str) -> ServiceObservation | None:
+        if service not in self.services:
+            return None
+        return ServiceObservation(
+            service=service,
+            revisions=(),
+            min_instances=0,
+            max_instances=1,
+            stopped=self.services[service],
+        )
+
+
+async def test_the_agent_drops_only_a_database_whose_service_is_gone_or_stopped(
+    dbs: CellAppDatabases, vault: MemoryVault, instance: CloudSqlLike
+) -> None:
+    runtime = Runtime()
+    app = create_app(driver=runtime, databases=dbs)
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://agent"
+    ) as agent:
+        live, stopped, gone = service(0), service(1), service(2)
+        for svc in (live, stopped, gone):
+            assert (await agent.post("/v1/databases/ensure", json={"service": svc})).is_success
+        runtime.services = {live: False, stopped: True}
+
+        refused = await agent.post("/v1/databases/drop", json={"service": live})
+        assert (refused.status_code, refused.json()["code"]) == (409, "SERVICE_LIVE")
+        assert (await dbs.usage(live)).present is True
+        assert url_of(vault, live)
+
+        for svc in (stopped, gone, gone):
+            r = await agent.post("/v1/databases/drop", json={"service": svc})
+            assert (r.status_code, r.json()) == (200, {"dropped": svc}), r.text
+            assert (await dbs.usage(svc)).present is False
+        assert (await dbs.usage(live)).environments == 1
+
+        bad = await agent.post("/v1/databases/drop", json={"service": "postgres"})
+        assert (bad.status_code, bad.json()["code"]) == (400, "INVALID_REQUEST")
 
 
 async def test_an_agent_without_an_instance_makes_no_database() -> None:
@@ -419,6 +522,7 @@ class AdminApi:
         self.requests: list[httpx2.Request] = []
         self.sql: dict[str, Any] = {"results": []}
         self.insert = httpx2.Response(200, json={"name": "op-1"})
+        self.delete = httpx2.Response(200, json={"name": "op-1"})
         self.polls = [{"status": "RUNNING"}, {"status": "DONE"}]
         self.instance: dict[str, Any] = {}
 
@@ -429,6 +533,8 @@ class AdminApi:
             return httpx2.Response(200, json=self.sql)
         if url == f"{INSTANCE}/databases":
             return self.insert
+        if url.startswith(f"{INSTANCE}/databases/") and request.method == "DELETE":
+            return self.delete
         if url == f"{SQL_API}/projects/{PROJECT}/operations/op-1":
             return httpx2.Response(200, json=self.polls.pop(0))
         if url == INSTANCE:
@@ -506,6 +612,29 @@ async def test_create_database_waits_for_its_operation_and_tolerates_one_that_ex
     api.insert = httpx2.Response(403, json={"error": {"status": "FORBIDDEN", "message": "no"}})
     with pytest.raises(AdminSqlError) as refused:
         await admin.create_database("app_y")
+    assert refused.value.status == 403
+
+
+async def test_drop_database_waits_for_its_operation_and_tolerates_one_already_gone(
+    admin: CloudSqlAdmin, api: AdminApi
+) -> None:
+    await admin.drop_database("app_x")
+    assert (api.requests[0].method, str(api.requests[0].url)) == (
+        "DELETE",
+        f"{INSTANCE}/databases/app_x",
+    )
+    assert len(api.requests) == 3
+    api.delete = httpx2.Response(
+        404, json={"error": {"status": "NOT_FOUND", "message": "app_x not found"}}
+    )
+    await admin.drop_database("app_x")
+    api.delete = httpx2.Response(200, json={"name": "op-1"})
+    api.polls = [{"status": "DONE", "error": {"errors": [{"message": "in use"}]}}]
+    with pytest.raises(AdminSqlError, match=r"databases\.delete: in use"):
+        await admin.drop_database("app_y")
+    api.delete = httpx2.Response(403, json={"error": {"status": "FORBIDDEN", "message": "no"}})
+    with pytest.raises(AdminSqlError) as refused:
+        await admin.drop_database("app_y")
     assert refused.value.status == 403
 
 
