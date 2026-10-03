@@ -7,7 +7,7 @@ Pulumi in Python for SSC on Google Cloud (SSC-013, decisions 021, 022 and 025). 
 | `platform` | Folders `ssc-cells/{prod,staging}` and `ssc-sandbox`, with logs in `us-central1`. The location policy on `ssc-platform`, the cell policy table on `ssc-cells` and the public-invoker tag (SSC-095). `ssc-control-staging` and its `ssc-control` identity. The folder rule denying secret reads. Just-in-time staff access. The $250 monthly budget. The public DNS zones `delimitusapps.com.` and `delimitus.com.` in `ssc-platform-0`. |
 | `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build` and `ssc-data`, KMS, bucket, Artifact Registry, the VPC with its firewall floor and DNS sinkhole, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests) and the cell agent behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
 
-The flags are turned on by the control plane in SSC-087; until then they are set by hand.
+The lazy flags are turned on by the cell deployer when the control plane asks (SSC-087, below). The operator can still set any flag by hand.
 
 State lives in `gs://ssc-platform-0-pulumi`, and secrets are encrypted with the KMS key `ssc-platform/pulumi-secrets`. Every call's quota goes to `ssc-platform-0`. The tools refuse any command that names `ristretto-506621`.
 
@@ -35,6 +35,31 @@ Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_i
 The stack exports `flags`, so `cell_diff` compares two cells with different flags without their flagged resources.
 
 **Subnets.** Two IPv4 `/24`s: `apps` (10.20.0.0/24) holds only apps; `gateway` (10.20.4.0/24) holds everything that may reach the internet: the gateway, the data gateway and the proxy. Only `gateway` is behind the NAT, so an app has no route out even if a firewall rule were wrong. To put everything in one `/24`, set `SUBNETS` in `cell.py` to the `apps` entry alone and `EDGE_SUBNET` to `"apps"`; the reserved addresses move with it.
+
+## The cell deployer
+
+The control plane turns on a cell's `database`, `egress` or `connections` flag without a person and without new powers of its own (SSC-087, decision 022 amendment pending). NAT and the fixed IP are not lazy.
+
+- **Trigger.** In the control plane, the job `cell:create_resource` (`ssc_control/cell/`), one per cell and resource. It is asked for by the first deploy whose manifest has `[state] postgres = true` (database), the first approved internet host (egress), the first approved data source (connections), or an org admin (`POST /v1/cell/resources/{resource}/enable`, audited). A second request joins the one in flight. Each request, success and failure is an audit row (`cell.resource_requested`, `cell.resource_ready`, `cell.resource_failed`). Nothing turns a flag off: removing a resource is a runbook step.
+- **Runner.** The Cloud Run job `ssc-cell-deployer` in `ssc-platform-0`, image `infra/deployer/Dockerfile`, running `python -I -m ssc_infra.deployer <cell label> <database|egress|connections>` as `ssc-cell-deployer@ssc-platform-0.iam.gserviceaccount.com`. It reads the config the stack was last applied with (the stack's `config` output), sets the one flag to `true` and runs `pulumi up` on that one stack. It refuses any third argument, any flag outside the three, a malformed label and any environment variable it does not expect, and gives Pulumi an environment of its own. A run killed halfway is converged by the next one: a state lock older than 3 hours is cancelled, and a create Pulumi never saw finish is imported or dropped.
+- **Deployer roles.** On `ssc-cells`: `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.networkUser`, `iam.serviceAccountUser`, `resourcemanager.tagUser`, `run.admin`. In `ssc-platform-0`: `storage.objectAdmin` on the state bucket, `cloudkms.cryptoKeyEncrypterDecrypter` on the secrets key, `serviceusage.serviceUsageConsumer`. Also the public-invoker tag (above) and the apps zone's record writer. No billing, project-creation, deny-rule or secret-value role.
+- **The control plane's part.** `ssc-control` holds `run.jobsExecutorWithOverrides` and `run.viewer` on that one job, nothing more. It starts a run with exactly two arguments, a cell label and a resource, and reads how the run went. Worker settings: `SSC_CELL_DEPLOYER=cloud_run` and `SSC_CELL_DEPLOYER_JOB=projects/ssc-platform-0/locations/us-central1/jobs/ssc-cell-deployer` (unset means none, and a lazy resource fails with `CELL_DEPLOYER_UNAVAILABLE`; `fake` only in `dev` and `test`).
+- **The operator's access** is unchanged.
+
+**Why this keeps the control plane without a path to app data.** The control plane gains no role in any cell. It cannot choose what the deployer applies, only which cell and which of three flags, and the deployer's code, image and identity are not the control plane's to change. The flag turns on the same resources the operator would, from the same program, so a compromised control plane can at worst create a database, a proxy or a data gateway that a cell was going to have anyway, and pay for it.
+
+**What it does not protect against.**
+- The deployer itself. It can read and decrypt every stack's state, the platform's included, and with `run.admin` and `iam.serviceAccountUser` on the cells folder it can deploy code as any identity in any cell, which reaches app data. Whoever can change its image, its job or its identity's roles holds that power; today that is the operator.
+- The image's supply chain: Pulumi, the provider plugin and the Python dependencies inside it run with the deployer's rights.
+- Repeated or unwanted runs. The control plane may start the job for any cell and flag as often as it likes; the cost is bounded by the three resources per cell (about $20 a month) and by the budget alert.
+- A bug in the cell program. The deployer applies whatever `infra/` says, with only the one flag changed.
+
+**Live steps** (operator, not run by SSC-087):
+1. `pulumi up --stack platform`: the identity, its roles and the registry.
+2. Build and push `infra/deployer/Dockerfile` (from the repository root) to `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-cell-deployer`, then `pulumi config set --stack platform deployer_image <image@digest>` and `pulumi up --stack platform` again: the job and the control plane's grants.
+3. Re-apply each existing cell once (`pulumi up --stack c-<label>`) so its state exports `config`.
+4. Set the two worker settings above on the control plane.
+5. Deploy a stateful app into an empty staging cell, then run `cell_diff` and `pulumi preview --stack c-<label> --expect-no-changes`.
 
 ## Public entry
 
@@ -79,7 +104,7 @@ The domain-restricted sharing row uses the managed constraint rather than `iam.a
 - a cell stack mistake that grants `allUsers` or an outside member anywhere but the tagged gateway, which is refused at apply;
 - the tag bound anywhere but the gateway (the agent, the project), which `tests/test_policies.py` refuses before apply.
 
-A later deployer identity (SSC-087) can take over binding from the operator.
+The cell deployer (SSC-087) is the second binder: it applies cell stacks, and the gateway it keeps is tagged. The grant still names nobody else.
 
 **Order.** The policies and the tag come before the first cell: `pulumi up --stack platform` creates the tag, its binder grant and the policies together. Never apply these policies to a folder already holding a cell unless the tag exception is in the same run, or the gateway's `allUsers` grant is refused on its next update. No cell exists yet.
 

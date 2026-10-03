@@ -125,7 +125,14 @@ def _build(state: str, *, failure_code: str | None = None) -> httpx2.Response:
     )
 
 
-def _operation(state: str, *, failure_code: str | None = None, env: str = PREVIEW, rel: str = REL):
+def _operation(
+    state: str,
+    *,
+    failure_code: str | None = None,
+    env: str = PREVIEW,
+    rel: str = REL,
+    notice: str | None = None,
+):
     return httpx2.Response(
         200,
         json={
@@ -138,6 +145,7 @@ def _operation(state: str, *, failure_code: str | None = None, env: str = PREVIE
             "started_at": "2026-09-29T00:00:00Z",
             "finished_at": None,
             "failure_code": failure_code,
+            "notice": notice,
         },
     )
 
@@ -294,6 +302,21 @@ def test_deploy_human_output(cli, api, folder):
     assert SIGNATURE not in r.stdout + r.stderr
     pending = cli("deploy", str(folder), "--app", "demo", session=api.session())
     assert pending.stdout.splitlines()[0] == f"Deploying R7 to preview of demo ({DEP})."
+
+
+def test_a_deploy_waiting_for_the_company_database_says_so_once(cli, api, folder):
+    notice = "Creating your company's database, about ten minutes, this happens once."
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("running", notice=notice),
+        _operation("running", notice=notice),
+        _operation("running"),
+        _operation("healthy"),
+    ]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", session=api.session())
+    assert r.code == 0, r.stderr
+    assert r.stderr.count(notice) == 1
+    quiet = cli("deploy", str(folder), "--app", "demo", "--wait", "--json", session=api.session())
+    assert notice not in quiet.stdout + quiet.stderr
 
 
 def test_a_warning_is_shown_and_does_not_block(cli, api, folder):

@@ -16,6 +16,7 @@ class SqlState(StrEnum):
     AUDIT_IMMUTABLE = "SC005"
     TRUNCATE_REFUSED = "SC006"
     SCHEDULE_DELETED = "SC007"
+    CELL_RESOURCE_READY = "SC008"
 
 
 # Standard Postgres codes the tests and the API error catalogue translate.

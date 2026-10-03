@@ -810,6 +810,58 @@ def test_deleted_schedule_is_terminal(dsns: Dsns, orgs: tuple[SeededOrg, SeededO
             assert sqlstate(e) == SqlState.SCHEDULE_DELETED
 
 
+# ── lazy cell resources (SSC-087, revision 0020) ─────────────────────────────
+
+CELL_RESOURCE = (
+    "insert into ssc.cell_resource (org_id, resource, state, cause, actor_kind, actor_id, "
+    "started_at, ready_at) values (%s, %s, 'ready', 'admin', 'user', %s, now(), now())"
+)
+
+
+def test_a_ready_cell_resource_is_never_turned_off(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, b = orgs
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        conn.execute(CELL_RESOURCE, (a.org, "egress", a.admin))
+    where = " where org_id = %s and resource = 'egress'"
+    back = "update ssc.cell_resource set state = 'requested', ready_at = null" + where
+    failed = (
+        "update ssc.cell_resource set state = 'failed', ready_at = null, failed_at = now(), "
+        "failure_code = 'CELL_DEPLOYER_FAILED'" + where
+    )
+    delete = "delete from ssc.cell_resource" + where
+    assert refused(dsns.app, a.org, back, (a.org,)) == SqlState.CELL_RESOURCE_READY
+    assert refused(dsns.app, a.org, failed, (a.org,)) == SqlState.CELL_RESOURCE_READY
+    assert refused(dsns.app, a.org, delete, (a.org,)) == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.app, a.org, "truncate ssc.cell_resource cascade") == (
+        INSUFFICIENT_PRIVILEGE
+    )
+    assert refused(dsns.migrate, a.org, back, (a.org,)) == SqlState.CELL_RESOURCE_READY
+    assert refused(dsns.migrate, a.org, delete, (a.org,)) == SqlState.CELL_RESOURCE_READY
+    assert refused(dsns.migrate, a.org, "truncate ssc.cell_resource cascade") == (
+        SqlState.TRUNCATE_REFUSED
+    )
+    assert run(dsns.app, b.org, "select resource from ssc.cell_resource") == []
+    assert refused(dsns.app, b.org, CELL_RESOURCE, (a.org, "database", a.admin)) == (
+        INSUFFICIENT_PRIVILEGE
+    )
+
+
+def test_a_cell_resource_row_is_consistent(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]) -> None:
+    a, _ = orgs
+    columns = "insert into ssc.cell_resource (org_id, resource, state, cause, actor_kind, actor_id"
+    for sql in (
+        columns + ", started_at) values (%s, 'database', 'ready', 'admin', 'user', %s, now())",
+        columns + ", started_at) values (%s, 'database', 'failed', 'admin', 'user', %s, now())",
+        columns + ") values (%s, 'database', 'creating', 'admin', 'user', %s)",
+        columns + ") values (%s, 'disk', 'requested', 'admin', 'user', %s)",
+        columns + ") values (%s, 'database', 'requested', 'whim', 'user', %s)",
+    ):
+        assert refused(dsns.app, a.org, sql, (a.org, a.admin)) == CHECK_VIOLATION
+
+
 # ── timers (SSC-041, revision 0013) ──────────────────────────────────────────
 
 ARMED_SCHEDULE = (
@@ -1218,9 +1270,31 @@ def test_identity_revision_widens_the_action_check_and_downgrade_restores_it(
     after = action_check(dsn)
     old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
     assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | IDENTITY_ACTIONS
-    assert {a.value for a in AuditAction} == old | IDENTITY_ACTIONS
+    assert {a.value for a in AuditAction} >= old | IDENTITY_ACTIONS
     downgrade(dsn, "0013_timers")
     # The audit chain is append-only, so the old vocabulary comes back unvalidated.
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    upgrade(dsn, "0014_identity")
+    assert action_check(dsn) == after
+
+
+CELL_ACTIONS = {"cell.resource_requested", "cell.resource_ready", "cell.resource_failed"}
+
+
+def test_cell_resources_revision_widens_the_action_check_and_downgrade_restores_it(
+    dsns: Dsns,
+) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database cellres owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="cellres").render_as_string(hide_password=False)
+    upgrade(dsn, "0014_identity")
+    before = action_check(dsn)
+    upgrade(dsn, "0020_cell_resources")
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | CELL_ACTIONS
+    assert {a.value for a in AuditAction} == old | CELL_ACTIONS
+    downgrade(dsn, "0014_identity")
     assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
     upgrade(dsn)
     assert action_check(dsn) == after

@@ -26,6 +26,8 @@ Revision 0013 adds ``timer_run`` (SSC-041), an ordinary org-scoped table.
 Revision 0014 adds ``directory_connection``, ``auth_session``, ``login_code``,
 ``refresh_token``, ``device_grant`` and ``unlinked_login`` (SSC-019), all ordinary org-scoped
 tables.
+Revision 0020 adds ``cell_resource`` and ``cell_resource_waiter`` (SSC-087), keyed by org and
+resource (one org is one cell), so both are in ``UNKEYED_TABLES``.
 """
 
 from collections.abc import Mapping
@@ -68,6 +70,8 @@ TABLES: Final[frozenset[str]] = frozenset(
         "refresh_token",  # SSC-019, revision 0014
         "device_grant",  # SSC-019, revision 0014
         "unlinked_login",  # SSC-019, revision 0014
+        "cell_resource",  # SSC-087, revision 0020
+        "cell_resource_waiter",  # SSC-087, revision 0020
     }
 )
 
@@ -86,6 +90,8 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "access_snapshot",
         "snapshot_ack",
         "audit_anchor",
+        "cell_resource",
+        "cell_resource_waiter",
     }
 )
 
@@ -136,6 +142,8 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "refresh_token": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # pruned with expiry
     "device_grant": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
     "unlinked_login": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "cell_resource": frozenset({"SELECT", "INSERT", "UPDATE"}),  # never turned off, never DELETE
+    "cell_resource_waiter": frozenset({"SELECT", "INSERT", "DELETE"}),
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

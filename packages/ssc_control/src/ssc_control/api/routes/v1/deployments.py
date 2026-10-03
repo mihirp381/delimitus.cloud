@@ -34,6 +34,7 @@ from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_re
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
+from ssc_control.cell.resources import notice_for, waiting_on
 from ssc_control.deploy.tasks import defer_build, defer_deployment
 from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
 from ssc_control.ports import MetricKind
@@ -70,6 +71,11 @@ class OperationOut(Strict):
     finished_at: datetime | None
     failure_code: str | None = Field(
         default=None, description="Why a `failed` deployment failed, as a reason code."
+    )
+    notice: str | None = Field(
+        default=None,
+        description="What a `running` deployment is waiting for, such as the company's "
+        "database being created.",
     )
 
 
@@ -393,7 +399,8 @@ async def get_operation(operation_id: Id, uow: UserUoW) -> OperationOut:
     )
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"operation_id": operation_id})
-    return OperationOut(**dict(row))
+    waiting = await waiting_on(uow.conn, uow.org_id, operation_id)
+    return OperationOut(**dict(row), notice=notice_for(waiting))
 
 
 @router.get(

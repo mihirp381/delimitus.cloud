@@ -57,6 +57,9 @@ const ACTIONS: Readonly<Record<AuditAction, true>> = {
   'directory.connected': true,
   'directory.frozen': true,
   'identity.linked': true,
+  'cell.resource_requested': true,
+  'cell.resource_ready': true,
+  'cell.resource_failed': true,
 };
 const KINDS: Readonly<Record<ActorKind, true>> = {
   user: true,

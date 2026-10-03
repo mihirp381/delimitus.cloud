@@ -64,6 +64,9 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "bundle": frozenset(
         {"app_id", "digest", "size_bytes", "file_count", "manifest_digest", "source_commit"}
     ),
+    "cell_resource": frozenset(
+        {"state", "cause", "attempts", "execution", "failure_code", "deployment_id"}
+    ),  # SSC-087
 }
 
 FILTER_KEYS: Final = frozenset(

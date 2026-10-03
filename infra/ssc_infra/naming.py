@@ -39,6 +39,8 @@ PROBE_DENIED_SA: Final = "ssc-deny-probe"
 PROBE_ENVS: Final = ("env_probe00000000000000a", "env_probe00000000000000b")
 PROBE_RUNNER: Final = "ssc-probe-runner"
 NIGHTLY_SA: Final = "ssc-nightly"
+DEPLOYER: Final = "ssc-cell-deployer"
+PLATFORM_REPOSITORY: Final = "ssc-platform"
 GITHUB_REPOSITORY: Final = "mihirp381/delimitus.cloud"
 NIGHTLY_WORKFLOW: Final = ".github/workflows/nightly.yml"
 SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S105
@@ -59,6 +61,7 @@ LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
     ),
     "connections": frozenset({f"gcp:cloudrunv2/service:Service::{DATA_GATEWAY}"}),
 }
+LAZY_FLAGS: Final = tuple(LAZY_RESOURCES)
 GATEWAY_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{GATEWAY}"
 GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
 

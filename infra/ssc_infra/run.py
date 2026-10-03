@@ -51,11 +51,17 @@ def pulumi_env() -> Mapping[str, str]:
     return {**os.environ, "PULUMI_BACKEND_URL": f"gs://{n.STATE_BUCKET}"}
 
 
-def pulumi(*args: str, cwd: str | None = None) -> str:
+def pulumi(*args: str, cwd: str | None = None, env: Mapping[str, str] | None = None) -> str:
+    """``env`` replaces the whole environment, ``PULUMI_BACKEND_URL`` included."""
     cmd = ["pulumi", *args, "--non-interactive"]
     _check(cmd)
     result = subprocess.run(  # noqa: S603
-        cmd, capture_output=True, text=True, check=False, env=dict(pulumi_env()), cwd=cwd
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=dict(pulumi_env() if env is None else env),
+        cwd=cwd,
     )
     if result.returncode:
         raise CommandError(f"pulumi {' '.join(args[:2])} failed: {result.stderr.strip()[-2000:]}")

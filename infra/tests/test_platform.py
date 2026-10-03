@@ -6,10 +6,16 @@ from typing import Any
 import pulumi
 import pytest
 
+import mockcloud
 from mockcloud import Declared, one, run
-from ssc_infra import naming, policies
+from ssc_infra import naming, platform, policies
 
 PLATFORM_FOLDER = "333333333333"
+DEPLOYER = naming.sa_email(naming.DEPLOYER, naming.BOOTSTRAP_PROJECT)
+DEPLOYER_MEMBER = f"serviceAccount:{DEPLOYER}"
+DEPLOYER_IMAGE = (
+    f"us-central1-docker.pkg.dev/{naming.BOOTSTRAP_PROJECT}/ssc-platform/deployer@sha256:{'0' * 64}"
+)
 
 
 @pytest.fixture(scope="module")
@@ -127,7 +133,9 @@ def test_only_the_operator_and_the_org_may_hold_roles_in_a_cell(declared: list[D
     }
 
 
-def test_only_the_operator_may_bind_the_public_invoker_tag(declared: list[Declared]) -> None:
+def test_only_the_operator_and_the_deployer_may_bind_the_public_invoker_tag(
+    declared: list[Declared],
+) -> None:
     key = one(declared, "gcp:tags/tagKey:TagKey")
     assert (key.inputs["parent"], key.inputs["shortName"]) == (
         f"organizations/{naming.ORG_ID}",
@@ -142,7 +150,7 @@ def test_only_the_operator_may_bind_the_public_invoker_tag(declared: list[Declar
     assert binders == {
         "tagValue": f"tagValues/{value.outputs['name']}",
         "role": "roles/resourcemanager.tagUser",
-        "members": [naming.OPERATOR],
+        "members": [naming.OPERATOR, DEPLOYER_MEMBER],
     }
     assert not [d for d in declared if d.type == "gcp:tags/tagValueIamMember:TagValueIamMember"]
 
@@ -202,7 +210,7 @@ def test_the_control_project_is_protected(declared: list[Declared]) -> None:
 
 
 def test_the_pam_service_agent_manages_the_cells_folder(declared: list[Declared]) -> None:
-    grant = one(declared, "gcp:folder/iAMMember:IAMMember").inputs
+    grant = one(declared, "gcp:folder/iAMMember:IAMMember", "cells-pam-agent").inputs
     assert grant["role"] == "roles/privilegedaccessmanager.folderServiceAgent"
     assert (
         grant["member"]
@@ -257,12 +265,17 @@ def test_the_two_public_zones_live_in_the_platform_project(declared: list[Declar
 
 
 def test_cell_stacks_may_write_records_only_in_the_apps_zone(declared: list[Declared]) -> None:
-    grant = one(declared, "gcp:dns/dnsManagedZoneIamMember:DnsManagedZoneIamMember").inputs
-    assert (grant["project"], grant["managedZone"], grant["member"]) == (
-        naming.BOOTSTRAP_PROJECT,
-        naming.APPS_ZONE,
-        naming.OPERATOR,
-    )
+    grants = [
+        d.inputs
+        for d in declared
+        if d.type == "gcp:dns/dnsManagedZoneIamMember:DnsManagedZoneIamMember"
+    ]
+    assert {(g["project"], g["managedZone"], g["member"]) for g in grants} == {
+        (naming.BOOTSTRAP_PROJECT, naming.APPS_ZONE, naming.OPERATOR),
+        (naming.BOOTSTRAP_PROJECT, naming.APPS_ZONE, DEPLOYER_MEMBER),
+    }
+    assert grants[0]["role"] == grants[1]["role"]
+    grant = grants[0]
     role = one(declared, "gcp:projects/iAMCustomRole:IAMCustomRole", "apps-zone-records").inputs
     assert grant["role"] == f"projects/{naming.BOOTSTRAP_PROJECT}/roles/{role['roleId']}"
     assert all(p.startswith("dns.") for p in role["permissions"])
@@ -286,3 +299,99 @@ def test_the_tag_and_the_policy_table_are_exported(monkeypatch: pytest.MonkeyPat
     assert {"public_invoker_tag", "cell_policies"} <= set(exported)
     assert exported["cell_policies"] == policies.summaries(policies.cell_rules(naming.OPERATOR))
     assert exported["cell_policies"]["compute.vmExternalIpAccess"] == "deny all"
+
+
+def _grants_to(declared: list[Declared], member: str) -> set[tuple[str, str]]:
+    return {
+        (d.type.split(":")[1], d.inputs["role"])
+        for d in declared
+        if d.inputs.get("member") == member or member in (d.inputs.get("members") or [])
+    }
+
+
+def test_the_deployer_holds_exactly_what_applying_a_lazy_flag_needs(
+    declared: list[Declared],
+) -> None:
+    """State and its key, quota here, a fixed list on the cells folder, the apps zone's records
+    and the public-invoker tag. No billing, deny-rule or secret role; nothing on the org."""
+    account = one(declared, "gcp:serviceaccount/account:Account", "deployer-sa").inputs
+    assert (account["project"], account["accountId"]) == (
+        naming.BOOTSTRAP_PROJECT,
+        "ssc-cell-deployer",
+    )
+    zone_role = one(declared, "gcp:projects/iAMCustomRole:IAMCustomRole", "apps-zone-records")
+    assert _grants_to(declared, DEPLOYER_MEMBER) == {
+        ("storage/bucketIAMMember", "roles/storage.objectAdmin"),
+        ("kms/cryptoKeyIAMMember", "roles/cloudkms.cryptoKeyEncrypterDecrypter"),
+        ("projects/iAMMember", "roles/serviceusage.serviceUsageConsumer"),
+        ("dns/dnsManagedZoneIamMember", zone_role.outputs["name"]),
+        ("tags/tagValueIamBinding", "roles/resourcemanager.tagUser"),
+        *(("folder/iAMMember", r) for r in platform.DEPLOYER_FOLDER_ROLES),
+    }
+    cells = _folders(declared)["ssc-cells"].outputs["name"]
+    folder_grants = [
+        d.inputs
+        for d in declared
+        if d.type == "gcp:folder/iAMMember:IAMMember" and d.inputs["member"] == DEPLOYER_MEMBER
+    ]
+    assert {g["folder"] for g in folder_grants} == {cells}
+    state = one(declared, "gcp:storage/bucketIAMMember:BucketIAMMember", "deployer-state").inputs
+    assert state["bucket"] == naming.STATE_BUCKET
+    key = one(declared, "gcp:kms/cryptoKeyIAMMember:CryptoKeyIAMMember", "deployer-state-key")
+    assert f"gcpkms://{key.inputs['cryptoKeyId']}" == naming.SECRETS_PROVIDER
+    quota = one(declared, "gcp:projects/iAMMember:IAMMember", "deployer-quota").inputs
+    assert quota["project"] == naming.BOOTSTRAP_PROJECT
+    forbidden = ("billing", "owner", "editor", "denyAdmin", "secretmanager", "organization")
+    assert not [
+        r for _, r in _grants_to(declared, DEPLOYER_MEMBER) if any(f in r for f in forbidden)
+    ]
+
+
+def test_the_operator_keeps_its_grants(declared: list[Declared]) -> None:
+    assert (
+        "dns/dnsManagedZoneIamMember",
+        one(declared, "gcp:projects/iAMCustomRole:IAMCustomRole", "apps-zone-records").outputs[
+            "name"
+        ],
+    ) in _grants_to(declared, naming.OPERATOR)
+    assert ("tags/tagValueIamBinding", platform.TAG_USER) in _grants_to(declared, naming.OPERATOR)
+
+
+def test_no_deployer_job_until_its_image_is_named(declared: list[Declared]) -> None:
+    assert not [d for d in declared if d.type == "gcp:cloudrunv2/job:Job"]
+    registry = one(declared, "gcp:artifactregistry/repository:Repository", "platform-registry")
+    assert (registry.inputs["project"], registry.inputs["repositoryId"]) == (
+        naming.BOOTSTRAP_PROJECT,
+        naming.PLATFORM_REPOSITORY,
+    )
+
+
+def test_the_control_plane_may_only_start_the_deployer_job_and_read_it() -> None:
+    declared = run(
+        naming.PLATFORM_STACK,
+        {"platform_folder_id": PLATFORM_FOLDER, "deployer_image": DEPLOYER_IMAGE},
+    )
+    job = one(declared, "gcp:cloudrunv2/job:Job", "cell-deployer").inputs
+    assert (job["project"], job["name"]) == (naming.BOOTSTRAP_PROJECT, naming.DEPLOYER)
+    template = job["template"]["template"]
+    assert template["serviceAccount"] == DEPLOYER
+    assert template["maxRetries"] == 0
+    (container,) = template["containers"]
+    assert container["image"] == DEPLOYER_IMAGE
+    assert "commands" not in container
+    assert "args" not in container
+    control = f"serviceAccount:{mockcloud.CONTROL['staging']}"
+    assert _grants_to(declared, control) == {
+        ("cloudrunv2/jobIamMember", "roles/run.jobsExecutorWithOverrides"),
+        ("cloudrunv2/jobIamMember", "roles/run.viewer"),
+        ("serviceaccount/iAMMember", "roles/iam.serviceAccountTokenCreator"),
+    }
+
+
+def test_the_deployer_is_exported(monkeypatch: pytest.MonkeyPatch) -> None:
+    exported: dict[str, Any] = {}
+    monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
+    run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER})
+    assert exported["cell_deployer"]["job"] == (
+        f"projects/{naming.BOOTSTRAP_PROJECT}/locations/{naming.REGION}/jobs/ssc-cell-deployer"
+    )

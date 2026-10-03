@@ -82,6 +82,7 @@ class OperationOut(Wire):
     started_at: str
     finished_at: str | None = None
     failure_code: str | None = None
+    notice: str | None = None
 
 
 class OperationAccepted(Wire):

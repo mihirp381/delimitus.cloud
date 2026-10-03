@@ -8,7 +8,8 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    In the same transaction: the app must be active, the release must have a manifest, and a
    ``prod`` deployment must clear the production gate. Any refusal fails the deployment with a
    reason code and commits, keeping the approval requests the gate opened. The driver is never
-   called before the gate clears.
+   called before the gate clears. A manifest that needs a lazy cell resource not yet ready
+   (SSC-087) leaves the deployment ``running`` and waiting; the resource's job re-defers it.
 2. ``apply`` the release's spec, then poll ``observe`` until the new revision is ready, fails, or
    the health timeout passes. A deployment another one pre-empted (``superseded``) stops at the
    next poll without touching traffic. So does one whose app stopped (the kill switch): it
@@ -35,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_control.audit import Actor, NewEvent, append_event
+from ssc_control.cell.resources import hold_deployment
 from ssc_control.db.bind import bound_org
 from ssc_control.ports import MetricKind
 from ssc_control.runtime.driver import (
@@ -211,9 +213,9 @@ async def _claim(ports: Ports, org_id: str, deployment_id: str) -> _Ready | str:
 
 async def _prepare(
     conn: AsyncConnection, ports: Ports, org_id: str, dep: _Deployment, row: Any
-) -> _Ready | _Refused:
+) -> _Ready | _Refused | Literal["running"]:
     """The checks before any runtime call: an active app, a manifest, the production gate for
-    ``prod``, a driver."""
+    ``prod``, a driver, the cell resources the manifest needs."""
     if row.app_status != "active":
         return _Refused(APP_NOT_ACTIVE)
     try:
@@ -236,6 +238,11 @@ async def _prepare(
         decision = gate.policy_decision_id
     if ports.runtime_driver is None:
         return _Refused(RUNTIME_UNAVAILABLE, decision)
+    held = await hold_deployment(
+        conn, org_id=org_id, deployment_id=dep.id, manifest=spec.manifest, actor=dep.actor
+    )
+    if held is not None:
+        return "running" if held.failure_code is None else _Refused(held.failure_code, decision)
     desired = desired_for(
         env=EnvironmentRow(
             id=dep.environment_id, org_id=org_id, app_id=dep.app_id, name=row.env_name

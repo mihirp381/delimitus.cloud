@@ -143,6 +143,25 @@ class CellConfig:
             "warm": self.warm,
         }
 
+    @property
+    def settings(self) -> dict[str, str]:
+        """Every setting as ``pulumi config set`` takes it, so the deployer can restore the
+        config this stack was last applied with (SSC-087). No setting is a secret."""
+        values: dict[str, str | int | bool | None] = {
+            "stage": self.stage,
+            "probe": self.probe,
+            "gateway_max": self.gateway_max,
+            "agent_image": self.agent_image,
+            "probe_digest": self.probe_digest,
+            "billing_account": self.billing_account,
+            **self.flags,
+        }
+        return {
+            k: str(v).lower() if isinstance(v, bool) else str(v)
+            for k, v in sorted(values.items())
+            if v is not None
+        }
+
 
 def read_config(stack: str) -> CellConfig:
     config = pulumi.Config()
@@ -1253,6 +1272,7 @@ class Cell:
         pulumi.export("datagw_ip", self.datagw_ip.address)
         pulumi.export("database_range", f"{PSA_ADDRESS}/{PSA_PREFIX}")
         pulumi.export("flags", self.cfg.flags)
+        pulumi.export("config", self.cfg.settings)
         pulumi.export(
             "service_accounts",
             {
