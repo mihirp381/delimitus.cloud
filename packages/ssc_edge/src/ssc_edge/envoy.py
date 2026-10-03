@@ -10,8 +10,9 @@ Filters, in order:
    or failing service is ``503``. Its answer may mark a browser page load (``x-ssc-wake``), which
    then takes the wake route, and may add the wake cookie to the browser's answer.
 4. ``route`` (Lua): moves the request to the service host the check named, keeps the app host
-   in ``X-Forwarded-Host`` and drops platform cookies from ``Cookie``. On the response, and only
-   for responses from an app, drops ``Set-Cookie`` values that use a platform name.
+   in ``X-Forwarded-Host``, drops a timer call's schedule token and drops platform cookies from
+   ``Cookie``. On the response, and only for responses from an app, drops ``Set-Cookie`` values
+   that use a platform name.
 5. ``dynamic_forward_proxy`` and ``router``: forwards to that host over TLS, the name checked.
 
 Routes: a WebSocket or event stream the check admitted carries ``x-ssc-stream`` and goes to the
@@ -36,6 +37,7 @@ from ssc_edge import pages
 from ssc_edge.gate import (
     DEADLINE_HEADER,
     IDENTITY_HEADER,
+    SCHEDULE_HEADER,
     STREAM_HEADER,
     UPSTREAM_HEADER,
     WAKE_HEADER,
@@ -53,6 +55,7 @@ ALLOWED_HEADERS: Final = (
     "sec-fetch-site",
     "sec-fetch-mode",
     "sec-fetch-dest",
+    SCHEDULE_HEADER,
     LENGTH_HEADER,
 )
 """Request headers the check sees, besides ``Host``, method and path."""
@@ -103,6 +106,7 @@ function envoy_on_request(h)
   end
   hs:remove("{UPSTREAM_HEADER}")
   hs:remove("{LENGTH_HEADER}")
+  hs:remove("{SCHEDULE_HEADER}")
   hs:replace("x-forwarded-host", hs:get(":authority"))
   hs:replace(":authority", up)
   local keep = {{}}

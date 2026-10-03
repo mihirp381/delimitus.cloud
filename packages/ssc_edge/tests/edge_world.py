@@ -1,14 +1,19 @@
 """One org with two apps, used by the gateway tests (SSC-018). Imported as ``edge_world``.
 Payroll is a session app: its environment carries ``timeout_seconds``; ledger's do not."""
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
+from jwt.algorithms import ECAlgorithm
 
 from ssc_contracts.snapshot import FORMAT_V1
 from ssc_edge.gate import Gate, GateConfig
 from ssc_edge.keys import Keyring, new_keyring, parse_keyring
+from ssc_edge.schedule_token import parse_timer_jwks
 from ssc_edge.server import gate_for
 from ssc_edge.session import Session, SessionCodec, new_sid
 from ssc_shared.access import AccessView
@@ -104,6 +109,42 @@ def session(user: str = ADA, *, org: str = ORG, iat: int = NOW - 60, life: int =
     )
 
 
+SCH = "sch_" + "s" * 20
+RUN = "tmr_" + "r" * 20
+KID = "timer-1"
+
+
+class Signer:
+    """The control plane's side, as ``ssc_control.timers.https`` signs."""
+
+    def __init__(self, kid: str = KID) -> None:
+        self.key = ec.generate_private_key(ec.SECP256R1())
+        self.kid = kid
+
+    def jwks(self) -> str:
+        jwk = dict(ECAlgorithm.to_jwk(self.key.public_key(), as_dict=True))
+        return json.dumps({"keys": [{**jwk, "kid": self.kid, "alg": "ES256", "use": "sig"}]})
+
+    def token(
+        self, *, now: int = NOW, headers: dict[str, Any] | None = None, **changes: Any
+    ) -> str:
+        """A token for a ``POST /tasks/tick`` timer call to ledger's prod at ``now``."""
+        claims: dict[str, Any] = {
+            "aud": f"https://{HOST}",
+            "sub": SCH,
+            "org": ORG,
+            "env": PROD,
+            "htm": "POST",
+            "htu": "/tasks/tick",
+            "jti": RUN,
+            "iat": now - 5,
+            "exp": now + 115,
+        }
+        claims.update(changes)
+        head = {"kid": self.kid, "typ": "ssc-sched+jwt", **(headers or {})}
+        return jwt.encode(claims, self.key, algorithm="ES256", headers=head)
+
+
 @dataclass
 class FakeRedeemer:
     sessions: dict[str, Session] = field(default_factory=dict)
@@ -126,7 +167,8 @@ class World:
     def codec(self) -> SessionCodec:
         return SessionCodec(self.keyring.session, active=self.keyring.session_kid)
 
-    def gate(self, **changes: Any) -> Gate:
+    def gate(self, *, timer: Signer | None = None, **changes: Any) -> Gate:
+        """``timer`` is the control plane whose timer calls the gate admits."""
         return gate_for(
             config(**changes),
             self.keyring,
@@ -134,6 +176,7 @@ class World:
             clock=lambda: self.now,
             redeemer=self.redeemer,
             nonce=lambda: NONCE,
+            timer_keys=None if timer is None else parse_timer_jwks(timer.jwks()),
         )
 
     def cookie(self, s: Session | None = None, host: str = HOST) -> str:

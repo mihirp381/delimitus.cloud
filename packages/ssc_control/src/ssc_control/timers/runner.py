@@ -3,7 +3,8 @@
 ``run_timer`` claims, dispatches and records one run in three steps:
 
 1. Claim, in one org-bound transaction holding the schedule's row lock. A ``running`` row past
-   its deadline (``timeout_seconds`` plus a minute) is closed as ``timed_out``/``abandoned``.
+   its deadline (``START_SECONDS``, ``timeout_seconds`` and a minute) is closed as
+   ``timed_out``/``abandoned``.
    A scheduled run is stale, and does nothing, unless the schedule is ``active`` and armed for
    exactly this instant. It is then ``skipped`` (``owner_inactive``, ``builder_access_revoked``)
    and the schedule paused when the app's owner or its declarer has lost authority; ``skipped``
@@ -12,8 +13,12 @@
    after the later of this one and now, so missed instants coalesce into one late run. A manual
    run is stale unless its row is ``queued``; it is ``skipped`` (``deleted``, ``app_inactive``,
    ``owner_inactive``, ``builder_access_revoked`` for the requester, ``overlap``) or started.
-2. Dispatch outside any transaction, once, under ``asyncio.timeout(timeout_seconds)``. No
-   dispatcher configured fails the run (``dispatch_unavailable``).
+2. Dispatch outside any transaction, in two requests through the app's public host. The start
+   request to the app's ``health_path`` waits up to ``START_SECONDS`` for a gateway and an app
+   at zero; no answer, or one of ``500`` or more, fails the run (``start_failed``). Its time is
+   ``start_ms``. Then the call, once, under ``asyncio.timeout(timeout_seconds)``: the run's clock
+   starts when the call is sent, after the app has answered, and ``duration_ms`` is the call's
+   time. No dispatcher configured fails the run (``dispatch_unavailable``).
 3. Record the outcome and a ``timer_run`` metrics event in a second transaction.
 
 Running the task twice for one instant or one manual run dispatches once: the second claim is
@@ -39,7 +44,12 @@ from ssc_contracts.ids import new_id
 from ssc_control.db.bind import bound_org
 from ssc_control.domain.schedule_time import next_after
 from ssc_control.ports import MetricKind, MetricsPort
-from ssc_control.timers.dispatch import DispatchResult, ScheduleDispatcher, TimerCall
+from ssc_control.timers.dispatch import (
+    START_SECONDS,
+    DispatchResult,
+    ScheduleDispatcher,
+    TimerCall,
+)
 from ssc_control.timers.service import (
     Blocker,
     may_build,
@@ -52,7 +62,9 @@ from ssc_control.timers.tasks import defer_scheduled_run
 log = logging.getLogger(__name__)
 
 RUN_SLACK: Final = timedelta(minutes=1)
-"""How long past its timeout a ``running`` row may stay before it counts as abandoned."""
+"""How long past its start window and timeout a ``running`` row may stay before it counts as
+abandoned."""
+SERVER_ERROR: Final = 500
 QUEUED_TTL: Final = timedelta(hours=1)
 """How long a manual run may wait for the worker before it is dropped."""
 REARM_GRACE: Final = timedelta(minutes=1)
@@ -69,18 +81,25 @@ RunError = Literal[
     "dispatch_error",
     "http_error",
     "timeout",
+    "start_failed",
 ]
 
 _SCHEDULE = text(
     "select s.id, s.environment_id, s.name, s.cron, s.timezone, s.path, s.method, "  # noqa: S608  (constant SQL fragments)
     "s.timeout_seconds, s.state, s.pause_reason, s.next_run_at, s.declared_by_user_id, "
-    "e.name as environment_name, a.id as app_id, a.status as app_status, "
+    "e.name as environment_name, a.id as app_id, a.status as app_status, a.slug, "
+    "g.cell_label, coalesce(b.manifest #>> '{runtime,health_path}', '/') as health_path, "
     f"o.status = 'active' as owner_active, {may_build('d')} as declarer_may_build "
     "from ssc.schedule s "
     "join ssc.environment e on e.org_id = s.org_id and e.id = s.environment_id "
     "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
+    "join ssc.org g on g.id = s.org_id "
     "join ssc.user_account o on o.org_id = a.org_id and o.id = a.owner_user_id "
     "join ssc.user_account d on d.org_id = s.org_id and d.id = s.declared_by_user_id "
+    "left join ssc.deployment cur on cur.org_id = e.org_id and cur.id = e.current_deployment_id "
+    "left join ssc.release r on r.org_id = cur.org_id and r.id = cur.release_id "
+    "left join ssc.bundle b on b.org_id = r.org_id and b.app_id = r.app_id "
+    "and b.digest = r.source_digest and b.state = 'stored' "
     "where s.org_id = :org and s.id = :id for update of s"
 )
 _REQUESTER_MAY_BUILD = text(
@@ -124,7 +143,8 @@ _SKIP_MANUAL = text(
 )
 _FINISH = text(
     "update ssc.timer_run set state = :state, error = :error, http_status = :status, "
-    "duration_ms = :ms, finished_at = :now where org_id = :org and id = :id and state = 'running'"
+    "start_ms = :start_ms, duration_ms = :ms, finished_at = :now "
+    "where org_id = :org and id = :id and state = 'running'"
 )
 _OVERDUE = text(
     "select id, next_run_at from ssc.schedule where org_id = :org and state = 'active' "
@@ -233,6 +253,10 @@ def _started(
         run_id=run_id,
         method=s["method"],
         path=s["path"],
+        slug=s["slug"],
+        environment=s["environment_name"],
+        cell_label=s["cell_label"],
+        health_path=s["health_path"],
     )
     return _Claim(
         run_id=run_id,
@@ -245,24 +269,71 @@ def _started(
     )
 
 
-async def _dispatch(
-    dispatcher: ScheduleDispatcher | None, claim: _Claim
-) -> tuple[Outcome, RunError | None, int | None]:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Done:
+    outcome: Outcome
+    error: RunError | None
+    status: int | None
+    start_ms: int | None = None
+    duration_ms: int = 0
+
+
+def _ms_since(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)
+
+
+async def _start(dispatcher: ScheduleDispatcher, claim: _Claim) -> tuple[int | None, int | None]:
+    """The start request: its time when the gateway and the app answered below ``500``, else
+    None, with any status they gave."""
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(START_SECONDS):
+            woke = await dispatcher.start(claim.call)
+    except TimeoutError:
+        log.warning("timer start got no answer in time", extra={"run_id": claim.run_id})
+        return None, None
+    except Exception:
+        log.exception("timer start failed", extra={"run_id": claim.run_id})
+        return None, None
+    status = woke.http_status
+    if woke.error is not None or status is None or status >= SERVER_ERROR:
+        return None, status
+    return _ms_since(started), status
+
+
+async def _dispatch(dispatcher: ScheduleDispatcher | None, claim: _Claim) -> _Done:
     if dispatcher is None:
-        return "failed", "dispatch_unavailable", None
+        return _Done(outcome="failed", error="dispatch_unavailable", status=None)
+    start_ms, start_status = await _start(dispatcher, claim)
+    if start_ms is None:
+        return _Done(outcome="failed", error="start_failed", status=start_status)
+    started = time.monotonic()
     budget = asyncio.timeout(claim.timeout_seconds)
     try:
         async with budget:
             result = await dispatcher.dispatch(claim.call)
     except TimeoutError:
         if budget.expired():
-            return "timed_out", "timeout", None
+            return _Done(
+                outcome="timed_out",
+                error="timeout",
+                status=None,
+                start_ms=start_ms,
+                duration_ms=_ms_since(started),
+            )
         log.warning("timer dispatch timed out on its own", extra={"run_id": claim.run_id})
         result = DispatchResult(error="dispatch_error")
     except Exception:
         log.exception("timer dispatch failed", extra={"run_id": claim.run_id})
         result = DispatchResult(error="dispatch_error")
-    return _answer(result)
+    outcome, error, status = _answer(result)
+    return _Done(
+        outcome=outcome,
+        error=error,
+        status=status,
+        start_ms=start_ms,
+        duration_ms=_ms_since(started),
+    )
 
 
 def _answer(result: DispatchResult) -> tuple[Outcome, RunError | None, int | None]:
@@ -288,7 +359,7 @@ async def run_timer(  # noqa: PLR0913  (keyword-only)
         raise ValueError("a timer run is either scheduled_for an instant or a manual run_id")
     async with bound_org(deps.engine, org_id) as conn:
         now = deps.clock()
-        params = {"org": org_id, "only": schedule_id, "now": now, "slack": _seconds(RUN_SLACK)}
+        params = {"org": org_id, "only": schedule_id, "now": now, "slack": _slack()}
         await conn.execute(_ABANDON_RUNNING, params)
         s = (await conn.execute(_SCHEDULE, {"org": org_id, "id": schedule_id})).mappings().first()
         if s is None:
@@ -302,19 +373,18 @@ async def run_timer(  # noqa: PLR0913  (keyword-only)
             raise ValueError("a timer run needs scheduled_for or run_id")
     if not isinstance(claim, _Claim):
         return claim
-    started = time.monotonic()
-    outcome, error, status = await _dispatch(deps.dispatcher, claim)
-    duration_ms = round((time.monotonic() - started) * 1000)
+    done = await _dispatch(deps.dispatcher, claim)
     async with bound_org(deps.engine, org_id) as conn:
         finished = await conn.execute(
             _FINISH,
             {
                 "org": org_id,
                 "id": claim.run_id,
-                "state": outcome,
-                "error": error,
-                "status": status,
-                "ms": duration_ms,
+                "state": done.outcome,
+                "error": done.error,
+                "status": done.status,
+                "start_ms": done.start_ms,
+                "ms": done.duration_ms,
                 "now": deps.clock(),
             },
         )
@@ -328,15 +398,18 @@ async def run_timer(  # noqa: PLR0913  (keyword-only)
                 properties={
                     "trigger": claim.trigger,
                     "environment": claim.environment_name,
-                    "outcome": outcome,
-                    "duration_ms": duration_ms,
+                    "outcome": done.outcome,
+                    "start_ms": done.start_ms,
+                    "duration_ms": done.duration_ms,
                 },
             )
-    return outcome
+    return done.outcome
 
 
-def _seconds(delta: timedelta) -> int:
-    return int(delta.total_seconds())
+def _slack() -> int:
+    """Seconds past ``timeout_seconds`` before a ``running`` row is abandoned: the start
+    window and ``RUN_SLACK``."""
+    return START_SECONDS + int(RUN_SLACK.total_seconds())
 
 
 async def sweep_org(conn: AsyncConnection, org_id: str, *, now: datetime) -> int:
@@ -344,7 +417,7 @@ async def sweep_org(conn: AsyncConnection, org_id: str, *, now: datetime) -> int
     re-defer overdue instants, in ``conn``'s org-bound transaction. Returns how many were
     deferred again."""
     await conn.execute(
-        _ABANDON_RUNNING, {"org": org_id, "only": None, "now": now, "slack": _seconds(RUN_SLACK)}
+        _ABANDON_RUNNING, {"org": org_id, "only": None, "now": now, "slack": _slack()}
     )
     await conn.execute(_ABANDON_QUEUED, {"org": org_id, "now": now, "cutoff": now - QUEUED_TTL})
     for schedule_id, blocker in await pause_blocked(conn, org_id):

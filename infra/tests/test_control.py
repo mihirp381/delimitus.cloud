@@ -12,6 +12,9 @@ Ticket "done when" checks:
         test_the_migration_job_runs_as_the_migrator
   * no service account can read a secret it does not use
         -> test_no_account_can_read_a_secret_it_does_not_use
+  * the worker's timer key only once named (SSC-041)
+        -> test_without_a_timer_key_id_the_worker_keeps_its_dispatcher,
+        test_a_timer_key_id_gives_the_worker_its_timer_key_alone
   * every setting of the three processes -> test_every_setting_of_the_api_is_wired,
         test_every_setting_of_the_worker_is_wired, test_every_setting_of_the_auth_host_is_wired
   * api, auth and keys hosts with certificate and records
@@ -59,6 +62,7 @@ API_CELL = {
     "SSC_CELL_AGENT_URL": naming.agent_url(LABEL),
     "SSC_SECRET_INTAKE_URL": naming.intake_url(LABEL),
 }
+TIMER_KID = "timer-202610"
 SERVICE = "gcp:cloudrunv2/service:Service"
 POOL = "gcp:cloudrunv2/workerPool:WorkerPool"
 JOB = "gcp:cloudrunv2/job:Job"
@@ -72,6 +76,11 @@ def email(account: str, stage: naming.Stage) -> str:
 @pytest.fixture(scope="module")
 def released() -> list[Declared]:
     return run(naming.PLATFORM_STACK, RELEASE)
+
+
+@pytest.fixture(scope="module")
+def timed() -> list[Declared]:
+    return run(naming.PLATFORM_STACK, RELEASE | {"timer_key_id": TIMER_KID})
 
 
 @pytest.fixture(scope="module")
@@ -156,11 +165,15 @@ def test_each_process_runs_as_its_own_account(released: list[Declared]) -> None:
         assert len(set(runs_as.values())) == len(runs_as)
 
 
-def test_no_account_can_read_a_secret_it_does_not_use(released: list[Declared]) -> None:
+@pytest.mark.parametrize("stack", ["released", "timed"])
+def test_no_account_can_read_a_secret_it_does_not_use(
+    stack: str, request: pytest.FixtureRequest
+) -> None:
     """Use is what the declared containers take by ``secretKeyRef``. Every grant is the
     accessor role on one secret to an account whose workload takes it, every secret a
     workload takes is granted to its account, and no account holds a secret role on a
-    project."""
+    project. Also with the worker's timer key (``timed``)."""
+    released: list[Declared] = request.getfixturevalue(stack)
     for stage in naming.STAGES:
         uses: set[tuple[str, str]] = set()
         for type_ in (SERVICE, POOL, JOB):
@@ -296,6 +309,48 @@ def test_only_the_stage_the_cells_trust_is_given_the_cell(
     assert not set(API_CELL) & set(api)
     assert not set(WORKER_CELL) & set(worker)
     assert worker["SSC_CELL_DEPLOYER"] == "cloud_run"
+
+
+def test_without_a_timer_key_id_the_worker_keeps_its_dispatcher(
+    released: list[Declared],
+) -> None:
+    """Nothing waits for a secret version: no timer key secret, grant or setting."""
+    for stage in naming.STAGES:
+        plain, secrets = _env(_workload(released, POOL, stage, "ssc-worker"))
+        assert not {"SSC_TIMER_DISPATCHER", "SSC_TIMER_KEY_ID"} & set(plain)
+        assert control.TIMER_KEY not in secrets
+        made = {
+            d.inputs["secretId"] for d in _of(released, "gcp:secretmanager/secret:Secret", stage)
+        }
+        assert control.TIMER_KEY not in made
+
+
+def test_a_timer_key_id_gives_the_worker_its_timer_key_alone(timed: list[Declared]) -> None:
+    """The worker sends timer calls through each app's public host, signed with the key in
+    ``SSC_TIMER_SIGNING_KEY`` (``worker.timer_dispatcher_from_env``); no other account reads
+    it."""
+    for stage in naming.STAGES:
+        plain, secrets = _env(_workload(timed, POOL, stage, "ssc-worker"))
+        assert {
+            "SSC_TIMER_DISPATCHER": "https",
+            "SSC_TIMER_KEY_ID": TIMER_KID,
+            "SSC_APPS_DOMAIN": "delimitusapps.com",
+        }.items() <= plain.items()
+        assert control.TIMER_KEY in secrets
+        readers = {
+            g.inputs["member"]
+            for g in _of(timed, SECRET_GRANT, stage)
+            if g.inputs["secretId"] == control.TIMER_KEY
+        }
+        assert readers == {f"serviceAccount:{email(naming.CONTROL_WORKER_SA, stage)}"}
+        for name in ("ssc-api", "ssc-auth"):
+            assert control.TIMER_KEY not in _env(_workload(timed, SERVICE, stage, name))[1]
+
+
+@pytest.mark.parametrize("kid", ["a b", "-lead", "x" * 65, "kid/1"])
+def test_the_timer_key_id_is_a_plain_name(kid: str) -> None:
+    with pytest.raises(Exception, match="timer_key_id"):
+        run(naming.PLATFORM_STACK, RELEASE | {"timer_key_id": kid})
 
 
 def test_with_no_public_stage_each_stage_is_given_the_cell() -> None:

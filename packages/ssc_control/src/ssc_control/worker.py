@@ -61,6 +61,7 @@ from ssc_control.storage import (
 )
 from ssc_control.timers import jobs as timers_jobs
 from ssc_control.timers.dispatch import FakeScheduleDispatcher, ScheduleDispatcher
+from ssc_control.timers.https import HttpsScheduleDispatcher, ScheduleSigner
 from ssc_control.timers.service import Timers
 from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_of
 from ssc_shared import redaction
@@ -77,6 +78,8 @@ CELL_AGENT_URL_ENV: Final = "SSC_CELL_AGENT_URL"
 BUILD_DRIVER_ENV: Final = "SSC_BUILD_DRIVER"
 METRICS_KEY_ENV: Final = "SSC_METRICS_KEY"
 TIMER_DISPATCHER_ENV: Final = "SSC_TIMER_DISPATCHER"
+TIMER_SIGNING_KEY_ENV: Final = "SSC_TIMER_SIGNING_KEY"
+TIMER_KEY_ID_ENV: Final = "SSC_TIMER_KEY_ID"
 IDENTITY_JWKS_ENV: Final = "SSC_IDENTITY_JWKS"
 IDENTITY_ISSUER_ENV: Final = "SSC_IDENTITY_ISSUER"
 APPS_DOMAIN_ENV: Final = "SSC_APPS_DOMAIN"
@@ -250,13 +253,30 @@ def build_driver_from_env(
 
 def timer_dispatcher_from_env(env: Mapping[str, str]) -> ScheduleDispatcher | None:
     """``SSC_TIMER_DISPATCHER``: unset means none (timer runs fail with ``dispatch_unavailable``),
-    ``fake`` the in-memory dispatcher. The real one arrives with the cell's timer endpoint
-    (SSC-018)."""
+    ``fake`` the in-memory dispatcher, ``https`` calls through each app's public host
+    (``SSC_APPS_DOMAIN``) with tokens signed by ``SSC_TIMER_SIGNING_KEY``, a P-256 PEM, under
+    ``SSC_TIMER_KEY_ID`` (SSC-041). A missing or unreadable key refuses to start."""
     match env.get(TIMER_DISPATCHER_ENV, ""):
         case "":
             return None
         case "fake":
             return FakeScheduleDispatcher()
+        case "https":
+            pem, kid = env.get(TIMER_SIGNING_KEY_ENV, ""), env.get(TIMER_KEY_ID_ENV, "")
+            if not pem or not kid:
+                raise CompositionError(
+                    f"{TIMER_DISPATCHER_ENV}=https needs {TIMER_SIGNING_KEY_ENV} and "
+                    f"{TIMER_KEY_ID_ENV}"
+                )
+            try:
+                signer = ScheduleSigner(pem.encode(), kid)
+                domain = check_apps_domain(env.get(APPS_DOMAIN_ENV, APPS_DOMAIN))
+            except ValueError as exc:
+                raise CompositionError(
+                    f"{TIMER_DISPATCHER_ENV}=https: {type(exc).__name__}: the timer key or "
+                    f"{APPS_DOMAIN_ENV} does not load"
+                ) from None
+            return HttpsScheduleDispatcher(signer, apps_domain=domain)
         case other:
             raise CompositionError(f"unknown {TIMER_DISPATCHER_ENV} {other!r}")
 
@@ -428,6 +448,8 @@ async def run(env: Mapping[str, str] | None = None) -> None:
     finally:
         if ports.directory is not None:
             await ports.directory.aclose()
+        if isinstance(ports.timer_dispatcher, HttpsScheduleDispatcher):
+            await ports.timer_dispatcher.aclose()
         await ports.engine.dispose()
 
 

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Final, Protocol
 
 import httpx2
+import jwt
 import uvicorn
 from fastapi import FastAPI, Request, Response
 
@@ -41,6 +42,7 @@ from ssc_edge.gate import (
 from ssc_edge.identity_note import sign_note
 from ssc_edge.keys import Keyring, KeyringError, check_published, kms_decrypt, parse_keyring
 from ssc_edge.redeemer import HttpRedeemer
+from ssc_edge.schedule_token import ScheduleKeys, ScheduleKeysError, parse_timer_jwks
 from ssc_edge.session import SessionCodec
 from ssc_edge.streams import Streams
 from ssc_edge.tokens import MetadataTokens
@@ -84,6 +86,9 @@ class Settings:
     published_jwks: str | None = None
     """The JWKS the cell hands to apps; the gateway refuses to start with other identity keys."""
     stream_port: int = STREAM_PORT
+    timer_keys: jwt.PyJWKSet | None = None
+    """The control plane's public timer keys (``SSC_TIMER_JWKS``); unset refuses every timer
+    call."""
 
 
 def _need(env: Mapping[str, str], name: str) -> str:
@@ -114,6 +119,11 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         raise SettingsError(
             "SSC_GATEWAY_MAX_BODY, SSC_SNAPSHOT_MAX_AGE and SSC_STREAM_PORT are numbers"
         ) from exc
+    timer_jwks = env.get("SSC_TIMER_JWKS") or None
+    try:
+        timer_keys = None if timer_jwks is None else parse_timer_jwks(timer_jwks)
+    except ScheduleKeysError as exc:
+        raise SettingsError(str(exc)) from exc
     gate = GateConfig(
         org_id=_need(env, "SSC_ORG_ID"),
         cell_label=label,
@@ -135,6 +145,7 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         dev_cell_secret=dev_secret,
         published_jwks=env.get("SSC_IDENTITY_JWKS") or None,
         stream_port=stream_port,
+        timer_keys=timer_keys,
     )
 
 
@@ -162,7 +173,11 @@ def gate_for(  # noqa: PLR0913  (keyword-only collaborators)
     redeemer: Redeemer | None = None,
     nonce: Callable[[], str] = new_nonce,
     refresh: Callable[[], Awaitable[None]] | None = None,
+    timer_keys: jwt.PyJWKSet | None = None,
 ) -> Gate:
+    """The gate over ``keyring``; ``timer_keys`` admit timer calls (``ScheduleKeys``, one per
+    gate, on the gate's clock)."""
+
     def sign(note: IdentityNote) -> str:
         return sign_note(note, private_key=keyring.signing_key, kid=keyring.identity_kid)
 
@@ -176,6 +191,7 @@ def gate_for(  # noqa: PLR0913  (keyword-only collaborators)
         redeemer=redeemer,
         nonce=nonce,
         refresh=refresh,
+        schedule_keys=None if timer_keys is None else ScheduleKeys(timer_keys, clock=clock),
     )
 
 
@@ -344,6 +360,7 @@ def production_app(
             view=snapshot.view,
             redeemer=redeemer,
             refresh=snapshot.refresh,
+            timer_keys=settings.timer_keys,
         )
         relay = await streams.serve("127.0.0.1", settings.stream_port)
         try:

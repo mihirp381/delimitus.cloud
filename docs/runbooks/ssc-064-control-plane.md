@@ -181,6 +181,28 @@ printf '%s\n' "$PEM" | uv run python -c "import json, sys; from ssc_control.iden
 unset PEM
 ```
 
+The worker's timer key (SSC-041) is made the same way. Naming it makes its secret, so apply that one resource first; the worker takes the key, with `SSC_TIMER_DISPATCHER=https` and `SSC_TIMER_KEY_ID`, in step 9:
+
+```sh
+TIMER_KID=timer-$(date +%Y%m)
+pulumi config set --stack platform timer_key_id $TIMER_KID
+pulumi up --stack platform \
+  --target 'urn:pulumi:platform::ssc-infra::gcp:secretmanager/secret:Secret::control-prod-ssc-timer-signing-key'
+PEM=$(uv run python -c 'import sys; from ssc_control.timers.https import new_timer_pem; sys.stdout.write(new_timer_pem().decode())')
+printf '%s\n' "$PEM" | gcloud secrets versions add SSC_TIMER_SIGNING_KEY --project=$P --data-file=-
+printf '%s\n' "$PEM" | uv run python -c "import json, sys; from ssc_control.timers.https import ScheduleSigner; print(json.dumps(ScheduleSigner(sys.stdin.read().encode(), '$TIMER_KID').jwks()))" > timer-jwks.json
+unset PEM
+```
+
+The cell's gateway trusts that key once its `timer_jwks` is set. The preview should change only the gateway's `SSC_TIMER_JWKS`:
+
+```sh
+pulumi config set --stack c-$LABEL timer_jwks "$(cat timer-jwks.json)"
+pulumi up --stack c-$LABEL
+```
+
+Pass: `gcloud secrets versions list SSC_TIMER_SIGNING_KEY --project=$P` shows one enabled version, and `gcloud secrets get-iam-policy SSC_TIMER_SIGNING_KEY --project=$P` names `ssc-control-worker` alone.
+
 Keep `APP_PW` in this shell for step 10, then unset it.
 
 ## 8. The release, and the migration job **[real]**

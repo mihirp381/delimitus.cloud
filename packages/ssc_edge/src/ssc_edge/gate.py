@@ -12,6 +12,10 @@ Stages, in order, stopping at the first refusal:
    ``403``; a WebSocket upgrade whose ``Origin`` is not the app's own origin is ``403``.
 4. Session: no valid session cookie for this host is a redirect to login, whether or not an app
    lives at the host. The redirect sets a fresh login nonce cookie and sends its SHA-256.
+   A request carrying a schedule token (``SSC-Schedule-Token``, SSC-041) is a timer call
+   instead: it needs no session and goes to :meth:`Gate._timer`, which never redirects to login
+   and never marks the request for the "waking up" page, so the call waits for the app or fails
+   with a plain status.
 5. Snapshot: none loaded is ``503`` for every host (fail closed).
 6. Revocation: a session issued before the person's ``sessions_not_before`` (deactivation,
    SSC-019) is a redirect to login with the cookie cleared.
@@ -36,9 +40,11 @@ from typing import Final, Literal, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from ssc_contracts.identity import MAX_GROUPS, IdentityNote
+from ssc_contracts.schedule_token import SCHEDULE_TOKEN_HEADER
 from ssc_contracts.snapshot import GrantRole
 from ssc_edge import pages
 from ssc_edge.identity_note import compose_note
+from ssc_edge.schedule_token import ScheduleKeys
 from ssc_edge.session import (
     COOKIE_NAME,
     LOGIN_COOKIE,
@@ -72,6 +78,8 @@ removes it before forwarding."""
 STREAM_HEADER: Final = "x-ssc-stream"
 """Internal: the stream relay's ticket for a WebSocket or an event stream (``ssc_edge.streams``).
 Envoy sends a request carrying it to the relay, which removes it."""
+SCHEDULE_HEADER: Final = SCHEDULE_TOKEN_HEADER.lower()
+"""A timer call's schedule token. The check reads it and Envoy removes it before forwarding."""
 REQUEST_SECONDS: Final = MAX_TIMEOUT_SECONDS
 SAFE_METHODS: Final = frozenset({"GET", "HEAD"})
 _SAME_ORIGIN: Final = frozenset({"same-origin", "none"})
@@ -89,6 +97,8 @@ type Reason = Literal[
     "not_granted",
     "signed_in",
     "signed_out",
+    "bad_schedule_token",
+    "app_inactive",
 ]
 
 
@@ -222,8 +232,10 @@ class Gate:
         redeemer: Redeemer | None = None,
         nonce: Callable[[], str] = new_nonce,
         refresh: Callable[[], Awaitable[None]] | None = None,
+        schedule_keys: ScheduleKeys | None = None,
     ) -> None:
-        """``refresh`` runs only when a check reaches the snapshot (``OnDemandView.refresh``)."""
+        """``refresh`` runs only when a check reaches the snapshot (``OnDemandView.refresh``).
+        ``schedule_keys`` verifies timer calls; without them every timer call is ``404``."""
         self._cfg = config
         self._codec = codec
         self._view = view
@@ -232,6 +244,7 @@ class Gate:
         self._redeemer = redeemer
         self._nonce = nonce
         self._refresh = refresh
+        self._schedule_keys = schedule_keys
 
     async def check(self, facts: Facts) -> Allow | Deny:
         host = normal_host(facts.host)
@@ -245,6 +258,9 @@ class Gate:
         shape = self._shape(facts, host)
         if shape is not None:
             return shape
+        token = facts.headers.get(SCHEDULE_HEADER)
+        if token is not None:
+            return await self._timer(token, host, path, app, facts)
         session, presented = self._session(facts, host)
         if session is None:
             return self._login(host, path, cleared=presented)
@@ -375,14 +391,7 @@ class Gate:
             name=session.name or None,
             email=session.email or None,
         )
-        upstream = upstream_host(
-            env_id, project_number=self._cfg.project_number, region=self._cfg.region
-        )
-        headers = {
-            IDENTITY_HEADER: self._sign(note),
-            UPSTREAM_HEADER: upstream,
-            DEADLINE_HEADER: str(now + min(REQUEST_SECONDS, env.timeout_seconds)),
-        }
+        upstream, headers = self._forward(env_id, env, note, now)
         client: tuple[tuple[str, str], ...] = ()
         if page_load(facts) and not cookie_values(facts.headers.get("cookie", ""), WAKE_COOKIE):
             headers[WAKE_HEADER] = "1"
@@ -395,4 +404,69 @@ class Gate:
             client_headers=client,
             host=host,
             session=session,
+        )
+
+    def _forward(
+        self, env_id: str, env: EnvironmentIndex, note: IdentityNote, now: int
+    ) -> tuple[str, dict[str, str]]:
+        """The environment's service host and what the app receives with the request."""
+        upstream = upstream_host(
+            env_id, project_number=self._cfg.project_number, region=self._cfg.region
+        )
+        headers = {
+            IDENTITY_HEADER: self._sign(note),
+            UPSTREAM_HEADER: upstream,
+            DEADLINE_HEADER: str(now + min(REQUEST_SECONDS, env.timeout_seconds)),
+        }
+        return upstream, headers
+
+    async def _timer(  # noqa: PLR0913  (one request's parts)
+        self, token: str, host: str, path: str, app: AppHost, facts: Facts
+    ) -> Allow | Deny:
+        """A timer call: the schedule token must admit exactly this request (origin, method,
+        path, org, once), then the snapshot must place the token's environment at this host and
+        the app must be active. An unknown or refused token and every refusal after it are the
+        same ``404`` as a wrong address; no snapshot is ``503``. The note names the schedule with
+        role ``schedule`` and no groups, name or email. A timer is never a stream."""
+        keys = self._schedule_keys
+        claims = None
+        if keys is not None and not streaming(facts):
+            claims = keys.verify(
+                token,
+                origin=f"https://{host}",
+                org=self._cfg.org_id,
+                method=facts.method,
+                path=path,
+            )
+        if claims is None:
+            return not_found("bad_schedule_token")
+        if self._refresh is not None:
+            await self._refresh()
+        view = self._view()
+        if view is None:
+            return _page(503, pages.UNAVAILABLE, "no_view")
+        env_id = view.hosts.get(host.split(".", 1)[0])
+        env = view.environments.get(claims.env)
+        if env_id != claims.env or env is None or env.name != app.environment:
+            return not_found("unknown_host_label")
+        if not env.active:
+            return not_found("app_inactive")
+        now = self._clock()
+        note = compose_note(
+            issuer=self._cfg.issuer,
+            audience=f"https://{host}",
+            subject=claims.sub,
+            org=self._cfg.org_id,
+            app=env.app_id,
+            env=env.name,
+            role="schedule",
+            now=now,
+        )
+        upstream, headers = self._forward(claims.env, env, note, now)
+        return Allow(
+            upstream=upstream,
+            headers=MappingProxyType(headers),
+            user=claims.sub,
+            environment=claims.env,
+            host=host,
         )

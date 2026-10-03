@@ -489,6 +489,25 @@ def test_the_gateway_runs_its_image_with_the_cell_wired_in() -> None:
     assert env["SSC_IDENTITY_ISSUER"] == f"https://{naming.KEYS_HOST}/{label}"
 
 
+def test_the_gateway_trusts_the_control_planes_timer_keys_once_set() -> None:
+    """SSC-041: ``timer_jwks`` is ``SSC_TIMER_JWKS``; unset, the gateway refuses timer calls."""
+    timer = _jwks("timer-1")
+    declared = run(naming.cell_stack("testcell06"), GATEWAY | {"timer_jwks": timer})
+    gw = one(declared, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
+    (container,) = gw["template"]["containers"]
+    env = {e["name"]: e["value"] for e in container["envs"]}
+    assert set(env) == GATEWAY_ENV | {"SSC_TIMER_JWKS"}
+    assert env["SSC_TIMER_JWKS"] == timer
+    assert cell.timer_jwks_setting(None) is None and cell.timer_jwks_setting("") is None
+    two = json.dumps({"keys": [*json.loads(timer)["keys"], *json.loads(_jwks("timer-2"))["keys"]]})
+    assert cell.timer_jwks_setting(two) == two
+    three = json.loads(two)
+    three["keys"].append(json.loads(_jwks("timer-3"))["keys"][0])
+    for bad in ("{", '{"keys": []}', json.dumps(three), timer.replace('"alg"', '"d":"x","alg"')):
+        with pytest.raises(ValueError, match="timer_jwks"):
+            cell.timer_jwks_setting(bad)
+
+
 def test_without_the_gateway_settings_the_gateway_is_a_placeholder(cell_a: list[Declared]) -> None:
     gw = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
     (container,) = gw["template"]["containers"]

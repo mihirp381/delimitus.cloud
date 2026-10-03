@@ -30,7 +30,9 @@ from edge_world import (
     NOWHERE_HOST,
     PAY_HOST,
     PROD,
+    SCH,
     FakeRedeemer,
+    Signer,
     World,
     session,
     snapshot,
@@ -39,9 +41,10 @@ from fastapi import FastAPI
 
 from ssc_app.identity import verify
 from ssc_app.reconnect import seconds_left
+from ssc_contracts.schedule_token import SCHEDULE_TOKEN_HEADER
 from ssc_edge import pages
 from ssc_edge.envoy import ENVOY_VERSION, WAKE_SECONDS, EnvoyConfig, render
-from ssc_edge.gate import DEADLINE_HEADER, STREAM_HEADER, WAKE_HEADER
+from ssc_edge.gate import DEADLINE_HEADER, SCHEDULE_HEADER, STREAM_HEADER, WAKE_HEADER
 from ssc_edge.identity_note import jwks
 from ssc_edge.keys import new_keyring, parse_keyring
 from ssc_edge.server import create_app
@@ -240,6 +243,7 @@ class Stack:
     server: uvicorn.Server
     streams: Streams
     relayed: list[str]
+    timer: Signer
 
     def get(self, host: str, path: str = "/", method: str = "GET", **kw: object) -> httpx2.Response:
         headers = {"host": host, **dict(kw.pop("headers", {}) or {})}  # type: ignore[arg-type]
@@ -256,7 +260,8 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
         redeemer=FakeRedeemer(),
     )
     world.now = int(time.time())  # Envoy runs on the real clock
-    gate = world.gate(max_body_bytes=1024)
+    timer = Signer()
+    gate = world.gate(max_body_bytes=1024, timer=timer)
     port, relay_port = free_port(), free_port()
     published: dict[str, int] = {}
     relayed: list[str] = []
@@ -324,7 +329,7 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(0.2)
-        yield Stack(url, world, server, streams, relayed)
+        yield Stack(url, world, server, streams, relayed, timer)
     finally:
         subprocess.run(
             [docker(), "rm", "-f", f"{tag}-envoy", f"{tag}-app", f"{tag}-pay"],
@@ -373,6 +378,39 @@ def test_an_allowed_request_reaches_the_app_with_only_the_minted_note(stack: Sta
     )
     assert note.app.startswith("app_")
     assert r.headers.get_list("set-cookie") == ["app=2; Path=/"]
+
+
+def test_a_timer_call_reaches_the_app_with_a_schedule_note_and_without_its_token(
+    stack: Stack,
+) -> None:
+    """SSC-041: no session, no redirect; the app never sees the schedule token, and a replay
+    is the wrong-address page."""
+    w = stack.world
+    token = stack.timer.token(now=int(time.time()), htu="/tasks/tick?full=1")
+    r = stack.get(
+        HOST,
+        "/tasks/tick?full=1",
+        method="POST",
+        headers={SCHEDULE_TOKEN_HEADER: token, "x-ssc-identity": "forged"},
+    )
+    assert r.status_code == 200, r.text
+    seen = echoed(r)
+    assert r.json()["path"] == "/tasks/tick?full=1"
+    assert SCHEDULE_HEADER not in seen and WAKE_HEADER not in seen
+    (note_token,) = seen["x-ssc-identity"]
+    keys = jwks((w.keyring.signing_key.public_key(), w.keyring.identity_kid))
+    note = verify(
+        note_token,
+        audience=f"https://{HOST}",
+        keys=keys,
+        issuer=f"https://keys.example.test/{LABEL}",
+    )
+    assert (note.sub, note.role, note.groups) == (SCH, "schedule", ())
+    replay = stack.get(
+        HOST, "/tasks/tick?full=1", method="POST", headers={SCHEDULE_TOKEN_HEADER: token}
+    )
+    assert (replay.status_code, replay.content) == (404, pages.NOT_FOUND)
+    assert "location" not in replay.headers
 
 
 def test_a_forbidden_app_answers_exactly_like_no_app(stack: Stack) -> None:

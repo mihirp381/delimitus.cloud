@@ -120,5 +120,6 @@ app.use(async (req, res, next) => {
 - The cell stack giving the worker `SSC_IDENTITY_JWKS` and `SSC_IDENTITY_ISSUER`; until it does, apps run without the two variables.
 - SSC-064: the copy at `keys.delimitus.com/<cell_label>/jwks.json` for code outside a cell, never from a cell bucket, and the rotation runbook.
 - SSC-018 mints on every admitted request (`ssc_edge.gate`) and strips inbound `X-SSC-*` headers (`ssc_edge.envoy`); the cell's `gateway` KMS key, sealed keyring and `gateway_jwks` are wired in `infra/ssc_infra/cell.py`.
+- SSC-041 mints the `schedule` note at the gateway for a request whose schedule token verifies (decision 023, SSC-041 amendment); the worker's timer key (`timer_key_id`) and each cell's `timer_jwks` are set by the operator (`docs/runbooks/ssc-064-control-plane.md`, step 7).
 - SSC-050: the data gateway accepts this same note with the calling app's origin as `aud`, alongside the app's own workload token.
 - Open design item (build plan §3.3): a bounded stream token for app-to-data-gateway calls from long streams.
