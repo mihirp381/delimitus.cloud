@@ -8,7 +8,8 @@ an app that ignores ``PORT`` is the failure this probes). Routes:
 - ``/probe/env``: the environment's variable names, never their values.
 - ``/probe/write``: which of ``/``, ``/app`` and ``$HOME`` accept a new file.
 - ``/probe/mounts``: every mount's point and type, and whether ``$HOME`` accepts a file.
-- ``/probe/egress``: direct connections to the internet, each blocked or not.
+- ``/probe/egress?host=``: direct connections to the internet, and to each named host on 443,
+  each blocked or not.
 - ``/probe/dns``: what public names resolve to, and whether a public resolver answers.
 - ``/probe/identity``: the metadata server's identity and what it may do. The token stays here.
 - ``/probe/peer?url=``: whether another app answers this one, by name and by Google's VIP.
@@ -111,13 +112,14 @@ def _udp(host: str, port: int, payload: bytes) -> dict[str, object]:
     return _blocked(run)
 
 
-def egress() -> dict[str, object]:
+def egress(hosts: Iterable[str] = ()) -> dict[str, object]:
     return {
         "tcp 1.1.1.1:443": _tcp("1.1.1.1", 443),
         "tcp 1.1.1.1:80": _tcp("1.1.1.1", 80),
         "udp 8.8.8.8:53": _udp("8.8.8.8", 53, _dns_query(PUBLIC_NAME)),
         "udp 1.1.1.1:443": _udp("1.1.1.1", 443, secrets.token_bytes(1200)),
         "tcp [2606:4700:4700::1111]:443": _tcp("2606:4700:4700::1111", 443, socket.AF_INET6),
+        **{f"tcp {host}:443": _tcp(host, 443) for host in hosts},
     }
 
 
@@ -341,7 +343,7 @@ def probe(path: str, query: dict[str, list[str]], headers: dict[str, str]) -> ob
             "writable": {d: writable(d) for d in ("/", "/app", home) if d},
         },
         "/probe/mounts": mounts,
-        "/probe/egress": egress,
+        "/probe/egress": lambda: egress(query.get("host", [])),
         "/probe/dns": dns,
         "/probe/identity": identity,
         "/probe/peer": lambda: peer(query.get("url", [""])[0]),

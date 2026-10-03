@@ -1,6 +1,7 @@
 """The cell program, run against mocks: same shape for every label, and the rules SSC-013 names."""
 
 import json
+from ipaddress import ip_address, ip_network
 from typing import Any, cast
 
 import pulumi
@@ -66,6 +67,21 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_CELL_SUBNETWORK",
     "SSC_IMAGE_REPOSITORY",
     "SSC_GATEWAY_SA",
+}
+TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
+FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
+BUILD = {"build_tools_image": TOOLS_IMAGE, "build_frontend_image": FRONTEND_IMAGE}
+BUILD_ENV = {"SSC_BUILD_SA", "SSC_BUILD_TOOLS_IMAGE", "SSC_BUILD_FRONTEND_IMAGE"}
+NETWORK_FLOOR = {  # what SSC-027 writes once at onboarding
+    "gcp:compute/network:Network",
+    "gcp:compute/subnetwork:Subnetwork",
+    "gcp:compute/address:Address",
+    "gcp:compute/firewall:Firewall",
+    "gcp:compute/router:Router",
+    "gcp:compute/routerNat:RouterNat",
+    "gcp:dns/managedZone:ManagedZone",
+    "gcp:dns/responsePolicy:ResponsePolicy",
+    "gcp:dns/responsePolicyRule:ResponsePolicyRule",
 }
 
 
@@ -212,6 +228,95 @@ def test_the_firewall_is_the_same_before_and_after_every_lazy_resource(
     assert full["egress-data"]["targetTags"] == ["ssc-data"]
 
 
+def _floor(declared: list[Declared]) -> dict[str, dict[str, Any]]:
+    return {f"{d.type}::{d.name}": d.inputs for d in declared if d.type in NETWORK_FLOOR}
+
+
+def test_the_network_floor_is_the_same_on_an_empty_cell_and_as_each_flag_comes_on() -> None:
+    stack = naming.cell_stack("testcell08")
+    steps = [EMPTY, EMPTY | {"database": "true"}]
+    steps += [steps[-1] | {"egress": "true"}, steps[-1] | {"egress": "true", "connections": "true"}]
+    first, *rest = (_floor(run(stack, config)) for config in steps)
+    assert {key.split("::")[0] for key in first} == NETWORK_FLOOR
+    for later in rest:
+        assert later == first
+
+
+def _egress_allowed(rules: list[dict[str, Any]], tags: set[str], address: str) -> bool:
+    """VPC egress evaluation: the matching rule with the lowest priority number decides, and at
+    equal priority a deny beats an allow."""
+    destination = ip_address(address)
+    matching = [
+        r
+        for r in rules
+        if r["direction"] == "EGRESS"
+        and (not r.get("targetTags") or tags & set(r["targetTags"]))
+        and any(destination in ip_network(cidr) for cidr in r["destinationRanges"])
+    ]
+    top = min(r["priority"] for r in matching)
+    return not any("denies" in r for r in matching if r["priority"] == top)
+
+
+@pytest.mark.parametrize(
+    ("address", "allowed"),
+    [
+        ("10.20.4.10", True),
+        ("10.20.4.11", True),
+        ("10.21.0.3", True),
+        ("10.21.15.254", True),
+        ("199.36.153.9", True),
+        ("10.20.0.7", False),
+        ("10.20.4.2", False),
+        ("10.20.4.12", False),
+        ("10.20.255.1", False),
+        ("10.21.16.1", False),
+        ("10.30.0.2", False),
+        ("1.1.1.1", False),
+        ("8.8.8.8", False),
+        ("199.36.153.4", False),
+        (cell.SINKHOLE, False),
+    ],
+)
+def test_an_app_reaches_only_the_reserved_addresses_the_database_and_google(
+    empty_b: list[Declared], address: str, allowed: bool
+) -> None:
+    rules = [d.inputs for d in empty_b if d.type == "gcp:compute/firewall:Firewall"]
+    assert _egress_allowed(rules, set(), address) is allowed
+    for tag in (cell.GATEWAY_TAG, cell.PROXY_TAG, cell.DATA_TAG):
+        assert _egress_allowed(rules, {tag}, address)
+
+
+def test_egress_internal_names_the_proxy_the_data_gateway_and_the_database_range(
+    empty_b: list[Declared],
+) -> None:
+    internal = one(empty_b, "gcp:compute/firewall:Firewall", "egress-internal").inputs
+    assert internal["destinationRanges"] == ["10.20.4.10/32", "10.20.4.11/32", "10.21.0.0/20"]
+    assert "targetTags" not in internal
+    google = one(empty_b, "gcp:compute/firewall:Firewall", "egress-google-private").inputs
+    assert google["destinationRanges"] == ["199.36.153.8/30"]
+    reserved = {
+        d.inputs["address"]
+        for d in empty_b
+        if d.type == "gcp:compute/address:Address" and d.inputs["addressType"] == "INTERNAL"
+    }
+    assert {r.removesuffix("/32") for r in cell.internal_ranges()[:2]} == reserved
+
+
+def test_nothing_in_the_cell_has_ipv6(cell_a: list[Declared]) -> None:
+    vpc = one(cell_a, "gcp:compute/network:Network").inputs
+    assert not vpc.get("enableUlaInternalIpv6")
+    assert "internalIpv6Range" not in vpc
+    for d in cell_a:
+        if d.type == "gcp:compute/subnetwork:Subnetwork":
+            assert d.inputs["stackType"] == "IPV4_ONLY"
+            assert "ipv6AccessType" not in d.inputs
+        if d.type == "gcp:compute/instanceTemplate:InstanceTemplate":
+            assert {nic["stackType"] for nic in d.inputs["networkInterfaces"]} == {"IPV4_ONLY"}
+        if d.type == "gcp:compute/firewall:Firewall":
+            ranges = d.inputs.get("destinationRanges", []) + d.inputs.get("sourceRanges", [])
+            assert {ip_network(r).version for r in ranges} == {4}
+
+
 def test_the_database_is_a_zonal_shared_core_instance(cell_a: list[Declared]) -> None:
     settings = one(cell_a, "gcp:sql/databaseInstance:DatabaseInstance").inputs["settings"]
     assert (settings["tier"], settings["availabilityType"]) == ("db-f1-micro", "ZONAL")
@@ -284,7 +389,9 @@ def test_the_cell_agent_scales_to_zero_with_a_pinned_ceiling(cell_a: list[Declar
     assert agent["scaling"]["maxInstanceCount"] == cell.AGENT_MAX
 
 
-def test_only_google_names_resolve_in_the_cell(cell_a: list[Declared]) -> None:
+def test_only_google_names_and_the_gateway_s_platform_hosts_resolve_in_the_cell(
+    cell_a: list[Declared],
+) -> None:
     policy = one(cell_a, "gcp:dns/responsePolicy:ResponsePolicy").inputs
     assert policy["networks"] == [{"networkUrl": "vpc-id"}]
     rules = {
@@ -303,8 +410,11 @@ def test_only_google_names_resolve_in_the_cell(cell_a: list[Declared]) -> None:
     for tld in tlds:
         (answer,) = rules.pop(f"*.{tld}.")["localData"]["localDatas"]
         assert (answer["type"], answer["rrdatas"]) == ("CNAME", [cell.SINKHOLE_NAME])
-    assert set(rules) == set(cell.GOOGLE_DNS_PASSTHRU)
+    platform = {f"{host}." for host in naming.GATEWAY_PLATFORM_HOSTS}
+    assert platform == {"auth.delimitus.com.", "keys.delimitus.com."}
+    assert set(rules) == set(cell.GOOGLE_DNS_PASSTHRU) | platform
     assert {r["behavior"] for r in rules.values()} == {"bypassResponsePolicy"}
+    assert not any("*" in name or "localData" in rules[name] for name in platform)
 
 
 def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
@@ -322,6 +432,42 @@ def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
     assert set(env) == AGENT_ENV
     subnet = one(declared, "gcp:compute/subnetworkIAMMember:SubnetworkIAMMember").inputs
     assert (subnet["subnetwork"], subnet["role"]) == ("apps", "roles/compute.networkUser")
+
+
+def test_the_agent_runs_builds_as_ssc_build_once_both_images_are_set() -> None:
+    image = "us-central1-docker.pkg.dev/ssc-c-testcell05/ssc-platform/agent@sha256:" + "a" * 64
+    declared = run(naming.cell_stack("testcell05"), {"agent_image": image} | BUILD)
+    agent = one(declared, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
+    env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
+    assert set(env) == AGENT_ENV | BUILD_ENV
+    assert env["SSC_BUILD_SA"] == naming.sa_email("ssc-build", "ssc-c-testcell05")
+    assert (env["SSC_BUILD_TOOLS_IMAGE"], env["SSC_BUILD_FRONTEND_IMAGE"]) == (
+        TOOLS_IMAGE,
+        FRONTEND_IMAGE,
+    )
+
+
+@pytest.mark.parametrize(
+    ("tools", "frontend"),
+    [
+        (TOOLS_IMAGE, None),
+        (None, FRONTEND_IMAGE),
+        (TOOLS_IMAGE, f"{naming.platform_registry()}/railpack-frontend:v0.40.1"),
+        (TOOLS_IMAGE, "ghcr.io/railwayapp/railpack-frontend@sha256:" + "e" * 64),
+        (f"{naming.platform_registry()}@sha256:" + "d" * 64, FRONTEND_IMAGE),
+    ],
+)
+def test_build_images_are_both_set_in_the_platform_registry_and_pinned(
+    tools: str | None, frontend: str | None
+) -> None:
+    with pytest.raises(ValueError, match="build_tools_image or build_frontend_image"):
+        cell.build_images(tools, frontend)
+
+
+def test_without_build_images_the_agent_sets_none_of_the_build_variables() -> None:
+    assert cell.build_images(None, None) == (None, None)
+    assert cell.build_images("", "") == (None, None)
+    assert cell.build_images(TOOLS_IMAGE, FRONTEND_IMAGE) == (TOOLS_IMAGE, FRONTEND_IMAGE)
 
 
 def test_without_an_agent_image_the_agent_is_a_placeholder(cell_a: list[Declared]) -> None:
@@ -344,6 +490,7 @@ def test_the_probe_runner_stands_where_the_gateway_stands() -> None:
     number = project_number("ssc-c-testcell06")
     assert env["PROBE_URL"] == f"https://ssc-a-probe00000000000000a-{number}.us-central1.run.app"
     assert env["PROBE_PEER_URL"].startswith("https://ssc-a-probe00000000000000b-")
+    assert env["PROBE_EGRESS_HOSTS"] == "auth.delimitus.com,keys.delimitus.com"
     nightly = f"serviceAccount:{mockcloud.NIGHTLY}"
     executor = one(declared, "gcp:cloudrunv2/jobIamMember:JobIamMember").inputs
     assert (executor["role"], executor["member"]) == ("roles/run.jobsExecutor", nightly)
@@ -414,6 +561,11 @@ def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared])
     assert not any(p.endswith((".delete", ".create")) for p in runtime)
     assert "iam.serviceAccounts.actAs" in runtime
     assert {"run.services.setIamPolicy", "run.revisions.list"} <= set(runtime)
+    assert "cloudbuild.builds.create" in roles["sscCellAgentCreate"]
+    assert {p for p in runtime if p.startswith("cloudbuild.")} == {
+        "cloudbuild.builds.get",
+        "cloudbuild.builds.list",
+    }
 
 
 def test_app_images_are_read_by_the_agent_and_written_by_builds(cell_a: list[Declared]) -> None:
@@ -424,8 +576,42 @@ def test_app_images_are_read_by_the_agent_and_written_by_builds(cell_a: list[Dec
     }
     assert grants == {
         "registry-build": ("serviceAccount:ssc-build", "roles/artifactregistry.writer"),
+        "registry-build-tools": ("serviceAccount:ssc-build", "roles/artifactregistry.reader"),
         "registry-agent": ("serviceAccount:ssc-cell-agent", "roles/artifactregistry.reader"),
     }
+
+
+def test_builds_read_the_platform_registry_and_push_to_the_cell_s_own(
+    cell_a: list[Declared],
+) -> None:
+    kind = "gcp:artifactregistry/repositoryIamMember:RepositoryIamMember"
+    tools = one(cell_a, kind, "registry-build-tools").inputs
+    assert (tools["project"], tools["location"], tools["repository"]) == (
+        naming.BOOTSTRAP_PROJECT,
+        naming.REGION,
+        naming.PLATFORM_REPOSITORY,
+    )
+    push = one(cell_a, kind, "registry-build").inputs
+    assert (push["project"], push["role"]) == (
+        naming.cell_project(A),
+        "roles/artifactregistry.writer",
+    )
+
+
+def test_the_build_account_holds_no_storage_role(cell_a: list[Declared]) -> None:
+    build = f"serviceAccount:{naming.sa_email('ssc-build', naming.cell_project(A))}"
+    held = [
+        (d.type, d.inputs["role"])
+        for d in cell_a
+        if d.inputs.get("member") == build or build in d.inputs.get("members", [])
+    ]
+    assert sorted(role for _, role in held) == [
+        "roles/artifactregistry.reader",
+        "roles/artifactregistry.writer",
+        "roles/logging.logWriter",
+    ]
+    assert not [t for t, role in held if t.startswith("gcp:storage/") or "storage" in role]
+    assert not [r for _, r in held if not r.startswith("roles/")]
 
 
 def test_the_cell_deny_rule_names_every_ssc_identity(cell_a: list[Declared]) -> None:

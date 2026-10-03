@@ -8,8 +8,9 @@ Configuration: ``PROBE_URL`` (the probe app), ``PROBE_PEER_URL`` (a second app t
 not reach), ``PROBE_HEALTH_PATH`` (default ``/health``). For ``cannot_reach_peer_cell``, all of
 ``PROBE_PEER_CELL_APP_URL``, ``PROBE_PEER_CELL_GATEWAY_URL`` (another cell's app and gateway
 ``run.app`` URLs) and ``PROBE_PEER_CELL_RANGE`` (that cell's address range); without them the
-probe is skipped (``no peer cell``), never passed. Prints one JSON line per probe and a summary
-line, and exits 1 when any probe fails.
+probe is skipped (``no peer cell``), never passed. ``PROBE_EGRESS_HOSTS`` (comma-separated)
+names hosts that resolve in the cell but must not answer an app; ``no_direct_egress`` dials each
+too. Prints one JSON line per probe and a summary line, and exits 1 when any probe fails.
 """
 
 import json
@@ -19,7 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 import checks
 
@@ -27,6 +28,7 @@ METADATA = "http://metadata.google.internal/computeMetadata/v1"
 TIMEOUT = 60.0
 NO_PEER_CELL = "no peer cell"
 PEER_CELL_ENV = ("PROBE_PEER_CELL_APP_URL", "PROBE_PEER_CELL_GATEWAY_URL", "PROBE_PEER_CELL_RANGE")
+EGRESS_HOSTS_ENV = "PROBE_EGRESS_HOSTS"
 
 
 class ProbeSkippedError(Exception):
@@ -87,6 +89,11 @@ def peer_cell_from(environ: Mapping[str, str]) -> tuple[str, str, str] | None:
     return (app_url, gateway_url, cidr) if app_url and gateway_url and cidr else None
 
 
+def egress_hosts_from(environ: Mapping[str, str]) -> tuple[str, ...]:
+    """The hosts ``no_direct_egress`` also dials, from ``PROBE_EGRESS_HOSTS``."""
+    return tuple(h for h in (p.strip() for p in environ.get(EGRESS_HOSTS_ENV, "").split(",")) if h)
+
+
 def _peer_cell(app: Probe, peer_cell: tuple[str, str, str] | None) -> str:
     if peer_cell is None:
         raise ProbeSkippedError(NO_PEER_CELL)
@@ -95,9 +102,14 @@ def _peer_cell(app: Probe, peer_cell: tuple[str, str, str] | None) -> str:
 
 
 def plan(
-    app: Probe, peer_url: str, health_path: str, peer_cell: tuple[str, str, str] | None = None
+    app: Probe,
+    peer_url: str,
+    health_path: str,
+    peer_cell: tuple[str, str, str] | None = None,
+    egress_hosts: Sequence[str] = (),
 ) -> dict[str, Callable[[], str]]:
     peer = urllib.parse.urlencode({"url": peer_url})
+    egress = urllib.parse.urlencode([("host", h) for h in egress_hosts])
     return {
         "non_root_10001": lambda: checks.non_root(app.body("/probe/uid")),
         "listens_on_PORT": lambda: (app.get("/"), "answers on $PORT")[1],
@@ -105,7 +117,7 @@ def plan(
         "no_write_outside_memory": lambda: checks.no_write_outside_memory(
             app.body("/probe/mounts")
         ),
-        "no_direct_egress": lambda: checks.no_direct_egress(app.body("/probe/egress")),
+        "no_direct_egress": lambda: checks.no_direct_egress(app.body(f"/probe/egress?{egress}")),
         "no_dns_exfil": lambda: checks.no_dns_exfil(app.body("/probe/dns")),
         "metadata_token_no_roles": lambda: checks.metadata_token_no_roles(
             app.body("/probe/identity")
@@ -132,9 +144,13 @@ def plan(
 
 
 def run(
-    app: Probe, peer_url: str, health_path: str, peer_cell: tuple[str, str, str] | None = None
+    app: Probe,
+    peer_url: str,
+    health_path: str,
+    peer_cell: tuple[str, str, str] | None = None,
+    egress_hosts: Sequence[str] = (),
 ) -> list[dict[str, str]]:
-    steps = plan(app, peer_url, health_path, peer_cell)
+    steps = plan(app, peer_url, health_path, peer_cell, egress_hosts)
     results: list[dict[str, str]] = []
     for name in checks.PROBES:
         try:
@@ -149,7 +165,13 @@ def run(
 def main() -> int:
     url, peer_url = os.environ["PROBE_URL"], os.environ["PROBE_PEER_URL"]
     health_path = os.environ.get("PROBE_HEALTH_PATH", "/health")
-    results = run(Probe(url, id_token(url)), peer_url, health_path, peer_cell_from(os.environ))
+    results = run(
+        Probe(url, id_token(url)),
+        peer_url,
+        health_path,
+        peer_cell_from(os.environ),
+        egress_hosts_from(os.environ),
+    )
     for result in results:
         print(json.dumps({"ssc_probe": result}), flush=True)  # noqa: T201
     failed = [r["probe"] for r in results if r["status"] == "failed"]

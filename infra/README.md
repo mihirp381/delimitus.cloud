@@ -30,11 +30,58 @@ pulumi config set --stack c-<label> database true
 pulumi up --stack c-<label>
 ```
 
-Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
+Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
 
 The stack exports `flags`, so `cell_diff` compares two cells with different flags without their flagged resources.
 
 **Subnets.** Two IPv4 `/24`s: `apps` (10.20.0.0/24) holds only apps; `gateway` (10.20.4.0/24) holds everything that may reach the internet: the gateway, the data gateway and the proxy. Only `gateway` is behind the NAT, so an app has no route out even if a firewall rule were wrong. To put everything in one `/24`, set `SUBNETS` in `cell.py` to the `apps` entry alone and `EDGE_SUBNET` to `"apps"`; the reserved addresses move with it.
+
+## No-internet floor
+
+Apps have no internet (SSC-027). The rules are written once at onboarding, against addresses reserved then, and no flag changes them: `tests/test_cell.py` checks that the network, firewall, NAT, private zone and response policy are identical on an empty cell and after `database`, then `egress`, then `connections`.
+
+| Egress rule | Priority | Applies to | Destinations |
+| --- | --- | --- | --- |
+| `egress-internal` | 1000 | everything | 10.20.4.10/32 (proxy), 10.20.4.11/32 (data gateway), 10.21.0.0/20 (database range) |
+| `egress-google-private` | 1000 | everything | 199.36.153.8/30 (`private.googleapis.com`) |
+| `egress-gateway`, `egress-proxy`, `egress-data` | 1000 | tags `ssc-gateway`, `ssc-proxy`, `ssc-data` | 0.0.0.0/0 |
+| `egress-deny-all` | 65534 | everything | 0.0.0.0/0, denied |
+
+Apps carry no tag, so an app reaches the two reserved addresses (a dead end until the proxy or data gateway takes its address), the database range and Google's private APIs, and nothing else: not another app, not the gateway subnet, not another cell. `ingress-proxy` lets the apps subnet reach the proxy on tcp 3128 only. Until SSC-027, `egress-internal` allowed all of 10.20.0.0/16.
+
+**No IPv6.** The VPC has no internal IPv6 range, both subnets and the proxy's interface are `IPV4_ONLY`, and every firewall range is IPv4, so an IPv6 connection has no route.
+
+**DNS.** The response policy `ssc-cell` answers every name under every top-level domain with an unroutable sinkhole. Two lists bypass it: Google's names (`cell.GOOGLE_DNS_PASSTHRU`) and the platform hosts the gateway calls, `naming.GATEWAY_PLATFORM_HOSTS`: `auth.delimitus.com` (login) and `keys.delimitus.com` (identity note issuer and keys). Each platform rule is the exact name, so `x.auth.delimitus.com` still gets the sinkhole and a query can carry data only in those two fixed names. To add a host, add it to that tuple; it adds one rule.
+
+**Why apps stay blocked.** A response policy belongs to the whole VPC: Cloud DNS cannot answer the apps subnet differently from the gateway subnet, so an app resolves the two platform hosts too. Resolving is not reaching. Their addresses are public, no allow rule names them for an untagged source, so `egress-deny-all` drops the packet; and the apps subnet is not behind the NAT, so there would be no route out even if a rule were wrong. The probe checks it: the probe runner job sets `PROBE_EGRESS_HOSTS` to the two hosts, and `no_direct_egress` dials each on 443 from the app, as well as its five fixed attempts (tcp 443 and 80, udp 53 and 443, IPv6).
+
+Keep `auth` and `keys` as A records. Neither record is in the platform stack yet; a CNAME to a name outside the bypass lists may be answered with the sinkhole.
+
+**What SSC-053 must do** (the proxy machine; nothing here blocks it):
+- Run the proxy at the reserved address 10.20.4.10, listening on tcp 3128, with its health check on the same port. The ingress rules (`ingress-proxy`, `ingress-proxy-health`) and `PROXY_PORT` already say so; a different port changes `PROXY_PORT` only.
+- Resolve allowed hosts itself, through a public resolver over the NAT (the proxy tag may reach 0.0.0.0/0, and the gateway subnet is behind the NAT), not through the cell's resolver, which sinkholes them. Never add approved hosts to the response policy: it is VPC-wide, so apps would resolve them too, and it would change with every approval.
+- Refuse any destination that resolves to a private, link-local or Google private address (10.0.0.0/8, 169.254.0.0/16, 199.36.153.8/30, and the like) and any IP literal. The proxy tag may reach everything, so the proxy alone keeps an app from using it to reach the gateway subnet, the database or the metadata server.
+- Fetch its software without opening the floor per cell. The template has no service account and the boot image is Container-Optimized OS. Pulling from Artifact Registry needs a service account with `artifactregistry.reader` and `*.pkg.dev` names, which the `*.dev.` rule sinkholes; either add `pkg.dev.` and `*.pkg.dev.` to `GOOGLE_DNS_PASSTHRU` with a private `pkg.dev.` zone pointing at `private.googleapis.com` (one change for every cell, written at onboarding), or resolve through the public resolver as above.
+- Leave `egress-internal`, the ingress rules and the NAT alone, and keep the before-and-after test passing.
+
+**Live check** (operator, not run by SSC-027). On a staging probe cell with the nightly's settings (SSC-017: stack settings `probe`, `probe_digest` and `agent_image`; environment `SSC_PROBE_PROJECT`, `SSC_PROBE_AGENT_URL` and `SSC_PROBE_DIGEST`), all flags off:
+
+```
+P=ssc-c-testcell01
+pulumi up --stack c-testcell01
+gcloud compute firewall-rules list --project=$P --format=json > /tmp/fw-empty.json
+gcloud dns response-policies rules list ssc-cell --project=$P --format=json > /tmp/dns-empty.json
+uv run python -m ssc_conformance.nightly            # no_direct_egress passed, 7 connections refused
+for flag in database egress connections; do
+  pulumi config set --stack c-testcell01 $flag true
+  pulumi up --stack c-testcell01
+  gcloud compute firewall-rules list --project=$P --format=json | diff /tmp/fw-empty.json -
+  gcloud dns response-policies rules list ssc-cell --project=$P --format=json | diff /tmp/dns-empty.json -
+  uv run python -m ssc_conformance.nightly
+done
+```
+
+Each `diff` prints nothing, and `no_direct_egress` passes every time. The sinkhole's first creation takes about 78 minutes (SSC-091).
 
 ## The cell deployer
 
@@ -60,6 +107,36 @@ The control plane turns on a cell's `database`, `egress` or `connections` flag w
 3. Re-apply each existing cell once (`pulumi up --stack c-<label>`) so its state exports `config`.
 4. Set the two worker settings above on the control plane.
 5. Deploy a stateful app into an empty staging cell, then run `cell_diff` and `pulumi preview --stack c-<label> --expect-no-changes`.
+
+## Builds
+
+The cell agent runs each build in the cell's own Cloud Build as `ssc-build` (SSC-015, `ssc_agent.cloud_build`). The stack wires it in:
+
+- **Settings.** `build_tools_image` and `build_frontend_image`, both or neither, each `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/<image>@sha256:<digest>`. Anything else, or one without the other, fails the stack before apply: a partial set would stop the agent from starting.
+- **Agent environment.** With `agent_image` and both images set: `SSC_BUILD_SA` (`ssc-build@ssc-c-<label>.iam.gserviceaccount.com`), `SSC_BUILD_TOOLS_IMAGE` and `SSC_BUILD_FRONTEND_IMAGE`. Without them none of the three is set, and the agent answers builds with `BUILD_NOT_CONFIGURED`.
+- **Agent permissions.** `cloudbuild.builds.create` in `sscCellAgentCreate`; `cloudbuild.builds.get` and `cloudbuild.builds.list` in `sscCellAgentRuntime`. Acting as `ssc-build` is the `iam.serviceAccounts.actAs` that `sscCellAgentRuntime` already holds on the project (it covers every account in the cell, as for app identities).
+- **`ssc-build`.** `artifactregistry.writer` on the cell's `ssc-apps`; `artifactregistry.reader` on `ssc-platform` in `ssc-platform-0`, which holds the tools image and the Railpack frontend mirror (and the cell deployer's image, which builds can therefore pull); `logging.logWriter`. No storage role of any kind: the bundle's signed URL is all it reads (`tests/test_cell.py`).
+- **Policies.** None of the folder policies touches this: the builds run in `us-central1`, on Google's default pool (no VM in the cell), and the registry grant is on a platform project, to an organisation identity.
+
+The cell stack writes the reader grant into `ssc-platform-0`, as it writes the apps zone's records. The operator's run creates it. The cell deployer has no role on that registry, so re-apply each existing cell by hand once before the deployer next runs on it.
+
+**Live steps** (operator, not run by SSC-015):
+
+```
+REG=us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform
+gcloud auth configure-docker us-central1-docker.pkg.dev
+docker buildx build --platform linux/amd64 --provenance=false --metadata-file /tmp/tools.json \
+  --tag $REG/ssc-build-tools:railpack-0.40.1 --push infra/build_tools
+jq -r '."containerimage.digest"' /tmp/tools.json
+docker buildx imagetools create --tag $REG/railpack-frontend:v0.40.1 \
+  ghcr.io/railwayapp/railpack-frontend:v0.40.1@sha256:f1973377693af30c9b37a92c97c661c07b277ccdc6be909213c74c771f8d2d6d
+docker buildx imagetools inspect $REG/railpack-frontend:v0.40.1
+pulumi config set --stack c-<label> build_tools_image $REG/ssc-build-tools@<tools digest>
+pulumi config set --stack c-<label> build_frontend_image $REG/railpack-frontend@<mirror digest>
+pulumi up --stack c-<label>
+```
+
+Railpack tags its frontend `v0.40.1`; there is no `0.40.1` tag.
 
 ## Public entry
 

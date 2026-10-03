@@ -5,6 +5,7 @@ project number, addresses and the resources their flags name; ``python -m ssc_in
 checks exactly that.
 """
 
+import re
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -58,7 +59,6 @@ TLS_PROFILE: Final = "MODERN"
 AGENT_PATHS: Final = "agent"
 DNS_TTL: Final = 300
 CELL_BUDGET_USD: Final = 50
-CELL_RANGE: Final = "10.20.0.0/16"
 PSA_ADDRESS: Final = "10.21.0.0"
 PSA_PREFIX: Final = 20
 GOOGLE_PRIVATE: Final = ("199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11")
@@ -90,10 +90,12 @@ CREATE_PERMISSIONS: Final = (
     "run.services.create",
     "secretmanager.secrets.create",
     "cloudsql.databases.create",
+    "cloudbuild.builds.create",
 )
 # Cloud Run and service accounts take no resource-name IAM conditions (only Secret Manager of
 # the agent's APIs does), so these are granted on the project and the agent's code holds it to
-# ``ssc-a-`` names. Exactly what ``ssc_agent.cloud_run`` calls; no delete.
+# ``ssc-a-`` names. Exactly what ``ssc_agent.cloud_run`` and ``ssc_agent.cloud_build`` call; no
+# delete.
 RUNTIME_PERMISSIONS: Final = (
     "run.services.get",
     "run.services.update",
@@ -102,6 +104,12 @@ RUNTIME_PERMISSIONS: Final = (
     "run.revisions.get",
     "run.revisions.list",
     "iam.serviceAccounts.actAs",
+    "cloudbuild.builds.get",
+    "cloudbuild.builds.list",
+)
+BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
+PINNED_IMAGE: Final = re.compile(
+    rf"{re.escape(n.platform_registry())}(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{{64}}"
 )
 
 
@@ -119,6 +127,8 @@ class CellConfig:
     egress: bool
     connections: bool
     warm: bool
+    build_tools_image: str | None = None
+    build_frontend_image: str | None = None
 
     @property
     def project_id(self) -> str:
@@ -154,6 +164,8 @@ class CellConfig:
             "agent_image": self.agent_image,
             "probe_digest": self.probe_digest,
             "billing_account": self.billing_account,
+            "build_tools_image": self.build_tools_image,
+            "build_frontend_image": self.build_frontend_image,
             **self.flags,
         }
         return {
@@ -168,6 +180,7 @@ def read_config(stack: str) -> CellConfig:
     stage = config.get("stage") or "staging"
     if stage != "prod" and stage != "staging":  # noqa: PLR1714  (narrows to Stage)
         raise ValueError(f"stage must be one of {n.STAGES}, not {stage!r}")
+    tools, frontend = build_images(config.get(BUILD_IMAGES[0]), config.get(BUILD_IMAGES[1]))
     return CellConfig(
         label=n.label_of_stack(stack),
         stage=stage,
@@ -181,7 +194,23 @@ def read_config(stack: str) -> CellConfig:
         egress=config.get_bool("egress") or False,
         connections=config.get_bool("connections") or False,
         warm=config.get_bool("warm") or False,
+        build_tools_image=tools,
+        build_frontend_image=frontend,
     )
+
+
+def build_images(tools: str | None, frontend: str | None) -> tuple[str | None, str | None]:
+    """Both build images or neither (the agent refuses to start on a partial set), each in the
+    platform registry and pinned by digest."""
+    if not tools and not frontend:
+        return None, None
+    for key, value in zip(BUILD_IMAGES, (tools, frontend), strict=True):
+        if not value or not PINNED_IMAGE.fullmatch(value):
+            raise ValueError(
+                f"{key} must be {n.platform_registry()}/<image>@sha256:<digest> when "
+                f"{' or '.join(BUILD_IMAGES)} is set"
+            )
+    return tools, frontend
 
 
 def _int_or(value: int | None, default: int) -> int:
@@ -444,9 +473,8 @@ class Cell:
             deletion_policy="ABANDON",  # Google holds it for a while after Cloud SQL is deleted
             opts=self._o(),
         )
-        psa_cidr = f"{PSA_ADDRESS}/{PSA_PREFIX}"
         self._egress("egress-deny-all", 65534, deny=True, ranges=["0.0.0.0/0"])
-        self._egress("egress-internal", 1000, ranges=[CELL_RANGE, psa_cidr])
+        self._egress("egress-internal", 1000, ranges=internal_ranges())
         self._egress("egress-google-private", 1000, ranges=[GOOGLE_PRIVATE_RANGE])
         for name, tag in (("gateway", GATEWAY_TAG), ("proxy", PROXY_TAG), ("data", DATA_TAG)):
             self._egress(f"egress-{name}", 1000, ranges=["0.0.0.0/0"], tags=[tag])
@@ -496,7 +524,7 @@ class Cell:
             region=n.REGION,
             address_type="INTERNAL",
             subnetwork=self.edge_subnet.id,
-            address=str(ip_network(SUBNETS[EDGE_SUBNET])[host]),
+            address=edge_address(host),
             opts=self._o(),
         )
 
@@ -661,6 +689,15 @@ class Cell:
             member=self.build_sa.member,
             opts=self._o(),
         )
+        gcp.artifactregistry.RepositoryIamMember(
+            "registry-build-tools",
+            project=n.BOOTSTRAP_PROJECT,
+            location=n.REGION,
+            repository=n.PLATFORM_REPOSITORY,
+            role="roles/artifactregistry.reader",
+            member=self.build_sa.member,
+            opts=self._o(),
+        )
         # Cloud Run checks that whoever deploys an image may read it.
         gcp.artifactregistry.RepositoryIamMember(
             "registry-agent",
@@ -680,7 +717,12 @@ class Cell:
         Measured in a probe cell: Cloud DNS ignores a ``*.`` rule, and a rule answers only the
         record types it holds, passing others (AAAA, TXT) to public DNS. So each top-level domain
         gets a ``*.<tld>.`` rule answering with a CNAME, which covers every type, to a name that
-        only this policy answers. Google's names bypass it by the longer match."""
+        only this policy answers. Google's names bypass it by the longer match, and so do the
+        platform hosts the gateway calls (``GATEWAY_PLATFORM_HOSTS``), each by its exact name.
+
+        The policy holds for the whole VPC, so an app resolves those hosts too, and nothing more:
+        no allow rule covers their addresses and the apps subnet has no NAT, so the answer leads
+        nowhere (SSC-027)."""
         policy = gcp.dns.ResponsePolicy(
             "dns-policy",
             project=self.pid,
@@ -728,6 +770,17 @@ class Cell:
                 response_policy=policy.response_policy_name,
                 rule_name=f"google-{i}",
                 dns_name=name,
+                behavior="bypassResponsePolicy",
+                opts=self._o(),
+            )
+        for host in n.GATEWAY_PLATFORM_HOSTS:
+            label = host.split(".", 1)[0]
+            gcp.dns.ResponsePolicyRule(
+                f"dns-platform-{label}",
+                project=self.pid,
+                response_policy=policy.response_policy_name,
+                rule_name=f"platform-{label}",
+                dns_name=f"{host}.",
                 behavior="bypassResponsePolicy",
                 opts=self._o(),
             )
@@ -1025,7 +1078,8 @@ class Cell:
         """Runs ``python -m ssc_agent`` (decision 014) once ``agent_image`` names a build of
         ``packages/ssc_agent/Dockerfile`` in the cell's ``ssc-platform`` repository. Reached only
         through the cell's load balancer on its reserved host, and invoked only by the control
-        plane, with an ID token whose audience is that host's URL (SSC-095)."""
+        plane, with an ID token whose audience is that host's URL (SSC-095). With both build images
+        set it runs builds in the cell's Cloud Build as ``ssc-build`` (SSC-015)."""
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
             "SSC_CELL_REGION": n.REGION,
@@ -1034,6 +1088,13 @@ class Cell:
             "SSC_IMAGE_REPOSITORY": self.app_images,
             "SSC_GATEWAY_SA": self.gateway_sa.email,
         }
+        tools, frontend = self.cfg.build_tools_image, self.cfg.build_frontend_image
+        if tools and frontend:
+            env |= {
+                "SSC_BUILD_SA": self.build_sa.email,
+                "SSC_BUILD_TOOLS_IMAGE": tools,
+                "SSC_BUILD_FRONTEND_IMAGE": frontend,
+            }
         self.agent_ = self._run(
             n.CELL_AGENT,
             self.agent_sa,
@@ -1192,7 +1253,8 @@ class Cell:
 
     def probe_runner(self) -> None:
         """The in-cell probe run (SSC-017): a job that stands where the gateway stands (its
-        identity, subnet and tag) and calls probe app ``a``. The nightly run starts it."""
+        identity, subnet and tag) and calls probe app ``a``. The nightly run starts it. The app
+        also dials the platform hosts that resolve in the cell, which must stay unreachable."""
         digest = self.cfg.probe_digest
         if digest is None:
             return
@@ -1231,6 +1293,10 @@ class Cell:
                                 gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
                                     name="PROBE_PEER_URL",
                                     value=number.apply(lambda p: n.run_url(b, p)),
+                                ),
+                                gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
+                                    name="PROBE_EGRESS_HOSTS",
+                                    value=",".join(n.GATEWAY_PLATFORM_HOSTS),
                                 ),
                             ],
                         )
@@ -1291,3 +1357,15 @@ def build(stack: str) -> None:
 def tlds() -> list[str]:
     lines = TLDS_FILE.read_text(encoding="ascii").splitlines()
     return [line.lower() for line in lines if line and not line.startswith("#")]
+
+
+def edge_address(host: int) -> str:
+    """Address ``host`` of the edge subnet, reserved at cell creation."""
+    return str(ip_network(SUBNETS[EDGE_SUBNET])[host])
+
+
+def internal_ranges() -> list[str]:
+    """What an untagged app may reach inside the cell (SSC-027): the proxy and data gateway
+    addresses and the database's private range, written once whether or not they exist yet."""
+    hosts = [f"{edge_address(host)}/32" for host in (PROXY_HOST, DATAGW_HOST)]
+    return [*hosts, f"{PSA_ADDRESS}/{PSA_PREFIX}"]

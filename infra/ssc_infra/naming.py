@@ -67,6 +67,9 @@ GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
 
 APPS_DOMAIN: Final = "delimitusapps.com"
 PLATFORM_DOMAIN: Final = "delimitus.com"
+AUTH_HOST: Final = f"auth.{PLATFORM_DOMAIN}"
+KEYS_HOST: Final = f"keys.{PLATFORM_DOMAIN}"
+GATEWAY_PLATFORM_HOSTS: Final = (AUTH_HOST, KEYS_HOST)
 APPS_ZONE: Final = "delimitusapps"
 PLATFORM_ZONE: Final = "delimitus"
 AGENT_HOST_LABEL: Final = "ssc--agent"
@@ -120,6 +123,12 @@ def agent_host(label: str) -> str:
 def agent_url(label: str) -> str:
     """The cell agent's URL through the cell's load balancer, and its ID token audience."""
     return f"https://{agent_host(label)}"
+
+
+def platform_registry() -> str:
+    """The platform's own images in ``ssc-platform-0``: the cell deployer, the build tools image
+    and the Railpack frontend mirror."""
+    return f"{REGION}-docker.pkg.dev/{BOOTSTRAP_PROJECT}/{PLATFORM_REPOSITORY}"
 
 
 def platform_stack_ref() -> str:

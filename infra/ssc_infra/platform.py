@@ -373,7 +373,8 @@ def _deployer_job(
         location=n.REGION,
         repository_id=n.PLATFORM_REPOSITORY,
         format="DOCKER",
-        description="SSC's own images in the platform project: the cell deployer.",
+        description="SSC's own images in the platform project: the cell deployer, the build "
+        "tools image and the Railpack frontend mirror.",
         opts=opts,
     )
     if image is None:
