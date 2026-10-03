@@ -134,6 +134,11 @@ class ControlConfig:
     def released(self) -> bool:
         return self.image is not None
 
+    def serves_cells(self, stage: n.Stage) -> bool:
+        """Whether ``stage``'s control plane is the one the cells trust (``cell.control_for``):
+        the public stage, or every stage while there is none."""
+        return self.public is None or self.public == stage
+
 
 def release_settings(
     image: str | None, jwks: str | None, kid: str | None
@@ -213,7 +218,7 @@ def api_env(
         "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
         **_blob_env(stage, signer),
     }
-    if cfg.cell_label:
+    if cfg.cell_label and cfg.serves_cells(stage):
         env["SSC_CELL_AGENT_URL"] = n.agent_url(cfg.cell_label)
         env["SSC_SECRET_INTAKE_URL"] = n.intake_url(cfg.cell_label)
     return env
@@ -233,7 +238,7 @@ def worker_env(
     if cfg.deployer:
         env["SSC_CELL_DEPLOYER"] = "cloud_run"
         env["SSC_CELL_DEPLOYER_JOB"] = n.deployer_job()
-    if cfg.cell_label and cfg.cell_jwks:
+    if cfg.cell_label and cfg.cell_jwks and cfg.serves_cells(stage):
         env["SSC_RUNTIME_DRIVER"] = "cell_agent"
         env["SSC_BUILD_DRIVER"] = "cell_agent"
         env["SSC_CELL_AGENT_URL"] = n.agent_url(cfg.cell_label)

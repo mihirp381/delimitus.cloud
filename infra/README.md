@@ -5,7 +5,7 @@ Pulumi in Python for SSC on Google Cloud (SSC-013, decisions 021, 022 and 025). 
 | Stack | What it holds |
 | --- | --- |
 | `platform` | Folders `ssc-cells/{prod,staging}` and `ssc-sandbox`, with logs in `us-central1`. The location policy on `ssc-platform`, the cell policy table on `ssc-cells` and the public-invoker tag (SSC-095). The control projects `ssc-control-<stage>`, their four identities and, for each stage in `control_stages`, the control plane (SSC-064: API, worker, auth host, database, secrets; the public hosts in `public_stage`). The folder rule denying secret reads. Just-in-time staff access. The $250 monthly budget. The public DNS zones `delimitusapps.com.` and `delimitus.com.` in `ssc-platform-0`. |
-| `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build`, `ssc-data` and `ssc-secret-intake`, KMS, bucket, Artifact Registry, the VPC with its firewall floor, DNS sinkhole and the empty database zone `ssc-sql`, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests), the cell agent and the secret intake behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
+| `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build`, `ssc-data` and `ssc-secret-intake`, KMS, bucket, Artifact Registry, the VPC with its firewall floor, DNS sinkhole and the empty database zone `ssc-sql`, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests), the cell agent (one instance at most) with its two log views and the secret intake behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
 
 The lazy flags are turned on by the cell deployer when the control plane asks (SSC-087, below). The operator can still set any flag by hand.
 
@@ -178,6 +178,25 @@ With the `database` flag the agent makes one database per app on the cell's inst
 8. The agent's IAM user is in `cloudsqlsuperuser` (`gcloud sql users list --instance=ssc-cell`) and `SET ROLE cloudsqlsuperuser` works through the Data API.
 9. CMEK and the CAS server CA mode together are accepted on a new instance.
 
+## App logs
+
+The cell agent reads app, build and health logs from the cell's own Cloud Logging (SSC-024, `ssc_agent.cloud_logging`), through two log views and nothing else:
+
+- **Views.** `ssc-run` (`resource.type = "cloud_run_revision"`) and `ssc-build` (`resource.type = "build"`) on the project's `_Default` bucket, `projects/ssc-c-<label>/locations/us-central1/buckets/_Default/views/<view>`. Two views, because a view's filter is documented as an `AND` of comparisons only. The agent's `SSC_LOG_VIEW` holds both full names, comma-separated.
+- **Bucket location.** `_Default` is made with the project, in the default log location of its folder. The platform stack sets that to `us-central1` on `ssc-cells` and on each stage folder (`FolderSettings`), and the location policy allows it, so a cell's `_Default` is in `us-central1`. A bucket's location never changes: a cell project made before that setting would have a `global` `_Default`, and its views would need `locations/global` in `cell.log_bucket`, or a new project; live check 1 tells which.
+- **Identity.** `ssc-cell-agent` holds `logging.viewAccessor` on the project with the condition `resource.name == "<ssc-run>" || resource.name == "<ssc-build>"`, beside its `logging.logWriter`; no `logging.viewer`, no `privateLogViewer`, nothing on the bucket (`tests/test_cell.py`).
+- **One instance.** The agent keeps under Cloud Logging's 60 `entries.list` calls a minute per project only within one instance, so the agent service runs at most 1 instance (it was 3). Concurrency 200, for the 40 follows it allows at once (each held up to 20 s) beside deploys, which hold a call for up to 240 s; request timeout 300 s. The secret intake keeps its own 3.
+- **Network.** The agent has no VPC egress, so it reaches `logging.googleapis.com` on Google's own path, as it reaches Cloud Run and Secret Manager; the Logging API is already on in the cell. No DNS or Private Google Access change.
+- **Cost.** None for an empty cell: views and IAM are free, Logging does not bill reads, and one instance at most can only cost less.
+
+**Live checks** (operator, not run by this change), on a staging cell with `agent_image` set and one app deployed:
+1. `gcloud logging buckets describe _Default --location=us-central1 --project=ssc-c-<label>` answers (and `--location=global` does not); `gcloud logging views list --bucket=_Default --location=us-central1` shows both views with their filters.
+2. Following the app (`GET /v1/apps/<app>/environments/<env>/logs?source=app` with `after=<cursor>&wait=20`, until `ssc logs` lands in SSC-022) shows a line the app prints within 5 s of printing it, on a real cell; note the ingestion delay seen (the agent reads 10 s back, `LAG`, and polls every 2 s).
+3. `viewAccessor` on the two views alone is enough for `entries.list` with both views in `resourceNames`: no `403`, and the same call naming the bucket itself (`projects/<p>/locations/us-central1/buckets/_Default`) is refused.
+4. Whether one view with `resource.type = "cloud_run_revision" OR resource.type = "build"` is accepted: `gcloud logging views create ssc-try --bucket=_Default --location=us-central1 --log-filter=...`, then delete it. If it is, two views stay anyway (no change needed).
+5. `source=build` shows a build's lines through `ssc-build`, and `GET .../health` shows `running` or `asleep` without waking the app.
+6. The agent service shows max instances 1, concurrency 200 and timeout 300 s (`gcloud run services describe ssc-cell-agent`).
+
 ## Gateway
 
 The cell's gateway (SSC-018, decision 023) runs a build of `packages/ssc_edge/Dockerfile` once its four settings are set; until then it is the placeholder image with no environment.
@@ -246,7 +265,7 @@ The platform stack runs the control plane in `ssc-control-<stage>` for each stag
   - `control_stages`: a list, `["prod"]`, `["staging"]` or both. Unset or empty: no control plane, only the staging project and its identities, as before. `ssc-control-prod` is made only once `prod` is named.
   - `public_stage`: the stage that holds `api`, `auth` and `keys.delimitus.com`; defaults to `prod` when named, else `staging`. One stage at a time: the three hosts have one A record each.
   - `control_image`, `auth_jwks`, `auth_signing_kid`: the release, all or none. `control_image` is a build of `packages/ssc_control/Dockerfile` pinned by digest in `ssc-platform`; `auth_jwks` is the auth host's public JWKS and must hold `auth_signing_kid`. Until they are set every service runs the placeholder image with no settings, the worker pool runs no instance and there is no migration job.
-  - `cell_label`, `cell_jwks`: the one cell until placement, both or neither. `cell_jwks` is that cell stack's `identity_jwks` output. Every per-cell setting derives from the label through `naming`: the agent and intake URLs, the cell bucket and the issuer `https://keys.delimitus.com/<label>`. The cell's `sql_instance` output is not used: the control plane talks to the cell's database only through the agent, and the agent's own `SSC_SQL_INSTANCE` is the cell stack's.
+  - `cell_label`, `cell_jwks`: the one cell until placement, both or neither. `cell_jwks` is that cell stack's `identity_jwks` output. Every per-cell setting derives from the label through `naming`: the agent and intake URLs, the cell bucket and the issuer `https://keys.delimitus.com/<label>`. Only the stage the cells trust gets them, on its API and worker (the public stage; with none, every stage), because a cell grants nothing to another stage's accounts (`ControlConfig.serves_cells`). The cell's `sql_instance` output is not used: the control plane talks to the cell's database only through the agent, and the agent's own `SSC_SQL_INSTANCE` is the cell stack's.
   - `worker_instances`: the worker pool's instance count, 1 by default.
 - **Processes**, one account each, all from one image:
 

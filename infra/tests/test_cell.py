@@ -11,6 +11,7 @@ import pytest
 import mockcloud
 from mockcloud import Declared, as_export, entry_address, one, project_number, run
 from ssc_infra import cell, cell_diff, naming, platform
+from ssc_shared import logs
 from ssc_shared.hosts import check_apps_domain, parse_app_host, slug_problem
 
 A, B = "testcell01", "testcell02"
@@ -72,6 +73,7 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_CELL_SUBNETWORK",
     "SSC_IMAGE_REPOSITORY",
     "SSC_GATEWAY_SA",
+    "SSC_LOG_VIEW",
 }
 TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
@@ -82,6 +84,9 @@ AGENT_IMAGE = "us-central1-docker.pkg.dev/ssc-c-testcell05/ssc-platform/agent@sh
 INTAKE_ENV = {"SSC_CELL_PROJECT", "SSC_INTAKE_ORIGIN", "SSC_CONTROL_SA"}
 CONTROL_MEMBER = f"serviceAccount:{mockcloud.CONTROL['staging']}"
 POINT = "A" * 43
+AGENT_FOLLOWS = 40
+AGENT_LOGGING_CALL = 30
+TRAFFIC_SWITCH = 240
 
 
 def _jwks(kid: str) -> str:
@@ -590,10 +595,67 @@ def test_gateway_min_and_warm_set_the_gateway_floor(config: dict[str, str], floo
     assert gw["template"]["containers"][0]["resources"]["cpuIdle"] is True
 
 
-def test_the_cell_agent_scales_to_zero_with_a_pinned_ceiling(cell_a: list[Declared]) -> None:
+def test_the_cell_agent_scales_to_zero_and_runs_one_instance(cell_a: list[Declared]) -> None:
+    """The agent's log read budget is counted per instance (SSC-024)."""
     agent = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     assert agent["template"]["scaling"]["minInstanceCount"] == 0
-    assert agent["scaling"]["maxInstanceCount"] == cell.AGENT_MAX
+    assert agent["scaling"]["maxInstanceCount"] == cell.AGENT_MAX == 1
+    intake = one(cell_a, "gcp:cloudrunv2/service:Service", naming.SECRET_INTAKE).inputs
+    assert intake["scaling"]["maxInstanceCount"] == cell.INTAKE_MAX == 3
+
+
+def test_the_one_agent_serves_every_follow_beside_other_calls(cell_a: list[Declared]) -> None:
+    """``ssc_agent.cloud_logging`` holds at most 40 follows (``MAX_FOLLOWS``) and gives Cloud
+    Logging 30 s a call; the control plane waits 240 s for a traffic switch
+    (``ssc_control.runtime.cell_agent``). Neither package is installed in ``infra``."""
+    template = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs["template"]
+    assert template["maxInstanceRequestConcurrency"] == cell.AGENT_CONCURRENCY == 200
+    assert cell.AGENT_CONCURRENCY >= 2 * AGENT_FOLLOWS
+    seconds = int(template["timeout"].removesuffix("s"))
+    assert seconds == 300
+    assert seconds > logs.MAX_WAIT_SECONDS + AGENT_LOGGING_CALL
+    assert seconds > TRAFFIC_SWITCH
+
+
+def test_the_agent_reads_logs_through_two_views_on_the_default_bucket(
+    cell_a: list[Declared],
+) -> None:
+    project = naming.cell_project(A)
+    bucket = f"projects/{project}/locations/{naming.REGION}/buckets/_Default"
+    views = {d.inputs["name"]: d.inputs for d in cell_a if d.type == "gcp:logging/logView:LogView"}
+    assert {name: v["filter"] for name, v in views.items()} == {
+        "ssc-run": 'resource.type = "cloud_run_revision"',
+        "ssc-build": 'resource.type = "build"',
+    }
+    assert {v["bucket"] for v in views.values()} == {bucket}
+    assert not any(" OR " in v["filter"] for v in views.values())
+    declared = run(naming.cell_stack(A), {"agent_image": AGENT_IMAGE})
+    agent = one(declared, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
+    env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
+    assert env["SSC_LOG_VIEW"].split(",") == [
+        f"{bucket}/views/ssc-run",
+        f"{bucket}/views/ssc-build",
+    ]
+
+
+def test_the_agent_may_read_the_two_log_views_and_no_other_log(cell_a: list[Declared]) -> None:
+    agent = f"serviceAccount:{naming.sa_email(naming.CELL_AGENT, naming.cell_project(A))}"
+    grants = _grants(cell_a, agent)
+    condition = grants["roles/logging.viewAccessor"]
+    bucket = cell.log_bucket(naming.cell_project(A))
+    assert condition is not None
+    assert condition["expression"] == (
+        f'resource.name == "{bucket}/views/ssc-run" || resource.name == "{bucket}/views/ssc-build"'
+    )
+    logging_roles = {role for role in grants if role.startswith("roles/logging.")}
+    assert logging_roles == {"roles/logging.viewAccessor", "roles/logging.logWriter"}
+    assert grants["roles/logging.logWriter"] is None
+    held = {
+        d.inputs["role"]
+        for d in cell_a
+        if d.inputs.get("member") == agent and "logging" in str(d.inputs.get("role"))
+    }
+    assert held == logging_roles
 
 
 def test_only_google_names_and_the_gateway_s_platform_hosts_resolve_in_the_cell(
