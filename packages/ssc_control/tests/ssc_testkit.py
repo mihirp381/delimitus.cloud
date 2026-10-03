@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -29,6 +29,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection
 from testcontainers.postgres import PostgresContainer
 
+from ssc_agent.app_database import AdminSqlError
 from ssc_contracts.errors import CATALOGUE, PROBLEM_MEDIA_TYPE, ErrorCode, problem_type
 from ssc_contracts.ids import new_id
 from ssc_control.api.auth import API_TOKEN_TYP
@@ -138,6 +139,127 @@ def wait_for_a_lock_wait(dsn: str, *, seconds: float = 10.0, blocker: int | None
                 return
             time.sleep(0.01)
     raise AssertionError(f"no session waited on a lock within {seconds} s")
+
+
+# ── an instance set up the way Cloud SQL is (SSC-040) ────────────────────────
+
+
+CLOUD_SQL_ADMIN = "cloudsqlsuperuser"
+CLOUD_SQL_AGENT = "ssc_cell_agent"
+CLOUD_SQL_AGENT_PASSWORD = "fake-agent-password-for-tests"
+FAKE_SERVER_CA = "-----BEGIN CERTIFICATE-----\nZmFrZSBDQQ==\n-----END CERTIFICATE-----\n"
+
+
+@dataclass(frozen=True)
+class CloudSqlLike:
+    host: str
+    port: int
+    superuser: str
+
+    def dsn(self, user: str, password: str, database: str) -> str:
+        """Plain text, as the test container has no certificate: verify-full is SSC-086 T5."""
+        return psycopg.conninfo.make_conninfo(
+            host=self.host,
+            port=self.port,
+            user=user,
+            password=password,
+            dbname=database,
+            sslmode="disable",
+        )
+
+
+@contextmanager
+def cloud_sql_like(max_connections: int = 25) -> Iterator[CloudSqlLike]:
+    """A postgres:18 with ``db-f1-micro``'s 25 connections, a ``cloudsqlsuperuser`` that is no
+    superuser but may create roles and databases and read activity, and the cell agent's own
+    login in it, as Cloud SQL sets them up."""
+    container = PostgresContainer("postgres:18", driver=None).with_command(
+        f"postgres -c max_connections={max_connections}"
+    )
+    with container as pg:
+        su = pg.get_connection_url()
+        with psycopg.connect(su, autocommit=True) as conn:
+            conn.execute(f"create role {CLOUD_SQL_ADMIN} nologin createrole createdb")
+            conn.execute(f"grant pg_read_all_stats to {CLOUD_SQL_ADMIN}")
+            conn.execute(
+                f"create role {CLOUD_SQL_AGENT} login password '{CLOUD_SQL_AGENT_PASSWORD}' "
+                f"in role {CLOUD_SQL_ADMIN}"
+            )
+        yield CloudSqlLike(pg.get_container_host_ip(), int(pg.get_exposed_port(5432)), su)
+
+
+class LocalAdminSql:
+    """The cell agent's ``AdminSql`` on a :func:`cloud_sql_like` instance, as ``executeSql``
+    runs it: as the agent's own login, one transaction per batch, values back as text.
+    ``statements`` keeps every statement run; ``fail_creates`` fails that many database
+    creations first."""
+
+    def __init__(self, db: CloudSqlLike) -> None:
+        self.db = db
+        self.statements: list[str] = []
+        self.fail_creates = 0
+
+    def _agent(self, database: str) -> str:
+        return self.db.dsn(CLOUD_SQL_AGENT, CLOUD_SQL_AGENT_PASSWORD, database)
+
+    async def run(self, database: str, statements: Sequence[str]) -> list[dict[str, Any]]:
+        self.statements += statements
+        rows: list[dict[str, Any]] = []
+        try:
+            async with await psycopg.AsyncConnection.connect(
+                self._agent(database), autocommit=True
+            ) as conn:
+                async with conn.transaction():
+                    for statement in statements:
+                        cur = await conn.execute(statement.encode())
+                        names = [c.name for c in cur.description or []]
+                        rows = [
+                            {
+                                n: None if v is None else str(v)
+                                for n, v in zip(names, r, strict=True)
+                            }
+                            for r in (await cur.fetchall() if names else [])
+                        ]
+        except psycopg.Error as exc:
+            raise AdminSqlError(str(exc)) from None
+        return rows
+
+    async def create_database(self, name: str) -> None:
+        if self.fail_creates:
+            self.fail_creates -= 1
+            raise AdminSqlError("databases.insert: injected failure")
+        async with await psycopg.AsyncConnection.connect(
+            self._agent("postgres"), autocommit=True
+        ) as conn:
+            await conn.execute(f"SET ROLE {CLOUD_SQL_ADMIN}".encode())
+            try:
+                await conn.execute(f"CREATE DATABASE {name}".encode())
+            except psycopg.errors.DuplicateDatabase:
+                pass
+
+    async def endpoint(self) -> tuple[str, int]:
+        return self.db.host, self.db.port
+
+    async def server_ca(self) -> str:
+        return FAKE_SERVER_CA
+
+
+class MemoryVault:
+    """``SecretCustody`` and ``SecretWriter`` in memory, for tests that must read a value back
+    to prove where it works; nothing in SSC can."""
+
+    def __init__(self) -> None:
+        self.secrets: dict[str, list[bytes]] = {}
+
+    async def ensure(self, secret: str) -> None:
+        self.secrets.setdefault(secret, [])
+
+    async def add_version(self, secret: str, value: bytes) -> str:
+        self.secrets[secret].append(value)
+        return str(len(self.secrets[secret]))
+
+    def latest(self, secret: str) -> str:
+        return self.secrets[secret][-1].decode()
 
 
 async def backend_pid(conn: AsyncConnection) -> int:

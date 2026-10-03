@@ -74,6 +74,19 @@ class DeploymentRow(Shape):
     finished_at: str | None
 
 
+class DatabaseRow(Shape):
+    """``status``: the environment's database, when it has one. Never a password or a URL.
+    ``size_bytes``, ``connections`` and the places are null when the cell did not say."""
+
+    database: str
+    connection_limit: int | None
+    pool_size: int
+    size_bytes: int | None
+    connections: int | None
+    places_used: int | None
+    places_total: int | None
+
+
 class EnvironmentRow(Shape):
     id: str
     name: str
@@ -82,6 +95,9 @@ class EnvironmentRow(Shape):
     current_deployment_id: str | None
     deployment: DeploymentRow | None
     url: str | None = Field(description="Where the environment is served.")
+    database: DatabaseRow | None = Field(
+        default=None, description="Only from ``status``; null when there is none."
+    )
 
 
 class AppResult(Shape):
@@ -333,6 +349,7 @@ SHAPES: dict[str, type[BaseModel]] = {
         AppRow,
         AppsResult,
         DeploymentRow,
+        DatabaseRow,
         EnvironmentRow,
         AppResult,
         GrantRow,

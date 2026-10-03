@@ -77,7 +77,7 @@ A name is `^[A-Z][A-Z0-9_]{0,127}$` and must start with `VITE_` or `NEXT_PUBLIC_
 
 | Key | Type | Default | Rule |
 |---|---|---|---|
-| `postgres` | boolean | `false` | Ask for the environment's Postgres database (`DATABASE_URL`). |
+| `postgres` | boolean | `false` | Ask for the environment's Postgres database (`DATABASE_URL` and its `PG*` parts). The environment then runs one instance with a pool of one connection, keeping its second connection free for the next revision during a deploy or rotation and for a migration at start, and takes one of the ten places on the base tier (SSC-040). |
 
 Postgres is the only state offered. A key-value request (`kv`, `redis`, `valkey`, `memcached`, `cache`, `keyvalue`, `key_value`, in any case, or `state = "redis"`) is refused with the fix-it `STATE_KV_UNSUPPORTED`: set `postgres = true` and keep the data in a table; for a cache, an `UNLOGGED` table with an `expires_at` column.
 

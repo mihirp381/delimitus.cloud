@@ -50,6 +50,15 @@
     "severity": "string",
     "subject": "string"
   },
+  "DatabaseRow": {
+    "connection_limit": "integer|null",
+    "connections": "integer|null",
+    "database": "string",
+    "places_total": "integer|null",
+    "places_used": "integer|null",
+    "pool_size": "integer",
+    "size_bytes": "integer|null"
+  },
   "DeployResult": {
     "app_id": "string",
     "build_id": "string",
@@ -93,6 +102,7 @@
   "EnvironmentRow": {
     "config_version": "integer",
     "current_deployment_id": "string|null",
+    "database": "DatabaseRow|null",
     "deployment": "DeploymentRow|null",
     "grants_version": "integer",
     "id": "string",

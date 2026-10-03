@@ -26,6 +26,7 @@ from ssc_control.ports import (
     SnapshotPort,
     TimersPort,
 )
+from ssc_control.runtime.app_databases import AppDatabases
 from ssc_control.runtime.driver import RuntimeDriver
 from ssc_control.runtime.specs import NoReleaseSpecs, ReleaseSpecs
 from ssc_control.timers.dispatch import ScheduleDispatcher
@@ -46,7 +47,8 @@ class Ports:
     snapshot and anchor ticks defer nothing and a compile does nothing. ``cell_stores`` set sends
     each org's snapshots to its cell's bucket instead. ``timer_dispatcher`` None fails timer runs
     with ``dispatch_unavailable``. ``cell_deployer`` None fails a lazy cell resource with
-    ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087)."""
+    ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087). ``app_databases`` None fails the first deployment
+    of an environment that declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040)."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -61,6 +63,7 @@ class Ports:
     metrics: MetricsPort = field(default_factory=NullMetricsPort)
     timer_dispatcher: ScheduleDispatcher | None = None
     cell_deployer: CellDeployer | None = None
+    app_databases: AppDatabases | None = None
 
 
 class PortsMissingError(RuntimeError):

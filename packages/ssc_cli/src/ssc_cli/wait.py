@@ -41,6 +41,11 @@ FIXES: Final = {
     "status; an org admin can tell you why.",
     "CELL_RESOURCE_FAILED": "Your company's database could not be created. Deploy again to retry; "
     "if it fails again, tell an org admin.",
+    "DB_TIER_FULL": "Your company's database (db-f1-micro) holds ten app environments, previews "
+    "included, and all are taken; nothing was created. An org admin can move to the bigger "
+    "database (db-g1-small, about $26 a month), or remove an environment that has a database.",
+    "DATABASE_UNAVAILABLE": "The app's database could not be reached from the platform. Deploy "
+    "again to retry; if it fails again, tell an org admin.",
     **FIX_ITS,
 }
 

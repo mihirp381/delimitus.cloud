@@ -10,8 +10,13 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    reason code and commits, keeping the approval requests the gate opened. The driver is never
    called before the gate clears. A manifest that needs a lazy cell resource not yet ready
    (SSC-087) leaves the deployment ``running`` and waiting; the resource's job re-defers it.
-   The first claim copies the environment's secret versions onto the deployment
-   (``secret_refs``, SSC-026); a rerun keeps the copy, so the spec never changes under it.
+   A manifest with ``[state] postgres = true`` whose environment has no database yet ends the
+   transaction there: the cell agent makes the database outside it (SSC-040), the database and
+   its secret versions are recorded, and the claim runs again. A full instance fails the
+   deployment with ``DB_TIER_FULL`` before anything is created; an unreachable one with
+   ``DATABASE_UNAVAILABLE``. The first claim copies the environment's secret versions onto the
+   deployment (``secret_refs``, SSC-026); a rerun keeps the copy, so the spec never changes
+   under it.
 2. ``apply`` the release's spec, then poll ``observe`` until the new revision is ready, fails, or
    the health timeout passes. A deployment another one pre-empted (``superseded``) stops at the
    next poll without touching traffic. So does one whose app stopped (the kill switch): it
@@ -41,6 +46,7 @@ from ssc_control.audit import Actor, NewEvent, append_event
 from ssc_control.cell.resources import hold_deployment
 from ssc_control.db.bind import bound_org
 from ssc_control.ports import MetricKind
+from ssc_control.runtime.app_databases import AppDatabaseError, database_of, record_database
 from ssc_control.runtime.driver import (
     EnvironmentRow,
     ReleaseRow,
@@ -48,6 +54,7 @@ from ssc_control.runtime.driver import (
     ServiceObservation,
     ServiceSpec,
     desired_for,
+    service_name,
 )
 from ssc_control.runtime.specs import ReleaseSpec, ReleaseSpecUnavailableError
 from ssc_control.worker_ports import Ports
@@ -63,6 +70,8 @@ HEALTH_CHECK_FAILED: Final = "HEALTH_CHECK_FAILED"
 RELEASE_SPEC_UNAVAILABLE: Final = "RELEASE_SPEC_UNAVAILABLE"
 RUNTIME_UNAVAILABLE: Final = "RUNTIME_UNAVAILABLE"
 RUNTIME_ERROR: Final = "RUNTIME_ERROR"
+DB_TIER_FULL: Final = "DB_TIER_FULL"
+DATABASE_UNAVAILABLE: Final = "DATABASE_UNAVAILABLE"
 
 Kind = Literal["deploy", "rollback"]
 type _Verdict = Literal["ready", "unhealthy", "stopped", "preempted"]
@@ -172,11 +181,19 @@ class _Refused:
     policy_decision_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _NeedsDatabase:
+    deployment: _Deployment
+    policy_decision_id: str | None
+
+
 async def run_deployment(
     ports: Ports, *, org_id: str, deployment_id: str, health: HealthWait | None = None
 ) -> str:
     """The deployment job; returns the deployment's state when it stops (or ``missing``)."""
     ready = await _claim(ports, org_id, deployment_id)
+    if isinstance(ready, _NeedsDatabase):
+        ready = await _make_database(ports, org_id, deployment_id, ready)
     if isinstance(ready, str):
         return ready
     dep, driver, desired = ready.deployment, ready.driver, ready.desired
@@ -200,7 +217,7 @@ async def run_deployment(
     return "healthy"
 
 
-async def _claim(ports: Ports, org_id: str, deployment_id: str) -> _Ready | str:
+async def _claim(ports: Ports, org_id: str, deployment_id: str) -> _Ready | _NeedsDatabase | str:
     """Step 1 in one transaction: the ready deployment, or the state it stopped in."""
     async with bound_org(ports.engine, org_id) as conn:
         params = {"org": org_id, "id": deployment_id}
@@ -220,11 +237,37 @@ async def _claim(ports: Ports, org_id: str, deployment_id: str) -> _Ready | str:
     return prepared
 
 
-async def _prepare(
+async def _make_database(
+    ports: Ports, org_id: str, deployment_id: str, need: _NeedsDatabase
+) -> _Ready | str:
+    """Outside any transaction: the cell agent makes the environment's database; its secret
+    versions are recorded and the deployment is claimed again, so it pins them."""
+    dep = need.deployment
+    if ports.app_databases is None:
+        raise AssertionError("_prepare refuses a deployment with no app databases")
+    try:
+        made = await ports.app_databases.ensure(service_name(dep.environment_id))
+    except AppDatabaseError as exc:
+        log.warning("app database failed", extra={"deployment_id": dep.id, "error": str(exc)})
+        code = DB_TIER_FULL if exc.code == DB_TIER_FULL else DATABASE_UNAVAILABLE
+        async with bound_org(ports.engine, org_id) as conn:
+            return await _fail(conn, org_id, dep, code, policy_decision_id=need.policy_decision_id)
+    async with bound_org(ports.engine, org_id) as conn:
+        await record_database(
+            conn, org_id=org_id, environment_id=dep.environment_id, made=made, actor=dep.actor
+        )
+    ready = await _claim(ports, org_id, deployment_id)
+    if isinstance(ready, _NeedsDatabase):
+        raise AssertionError("the app database was just recorded")
+    return ready
+
+
+async def _prepare(  # noqa: PLR0911  (one return per refusal)
     conn: AsyncConnection, ports: Ports, org_id: str, dep: _Deployment, row: Any
-) -> _Ready | _Refused | Literal["running"]:
+) -> _Ready | _NeedsDatabase | _Refused | Literal["running"]:
     """The checks before any runtime call: an active app, a manifest, the production gate for
-    ``prod``, a driver, the cell resources the manifest needs. Then the pinned secrets."""
+    ``prod``, a driver, the cell resources the manifest needs, the app database. Then the
+    pinned secrets."""
     if row.app_status != "active":
         return _Refused(APP_NOT_ACTIVE)
     try:
@@ -252,6 +295,11 @@ async def _prepare(
     )
     if held is not None:
         return "running" if held.failure_code is None else _Refused(held.failure_code, decision)
+    database = await database_of(conn, org_id=org_id, environment_id=dep.environment_id)
+    if spec.manifest.state.postgres and database is None:
+        if ports.app_databases is None:
+            return _Refused(DATABASE_UNAVAILABLE, decision)
+        return _NeedsDatabase(dep, decision)
     params = {"org": org_id, "id": dep.id, "env": dep.environment_id}
     await conn.execute(_PIN_SECRETS, params)
     secrets = (await conn.execute(_SECRET_REFS, params)).scalar_one()
@@ -264,6 +312,7 @@ async def _prepare(
         app_status="active",
         framework=spec.framework,
         secrets=secrets,
+        database=database,
     )
     if not isinstance(desired, ServiceSpec):
         raise AssertionError("an active app has a service spec")

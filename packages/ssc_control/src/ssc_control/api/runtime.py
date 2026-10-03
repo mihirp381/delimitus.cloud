@@ -1,5 +1,6 @@
 """What one running API process holds: settings, the engine, the verifier, the limiter, the
-metrics recorder, the blob store, the production gate, the timers and the secret grants."""
+metrics recorder, the blob store, the production gate, the timers, the secret grants and the app
+databases."""
 
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from ssc_control.api.auth import Verifier
     from ssc_control.api.ratelimit import RateLimiter
     from ssc_control.api.settings import Settings
+    from ssc_control.runtime.app_databases import AppDatabases
     from ssc_control.runtime.secret_grants import SecretGrants
     from ssc_shared.blobstore import BlobStore
 
@@ -38,6 +40,9 @@ class Runtime:
     secret_grants: SecretGrants | None = None
     """Prepares a secret in the cell and grants one upload of its value (SSC-026); ``None``
     when the cell is not configured, and secret writes refuse."""
+    app_databases: AppDatabases | None = None
+    """Rotates and reads app databases through the cell agent (SSC-040); ``None`` when the cell
+    is not configured, and rotation refuses."""
 
 
 def runtime_of(request: Request) -> Runtime:

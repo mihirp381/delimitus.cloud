@@ -67,6 +67,7 @@ from ssc_control.cell.deployer import (
 from ssc_control.cell.resources import CELL_RESOURCE_FAILED
 from ssc_control.db import bound_org
 from ssc_control.domain.approval_rules import Requirement, RequirementKind
+from ssc_control.runtime.app_databases import FakeAppDatabases
 from ssc_control.worker import CompositionError, Ports, build_app, compose_ports
 
 world = test_deploy.world
@@ -95,7 +96,9 @@ class Cell:
 def cell(b: Bench) -> Cell:
     fake = FakeCellDeployer()
     set_prod_gate(b, SpyGate("clear"))
-    ports = replace(b.ports, cell_deployer=fake, prod_gate=SpyGate("clear"))
+    ports = replace(
+        b.ports, cell_deployer=fake, prod_gate=SpyGate("clear"), app_databases=FakeAppDatabases()
+    )
     (row,) = rows_of(b.dsn, b.w.org, "select cell_label from ssc.org")
     return Cell(b, fake, ports, str(row["cell_label"]))
 

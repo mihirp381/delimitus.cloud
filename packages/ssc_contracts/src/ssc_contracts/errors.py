@@ -79,6 +79,9 @@ class ErrorCode(StrEnum):
     PROD_REQUIRES_PROMOTE = "PROD_REQUIRES_PROMOTE"
     # secrets (SSC-026)
     SECRETS_UNAVAILABLE = "SECRETS_UNAVAILABLE"
+    # app databases (SSC-040)
+    DB_TIER_FULL = "DB_TIER_FULL"
+    DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -312,6 +315,20 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         503,
         "Secrets cannot be set right now.",
         "The cell that keeps this app's secrets is not reachable from here. Nothing was "
+        "changed; retry later.",
+    ),
+    ErrorCode.DB_TIER_FULL: CatalogueEntry(
+        409,
+        "Your company's database has no room for another app environment.",
+        "The base database (db-f1-micro) holds ten environments that use a database, preview "
+        "ones included, and all ten are taken. Nothing was created. An org admin can move to the "
+        "bigger database (db-g1-small, about $26 a month), or free a place by removing an "
+        "environment that no longer needs its database.",
+    ),
+    ErrorCode.DATABASE_UNAVAILABLE: CatalogueEntry(
+        503,
+        "The app's database cannot be reached right now.",
+        "The cell that keeps this app's database is not reachable from here. Nothing was "
         "changed; retry later.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(

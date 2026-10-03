@@ -30,6 +30,8 @@ Revision 0020 adds ``cell_resource`` and ``cell_resource_waiter`` (SSC-087), key
 resource (one org is one cell), so both are in ``UNKEYED_TABLES``.
 Revision 0021 adds columns only (SSC-026): ``secret_ref.updated_at`` and
 ``deployment.secret_refs``, references and version numbers, never a secret value.
+Revision 0022 adds ``app_database`` (SSC-040), keyed by org and environment, so it is in
+``UNKEYED_TABLES``: where an app database is, never its password.
 """
 
 from collections.abc import Mapping
@@ -74,6 +76,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "unlinked_login",  # SSC-019, revision 0014
         "cell_resource",  # SSC-087, revision 0020
         "cell_resource_waiter",  # SSC-087, revision 0020
+        "app_database",  # SSC-040, revision 0022
     }
 )
 
@@ -94,6 +97,7 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "audit_anchor",
         "cell_resource",
         "cell_resource_waiter",
+        "app_database",
     }
 )
 
@@ -146,6 +150,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "unlinked_login": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "cell_resource": frozenset({"SELECT", "INSERT", "UPDATE"}),  # never turned off, never DELETE
     "cell_resource_waiter": frozenset({"SELECT", "INSERT", "DELETE"}),
+    "app_database": frozenset({"SELECT", "INSERT", "UPDATE"}),  # never removed by the app
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

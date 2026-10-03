@@ -47,6 +47,7 @@ from ssc_cli.models import (
     BuildOut,
     BundleCreate,
     BundleOut,
+    DatabaseOut,
     DeploymentCreate,
     GrantIn,
     GrantsIn,
@@ -297,6 +298,10 @@ class ApiClient:
         """Names and versions; there is no way to read a value back."""
         path = f"{_environment_path(app_id, environment_id)}/secrets"
         return _parse(self._send("GET", path), SecretList)
+
+    def get_database(self, app_id: str, environment_id: str) -> DatabaseOut:
+        path = f"{_environment_path(app_id, environment_id)}/database"
+        return _parse(self._send("GET", path), DatabaseOut)
 
     def grant_secret_upload(self, app_id: str, environment_id: str, name: str) -> SecretGrantOut:
         path = f"{_secret_path(app_id, environment_id, name)}/grants"

@@ -51,6 +51,7 @@ RESPONSES = (
     models.SecretList,
     models.SecretGrantOut,
     models.SecretSetOut,
+    models.DatabaseOut,
 )
 REQUESTS = (
     models.AppCreate,
