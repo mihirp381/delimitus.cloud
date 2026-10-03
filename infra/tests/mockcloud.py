@@ -14,6 +14,7 @@ FOLDERS = {"prod": "111111111111", "staging": "222222222222"}
 NIGHTLY = naming.sa_email(naming.NIGHTLY_SA, naming.control_project("staging"))
 CONTROL = {s: naming.sa_email(naming.CONTROL_SA, naming.control_project(s)) for s in naming.STAGES}
 PUBLIC_TAG = "tagValues/555555555555"
+DEPLOYER = naming.sa_email(naming.DEPLOYER, naming.BOOTSTRAP_PROJECT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,7 @@ class Recorder(pulumi.runtime.Mocks):
                 "control_service_accounts": CONTROL,
                 "nightly_service_account": NIGHTLY,
                 "public_invoker_tag": PUBLIC_TAG,
+                "cell_deployer": {"service_account": DEPLOYER},
             }
             return f"{args.name}-id", {"name": args.name, "outputs": outputs}
         state = dict(args.inputs)
@@ -90,6 +92,13 @@ class Recorder(pulumi.runtime.Mocks):
                         "certificatemanager.goog.",
                     }
                 ]
+            case "gcp:sql/databaseInstance:DatabaseInstance":
+                crc = zlib.crc32(project.encode())
+                state |= {
+                    "connectionName": f"{project}:{state['region']}:{state['name']}",
+                    "dnsName": f"{crc:08x}.{state['region']}.sql.goog.",
+                    "privateIpAddress": f"10.21.0.{3 + crc % 250}",
+                }
             case "gcp:dns/managedZone:ManagedZone" if state.get("visibility") == "public":
                 state["nameServers"] = [f"ns-cloud-a{i}.googledomains.com." for i in range(1, 5)]
             case _:

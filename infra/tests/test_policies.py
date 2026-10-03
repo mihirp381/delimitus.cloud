@@ -103,6 +103,16 @@ PLANTED: dict[str, tuple[str, Plant]] = {
             location=naming.REGION,
         ),
     ),
+    "tag-on-the-data-gateway": (
+        "iam.managed.allowedPolicyMembers",
+        _add(
+            "gcp:tags/locationTagBinding:LocationTagBinding",
+            "datagw-public-tag",
+            parent=_tag(naming.DATA_GATEWAY),
+            tagValue=PUBLIC_TAG,
+            location=naming.REGION,
+        ),
+    ),
     "tag-on-the-project": (
         "iam.managed.allowedPolicyMembers",
         _add(
@@ -213,14 +223,27 @@ def test_a_planted_violation_is_refused(full: list[Declared], case: str) -> None
     assert len(found[constraint]) == 1
 
 
-def test_the_gateway_s_public_invoker_needs_the_tag(full: list[Declared]) -> None:
+def test_each_public_invoker_needs_the_tag(full: list[Declared]) -> None:
     untagged = [d for d in full if d.type != "gcp:tags/locationTagBinding:LocationTagBinding"]
     found = _check(untagged)
     assert list(found) == ["iam.managed.allowedPolicyMembers"]
-    assert found["iam.managed.allowedPolicyMembers"] == [
-        "gcp:cloudrunv2/serviceIamMember:ServiceIamMember::gateway-invoker grants allUsers "
-        "outside the tagged gateway"
+    assert sorted(found["iam.managed.allowedPolicyMembers"]) == [
+        f"gcp:cloudrunv2/serviceIamMember:ServiceIamMember::{name}-invoker grants allUsers "
+        "outside a tagged public service"
+        for name in ("gateway", "intake")
     ]
+
+
+def test_the_public_invoker_tag_is_on_the_gateway_and_the_intake_alone(
+    full: list[Declared],
+) -> None:
+    assert policies.PUBLIC_SERVICES == {naming.GATEWAY, naming.SECRET_INTAKE}
+    tagged = {
+        d.inputs["parent"].rsplit("/", 1)[-1]
+        for d in full
+        if d.type.startswith("gcp:tags/") and d.inputs.get("tagValue") == PUBLIC_TAG
+    }
+    assert tagged == policies.PUBLIC_SERVICES
 
 
 def test_another_tag_value_is_no_exception(full: list[Declared]) -> None:

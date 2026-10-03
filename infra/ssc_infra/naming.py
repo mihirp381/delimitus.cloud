@@ -47,11 +47,16 @@ SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S10
 
 GATEWAY: Final = "ssc-gateway"
 CELL_AGENT: Final = "ssc-cell-agent"
+SECRET_INTAKE: Final = "ssc-secret-intake"  # noqa: S105
 DATA_GATEWAY: Final = "ssc-datagw"
 FLAGS: Final = ("database", "egress", "connections", "gateway_min", "warm")
 LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
     "database": frozenset(
-        {"gcp:sql/databaseInstance:DatabaseInstance::sql", "gcp:sql/user:User::sql-agent"}
+        {
+            "gcp:sql/databaseInstance:DatabaseInstance::sql",
+            "gcp:sql/user:User::sql-agent",
+            "gcp:dns/recordSet:RecordSet::sql-dns",
+        }
     ),
     "egress": frozenset(
         {
@@ -64,6 +69,8 @@ LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
 LAZY_FLAGS: Final = tuple(LAZY_RESOURCES)
 GATEWAY_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{GATEWAY}"
 GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
+AGENT_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{CELL_AGENT}"
+SQL_INSTANCE_ENV: Final = "SSC_SQL_INSTANCE"
 
 APPS_DOMAIN: Final = "delimitusapps.com"
 PLATFORM_DOMAIN: Final = "delimitus.com"
@@ -73,6 +80,7 @@ GATEWAY_PLATFORM_HOSTS: Final = (AUTH_HOST, KEYS_HOST)
 APPS_ZONE: Final = "delimitusapps"
 PLATFORM_ZONE: Final = "delimitus"
 AGENT_HOST_LABEL: Final = "ssc--agent"
+INTAKE_HOST_LABEL: Final = "ssc--secrets"
 
 
 def control_project(stage: Stage) -> str:
@@ -123,6 +131,16 @@ def agent_host(label: str) -> str:
 def agent_url(label: str) -> str:
     """The cell agent's URL through the cell's load balancer, and its ID token audience."""
     return f"https://{agent_host(label)}"
+
+
+def intake_host(label: str) -> str:
+    """The secret intake's reserved host (SSC-026), held off app slugs as the agent's is."""
+    return f"{INTAKE_HOST_LABEL}.{host_suffix(label)}"
+
+
+def intake_url(label: str) -> str:
+    """The secret intake's origin through the cell's load balancer, the audience of each grant."""
+    return f"https://{intake_host(label)}"
 
 
 def platform_registry() -> str:

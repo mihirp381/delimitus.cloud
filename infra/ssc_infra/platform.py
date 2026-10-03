@@ -91,10 +91,10 @@ def _location_policy(name: str, folder_id: pulumi.Input[str], opts: pulumi.Resou
 def _public_tag(
     binders: Sequence[pulumi.Input[str]], opts: pulumi.ResourceOptions
 ) -> tuple[pulumi.Output[str], pulumi.Output[str]]:
-    """The tag that marks the one resource allowed a public member: each cell's gateway service.
-    Only ``binders`` (the operator and the cell deployer) may bind it; the grant is authoritative,
-    so another holder added by hand is removed by the next run. Returns the tag key and value
-    IDs."""
+    """The tag that marks the resources allowed a public member: each cell's gateway and secret
+    intake services (``policies.PUBLIC_SERVICES``). Only ``binders`` (the operator and the cell
+    deployer) may bind it; the grant is authoritative, so another holder added by hand is removed
+    by the next run. Returns the tag key and value IDs."""
     key = gcp.tags.TagKey(
         "public-invoker-key",
         parent=f"organizations/{n.ORG_ID}",

@@ -5,7 +5,7 @@ Pulumi in Python for SSC on Google Cloud (SSC-013, decisions 021, 022 and 025). 
 | Stack | What it holds |
 | --- | --- |
 | `platform` | Folders `ssc-cells/{prod,staging}` and `ssc-sandbox`, with logs in `us-central1`. The location policy on `ssc-platform`, the cell policy table on `ssc-cells` and the public-invoker tag (SSC-095). `ssc-control-staging` and its `ssc-control` identity. The folder rule denying secret reads. Just-in-time staff access. The $250 monthly budget. The public DNS zones `delimitusapps.com.` and `delimitus.com.` in `ssc-platform-0`. |
-| `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build` and `ssc-data`, KMS, bucket, Artifact Registry, the VPC with its firewall floor and DNS sinkhole, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests) and the cell agent behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
+| `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build`, `ssc-data` and `ssc-secret-intake`, KMS, bucket, Artifact Registry, the VPC with its firewall floor, DNS sinkhole and the empty database zone `ssc-sql`, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests), the cell agent and the secret intake behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
 
 The lazy flags are turned on by the cell deployer when the control plane asks (SSC-087, below). The operator can still set any flag by hand.
 
@@ -19,7 +19,7 @@ Five settings in a cell stack's config, all off by default. Turning one on adds 
 
 | Flag | Default | Adds | About a month |
 | --- | --- | --- | --- |
-| `database` | `false` | Cloud SQL Postgres 18 `ssc-cell`, zonal `db-f1-micro`, private address in the database range, customer-managed key, backups and point-in-time recovery, and the cell agent's IAM login | $13 |
+| `database` | `false` | Cloud SQL Postgres 18 `ssc-cell`, zonal `db-f1-micro`, `max_connections` 25, private address in the database range, a CA-issued certificate for its DNS name and that name's record in `ssc-sql`, the Data API, customer-managed key, backups and point-in-time recovery, the cell agent's IAM database user in `cloudsqlsuperuser`, and `SSC_SQL_INSTANCE` on the agent (App databases, below) | $13 |
 | `egress` | `false` | The proxy machine: one `e2-micro` with no external address at the reserved proxy address, in a group of one that recreates it. Its proxy software is SSC-053 | $7 |
 | `connections` | `false` | The data gateway and file broker `ssc-datagw` on Cloud Run, minimum 0, as `ssc-data`, leaving through the cell NAT | usage |
 | `gateway_min` | `0` | The gateway's minimum instances | about $10 each |
@@ -51,7 +51,7 @@ Apps carry no tag, so an app reaches the two reserved addresses (a dead end unti
 
 **No IPv6.** The VPC has no internal IPv6 range, both subnets and the proxy's interface are `IPV4_ONLY`, and every firewall range is IPv4, so an IPv6 connection has no route.
 
-**DNS.** The response policy `ssc-cell` answers every name under every top-level domain with an unroutable sinkhole. Two lists bypass it: Google's names (`cell.GOOGLE_DNS_PASSTHRU`) and the platform hosts the gateway calls, `naming.GATEWAY_PLATFORM_HOSTS`: `auth.delimitus.com` (login) and `keys.delimitus.com` (identity note issuer and keys). Each platform rule is the exact name, so `x.auth.delimitus.com` still gets the sinkhole and a query can carry data only in those two fixed names. To add a host, add it to that tuple; it adds one rule.
+**DNS.** The response policy `ssc-cell` answers every name under every top-level domain with an unroutable sinkhole. Two lists bypass it: Google's names (`cell.GOOGLE_DNS_PASSTHRU`) and the platform hosts the gateway calls, `naming.GATEWAY_PLATFORM_HOSTS`: `auth.delimitus.com` (login) and `keys.delimitus.com` (identity note issuer and keys). Each platform rule is the exact name, so `x.auth.delimitus.com` still gets the sinkhole and a query can carry data only in those two fixed names. To add a host, add it to that tuple; it adds one rule. A third bypass, `*.sql.goog.`, hands Cloud SQL's names to the cell's private zone `ssc-sql` (`sql.goog.`), which answers every one of them itself: the database's name with its private address once the flag is on, any other name with NXDOMAIN, so none goes to public DNS (App databases, below).
 
 **Why apps stay blocked.** A response policy belongs to the whole VPC: Cloud DNS cannot answer the apps subnet differently from the gateway subnet, so an app resolves the two platform hosts too. Resolving is not reaching. Their addresses are public, no allow rule names them for an untagged source, so `egress-deny-all` drops the packet; and the apps subnet is not behind the NAT, so there would be no route out even if a rule were wrong. The probe checks it: the probe runner job sets `PROBE_EGRESS_HOSTS` to the two hosts, and `no_direct_egress` dials each on 443 from the app, as well as its five fixed attempts (tcp 443 and 80, udp 53 and 443, IPv6).
 
@@ -89,7 +89,7 @@ The control plane turns on a cell's `database`, `egress` or `connections` flag w
 
 - **Trigger.** In the control plane, the job `cell:create_resource` (`ssc_control/cell/`), one per cell and resource. It is asked for by the first deploy whose manifest has `[state] postgres = true` (database), the first approved internet host (egress), the first approved data source (connections), or an org admin (`POST /v1/cell/resources/{resource}/enable`, audited). A second request joins the one in flight. Each request, success and failure is an audit row (`cell.resource_requested`, `cell.resource_ready`, `cell.resource_failed`). Nothing turns a flag off: removing a resource is a runbook step.
 - **Runner.** The Cloud Run job `ssc-cell-deployer` in `ssc-platform-0`, image `infra/deployer/Dockerfile`, running `python -I -m ssc_infra.deployer <cell label> <database|egress|connections>` as `ssc-cell-deployer@ssc-platform-0.iam.gserviceaccount.com`. It reads the config the stack was last applied with (the stack's `config` output), sets the one flag to `true` and runs `pulumi up` on that one stack. It refuses any third argument, any flag outside the three, a malformed label and any environment variable it does not expect, and gives Pulumi an environment of its own. A run killed halfway is converged by the next one: a state lock older than 3 hours is cancelled, and a create Pulumi never saw finish is imported or dropped.
-- **Deployer roles.** On `ssc-cells`: `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.networkUser`, `iam.serviceAccountUser`, `resourcemanager.tagUser`, `run.admin`. In `ssc-platform-0`: `storage.objectAdmin` on the state bucket, `cloudkms.cryptoKeyEncrypterDecrypter` on the secrets key, `serviceusage.serviceUsageConsumer`. Also the public-invoker tag (above) and the apps zone's record writer. No billing, project-creation, deny-rule or secret-value role.
+- **Deployer roles.** On `ssc-cells`: `cloudsql.admin`, `compute.instanceAdmin.v1`, `compute.networkUser`, `iam.serviceAccountUser`, `resourcemanager.tagUser`, `run.admin`. In `ssc-platform-0`: `storage.objectAdmin` on the state bucket, `cloudkms.cryptoKeyEncrypterDecrypter` on the secrets key, `serviceusage.serviceUsageConsumer`. Also the public-invoker tag (above), the apps zone's record writer, and in each cell the custom role `sscDeployerRecords` (record permissions only) on the zone `ssc-sql` alone, which the cell stack grants at onboarding so the `database` flag can write the database's record. No billing, project-creation, deny-rule, IAM or secret-value role.
 - **The control plane's part.** `ssc-control` holds `run.jobsExecutorWithOverrides` and `run.viewer` on that one job, nothing more. It starts a run with exactly two arguments, a cell label and a resource, and reads how the run went. Worker settings: `SSC_CELL_DEPLOYER=cloud_run` and `SSC_CELL_DEPLOYER_JOB=projects/ssc-platform-0/locations/us-central1/jobs/ssc-cell-deployer` (unset means none, and a lazy resource fails with `CELL_DEPLOYER_UNAVAILABLE`; `fake` only in `dev` and `test`).
 - **The operator's access** is unchanged.
 
@@ -138,6 +138,46 @@ pulumi up --stack c-<label>
 
 Railpack tags its frontend `v0.40.1`; there is no `0.40.1` tag.
 
+## Secrets
+
+App secret values enter a cell through one service, the secret intake (SSC-026, decision 022 amendment pending), and never pass the control plane:
+
+- **Service.** `ssc-secret-intake` on Cloud Run, minimum 0, at most 3, request-billed, as `ssc-secret-intake`. With `agent_image` set it runs that image with the command `python -m ssc_agent.intake` and `SSC_CELL_PROJECT`, `SSC_INTAKE_ORIGIN` (`https://ssc--secrets.<label>.delimitusapps.com`) and `SSC_CONTROL_SA` (the stage's control plane account); without it, the placeholder with no environment.
+- **Door.** Its own serverless NEG and backend `ssc-secret-intake` on the cell's load balancer, for its reserved host alone. Ingress internal and load balancer; invoker `allUsers` under the public-invoker tag, because the CLI calls it with the control plane's write grant, which the intake checks itself. No custom audience: no ID token is checked by Cloud Run.
+- **Network.** No VPC egress, like the agent: it reaches `www.googleapis.com` (Google's certificates) and Secret Manager on Google's own path, not through the apps' network, so the no-internet floor neither applies to it nor changes.
+- **Identity.** `ssc-secret-intake` holds `secretmanager.secretVersionAdder` on `ssc-a-*` secrets (IAM condition) and `logging.logWriter`, nothing else, and is named in the cell's deny rule, so it cannot read a version back.
+- **Control plane.** Its `secretVersionAdder` in the cell (`control-secret-versions`) is removed; it holds no project role in a cell now.
+- **Agent.** `secretmanager.admin` on `ssc-a-*`, unchanged: it creates each secret, sets its policy, adds the database's versions (SSC-040) and deletes the secret of a database it drops (SSC-042). The deny rule refuses it every value.
+
+**Live checks** (operator, not run by this change), on a staging cell with `agent_image` set:
+1. `curl https://ssc--secrets.<label>.delimitusapps.com/healthz` answers `ok`; the service's `run.app` host refuses. The folder policy accepts the `allUsers` grant on the intake with the existing tag value.
+2. `ssc secret set` adds a version; the intake's account reading it back (`gcloud secrets versions access` impersonating `ssc-secret-intake`) is refused, and so is a create.
+3. The control plane's account adding a version in the cell is refused.
+4. The condition `resource.name.extract("/secrets/{name}")` matches the resource name `:addVersion` is checked against, as it does for the agent's `secretmanager.admin`.
+5. `deny_probe` does not list identities, so check the intake and the control plane in the deny rule with `gcloud iam policies get ssc-deny-secret-read --attachment-point=cloudresourcemanager.googleapis.com/projects/<project> --kind=denypolicies`.
+
+## App databases
+
+With the `database` flag the agent makes one database per app on the cell's instance (SSC-040, `ssc_agent.cloud_sql`, `ssc_agent.app_database`):
+
+- **Agent environment.** `SSC_SQL_INSTANCE=ssc-cell`, the instance's name (the agent builds `projects/<project>/instances/<name>` itself), only with the flag on and `agent_image` set; unset, the agent refuses databases. `cell_diff` hides only that variable on the agent when the stacks' `database` flags differ.
+- **Agent permissions.** Granted at onboarding, since the deployer holds no IAM role: the custom role `sscCellAgentDatabase`, one permission per call `ssc_agent.cloud_sql` makes: `cloudsql.instances.executeSql` (`executeSql`), `cloudsql.instances.login` (its `autoIamAuthn`), `cloudsql.instances.get` (the instance, and the `operations` it polls after `databases.insert` and `databases.delete`), `cloudsql.instances.listServerCas`, `cloudsql.databases.create` (`databases.insert`, moved here from `sscCellAgentCreate`) and `cloudsql.databases.delete` (`databases.delete`, SSC-042). They replace `cloudsql.admin`, `cloudsql.client` and `cloudsql.instanceUser`. The agent has no network path to the instance and needs none.
+- **Database user.** `ssc-cell-agent@ssc-c-<label>.iam`, type `CLOUD_IAM_SERVICE_ACCOUNT`, in `cloudsqlsuperuser`; the instance has `cloudsql.iam_authentication=on`. Statements run through the Data API (`dataApiAccess: ALLOW_DATA_API`) with `autoIamAuthn`.
+- **Connections.** `max_connections=25` on `db-f1-micro` (`SQL_TIER`), which the agent reads for its ceiling.
+- **Name and certificate.** `serverCaMode: GOOGLE_MANAGED_CAS_CA`, so the server certificate names the instance's DNS name and apps can use `sslmode=verify-full` against `listServerCas`. The name is under `sql.goog.`, which the `*.goog.` rule would sinkhole, so at onboarding the cell gets the private zone `ssc-sql` and the bypass `*.sql.goog.` (both in the floor, the same with every flag), and the flag adds the record `sql-dns`: the instance's `dnsName` as A to its private address, in the database range apps may already reach. Nothing else opens.
+- **`cell_diff`.** The instance's `dnsName` and private address are cloud-assigned, so they become `<sql-dns>` and `<sql-address>` wherever they appear, as the entry address does.
+
+**Live checks** (operator, not run by this change), on a staging cell with `database` on:
+1. Custom roles may hold `cloudsql.instances.executeSql` and `cloudsql.instances.listServerCas`, and `executeSql` with `autoIamAuthn` needs no more than the permissions above (in particular not `cloudsql.instances.connect`).
+2. `operations.get` on the `databases.insert` and `databases.delete` operations needs only `cloudsql.instances.get`, and a database drop succeeds with `cloudsql.databases.delete`.
+3. `executeSql` runs on this private-IP-only instance with the Data API allowed.
+4. With `GOOGLE_MANAGED_CAS_CA` the instance has a `dnsName` (`gcloud sql instances describe ssc-cell --format='value(dnsName,dnsNames)'`) and its certificate names it; Cloud SQL does not publish that name itself for private services access (if it does, the record here only repeats it).
+5. From an app: the name resolves to the instance's private address, another `*.sql.goog` name gets NXDOMAIN, and `psql "sslmode=verify-full"` with `DATABASE_CA` connects.
+6. The deployer's flag run writes `sql-dns` through its zone-level grant.
+7. Cloud SQL accepts `max_connections=25` on `db-f1-micro`, and `superuser_reserved_connections + reserved_connections` is 3, which gives the agent's ceiling of 10 app databases.
+8. The agent's IAM user is in `cloudsqlsuperuser` (`gcloud sql users list --instance=ssc-cell`) and `SET ROLE cloudsqlsuperuser` works through the Data API.
+9. CMEK and the CAS server CA mode together are accepted on a new instance.
+
 ## Gateway
 
 The cell's gateway (SSC-018, decision 023) runs a build of `packages/ssc_edge/Dockerfile` once its four settings are set; until then it is the placeholder image with no environment.
@@ -181,15 +221,16 @@ The first `pulumi up` creates the key on a cell made before it. Still live-only:
 
 Each cell has its own door (SSC-088), created at onboarding with no flag:
 
-- A global external Application Load Balancer on the reserved address `ssc-entry`: forwarding rule `ssc-entry-https` (443) to the HTTPS proxy, and URL map `ssc-entry` with two backend services, each on its own serverless NEG: `ssc-gateway` for every host but one, and `ssc-cell-agent` for `ssc--agent.<label>.delimitusapps.com` alone. The gateway's backend never serves the agent host, and the agent's serves nothing else.
+- A global external Application Load Balancer on the reserved address `ssc-entry`: forwarding rule `ssc-entry-https` (443) to the HTTPS proxy, and URL map `ssc-entry` with three backend services, each on its own serverless NEG: `ssc-gateway` for every host but two, `ssc-cell-agent` for `ssc--agent.<label>.delimitusapps.com` alone, and `ssc-secret-intake` for `ssc--secrets.<label>.delimitusapps.com` alone. The gateway's backend never serves a reserved host, and the other two serve nothing else.
 - The HTTPS proxy carries the SSL policy `ssc-entry`: TLS 1.2 at least, `MODERN` profile. A second rule, `ssc-entry-http` (80), on the same address only redirects to HTTPS. The first five forwarding rules in a project are billed as one, so the redirect adds nothing: the entry is about $18.25 a month plus $0.008 per GB.
 - A serverless NEG's backend timeout is fixed at 60 minutes and Google refuses `timeoutSec` on it, so the stack leaves it unset; the gateway's own 3600 s request timeout is what ends a WebSocket at the hour.
 - Certificate Manager: DNS authorisation `ssc-cell` for `<label>.delimitusapps.com`, the wildcard certificate `ssc-cell-wildcard` for `*.<label>.delimitusapps.com`, map `ssc-entry` and map entry `ssc-wildcard`. No Cloud Armor.
 - The same run writes two records into the apps zone: the authorisation CNAME `_acme-challenge.<label>.delimitusapps.com.` and `*.<label>.delimitusapps.com.` A to the entry address.
 - The gateway's invoker is `allUsers`; its ingress stays internal and load balancer, which keeps its `run.app` host closed. The grant is allowed only because the gateway carries the public-invoker tag (see Organisation policies); the stack binds the tag before it grants.
 - The cell agent's ingress is internal and load balancer too, and its invoker is still only the control plane's identity. Its custom audience is `https://ssc--agent.<label>.delimitusapps.com`, so an ID token for that URL is accepted through the load balancer; its `run.app` host is closed. No slug can claim the agent host: slugs never contain `--`.
+- The secret intake's ingress is internal and load balancer, and its invoker is `allUsers` under the same tag as the gateway (Secrets, below).
 
-The cell stack exports `entry_address`, `public_host_suffix` (`<label>.delimitusapps.com`), `certificate_id`, `agent_host` and `agent_url`. `agent_url` is `https://ssc--agent.<label>.delimitusapps.com`, the URL the control plane calls and the audience of its ID token; it was the agent's `run.app` URL before SSC-095. Set `SSC_CELL_AGENT_URL` (worker) and the GitHub variable `SSC_PROBE_AGENT_URL` (nightly) to it.
+The cell stack exports `entry_address`, `public_host_suffix` (`<label>.delimitusapps.com`), `certificate_id`, `agent_host`, `agent_url`, `intake_host` and `intake_url`. `agent_url` is `https://ssc--agent.<label>.delimitusapps.com`, the URL the control plane calls and the audience of its ID token; it was the agent's `run.app` URL before SSC-095. Set `SSC_CELL_AGENT_URL` (worker and API) and the GitHub variable `SSC_PROBE_AGENT_URL` (nightly) to it. `intake_url` is `https://ssc--secrets.<label>.delimitusapps.com`; set `SSC_SECRET_INTAKE_URL` (API) to it.
 
 **Zones and the registrar step.** The platform stack owns two public zones in `ssc-platform-0`: `delimitusapps` (`delimitusapps.com.`, the cells' records) and `delimitus` (`delimitus.com.`, for `api`, `auth` and `keys`, whose records come later). Both are protected from deletion. A cell stack runs as the operator, who may write records in the apps zone only, through the custom role `sscZoneRecords` granted on that zone. After `pulumi up --stack platform`, the founder sets each domain's name servers at the registrar from `pulumi stack output apps_zone_name_servers` and `platform_zone_name_servers`, and deletes the domain's DS records there. Both domains still carry DS records from zones that no longer exist; with them left in place, validating resolvers fail every lookup and no certificate is issued. The `.com` delegation is cached for up to 48 hours, so do this well before the first cell.
 
@@ -215,12 +256,12 @@ The platform stack applies one table (`policies.cell_rules`) to the `ssc-cells` 
 
 The domain-restricted sharing row uses the managed constraint rather than `iam.allowedPolicyMemberDomains`: the organisation has no Workspace customer, and the legacy constraint cannot name the operator's personal account, so it would refuse the operator's just-in-time and probe grants.
 
-**The one exception.** The gateway's `allUsers` invoker. The platform stack owns the tag `ssc-public-invoker=gateway` on the organisation, and the members rule is off only where that tag is bound. The cell stack binds it to `ssc-gateway` and nothing else. Binding needs `resourcemanager.tagUser` on the value, which the platform stack grants to the operator alone, authoritatively, so a holder added by hand is removed on the next run. The same operator runs both stacks and is organisation and policy admin, so this does not stop the operator. It does stop:
+**The one exception.** The `allUsers` invoker of the gateway and of the secret intake (`policies.PUBLIC_SERVICES`). The platform stack owns the tag `ssc-public-invoker=gateway` on the organisation, and the members rule is off only where that tag is bound. The cell stack binds it to `ssc-gateway` and `ssc-secret-intake` and nothing else. The intake reuses the tag value rather than a second one: the same binders and the same exception, so the platform stack is unchanged. Binding needs `resourcemanager.tagUser` on the value, which the platform stack grants to the operator alone, authoritatively, so a holder added by hand is removed on the next run. The same operator runs both stacks and is organisation and policy admin, so this does not stop the operator. It does stop:
 - every runtime identity (cell agent, control plane, apps, nightly), which can never bind the tag and so never make anything public;
-- a cell stack mistake that grants `allUsers` or an outside member anywhere but the tagged gateway, which is refused at apply;
-- the tag bound anywhere but the gateway (the agent, the project), which `tests/test_policies.py` refuses before apply.
+- a cell stack mistake that grants `allUsers` or an outside member anywhere but the two tagged services, which is refused at apply;
+- the tag bound anywhere else (the agent, the data gateway, the project), which `tests/test_policies.py` refuses before apply.
 
-The cell deployer (SSC-087) is the second binder: it applies cell stacks, and the gateway it keeps is tagged. The grant still names nobody else.
+The cell deployer (SSC-087) is the second binder: it applies cell stacks, and the two services it keeps are tagged. The grant still names nobody else.
 
 **Order.** The policies and the tag come before the first cell: `pulumi up --stack platform` creates the tag, its binder grant and the policies together. Never apply these policies to a folder already holding a cell unless the tag exception is in the same run, or the gateway's `allUsers` grant is refused on its next update. No cell exists yet.
 
