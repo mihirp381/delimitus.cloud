@@ -10,7 +10,23 @@ from mockcloud import Declared, as_export, one, project_number, run
 from ssc_infra import cell, cell_diff, naming
 
 A, B = "testcell01", "testcell02"
-ALL = {"probe": "true"}
+LAZY = {"database": "true", "egress": "true", "connections": "true"}
+ALL = {"probe": "true"} | LAZY
+EMPTY = {"probe": "true"}
+FULL_FLAGS = {
+    "database": True,
+    "egress": True,
+    "connections": True,
+    "gateway_min": 0,
+    "warm": False,
+}
+EMPTY_FLAGS = {
+    "database": False,
+    "egress": False,
+    "connections": False,
+    "gateway_min": 0,
+    "warm": False,
+}
 AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_CELL_PROJECT",
     "SSC_CELL_REGION",
@@ -29,6 +45,15 @@ def cell_a() -> list[Declared]:
 @pytest.fixture(scope="module")
 def cell_b() -> list[Declared]:
     return run(naming.cell_stack(B), ALL)
+
+
+@pytest.fixture(scope="module")
+def empty_b() -> list[Declared]:
+    return run(naming.cell_stack(B), EMPTY)
+
+
+def _names(declared: list[Declared]) -> set[str]:
+    return {f"{d.type}::{d.name}" for d in declared}
 
 
 def test_two_cells_differ_only_in_their_label(
@@ -92,22 +117,75 @@ def test_the_registries_use_the_cell_key(cell_a: list[Declared]) -> None:
     assert all(r["kmsKeyName"] == "key-registry-id" for r in repos)
 
 
-def test_the_network_is_ipv4_with_one_fixed_ip_for_the_gateway(cell_a: list[Declared]) -> None:
+def test_the_network_is_two_ipv4_slash_24s_with_no_proxy_only_subnet(
+    cell_a: list[Declared],
+) -> None:
     subnets = {
         d.inputs["name"]: d.inputs for d in cell_a if d.type == "gcp:compute/subnetwork:Subnetwork"
     }
-    assert subnets["apps"]["ipCidrRange"] == "10.20.0.0/22"
-    assert subnets["apps"]["stackType"] == "IPV4_ONLY"
-    nat = one(cell_a, "gcp:compute/routerNat:RouterNat").inputs
+    assert {k: v["ipCidrRange"] for k, v in subnets.items()} == {
+        "apps": "10.20.0.0/24",
+        "gateway": "10.20.4.0/24",
+    }
+    assert {v["stackType"] for v in subnets.values()} == {"IPV4_ONLY"}
+    assert not any("purpose" in v for v in subnets.values())
+
+
+@pytest.mark.parametrize("config", [EMPTY, ALL])
+def test_nat_and_the_fixed_ip_always_exist_for_the_edge_subnet_only(
+    config: dict[str, str],
+) -> None:
+    declared = run(naming.cell_stack(A), config)
+    nat = one(declared, "gcp:compute/routerNat:RouterNat").inputs
     assert nat["natIpAllocateOption"] == "MANUAL_ONLY"
     assert len(nat["natIps"]) == 1
     assert [s["name"] for s in nat["subnetworks"]] == ["subnet-gateway-id"]
-    assert len([d for d in cell_a if d.type == "gcp:compute/address:Address"]) == 1
+    fixed = one(declared, "gcp:compute/address:Address", "nat-ip-gateway").inputs
+    assert (fixed["addressType"], fixed["networkTier"]) == ("EXTERNAL", "PREMIUM")
+
+
+def test_the_proxy_data_gateway_and_database_addresses_are_reserved_at_onboarding(
+    empty_b: list[Declared],
+) -> None:
+    reserved = {
+        d.inputs["name"]: (d.inputs["address"], d.inputs["subnetwork"])
+        for d in empty_b
+        if d.type == "gcp:compute/address:Address" and d.inputs["addressType"] == "INTERNAL"
+    }
+    assert reserved == {
+        "ssc-proxy": ("10.20.4.10", "subnet-gateway-id"),
+        "ssc-datagw": ("10.20.4.11", "subnet-gateway-id"),
+    }
+    psa = one(empty_b, "gcp:compute/globalAddress:GlobalAddress").inputs
+    assert (psa["address"], psa["prefixLength"], psa["purpose"]) == ("10.21.0.0", 20, "VPC_PEERING")
+    one(empty_b, "gcp:servicenetworking/connection:Connection")
+
+
+def test_the_firewall_is_the_same_before_and_after_every_lazy_resource(
+    cell_a: list[Declared], empty_b: list[Declared]
+) -> None:
+    def rules(declared: list[Declared]) -> dict[str, dict[str, Any]]:
+        return {
+            d.inputs["name"]: {k: v for k, v in d.inputs.items() if k != "project"}
+            for d in declared
+            if d.type == "gcp:compute/firewall:Firewall"
+        }
+
+    assert rules(cell_a) == rules(empty_b)
+    full = rules(cell_a)
+    assert full["ingress-proxy"]["sourceRanges"] == ["10.20.0.0/24"]
+    assert full["ingress-proxy"]["targetTags"] == ["ssc-proxy"]
+    assert full["ingress-proxy"]["allows"] == [{"protocol": "tcp", "ports": ["3128"]}]
+    assert full["egress-proxy"]["targetTags"] == ["ssc-proxy"]
+    assert full["egress-data"]["targetTags"] == ["ssc-data"]
 
 
 def test_the_database_is_a_zonal_shared_core_instance(cell_a: list[Declared]) -> None:
     settings = one(cell_a, "gcp:sql/databaseInstance:DatabaseInstance").inputs["settings"]
-    assert (settings["tier"], settings["availabilityType"]) == ("db-g1-small", "ZONAL")
+    assert (settings["tier"], settings["availabilityType"]) == ("db-f1-micro", "ZONAL")
+    backups = settings["backupConfiguration"]
+    assert backups["enabled"] is True
+    assert backups["pointInTimeRecoveryEnabled"] is True
 
 
 def test_destroy_leaves_the_sql_peering_to_the_project(cell_a: list[Declared]) -> None:
@@ -126,23 +204,41 @@ def test_egress_is_denied_unless_allowed(cell_a: list[Declared]) -> None:
     assert rules["egress-gateway"]["targetTags"] == ["ssc-gateway"]
 
 
-def test_the_gateway_is_internal_always_on_and_behind_the_load_balancer(
-    cell_a: list[Declared],
+def test_the_gateway_is_request_billed_from_zero_with_an_hour_per_request(
+    empty_b: list[Declared],
 ) -> None:
-    gw = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
+    gw = one(empty_b, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
     assert gw["ingress"] == "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
-    assert gw["template"]["scaling"]["minInstanceCount"] == 2
-    assert gw["scaling"]["maxInstanceCount"] == 20
-    assert gw["template"]["containers"][0]["resources"]["cpuIdle"] is False
-    assert gw["template"]["vpcAccess"]["egress"] == "ALL_TRAFFIC"
-    rule = one(cell_a, "gcp:compute/forwardingRule:ForwardingRule").inputs
-    assert rule["loadBalancingScheme"] == "INTERNAL_MANAGED"
-
-
-def test_a_cell_can_run_its_gateway_from_zero() -> None:
-    declared = run(naming.cell_stack("testcell07"), {"gateway_min": "0"})
-    gw = one(declared, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
     assert gw["template"]["scaling"]["minInstanceCount"] == 0
+    assert gw["scaling"]["maxInstanceCount"] == 20
+    assert gw["template"]["timeout"] == "3600s"
+    assert gw["template"]["maxInstanceRequestConcurrency"] == 1000
+    (container,) = gw["template"]["containers"]
+    assert container["resources"] == {"cpuIdle": True, "limits": {"cpu": "1", "memory": "512Mi"}}
+    assert gw["template"]["vpcAccess"]["egress"] == "ALL_TRAFFIC"
+    (nic,) = gw["template"]["vpcAccess"]["networkInterfaces"]
+    assert (nic["subnetwork"], nic["tags"]) == ("subnet-gateway-id", ["ssc-gateway"])
+
+
+def test_no_internal_load_balancer_remains(cell_a: list[Declared]) -> None:
+    kinds = {d.type for d in cell_a}
+    assert not {k for k in kinds if "region" in k.lower() and "compute/" in k}
+    assert "gcp:compute/forwardingRule:ForwardingRule" not in kinds
+
+
+@pytest.mark.parametrize(
+    ("config", "floor"),
+    [
+        ({"gateway_min": "2"}, 2),
+        ({"warm": "true"}, 1),
+        ({"warm": "true", "gateway_min": "3"}, 3),
+        ({"gateway_min": "0"}, 0),
+    ],
+)
+def test_gateway_min_and_warm_set_the_gateway_floor(config: dict[str, str], floor: int) -> None:
+    declared = run(naming.cell_stack("testcell07"), config)
+    gw = one(declared, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
+    assert gw["template"]["scaling"]["minInstanceCount"] == floor
     assert gw["template"]["containers"][0]["resources"]["cpuIdle"] is True
 
 
@@ -298,7 +394,13 @@ def test_the_cell_deny_rule_names_every_ssc_identity(cell_a: list[Declared]) -> 
     rule = one(cell_a, "gcp:iam/denyPolicy:DenyPolicy").inputs["rules"][0]["denyRule"]
     assert rule["deniedPermissions"] == [naming.SECRET_READ]
     denied = {p.rsplit("/", 1)[-1].split("@")[0] for p in rule["deniedPrincipals"]}
-    assert denied == {"ssc-gateway", "ssc-cell-agent", "ssc-build", naming.PROBE_DENIED_SA}
+    assert denied == {
+        "ssc-gateway",
+        "ssc-cell-agent",
+        "ssc-build",
+        "ssc-data",
+        naming.PROBE_DENIED_SA,
+    }
 
 
 def test_the_probe_value_never_reaches_the_state(cell_a: list[Declared]) -> None:
@@ -322,7 +424,7 @@ def test_a_cell_without_the_probe_has_no_probe_secret() -> None:
     ("stage", "policy", "protected"), [("staging", "DELETE", False), ("prod", "PREVENT", True)]
 )
 def test_only_staging_cells_can_be_destroyed(stage: str, policy: str, protected: bool) -> None:
-    declared = run(naming.cell_stack("testcell04"), {"stage": stage})
+    declared = run(naming.cell_stack("testcell04"), {"stage": stage, "database": "true"})
     assert one(declared, "gcp:organizations/project:Project").inputs["deletionPolicy"] == policy
     assert (
         one(declared, "gcp:sql/databaseInstance:DatabaseInstance").inputs["deletionProtection"]
@@ -384,3 +486,109 @@ def test_destroy_leaves_the_network_to_the_project(monkeypatch: pytest.MonkeyPat
         "gcp:compute/subnetwork:Subnetwork::subnet-apps",
         "gcp:compute/subnetwork:Subnetwork::subnet-gateway",
     }
+
+
+def test_by_default_a_cell_has_no_database_proxy_or_data_gateway(empty_b: list[Declared]) -> None:
+    kinds = {d.type for d in empty_b}
+    assert not {k for k in kinds if k.startswith("gcp:sql/")}
+    assert "gcp:compute/instanceTemplate:InstanceTemplate" not in kinds
+    assert "gcp:compute/instanceGroupManager:InstanceGroupManager" not in kinds
+    services = {d.name for d in empty_b if d.type == "gcp:cloudrunv2/service:Service"}
+    assert services == {"ssc-gateway", "ssc-cell-agent"}
+    assert not _names(empty_b) & set().union(*naming.LAZY_RESOURCES.values())
+
+
+@pytest.mark.parametrize("flag", sorted(naming.LAZY_RESOURCES))
+def test_each_flag_adds_only_its_named_resources(flag: str, empty_b: list[Declared]) -> None:
+    flagged = run(naming.cell_stack(B), EMPTY | {flag: "true"})
+    assert _names(flagged) - _names(empty_b) == naming.LAZY_RESOURCES[flag]
+    assert _names(empty_b) <= _names(flagged)
+    flags = EMPTY_FLAGS | {flag: True}
+    first = cell_diff.normalise(as_export(empty_b, B, EMPTY_FLAGS), B)
+    second = cell_diff.normalise(as_export(flagged, B, flags), B)
+    assert cell_diff.compare(first, second, [flag]) == []
+    assert len(cell_diff.compare(first, second)) == len(naming.LAZY_RESOURCES[flag])
+
+
+def test_the_lazy_resources_are_what_the_flags_say(cell_a: list[Declared]) -> None:
+    template = one(cell_a, "gcp:compute/instanceTemplate:InstanceTemplate").inputs
+    assert template["machineType"] == "e2-micro"
+    assert template["tags"] == ["ssc-proxy"]
+    (nic,) = template["networkInterfaces"]
+    assert nic["networkIp"] == "10.20.4.10"
+    assert nic["subnetwork"] == "subnet-gateway-id"
+    assert "accessConfigs" not in nic
+    assert "serviceAccount" not in template
+    group = one(cell_a, "gcp:compute/instanceGroupManager:InstanceGroupManager").inputs
+    assert group["targetSize"] == 1
+    assert group["zone"].startswith(naming.REGION)
+    assert group["updatePolicy"]["maxSurgeFixed"] == 0
+    datagw = one(cell_a, "gcp:cloudrunv2/service:Service", naming.DATA_GATEWAY).inputs
+    assert datagw["ingress"] == "INGRESS_TRAFFIC_INTERNAL_ONLY"
+    assert datagw["template"]["serviceAccount"] == naming.sa_email("ssc-data", "ssc-c-testcell01")
+    assert datagw["template"]["scaling"]["minInstanceCount"] == 0
+    assert datagw["template"]["containers"][0]["resources"]["cpuIdle"] is True
+    (nic,) = datagw["template"]["vpcAccess"]["networkInterfaces"]
+    assert (nic["subnetwork"], nic["tags"]) == ("subnet-gateway-id", ["ssc-data"])
+
+
+def test_a_full_and_an_empty_cell_differ_only_in_what_their_flags_name(
+    cell_a: list[Declared], empty_b: list[Declared]
+) -> None:
+    full = as_export(cell_a, A, FULL_FLAGS)
+    empty = as_export(empty_b, B, EMPTY_FLAGS)
+    differ = cell_diff.differing(cell_diff.flags(full), cell_diff.flags(empty))
+    assert differ == ["database", "egress", "connections"]
+    first, second = cell_diff.normalise(full, A), cell_diff.normalise(empty, B)
+    assert cell_diff.compare(first, second, differ) == []
+    assert cell_diff.compare(first, second)
+
+
+def test_a_stack_without_a_flags_output_has_the_defaults(cell_a: list[Declared]) -> None:
+    assert cell_diff.flags(as_export(cell_a, A)) == EMPTY_FLAGS
+
+
+def test_a_differing_flag_hides_nothing_else(
+    cell_a: list[Declared], empty_b: list[Declared]
+) -> None:
+    drifted = [
+        Declared(d.type, d.name, {**d.inputs, "machineType": "e2-small"}, d.outputs)
+        if d.name == "proxy-template"
+        else Declared(d.type, d.name, {**d.inputs, "versioning": {"enabled": False}}, d.outputs)
+        if d.type == "gcp:storage/bucket:Bucket"
+        else d
+        for d in cell_a
+    ]
+    first = cell_diff.normalise(as_export(drifted, A, FULL_FLAGS), A)
+    second = cell_diff.normalise(as_export(empty_b, B, EMPTY_FLAGS), B)
+    diffs = cell_diff.compare(first, second, ["database", "egress", "connections"])
+    assert [d.split(" ")[0] for d in diffs] == ["gcp:storage/bucket:Bucket::bucket"]
+
+
+def test_gateway_min_and_warm_differ_only_in_the_gateway_floor(empty_b: list[Declared]) -> None:
+    warm = run(naming.cell_stack(B), EMPTY | {"warm": "true", "gateway_min": "2"})
+    flags = EMPTY_FLAGS | {"warm": True, "gateway_min": 2}
+    first = cell_diff.normalise(as_export(empty_b, B, EMPTY_FLAGS), B)
+    second = cell_diff.normalise(as_export(warm, B, flags), B)
+    differ = cell_diff.differing(EMPTY_FLAGS, flags)
+    assert differ == ["gateway_min", "warm"]
+    assert cell_diff.compare(first, second, differ) == []
+    assert {d.split(": ")[0] for d in cell_diff.compare(first, second)} == {
+        f"{naming.GATEWAY_SERVICE} {side}.{naming.GATEWAY_MIN_PATH}" for side in ("in", "out")
+    }
+
+
+def test_the_budget_alert_is_on_the_project_and_its_billing_account() -> None:
+    declared = run(naming.cell_stack("testcell08"), {"billing_account": "000000-111111-222222"})
+    project = one(declared, "gcp:organizations/project:Project").inputs
+    assert project["billingAccount"] == "000000-111111-222222"
+    budget = one(declared, "gcp:billing/budget:Budget").inputs
+    assert budget["billingAccount"] == "000000-111111-222222"
+    number = project_number("ssc-c-testcell08")
+    assert budget["budgetFilter"]["projects"] == [f"projects/{number}"]
+    assert budget["amount"]["specifiedAmount"]["units"] == str(cell.CELL_BUDGET_USD)
+
+
+def test_the_billing_account_defaults_to_ours(empty_b: list[Declared]) -> None:
+    project = one(empty_b, "gcp:organizations/project:Project").inputs
+    assert project["billingAccount"] == naming.BILLING_ACCOUNT

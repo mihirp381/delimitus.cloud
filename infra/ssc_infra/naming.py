@@ -43,6 +43,24 @@ GITHUB_REPOSITORY: Final = "mihirp381/delimitus.cloud"
 NIGHTLY_WORKFLOW: Final = ".github/workflows/nightly.yml"
 SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S105
 
+GATEWAY: Final = "ssc-gateway"
+DATA_GATEWAY: Final = "ssc-datagw"
+FLAGS: Final = ("database", "egress", "connections", "gateway_min", "warm")
+LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
+    "database": frozenset(
+        {"gcp:sql/databaseInstance:DatabaseInstance::sql", "gcp:sql/user:User::sql-agent"}
+    ),
+    "egress": frozenset(
+        {
+            "gcp:compute/instanceTemplate:InstanceTemplate::proxy-template",
+            "gcp:compute/instanceGroupManager:InstanceGroupManager::proxy",
+        }
+    ),
+    "connections": frozenset({f"gcp:cloudrunv2/service:Service::{DATA_GATEWAY}"}),
+}
+GATEWAY_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{GATEWAY}"
+GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
+
 
 def control_project(stage: Stage) -> str:
     return f"ssc-control-{stage}"

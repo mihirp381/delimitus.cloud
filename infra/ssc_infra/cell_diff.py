@@ -1,16 +1,18 @@
 """Done-when check 1: two cells are identical once their label, project number, addresses and
-timestamps are taken out.
+timestamps are taken out, apart from what their flags name.
 
     uv run python -m ssc_infra.cell_diff testcell01 testcell02
 
 Compares ``pulumi stack export`` of both stacks: the same resources, the same inputs, and the same
-outputs apart from values the cloud assigns. Prints each difference; exit 1 if there is any.
+outputs apart from values the cloud assigns. Where the stacks' ``flags`` output differ, the lazy
+resources of a differing flag and the gateway's minimum (``gateway_min``, ``warm``) are left out.
+Prints each difference; exit 1 if there is any.
 """
 
 import json
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from ssc_infra import naming as n
@@ -87,6 +89,14 @@ ASSIGNED_KEYS: Final = frozenset(
         "lastUpdateTime",
     }
 )
+ASSIGNED_PATHS: Final = {"gcp:billing/budget:Budget": frozenset({"out.name"})}
+FLAG_DEFAULTS: Final[dict[str, Json]] = {
+    "database": False,
+    "egress": False,
+    "connections": False,
+    "gateway_min": 0,
+    "warm": False,
+}
 IPV4: Final = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 
@@ -152,17 +162,45 @@ def normalise(state: Json, label: str) -> dict[str, Flat]:
             f"out.{k}": v
             for k, v in flatten(res.get("outputs", {}), label, number, outputs=True).items()
         }
-        out[f"{kind}::{name}"] = flat
+        assigned = ASSIGNED_PATHS.get(kind, frozenset())
+        out[f"{kind}::{name}"] = {k: v for k, v in flat.items() if k not in assigned}
     return out
 
 
-def compare(a: Mapping[str, Flat], b: Mapping[str, Flat]) -> list[str]:
-    diffs = [f"only in first: {k}" for k in sorted(a.keys() - b.keys())]
-    diffs += [f"only in second: {k}" for k in sorted(b.keys() - a.keys())]
+def flags(state: Json) -> dict[str, Json]:
+    """The five stack flags as the stack exported them; a stack without them has the defaults."""
+    return FLAG_DEFAULTS | dict(_stack_outputs(state).get("flags") or {})
+
+
+def differing(a: Mapping[str, Json], b: Mapping[str, Json]) -> list[str]:
+    return [f for f in n.FLAGS if a.get(f) != b.get(f)]
+
+
+def _flagged(key: str, path: str, flags_differ: Sequence[str]) -> bool:
+    """Whether a differing flag names this resource, or this path of it."""
+    if any(key in n.LAZY_RESOURCES.get(f, ()) for f in flags_differ):
+        return True
+    gateway_min = {"gateway_min", "warm"} & set(flags_differ)
+    return bool(gateway_min) and key == n.GATEWAY_SERVICE and path.endswith(n.GATEWAY_MIN_PATH)
+
+
+def compare(
+    a: Mapping[str, Flat], b: Mapping[str, Flat], flags_differ: Sequence[str] = ()
+) -> list[str]:
+    diffs = [
+        f"only in first: {k}"
+        for k in sorted(a.keys() - b.keys())
+        if not _flagged(k, "", flags_differ)
+    ]
+    diffs += [
+        f"only in second: {k}"
+        for k in sorted(b.keys() - a.keys())
+        if not _flagged(k, "", flags_differ)
+    ]
     for key in sorted(a.keys() & b.keys()):
         left, right = a[key], b[key]
         for path in sorted(left.keys() | right.keys()):
-            if left.get(path) != right.get(path):
+            if left.get(path) != right.get(path) and not _flagged(key, path, flags_differ):
                 diffs.append(f"{key} {path}: {left.get(path)} != {right.get(path)}")
     return diffs
 
@@ -172,11 +210,16 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)  # noqa: T201
         return 2
     try:
-        states = [normalise(export(n.cell_stack(label)), label) for label in argv]
+        exports = [export(n.cell_stack(label)) for label in argv]
     except (CommandError, ValueError) as exc:
         print(exc, file=sys.stderr)  # noqa: T201
         return 1
-    diffs = compare(*states)
+    states = [normalise(state, label) for state, label in zip(exports, argv, strict=True)]
+    flags_differ = differing(flags(exports[0]), flags(exports[1]))
+    if flags_differ:
+        left_out = ", ".join(flags_differ)
+        print(f"flags differ, their resources left out: {left_out}", file=sys.stderr)  # noqa: T201
+    diffs = compare(*states, flags_differ=flags_differ)
     for line in diffs:
         print(line)  # noqa: T201
     count = len(states[0])

@@ -100,14 +100,19 @@ def one(declared: list[Declared], type_: str, name: str | None = None) -> Declar
     return found[0]
 
 
-def as_export(declared: list[Declared], label: str) -> dict[str, Any]:
+def as_export(
+    declared: list[Declared], label: str, flags: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The shape of ``pulumi stack export`` for ``cell_diff``."""
     stack = naming.cell_stack(label)
+    outputs: dict[str, Any] = {"project_number": project_number(naming.cell_project(label))}
+    if flags is not None:
+        outputs["flags"] = flags
     resources: list[dict[str, Any]] = [
         {
             "type": "pulumi:pulumi:Stack",
             "urn": f"urn:pulumi:{stack}::{naming.PROJECT}::pulumi:pulumi:Stack::root",
-            "outputs": {"project_number": project_number(naming.cell_project(label))},
+            "outputs": outputs,
         }
     ]
     resources += [

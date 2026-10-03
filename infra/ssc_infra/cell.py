@@ -1,12 +1,14 @@
 """A ``c-<cell label>`` stack: one customer cell, one project (SSC-013, decisions 021 and 022).
 
 Everything a cell holds is named from the label alone, so two cells differ only in their label,
-project number and addresses; ``python -m ssc_infra.cell_diff`` checks exactly that.
+project number, addresses and the resources their flags name; ``python -m ssc_infra.cell_diff``
+checks exactly that.
 """
 
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
+from ipaddress import ip_network
 from pathlib import Path
 from typing import Final
 
@@ -14,7 +16,7 @@ import pulumi
 import pulumi_gcp as gcp
 
 from ssc_infra import naming as n
-from ssc_infra.platform import provider, sa_principal
+from ssc_infra.platform import BUDGET_THRESHOLDS, provider, sa_principal
 from ssc_shared.runtime import service_name
 
 APIS: Final = (
@@ -33,9 +35,21 @@ APIS: Final = (
     "sqladmin.googleapis.com",
     "storage.googleapis.com",
 )
-APPS_RANGE: Final = "10.20.0.0/22"
-GATEWAY_RANGE: Final = "10.20.4.0/24"
-PROXY_RANGE: Final = "10.20.6.0/23"
+SUBNETS: Final = {"apps": "10.20.0.0/24", "gateway": "10.20.4.0/24"}
+APPS_SUBNET: Final = "apps"
+EDGE_SUBNET: Final = "gateway"
+PROXY_HOST: Final = 10
+DATAGW_HOST: Final = 11
+PROXY_PORT: Final = 3128
+PROXY_TAG: Final = "ssc-proxy"
+DATA_TAG: Final = "ssc-data"
+PROXY_MACHINE: Final = "e2-micro"
+PROXY_ZONE: Final = f"{n.REGION}-a"
+PROXY_BOOT_IMAGE: Final = "cos-cloud/cos-stable"
+HEALTH_CHECK_RANGES: Final = ("35.191.0.0/16", "130.211.0.0/22")
+GATEWAY_CONCURRENCY: Final = 1000
+GATEWAY_TIMEOUT: Final = "3600s"
+CELL_BUDGET_USD: Final = 50
 CELL_RANGE: Final = "10.20.0.0/16"
 PSA_ADDRESS: Final = "10.21.0.0"
 PSA_PREFIX: Final = 20
@@ -43,8 +57,9 @@ GOOGLE_PRIVATE: Final = ("199.36.153.8", "199.36.153.9", "199.36.153.10", "199.3
 GOOGLE_PRIVATE_RANGE: Final = "199.36.153.8/30"
 GATEWAY_TAG: Final = "ssc-gateway"
 AGENT_MAX: Final = 3
+DATAGW_MAX: Final = 10
 KEY_ROTATION: Final = "7776000s"
-SQL_TIER: Final = "db-g1-small"  # shared core, zonal: see decision 022, 2026-10-01
+SQL_TIER: Final = "db-f1-micro"
 PLACEHOLDER_IMAGE: Final = "us-docker.pkg.dev/cloudrun/container/hello"
 GOOGLE_DNS_PASSTHRU: Final = (
     "googleapis.com.",
@@ -91,6 +106,11 @@ class CellConfig:
     gateway_max: int
     agent_image: str | None
     probe_digest: str | None
+    billing_account: str
+    database: bool
+    egress: bool
+    connections: bool
+    warm: bool
 
     @property
     def project_id(self) -> str:
@@ -99,6 +119,21 @@ class CellConfig:
     @property
     def disposable(self) -> bool:
         return self.stage == "staging"
+
+    @property
+    def gateway_floor(self) -> int:
+        """The gateway's minimum instances: ``warm`` keeps at least one."""
+        return max(self.gateway_min, 1) if self.warm else self.gateway_min
+
+    @property
+    def flags(self) -> dict[str, bool | int]:
+        return {
+            "database": self.database,
+            "egress": self.egress,
+            "connections": self.connections,
+            "gateway_min": self.gateway_min,
+            "warm": self.warm,
+        }
 
 
 def read_config(stack: str) -> CellConfig:
@@ -110,10 +145,15 @@ def read_config(stack: str) -> CellConfig:
         label=n.label_of_stack(stack),
         stage=stage,
         probe=config.get_bool("probe") or False,
-        gateway_min=_int_or(config.get_int("gateway_min"), 2),
+        gateway_min=_int_or(config.get_int("gateway_min"), 0),
         gateway_max=_int_or(config.get_int("gateway_max"), 20),
         agent_image=config.get("agent_image"),
         probe_digest=config.get("probe_digest"),
+        billing_account=config.get("billing_account") or n.BILLING_ACCOUNT,
+        database=config.get_bool("database") or False,
+        egress=config.get_bool("egress") or False,
+        connections=config.get_bool("connections") or False,
+        warm=config.get_bool("warm") or False,
     )
 
 
@@ -136,7 +176,10 @@ def control_for(accounts: dict[str, str], stage: n.Stage) -> str:
 
 
 class Cell:
-    """Builds the resources in dependency order; each step keeps what later steps need."""
+    """Builds the resources in dependency order; each step keeps what later steps need.
+
+    Onboarding builds everything but the lazy resources, which only their flags add
+    (``naming.LAZY_RESOURCES``). The public entry (SSC-088) fronts ``gateway_``."""
 
     def __init__(self, cfg: CellConfig, platform: pulumi.StackReference) -> None:
         self.cfg = cfg
@@ -158,19 +201,25 @@ class Cell:
         )
 
     def build(self) -> None:
+        cfg = self.cfg
         self.project()
+        self.budget()
         self.identities()
         self.keys()
         self.network()
-        self.database()
+        if cfg.database:
+            self.database()
         self.registry()
         self.dns_policy()
         self.bucket()
         self.gateway()
         self.cell_agent()
-        self.load_balancer()
+        if cfg.egress:
+            self.proxy()
+        if cfg.connections:
+            self.data_gateway()
         self.deny()
-        if self.cfg.probe:
+        if cfg.probe:
             self.probe()
             self.probe_runner()
         self.exports()
@@ -183,7 +232,7 @@ class Cell:
             project_id=cfg.project_id,
             name=cfg.project_id,
             folder_id=folder,
-            billing_account=n.BILLING_ACCOUNT,
+            billing_account=cfg.billing_account,
             auto_create_network=False,
             deletion_policy="DELETE" if cfg.disposable else "PREVENT",
             labels={n.CELL_LABEL_KEY: cfg.label, "ssc-stage": cfg.stage},
@@ -202,6 +251,28 @@ class Cell:
         ]
         self.control_sa = self.platform.require_output("control_service_accounts").apply(
             lambda m: control_for(m, cfg.stage)
+        )
+
+    def budget(self) -> None:
+        """An alert on the cell project itself, sized to a full cell (A7)."""
+        gcp.billing.Budget(
+            "cell-monthly",
+            billing_account=self.cfg.billing_account,
+            display_name=f"SSC cell {self.cfg.label} ${CELL_BUDGET_USD} a month",
+            amount=gcp.billing.BudgetAmountArgs(
+                specified_amount=gcp.billing.BudgetAmountSpecifiedAmountArgs(
+                    currency_code="USD", units=str(CELL_BUDGET_USD)
+                )
+            ),
+            budget_filter=gcp.billing.BudgetBudgetFilterArgs(
+                calendar_period="MONTH",
+                projects=[pulumi.Output.concat("projects/", self.project_.number)],
+            ),
+            threshold_rules=[
+                gcp.billing.BudgetThresholdRuleArgs(threshold_percent=p, spend_basis=b)
+                for p, b in BUDGET_THRESHOLDS
+            ],
+            opts=self._o(),
         )
 
     def _sa(self, account: str, display: str) -> gcp.serviceaccount.Account:
@@ -233,6 +304,7 @@ class Cell:
         self.gateway_sa = self._sa("ssc-gateway", "SSC cell gateway")
         self.agent_sa = self._sa("ssc-cell-agent", "SSC cell agent")
         self.build_sa = self._sa("ssc-build", "SSC builds")
+        self.data_sa = self._sa("ssc-data", "SSC data gateway and file broker")
         agent = self.agent_sa.member
         create_role = gcp.projects.IAMCustomRole(
             "agent-create",
@@ -272,6 +344,7 @@ class Cell:
         self._project_role("build-logs", self.build_sa.member, "roles/logging.logWriter")
         self._project_role("gateway-logs", self.gateway_sa.member, "roles/logging.logWriter")
         self._project_role("agent-logs", agent, "roles/logging.logWriter")
+        self._project_role("data-logs", self.data_sa.member, "roles/logging.logWriter")
 
     def keys(self) -> None:
         ring = gcp.kms.KeyRing(
@@ -318,19 +391,11 @@ class Cell:
             routing_mode="REGIONAL",
             opts=self._kept(),
         )
-        self.apps_subnet = self._subnet("apps", APPS_RANGE)
-        self.gateway_subnet = self._subnet("gateway", GATEWAY_RANGE)
-        self.proxy_subnet = gcp.compute.Subnetwork(
-            "subnet-proxy",
-            project=self.pid,
-            name="proxy-only",
-            region=n.REGION,
-            network=self.vpc.id,
-            ip_cidr_range=PROXY_RANGE,
-            purpose="REGIONAL_MANAGED_PROXY",
-            role="ACTIVE",
-            opts=self._o(),
-        )
+        subnets = {name: self._subnet(name, cidr) for name, cidr in SUBNETS.items()}
+        self.apps_subnet = subnets[APPS_SUBNET]
+        self.edge_subnet = subnets[EDGE_SUBNET]
+        self.proxy_ip = self._reserve("proxy-ip", "ssc-proxy", PROXY_HOST)
+        self.datagw_ip = self._reserve("datagw-ip", "ssc-datagw", DATAGW_HOST)
         psa = gcp.compute.GlobalAddress(
             "psa-range",
             project=self.pid,
@@ -354,7 +419,10 @@ class Cell:
         self._egress("egress-deny-all", 65534, deny=True, ranges=["0.0.0.0/0"])
         self._egress("egress-internal", 1000, ranges=[CELL_RANGE, psa_cidr])
         self._egress("egress-google-private", 1000, ranges=[GOOGLE_PRIVATE_RANGE])
-        self._egress("egress-gateway", 1000, ranges=["0.0.0.0/0"], tags=[GATEWAY_TAG])
+        for name, tag in (("gateway", GATEWAY_TAG), ("proxy", PROXY_TAG), ("data", DATA_TAG)):
+            self._egress(f"egress-{name}", 1000, ranges=["0.0.0.0/0"], tags=[tag])
+        self._ingress("ingress-proxy", [SUBNETS[APPS_SUBNET]], PROXY_TAG, PROXY_PORT)
+        self._ingress("ingress-proxy-health", HEALTH_CHECK_RANGES, PROXY_TAG, PROXY_PORT)
         self._private_google_dns()
         router = gcp.compute.Router(
             "router",
@@ -364,7 +432,6 @@ class Cell:
             network=self.vpc.id,
             opts=self._o(),
         )
-        # Apps reach the internet only through the gateway, so only its subnet is NATed.
         self.nat_ip = gcp.compute.Address(
             "nat-ip-gateway",
             project=self.pid,
@@ -385,9 +452,22 @@ class Cell:
             source_subnetwork_ip_ranges_to_nat="LIST_OF_SUBNETWORKS",
             subnetworks=[
                 gcp.compute.RouterNatSubnetworkArgs(
-                    name=self.gateway_subnet.id, source_ip_ranges_to_nats=["ALL_IP_RANGES"]
+                    name=self.edge_subnet.id, source_ip_ranges_to_nats=["ALL_IP_RANGES"]
                 )
             ],
+            opts=self._o(),
+        )
+
+    def _reserve(self, resource: str, name: str, host: int) -> gcp.compute.Address:
+        """A fixed internal address in the edge subnet, held before anything uses it."""
+        return gcp.compute.Address(
+            resource,
+            project=self.pid,
+            name=name,
+            region=n.REGION,
+            address_type="INTERNAL",
+            subnetwork=self.edge_subnet.id,
+            address=str(ip_network(SUBNETS[EDGE_SUBNET])[host]),
             opts=self._o(),
         )
 
@@ -424,6 +504,20 @@ class Cell:
             denies=[gcp.compute.FirewallDenyArgs(protocol="all")] if deny else None,
             allows=None if deny else [gcp.compute.FirewallAllowArgs(protocol="all")],
             target_tags=list(tags) if tags else None,
+            opts=self._o(),
+        )
+
+    def _ingress(self, name: str, sources: Sequence[str], tag: str, port: int) -> None:
+        gcp.compute.Firewall(
+            name,
+            project=self.pid,
+            name=name,
+            network=self.vpc.id,
+            direction="INGRESS",
+            priority=1000,
+            source_ranges=list(sources),
+            target_tags=[tag],
+            allows=[gcp.compute.FirewallAllowArgs(protocol="tcp", ports=[str(port)])],
             opts=self._o(),
         )
 
@@ -645,7 +739,10 @@ class Cell:
         instances: tuple[int, int],
         image: str | None = None,
         env: dict[str, pulumi.Input[str]] | None = None,
+        timeout: str | None = None,
+        concurrency: int | None = None,
     ) -> gcp.cloudrunv2.Service:
+        """A request-billed service: CPU only while a request is open."""
         min_instances, max_instances = instances
         return gcp.cloudrunv2.Service(
             name,
@@ -658,6 +755,8 @@ class Cell:
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=sa.email,
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=min_instances),
+                timeout=timeout,
+                max_instance_request_concurrency=concurrency,
                 vpc_access=vpc,
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
@@ -668,7 +767,7 @@ class Cell:
                         ]
                         or None,
                         resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
-                            cpu_idle=min_instances == 0,
+                            cpu_idle=True,
                             limits={"cpu": "1", "memory": "512Mi"},
                         ),
                     )
@@ -677,20 +776,27 @@ class Cell:
             opts=self._o(),
         )
 
+    def _edge_vpc(self, tag: str) -> gcp.cloudrunv2.ServiceTemplateVpcAccessArgs:
+        """Direct VPC egress from the edge subnet, the one the NAT serves."""
+        return gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
+            egress="ALL_TRAFFIC",
+            network_interfaces=[
+                gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
+                    network=self.vpc.id, subnetwork=self.edge_subnet.id, tags=[tag]
+                )
+            ],
+        )
+
     def gateway(self) -> None:
+        """Internal and load-balancer ingress; SSC-088 adds the load balancer and invoker."""
         self.gateway_ = self._run(
-            "ssc-gateway",
+            n.GATEWAY,
             self.gateway_sa,
             ingress="INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
-            vpc=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
-                egress="ALL_TRAFFIC",
-                network_interfaces=[
-                    gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
-                        network=self.vpc.id, subnetwork=self.gateway_subnet.id, tags=[GATEWAY_TAG]
-                    )
-                ],
-            ),
-            instances=(self.cfg.gateway_min, self.cfg.gateway_max),
+            vpc=self._edge_vpc(GATEWAY_TAG),
+            instances=(self.cfg.gateway_floor, self.cfg.gateway_max),
+            timeout=GATEWAY_TIMEOUT,
+            concurrency=GATEWAY_CONCURRENCY,
         )
 
     def cell_agent(self) -> None:
@@ -732,66 +838,70 @@ class Cell:
             opts=self._o(),
         )
 
-    def load_balancer(self) -> None:
-        neg = gcp.compute.RegionNetworkEndpointGroup(
-            "gateway-neg",
+    def proxy(self) -> None:
+        """The ``egress`` flag: one machine at the reserved address, no external address, in a
+        group of one that recreates it. Its proxy software and health check are SSC-053."""
+        template = gcp.compute.InstanceTemplate(
+            "proxy-template",
             project=self.pid,
-            name="ssc-gateway",
-            region=n.REGION,
-            network_endpoint_type="SERVERLESS",
-            cloud_run=gcp.compute.RegionNetworkEndpointGroupCloudRunArgs(
-                service=self.gateway_.name
-            ),
-            opts=self._o(),
-        )
-        backend = gcp.compute.RegionBackendService(
-            "gateway-backend",
-            project=self.pid,
-            name="ssc-gateway",
-            region=n.REGION,
-            load_balancing_scheme="INTERNAL_MANAGED",
-            protocol="HTTP",
-            backends=[
-                gcp.compute.RegionBackendServiceBackendArgs(
-                    group=neg.id, balancing_mode="UTILIZATION", capacity_scaler=1.0
+            name="ssc-proxy",
+            machine_type=PROXY_MACHINE,
+            tags=[PROXY_TAG],
+            disks=[
+                gcp.compute.InstanceTemplateDiskArgs(
+                    source_image=PROXY_BOOT_IMAGE, boot=True, auto_delete=True
                 )
             ],
+            network_interfaces=[
+                gcp.compute.InstanceTemplateNetworkInterfaceArgs(
+                    network=self.vpc.id,
+                    subnetwork=self.edge_subnet.id,
+                    network_ip=self.proxy_ip.address,
+                    stack_type="IPV4_ONLY",
+                )
+            ],
+            shielded_instance_config=gcp.compute.InstanceTemplateShieldedInstanceConfigArgs(
+                enable_secure_boot=True, enable_vtpm=True, enable_integrity_monitoring=True
+            ),
+            metadata={"enable-oslogin": "TRUE", "block-project-ssh-keys": "true"},
+            labels={n.CELL_LABEL_KEY: self.cfg.label},
             opts=self._o(),
         )
-        url_map = gcp.compute.RegionUrlMap(
-            "gateway-urlmap",
+        gcp.compute.InstanceGroupManager(
+            "proxy",
             project=self.pid,
-            name="ssc-gateway",
-            region=n.REGION,
-            default_service=backend.id,
+            name="ssc-proxy",
+            zone=PROXY_ZONE,
+            base_instance_name="ssc-proxy",
+            target_size=1,
+            versions=[
+                gcp.compute.InstanceGroupManagerVersionArgs(instance_template=template.self_link)
+            ],
+            update_policy=gcp.compute.InstanceGroupManagerUpdatePolicyArgs(
+                type="PROACTIVE",
+                minimal_action="REPLACE",
+                replacement_method="RECREATE",
+                max_surge_fixed=0,
+                max_unavailable_fixed=1,
+            ),
+            wait_for_instances=False,
             opts=self._o(),
         )
-        proxy = gcp.compute.RegionTargetHttpProxy(
-            "gateway-proxy",
-            project=self.pid,
-            name="ssc-gateway",
-            region=n.REGION,
-            url_map=url_map.id,
-            opts=self._o(),
-        )
-        self.lb = gcp.compute.ForwardingRule(
-            "gateway-ilb",
-            project=self.pid,
-            name="ssc-gateway",
-            region=n.REGION,
-            load_balancing_scheme="INTERNAL_MANAGED",
-            ip_protocol="TCP",
-            port_range="80",
-            target=proxy.id,
-            network=self.vpc.id,
-            subnetwork=self.gateway_subnet.id,
-            network_tier="PREMIUM",
-            opts=self._o(self.proxy_subnet),
+
+    def data_gateway(self) -> None:
+        """The ``connections`` flag: the data gateway and file broker, leaving through the NAT."""
+        self.data_gateway_ = self._run(
+            n.DATA_GATEWAY,
+            self.data_sa,
+            ingress="INGRESS_TRAFFIC_INTERNAL_ONLY",
+            vpc=self._edge_vpc(DATA_TAG),
+            instances=(0, DATAGW_MAX),
         )
 
     def deny(self) -> None:
         """The folder rule names the control plane; this one names the cell's own identities."""
-        denied = [sa_principal(sa.email) for sa in (self.gateway_sa, self.agent_sa, self.build_sa)]
+        ours = (self.gateway_sa, self.agent_sa, self.build_sa, self.data_sa)
+        denied = [sa_principal(sa.email) for sa in ours]
         if self.cfg.probe:
             self.denied_probe = self._sa(n.PROBE_DENIED_SA, "SSC deny probe (always refused)")
             denied.append(sa_principal(self.denied_probe.email))
@@ -880,7 +990,7 @@ class Cell:
                         network_interfaces=[
                             gcp.cloudrunv2.JobTemplateTemplateVpcAccessNetworkInterfaceArgs(
                                 network=self.vpc.id,
-                                subnetwork=self.gateway_subnet.id,
+                                subnetwork=self.edge_subnet.id,
                                 tags=[GATEWAY_TAG],
                             )
                         ],
@@ -923,21 +1033,26 @@ class Cell:
         pulumi.export("project_id", self.pid)
         pulumi.export("project_number", self.project_.number)
         pulumi.export("bucket", self.bucket_.name)
-        pulumi.export("sql_instance", self.sql.connection_name)
+        if self.cfg.database:
+            pulumi.export("sql_instance", self.sql.connection_name)
         pulumi.export("registry", self.repo.name)
         pulumi.export("app_images", self.app_images)
         pulumi.export(
             "agent_url",
             self.project_.number.apply(lambda p: n.run_url("ssc-cell-agent", p)),
         )
-        pulumi.export("gateway_ilb_ip", self.lb.ip_address)
         pulumi.export("nat_ip", self.nat_ip.address)
+        pulumi.export("proxy_ip", self.proxy_ip.address)
+        pulumi.export("datagw_ip", self.datagw_ip.address)
+        pulumi.export("database_range", f"{PSA_ADDRESS}/{PSA_PREFIX}")
+        pulumi.export("flags", self.cfg.flags)
         pulumi.export(
             "service_accounts",
             {
                 "gateway": self.gateway_sa.email,
                 "agent": self.agent_sa.email,
                 "build": self.build_sa.email,
+                "data": self.data_sa.email,
             },
         )
 
