@@ -3,7 +3,8 @@
 A question is ``(environment, kind, subject_key)``. At most one request per question is pending
 (a partial unique index); asking again while one is pending or approved returns that request.
 Deciding locks the request, checks the decider (never an agent session, never the requester,
-always an active org admin), writes a ``policy_decision`` and audits ``approval.decided``.
+always an active org admin), writes a ``policy_decision`` and audits ``approval.decided``. An
+approved internet host or data source turns on the cell's ``egress`` or ``connections`` (SSC-087).
 """
 
 import json
@@ -20,6 +21,7 @@ from ssc_contracts.ids import new_id
 from ssc_control.approvals.capabilities import CapabilitySource
 from ssc_control.approvals.policy import record_policy_decision
 from ssc_control.audit import Actor, NewEvent, append_event
+from ssc_control.cell.resources import on_approval
 from ssc_control.domain.approval_rules import (
     ApprovalState,
     GrantKey,
@@ -349,6 +351,10 @@ async def decide(
     decided = await get(conn, org_id=org_id, approval_id=approval_id)
     if decided is None:
         raise RuntimeError(f"approval request {approval_id} vanished while it was locked")
+    if decided.state == "approved":
+        await on_approval(
+            conn, org_id=org_id, kind=decided.kind, actor=actor, policy_decision_id=pol_id
+        )
     await append_event(
         conn,
         NewEvent(

@@ -1,0 +1,17 @@
+# Build context is the repository root; send only what the deployer image needs.
+*
+!pyproject.toml
+!packages/ssc_contracts/
+!packages/ssc_shared/
+!infra/pyproject.toml
+!infra/uv.lock
+!infra/Pulumi.yaml
+!infra/__main__.py
+!infra/ssc_infra/
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.DS_Store
+**/tests
+infra/Pulumi.*.yaml

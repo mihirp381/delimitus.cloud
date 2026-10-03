@@ -28,6 +28,8 @@ from procrastinate.manager import QUEUEING_LOCK_CONSTRAINT
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from ssc_control.audit import jobs as audit_jobs
+from ssc_control.cell import jobs as cell_jobs
+from ssc_control.cell.deployer import CellDeployer, FakeCellDeployer, cell_deployer_from_env
 from ssc_control.db.catalog import QUEUE_SCHEMA
 from ssc_control.db.engine import make_engine
 from ssc_control.deploy import jobs as deploy_jobs
@@ -154,6 +156,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(audit_jobs.blueprint(), namespace="audit")
     app.add_tasks_from(lifecycle_jobs.blueprint(), namespace="lifecycle")
     app.add_tasks_from(timers_jobs.blueprint(), namespace="timers")
+    app.add_tasks_from(cell_jobs.blueprint(), namespace="cell")
     return app
 
 
@@ -228,6 +231,13 @@ def cell_stores_of(env: Mapping[str, str]) -> CellStores | None:
         raise CompositionError(str(exc)) from exc
 
 
+def _cell_deployer(env: Mapping[str, str]) -> CellDeployer | None:
+    try:
+        return cell_deployer_from_env(env)
+    except ValueError as exc:
+        raise CompositionError(str(exc)) from None
+
+
 def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
     """Refuse any fake port unless ``SSC_ENV`` is ``dev`` or ``test``."""
     fakes = [
@@ -236,8 +246,12 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             ("runtime_driver", ports.runtime_driver),
             ("build_driver", ports.build_driver),
             ("timer_dispatcher", ports.timer_dispatcher),
+            ("cell_deployer", ports.cell_deployer),
         )
-        if isinstance(value, FakeRuntimeDriver | FakeBuildDriver | FakeScheduleDispatcher)
+        if isinstance(
+            value,
+            FakeRuntimeDriver | FakeBuildDriver | FakeScheduleDispatcher | FakeCellDeployer,
+        )
     ]
     if fakes and env.get(ENV_ENV) not in FAKE_ENVIRONMENTS:
         raise CompositionError(
@@ -260,6 +274,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         metrics=metrics_from_env(env),
         timers=Timers(),
         timer_dispatcher=timer_dispatcher_from_env(env),
+        cell_deployer=_cell_deployer(env),
     )
     refuse_fakes(ports, env)
     return ports

@@ -1,16 +1,22 @@
 """The ``platform`` stack: folders, folder policies, the staging control identity, the secret-read
-deny rule, just-in-time staff access and the budget (decisions 021 and 022).
+deny rule, just-in-time staff access, the budget (decisions 021 and 022), the public DNS zones
+(SSC-088), the cells' organisation policies with the gateway's public-invoker tag (SSC-095) and
+the cell deployer that turns on a cell's lazy resources (SSC-087).
 
 The ``ssc-platform`` folder and the ``ssc-platform-0`` project that holds this program's state are
 made by ``python -m ssc_infra.bootstrap`` first; this stack takes the folder's ID from config.
 """
 
+import json
+from collections.abc import Sequence
+
 import pulumi
 import pulumi_gcp as gcp
 
 from ssc_infra import naming as n
+from ssc_infra import policies
+from ssc_infra.policies import LOCATIONS, PUBLIC_TAG_KEY, PUBLIC_TAG_VALUE, Rule
 
-LOCATIONS = "in:us-central1-locations"
 BUDGET_USD = 250
 BUDGET_THRESHOLDS = (
     (0.5, "CURRENT_SPEND"),
@@ -18,10 +24,30 @@ BUDGET_THRESHOLDS = (
     (1.0, "CURRENT_SPEND"),
     (1.0, "FORECASTED_SPEND"),
 )
+TAG_USER = "roles/resourcemanager.tagUser"
 JIT_ROLE = "roles/writer"
 JIT_MAX = "3600s"
 PAM_AGENT = f"serviceAccount:service-org-{n.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
 PAM_AGENT_ROLE = "roles/privilegedaccessmanager.folderServiceAgent"
+ZONE_RECORD_PERMISSIONS = (
+    "dns.changes.create",
+    "dns.changes.get",
+    "dns.managedZones.get",
+    "dns.resourceRecordSets.create",
+    "dns.resourceRecordSets.delete",
+    "dns.resourceRecordSets.get",
+    "dns.resourceRecordSets.list",
+    "dns.resourceRecordSets.update",
+)
+DEPLOYER_FOLDER_ROLES = (
+    "roles/cloudsql.admin",
+    "roles/compute.instanceAdmin.v1",
+    "roles/compute.networkUser",
+    "roles/iam.serviceAccountUser",
+    "roles/resourcemanager.tagUser",
+    "roles/run.admin",
+)
+DEPLOYER_TIMEOUT = "3600s"
 
 
 def provider() -> gcp.Provider:
@@ -60,6 +86,85 @@ def _location_policy(name: str, folder_id: pulumi.Input[str], opts: pulumi.Resou
         ),
         opts=opts,
     )
+
+
+def _public_tag(
+    binders: Sequence[pulumi.Input[str]], opts: pulumi.ResourceOptions
+) -> tuple[pulumi.Output[str], pulumi.Output[str]]:
+    """The tag that marks the one resource allowed a public member: each cell's gateway service.
+    Only ``binders`` (the operator and the cell deployer) may bind it; the grant is authoritative,
+    so another holder added by hand is removed by the next run. Returns the tag key and value
+    IDs."""
+    key = gcp.tags.TagKey(
+        "public-invoker-key",
+        parent=f"organizations/{n.ORG_ID}",
+        short_name=PUBLIC_TAG_KEY,
+        description="Bound only to a cell's gateway service: lifts domain-restricted sharing.",
+        opts=opts,
+    )
+    key_id = pulumi.Output.concat("tagKeys/", key.name)
+    value = gcp.tags.TagValue(
+        "public-invoker-gateway",
+        parent=key_id,
+        short_name=PUBLIC_TAG_VALUE,
+        description="The cell gateway's allUsers invoker (SSC-088, SSC-095).",
+        opts=opts,
+    )
+    value_id = pulumi.Output.concat("tagValues/", value.name)
+    gcp.tags.TagValueIamBinding(
+        "public-invoker-binders",
+        tag_value=value_id,
+        role=TAG_USER,
+        members=list(binders),
+        opts=opts,
+    )
+    return key_id, value_id
+
+
+def _spec_rules(
+    rule: Rule, tag: tuple[pulumi.Output[str], pulumi.Output[str]]
+) -> list[gcp.orgpolicy.PolicySpecRuleArgs]:
+    """A list constraint takes values or deny-all; a boolean or managed one ``enforce``, with
+    the managed one's parameters. The tag exception is a second rule, off where the tag is."""
+    if rule.deny_all:
+        main = gcp.orgpolicy.PolicySpecRuleArgs(deny_all="TRUE")
+    elif rule.allowed:
+        main = gcp.orgpolicy.PolicySpecRuleArgs(
+            values=gcp.orgpolicy.PolicySpecRuleValuesArgs(allowed_values=list(rule.allowed))
+        )
+    else:
+        params = {k: list(v) for k, v in rule.parameters.items()}
+        main = gcp.orgpolicy.PolicySpecRuleArgs(
+            enforce="TRUE", parameters=json.dumps(params) if params else None
+        )
+    if not rule.tag_exception:
+        return [main]
+    key_id, value_id = tag
+    exception = gcp.orgpolicy.PolicySpecRuleArgs(
+        enforce="FALSE",
+        condition=gcp.orgpolicy.PolicySpecRuleConditionArgs(
+            title="the cell gateway's public invoker",
+            expression=pulumi.Output.format("resource.matchTagId('{0}', '{1}')", key_id, value_id),
+        ),
+    )
+    return [main, exception]
+
+
+def _cell_policies(
+    folder_id: pulumi.Input[str],
+    rules: Sequence[Rule],
+    tag: tuple[pulumi.Output[str], pulumi.Output[str]],
+    opts: pulumi.ResourceOptions,
+) -> None:
+    ref = folder_ref(folder_id)
+    for rule in rules:
+        gcp.orgpolicy.Policy(
+            f"{n.CELLS_FOLDER}-{rule.key}",
+            name=pulumi.Output.concat(ref, "/policies/", rule.constraint),
+            parent=ref,
+            spec=gcp.orgpolicy.PolicySpecArgs(rules=_spec_rules(rule, tag)),
+            opts=opts,
+        )
 
 
 def _folder(
@@ -157,6 +262,161 @@ def _nightly(
     return nightly
 
 
+def _zone(name: str, domain: str, opts: pulumi.ResourceOptions) -> gcp.dns.ManagedZone:
+    """A public zone in ``ssc-platform-0``; the founder points the registrar at its name
+    servers. DNSSEC is off until the registrar's old DS records are gone."""
+    return gcp.dns.ManagedZone(
+        f"zone-{name}",
+        project=n.BOOTSTRAP_PROJECT,
+        name=name,
+        dns_name=f"{domain}.",
+        description=f"SSC public names under {domain}",
+        visibility="public",
+        dnssec_config=gcp.dns.ManagedZoneDnssecConfigArgs(state="off"),
+        opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(protect=True)),
+    )
+
+
+def _zones(
+    writers: dict[str, pulumi.Input[str]], opts: pulumi.ResourceOptions
+) -> dict[str, gcp.dns.ManagedZone]:
+    """The apps zone, where each cell stack writes its own wildcard and certificate
+    authorisation records, and the platform zone for ``api``, ``auth`` and ``keys``. A cell stack
+    runs as the operator or as the cell deployer (SSC-087); ``writers`` names both."""
+    apps = _zone(n.APPS_ZONE, n.APPS_DOMAIN, opts)
+    platform_hosts = _zone(n.PLATFORM_ZONE, n.PLATFORM_DOMAIN, opts)
+    writer = gcp.projects.IAMCustomRole(
+        "apps-zone-records",
+        project=n.BOOTSTRAP_PROJECT,
+        role_id="sscZoneRecords",
+        title="SSC: write records in one zone",
+        description="Granted on a zone, never on the project.",
+        permissions=list(ZONE_RECORD_PERMISSIONS),
+        opts=opts,
+    )
+    for name, member in writers.items():
+        gcp.dns.DnsManagedZoneIamMember(
+            name,
+            project=n.BOOTSTRAP_PROJECT,
+            managed_zone=apps.name,
+            role=writer.name,
+            member=member,
+            opts=opts,
+        )
+    return {"apps": apps, "platform": platform_hosts}
+
+
+def _deployer(opts: pulumi.ResourceOptions) -> gcp.serviceaccount.Account:
+    """The cell deployer's identity (SSC-087), with the state it applies cell stacks from: the
+    state bucket, the key that wraps its secrets, and quota in this project."""
+    deployer = gcp.serviceaccount.Account(
+        "deployer-sa",
+        project=n.BOOTSTRAP_PROJECT,
+        account_id=n.DEPLOYER,
+        display_name="SSC cell deployer (lazy resources only)",
+        opts=opts,
+    )
+    gcp.storage.BucketIAMMember(
+        "deployer-state",
+        bucket=n.STATE_BUCKET,
+        role="roles/storage.objectAdmin",
+        member=deployer.member,
+        opts=opts,
+    )
+    gcp.kms.CryptoKeyIAMMember(
+        "deployer-state-key",
+        crypto_key_id=n.SECRETS_PROVIDER.removeprefix("gcpkms://"),
+        role="roles/cloudkms.cryptoKeyEncrypterDecrypter",
+        member=deployer.member,
+        opts=opts,
+    )
+    gcp.projects.IAMMember(
+        "deployer-quota",
+        project=n.BOOTSTRAP_PROJECT,
+        role="roles/serviceusage.serviceUsageConsumer",
+        member=deployer.member,
+        opts=opts,
+    )
+    return deployer
+
+
+def _deployer_cells(
+    deployer: gcp.serviceaccount.Account,
+    cells: gcp.organizations.Folder,
+    opts: pulumi.ResourceOptions,
+) -> None:
+    """What applying a cell stack with a lazy flag on needs: the database, the proxy group, the
+    data gateway, and the tag and records the stack keeps on its gateway. No billing, deny-rule
+    or secret-value role, so the deployer can neither make a cell nor weaken one."""
+    for role in DEPLOYER_FOLDER_ROLES:
+        gcp.folder.IAMMember(
+            f"deployer-{role.removeprefix('roles/')}",
+            folder=cells.name,
+            role=role,
+            member=deployer.member,
+            opts=opts,
+        )
+
+
+def _deployer_job(
+    deployer: gcp.serviceaccount.Account,
+    control: gcp.serviceaccount.Account,
+    image: str | None,
+    opts: pulumi.ResourceOptions,
+) -> None:
+    """The job runs ``infra/deployer/Dockerfile`` once ``deployer_image`` names a build of it in
+    this project's registry. The control plane may start it, with its own arguments, and read
+    its executions; nothing else."""
+    gcp.artifactregistry.Repository(
+        "platform-registry",
+        project=n.BOOTSTRAP_PROJECT,
+        location=n.REGION,
+        repository_id=n.PLATFORM_REPOSITORY,
+        format="DOCKER",
+        description="SSC's own images in the platform project: the cell deployer.",
+        opts=opts,
+    )
+    if image is None:
+        return
+    job = gcp.cloudrunv2.Job(
+        "cell-deployer",
+        project=n.BOOTSTRAP_PROJECT,
+        name=n.DEPLOYER,
+        location=n.REGION,
+        deletion_protection=False,
+        template=gcp.cloudrunv2.JobTemplateArgs(
+            task_count=1,
+            template=gcp.cloudrunv2.JobTemplateTemplateArgs(
+                service_account=deployer.email,
+                max_retries=0,
+                timeout=DEPLOYER_TIMEOUT,
+                containers=[
+                    gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
+                        image=image,
+                        resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
+                            limits={"cpu": "2", "memory": "2Gi"}
+                        ),
+                    )
+                ],
+            ),
+        ),
+        opts=opts,
+    )
+    for name, role in (
+        ("runs", "roles/run.jobsExecutorWithOverrides"),
+        ("reads", "roles/run.viewer"),
+    ):
+        gcp.cloudrunv2.JobIamMember(
+            f"cell-deployer-control-{name}",
+            project=n.BOOTSTRAP_PROJECT,
+            location=n.REGION,
+            name=job.name,
+            role=role,
+            member=control.member,
+            opts=opts,
+        )
+
+
 def build() -> None:
     config = pulumi.Config()
     platform_folder = config.require("platform_folder_id")
@@ -167,7 +427,11 @@ def build() -> None:
     _location_policy(n.PLATFORM_FOLDER, platform_folder, opts)
 
     cells = _folder(n.CELLS_FOLDER, n.CELLS_FOLDER, org, opts)
-    _location_policy(n.CELLS_FOLDER, cells.folder_id, opts)
+    deployer = _deployer(opts)
+    _deployer_cells(deployer, cells, opts)
+    rules = policies.cell_rules(operator, config.get_object("peering_allowed"))
+    tag = _public_tag([operator, deployer.member], opts)
+    _cell_policies(cells.folder_id, rules, tag, opts)
     stages = {
         stage: _folder(f"{n.CELLS_FOLDER}-{stage}", stage, cells.name, opts) for stage in n.STAGES
     }
@@ -199,6 +463,10 @@ def build() -> None:
     )
 
     nightly = _nightly(control_project.project_id, control, opts)
+    zones = _zones(
+        {"apps-zone-cell-deployer": operator, "apps-zone-deployer": deployer.member}, opts
+    )
+    _deployer_job(deployer, control, config.get("deployer_image"), opts)
 
     gcp.iam.DenyPolicy(
         "cells-secret-read",
@@ -286,3 +554,14 @@ def build() -> None:
     pulumi.export("sandbox_folder_id", sandbox.folder_id)
     pulumi.export("control_service_accounts", {"staging": control.email})
     pulumi.export("nightly_service_account", nightly.email)
+    pulumi.export("apps_zone_name_servers", zones["apps"].name_servers)
+    pulumi.export("platform_zone_name_servers", zones["platform"].name_servers)
+    pulumi.export("public_invoker_tag", tag[1])
+    pulumi.export("cell_policies", policies.summaries(rules))
+    pulumi.export(
+        "cell_deployer",
+        {
+            "service_account": deployer.email,
+            "job": f"projects/{n.BOOTSTRAP_PROJECT}/locations/{n.REGION}/jobs/{n.DEPLOYER}",
+        },
+    )

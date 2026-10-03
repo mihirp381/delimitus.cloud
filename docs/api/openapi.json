@@ -514,7 +514,10 @@
           "audit.reanchored",
           "directory.connected",
           "directory.frozen",
-          "identity.linked"
+          "identity.linked",
+          "cell.resource_requested",
+          "cell.resource_ready",
+          "cell.resource_failed"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -1068,6 +1071,154 @@
           "summarised"
         ],
         "title": "CapabilityDiff",
+        "type": "object"
+      },
+      "CellOut": {
+        "additionalProperties": false,
+        "properties": {
+          "cell_label": {
+            "title": "Cell Label",
+            "type": "string"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/CellResourceOut"
+            },
+            "title": "Resources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cell_label",
+          "resources"
+        ],
+        "title": "CellOut",
+        "type": "object"
+      },
+      "CellResourceOut": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "cause": {
+            "anyOf": [
+              {
+                "enum": [
+                  "deploy",
+                  "egress_approved",
+                  "connection_granted",
+                  "file_use",
+                  "admin"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cause"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "monthly_usd": {
+            "description": "About what it adds to the cell's bill a month.",
+            "title": "Monthly Usd",
+            "type": "integer"
+          },
+          "ready_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ready At"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "resource": {
+            "enum": [
+              "database",
+              "egress",
+              "connections"
+            ],
+            "title": "Resource",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "description": "`off` until something asks for it.",
+            "enum": [
+              "off",
+              "requested",
+              "creating",
+              "ready",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource",
+          "state",
+          "cause",
+          "monthly_usd",
+          "attempts",
+          "failure_code",
+          "requested_at",
+          "started_at",
+          "ready_at",
+          "failed_at"
+        ],
+        "title": "CellResourceOut",
         "type": "object"
       },
       "CurrentRelease": {
@@ -2338,6 +2489,18 @@
             ],
             "title": "Kind",
             "type": "string"
+          },
+          "notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What a `running` deployment is waiting for, such as the company's database being created.",
+            "title": "Notice"
           },
           "operation_id": {
             "title": "Operation Id",
@@ -7714,6 +7877,182 @@
           }
         },
         "summary": "Get Build",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/cell": {
+      "get": {
+        "description": "Active org admins only (``FORBIDDEN``). Every lazy resource, ``off`` included.",
+        "operationId": "get_cell_v1_cell_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CellOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Cell",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/cell/resources/{resource}/enable": {
+      "post": {
+        "description": "Turn one resource on before an app needs it. Active org admins only, never in an agent\nsession. One already on, or being created, is left as it is; a failed one is tried again.\nAudited as ``cell.resource_requested`` when it is asked for.",
+        "operationId": "enable_resource_v1_cell_resources__resource__enable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "enum": [
+                "database",
+                "egress",
+                "connections"
+              ],
+              "title": "Resource",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CellOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Enable Resource",
         "tags": [
           "v1"
         ]

@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
 
 from ssc_contracts.errors import ErrorCode
@@ -32,6 +33,7 @@ from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
 from ssc_control.api.auth import Principal
 from ssc_control.db import (
+    MIGRATE_ROLE,
     CreatedOrg,
     NewOrg,
     bind_org_sync,
@@ -298,8 +300,14 @@ async def test_the_database_refuses_raw_ids_and_emails(
 
 
 def test_0007_adds_the_checks_and_downgrade_drops_them(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database metrics0007 owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="metrics0007").render_as_string(hide_password=False)
+    app_dsn = make_url(dsns.app).set(database="metrics0007").render_as_string(hide_password=False)
+    upgrade(dsn)
+
     def checks() -> set[str]:
-        with psycopg.connect(dsns.migrate) as conn:
+        with psycopg.connect(dsn) as conn:
             rows = conn.execute(
                 "select conname from pg_constraint "
                 "where conrelid = 'ssc.metrics_event'::regclass and contype = 'c'"
@@ -314,18 +322,18 @@ def test_0007_adds_the_checks_and_downgrade_drops_them(dsns: Dsns) -> None:
     }
     assert ours <= checks()
     # Re-adding the checks scans rows under forced RLS with no org bound: there must be some.
-    org = asyncio.run(new_org(dsns.app))
-    with psycopg.connect(dsns.app) as conn:
+    org = asyncio.run(new_org(app_dsn))
+    with psycopg.connect(app_dsn) as conn:
         bind_org_sync(conn, org.org_id)
         conn.execute(
             "insert into ssc.metrics_event (org_id, kind, pseudonym, source_tool, properties) "
             "values (%s, 'deploy', %s, 'cursor', '{\"environment\": \"prod\"}')",
             (org.org_id, pseudonym(KEYS, org.org_id, org.admin_user_id)),
         )
-    downgrade(dsns.migrate, "0006_procrastinate_orgindex")
+    downgrade(dsn, "0006_procrastinate_orgindex")
     assert not ours & checks()
     assert "metrics_event_kind_check" in checks()
-    upgrade(dsns.migrate)
+    upgrade(dsn)
     assert ours <= checks()
 
 

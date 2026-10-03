@@ -6,6 +6,7 @@ operation. Time is counted in the sleeps between polls, so a test's no-op sleep 
 :class:`Budget` is shared by every wait of a command, so ``--timeout`` bounds the whole command.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
@@ -37,6 +38,8 @@ FIXES: Final = {
     "BUILD_TIMED_OUT": "The build ran for over 20 minutes. Run `ssc doctor`, then deploy again.",
     "APP_NOT_ACTIVE": "The app is not active, so it takes no deployments. `ssc status` shows its "
     "status; an org admin can tell you why.",
+    "CELL_RESOURCE_FAILED": "Your company's database could not be created. Deploy again to retry; "
+    "if it fails again, tell an org admin.",
 }
 
 
@@ -98,13 +101,24 @@ def wait_for_build(
         budget.sleep(sleep)
 
 
-def wait_for_operation(
-    client: ApiClient, operation_id: str, *, sleep: Sleep, budget: Budget, next_step: str
+def wait_for_operation(  # noqa: PLR0913  (keyword-only)
+    client: ApiClient,
+    operation_id: str,
+    *,
+    sleep: Sleep,
+    budget: Budget,
+    next_step: str,
+    note: Callable[[str], None] | None = None,
 ) -> OperationOut:
-    """The deployment once it is ``healthy``."""
+    """The deployment once it is ``healthy``. Each new ``notice`` (a deployment waiting for the
+    company's database, SSC-087) goes to ``note`` once."""
     instance = f"/v1/operations/{operation_id}"
+    told: str | None = None
     while True:
         op = client.get_operation(operation_id)
+        if note is not None and op.notice is not None and op.notice != told:
+            note(op.notice)
+            told = op.notice
         if op.state == "healthy":
             return op
         if op.state == "failed":

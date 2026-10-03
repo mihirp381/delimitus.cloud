@@ -39,9 +39,37 @@ PROBE_DENIED_SA: Final = "ssc-deny-probe"
 PROBE_ENVS: Final = ("env_probe00000000000000a", "env_probe00000000000000b")
 PROBE_RUNNER: Final = "ssc-probe-runner"
 NIGHTLY_SA: Final = "ssc-nightly"
+DEPLOYER: Final = "ssc-cell-deployer"
+PLATFORM_REPOSITORY: Final = "ssc-platform"
 GITHUB_REPOSITORY: Final = "mihirp381/delimitus.cloud"
 NIGHTLY_WORKFLOW: Final = ".github/workflows/nightly.yml"
 SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S105
+
+GATEWAY: Final = "ssc-gateway"
+CELL_AGENT: Final = "ssc-cell-agent"
+DATA_GATEWAY: Final = "ssc-datagw"
+FLAGS: Final = ("database", "egress", "connections", "gateway_min", "warm")
+LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
+    "database": frozenset(
+        {"gcp:sql/databaseInstance:DatabaseInstance::sql", "gcp:sql/user:User::sql-agent"}
+    ),
+    "egress": frozenset(
+        {
+            "gcp:compute/instanceTemplate:InstanceTemplate::proxy-template",
+            "gcp:compute/instanceGroupManager:InstanceGroupManager::proxy",
+        }
+    ),
+    "connections": frozenset({f"gcp:cloudrunv2/service:Service::{DATA_GATEWAY}"}),
+}
+LAZY_FLAGS: Final = tuple(LAZY_RESOURCES)
+GATEWAY_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{GATEWAY}"
+GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
+
+APPS_DOMAIN: Final = "delimitusapps.com"
+PLATFORM_DOMAIN: Final = "delimitus.com"
+APPS_ZONE: Final = "delimitusapps"
+PLATFORM_ZONE: Final = "delimitus"
+AGENT_HOST_LABEL: Final = "ssc--agent"
 
 
 def control_project(stage: Stage) -> str:
@@ -73,6 +101,25 @@ def sa_email(account: str, project: str) -> str:
 def run_url(service: str, project_number: str) -> str:
     """A Cloud Run service's deterministic URL."""
     return f"https://{service}-{project_number}.{REGION}.run.app"
+
+
+def host_suffix(label: str) -> str:
+    """Every public host of a cell ends in ``.<this>``: ``<cell label>.<apps domain>``."""
+    return f"{check_cell_label(label)}.{APPS_DOMAIN}"
+
+
+def cell_wildcard(label: str) -> str:
+    return f"*.{host_suffix(label)}"
+
+
+def agent_host(label: str) -> str:
+    """The cell agent's reserved host (SSC-095). A slug never holds ``--``, so no app is ever it."""
+    return f"{AGENT_HOST_LABEL}.{host_suffix(label)}"
+
+
+def agent_url(label: str) -> str:
+    """The cell agent's URL through the cell's load balancer, and its ID token audience."""
+    return f"https://{agent_host(label)}"
 
 
 def platform_stack_ref() -> str:

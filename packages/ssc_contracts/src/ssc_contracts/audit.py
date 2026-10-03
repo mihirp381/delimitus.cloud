@@ -61,3 +61,6 @@ class AuditAction(StrEnum):
     DIRECTORY_CONNECTED = "directory.connected"
     DIRECTORY_FROZEN = "directory.frozen"
     IDENTITY_LINKED = "identity.linked"
+    CELL_RESOURCE_REQUESTED = "cell.resource_requested"
+    CELL_RESOURCE_READY = "cell.resource_ready"
+    CELL_RESOURCE_FAILED = "cell.resource_failed"

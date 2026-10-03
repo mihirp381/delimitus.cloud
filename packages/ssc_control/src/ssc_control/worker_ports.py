@@ -14,6 +14,7 @@ from typing import Final, cast
 from procrastinate import JobContext
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ssc_control.cell.deployer import CellDeployer
 from ssc_control.deploy.build_driver import BuildDriver
 from ssc_control.ports import (
     MetricsPort,
@@ -44,7 +45,8 @@ class Ports:
     ``BUILD_DRIVER_UNAVAILABLE``. ``blob_store`` None means ``SSC_BLOB_BACKEND=none``: the
     snapshot and anchor ticks defer nothing and a compile does nothing. ``cell_stores`` set sends
     each org's snapshots to its cell's bucket instead. ``timer_dispatcher`` None fails timer runs
-    with ``dispatch_unavailable``."""
+    with ``dispatch_unavailable``. ``cell_deployer`` None fails a lazy cell resource with
+    ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087)."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -58,6 +60,7 @@ class Ports:
     build_driver: BuildDriver | None = None
     metrics: MetricsPort = field(default_factory=NullMetricsPort)
     timer_dispatcher: ScheduleDispatcher | None = None
+    cell_deployer: CellDeployer | None = None
 
 
 class PortsMissingError(RuntimeError):

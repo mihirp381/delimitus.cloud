@@ -702,6 +702,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/cell": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Cell
+         * @description Active org admins only (``FORBIDDEN``). Every lazy resource, ``off`` included.
+         */
+        get: operations["get_cell_v1_cell_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/cell/resources/{resource}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable Resource
+         * @description Turn one resource on before an app needs it. Active org admins only, never in an agent
+         *     session. One already on, or being created, is left as it is; a failed one is tried again.
+         *     Audited as ``cell.resource_requested`` when it is asked for.
+         */
+        post: operations["enable_resource_v1_cell_resources__resource__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/groups": {
         parameters: {
             query?: never;
@@ -1029,7 +1071,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "org.created" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked";
+        AuditAction: "org.created" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed";
         /** AuditActor */
         AuditActor: {
             /** Client Id */
@@ -1228,6 +1270,46 @@ export interface components {
             readonly summarised: boolean;
             /** Total */
             total: number;
+        };
+        /** CellOut */
+        CellOut: {
+            /** Cell Label */
+            cell_label: string;
+            /** Resources */
+            resources: components["schemas"]["CellResourceOut"][];
+        };
+        /** CellResourceOut */
+        CellResourceOut: {
+            /** Attempts */
+            attempts: number;
+            /** Cause */
+            cause: ("deploy" | "egress_approved" | "connection_granted" | "file_use" | "admin") | null;
+            /** Failed At */
+            failed_at: string | null;
+            /** Failure Code */
+            failure_code: string | null;
+            /**
+             * Monthly Usd
+             * @description About what it adds to the cell's bill a month.
+             */
+            monthly_usd: number;
+            /** Ready At */
+            ready_at: string | null;
+            /** Requested At */
+            requested_at: string | null;
+            /**
+             * Resource
+             * @enum {string}
+             */
+            resource: "database" | "egress" | "connections";
+            /** Started At */
+            started_at: string | null;
+            /**
+             * State
+             * @description `off` until something asks for it.
+             * @enum {string}
+             */
+            state: "off" | "requested" | "creating" | "ready" | "failed";
         };
         /** CurrentRelease */
         CurrentRelease: {
@@ -1721,6 +1803,11 @@ export interface components {
              * @enum {string}
              */
             kind: "deploy" | "rollback";
+            /**
+             * Notice
+             * @description What a `running` deployment is waiting for, such as the company's database being created.
+             */
+            notice?: string | null;
             /** Operation Id */
             operation_id: string;
             /** Release Id */
@@ -5011,6 +5098,140 @@ export interface operations {
                 };
             };
             /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_cell_v1_cell_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CellOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    enable_resource_v1_cell_resources__resource__enable_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                resource: "database" | "egress" | "connections";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CellOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;

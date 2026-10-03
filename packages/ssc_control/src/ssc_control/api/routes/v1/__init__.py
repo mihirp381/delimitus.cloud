@@ -12,6 +12,7 @@ from ssc_control.api.routes.v1.approvals import router as approvals_router
 from ssc_control.api.routes.v1.apps import router as apps_router
 from ssc_control.api.routes.v1.audit import router as audit_router
 from ssc_control.api.routes.v1.bundles import router as bundles_router
+from ssc_control.api.routes.v1.cell import router as cell_router
 from ssc_control.api.routes.v1.deployments import router as deployments_router
 from ssc_control.api.routes.v1.grants import router as grants_router
 from ssc_control.api.routes.v1.groups import router as groups_router
@@ -37,3 +38,4 @@ router.include_router(inventory_router)
 router.include_router(schedules_router)
 router.include_router(promote_router)
 router.include_router(logins_router)
+router.include_router(cell_router)

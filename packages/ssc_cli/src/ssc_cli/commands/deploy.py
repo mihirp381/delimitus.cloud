@@ -138,6 +138,7 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
                     sleep=s.sleep,
                     budget=budget,
                     next_step=f"Follow it with `ssc status {target.slug}`.",
+                    note=note,
                 ).state
     result = DeployResult(
         app_id=target.id,
