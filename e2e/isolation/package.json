@@ -1,0 +1,20 @@
+{
+  "name": "ssc-isolation-e2e",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Browser isolation suite for the SSC gateway (SSC-029).",
+  "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "test": "node run.mjs fast",
+    "live": "node run.mjs live",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.13.6",
+    "typescript": "5.9.3"
+  }
+}

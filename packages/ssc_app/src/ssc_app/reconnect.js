@@ -11,12 +11,14 @@
  *
  * The app closes its end with code 1012 a little before the limit the gateway reports
  * (`close_before_deadline` in Python, `closeBeforeDeadline` in Node); this reconnects at once on
- * that close, and after a growing pause on an unclean drop. It gives up, calling `onclose`, after
- * `attempts` reconnects in a row that did not stay open, or on a clean close with any other code.
- * `url` may be a function, so a reconnect can say where to resume.
+ * that close, and after a growing pause on an unclean drop. WebKit reports every close the server
+ * starts as 1005 (no status), whatever its code, so 1005 counts as 1012. It gives up, calling
+ * `onclose`, after `attempts` reconnects in a row that did not stay open, or on a clean close with
+ * any other code. `url` may be a function, so a reconnect can say where to resume.
  */
 (function (root) {
   const RESTART_CODE = 1012;
+  const NO_STATUS = 1005;
 
   /**
    * @param {string | (() => string)} url
@@ -50,7 +52,7 @@
       };
       ws.onclose = (event) => {
         if (stopped) return;
-        const restart = event.code === RESTART_CODE;
+        const restart = event.code === RESTART_CODE || event.code === NO_STATUS;
         if (event.wasClean && !restart) return stop(event);
         if (openedAt !== 0 && Date.now() - openedAt >= maxDelayMs) failures = 0;
         const wait = restart && failures === 0 ? 0 : Math.min(maxDelayMs, delayMs * 2 ** failures);

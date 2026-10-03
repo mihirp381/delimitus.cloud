@@ -94,6 +94,7 @@ include = [
   "packages/ssc_control/src/ssc_control/storage.py",
   "packages/ssc_control/src/ssc_control/lifecycle",
   "packages/ssc_control/src/ssc_control/timers",
+  "e2e/isolation/rig.py",
 ]
 strict = [
   "packages/ssc_contracts/src",
@@ -122,6 +123,7 @@ strict = [
   "packages/ssc_control/src/ssc_control/storage.py",
   "packages/ssc_control/src/ssc_control/lifecycle",
   "packages/ssc_control/src/ssc_control/timers",
+  "e2e/isolation/rig.py",
 ]
 reportMissingImports = true
 

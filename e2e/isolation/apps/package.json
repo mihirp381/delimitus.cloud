@@ -1,0 +1,13 @@
+{
+  "name": "ssc-isolation-app",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Test apps A and B of the browser isolation suite (SSC-029).",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

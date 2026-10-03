@@ -33,7 +33,7 @@ In the page:
 </script>
 ```
 
-`sscSocket` reconnects at once after code 1012 and after a growing pause on an unclean drop. It gives up, calling `onclose`, after 10 reconnects in a row that did not stay open, or on a clean close with any other code. Options: `protocols`, `onopen`, `onmessage`, `onclose`, `delayMs` (250), `maxDelayMs` (10000), `attempts` (10).
+`sscSocket` reconnects at once after code 1012 and after a growing pause on an unclean drop. WebKit (Safari) reports any close the server starts as 1005, so 1005 counts as 1012. It gives up, calling `onclose`, after 10 reconnects in a row that did not stay open, or on a clean close with any other code. Options: `protocols`, `onopen`, `onmessage`, `onclose`, `delayMs` (250), `maxDelayMs` (10000), `attempts` (10).
 
 Both server helpers take `{ margin }` in seconds (30) and `endBeforeDeadline` also `{ retryMs }` (1000). Both return a function that cancels, and cancel themselves when the stream closes first. A stream that opens with less than the margin left is ended after half the time left (`secondsToWait`), never at once. Without the header, as on a laptop, nothing is cut.
 
