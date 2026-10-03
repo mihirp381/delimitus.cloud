@@ -5,7 +5,8 @@
   can never do the work twice. A keyed POST also waits out ``IDEMPOTENCY_IN_FLIGHT``.
 * PUT is conditional (``If-Match``) and is not retried here; callers handle ``412`` themselves.
   ``PUT .../grants`` answers ``202`` with the pending approval ids when the change needs approval.
-* ``429`` is retried once after ``Retry-After``: the API refuses before doing any work.
+* ``429`` is retried once after ``Retry-After``: the API refuses before doing any work. A second
+  ``429`` raises, carrying that wait (at most ``MAX_RETRY_AFTER``) as ``CliError.retry_after``.
 * A refusal becomes a :class:`~ssc_cli.errors.CliError` carrying the API's problem members.
 * Every request names the tool in ``X-SSC-Source-Tool`` for the API's source tool mix.
 * A bundle goes to the signed upload URL the API hands out, from a separate client that sends
@@ -54,9 +55,11 @@ from ssc_cli.models import (
     GrantsOut,
     GrantsPending,
     GroupMatches,
+    HealthOut,
     KillSwitchAccepted,
     KillSwitchCreate,
     KillSwitchRun,
+    LogPageOut,
     OperationAccepted,
     OperationOut,
     PromoteIn,
@@ -303,6 +306,30 @@ class ApiClient:
         path = f"{_environment_path(app_id, environment_id)}/database"
         return _parse(self._send("GET", path), DatabaseOut)
 
+    def get_logs(  # noqa: PLR0913  (keyword-only query)
+        self,
+        app_id: str,
+        environment_id: str,
+        *,
+        source: str,
+        since: int | None = None,
+        after: str | None = None,
+        wait: int = 0,
+    ) -> LogPageOut:
+        """The newest lines of the last ``since`` seconds, or with ``after`` the lines after that
+        cursor, waiting up to ``wait`` seconds for one."""
+        query: dict[str, str | int] = {"source": source}
+        if after is None:
+            query["since"] = since or 3600
+        else:
+            query |= {"after": after, "wait": wait}
+        path = f"{_environment_path(app_id, environment_id)}/logs?{urlencode(query)}"
+        return _parse(self._send("GET", path), LogPageOut)
+
+    def get_health(self, app_id: str, environment_id: str) -> HealthOut:
+        path = f"{_environment_path(app_id, environment_id)}/health"
+        return _parse(self._send("GET", path), HealthOut)
+
     def grant_secret_upload(self, app_id: str, environment_id: str, name: str) -> SecretGrantOut:
         path = f"{_secret_path(app_id, environment_id, name)}/grants"
         return _parse(self._send("POST", path), SecretGrantOut)
@@ -476,6 +503,13 @@ def _code(r: httpx2.Response) -> str | None:
 
 
 def _refusal(r: httpx2.Response) -> CliError:
+    error = _problem(r)
+    if r.status_code == 429:
+        error.retry_after = _retry_after(r)
+    return error
+
+
+def _problem(r: httpx2.Response) -> CliError:
     data = _json(r)
     request_id = r.headers.get(REQUEST_ID_HEADER)
     if isinstance(data, dict):

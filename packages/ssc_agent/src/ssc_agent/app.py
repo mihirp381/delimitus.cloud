@@ -8,13 +8,16 @@ is not an SSC app's, because its own IAM cannot limit a create by name. Secrets 
 ``ensure``, ``rotate``, ``usage`` and ``drop``; their passwords stay in the agent and the cell's
 Secret Manager, and the answers carry secret versions only. ``drop`` runs only while the
 service is gone or stopped (``SERVICE_LIVE`` otherwise), so no running app loses its database.
+Logs (SSC-024) have ``read``, ``follow`` and ``health`` of one service; the agent builds the
+filter, redacts every line, and keeps the cell under Cloud Logging's quota.
 
 Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FOUND``,
 ``BUILD_NOT_FOUND`` or ``DATABASE_NOT_FOUND``, 400 ``INVALID_REQUEST``, 409 ``DB_TIER_FULL`` or
 ``SERVICE_LIVE``, 502 ``RUNTIME_ERROR``, ``BUILD_ERROR``, ``SECRETS_ERROR`` or
 ``DATABASE_ERROR``, 503 ``BUILD_NOT_CONFIGURED``, ``SECRETS_NOT_CONFIGURED`` or
 ``DATABASES_NOT_CONFIGURED`` when the agent runs without a builder, secret custody or a Cloud SQL
-instance.
+instance. Logs add 429 ``LOGS_RATE_LIMITED`` (with ``retry_after``), 502 ``LOGS_ERROR`` and 503
+``LOGS_NOT_CONFIGURED`` without a log view; health still answers then, from the service alone.
 """
 
 import logging
@@ -32,6 +35,7 @@ from ssc_agent.app_database import (
     DatabaseMissingError,
     TierFullError,
 )
+from ssc_agent.cloud_logging import CellLogHub
 from ssc_agent.secret_manager import SecretCustody, SecretsError
 from ssc_shared.build import (
     BuildDriverError,
@@ -39,6 +43,16 @@ from ssc_shared.build import (
     CellBuilder,
     build_from_wire,
     status_to_wire,
+)
+from ssc_shared.logs import (
+    CellLogs,
+    LogsError,
+    LogsNotConfiguredError,
+    LogsRateLimitedError,
+    check_caller,
+    health_to_wire,
+    page_to_wire,
+    query_from_wire,
 )
 from ssc_shared.redaction import redact
 from ssc_shared.runtime import (
@@ -57,6 +71,7 @@ PREFIX: Final = "/v1/runtime"
 BUILD_PREFIX: Final = "/v1/build"
 SECRETS_PREFIX: Final = "/v1/secrets"
 DATABASES_PREFIX: Final = "/v1/databases"
+LOGS_PREFIX: Final = "/v1/logs"
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
 
@@ -66,6 +81,7 @@ def create_app(
     builder: CellBuilder | None = None,
     secrets: SecretCustody | None = None,
     databases: CellAppDatabases | None = None,
+    logs: CellLogs | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -144,6 +160,7 @@ def create_app(
 
     _secret_routes(app, secrets)
     _database_routes(app, driver, databases)
+    _log_routes(app, CellLogHub(None, driver) if logs is None else logs)
     return app
 
 
@@ -221,6 +238,55 @@ def _database_routes(
         return JSONResponse(result)
 
 
+def _log_routes(app: FastAPI, logs: CellLogs) -> None:
+    """``read``, ``follow`` and ``health`` of one service's logs."""
+
+    @app.post(LOGS_PREFIX + "/{method}")
+    async def log_call(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
+        if method not in ("read", "follow", "health"):
+            return _error(404, "NOT_FOUND", f"no method {method}")
+        try:
+            body: object = await request.json()
+            if not isinstance(body, dict):
+                raise TypeError("the body is not a JSON object")
+            fields = cast("dict[str, Any]", body)
+            caller = check_caller(_str(fields, "caller"))
+            if method == "health":
+                result = health_to_wire(await logs.health(_service(fields), caller=caller))
+            elif method == "read":
+                page = await logs.read(
+                    query_from_wire(fields["query"]),
+                    since_seconds=_int(fields, "since_seconds"),
+                    limit=_int(fields, "limit"),
+                    caller=caller,
+                )
+                result = page_to_wire(page)
+            else:
+                cursor = fields["cursor"]
+                page = await logs.follow(
+                    query_from_wire(fields["query"]),
+                    cursor=None if cursor is None else _str(fields, "cursor"),
+                    wait_seconds=_int(fields, "wait_seconds"),
+                    caller=caller,
+                )
+                result = page_to_wire(page)
+        except (ValueError, TypeError, KeyError) as exc:
+            return _error(400, "INVALID_REQUEST", str(exc))
+        except LogsRateLimitedError as exc:
+            response = _error(429, "LOGS_RATE_LIMITED", str(exc), retry_after=exc.retry_after)
+            response.headers["Retry-After"] = str(exc.retry_after)
+            return response
+        except LogsNotConfiguredError as exc:
+            return _error(503, "LOGS_NOT_CONFIGURED", str(exc))
+        except LogsError as exc:
+            log.warning("logs call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "LOGS_ERROR", str(exc))
+        except RuntimeDriverError as exc:
+            log.warning("logs call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "RUNTIME_ERROR", str(exc))
+        return JSONResponse(result)
+
+
 def _database_to_wire(made: AppDatabase) -> dict[str, object]:
     return {
         "database": made.database,
@@ -246,5 +312,12 @@ def _str(body: dict[str, Any], key: str) -> str:
     return value
 
 
-def _error(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse({"code": code, "message": redact(message)}, status_code=status)
+def _int(body: dict[str, Any], key: str) -> int:
+    value = body[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"{key} must be an integer")
+    return value
+
+
+def _error(status: int, code: str, message: str, **extra: object) -> JSONResponse:
+    return JSONResponse({"code": code, "message": redact(message), **extra}, status_code=status)

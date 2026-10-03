@@ -271,6 +271,32 @@ class DatabaseOut(Wire):
     places_total: int | None = None
 
 
+class LogLineOut(Wire):
+    """One redacted line of an app's logs."""
+
+    timestamp: str
+    severity: str
+    source: str
+    text: str
+
+
+class LogPageOut(Wire):
+    environment_id: str
+    source: str
+    lines: list[LogLineOut]
+    cursor: str | None = None
+
+
+class HealthOut(Wire):
+    """Whether an environment runs, sleeps or fails; ``state`` is null when nothing runs."""
+
+    environment_id: str
+    state: str | None = None
+    reason: str
+    last_request_at: str | None = None
+    checked_at: str
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

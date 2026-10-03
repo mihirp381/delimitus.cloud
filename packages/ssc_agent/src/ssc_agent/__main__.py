@@ -6,7 +6,10 @@ Configuration, all required and set by the cell stack: ``SSC_CELL_PROJECT``,
 ``SSC_BUILD_FRONTEND_IMAGE``, or none, and then the agent refuses builds. Exits 2 when one is
 missing or malformed. Secrets (SSC-026) need nothing more: they live in the cell's project and
 region. App databases (SSC-040) need ``SSC_SQL_INSTANCE``, the name of the cell's Cloud SQL
-instance; unset, the agent refuses them. Log records are redacted (``ssc_shared.redaction``).
+instance; unset, the agent refuses them. App logs (SSC-024) need ``SSC_LOG_VIEW``, the full names
+of the cell's log views (``projects/<p>/locations/<l>/buckets/<b>/views/<v>``), separated by
+commas; unset, the agent refuses log reads and health uses the service alone. Log records are
+redacted (``ssc_shared.redaction``).
 """
 
 import logging
@@ -20,6 +23,7 @@ import uvicorn
 from ssc_agent.app import create_app
 from ssc_agent.app_database import CellAppDatabases
 from ssc_agent.cloud_build import CellBuildConfig, CloudBuildDriver
+from ssc_agent.cloud_logging import LOG_VIEW, CellLogHub, CloudLoggingEntries
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_agent.cloud_sql import CloudSqlAdmin
 from ssc_agent.metadata import MetadataAccessTokens
@@ -40,6 +44,7 @@ BUILD_ENV: Final = {
     "frontend_image": "SSC_BUILD_FRONTEND_IMAGE",
 }
 SQL_INSTANCE_ENV: Final = "SSC_SQL_INSTANCE"
+LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
 
 
 class ConfigError(ValueError):
@@ -71,10 +76,22 @@ def build_config_from_env(env: Mapping[str, str], cell: CellRuntime) -> CellBuil
         raise ConfigError(str(exc)) from None
 
 
+def log_views_from_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
+    """None when unset; ``ConfigError`` unless every comma-separated name is a log view."""
+    value = env.get(LOG_VIEW_ENV, "")
+    if not value:
+        return None
+    views = tuple(view.strip() for view in value.split(","))
+    if any(LOG_VIEW.fullmatch(view) is None for view in views):
+        raise ConfigError(f"{LOG_VIEW_ENV} is not a list of log view names")
+    return views
+
+
 def main() -> int:
     try:
         cell = cell_from_env(os.environ)
         build = build_config_from_env(os.environ, cell)
+        views = log_views_from_env(os.environ)
     except ConfigError as exc:
         print(f"ssc-agent: {exc}", file=sys.stderr)  # noqa: T201
         return 2
@@ -90,7 +107,8 @@ def main() -> int:
         sql = CloudSqlAdmin(cell.project, instance, tokens)
         writer = CellSecretWriter(cell.project, tokens)
         databases = CellAppDatabases(sql, custody, writer)
-    app = create_app(driver, builder, custody, databases)
+    entries = None if views is None else CloudLoggingEntries(views, tokens)
+    app = create_app(driver, builder, custody, databases, CellLogHub(entries, driver))
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
     return 0
 

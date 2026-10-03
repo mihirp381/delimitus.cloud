@@ -83,6 +83,9 @@ class ErrorCode(StrEnum):
     # app databases (SSC-040)
     DB_TIER_FULL = "DB_TIER_FULL"
     DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
+    # logs and health (SSC-024)
+    LOGS_RATE_LIMITED = "LOGS_RATE_LIMITED"
+    LOGS_UNAVAILABLE = "LOGS_UNAVAILABLE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -339,6 +342,17 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "The app's database cannot be reached right now.",
         "The cell that keeps this app's database is not reachable from here. Nothing was "
         "changed; retry later.",
+    ),
+    ErrorCode.LOGS_RATE_LIMITED: CatalogueEntry(
+        429,
+        "Too many log reads.",
+        "Logs are read from the app's cell, which allows a fixed number of reads a minute shared "
+        "by everyone. Wait the seconds in Retry-After, then retry.",
+    ),
+    ErrorCode.LOGS_UNAVAILABLE: CatalogueEntry(
+        503,
+        "Logs cannot be read right now.",
+        "The cell that keeps this app's logs is not reachable from here. Retry later.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

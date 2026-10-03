@@ -16,6 +16,7 @@ from typer.core import TyperGroup
 from typer.main import get_command
 
 from ssc_cli import __version__
+from ssc_cli.commands import logs as logs_command
 from ssc_cli.credentials import SERVICE
 from ssc_cli.errors import ExitCode
 from ssc_cli.main import app
@@ -29,7 +30,9 @@ from ssc_cli.shapes import (
     DoctorResult,
     ErrorResult,
     InitResult,
+    LogLineRow,
     LogoutResult,
+    LogsResult,
     PromoteResult,
     ReleasesResult,
     RollbackResult,
@@ -67,6 +70,7 @@ ALLOWED = {
     "enable",
     "access",
     "secret",
+    "logs",
 }
 
 
@@ -128,6 +132,7 @@ def test_help_lists_exact_set(cli):
         ("access", "explain"),
         ("secret", "set"),
         ("secret", "list"),
+        ("logs",),
     }
     for group, subs in (
         ("token", {"set", "clear"}),
@@ -886,6 +891,126 @@ def test_status_without_a_database_route_still_answers(cli, scripted):
     assert all(e["database"] is None for e in r.json()["environments"])
 
 
+def _health(state: str, reason: str) -> httpx2.Response:
+    body = {
+        "environment_id": PROD,
+        "state": state,
+        "reason": reason,
+        "last_request_at": None,
+        "checked_at": "2026-10-03T00:00:00Z",
+    }
+    return httpx2.Response(200, json=body)
+
+
+def test_status_shows_each_environments_health(cli, scripted):
+    path = f"/v1/apps/{APP_ID}/environments"
+    scripted.add("GET", f"{path}/{PROD}/health", _health("failing", "server_error"))
+    scripted.add("GET", f"{path}/{PREVIEW}/health", _health("asleep", "idle"))
+    r = cli("status", APP_ID, "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    envs = {e.name: e for e in AppResult.model_validate(r.json()).environments}
+    assert envs["prod"].health is not None
+    assert (envs["prod"].health.state, envs["prod"].health.reason) == ("failing", "server_error")
+    assert envs["preview"].health is not None
+    assert envs["preview"].health.state == "asleep"
+    human = cli("status", APP_ID, session=scripted.session()).stdout
+    assert "HEALTH" in human
+    assert "failing (server_error)" in human
+    assert "asleep" in human
+    assert all(r.method == "GET" and r.url.host == "api.test" for r in scripted.seen)
+
+
+def test_status_without_a_health_route_still_answers(cli, scripted):
+    r = cli("status", APP_ID, "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    assert all(e["health"] is None for e in r.json()["environments"])
+
+
+LOGS = f"/v1/apps/{APP_ID}/environments/{PROD}/logs"
+
+
+def _page(cursor: str, *texts: str) -> httpx2.Response:
+    lines = [
+        {"timestamp": "2026-10-03T00:00:00Z", "severity": "INFO", "source": "app", "text": t}
+        for t in texts
+    ]
+    body = {"environment_id": PROD, "source": "app", "lines": lines, "cursor": cursor}
+    return httpx2.Response(200, json=body)
+
+
+def test_logs_prints_the_environments_lines(cli, scripted):
+    scripted.add("GET", LOGS, _page("1.1.1", "started", "GET / 200 3ms"))
+    r = cli("logs", "demo", "--since", "10m", "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    result = LogsResult.model_validate(r.json())
+    assert (result.environment, result.source, result.cursor) == ("prod", "app", "1.1.1")
+    assert [line.text for line in result.lines] == ["started", "GET / 200 3ms"]
+    (asked,) = [q for q in scripted.seen if q.url.path == LOGS]
+    assert dict(asked.url.params) == {"source": "app", "since": "600"}
+    human = cli("logs", "demo", session=scripted.session()).stdout
+    assert "INFO" in human
+    assert "GET / 200 3ms" in human
+
+
+def test_logs_follow_prints_new_lines(cli, scripted, monkeypatch):
+    monkeypatch.setattr(logs_command, "FOLLOW_POLLS", 2)
+    scripted.add("GET", LOGS, _page("1.1.1", "old"), _page("1.2.2", "new"), _page("1.2.2"))
+    r = cli("logs", "demo", "--follow", "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    rows = [LogLineRow.model_validate_json(line) for line in r.stdout.splitlines()]
+    assert [row.text for row in rows] == ["old", "new"]
+    asks = [dict(q.url.params) for q in scripted.seen if q.url.path == LOGS]
+    assert asks[1:] == [
+        {"source": "app", "after": "1.1.1", "wait": "15"},
+        {"source": "app", "after": "1.2.2", "wait": "15"},
+    ]
+
+
+def test_logs_follow_waits_out_a_rate_limit_and_keeps_going(
+    cli, scripted, fake_problem, monkeypatch
+):
+    monkeypatch.setattr(logs_command, "FOLLOW_POLLS", 2)
+    limited = fake_problem(429, "LOGS_RATE_LIMITED", **{"Retry-After": "7"})
+    scripted.add("GET", LOGS, _page("1.1.1", "old"), limited, limited, _page("1.2.2", "new"))
+    sleeps: list[float] = []
+    session = Session(
+        api_override="https://api.test",
+        transport=httpx2.MockTransport(scripted.handler),
+        sleep=sleeps.append,
+    )
+    r = cli("logs", "demo", "--follow", "--json", session=session)
+    assert r.code == 0, r.stderr
+    rows = [LogLineRow.model_validate_json(line) for line in r.stdout.splitlines()]
+    assert [row.text for row in rows] == ["old", "new"]
+    assert sleeps == [7.0, 7.0]
+    asks = [dict(q.url.params) for q in scripted.seen if q.url.path == LOGS]
+    assert [a.get("after") for a in asks] == [None, "1.1.1", "1.1.1", "1.1.1"]
+    scripted.routes[("GET", LOGS)] = [_page("1.1.1", "old"), fake_problem(403, "FORBIDDEN")]
+    ended = cli("logs", "demo", "--follow", session=scripted.session())
+    assert ended.code == ExitCode.FAILED
+    assert "Code: FORBIDDEN" in ended.stderr
+
+
+def test_logs_refused_to_a_user_says_who_may_read(cli, scripted, fake_problem):
+    scripted.add("GET", LOGS, fake_problem(403, "FORBIDDEN"))
+    r = cli("logs", "demo", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert "Code: FORBIDDEN" in r.stderr
+    assert _fix(r.stderr).startswith(
+        "only an org admin, the app's owner or a builder on prod reads its logs"
+    )
+    as_json = cli("logs", "demo", "--json", session=scripted.session())
+    ErrorResult.model_validate(as_json.json())
+    assert as_json.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_logs_refuses_a_bad_since_before_asking(cli, scripted):
+    for since in ("soon", "8d", "0"):
+        r = cli("logs", "demo", "--since", since, session=scripted.session())
+        assert r.code == ExitCode.USAGE
+    assert not [q for q in scripted.seen if q.url.path == LOGS]
+
+
 # ── against the live API ────────────────────────────────────────────────────
 
 
@@ -920,6 +1045,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("promote",): ([name, "--wait"], PromoteResult, None),
         ("access", "explain"): ([name], AccessResult, None),
         ("secret", "list"): ([name, "--env", "preview"], SecretsResult, None),
+        ("logs",): ([name, "--env", "preview", "--source", "deploy"], LogsResult, None),
         ("disable",): ([name, "--timeout", "3600"], DisableResult, None),
         ("enable",): ([name], AppResult, None),
         ("doctor",): ([str(CLEAN)], DoctorResult, None),

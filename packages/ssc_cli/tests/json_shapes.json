@@ -105,6 +105,7 @@
     "database": "DatabaseRow|null",
     "deployment": "DeploymentRow|null",
     "grants_version": "integer",
+    "health": "HealthRow|null",
     "id": "string",
     "name": "string",
     "url": "string|null"
@@ -140,6 +141,12 @@
     "subject_id": "string|null",
     "subject_kind": "string"
   },
+  "HealthRow": {
+    "checked_at": "string",
+    "last_request_at": "string|null",
+    "reason": "string",
+    "state": "string|null"
+  },
   "InitResult": {
     "files": "array<FileAction>",
     "path": "string"
@@ -150,6 +157,12 @@
     "error": "string|null",
     "name": "string",
     "state": "string"
+  },
+  "LogLineRow": {
+    "severity": "string",
+    "source": "string",
+    "text": "string",
+    "timestamp": "string"
   },
   "LoginResult": {
     "api_url": "string",
@@ -162,6 +175,15 @@
     "api_url": "string",
     "cleared": "boolean",
     "revoked": "boolean"
+  },
+  "LogsResult": {
+    "app_id": "string",
+    "cursor": "string|null",
+    "environment": "string",
+    "environment_id": "string",
+    "lines": "array<LogLineRow>",
+    "slug": "string",
+    "source": "string"
   },
   "PromoteResult": {
     "app_id": "string",
