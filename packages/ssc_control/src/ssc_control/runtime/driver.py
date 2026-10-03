@@ -73,10 +73,10 @@ def desired_for(
     framework: str | None = None,
 ) -> ServiceSpec | Stopped:
     """What should be running for one app environment. Pure: rows in, spec out. ``framework`` is
-    what the build detected (B4 records it); None until builds do. Every environment scales to
-    zero. A session environment is instance-billed with the 60-minute timeout and takes 1000
-    requests at once, since its one instance holds every user's WebSocket; any other is
-    request-billed with 5 minutes and 80."""
+    what the build detected (SSC-015 records it on the release), or None. Every environment
+    scales to zero. A session environment is instance-billed with the 60-minute timeout and
+    takes 1000 requests at once, since its one instance holds every user's WebSocket; any other
+    is request-billed with 5 minutes and 80."""
     service = service_name(env.id)
     if app_status != "active":
         return Stopped(service=service, reason=app_status)

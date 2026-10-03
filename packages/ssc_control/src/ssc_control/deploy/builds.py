@@ -9,6 +9,13 @@ the build's deadline; after it, the build fails with ``BUILD_TIMED_OUT`` or
 and re-reading its app: a disabled or quarantined app fails the build with ``APP_NOT_ACTIVE``
 before any builder call.
 
+Before the builder is first called the job reads the stored bundle (``ssc_bundle.analyze``,
+SSC-015): a refusal fails the build with its code (``STATE_SQLITE_EPHEMERAL``,
+``BUILD_PRIVATE_REGISTRY`` and the rest of ``ssc_contracts.build``), notices go to the log with
+the build id, and the session framework found is kept on the build and then on its release, where
+``desired_for`` reads it. The analysis needs the blob store; only a development or test
+composition with the fake builder runs without one, and then skips it.
+
 On success one transaction numbers and writes the release (``source_digest`` is the bundle's
 digest, ``manifest_digest`` the stored bundle's), marks the build ``succeeded`` and audits
 ``release.created`` as the build's actor.
@@ -39,7 +46,7 @@ from ssc_control.deploy.build_driver import (
     Running,
     Succeeded,
 )
-from ssc_control.deploy.bundles import bundle_key
+from ssc_control.deploy.bundles import analyze_stored, bundle_key
 from ssc_control.deploy.releases import NewRelease, allocate_and_insert
 from ssc_control.deploy.tasks import defer_build
 from ssc_control.worker_ports import Ports
@@ -55,7 +62,8 @@ NOT_RUNNING: Final = "not_running"
 
 _LOAD = text(
     "select b.state, b.app_id, b.environment_id, b.bundle_id, b.driver_ref, b.started_at, "
-    "b.actor_kind, b.actor_id, b.actor_via_agent, b.actor_client_id, e.name as env_name, "
+    "b.framework, b.actor_kind, b.actor_id, b.actor_via_agent, b.actor_client_id, "
+    "e.name as env_name, "
     "d.digest, d.manifest, d.manifest_digest, d.source_commit, a.status as app_status "
     "from ssc.build b "
     "join ssc.environment e on e.org_id = b.org_id and e.id = b.environment_id "
@@ -69,6 +77,10 @@ _CLAIM = text(
 )
 _SET_REF = text(
     "update ssc.build set driver_ref = :ref "
+    "where org_id = :org and id = :id and state = 'running' and driver_ref is null"
+)
+_SET_FRAMEWORK = text(
+    "update ssc.build set framework = :framework "
     "where org_id = :org and id = :id and state = 'running' and driver_ref is null"
 )
 _LOCK_RUNNING = text(
@@ -93,6 +105,7 @@ class _Build:
     bundle_id: str
     driver_ref: str | None
     started_at: datetime | None
+    framework: str | None
     actor: Actor
     env_name: str
     digest: str
@@ -123,6 +136,7 @@ async def _load(conn: AsyncConnection, org_id: str, build_id: str) -> _Build | N
         bundle_id=str(row.bundle_id),
         driver_ref=row.driver_ref,
         started_at=row.started_at,
+        framework=row.framework,
         actor=_actor(row),
         env_name=str(row.env_name),
         digest=str(row.digest),
@@ -176,7 +190,11 @@ async def run_build(
     request = _request(org_id, build)
     if request is None:
         return await _fail(ports, org_id, build, ErrorCode.MANIFEST_INVALID.value)
-    status = await _step(ports, driver, org_id, build, request)
+    checked = await _check_source(ports, org_id, build, request)
+    if isinstance(checked, _Build):
+        build, status = checked, await _step(ports, driver, org_id, checked, request)
+    else:
+        status = checked
     return await _settle(
         ports, org_id, build, status, build_timeout=build_timeout, poll_interval=poll_interval
     )
@@ -223,6 +241,31 @@ async def _claim(ports: Ports, org_id: str, build_id: str) -> _Build | str:
     return build
 
 
+async def _check_source(
+    ports: Ports, org_id: str, build: _Build, request: BuildRequest
+) -> _Build | Failed | None:
+    """Analyse the bundle before the builder is first called: the build with its framework, a
+    refusal, or None when the bundle could not be read (try again later)."""
+    store = ports.blob_store
+    if store is None or build.driver_ref is not None:
+        return build
+    try:
+        found = await analyze_stored(store, request.bundle_key, request.manifest)
+    except Exception:
+        log.exception("bundle analysis failed", extra={"build_id": build.id})
+        return None
+    if found.notices:
+        log.info("build notices", extra={"build_id": build.id, "notices": list(found.notices)})
+    if found.refusal is not None:
+        why = f"{found.refusal.detail} ({found.refusal.path})"
+        return Failed(code=found.refusal.code, message=why)
+    if found.framework is not None:
+        async with bound_org(ports.engine, org_id) as conn:
+            params = {"org": org_id, "id": build.id, "framework": found.framework}
+            await conn.execute(_SET_FRAMEWORK, params)
+    return replace(build, framework=found.framework)
+
+
 async def _step(
     ports: Ports, driver: BuildDriver, org_id: str, build: _Build, request: BuildRequest
 ) -> BuildStatus | None:
@@ -265,6 +308,7 @@ async def _succeed(ports: Ports, org_id: str, build: _Build, result: Succeeded) 
             source_digest=build.digest,
             source_commit=build.source_commit,
             scan_refs=result.scan_refs,
+            framework=build.framework,
             actor=build.actor,
         )
         allocated = await allocate_and_insert(conn, org_id=org_id, release=release)

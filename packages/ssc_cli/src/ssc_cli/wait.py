@@ -22,6 +22,7 @@ from ssc_cli.errors import (
     local_error,
 )
 from ssc_cli.models import OperationOut
+from ssc_contracts.build import FIX_ITS
 
 POLL_SECONDS: Final = 2.0
 DEFAULT_TIMEOUT: Final = 1800
@@ -37,6 +38,7 @@ FIXES: Final = {
     "BUILD_TIMED_OUT": "The build ran for over 20 minutes. Run `ssc doctor`, then deploy again.",
     "APP_NOT_ACTIVE": "The app is not active, so it takes no deployments. `ssc status` shows its "
     "status; an org admin can tell you why.",
+    **FIX_ITS,
 }
 
 

@@ -405,6 +405,15 @@ def test_a_failed_build_names_its_code_and_build(cli, api, folder):
     assert "Fix: Run `ssc doctor`" in human.stderr
 
 
+def test_a_sqlite_build_failure_shows_the_postgres_fix(cli, api, folder):
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [
+        _build("failed", failure_code="STATE_SQLITE_EPHEMERAL")
+    ]
+    human = cli("deploy", str(folder), "--app", "demo", session=api.session())
+    assert human.code == ExitCode.FAILED
+    assert "postgres = true" in human.stderr
+
+
 def test_a_build_failed_without_a_code(cli, api, folder):
     api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("failed")]
     r = cli("deploy", str(folder), "--app", "demo", "--json", session=api.session())

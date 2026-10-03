@@ -3,7 +3,8 @@
 ``reconcile_env`` never guesses a manifest. ``BundleReleaseSpecs`` (the worker's port) reads the
 manifest stored with the release's bundle, joined on ``release.source_digest = bundle.digest``
 (decision 015), and re-derives its digest; a release without a stored bundle, or whose manifest
-does not hash to ``release.manifest_digest``, reports ``no_spec`` instead of being changed.
+does not hash to ``release.manifest_digest``, reports ``no_spec`` instead of being changed. The
+framework is the one the build found and kept on the release (SSC-015).
 """
 
 import logging
@@ -22,7 +23,7 @@ from ssc_shared.canonical import manifest_digest
 log = logging.getLogger(__name__)
 
 _RELEASE_MANIFEST = text(
-    "select b.manifest, r.manifest_digest from ssc.release r "
+    "select b.manifest, r.manifest_digest, r.framework from ssc.release r "
     "join ssc.bundle b on b.org_id = r.org_id and b.app_id = r.app_id "
     "and b.digest = r.source_digest "
     "where r.org_id = :org and r.id = :rel and b.state = 'stored'"
@@ -32,7 +33,7 @@ _RELEASE_MANIFEST = text(
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReleaseSpec:
     manifest: Manifest
-    framework: str | None = None  # what the build detected (B4)
+    framework: str | None = None
 
 
 class ReleaseSpecUnavailableError(LookupError):
@@ -50,6 +51,11 @@ class ReleaseSpecs(Protocol):
 async def release_manifest(conn: AsyncConnection, org_id: str, release_id: str) -> Manifest | None:
     """The manifest of the bundle ``release_id`` was built from, or None when there is none or it
     does not hash to the release's ``manifest_digest``. An approvals ``ManifestLoader``."""
+    spec = await _release_spec(conn, org_id, release_id)
+    return None if spec is None else spec.manifest
+
+
+async def _release_spec(conn: AsyncConnection, org_id: str, release_id: str) -> ReleaseSpec | None:
     row = (await conn.execute(_RELEASE_MANIFEST, {"org": org_id, "rel": release_id})).first()
     if row is None:
         return None
@@ -61,19 +67,20 @@ async def release_manifest(conn: AsyncConnection, org_id: str, release_id: str) 
     if manifest_digest(manifest) != row[1]:
         log.warning("stored manifest does not match its release", extra={"release_id": release_id})
         return None
-    return manifest
+    return ReleaseSpec(manifest=manifest, framework=row[2])
 
 
 class BundleReleaseSpecs(ReleaseSpecs):
-    """The manifest stored with the release's bundle (``release_manifest``)."""
+    """The manifest stored with the release's bundle (``release_manifest``) and the framework
+    kept on the release."""
 
     async def get(
         self, conn: AsyncConnection, *, org_id: str, app_id: str, release_id: str
     ) -> ReleaseSpec:
-        manifest = await release_manifest(conn, org_id, release_id)
-        if manifest is None:
+        spec = await _release_spec(conn, org_id, release_id)
+        if spec is None:
             raise ReleaseSpecUnavailableError(f"no stored bundle manifest for {release_id}")
-        return ReleaseSpec(manifest=manifest)
+        return spec
 
 
 class NoReleaseSpecs(ReleaseSpecs):

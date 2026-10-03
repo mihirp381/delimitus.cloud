@@ -63,6 +63,16 @@ def iter_files(source: IO[bytes], limits: Limits, max_bytes: int) -> Iterator[tu
             yield member.name, _read(tar, member, member.size)
 
 
+def iter_entries(
+    source: IO[bytes], limits: Limits, max_bytes: int
+) -> Iterator[tuple[str, bytes | None]]:
+    """``(path, content)`` of every regular file; content is None over ``max_bytes``."""
+    for tar, member in _entries(source, limits):
+        if member.isreg():
+            small = member.size <= max_bytes
+            yield member.name, _read(tar, member, member.size) if small else None
+
+
 def _read(tar: tarfile.TarFile, member: tarfile.TarInfo, size: int) -> bytes:
     f = tar.extractfile(member)
     if f is None:
