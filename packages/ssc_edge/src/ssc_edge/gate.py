@@ -19,7 +19,9 @@ Stages, in order, stopping at the first refusal:
    refusal are the same ``404`` page.
 8. Allowed: the identity note is minted, and the request goes to the environment's service with
    the time Cloud Run will end it (``X-SSC-Request-Deadline``). A browser page load without the
-   wake cookie is marked for the "waking up" page (``ssc_edge.envoy``).
+   wake cookie is marked for the "waking up" page (``ssc_edge.envoy``). A WebSocket or an event
+   stream is admitted to the stream relay (``ssc_edge.streams``), which asks :meth:`Gate.holds`
+   again while it is open.
 
 A refusal never names the reason to the caller; ``Deny.reason`` is for the gateway's own log.
 """
@@ -34,6 +36,7 @@ from typing import Final, Literal, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from ssc_contracts.identity import MAX_GROUPS, IdentityNote
+from ssc_contracts.snapshot import GrantRole
 from ssc_edge import pages
 from ssc_edge.identity_note import compose_note
 from ssc_edge.session import (
@@ -49,7 +52,7 @@ from ssc_edge.session import (
     set_cookie,
     wake_cookie,
 )
-from ssc_shared.access import AccessView, decide
+from ssc_shared.access import AccessView, EnvironmentIndex, decide
 from ssc_shared.hosts import AppHost, parse_app_host
 from ssc_shared.runtime import MAX_TIMEOUT_SECONDS, service_name
 
@@ -65,6 +68,9 @@ timeout from the check. An app's own timeout may end it sooner."""
 WAKE_HEADER: Final = "x-ssc-wake"
 """Internal: a browser page load that gets the "waking up" page when the app is slow. Envoy
 removes it before forwarding."""
+STREAM_HEADER: Final = "x-ssc-stream"
+"""Internal: the stream relay's ticket for a WebSocket or an event stream (``ssc_edge.streams``).
+Envoy sends a request carrying it to the relay, which removes it."""
 REQUEST_SECONDS: Final = MAX_TIMEOUT_SECONDS
 SAFE_METHODS: Final = frozenset({"GET", "HEAD"})
 _SAME_ORIGIN: Final = frozenset({"same-origin", "none"})
@@ -118,6 +124,8 @@ class Allow:
     user: str
     environment: str
     client_headers: tuple[tuple[str, str], ...] = ()
+    host: str = ""
+    session: Session | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -161,6 +169,12 @@ def page_load(facts: Facts) -> bool:
         and "text/html" in h.get("accept", "")
         and "upgrade" not in h
     )
+
+
+def streaming(facts: Facts) -> bool:
+    """A request that may stay open: a WebSocket upgrade or an ``EventSource`` stream."""
+    h = facts.headers
+    return h.get("upgrade", "").lower() == "websocket" or "text/event-stream" in h.get("accept", "")
 
 
 def normal_host(raw: str) -> str:
@@ -305,25 +319,45 @@ class Gate:
             )
         return not_found("unknown_host_label")
 
+    def _admit(
+        self, view: AccessView, host: str, app: AppHost, session: Session
+    ) -> tuple[str, EnvironmentIndex, GrantRole] | Reason:
+        """Stages 6 and 7: the environment and role, or why the person may not have them."""
+        not_before = view.not_before.get(session.sub)
+        if not_before is not None and session.iat < not_before:
+            return "revoked"
+        env_id = view.hosts.get(host.split(".", 1)[0])
+        if env_id is None:
+            return "unknown_host_label"
+        decision = decide(view, env_id, session.sub)
+        env = view.environments.get(env_id)
+        if not decision.allowed or decision.role is None or env is None:
+            return "not_granted"
+        if env.name != app.environment:
+            return "unknown_host_label"
+        return env_id, env, decision.role
+
+    def holds(self, allowed: Allow) -> bool:
+        """Whether an open stream admitted as ``allowed`` would be admitted now: the same
+        stages against the view the gate holds now, and the session not yet expired."""
+        view, session = self._view(), allowed.session
+        app = parse_app_host(allowed.host, self._cfg.apps_domain)
+        if view is None or session is None or app is None or self._clock() >= session.exp:
+            return False
+        return not isinstance(self._admit(view, allowed.host, app, session), str)
+
     def _decide(  # noqa: PLR0913  (one request's parts)
         self, host: str, path: str, app: AppHost, session: Session, facts: Facts
     ) -> Allow | Deny:
         view = self._view()
         if view is None:
             return _page(503, pages.UNAVAILABLE, "no_view")
-        not_before = view.not_before.get(session.sub)
-        if not_before is not None and session.iat < not_before:
+        admitted = self._admit(view, host, app, session)
+        if admitted == "revoked":
             return self._login(host, path, cleared=True, reason="revoked")
-        label = host.split(".", 1)[0]
-        env_id = view.hosts.get(label)
-        if env_id is None:
-            return not_found("unknown_host_label")
-        decision = decide(view, env_id, session.sub)
-        env = view.environments.get(env_id)
-        if not decision.allowed or decision.role is None or env is None:
-            return not_found("not_granted")
-        if env.name != app.environment:
-            return not_found("unknown_host_label")
+        if isinstance(admitted, str):
+            return not_found(admitted)
+        env_id, env, role = admitted
         mine = view.groups_by_user.get(session.sub, frozenset())
         groups = tuple(sorted(mine & env.by_group.keys()))[:MAX_GROUPS]
         now = self._clock()
@@ -334,7 +368,7 @@ class Gate:
             org=self._cfg.org_id,
             app=env.app_id,
             env=env.name,
-            role=decision.role,
+            role=role,
             now=now,
             groups=groups,
             name=session.name or None,
@@ -358,4 +392,6 @@ class Gate:
             user=session.sub,
             environment=env_id,
             client_headers=client,
+            host=host,
+            session=session,
         )

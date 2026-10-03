@@ -236,6 +236,15 @@ pulumi up --stack c-<label>
 
 The first `pulumi up` creates the key on a cell made before it. Still live-only: Cloud Run accepting the gateway's ID token for an app's `run.app` URL (T3), the cold start (T7), the browser suite (SSC-029), and the `auth` and `keys` records in the `delimitus` zone, which exist once the control plane's public stage is applied (Control plane, below).
 
+**Removing access (SSC-021, decision 023 amendment).** An allowed WebSocket or event stream goes through the gateway's stream relay (loopback port 9002, `SSC_STREAM_PORT`). While any stream is open, the relay re-reads the snapshot every second and closes each stream its person may no longer open. Nothing in the stack changes. Live checks for the proof run, on a staging cell with a Streamlit app shared with one test person through a group, then by a direct grant:
+
+1. Grant removal, awake gateway. Keep a page polling the app once a second, then remove the grant (`PUT .../grants`). Note when `snapshots/<org>/latest.json` names the new version (`gcloud storage objects describe`, `update_time`) and when the first `404` arrives. Expected: the `404` arrives at most 2 s plus the bucket read after the pointer moves, under 5 s in total.
+2. Time from the grant change to the pointer. Measure from the `PUT` returning to `latest.json` moving: this is the worker's compile, which is not measured anywhere yet. Expected: a few seconds. If it is longer, the 5 s done-when does not hold from the person's side.
+3. Open stream. With the Streamlit page open, remove the grant. Expected: the websocket closes (browser devtools, Network, WS) about 3 s after the pointer moves, and Streamlit shows its "connection lost" state. The cell's logs show `stream watch closed 1 stream(s)`.
+4. Group removal. Remove the person from the group in the directory. Expected: after the next sync tick (60 s) and the compile, the page gets `404` and the open websocket closes, as in 1 and 3.
+5. Gateway at zero. Let the gateway scale to zero, remove a grant, then open the app. Expected: the first answer is `404`.
+6. The relay's path. Open a websocket through the load balancer and confirm it reaches the app with `X-Serverless-Authorization` accepted. This checks TLS from the relay to `run.app` with the image's CA bundle (`/etc/ssl/certs/ca-certificates.crt`), the ID token, and WebSockets through Envoy to the relay behind the serverless NEG. Also confirm that server-sent events still arrive unbuffered.
+
 ## Public entry
 
 Each cell has its own door (SSC-088), created at onboarding with no flag:

@@ -9,7 +9,8 @@ down or slow, so the gateway fails closed.
 
 The gateway runs request-billed from zero (decision 023 amendment), so nothing runs between
 requests: the snapshot is read once before the first request is accepted and then on demand by
-the checks themselves (``OnDemandView``). There is no background poll.
+the checks themselves (``OnDemandView``) and, while a stream is open, by the stream watch
+(``ssc_edge.streams``). There is no background poll.
 """
 
 import asyncio
@@ -27,11 +28,21 @@ from fastapi import FastAPI, Request, Response
 
 from ssc_contracts.identity import IdentityNote
 from ssc_edge import pages
-from ssc_edge.gate import Allow, Facts, Gate, GateConfig, Redeemer, new_nonce
+from ssc_edge.gate import (
+    STREAM_HEADER,
+    Allow,
+    Facts,
+    Gate,
+    GateConfig,
+    Redeemer,
+    new_nonce,
+    streaming,
+)
 from ssc_edge.identity_note import sign_note
 from ssc_edge.keys import Keyring, KeyringError, check_published, kms_decrypt, parse_keyring
 from ssc_edge.redeemer import HttpRedeemer
 from ssc_edge.session import SessionCodec
+from ssc_edge.streams import Streams
 from ssc_edge.tokens import MetadataTokens
 from ssc_shared.access import AccessView, ViewHolder
 from ssc_shared.blobstore import BlobStore
@@ -48,10 +59,11 @@ DEFAULT_MAX_BODY: Final = 32 * 1024 * 1024
 DEFAULT_MAX_STALE: Final = 300.0
 RECHECK_SECONDS: Final = POLL_SECONDS
 FRESH_WAIT: Final = 0.3
-SETTLED_SECONDS: Final = 30.0
+SETTLED_SECONDS: Final = 3.0
 STALE_WAIT: Final = 4.0
 FIRST_READ_WAIT: Final = 10.0
 DEV_ENVS: Final = frozenset({"dev", "test"})
+STREAM_PORT: Final = 9002
 
 
 class SettingsError(ValueError):
@@ -71,6 +83,7 @@ class Settings:
     """Dev and test only: redeem login codes with the rig's shared secret, not an ID token."""
     published_jwks: str | None = None
     """The JWKS the cell hands to apps; the gateway refuses to start with other identity keys."""
+    stream_port: int = STREAM_PORT
 
 
 def _need(env: Mapping[str, str], name: str) -> str:
@@ -96,8 +109,11 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
     try:
         max_body = int(env.get("SSC_GATEWAY_MAX_BODY", DEFAULT_MAX_BODY))
         max_stale = float(env.get("SSC_SNAPSHOT_MAX_AGE", DEFAULT_MAX_STALE))
+        stream_port = int(env.get("SSC_STREAM_PORT", STREAM_PORT))
     except ValueError as exc:
-        raise SettingsError("SSC_GATEWAY_MAX_BODY and SSC_SNAPSHOT_MAX_AGE are numbers") from exc
+        raise SettingsError(
+            "SSC_GATEWAY_MAX_BODY, SSC_SNAPSHOT_MAX_AGE and SSC_STREAM_PORT are numbers"
+        ) from exc
     gate = GateConfig(
         org_id=_need(env, "SSC_ORG_ID"),
         cell_label=label,
@@ -118,6 +134,7 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         kms_key=kms_key,
         dev_cell_secret=dev_secret,
         published_jwks=env.get("SSC_IDENTITY_JWKS") or None,
+        stream_port=stream_port,
     )
 
 
@@ -192,7 +209,9 @@ class OnDemandView:
     ``latest.json`` when no read has confirmed the view for ``RECHECK_SECONDS``, one read at a
     time. It waits for that read up to ``FRESH_WAIT`` when a read confirmed the view within
     ``SETTLED_SECONDS`` and up to ``STALE_WAIT`` otherwise, so a check after idle decides on the
-    new snapshot; a read still running finishes for the next check."""
+    new snapshot; a read still running finishes for the next check. A read confirms the view as
+    of the moment it asked for ``latest.json``, so while the bucket answers within
+    ``STALE_WAIT`` no check decides on a view older than ``SETTLED_SECONDS + FRESH_WAIT``."""
 
     def __init__(self, feed: SnapshotFeed, holder: ViewHolder, *, max_stale: float) -> None:
         self._feed = feed
@@ -240,9 +259,11 @@ def create_app(
     *,
     tokens: IdTokens | None = None,
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
+    streams: Streams | None = None,
 ) -> FastAPI:
     """``gate`` returns None until start-up has loaded the keys. ``tokens`` mints the Google ID
-    token for the app's service; None leaves ``X-Serverless-Authorization`` off (dev, tests)."""
+    token for the app's service; None leaves ``X-Serverless-Authorization`` off (dev, tests).
+    ``streams`` admits an allowed WebSocket or event stream to the stream relay."""
     app = FastAPI(
         title="ssc-edge", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
     )
@@ -267,6 +288,8 @@ def create_app(
                 if tokens is not None:
                     token = await tokens.identity(f"https://{outcome.upstream}")
                     headers[SERVERLESS_AUTH] = f"Bearer {token}"
+                if streams is not None and streaming(facts):
+                    headers[STREAM_HEADER] = streams.admit(outcome)
                 allowed = Response(status_code=200, headers=headers)
                 for name, value in outcome.client_headers:
                     allowed.headers.append(name, value)
@@ -309,6 +332,7 @@ def production_app(
     snapshot = OnDemandView(feed, holder, max_stale=settings.max_stale)
     state: dict[str, Gate] = {}
     redeemer = redeemer_for(settings, tokens)
+    streams = Streams(lambda: state.get("gate"), refresh=snapshot.refresh)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
@@ -321,9 +345,13 @@ def production_app(
             redeemer=redeemer,
             refresh=snapshot.refresh,
         )
+        relay = await streams.serve("127.0.0.1", settings.stream_port)
         try:
             yield
         finally:
+            relay.close()
+            await streams.aclose()
+            await relay.wait_closed()
             await snapshot.aclose()
             await redeemer.aclose()
             await tokens.aclose()
@@ -333,6 +361,7 @@ def production_app(
         lambda: state.get("gate"),
         tokens=None if dev else tokens,
         lifespan=lifespan,
+        streams=streams,
     )
 
 

@@ -103,8 +103,10 @@ class SnapshotFeed:
         return None if view is None else view.version
 
     async def poll_once(self) -> bool:
-        """One poll; True when a newer version was applied. Never raises for a bad snapshot."""
+        """One poll; True when a newer version was applied. Never raises for a bad snapshot.
+        A good poll confirms the view as of the moment it asked for ``latest.json``."""
         org_id = self._holder.org_id
+        asked_at = self._monotonic()
         try:
             raw = await _read(self._store, latest_key(org_id), POINTER_MAX_BYTES)
         except BlobNotFoundError:
@@ -117,7 +119,7 @@ class SnapshotFeed:
             pointer = parse_pointer(raw, org_id)
             current = self.version
             if current is not None and pointer.version <= current:
-                self._ok()
+                self._ok(asked_at)
                 return False
             body = await _read(self._store, pointer.key, SNAPSHOT_MAX_BYTES)
             if not hmac.compare_digest(hashlib.sha256(body).hexdigest(), pointer.sha256):
@@ -126,7 +128,7 @@ class SnapshotFeed:
         except (BlobError, OSError, SnapshotInvalidError) as exc:
             self._fail(f"{type(exc).__name__}: {exc}")
             return False
-        self._ok()
+        self._ok(asked_at)
         if applied:
             self.last_applied_at = self._monotonic()
             log.info("snapshot applied", extra={"org_id": org_id, "version": pointer.version})
@@ -146,8 +148,8 @@ class SnapshotFeed:
         ok = self.last_ok_at
         return ok is not None and self._monotonic() - ok <= max_age
 
-    def _ok(self) -> None:
-        self.last_ok_at = self._monotonic()
+    def _ok(self, asked_at: float) -> None:
+        self.last_ok_at = asked_at
         if self.failures:
             log.info("snapshot feed recovered", extra={"after_failures": self.failures})
         self.failures = 0

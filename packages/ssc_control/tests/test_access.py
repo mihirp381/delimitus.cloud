@@ -2,11 +2,19 @@
 
 Ticket "done when" checks:
   * removed from a group, a user loses access at the next snapshot
-        -> test_group_removal_loses_access_in_the_next_version
+        -> test_group_removal_loses_access_in_the_next_version; from the directory sync to the
+        gateway refusing and closing the open stream, test_identity.py's
+        test_removal_from_a_group_reaches_the_gateway_and_closes_the_open_stream
+  * removing a grant takes effect at the gateway within 5 seconds and ends open sessions
+        -> ssc_edge's test_a_removed_grant_is_refused_within_the_recheck_and_one_gap,
+        test_a_gateway_started_after_a_grant_went_refuses_its_first_request (test_server.py),
+        test_a_removed_grant_closes_that_person_s_stream_within_one_watch (test_streams.py) and
+        test_a_websocket_is_closed_within_one_watch_of_its_grant_going (test_envoy.py)
   * a malformed snapshot keeps the last good view
         -> the same test, and ssc_shared's test_access_eval.py
   * an app cannot exist without an owner -> test_the_owner_cannot_be_unset_or_deleted
-  * the last admin cannot be removed -> test_the_directory_cannot_remove_the_last_admin
+  * the last admin cannot be removed -> test_the_directory_cannot_demote_the_last_admin,
+        test_control_db.py's test_last_active_admin_cannot_be_removed
   * explain names the grant -> test_explain_names_the_grant_and_the_group
 Plus: floors, who may change sharing, one evaluator, content-addressed publishing, the
 audience-ceiling hook, the compile job, heartbeat acknowledgements and the 0009 round trip.

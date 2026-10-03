@@ -14,11 +14,13 @@ Filters, in order:
    for responses from an app, drops ``Set-Cookie`` values that use a platform name.
 5. ``dynamic_forward_proxy`` and ``router``: forwards to that host over TLS, the name checked.
 
-Routes: the wake route gives the app 2 seconds to start answering (a per-try timeout, which stops
-counting once the answer has started), and the local reply for that timeout is the "waking up"
-page (``pages.WAKING``), which retries by itself; the retry carries the wake cookie, so it takes
-the other route and waits for the app. Every other request waits for the app with no route
-timeout; Cloud Run's 3600-second request timeout bounds it.
+Routes: a WebSocket or event stream the check admitted carries ``x-ssc-stream`` and goes to the
+stream relay on loopback (``ssc_edge.streams``), one request per connection, which can close it
+when access goes. The wake route gives the app 2 seconds to start answering (a per-try timeout,
+which stops counting once the answer has started), and the local reply for that timeout is the
+"waking up" page (``pages.WAKING``), which retries by itself; the retry carries the wake cookie,
+so it takes the other route and waits for the app. Every other request waits for the app with no
+route timeout; Cloud Run's 3600-second request timeout bounds it.
 
 ``python -m ssc_edge.envoy`` prints the JSON; CI checks it with ``envoy --mode validate``.
 """
@@ -31,9 +33,16 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from ssc_edge import pages
-from ssc_edge.gate import DEADLINE_HEADER, IDENTITY_HEADER, UPSTREAM_HEADER, WAKE_HEADER
+from ssc_edge.gate import (
+    DEADLINE_HEADER,
+    IDENTITY_HEADER,
+    STREAM_HEADER,
+    UPSTREAM_HEADER,
+    WAKE_HEADER,
+)
 from ssc_edge.server import AUTHZ_PREFIX, LENGTH_HEADER, SERVERLESS_AUTH
 from ssc_edge.session import PLATFORM_PREFIXES
+from ssc_edge.streams import CA_BUNDLE
 
 ENVOY_VERSION: Final = "1.39.0"
 ALLOWED_HEADERS: Final = (
@@ -52,12 +61,12 @@ UPSTREAM_HEADERS: Final = (
     UPSTREAM_HEADER,
     DEADLINE_HEADER,
     WAKE_HEADER,
+    STREAM_HEADER,
     SERVERLESS_AUTH,
 )
 ON_SUCCESS_CLIENT_HEADERS: Final = ("set-cookie",)
 """Headers an allowing answer adds to the browser's response: the wake cookie only."""
 WAKE_SECONDS: Final = 2
-CA_BUNDLE: Final = "/etc/ssl/certs/ca-certificates.crt"
 
 _T = "type.googleapis.com/envoy.extensions."
 
@@ -133,6 +142,8 @@ class EnvoyConfig:
     authz_host: str = "127.0.0.1"
     authz_port: int = 9001
     authz_timeout_ms: int = 5000
+    stream_host: str = "127.0.0.1"
+    stream_port: int = 9002
     upstream_tls: bool = True
     rate_per_second: int = 500
     rate_burst: int = 1000
@@ -157,23 +168,37 @@ def _dns_cache() -> dict[str, Any]:
     return {"name": "apps", "dns_lookup_family": "V4_ONLY"}
 
 
-def _authz_cluster(cfg: EnvoyConfig) -> dict[str, Any]:
+def _local_cluster(name: str, host: str, port: int) -> dict[str, Any]:
     try:
-        ipaddress.ip_address(cfg.authz_host)
+        ipaddress.ip_address(host)
         kind = "STATIC"
     except ValueError:
         kind = "STRICT_DNS"
-    address = {"socket_address": {"address": cfg.authz_host, "port_value": cfg.authz_port}}
+    address = {"socket_address": {"address": host, "port_value": port}}
     return {
-        "name": "authz",
+        "name": name,
         "type": kind,
         "dns_lookup_family": "V4_ONLY",
         "connect_timeout": "0.25s",
         "load_assignment": {
-            "cluster_name": "authz",
+            "cluster_name": name,
             "endpoints": [{"lb_endpoints": [{"endpoint": {"address": address}}]}],
         },
     }
+
+
+def _streams_cluster(cfg: EnvoyConfig) -> dict[str, Any]:
+    """The relay serves one request per connection, so a connection is never handed to a
+    second request after the stream it was opened for."""
+    cluster = _local_cluster("streams", cfg.stream_host, cfg.stream_port)
+    cluster["typed_extension_protocol_options"] = {
+        "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+            "@type": _T + "upstreams.http.v3.HttpProtocolOptions",
+            "common_http_protocol_options": {"max_requests_per_connection": 1},
+            "explicit_http_config": {"http_protocol_options": {}},
+        }
+    }
+    return cluster
 
 
 def _apps_cluster(cfg: EnvoyConfig) -> dict[str, Any]:
@@ -290,6 +315,14 @@ def render(cfg: EnvoyConfig) -> dict[str, Any]:
                     "domains": ["*"],
                     "routes": [
                         {
+                            "name": "stream",
+                            "match": {
+                                "prefix": "/",
+                                "headers": [{"name": STREAM_HEADER, "present_match": True}],
+                            },
+                            "route": {"cluster": "streams", "timeout": "0s"},
+                        },
+                        {
                             "name": "wake",
                             "match": {
                                 "prefix": "/",
@@ -346,7 +379,11 @@ def render(cfg: EnvoyConfig) -> dict[str, Any]:
     return {
         "static_resources": {
             "listeners": [listener],
-            "clusters": [_authz_cluster(cfg), _apps_cluster(cfg)],
+            "clusters": [
+                _local_cluster("authz", cfg.authz_host, cfg.authz_port),
+                _streams_cluster(cfg),
+                _apps_cluster(cfg),
+            ],
         },
         "overload_manager": {
             "resource_monitors": [
@@ -367,13 +404,17 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python -m ssc_edge.envoy")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--authz", default="127.0.0.1:9001", help="host:port of ssc_edge.server")
+    parser.add_argument("--streams", default="127.0.0.1:9002", help="host:port of the relay")
     parser.add_argument("--plaintext-upstream", action="store_true", help="tests only")
     args = parser.parse_args(argv)
     host, _, port = str(args.authz).rpartition(":")
+    stream_host, _, stream_port = str(args.streams).rpartition(":")
     cfg = EnvoyConfig(
         port=args.port,
         authz_host=host,
         authz_port=int(port),
+        stream_host=stream_host,
+        stream_port=int(stream_port),
         upstream_tls=not args.plaintext_upstream,
     )
     json.dump(render(cfg), sys.stdout, indent=1)

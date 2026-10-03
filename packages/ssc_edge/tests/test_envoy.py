@@ -1,11 +1,12 @@
 """The rendered Envoy config, validated and run in real Envoy 1.39 (SSC-018).
 
-The authorisation service runs in this process; Envoy and an echo app run in Docker, the app
-under the Cloud Run host name the gateway computes. Without Docker these tests skip locally and
-fail in CI.
+The authorisation service and the stream relay run in this process; Envoy and an echo app run
+in Docker, the app under the Cloud Run host name the gateway computes. Without Docker these tests
+skip locally and fail in CI.
 """
 
 import ast
+import asyncio
 import json
 import os
 import secrets
@@ -14,7 +15,8 @@ import socket
 import subprocess
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,20 +29,23 @@ from edge_world import (
     LABEL,
     NOWHERE_HOST,
     PAY_HOST,
+    PROD,
     FakeRedeemer,
     World,
     session,
     snapshot,
 )
+from fastapi import FastAPI
 
 from ssc_app.identity import verify
 from ssc_edge import pages
 from ssc_edge.envoy import ENVOY_VERSION, WAKE_SECONDS, EnvoyConfig, render
-from ssc_edge.gate import DEADLINE_HEADER, REQUEST_SECONDS, WAKE_HEADER
+from ssc_edge.gate import DEADLINE_HEADER, REQUEST_SECONDS, STREAM_HEADER, WAKE_HEADER
 from ssc_edge.identity_note import jwks
 from ssc_edge.keys import new_keyring, parse_keyring
 from ssc_edge.server import create_app
 from ssc_edge.session import WAKE_COOKIE, wake_cookie
+from ssc_edge.streams import WATCH_SECONDS, Streams
 from ssc_shared.access import AccessView
 
 ENVOY_IMAGE = (
@@ -53,6 +58,8 @@ APP_IMAGE = (
 UPSTREAM = "ssc-a-" + "p" * 20 + "-123456789012.us-central1.run.app"
 PAY_UPSTREAM = "ssc-a-" + "y" * 20 + "-123456789012.us-central1.run.app"
 ECHO_APP = """
+import base64
+import hashlib
 import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -68,7 +75,25 @@ class Echo(BaseHTTPRequestHandler):
             self.wfile.flush()
             time.sleep(1)
 
+    def _socket(self):
+        key = self.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        self.send_response(101)
+        self.send_header("upgrade", "websocket")
+        self.send_header("connection", "Upgrade")
+        accept = base64.b64encode(hashlib.sha1(key.encode()).digest()).decode()
+        self.send_header("sec-websocket-accept", accept)
+        self.end_headers()
+        seen = [[k.lower(), v] for k, v in self.headers.items()]
+        self.wfile.write(json.dumps(seen).encode() + b"\\n")
+        self.wfile.flush()
+        while data := self.rfile.read1(4096):
+            self.wfile.write(data)
+            self.wfile.flush()
+        self.close_connection = True
+
     def _go(self):
+        if self.headers.get("upgrade", "").lower() == "websocket":
+            return self._socket()
         if self.path.startswith("/events"):
             return self._events()
         if self.path.startswith("/slow/"):
@@ -172,7 +197,9 @@ def test_the_check_fails_closed_and_cannot_be_skipped() -> None:
 def test_only_a_marked_page_load_is_cut_at_two_seconds() -> None:
     hcm = render(EnvoyConfig())["static_resources"]["listeners"][0]["filter_chains"][0]
     hcm = hcm["filters"][0]["typed_config"]
-    wake, rest = hcm["route_config"]["virtual_hosts"][0]["routes"]
+    stream, wake, rest = hcm["route_config"]["virtual_hosts"][0]["routes"]
+    assert stream["match"]["headers"] == [{"name": STREAM_HEADER, "present_match": True}]
+    assert stream["route"] == {"cluster": "streams", "timeout": "0s"}
     assert wake["match"]["headers"] == [{"name": WAKE_HEADER, "present_match": True}]
     assert wake["route"]["retry_policy"] == {"num_retries": 0, "per_try_timeout": "2s"}
     assert wake["route"]["timeout"] == rest["route"]["timeout"] == "0s"
@@ -190,6 +217,14 @@ def test_only_a_marked_page_load_is_cut_at_two_seconds() -> None:
     assert on_success["allowed_client_headers_on_success"] == {
         "patterns": [{"exact": "set-cookie"}]
     }
+    assert {"exact": STREAM_HEADER} in on_success["allowed_upstream_headers"]["patterns"]
+
+
+def test_the_relay_gets_one_request_per_connection() -> None:
+    clusters = {c["name"]: c for c in render(EnvoyConfig())["static_resources"]["clusters"]}
+    options = clusters["streams"]["typed_extension_protocol_options"]
+    (http,) = options.values()
+    assert http["common_http_protocol_options"] == {"max_requests_per_connection": 1}
 
 
 @dataclass
@@ -197,6 +232,8 @@ class Stack:
     url: str
     world: World
     server: uvicorn.Server
+    streams: Streams
+    relayed: list[str]
 
     def get(self, host: str, path: str = "/", method: str = "GET", **kw: object) -> httpx2.Response:
         headers = {"host": host, **dict(kw.pop("headers", {}) or {})}  # type: ignore[arg-type]
@@ -214,9 +251,28 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
     )
     world.now = int(time.time())  # Envoy runs on the real clock
     gate = world.gate(max_body_bytes=1024)
-    port = free_port()
+    port, relay_port = free_port(), free_port()
+    published: dict[str, int] = {}
+    relayed: list[str] = []
+
+    async def dial(host: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        relayed.append(host)
+        return await asyncio.open_connection("127.0.0.1", published[host])
+
+    streams = Streams(lambda: gate, dial=dial)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        relay = await streams.serve("0.0.0.0", relay_port)  # noqa: S104
+        try:
+            yield
+        finally:
+            relay.close()
+            await streams.aclose()
+
+    app = create_app(lambda: gate, lifespan=lifespan, streams=streams)
     server = uvicorn.Server(
-        uvicorn.Config(create_app(lambda: gate), host="0.0.0.0", port=port, log_level="warning")  # noqa: S104
+        uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")  # noqa: S104
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -226,15 +282,22 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
     ast.parse(ECHO_APP)
     tag = "ssc018-" + secrets.token_hex(4)
     (tmp / "echo.py").write_text(ECHO_APP)
-    cfg = EnvoyConfig(authz_host="host.docker.internal", authz_port=port, upstream_tls=False)
+    cfg = EnvoyConfig(
+        authz_host="host.docker.internal",
+        authz_port=port,
+        stream_host="host.docker.internal",
+        stream_port=relay_port,
+        upstream_tls=False,
+    )
     (tmp / "envoy.json").write_text(json.dumps(render(cfg)))
     run("network", "create", tag)
     try:
         for name, alias in ((f"{tag}-app", UPSTREAM), (f"{tag}-pay", PAY_UPSTREAM)):
             run(
                 "run", "-d", "--rm", "--name", name, "--network", tag, "--network-alias", alias,
-                "-v", f"{tmp}:/c:ro", APP_IMAGE, "python", "/c/echo.py",
+                "-p", "127.0.0.1::80", "-v", f"{tmp}:/c:ro", APP_IMAGE, "python", "/c/echo.py",
             )  # fmt: skip
+            published[alias] = int(run("port", name, "80/tcp").splitlines()[0].rsplit(":", 1)[1])
         run(
             "run", "-d", "--rm", "--name", f"{tag}-envoy", "--network", tag,
             "--add-host", "host.docker.internal:host-gateway", "-p", "127.0.0.1::8080",
@@ -255,7 +318,7 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(0.2)
-        yield Stack(url, world, server)
+        yield Stack(url, world, server, streams, relayed)
     finally:
         subprocess.run(
             [docker(), "rm", "-f", f"{tag}-envoy", f"{tag}-app", f"{tag}-pay"],
@@ -375,6 +438,53 @@ def test_server_sent_events_stream_through_unbuffered(stack: Stack) -> None:
     assert [line for line, _ in arrived] == ["data: 0", "data: 1", "data: 2"]
     assert arrived[0][1] < 0.9, arrived  # before the app sent the second event
     assert arrived[2][1] - arrived[0][1] > 1.5, arrived
+    assert stack.relayed[-1] == UPSTREAM
+
+
+def open_socket(stack: Stack, cookie: str) -> tuple[socket.socket, list[list[str]]]:
+    """A WebSocket upgrade through Envoy; returns the socket and the headers the app saw."""
+    sock = socket.create_connection(("127.0.0.1", int(stack.url.rsplit(":", 1)[1])), timeout=5)
+    sock.sendall(
+        f"GET /ws HTTP/1.1\r\nhost: {HOST}\r\ncookie: {cookie}\r\nconnection: Upgrade\r\n"
+        "upgrade: websocket\r\nsec-websocket-version: 13\r\n"
+        f"sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\norigin: https://{HOST}\r\n\r\n".encode()
+    )
+    got = b""
+    while b"\n" not in got.partition(b"\r\n\r\n")[2]:
+        chunk = sock.recv(4096)
+        assert chunk, got
+        got += chunk
+    head, _, body = got.partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.1 101 "), head
+    return sock, json.loads(body.partition(b"\n")[0])
+
+
+def test_a_websocket_is_closed_within_one_watch_of_its_grant_going(stack: Stack) -> None:
+    w = stack.world
+    cookie = w.cookie(session(BEN, iat=w.now - 60))
+    before = w.view
+    sock, seen = open_socket(stack, cookie)
+    try:
+        names = {k for k, _ in seen}
+        assert STREAM_HEADER not in names and "x-ssc-identity" in names
+        assert ["host", UPSTREAM] in seen
+        sock.sendall(b"ping")
+        assert sock.recv(4) == b"ping"
+        grants = snapshot()["grants"]
+        w.view = AccessView.from_document(snapshot(2, grants={**grants, PROD: grants[PROD][1:]}))
+        started = time.monotonic()
+        sock.settimeout(WATCH_SECONDS + 3)
+        try:
+            rest = sock.recv(4096)
+        except ConnectionResetError:
+            rest = b""
+        took = time.monotonic() - started
+        assert rest == b""
+        assert took <= WATCH_SECONDS + 1, took
+        assert stack.get(HOST, headers={"cookie": cookie}).status_code == 404
+    finally:
+        sock.close()
+        w.view = before
 
 
 PAGE_LOAD = {
