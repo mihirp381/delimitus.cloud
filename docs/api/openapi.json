@@ -3536,6 +3536,7 @@
                 "type": "null"
               }
             ],
+            "description": "How long the call to the declared path took.",
             "title": "Duration Ms"
           },
           "error": {
@@ -3551,7 +3552,8 @@
                   "dispatch_error",
                   "http_error",
                   "timeout",
-                  "abandoned"
+                  "abandoned",
+                  "start_failed"
                 ],
                 "type": "string"
               },
@@ -3611,6 +3613,18 @@
             "title": "Scheduled For",
             "type": "string"
           },
+          "start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How long the app, and the gateway in front of it, took to answer the run's start request; the run's timeout counts from after it.",
+            "title": "Start Ms"
+          },
           "started_at": {
             "anyOf": [
               {
@@ -3651,6 +3665,7 @@
           "state",
           "error",
           "http_status",
+          "start_ms",
           "duration_ms",
           "scheduled_for",
           "requested_by_user_id",

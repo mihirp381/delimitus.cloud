@@ -138,6 +138,7 @@ DATABASE_PERMISSIONS: Final = (
 USAGE_PERMISSIONS: Final = ("monitoring.timeSeries.list",)
 BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
 GATEWAY_SETTINGS: Final = ("gateway_image", "gateway_keyring", "gateway_jwks", "org_id")
+MAX_TIMER_KEYS: Final = 2
 CUSTOMER_ORG: Final = re.compile(r"org_[a-z0-9]{20}")
 
 
@@ -161,6 +162,9 @@ class CellConfig:
     gateway_keyring: str | None = None
     gateway_jwks: str | None = None
     org_id: str | None = None
+    timer_jwks: str | None = None
+    """The control plane's public timer JWKS (SSC-041); unset, the gateway refuses timer
+    calls."""
 
     @property
     def project_id(self) -> str:
@@ -203,6 +207,7 @@ class CellConfig:
             "gateway_keyring": self.gateway_keyring,
             "gateway_jwks": self.gateway_jwks,
             "org_id": self.org_id,
+            "timer_jwks": self.timer_jwks,
             **self.flags,
         }
         return {
@@ -238,6 +243,7 @@ def read_config(stack: str) -> CellConfig:
         gateway_keyring=keyring,
         gateway_jwks=jwks,
         org_id=org,
+        timer_jwks=timer_jwks_setting(config.get("timer_jwks")),
     )
 
 
@@ -282,6 +288,17 @@ def _check_public_jwks(jwks: str) -> None:
     """A JWKS of named keys with no private member, as ``python -m ssc_edge.keys jwks`` prints."""
     if public_jwks_kids(jwks) is None:
         raise ValueError("gateway_jwks must be the public JWKS of the gateway keyring")
+
+
+def timer_jwks_setting(jwks: str | None) -> str | None:
+    """One or two named public keys, as ``python -m ssc_control.timers.https jwks`` prints; the
+    same for every cell, since one control plane signs every timer call."""
+    if not jwks:
+        return None
+    kids = public_jwks_kids(jwks)
+    if kids is None or len(kids) > MAX_TIMER_KEYS:
+        raise ValueError("timer_jwks must be the control plane's public timer JWKS, 1 or 2 keys")
+    return jwks
 
 
 def _int_or(value: int | None, default: int) -> int:
@@ -1162,7 +1179,7 @@ class Cell:
         cfg = self.cfg
         if not (cfg.gateway_image and cfg.gateway_keyring and cfg.gateway_jwks and cfg.org_id):
             return None
-        return {
+        env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_LABEL": cfg.label,
             "SSC_ORG_ID": cfg.org_id,
             "SSC_PROJECT_NUMBER": self.project_.number,
@@ -1175,6 +1192,9 @@ class Cell:
             "SSC_AUTH_URL": f"https://{n.AUTH_HOST}",
             "SSC_IDENTITY_ISSUER": n.identity_issuer(cfg.label),
         }
+        if cfg.timer_jwks:
+            env["SSC_TIMER_JWKS"] = cfg.timer_jwks
+        return env
 
     def entry(self) -> None:
         """The cell's own public door: a global external Application Load Balancer on one

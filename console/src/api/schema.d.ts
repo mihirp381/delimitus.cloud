@@ -2439,13 +2439,16 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /** Duration Ms */
+            /**
+             * Duration Ms
+             * @description How long the call to the declared path took.
+             */
             duration_ms: number | null;
             /**
              * Error
              * @description Why a run failed, timed out or was skipped.
              */
-            error: ("overlap" | "app_inactive" | "owner_inactive" | "builder_access_revoked" | "deleted" | "dispatch_unavailable" | "dispatch_error" | "http_error" | "timeout" | "abandoned") | null;
+            error: ("overlap" | "app_inactive" | "owner_inactive" | "builder_access_revoked" | "deleted" | "dispatch_unavailable" | "dispatch_error" | "http_error" | "timeout" | "abandoned" | "start_failed") | null;
             /** Finished At */
             finished_at: string | null;
             /** Http Status */
@@ -2465,6 +2468,11 @@ export interface components {
              * @description The instant a scheduled run was for; when a manual run was asked for.
              */
             scheduled_for: string;
+            /**
+             * Start Ms
+             * @description How long the app, and the gateway in front of it, took to answer the run's start request; the run's timeout counts from after it.
+             */
+            start_ms: number | null;
             /** Started At */
             started_at: string | null;
             /**

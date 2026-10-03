@@ -104,9 +104,11 @@ SQLite on disk (a `sqlite` or `sqlite3` key in `[state]`, in any case, or `state
 | `path` | string | required | Starts with a single `/`, may carry a `?query`, no `#`, at most 512 characters. |
 | `timezone` | string | `"UTC"` | `UTC` or an IANA zone such as `Europe/London`, checked against the zone database. |
 | `method` | string | `"POST"` | `GET` or `POST`. |
-| `timeout_seconds` | integer | `60` | 1 to 900. A run past it is cancelled. |
+| `timeout_seconds` | integer | `60` | 1 to 900. A run past it is cancelled and recorded as `timed_out`. The clock starts when the app first answers, not when the call is sent (below). |
 
 Preview timers are stored paused (decision, lane A).
+
+A run is two requests to the app's public host, each with its own schedule token (`ssc_contracts.schedule_token`). First a `GET` to the running release's `runtime.health_path` starts the gateway and the app if they are at zero. It has 150 seconds; no answer, an error or a status of 500 or more in that window ends the run as `failed` (`start_failed`). Then the call goes to `path` with `method`, and `timeout_seconds` counts from there. So a cold start never eats into the timeout, and the run history shows the start (`start_ms`) apart from the call (`duration_ms`). The app sees both requests with an identity note whose `role` is `schedule`; the health path should answer quickly and do no work.
 
 ## Resource classes
 

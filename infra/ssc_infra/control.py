@@ -52,6 +52,9 @@ APIS: Final = (
     "sqladmin.googleapis.com",
     "storage.googleapis.com",
 )
+TIMER_KEY: Final = "SSC_TIMER_SIGNING_KEY"  # noqa: S105  (a secret's name)
+"""Made, and given to the worker, only once ``timer_key_id`` is set (SSC-041)."""
+TIMER_KEY_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 SECRET_READERS: Final[Mapping[str, tuple[str, ...]]] = {
     "SSC_DATABASE_DSN": (API, WORKER, AUTH),
     "SSC_MIGRATE_DSN": (MIGRATE,),
@@ -60,6 +63,7 @@ SECRET_READERS: Final[Mapping[str, tuple[str, ...]]] = {
     "SSC_WORKOS_CLIENT_ID": (WORKER, AUTH),
     "SSC_AUTH_SIGNING_KEY": (AUTH,),
     "SSC_AUTH_STATE_KEY": (AUTH,),
+    TIMER_KEY: (WORKER,),
 }
 SECRET_ACCESSOR: Final = "roles/secretmanager.secretAccessor"  # noqa: S105
 SQL_INSTANCE: Final = "ssc-control"
@@ -118,7 +122,8 @@ def public_jwks_kids(jwks: str) -> set[str] | None:
 class ControlConfig:
     """``control_stages`` run the control plane; ``public_stage`` holds the public hosts.
     ``control_image``, ``auth_jwks`` and ``auth_signing_kid`` are the release, all or none;
-    ``cell_label`` and ``cell_jwks`` the one cell, both or none."""
+    ``cell_label`` and ``cell_jwks`` the one cell, both or none. ``timer_key_id`` names the
+    worker's timer key, whose PEM is the ``SSC_TIMER_SIGNING_KEY`` secret (SSC-041)."""
 
     stages: tuple[n.Stage, ...] = ()
     public: n.Stage | None = None
@@ -129,6 +134,7 @@ class ControlConfig:
     cell_jwks: str | None = None
     worker_instances: int = 1
     deployer: bool = False
+    timer_key_id: str | None = None
 
     @property
     def released(self) -> bool:
@@ -189,6 +195,9 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         config.get("control_image"), config.get("auth_jwks"), config.get("auth_signing_kid")
     )
     label, cell_jwks = cell_settings(config.get("cell_label"), config.get("cell_jwks"))
+    timer_key_id = config.get("timer_key_id") or None
+    if timer_key_id is not None and not TIMER_KEY_ID.fullmatch(timer_key_id):
+        raise ValueError("timer_key_id must be 1 to 64 letters, digits, '.', '_' or '-'")
     instances = config.get_int("worker_instances")
     if instances is not None and instances < 0:
         raise ValueError("worker_instances must be 0 or more")
@@ -202,6 +211,7 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         cell_jwks=cell_jwks,
         worker_instances=1 if instances is None else instances,
         deployer=deployer,
+        timer_key_id=timer_key_id,
     )
 
 
@@ -244,6 +254,9 @@ def worker_env(
         env["SSC_CELL_AGENT_URL"] = n.agent_url(cfg.cell_label)
         env["SSC_IDENTITY_JWKS"] = cfg.cell_jwks
         env["SSC_IDENTITY_ISSUER"] = n.identity_issuer(cfg.cell_label)
+    if cfg.timer_key_id:
+        env["SSC_TIMER_DISPATCHER"] = "https"
+        env["SSC_TIMER_KEY_ID"] = cfg.timer_key_id
     return env
 
 
@@ -266,8 +279,17 @@ def _blob_env(stage: n.Stage, signer: pulumi.Input[str]) -> dict[str, pulumi.Inp
     }
 
 
-def secrets_of(role: str) -> list[str]:
-    return [secret for secret, readers in SECRET_READERS.items() if role in readers]
+def secrets_in(cfg: ControlConfig) -> dict[str, tuple[str, ...]]:
+    """``SECRET_READERS`` as this config uses it: the timer key only with ``timer_key_id``."""
+    return {
+        secret: readers
+        for secret, readers in SECRET_READERS.items()
+        if secret != TIMER_KEY or cfg.timer_key_id
+    }
+
+
+def secrets_of(role: str, cfg: ControlConfig) -> list[str]:
+    return [secret for secret, readers in secrets_in(cfg).items() if role in readers]
 
 
 def _slug(secret: str) -> str:
@@ -454,7 +476,7 @@ class ControlPlane:
         """One secret per setting, in the region, readable only by the accounts in
         ``SECRET_READERS``: a grant on the secret, never on the project."""
         self.secret_grants: dict[str, list[pulumi.Resource]] = {role: [] for role in ACCOUNTS}
-        for secret_id, readers in SECRET_READERS.items():
+        for secret_id, readers in secrets_in(self.cfg).items():
             secret = gcp.secretmanager.Secret(
                 self._name(_slug(secret_id)),
                 project=self.pid,
@@ -573,7 +595,7 @@ class ControlPlane:
                                         )
                                     ),
                                 )
-                                for s in secrets_of(role)
+                                for s in secrets_of(role, self.cfg)
                             ),
                         ]
                         if released
@@ -652,7 +674,7 @@ class ControlPlane:
                                         )
                                     ),
                                 )
-                                for s in secrets_of(WORKER)
+                                for s in secrets_of(WORKER, self.cfg)
                             ),
                         ]
                         if released
@@ -712,7 +734,7 @@ class ControlPlane:
                                         )
                                     ),
                                 )
-                                for s in secrets_of(MIGRATE)
+                                for s in secrets_of(MIGRATE, self.cfg)
                             ],
                             volume_mounts=[
                                 gcp.cloudrunv2.JobTemplateTemplateContainerVolumeMountArgs(

@@ -20,21 +20,26 @@ Ticket "done when" checks (decision 020):
 Plus: pause and resume by hand, the API's authorisation, deletion and paging, cross-org reads,
 ``may_build`` against ``require_builder``, a sync's row locks before ``audit_head``, the fake
 dispatcher, the worker's wiring and a real
-worker pass, and revision 0013's round trip.
+worker pass, the HTTPS dispatcher's composition, and revisions 0013's and 0025's round trips.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 
+import cold_cell
 import psycopg
 import pytest
+from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -60,7 +65,8 @@ from ssc_testkit import (
 from ssc_contracts.audit import ActorKind
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
-from ssc_contracts.manifest import Schedule
+from ssc_contracts.manifest import Manifest, Schedule
+from ssc_contracts.schedule_token import SCHEDULE_TOKEN_HEADER
 from ssc_control import directory
 from ssc_control.api import Settings, create_app
 from ssc_control.api.authz import _SELECT_BUILDER  # pyright: ignore[reportPrivateUsage]
@@ -83,7 +89,7 @@ from ssc_control.lifecycle.kill_switch import Timings
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.timers import jobs as timers_jobs
-from ssc_control.timers import service, tasks
+from ssc_control.timers import runner, service, tasks
 from ssc_control.timers.dispatch import (
     DispatchResult,
     FakeScheduleDispatcher,
@@ -91,6 +97,8 @@ from ssc_control.timers.dispatch import (
     Scripted,
     TimerCall,
 )
+from ssc_control.timers.https import HttpsScheduleDispatcher, ScheduleSigner, new_timer_pem
+from ssc_control.timers.https import main as https_main
 from ssc_control.timers.runner import RunDeps, run_timer, sweep_org
 from ssc_control.timers.service import Timers, may_build
 from ssc_control.worker import (
@@ -295,6 +303,46 @@ async def armed(b: Bench, *schedules: Schedule) -> str:
     wanted = schedules or (declared(),)
     await sync(b, b.w.prod, *wanted)
     return str(live(b, b.w.prod)[wanted[0].name]["id"])
+
+
+def cell_of(b: Bench) -> str:
+    (row,) = rows_of(b.dsn, b.w.org, "select cell_label from ssc.org")
+    return str(row["cell_label"])
+
+
+def go_live(b: Bench, env: str, health_path: str) -> None:
+    """A healthy deployment to ``env`` of a release whose stored bundle declares
+    ``health_path``."""
+    digest = "sha256:" + uuid.uuid4().hex * 2
+    rel, dep = new_id("rel"), new_id("dep")
+    manifest = Manifest.model_validate(
+        {"schema": "ssc/v1", "runtime": {"health_path": health_path}}
+    ).model_dump_json(by_alias=True)
+    with psycopg.connect(b.dsn) as conn:
+        bind_org_sync(conn, b.w.org)
+        conn.execute(
+            "insert into ssc.bundle (id, org_id, app_id, digest, size_bytes, actor_kind, "
+            "actor_id, state, manifest, manifest_digest, file_count, stored_at) "
+            "values (%s, %s, %s, %s, 5, 'user', %s, 'stored', %s, %s, 0, now())",
+            (new_id("bdl"), b.w.org, b.w.app, digest, b.w.builder, manifest, digest),
+        )
+        (number,) = conn.execute(
+            "select coalesce(max(number), 0) + 1 from ssc.release where app_id = %s", (b.w.app,)
+        ).fetchone() or (1,)
+        conn.execute(
+            "insert into ssc.release (id, org_id, app_id, number, image_digest, manifest_digest, "
+            "source_digest, actor_kind, actor_id) values (%s, %s, %s, %s, %s, %s, %s, 'user', %s)",
+            (rel, b.w.org, b.w.app, number, digest, digest, digest, b.w.builder),
+        )
+        conn.execute(
+            "insert into ssc.deployment (id, org_id, app_id, environment_id, release_id, "
+            "kind, state, config_version, grants_version, actor_kind, actor_id, finished_at) "
+            "values (%s, %s, %s, %s, %s, 'deploy', 'healthy', 1, 1, 'user', %s, now())",
+            (dep, b.w.org, b.w.app, env, rel, b.w.builder),
+        )
+        conn.execute(
+            "update ssc.environment set current_deployment_id = %s where id = %s", (dep, env)
+        )
 
 
 def runs(b: Bench, sid: str) -> list[dict[str, Any]]:
@@ -544,7 +592,14 @@ async def test_preview_schedules_are_paused_and_run_by_hand(b: Bench) -> None:
             run_id=run_id,
             method="POST",
             path="/tasks/tick",
+            slug="ledger",
+            environment="preview",
+            cell_label=cell_of(b),
+            health_path="/",
         )
+    ]
+    assert cast("FakeScheduleDispatcher", b.dispatcher).starts == [
+        cast("FakeScheduleDispatcher", b.dispatcher).calls[0]
     ]
     assert actions(b, sid) == [
         ("schedule.created", "user", b.w.builder),
@@ -561,8 +616,10 @@ async def test_preview_schedules_are_paused_and_run_by_hand(b: Bench) -> None:
         "trigger": "manual",
         "environment": "preview",
         "outcome": "succeeded",
+        "start_ms": done["start_ms"],
         "duration_ms": done["duration_ms"],
     }
+    assert done["start_ms"] is not None
     # Preview never resumes; pausing it by hand leaves it as it is.
     assert_problem(
         post(b, url(b, b.w.preview, sid, "/resume"), b.t.builder), ErrorCode.SCHEDULE_CANNOT_RESUME
@@ -648,11 +705,14 @@ async def test_missed_instants_coalesce_into_one_late_run(b: Bench) -> None:
 
 
 class Held:
-    """A dispatcher that answers 200 once ``release`` is set."""
+    """A dispatcher whose call answers 200 once ``release`` is set."""
 
     def __init__(self) -> None:
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
+
+    async def start(self, call: TimerCall) -> DispatchResult:
+        return DispatchResult(http_status=200)
 
     async def dispatch(self, call: TimerCall) -> DispatchResult:
         self.entered.set()
@@ -711,9 +771,155 @@ async def test_a_run_past_its_timeout_is_cancelled(b: Bench) -> None:
     assert slow.cancelled == slow.calls and len(slow.calls) == 1 and slow.answered == []
 
 
+async def test_the_timeout_counts_from_when_the_app_answers(b: Bench) -> None:
+    sid = await armed(b, declared(timeout_seconds=1))
+    cold = FakeScheduleDispatcher([Scripted(delay=0.5)], start=Scripted(delay=1.5))
+    b.clock.now = at(5)
+    assert await fire(b, due(b, sid), cold) == "succeeded"
+    (run,) = runs(b, sid)
+    assert (run["state"], run["error"], run["http_status"]) == ("succeeded", None, 200)
+    assert 1400 <= run["start_ms"] < 3000
+    assert 400 <= run["duration_ms"] < 1000
+    assert len(cold.starts) == len(cold.answered) == 1 and cold.cancelled == []
+
+
+@pytest.mark.parametrize(
+    ("start", "status"),
+    [(Scripted(status=503), 503), (Scripted(status=500), 500), (Scripted(raises=OSError()), None)],
+    ids=["503", "500", "oserror"],
+)
+async def test_a_start_with_no_good_answer_fails_the_run_unsent(
+    b: Bench, start: Scripted, status: int | None
+) -> None:
+    sid = await armed(b)
+    dispatcher = FakeScheduleDispatcher(start=start)
+    b.clock.now = at(5)
+    assert await fire(b, due(b, sid), dispatcher) == "failed"
+    (run,) = runs(b, sid)
+    assert (run["state"], run["error"], run["http_status"], run["start_ms"]) == (
+        "failed",
+        "start_failed",
+        status,
+        None,
+    )
+    assert len(dispatcher.starts) == 1 and dispatcher.calls == []
+    assert schedule(b, sid)["next_run_at"] == at(10)
+
+
+async def test_a_start_that_never_answers_fails_within_the_start_window(
+    b: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "START_SECONDS", 0.2)
+    sid = await armed(b, declared(timeout_seconds=900))
+    stuck = FakeScheduleDispatcher(start=Scripted(delay=30))
+    b.clock.now = at(5)
+    started = time.monotonic()
+    assert await fire(b, due(b, sid), stuck) == "failed"
+    assert time.monotonic() - started < 5
+    (run,) = runs(b, sid)
+    assert (run["error"], run["start_ms"]) == ("start_failed", None)
+    assert stuck.calls == []
+
+
+async def test_any_answer_below_500_means_the_app_is_up(b: Bench) -> None:
+    sid = await armed(b)
+    dispatcher = FakeScheduleDispatcher(start=Scripted(status=404))
+    b.clock.now = at(5)
+    assert await fire(b, due(b, sid), dispatcher) == "succeeded"
+    assert len(dispatcher.calls) == 1
+
+
+async def test_the_start_asks_the_running_releases_health_path(b: Bench) -> None:
+    go_live(b, b.w.prod, "/healthz")
+    sid = await armed(b)
+    b.clock.now = at(5)
+    assert await fire(b, due(b, sid)) == "succeeded"
+    fake = cast("FakeScheduleDispatcher", b.dispatcher)
+    assert [c.health_path for c in fake.starts] == ["/healthz"]
+    assert (fake.calls[0].slug, fake.calls[0].environment) == ("ledger", "prod")
+
+
+async def test_a_fall_back_night_fires_a_fixed_time_once(b: Bench) -> None:
+    """``30 1 * * *`` in New York on 1 November 2026: 01:30 happens at 05:30 and 06:30 UTC.
+    Every due job is fired at each minute of the night; one run happens, at the first. A job
+    for the second 01:30, however it came to be queued, finds the schedule armed past it."""
+    night = datetime(2026, 11, 1, 4, 0, tzinfo=UTC)
+    b.clock.now = night
+    sid = await armed(b, declared(cron="30 1 * * *", timezone="America/New_York"))
+    first = datetime(2026, 11, 1, 5, 30, tzinfo=UTC)
+    second = datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+    assert schedule(b, sid)["next_run_at"] == first
+    outcomes: list[str] = []
+    for minute in range(4 * 60):
+        b.clock.now = night + timedelta(minutes=minute)
+        for job in jobs(b.dsn, sid):
+            if job["scheduled_at"] is None or job["scheduled_at"] <= b.clock.now:
+                outcomes.append(await fire(b, job))
+    assert outcomes == ["succeeded"]
+    (run,) = runs(b, sid)
+    assert run["scheduled_for"] == first
+    assert schedule(b, sid)["next_run_at"] == datetime(2026, 11, 2, 6, 30, tzinfo=UTC)
+    deps = RunDeps(
+        engine=b.engine, dispatcher=b.dispatcher, metrics=metrics_port(MASTER), clock=b.clock
+    )
+    replay = await run_timer(
+        deps, org_id=b.w.org, schedule_id=sid, scheduled_for=second.isoformat()
+    )
+    assert replay == "stale"
+    assert len(runs(b, sid)) == 1
+
+
+async def test_a_timer_wakes_a_cold_app_behind_a_cold_gateway(b: Bench, tmp_path: Path) -> None:
+    """The real dispatcher through the app's public host: the load balancer holds the call while
+    the gateway starts (2 s, then Envoy) and loads its snapshot, then the app holds it 3 s. The
+    start outlasts the 1 s timeout, and the run still succeeds; the history shows the start."""
+    signer = ScheduleSigner(new_timer_pem(), "timer-1")
+    go_live(b, b.w.prod, "/healthz")
+    sid = await armed(b, declared(timeout_seconds=1))
+    async with cold_cell.cold_cell(
+        org_id=b.w.org,
+        cell_label=cell_of(b),
+        app_id=b.w.app,
+        environment_id=b.w.prod,
+        slug="ledger",
+        timer_jwks=json.dumps(signer.jwks()),
+        workdir=tmp_path,
+        gateway_delay=2.0,
+        app_delay=3.0,
+    ) as cell:
+        dispatcher = HttpsScheduleDispatcher(
+            signer, apps_domain=cold_cell.DOMAIN, transport=cell.transport()
+        )
+        b.clock.now = at(5)
+        try:
+            assert await fire(b, due(b, sid), dispatcher) == "succeeded"
+        finally:
+            await dispatcher.aclose()
+        seen = cell.seen()
+        assert cell.woken_at is not None and len(cell.snapshot_loads) == 1
+        notes = [cell.note(s["headers"]["x-ssc-identity"]) for s in seen]
+    (run,) = runs(b, sid)
+    assert (run["state"], run["error"], run["http_status"]) == ("succeeded", None, 204)
+    assert run["start_ms"] >= 5000
+    assert run["duration_ms"] < 1000
+    assert [(s["method"], s["path"]) for s in seen] == [
+        ("GET", "/healthz"),
+        ("POST", "/tasks/tick"),
+    ]
+    assert all(SCHEDULE_TOKEN_HEADER.lower() not in s["headers"] for s in seen)
+    assert {(n.sub, n.env, n.role) for n in notes} == {(sid, "prod", "schedule")}
+    history = get(b, url(b, b.w.prod, sid, "/runs")).json()["items"]
+    assert [(h["start_ms"], h["duration_ms"]) for h in history] == [
+        (run["start_ms"], run["duration_ms"])
+    ]
+
+
 class Answering:
     def __init__(self, result: DispatchResult) -> None:
         self.result = result
+
+    async def start(self, call: TimerCall) -> DispatchResult:
+        return DispatchResult(http_status=200)
 
     async def dispatch(self, call: TimerCall) -> DispatchResult:
         return self.result
@@ -767,18 +973,19 @@ async def test_what_the_app_answers_decides_the_outcome(  # noqa: PLR0913
 
 
 async def test_the_sweep_closes_abandoned_runs_and_rearms(b: Bench) -> None:
+    """A running run is abandoned past the start window (150 s), its timeout (60 s) and a
+    minute of slack: 271 s after it started, not 269 s."""
     names = ("stuck", "fresh", "lost", "waited")
     await sync(b, b.w.prod, *(declared(n) for n in names))
     rows = live(b, b.w.prod)
     stuck, fresh, lost, waited = (str(rows[n]["id"]) for n in names)
     now = at(30)
     b.clock.now = now
-    # timeout 60 s plus a minute of slack: 121 s after it started a run is abandoned.
     dead = add_run(
-        b, stuck, "running", scheduled_for=at(5), started_at=now - timedelta(seconds=121)
+        b, stuck, "running", scheduled_for=at(5), started_at=now - timedelta(seconds=271)
     )
     alive = add_run(
-        b, fresh, "running", scheduled_for=at(5), started_at=now - timedelta(seconds=119)
+        b, fresh, "running", scheduled_for=at(5), started_at=now - timedelta(seconds=269)
     )
     # A manual run waits at most an hour for the worker.
     old = add_run(b, waited, "queued", scheduled_for=now - timedelta(minutes=61), by=b.w.builder)
@@ -1277,8 +1484,14 @@ async def test_the_fake_dispatcher_answers_from_its_script() -> None:
         run_id="tmr_x",
         method="GET",
         path="/x",
+        slug="ledger",
+        environment="prod",
+        cell_label="c1",
+        health_path="/",
     )
     fake = FakeScheduleDispatcher([Scripted(status=201), Scripted(delay=5)])
+    assert await fake.start(call) == DispatchResult(http_status=200)
+    assert fake.starts == [call] and fake.calls == []
     assert await fake.dispatch(call) == DispatchResult(http_status=201)
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0.05):
@@ -1286,6 +1499,10 @@ async def test_the_fake_dispatcher_answers_from_its_script() -> None:
     assert (fake.calls, fake.answered, fake.cancelled) == ([call, call], [call], [call])
     with pytest.raises(ValueError, match="at least one"):
         FakeScheduleDispatcher([])
+    waking = FakeScheduleDispatcher(start=Scripted(status=503))
+    assert await waking.start(call) == DispatchResult(http_status=503)
+    with pytest.raises(OSError):
+        await FakeScheduleDispatcher(start=Scripted(raises=OSError())).start(call)
 
 
 def test_the_worker_registers_the_timer_tasks_and_composes_the_ports() -> None:
@@ -1307,7 +1524,48 @@ def test_the_worker_registers_the_timer_tasks_and_composes_the_ports() -> None:
     with pytest.raises(CompositionError, match="fake timer_dispatcher"):
         refuse_fakes(faked, {"SSC_ENV": "prod"})
     with pytest.raises(CompositionError, match="unknown"):
-        timer_dispatcher_from_env({"SSC_TIMER_DISPATCHER": "https"})
+        timer_dispatcher_from_env({"SSC_TIMER_DISPATCHER": "smoke"})
+
+
+async def test_the_worker_composes_the_https_dispatcher(tmp_path: Path) -> None:
+    """The real dispatcher loads only with a P-256 key and its id, never echoes the key, and,
+    not being a fake, may be composed by a production worker."""
+    pem = new_timer_pem().decode()
+    https = {"SSC_TIMER_DISPATCHER": "https", "SSC_TIMER_KEY_ID": "timer-1"}
+    composed = timer_dispatcher_from_env({**https, "SSC_TIMER_SIGNING_KEY": pem})
+    assert isinstance(composed, HttpsScheduleDispatcher)
+    await composed.aclose()
+    with pytest.raises(CompositionError, match="needs SSC_TIMER_SIGNING_KEY and SSC_TIMER_KEY_ID"):
+        timer_dispatcher_from_env(https)
+    with pytest.raises(CompositionError, match="needs"):
+        timer_dispatcher_from_env({"SSC_TIMER_DISPATCHER": "https", "SSC_TIMER_SIGNING_KEY": pem})
+    bad = {**https, "SSC_TIMER_SIGNING_KEY": "-----BEGIN PRIVATE KEY-----\nnope\n"}
+    with pytest.raises(CompositionError, match="does not load") as refused:
+        timer_dispatcher_from_env(bad)
+    assert "nope" not in str(refused.value)
+    rsa = generate_private_key(public_exponent=65537, key_size=2048)
+    wrong = rsa.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode()
+    with pytest.raises(CompositionError, match="does not load"):
+        timer_dispatcher_from_env({**https, "SSC_TIMER_SIGNING_KEY": wrong})
+    with pytest.raises(CompositionError, match="SSC_APPS_DOMAIN"):
+        timer_dispatcher_from_env(
+            {**https, "SSC_TIMER_SIGNING_KEY": pem, "SSC_APPS_DOMAIN": "Not A Domain"}
+        )
+    ports = compose_ports(
+        {
+            "SSC_DATABASE_DSN": "postgresql://ssc_app@localhost/ssc",
+            **https,
+            "SSC_TIMER_SIGNING_KEY": pem,
+            "SSC_ENV": "prod",
+        }
+    )
+    assert isinstance(ports.timer_dispatcher, HttpsScheduleDispatcher)
+    await ports.timer_dispatcher.aclose()
+    key = tmp_path / "timer.pem"
+    assert https_main(["new", "--out", str(key), "--kid", "timer-1"]) == 0
+    assert key.stat().st_mode & 0o777 == 0o600
+    assert https_main(["new", "--out", str(key), "--kid", "timer-1"]) == 1
+    assert https_main(["jwks", "--key", str(key), "--kid", "timer-1"]) == 0
 
 
 def fresh_db(dsns: Dsns) -> Dsns:
@@ -1463,3 +1721,56 @@ def test_revision_0013_round_trips(dsns: Dsns) -> None:
     assert shape(dsn)[3].isdisjoint(added)
     upgrade(dsn)
     assert shape(dsn)[:3] == (0, True, [True, True])
+
+
+def test_revision_0025_round_trips(dsns: Dsns) -> None:
+    name = f"r{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database {name} owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database=name).render_as_string(hide_password=False)
+    in_db = {"database": name}
+    su = make_url(dsns.superuser).set(**in_db).render_as_string(hide_password=False)
+
+    def start_ms_column() -> bool:
+        with psycopg.connect(su) as conn:
+            (found,) = conn.execute(
+                "select count(*) from information_schema.columns where table_schema = 'ssc' "
+                "and table_name = 'timer_run' and column_name = 'start_ms'"
+            ).fetchone() or (0,)
+        return bool(found)
+
+    upgrade(dsn, "0025_timer_start")
+    assert start_ms_column()
+    org = make_org(make_url(dsns.app).set(**in_db).render_as_string(hide_password=False))
+    app_id, env_id, sid, rid = new_id("app"), new_id("env"), new_id("sch"), new_id("tmr")
+    with psycopg.connect(su) as conn:
+        conn.execute(
+            "insert into ssc.app (id, org_id, slug, owner_user_id) values (%s, %s, 'ledger', %s)",
+            (app_id, org.org_id, org.admin_user_id),
+        )
+        conn.execute(
+            "insert into ssc.environment (id, org_id, app_id, name) values (%s, %s, %s, 'prod')",
+            (env_id, org.org_id, app_id),
+        )
+        conn.execute(
+            "insert into ssc.schedule (id, org_id, environment_id, name, cron, path, state, "
+            "pause_reason, declared_by_user_id) "
+            "values (%s, %s, %s, 'nightly', '0 2 * * *', '/tick', 'paused', 'manual', %s)",
+            (sid, org.org_id, env_id, org.admin_user_id),
+        )
+        conn.execute(
+            "insert into ssc.timer_run (id, org_id, schedule_id, trigger, scheduled_for, state, "
+            "error, http_status, started_at, finished_at) values (%s, %s, %s, 'schedule', now(), "
+            "'failed', 'start_failed', 503, now(), now())",
+            (rid, org.org_id, sid),
+        )
+    with psycopg.connect(su) as conn, pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("update ssc.timer_run set start_ms = -1 where id = %s", (rid,))
+    downgrade(dsn, "0024_request_timeout")
+    assert not start_ms_column()
+    with psycopg.connect(su) as conn:
+        assert conn.execute("select error from ssc.timer_run").fetchall() == [("dispatch_error",)]
+    with psycopg.connect(su) as conn, pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("update ssc.timer_run set error = 'start_failed' where id = %s", (rid,))
+    upgrade(dsn)
+    assert start_ms_column()

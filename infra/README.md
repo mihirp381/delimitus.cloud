@@ -30,7 +30,7 @@ pulumi config set --stack c-<label> database true
 pulumi up --stack c-<label>
 ```
 
-Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
+Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below), `timer_jwks` (Timer calls, under Gateway), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
 
 The stack exports `flags`, so `cell_diff` compares two cells with different flags without their flagged resources.
 
@@ -268,6 +268,17 @@ The first `pulumi up` creates the key on a cell made before it. Still live-only:
 4. Full stop. Expected: `scale_to_zero` is `done` and the last step's `since_command_ms` is under 60,000. Cloud Run's settle time for manual scaling to 0 sets this bound (the agent waits up to 180 s), and it is known only from this run. `gcloud run services describe` shows the manual instance count at 0.
 5. Enable. Run `ssc enable <app>`. Expected: the next request after the following compile is admitted, and the app starts from zero.
 
+**Timer calls (SSC-041, decision 023 amendment).** A timer run reaches its app through the cell's load balancer and gateway, as a browser does, with a schedule token signed by the control-plane worker. The cell's `timer_jwks` setting is the worker key's public JWKS, one or two named public P-256 keys, the same for every cell; the stack refuses anything else and passes it to the gateway as `SSC_TIMER_JWKS`. Unset, the gateway refuses every timer call with its `404`. Live steps (operator, not run by SSC-041):
+
+```
+umask 077
+uv run python -m ssc_control.timers.https new --out timer-key.pem --kid timer-<yyyymm> > timer-jwks.json
+pulumi config set --stack c-<label> timer_jwks "$(cat timer-jwks.json)"
+pulumi up --stack c-<label>
+```
+
+The PEM goes into the worker's `SSC_TIMER_SIGNING_KEY` secret, then is removed locally; the platform stack's `timer_key_id` makes that secret and gives the worker `SSC_TIMER_KEY_ID` and `SSC_TIMER_DISPATCHER=https` (Control plane, below). `docs/runbooks/ssc-064-control-plane.md` (step 7) does this without writing the PEM to a file. To rotate, set `timer_jwks` to both keys on every cell, move the worker to the new key, then drop the old one. Live check for the proof run: with the gateway and an app with a one-minute schedule at zero, wait for a run. Expected: `GET .../schedules/{id}/runs` shows it `succeeded` with `start_ms` the cold start and `duration_ms` the call alone, and the app's logs show a `GET` of its `health_path` and then the call, both with a note whose `role` is `schedule`.
+
 ## Audit anchors
 
 Each org's daily audit anchor goes to its cell's bucket, beside the snapshots, under `audit-anchors/<org>/` (SSC-012, decision 012 amendment). The worker is the only account that may change them: it holds `storage.objectUser` on the cell bucket (`bucket-control-worker`), the API's grant there (`bucket-control`) is gone because no API code uses a cell bucket, the gateway and the agent hold `storage.objectViewer`, and no other cell account has a storage role. The cells folder enforces `iam.automaticIamGrantsForDefaultServiceAccounts` (Organisation policies), so no default account of a new cell project gets `roles/editor`. The retention lock is Step 5 and cannot be a bucket lock, because `latest.json` is replaced on every compile. Live checks for the proof run, on a staging cell whose org has events, run as the operator with the worker's settings: `SSC_DATABASE_DSN` through `cloud-sql-proxy` (runbook SSC-064), `SSC_ENV=staging`, `SSC_BLOB_BACKEND=gcs`, `SSC_BLOB_BUCKET`, `SSC_BLOB_SIGNER` and `SSC_CELL_BUCKET_TEMPLATE=ssc-c-{cell}-cell`, with credentials that may use the cell bucket (the just-in-time grant on the cells folder):
@@ -308,6 +319,7 @@ The platform stack runs the control plane in `ssc-control-<stage>` for each stag
   - `control_image`, `auth_jwks`, `auth_signing_kid`: the release, all or none. `control_image` is a build of `packages/ssc_control/Dockerfile` pinned by digest in `ssc-platform`; `auth_jwks` is the auth host's public JWKS and must hold `auth_signing_kid`. Until they are set every service runs the placeholder image with no settings, the worker pool runs no instance and there is no migration job.
   - `cell_label`, `cell_jwks`: the one cell until placement, both or neither. `cell_jwks` is that cell stack's `identity_jwks` output. Every per-cell setting derives from the label through `naming`: the agent and intake URLs, the cell bucket and the issuer `https://keys.delimitus.com/<label>`. Only the stage the cells trust gets them, on its API and worker (the public stage; with none, every stage), because a cell grants nothing to another stage's accounts (`ControlConfig.serves_cells`). The cell's `sql_instance` output is not used: the control plane talks to the cell's database only through the agent, and the agent's own `SSC_SQL_INSTANCE` is the cell stack's.
   - `worker_instances`: the worker pool's instance count, 1 by default.
+  - `timer_key_id`: the worker's timer key (SSC-041). Unset, there is no timer key secret and the worker keeps its current dispatcher. Set, the stack makes the `SSC_TIMER_SIGNING_KEY` secret, readable by the worker alone, and gives the worker `SSC_TIMER_DISPATCHER=https`, `SSC_TIMER_KEY_ID` and `SSC_APPS_DOMAIN`. Add the secret's version before the worker next starts (`docs/runbooks/ssc-064-control-plane.md`, step 7); every cell's `timer_jwks` is that key's public JWKS.
 - **Processes**, one account each, all from one image:
 
   | Process | Cloud Run | Account | Command |
@@ -329,6 +341,7 @@ The platform stack runs the control plane in `ssc-control-<stage>` for each stag
   | `SSC_METRICS_KEY` | API, worker |
   | `SSC_WORKOS_API_KEY`, `SSC_WORKOS_CLIENT_ID` | worker (directory sync), auth host |
   | `SSC_AUTH_SIGNING_KEY`, `SSC_AUTH_STATE_KEY` | auth host |
+  | `SSC_TIMER_SIGNING_KEY`, only with `timer_key_id` | worker |
 
   Services read `latest` at start, so a new version needs a new revision. The cell deny rule names all four accounts of every control project.
 - **Blobs.** The private bucket `ssc-control-<stage>-blobs`, with signed URLs only. The API and the worker each hold `storage.objectUser` there and sign as themselves (`iam.serviceAccountTokenCreator` on their own account).

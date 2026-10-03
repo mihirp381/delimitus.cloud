@@ -42,6 +42,7 @@ RunError = Literal[
     "http_error",
     "timeout",
     "abandoned",
+    "start_failed",
 ]
 Limit = Annotated[int, Query(ge=1, le=MAX_PAGE)]
 Before = Annotated[
@@ -57,7 +58,11 @@ class TimerRunOut(Strict):
     state: RunState
     error: RunError | None = Field(description="Why a run failed, timed out or was skipped.")
     http_status: int | None
-    duration_ms: int | None
+    start_ms: int | None = Field(
+        description="How long the app, and the gateway in front of it, took to answer the run's "
+        "start request; the run's timeout counts from after it."
+    )
+    duration_ms: int | None = Field(description="How long the call to the declared path took.")
     scheduled_for: datetime = Field(
         description="The instant a scheduled run was for; when a manual run was asked for."
     )
@@ -104,15 +109,16 @@ class RunAccepted(Strict):
 
 
 _RUN_COLUMNS: Final = (
-    "t.id as run_id, t.schedule_id, t.trigger, t.state, t.error, t.http_status, t.duration_ms, "
-    "t.scheduled_for, t.requested_by_user_id, t.created_at, t.started_at, t.finished_at"
+    "t.id as run_id, t.schedule_id, t.trigger, t.state, t.error, t.http_status, t.start_ms, "
+    "t.duration_ms, t.scheduled_for, t.requested_by_user_id, t.created_at, t.started_at, "
+    "t.finished_at"
 )
 _SCHEDULES: Final = (
     "select s.id as schedule_id, s.environment_id, s.name, s.cron, s.timezone, s.path, "
     "s.method, s.timeout_seconds, s.state, s.pause_reason, s.next_run_at, "
     "s.declared_by_user_id, l.* from ssc.schedule s left join lateral (select "
     "t.id as run_id, t.schedule_id as run_schedule_id, t.trigger, t.state as run_state, t.error, "
-    "t.http_status, t.duration_ms, t.scheduled_for, t.requested_by_user_id, "
+    "t.http_status, t.start_ms, t.duration_ms, t.scheduled_for, t.requested_by_user_id, "
     "t.created_at, t.started_at, t.finished_at from ssc.timer_run t "
     "where t.org_id = s.org_id and t.schedule_id = s.id "
     "order by t.scheduled_for desc, t.id desc limit 1) l on true "
@@ -173,6 +179,7 @@ def _schedule(row: RowMapping) -> ScheduleOut:
             state=row["run_state"],
             error=row["error"],
             http_status=row["http_status"],
+            start_ms=row["start_ms"],
             duration_ms=row["duration_ms"],
             scheduled_for=row["scheduled_for"],
             requested_by_user_id=row["requested_by_user_id"],
