@@ -1007,11 +1007,6 @@ class Cell:
         )
         for name, member, role in (
             (
-                "bucket-control",
-                pulumi.Output.concat("serviceAccount:", self.control_sa),
-                "roles/storage.objectUser",
-            ),
-            (
                 "bucket-control-worker",
                 pulumi.Output.concat("serviceAccount:", self.control_worker),
                 "roles/storage.objectUser",

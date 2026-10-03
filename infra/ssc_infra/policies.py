@@ -34,6 +34,9 @@ SERVICE_AGENT: Final = re.compile(
 OWN_ACCOUNT: Final = re.compile(
     r"^serviceAccount:[a-z0-9-]+@ssc-[a-z0-9-]+\.iam\.gserviceaccount\.com$"
 )
+DEFAULT_ACCOUNT: Final = re.compile(
+    r"^serviceAccount:(\d+-compute@developer|[a-z][a-z0-9-]+@appspot)\.gserviceaccount\.com$"
+)
 RUN_SERVICE: Final = re.compile(
     r"^//run\.googleapis\.com/projects/[^/]+/locations/[^/]+/services/([^/]+)$"
 )
@@ -85,6 +88,7 @@ def cell_rules(operator: str, peering: Sequence[str] | None = None) -> tuple[Rul
             tag_exception=True,
         ),
         Rule("sa-keys", "iam.disableServiceAccountKeyCreation", enforce=True),
+        Rule("default-grants", "iam.automaticIamGrantsForDefaultServiceAccounts", enforce=True),
         Rule(
             "vpc-peering",
             "compute.restrictVpcPeering",
@@ -178,6 +182,13 @@ def _sa_keys(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[st
             yield f"{type_}::{name} creates a service account key"
 
 
+def _default_grants(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+    for type_, name, inputs in resources:
+        for member in _members(type_, inputs):
+            if DEFAULT_ACCOUNT.match(member):
+                yield f"{type_}::{name} grants {inputs.get('role')} to the default {member}"
+
+
 def _peering(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
     for type_, name, inputs in resources:
         if type_ == "gcp:compute/networkPeering:NetworkPeering":
@@ -232,6 +243,7 @@ CHECKS: Final[dict[str, Check]] = {
     "storage.publicAccessPrevention": _public_access,
     "iam.managed.allowedPolicyMembers": _policy_members,
     "iam.disableServiceAccountKeyCreation": _sa_keys,
+    "iam.automaticIamGrantsForDefaultServiceAccounts": _default_grants,
     "compute.restrictVpcPeering": _peering,
     "compute.restrictSharedVpcHostProjects": _shared_vpc,
     "run.allowedIngress": _ingress,

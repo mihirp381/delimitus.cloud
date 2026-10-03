@@ -75,6 +75,7 @@ def test_the_cells_folder_holds_the_policy_table(declared: list[Declared]) -> No
         "storage.publicAccessPrevention",
         "iam.managed.allowedPolicyMembers",
         "iam.disableServiceAccountKeyCreation",
+        "iam.automaticIamGrantsForDefaultServiceAccounts",
         "compute.restrictVpcPeering",
         "compute.restrictSharedVpcHostProjects",
         "run.allowedIngress",
@@ -87,6 +88,7 @@ def test_the_cells_folder_holds_the_policy_table(declared: list[Declared]) -> No
     for boolean in (
         "storage.publicAccessPrevention",
         "iam.disableServiceAccountKeyCreation",
+        "iam.automaticIamGrantsForDefaultServiceAccounts",
         "sql.restrictPublicIp",
     ):
         assert rules[boolean] == [{"enforce": "TRUE"}]

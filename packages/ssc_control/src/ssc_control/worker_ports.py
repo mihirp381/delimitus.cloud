@@ -45,9 +45,10 @@ def _utcnow() -> datetime:
 class Ports:
     """``runtime_driver`` None means no runtime is configured: the reconciler defers nothing
     and deployments fail with ``RUNTIME_UNAVAILABLE``. ``build_driver`` None fails builds with
-    ``BUILD_DRIVER_UNAVAILABLE``. ``blob_store`` None means ``SSC_BLOB_BACKEND=none``: the
-    snapshot and anchor ticks defer nothing and a compile does nothing. ``cell_stores`` set sends
-    each org's snapshots to its cell's bucket instead. ``timer_dispatcher`` None fails timer runs
+    ``BUILD_DRIVER_UNAVAILABLE``. ``blob_store`` and ``cell_stores`` both None: the snapshot and
+    anchor ticks defer nothing and a compile does nothing. ``cell_stores`` set sends each org's
+    snapshots and audit anchors to its cell's bucket instead of ``blob_store``
+    (``storage.org_store``). ``timer_dispatcher`` None fails timer runs
     with ``dispatch_unavailable``. ``cell_deployer`` None fails a lazy cell resource with
     ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087). ``app_databases`` None fails the first deployment
     of an environment that declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040).

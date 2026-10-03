@@ -6,15 +6,23 @@
 * ``reanchor --org <id> --restored-to <rfc3339> --ref <ticket>``: step 4 of the restore
   procedure; exit 1, writing nothing, when the restored chain does not hold.
 
-Connects with ``SSC_DATABASE_DSN``, the setting the API uses. Anchors live in the blob store the
-API and the worker use (``SSC_BLOB_*``); without one these commands exit 2.
+Each prints ``no such org: <id>`` and exits 1 when the org does not exist.
+
+Run with the worker's settings: ``SSC_DATABASE_DSN``, ``SSC_BLOB_*`` and
+``SSC_CELL_BUCKET_TEMPLATE``. Each org's anchors are read and written where the daily job puts
+them (``storage.org_store``): the org's cell bucket when ``SSC_CELL_BUCKET_TEMPLATE`` is set, else
+the ``SSC_BLOB_*`` store. With neither, the anchor commands exit 2.
 """
 
 import argparse
 import asyncio
 import os
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.audit.anchor import (
     STALE_AFTER,
@@ -29,15 +37,49 @@ from ssc_control.audit.anchor import (
 from ssc_control.audit.verify import VerifyReport, verify
 from ssc_control.db.bind import bound_org, check_org_id
 from ssc_control.db.engine import make_engine
-from ssc_control.storage import StorageConfigError, blob_store_from_env
+from ssc_control.storage import (
+    CellStores,
+    StorageConfigError,
+    blob_store_from_env,
+    cell_stores_from_env,
+    org_store,
+)
 from ssc_shared.blobstore import BlobStore
 
 DSN_ENV = "SSC_DATABASE_DSN"
+_ORG = text("select 1 from ssc.org where id = :org")
+NO_STORE = "anchors need a blob store; SSC_BLOB_BACKEND is none and SSC_CELL_BUCKET_TEMPLATE unset"
+
+
+class UnknownOrgError(LookupError):
+    pass
+
+
+async def check_org(engine: AsyncEngine, org_id: str) -> None:
+    """``UnknownOrgError`` unless ``org_id`` names an org."""
+    async with bound_org(engine, org_id) as conn:
+        if (await conn.execute(_ORG, {"org": org_id})).first() is None:
+            raise UnknownOrgError(org_id)
+
+
+@dataclass(frozen=True, slots=True)
+class AnchorStores:
+    """The worker's two store settings; ``of`` picks one org's as the daily job does."""
+
+    blob: BlobStore | None
+    cells: CellStores | None
+
+    async def of(self, engine: AsyncEngine, org_id: str) -> BlobStore:
+        store = await org_store(engine, org_id, blob_store=self.blob, cell_stores=self.cells)
+        if store is None:
+            raise StorageConfigError(NO_STORE)
+        return store
 
 
 async def run_verify(dsn: str, org_id: str) -> VerifyReport:
     engine = make_engine(dsn)
     try:
+        await check_org(engine, org_id)
         snapshot = engine.execution_options(isolation_level="REPEATABLE READ")
         async with bound_org(snapshot, org_id) as conn:
             return await verify(conn, org_id)
@@ -46,18 +88,21 @@ async def run_verify(dsn: str, org_id: str) -> VerifyReport:
 
 
 async def run_verify_anchors(
-    dsn: str, org_id: str, blob: BlobStore, *, now: datetime
+    dsn: str, org_id: str, stores: AnchorStores, *, now: datetime
 ) -> tuple[VerifyReport, AnchorReport]:
     engine = make_engine(dsn)
     try:
-        return await verify_anchors(engine, org_id, blob, now=now)
+        await check_org(engine, org_id)
+        return await verify_anchors(engine, org_id, await stores.of(engine, org_id), now=now)
     finally:
         await engine.dispose()
 
 
-async def run_anchor(dsn: str, org_id: str, blob: BlobStore) -> Anchor:
+async def run_anchor(dsn: str, org_id: str, stores: AnchorStores) -> Anchor:
     engine = make_engine(dsn)
     try:
+        await check_org(engine, org_id)
+        blob = await stores.of(engine, org_id)
         async with bound_org(engine, org_id) as conn:
             return await write_anchor(conn, org_id, blob, "daily")
     finally:
@@ -65,10 +110,12 @@ async def run_anchor(dsn: str, org_id: str, blob: BlobStore) -> Anchor:
 
 
 async def run_reanchor(
-    dsn: str, org_id: str, blob: BlobStore, *, restored_to: datetime, ref: str
+    dsn: str, org_id: str, stores: AnchorStores, *, restored_to: datetime, ref: str
 ) -> Anchor:
     engine = make_engine(dsn)
     try:
+        await check_org(engine, org_id)
+        blob = await stores.of(engine, org_id)
         now = datetime.now(UTC)
         return await reanchor(engine, org_id, blob, restored_to=restored_to, ref=ref, now=now)
     finally:
@@ -109,14 +156,14 @@ def _anchor_lines(report: AnchorReport) -> list[str]:
     return lines
 
 
-def _blob_store(parser: argparse.ArgumentParser) -> BlobStore:
+def _stores(parser: argparse.ArgumentParser) -> AnchorStores:
     try:
-        blob = blob_store_from_env(os.environ)
+        stores = AnchorStores(blob_store_from_env(os.environ), cell_stores_from_env(os.environ))
     except StorageConfigError as exc:
         parser.error(str(exc))
-    if blob is None:
-        parser.error("anchors need a blob store; SSC_BLOB_BACKEND is none")
-    return blob
+    if stores.blob is None and stores.cells is None:
+        parser.error(NO_STORE)
+    return stores
 
 
 def _verify(parser: argparse.ArgumentParser, dsn: str, args: argparse.Namespace) -> int:
@@ -124,17 +171,17 @@ def _verify(parser: argparse.ArgumentParser, dsn: str, args: argparse.Namespace)
         report = asyncio.run(run_verify(dsn, args.org))
         _say(_chain_lines(report)[0])
         return 0 if report.ok else 1
-    blob = _blob_store(parser)
-    chain, anchors = asyncio.run(run_verify_anchors(dsn, args.org, blob, now=datetime.now(UTC)))
+    stores = _stores(parser)
+    chain, anchors = asyncio.run(run_verify_anchors(dsn, args.org, stores, now=datetime.now(UTC)))
     for line in _chain_lines(chain) + _anchor_lines(anchors):
         _say(line)
     return 0 if chain.ok and anchors.ok else 1
 
 
 def _anchor(parser: argparse.ArgumentParser, dsn: str, args: argparse.Namespace) -> int:
-    blob = _blob_store(parser)
+    stores = _stores(parser)
     try:
-        anchor = asyncio.run(run_anchor(dsn, args.org, blob))
+        anchor = asyncio.run(run_anchor(dsn, args.org, stores))
     except AnchorConflictError as exc:
         _say(f"refused: {exc}")
         return 1
@@ -143,10 +190,10 @@ def _anchor(parser: argparse.ArgumentParser, dsn: str, args: argparse.Namespace)
 
 
 def _reanchor(parser: argparse.ArgumentParser, dsn: str, args: argparse.Namespace) -> int:
-    blob = _blob_store(parser)
+    stores = _stores(parser)
     try:
         anchor = asyncio.run(
-            run_reanchor(dsn, args.org, blob, restored_to=args.restored_to, ref=args.ref)
+            run_reanchor(dsn, args.org, stores, restored_to=args.restored_to, ref=args.ref)
         )
     except ReanchorRefusedError as exc:
         for line in _chain_lines(exc.chain) + _anchor_lines(exc.anchors):
@@ -165,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     verify_cmd = commands.add_parser("verify", help="walk one org's chain from genesis")
     verify_cmd.add_argument("--org", required=True, type=check_org_id)
     verify_cmd.add_argument(
-        "--anchors", action="store_true", help="also check every anchor in the blob store"
+        "--anchors", action="store_true", help="also check every anchor in the org's store"
     )
     anchor_cmd = commands.add_parser("anchor", help="write today's anchor of one org now")
     anchor_cmd.add_argument("--org", required=True, type=check_org_id)
@@ -180,7 +227,11 @@ def main(argv: list[str] | None = None) -> int:
     if not dsn:
         parser.error(f"{DSN_ENV} is not set")
     command = {"verify": _verify, "anchor": _anchor, "reanchor": _reanchor}[args.command]
-    return command(parser, dsn, args)
+    try:
+        return command(parser, dsn, args)
+    except UnknownOrgError:
+        _say(f"no such org: {args.org}")
+        return 1
 
 
 if __name__ == "__main__":

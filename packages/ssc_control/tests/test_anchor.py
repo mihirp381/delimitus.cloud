@@ -10,6 +10,17 @@ Plus: adoption of an orphan object, refusal to replace a contradicting one, tail
 malformed objects, the 36-hour rule, re-anchoring after a restore (and refusing a tampered or
 wrongly-dated one), the CLI, the job tick, and the table's isolation and immutability.
 
+Each org's anchors live in its cell's bucket (SSC-012, the open part)
+  * the daily job writes each org's anchor to that org's cell bucket when cell stores are set
+                                  -> test_the_tick_anchors_each_org_in_its_own_cell_bucket
+  * ``verify --anchors`` and ``anchor`` use that bucket with the worker's settings; an anchor
+    left in the old store is reported missing
+                                  -> test_the_cli_uses_the_orgs_cell_bucket_with_worker_settings
+  * a point-in-time restore re-anchors in the cell bucket
+                                  -> test_reanchor_after_a_restore_writes_to_the_cell_bucket
+  * an org id that does not exist is one plain line and exit 1, with or without cell buckets
+                                  -> test_an_unknown_org_is_one_line_and_exit_1
+
 Revision 0011 also gives every org its cell label (founder default D1)
                                   -> test_every_org_gets_its_own_cell_label_at_creation
                                   -> test_0011_backfills_cell_labels_and_round_trips
@@ -24,6 +35,7 @@ import json
 import re
 import secrets
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -39,6 +51,7 @@ from ssc_testkit import Dsns, make_org
 
 from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.ids import new_id
+from ssc_control import storage
 from ssc_control.audit import Actor, NewEvent, append_event, canonical_bytes
 from ssc_control.audit import jobs as audit_jobs
 from ssc_control.audit.__main__ import main, run_verify
@@ -68,10 +81,13 @@ from ssc_control.db import (
 )
 from ssc_control.db.errors import INSUFFICIENT_PRIVILEGE
 from ssc_control.db.migrate import alembic_config
+from ssc_control.storage import cell_stores
 from ssc_control.worker import build_app, queue_conninfo
 from ssc_control.worker_ports import PORTS_KEY, Ports
+from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
+from ssc_shared.snapshot_feed import snapshot_prefix
 
 DAY = date(2026, 9, 1)
 LATER = date(2026, 9, 2)
@@ -634,6 +650,135 @@ def test_build_app_registers_the_audit_tasks_hourly() -> None:
     start = datetime(2026, 9, 1, 23, 30, tzinfo=UTC).timestamp()
     first = periodic.croniter.get_next(float, start_time=start)
     assert datetime.fromtimestamp(first, UTC) == datetime(2026, 9, 2, 0, 5, tzinfo=UTC)
+
+
+CELL_TEMPLATE = "ssc-c-{cell}-cell"
+
+
+def fs_buckets(root: Path) -> Callable[[str], BlobStore]:
+    """A bucket name to a filesystem store in the folder of that name under ``root``."""
+
+    def bucket(name: str) -> BlobStore:
+        return blob_store(root / name)
+
+    return bucket
+
+
+def cell_bucket(root: Path, label: str) -> FsBlobStore:
+    return blob_store(root / CELL_TEMPLATE.replace("{cell}", label))
+
+
+def label_of(dsns: Dsns, org: str) -> str:
+    return str(rows(dsns, org, "select cell_label from ssc.org where id = %s", org)[0][0])
+
+
+async def every_key(blob: FsBlobStore) -> list[str]:
+    return [info.key async for info in blob.list()]
+
+
+def worker_env(monkeypatch: pytest.MonkeyPatch, root: Path, dsns: Dsns) -> None:
+    """The worker's settings: the ``SSC_BLOB_*`` store in ``root/blobs`` and
+    ``SSC_CELL_BUCKET_TEMPLATE``, each bucket a folder under ``root``."""
+    fs_env(monkeypatch, root / "blobs", dsns)
+    monkeypatch.setenv("SSC_CELL_BUCKET_TEMPLATE", CELL_TEMPLATE)
+    monkeypatch.setattr(storage, "_gcs_store", fs_buckets(root))
+
+
+async def test_the_tick_anchors_each_org_in_its_own_cell_bucket(dsns: Dsns, tmp_path: Path) -> None:
+    db = await asyncio.to_thread(fresh_db, dsns)
+    a, b = [await asyncio.to_thread(make_org, db.app, n) for n in ("A", "B")]
+    blob = blob_store(tmp_path / "blobs")
+    cells = cell_stores(CELL_TEMPLATE, bucket=fs_buckets(tmp_path))
+    now = datetime.now(UTC)
+    today = now.date()
+    engine = make_engine(db.app)
+    try:
+        await run_tick(db, Ports(engine=engine, blob_store=blob, cell_stores=cells), now)
+    finally:
+        await engine.dispose()
+    assert anchor_jobs(db) == sorted([(a.org_id, "succeeded"), (b.org_id, "succeeded")])
+    for org in (a, b):
+        bucket = cell_bucket(tmp_path, org.cell_label)
+        key = daily_key(org.org_id, today)
+        assert await every_key(bucket) == [key]
+        assert parse_anchor(key, await read(bucket, key), org_id=org.org_id).seq == 1
+        assert not key.startswith(snapshot_prefix(org.org_id))
+    assert await every_key(blob) == []
+
+
+def test_the_cli_uses_the_orgs_cell_bucket_with_worker_settings(
+    dsns: Dsns, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    org = org_with_events(dsns, 2)
+    bucket = cell_bucket(tmp_path, label_of(dsns, org))
+    old_store = blob_store(tmp_path / "blobs")
+    worker_env(monkeypatch, tmp_path, dsns)
+    assert main(["anchor", "--org", org]) == 0
+    key = daily_key(org, db_now(dsns).astimezone(UTC).date())
+    assert capsys.readouterr().out == f"anchored: seq 3 at {key}\n"
+    assert asyncio.run(every_key(bucket)) == [key]
+    assert asyncio.run(every_key(old_store)) == []
+    assert main(["verify", "--org", org, "--anchors"]) == 0
+    assert "anchors: 1 checked" in capsys.readouterr().out
+    monkeypatch.delenv("SSC_BLOB_BACKEND")
+    assert main(["verify", "--org", org, "--anchors"]) == 0
+    capsys.readouterr()
+    left_behind = asyncio.run(anchor_of(dsns.app, org, old_store, DAY))
+    assert main(["verify", "--org", org, "--anchors"]) == 1
+    assert f"anchor missing: {left_behind.object_key} seq 3" in capsys.readouterr().out
+    monkeypatch.delenv("SSC_CELL_BUCKET_TEMPLATE")
+    with pytest.raises(SystemExit) as e:
+        main(["verify", "--org", org, "--anchors"])
+    assert e.value.code == 2
+    assert "SSC_CELL_BUCKET_TEMPLATE" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cells", [True, False])
+def test_an_unknown_org_is_one_line_and_exit_1(
+    dsns: Dsns,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    cells: bool,
+) -> None:
+    org = new_id("org")
+    worker_env(monkeypatch, tmp_path, dsns)
+    if not cells:
+        monkeypatch.delenv("SSC_CELL_BUCKET_TEMPLATE")
+    at = db_now(dsns).isoformat()
+    for argv in (
+        ["verify", "--org", org],
+        ["verify", "--org", org, "--anchors"],
+        ["anchor", "--org", org],
+        ["reanchor", "--org", org, "--restored-to", at, "--ref", "INC-44"],
+    ):
+        assert main(argv) == 1, argv
+        assert capsys.readouterr() == (f"no such org: {org}\n", ""), argv
+    assert asyncio.run(every_key(blob_store(tmp_path / "blobs"))) == []
+
+
+def test_reanchor_after_a_restore_writes_to_the_cell_bucket(
+    dsns: Dsns, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    org = org_with_events(dsns)
+    bucket = cell_bucket(tmp_path, label_of(dsns, org))
+    kept = asyncio.run(anchor_of(dsns.app, org, bucket, DAY))
+    restored_to = db_now(dsns)
+    asyncio.run(append(dsns.app, org, 3))
+    lost = asyncio.run(anchor_of(dsns.app, org, bucket, LATER))
+    restore(dsns, org, 6)
+    worker_env(monkeypatch, tmp_path, dsns)
+    assert main(["verify", "--org", org, "--anchors"]) == 1
+    assert f"anchor ahead: {lost.object_key} seq 9" in capsys.readouterr().out
+    at = restored_to.isoformat()
+    assert main(["reanchor", "--org", org, "--restored-to", at, "--ref", "INC-43"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(f"reanchored: seq 6 at audit-anchors/{org}/restore-")
+    written = out.removeprefix("reanchored: seq 6 at ").strip()
+    assert asyncio.run(every_key(bucket)) == sorted([kept.object_key, lost.object_key, written])
+    assert asyncio.run(every_key(blob_store(tmp_path / "blobs"))) == []
+    assert main(["verify", "--org", org, "--anchors"]) == 0
+    assert "2 checked, 1 superseded" in capsys.readouterr().out
 
 
 # ── the table ────────────────────────────────────────────────────────────────
