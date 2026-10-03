@@ -5,7 +5,7 @@ Pulumi in Python for SSC on Google Cloud (SSC-013, decisions 021, 022 and 025). 
 | Stack | What it holds |
 | --- | --- |
 | `platform` | Folders `ssc-cells/{prod,staging}` and `ssc-sandbox`, with logs in `us-central1`. The location policy on `ssc-platform`, the cell policy table on `ssc-cells` and the public-invoker tag (SSC-095). The control projects `ssc-control-<stage>`, their four identities and, for each stage in `control_stages`, the control plane (SSC-064: API, worker, auth host, database, secrets; the public hosts in `public_stage`). The folder rule denying secret reads. Just-in-time staff access. The $250 monthly budget. The public DNS zones `delimitusapps.com.` and `delimitus.com.` in `ssc-platform-0`. |
-| `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build`, `ssc-data` and `ssc-secret-intake`, KMS, bucket, Artifact Registry, the VPC with its firewall floor, DNS sinkhole and the empty database zone `ssc-sql`, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests), the cell agent (one instance at most) with its two log views and the secret intake behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
+| `c-<cell label>` | One cell, in two parts. At onboarding: project `ssc-c-<label>` with a $50 budget alert, identities `ssc-gateway`, `ssc-cell-agent`, `ssc-build`, `ssc-data` and `ssc-secret-intake`, KMS, bucket, Artifact Registry, the VPC with its firewall floor, DNS sinkhole and the empty database zone `ssc-sql`, Cloud NAT with the cell's fixed IP, reserved addresses for the proxy, the data gateway and the database range, the gateway (request-billed, minimum 0, 3600 s requests), the cell agent (one instance at most) with its two log views and its Monitoring read and the secret intake behind the cell's public entry, and the cell's own deny rule. On first use: whatever the flags below turn on. |
 
 The lazy flags are turned on by the cell deployer when the control plane asks (SSC-087, below). The operator can still set any flag by hand.
 
@@ -196,6 +196,21 @@ The cell agent reads app, build and health logs from the cell's own Cloud Loggin
 4. Whether one view with `resource.type = "cloud_run_revision" OR resource.type = "build"` is accepted: `gcloud logging views create ssc-try --bucket=_Default --location=us-central1 --log-filter=...`, then delete it. If it is, two views stay anyway (no change needed).
 5. `source=build` shows a build's lines through `ssc-build`, and `GET .../health` shows `running` or `asleep` without waking the app.
 6. The agent service shows max instances 1, concurrency 200 and timeout 300 s (`gcloud run services describe ssc-cell-agent`).
+
+## App usage
+
+The cell agent reads Cloud Run's own metrics for every `ssc-a-` service from the cell's Cloud Monitoring (SSC-028, `ssc_agent.cloud_monitoring`): three `timeSeries.list` calls an hour, for `container/billable_instance_time`, `container/instance_count` (`state = active`) and `container/startup_latencies`.
+
+- **API.** `monitoring.googleapis.com` is on in every cell, with the other APIs at onboarding.
+- **Identity.** The custom role `sscCellAgentUsage` holds `monitoring.timeSeries.list` alone, granted to `ssc-cell-agent` on the project; no `monitoring.viewer` or any other Monitoring role (`tests/test_cell.py`).
+- **Agent environment.** `SSC_USAGE_SOURCE=monitoring` with `agent_image` set; unset, the agent refuses usage reads and the control plane records no usage events.
+- **Network.** The agent has no VPC egress, so it reaches `monitoring.googleapis.com` on Google's own path, as it reaches Logging, Cloud Run and Cloud SQL Admin. The cell's DNS policy and Private Google Access apply only to traffic in the VPC, so neither changes.
+- **Cost.** Cloud Run's metrics are free, and about 2,200 read calls a month stay inside Monitoring's free read allowance.
+
+**Live checks** (operator, not run by this change), on a staging cell with an `agent_image` built from SSC-028 and one Streamlit app deployed:
+1. The custom role is enough: the agent's usage read answers with no `403`, and `gcloud projects get-iam-policy ssc-c-<label>` shows `ssc-cell-agent` with `sscCellAgentUsage` and no `roles/monitoring.*`.
+2. Data within 15 minutes: open the app, then read the agent's usage for the current hour; `billable_instance_time` and `startup_latencies` show the service within 15 minutes of the first request. Note the delay seen.
+3. `instance_count` stays `active` while a WebSocket is open: keep the Streamlit page open with no clicks for 20 minutes, then read `instance_count` with `state = active` for that window (Metrics Explorer, or the agent's busy minutes). Expected: every minute of the window counts as active. If the idle minutes show as `idle`, session hours undercount open pages, and SSC-028's busy-minute rule needs another source.
 
 ## Gateway
 

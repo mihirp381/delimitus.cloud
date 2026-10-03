@@ -34,6 +34,7 @@ APIS: Final = (
     "dns.googleapis.com",
     "iam.googleapis.com",
     "logging.googleapis.com",
+    "monitoring.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "servicenetworking.googleapis.com",
@@ -77,6 +78,8 @@ LOG_VIEWS: Final = {
     "ssc-build": 'resource.type = "build"',
 }
 LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
+USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
+USAGE_SOURCE: Final = "monitoring"
 INTAKE_MAX: Final = 3
 INTAKE_COMMAND: Final = ("python", "-m", "ssc_agent.intake")
 DATAGW_MAX: Final = 10
@@ -132,6 +135,7 @@ DATABASE_PERMISSIONS: Final = (
     "cloudsql.databases.create",
     "cloudsql.databases.delete",
 )
+USAGE_PERMISSIONS: Final = ("monitoring.timeSeries.list",)
 BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
 GATEWAY_SETTINGS: Final = ("gateway_image", "gateway_keyring", "gateway_jwks", "org_id")
 CUSTOMER_ORG: Final = re.compile(r"org_[a-z0-9]{20}")
@@ -472,10 +476,20 @@ class Cell:
             permissions=list(DATABASE_PERMISSIONS),
             opts=self._o(),
         )
+        usage_role = gcp.projects.IAMCustomRole(
+            "agent-usage",
+            project=self.pid,
+            role_id="sscCellAgentUsage",
+            title="SSC cell agent: app usage",
+            description="Reads Cloud Run's metrics from the cell's Cloud Monitoring (SSC-028).",
+            permissions=list(USAGE_PERMISSIONS),
+            opts=self._o(),
+        )
         for name, role in (
             ("agent-create", create_role),
             ("agent-runtime", runtime_role),
             ("agent-database", database_role),
+            ("agent-usage", usage_role),
         ):
             gcp.projects.IAMMember(
                 name, project=self.pid, member=agent, role=role.name, opts=self._o()
@@ -1347,10 +1361,11 @@ class Cell:
         plane's API and worker (SSC-064), with an ID token whose audience is that host's URL
         (SSC-095). With both build images set it runs builds in the cell's Cloud Build as
         ``ssc-build`` (SSC-015); with the ``database`` flag it makes app databases on the cell's
-        instance (SSC-040). It reads app logs through the two log views (SSC-024) and keeps
-        under Cloud Logging's read quota per instance, so it runs one; its concurrency holds the
-        40 follows the agent allows at once beside every other call, and its timeout outlasts a
-        20 s follow and a 240 s traffic switch."""
+        instance (SSC-040). It reads app usage from the cell's Cloud Monitoring (SSC-028) and app
+        logs through the two log views (SSC-024), and keeps under Cloud Logging's read quota per
+        instance, so it runs one; its concurrency holds the 40 follows the agent allows at once
+        beside every other call, and its timeout outlasts a 20 s follow and a 240 s traffic
+        switch."""
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
             "SSC_CELL_REGION": n.REGION,
@@ -1359,6 +1374,7 @@ class Cell:
             "SSC_IMAGE_REPOSITORY": self.app_images,
             "SSC_GATEWAY_SA": self.gateway_sa.email,
             LOG_VIEW_ENV: ",".join(self.log_view_names),
+            USAGE_SOURCE_ENV: USAGE_SOURCE,
         }
         tools, frontend = self.cfg.build_tools_image, self.cfg.build_frontend_image
         if tools and frontend:
