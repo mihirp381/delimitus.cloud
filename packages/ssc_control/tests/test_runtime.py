@@ -253,6 +253,58 @@ def test_fingerprint_covers_the_revision_and_not_the_scaling() -> None:
     assert spec_for(image=OTHER).spec_fingerprint != base.spec_fingerprint
 
 
+def test_secret_references_define_the_revision() -> None:
+    base = spec_for()
+    one = replace(base, secrets={"STRIPE_KEY": "1"})
+    assert one.spec_fingerprint != base.spec_fingerprint
+    assert replace(base, secrets={"STRIPE_KEY": "2"}).spec_fingerprint != one.spec_fingerprint
+    assert replace(base, secrets={"OTHER_KEY": "1"}).spec_fingerprint != one.spec_fingerprint
+    two = {"A_KEY": "1", "B_KEY": "4"}
+    assert (
+        replace(base, secrets=two).spec_fingerprint
+        == replace(base, secrets=dict(reversed(two.items()))).spec_fingerprint
+    )
+    with pytest.raises(TypeError):
+        one.secrets["STRIPE_KEY"] = "9"  # type: ignore[index]
+
+
+def test_desired_state_carries_the_pinned_secret_versions() -> None:
+    desired = desired_for(
+        env=env_row(),
+        release=ReleaseRow(id=new_id("rel"), image_digest=IMAGE),
+        manifest=manifest(),
+        app_status="active",
+        secrets={"STRIPE_KEY": "3"},
+    )
+    assert isinstance(desired, ServiceSpec)
+    assert dict(desired.secrets) == {"STRIPE_KEY": "3"}
+    assert "STRIPE_KEY" not in desired.env
+
+
+@pytest.mark.parametrize(
+    "secrets",
+    [
+        {"stripe_key": "1"},
+        {"PORT": "1"},
+        {"SSC_TOKEN": "1"},
+        {"K_SERVICE": "1"},
+        {"SSC_ENV": "1"},
+        {"STRIPE_KEY": "latest"},
+        {"STRIPE_KEY": "0"},
+        {"STRIPE_KEY": ""},
+    ],
+)
+def test_a_secret_reference_is_a_name_and_a_version_number(secrets: dict[str, str]) -> None:
+    with pytest.raises(ValueError, match="secret"):
+        replace(spec_for(), secrets=secrets)
+
+
+def test_a_secret_may_not_shadow_a_plain_variable() -> None:
+    spec = spec_for()
+    with pytest.raises(ValueError, match="both"):
+        replace(spec, env={**spec.env, "STRIPE_KEY": "x"}, secrets={"STRIPE_KEY": "1"})
+
+
 # ── the plan ─────────────────────────────────────────────────────────────────
 
 SPEC = spec_for()

@@ -28,6 +28,8 @@ Revision 0014 adds ``directory_connection``, ``auth_session``, ``login_code``,
 tables.
 Revision 0020 adds ``cell_resource`` and ``cell_resource_waiter`` (SSC-087), keyed by org and
 resource (one org is one cell), so both are in ``UNKEYED_TABLES``.
+Revision 0021 adds columns only (SSC-026): ``secret_ref.updated_at`` and
+``deployment.secret_refs``, references and version numbers, never a secret value.
 """
 
 from collections.abc import Mapping

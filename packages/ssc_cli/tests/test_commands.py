@@ -33,6 +33,7 @@ from ssc_cli.shapes import (
     PromoteResult,
     ReleasesResult,
     RollbackResult,
+    SecretsResult,
     ShareResult,
     TokenClearResult,
     TokenSetResult,
@@ -64,6 +65,7 @@ ALLOWED = {
     "disable",
     "enable",
     "access",
+    "secret",
 }
 
 
@@ -123,11 +125,14 @@ def test_help_lists_exact_set(cli):
         ("disable",),
         ("enable",),
         ("access", "explain"),
+        ("secret", "set"),
+        ("secret", "list"),
     }
     for group, subs in (
         ("token", {"set", "clear"}),
         ("apps", {"create"}),
         ("access", {"explain"}),
+        ("secret", {"set", "list"}),
     ):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
         assert {line.split()[0] for line in text.splitlines() if line.startswith("  ")} == subs
@@ -870,6 +875,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("rollback",): ([name, "R1", "--wait"], RollbackResult, None),
         ("promote",): ([name, "--wait"], PromoteResult, None),
         ("access", "explain"): ([name], AccessResult, None),
+        ("secret", "list"): ([name, "--env", "preview"], SecretsResult, None),
         ("disable",): ([name, "--timeout", "3600"], DisableResult, None),
         ("enable",): ([name], AppResult, None),
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
@@ -878,8 +884,9 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("logout",): ([], LogoutResult, None),
     }
     # `mcp` serves stdio; its --json covers start-up refusals only (test_mcp_local.py). `login`
-    # needs an auth host and a browser; test_login.py covers its --json.
-    assert set(cases) | {("mcp",), ("login",)} == _paths()
+    # needs an auth host and a browser; test_login.py covers its --json. `secret set` needs a
+    # cell's secret intake; test_secret.py covers its --json.
+    assert set(cases) | {("mcp",), ("login",), ("secret", "set")} == _paths()
     for path, (args, shape, stdin) in cases.items():
         r = on_live(*path, *args, "--json", input=stdin)
         assert r.code == 0, (path, r.stdout, r.stderr)

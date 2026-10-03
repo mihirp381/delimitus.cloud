@@ -14,6 +14,8 @@ Each app environment's service:
   allows only the cell and Google's private range;
 - bills per request (``cpuIdle``) or per instance, with the spec's request timeout and
   concurrency;
+- takes each secret as an environment variable pinned to one version of
+  ``ssc-a-<env>-<NAME>`` (SSC-026), never a value;
 - names its revisions ``<service>-<generation>-<fingerprint>``, so ``apply`` knows the revision
   it asked for before Cloud Run has made it;
 - pins traffic to named revisions after the first, so a new revision never takes traffic;
@@ -42,6 +44,7 @@ from ssc_shared.runtime import (
     ServiceObservation,
     ServiceSpec,
     fingerprint_of,
+    secret_id,
 )
 
 log = logging.getLogger(__name__)
@@ -169,11 +172,11 @@ class CloudRunDriver(RuntimeDriver):
             return None
         revisions = await self._revisions(service)
         traffic = _traffic(svc)
-        seen = [self._observe_revision(r, traffic) for r in revisions]
+        seen = [self._observe_revision(r, traffic, service) for r in revisions]
         template = _obj(svc.get("template"))
         pending = template.get("revision")
         if pending and pending not in {r.revision for r in seen} and _reconciling(svc):
-            fingerprint, digest = self._fingerprint(template)
+            fingerprint, digest = self._fingerprint(template, service)
             seen.append(
                 RevisionObservation(
                     revision=pending,
@@ -217,7 +220,10 @@ class CloudRunDriver(RuntimeDriver):
             return await self._create(spec)
         revisions = await self._revisions(spec.service)
         traffic = _traffic(svc)
-        matches = [r for r in revisions if self._fingerprint(r)[0] == spec.spec_fingerprint]
+        service = spec.service
+        matches = [
+            r for r in revisions if self._fingerprint(r, service)[0] == spec.spec_fingerprint
+        ]
         template = _obj(svc.get("template"))
         body = _writable(svc)
         body["labels"] = dict(spec.labels)
@@ -227,12 +233,14 @@ class CloudRunDriver(RuntimeDriver):
         if matches:
             revision = max(matches, key=lambda r: traffic.get(_short(r["name"]), 0))
             name = _short(revision["name"])
-        elif self._fingerprint(template)[0] == spec.spec_fingerprint and template.get("revision"):
+        elif self._fingerprint(template, service)[0] == spec.spec_fingerprint and template.get(
+            "revision"
+        ):
             name = template["revision"]  # asked for already, not made yet
             made = [r for r in revisions if _short(r["name"]) == name]
             if made:
                 # Cloud Run runs an image index's platform manifest under that manifest's digest.
-                ran = self._fingerprint(made[0])[1]
+                ran = self._fingerprint(made[0], service)[1]
                 raise RuntimeDriverError(
                     f"{spec.service}: Cloud Run ran {ran} for {spec.image_digest}; "
                     "an app image must be a single-platform manifest"
@@ -250,7 +258,7 @@ class CloudRunDriver(RuntimeDriver):
         return name
 
     async def _create(self, spec: ServiceSpec) -> str:
-        await self._ensure_identity(spec.service)
+        await self.ensure_identity(spec.service)
         name = _revision_name(spec, 1)
         body = {
             "labels": dict(spec.labels),
@@ -293,9 +301,15 @@ class CloudRunDriver(RuntimeDriver):
                     "image": self.cell.image(spec.image_digest),
                     "ports": [{"containerPort": spec.port}],
                     "env": [
-                        {"name": k, "value": v}
-                        for k, v in sorted(spec.env.items())
-                        if k not in RESERVED_ENV
+                        *(
+                            {"name": k, "value": v}
+                            for k, v in sorted(spec.env.items())
+                            if k not in RESERVED_ENV
+                        ),
+                        *(
+                            {"name": k, "valueSource": {"secretKeyRef": _secret_ref(spec, k, v)}}
+                            for k, v in sorted(spec.secrets.items())
+                        ),
                     ],
                     "resources": {
                         "limits": {"cpu": str(size.vcpu), "memory": f"{size.memory_mib}Mi"},
@@ -312,9 +326,9 @@ class CloudRunDriver(RuntimeDriver):
             ],
         }
 
-    async def _ensure_identity(self, service: str) -> None:
-        """The environment's own service account, with no roles. Granting it anything is a
-        decision of the ticket that needs it (secrets, the app database)."""
+    async def ensure_identity(self, service: str) -> None:
+        """The environment's own service account, with no project roles. Its secrets name it on
+        their own policies (``secret_manager.CellSecretCustody``)."""
         try:
             await self._call(
                 "POST",
@@ -412,9 +426,11 @@ class CloudRunDriver(RuntimeDriver):
 
     # ── observing ────────────────────────────────────────────────────────────
 
-    def _observe_revision(self, revision: Json, traffic: Mapping[str, int]) -> RevisionObservation:
+    def _observe_revision(
+        self, revision: Json, traffic: Mapping[str, int], service: str
+    ) -> RevisionObservation:
         name = _short(revision["name"])
-        fingerprint, digest = self._fingerprint(revision)
+        fingerprint, digest = self._fingerprint(revision, service)
         ready, failed = _readiness(revision)
         return RevisionObservation(
             revision=name,
@@ -425,10 +441,10 @@ class CloudRunDriver(RuntimeDriver):
             traffic_percent=traffic.get(name, 0),
         )
 
-    def _fingerprint(self, revision: Json) -> tuple[str, str]:
+    def _fingerprint(self, revision: Json, service: str) -> tuple[str, str]:
         """(fingerprint, image digest) of a revision or template, from what it actually runs.
         An image outside the cell's repository keeps its whole reference as the digest, so it
-        never matches a spec."""
+        never matches a spec; so does a variable from any secret but the service's own."""
         containers = _objs(revision.get("containers")) or [{}]
         container = containers[0] if len(containers) == 1 else {"multiple": len(containers)}
         image = str(container.get("image") or "")
@@ -440,9 +456,18 @@ class CloudRunDriver(RuntimeDriver):
         limits = _obj(resources.get("limits"))
         billing: Billing = "request" if resources.get("cpuIdle") else "instance"
         env: dict[str, str] = {}
+        secrets: dict[str, str] = {}
+        own = f"projects/{self.cell.project}/secrets/"
         for var in _objs(container.get("env")):
-            source = var.get("valueSource")
-            env[var["name"]] = str(var.get("value", "")) if source is None else f"source:{source}"
+            name, source = str(var["name"]), var.get("valueSource")
+            ref = _obj(_obj(source).get("secretKeyRef"))
+            secret = str(ref.get("secret") or "").removeprefix(own)
+            if source is None:
+                env[name] = str(var.get("value", ""))
+            elif len(_obj(source)) == 1 and secret == _own_secret(service, name):
+                secrets[name] = str(ref.get("version") or "")
+            else:
+                env[name] = f"source:{source}"
         port = int(ports[0].get("containerPort") or 8080)
         env["PORT"] = str(port)
         fingerprint = fingerprint_of(
@@ -452,6 +477,7 @@ class CloudRunDriver(RuntimeDriver):
             vcpu=_cpu(str(limits.get("cpu") or "1")),
             memory_mib=_memory_mib(str(limits.get("memory") or "512Mi")),
             env=env,
+            secrets=secrets,
             billing=billing,
             timeout_seconds=_seconds(revision.get("timeout")),
             concurrency=int(revision.get("maxInstanceRequestConcurrency") or DEFAULT_CONCURRENCY),
@@ -467,6 +493,17 @@ def _check_env(spec: ServiceSpec) -> None:
         raise RuntimeDriverError(f"{spec.service}: PORT must be the container port {spec.port}")
     if set_by_cloud_run := sorted(RESERVED_ENV.intersection(spec.env) - {"PORT"}):
         raise RuntimeDriverError(f"{spec.service}: Cloud Run sets {', '.join(set_by_cloud_run)}")
+
+
+def _secret_ref(spec: ServiceSpec, name: str, version: str) -> Json:
+    return {"secret": secret_id(spec.service, name), "version": version}
+
+
+def _own_secret(service: str, name: str) -> str | None:
+    try:
+        return secret_id(service, name)
+    except ValueError:
+        return None
 
 
 def _obj(value: object) -> Json:

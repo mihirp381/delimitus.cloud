@@ -56,6 +56,7 @@ from ssc_control.timers import jobs as timers_jobs
 from ssc_control.timers.dispatch import FakeScheduleDispatcher, ScheduleDispatcher
 from ssc_control.timers.service import Timers
 from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_of
+from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
 
 log = logging.getLogger(__name__)
@@ -330,6 +331,7 @@ async def run(env: Mapping[str, str] | None = None) -> None:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
+    redaction.install()
     try:
         asyncio.run(run())
     except CompositionError as exc:

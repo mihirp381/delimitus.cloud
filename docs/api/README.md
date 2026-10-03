@@ -133,6 +133,20 @@ whose authority it runs on. Resuming is `409 SCHEDULE_CANNOT_RESUME` in preview,
 switch holds it, while the app is not active and while the owner is not active. A deleted
 schedule is `409 SCHEDULE_DELETED`.
 
+**A secret's value never reaches the API** (SSC-026). Under
+`/v1/apps/{app}/environments/{env}/secrets`, a person who may change the environment
+(`require_builder`; an agent credential is `403 AGENT_SESSION_REFUSED`) lists names and versions
+(`GET`). `POST .../{name}/grants` asks the cell agent to create the secret (`ssc-a-<env>-<NAME>`,
+read only by the app's own identity) and answers `201` with a PUT target on the cell's secret
+intake, authorised by a ten-minute Google ID token whose audience names that secret and a fresh
+nonce. The client PUTs the value there; the intake adds a version and answers its number.
+`PUT .../{name}` with `{"version": "N"}` records the reference, audits `secret.bound` or
+`secret.rotated`, and deploys the live release again (`202` with `Location`), or answers `200`
+when nothing is live or the version is unchanged; `409 DEPLOYMENT_IN_FLIGHT` while one runs. A
+deployment pins the references at its first claim (`deployment.secret_refs`) and Cloud Run
+mounts each as an env var at that version. No route, CLI command or MCP tool returns a value;
+`503 SECRETS_UNAVAILABLE` when the cell agent or intake is not configured or fails.
+
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's
 call once there is more than one replica.

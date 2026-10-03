@@ -45,6 +45,7 @@ MCP_NOT_INSTALLED: Final = "MCP_NOT_INSTALLED"
 KILL_SWITCH_FAILED: Final = "KILL_SWITCH_FAILED"
 LOGIN_FAILED: Final = "LOGIN_FAILED"
 LOGIN_ENDED: Final = "LOGIN_ENDED"
+BAD_SECRET_INPUT: Final = "BAD_SECRET_INPUT"  # noqa: S105  (an error code, not a secret)
 LOCAL_CODES: Final = frozenset(
     {
         NO_TOKEN,
@@ -72,6 +73,7 @@ LOCAL_CODES: Final = frozenset(
         KILL_SWITCH_FAILED,
         LOGIN_FAILED,
         LOGIN_ENDED,
+        BAD_SECRET_INPUT,
     }
 )
 

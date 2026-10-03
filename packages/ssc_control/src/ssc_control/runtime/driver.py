@@ -7,6 +7,7 @@ Every ``RuntimeDriver`` passes ``conformance/ssc_conformance/contracts/runtime_d
 ``CellAgentDriver`` (``cell_agent.py``), which reaches the Cloud Run driver through the cell agent.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -64,19 +65,21 @@ def max_instances_for(manifest: Manifest, framework: str | None) -> int:
     return max_instances(manifest.runtime, framework)
 
 
-def desired_for(
+def desired_for(  # noqa: PLR0913  (keyword-only)
     *,
     env: EnvironmentRow,
     release: ReleaseRow,
     manifest: Manifest,
     app_status: AppStatus,
     framework: str | None = None,
+    secrets: Mapping[str, str] | None = None,
 ) -> ServiceSpec | Stopped:
     """What should be running for one app environment. Pure: rows in, spec out. ``framework`` is
     what the build detected (SSC-015 records it on the release), or None. Every environment
     scales to zero. A session environment is instance-billed with the 60-minute timeout and
     takes 1000 requests at once, since its one instance holds every user's WebSocket; any other
-    is request-billed with 5 minutes and 80."""
+    is request-billed with 5 minutes and 80. ``secrets`` are the versions the deployment runs
+    (``deployment.secret_refs``), each mounted as its variable (SSC-026)."""
     service = service_name(env.id)
     if app_status != "active":
         return Stopped(service=service, reason=app_status)
@@ -96,6 +99,7 @@ def desired_for(
         min_instances=0,
         max_instances=max_instances_for(manifest, framework),
         labels={"ssc-org": env.org_id, "ssc-app": env.app_id, "ssc-env": env.id},
+        secrets=dict(secrets or {}),
     )
 
 

@@ -23,7 +23,10 @@ from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
 from ssc_control.metrics import metrics_port
+from ssc_control.runtime.cell_agent import MetadataIdTokens
+from ssc_control.runtime.secret_grants import CellSecretGrants, SecretGrants
 from ssc_control.timers.service import Timers
+from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore
 
@@ -56,9 +59,11 @@ def create_app(
     settings: Settings,
     engine: AsyncEngine | None = None,
     blob_store: BlobStore | None = None,
+    secret_grants: SecretGrants | None = None,
 ) -> FastAPI:
     store = blob_store if blob_store is not None else blob_store_for(settings)
     check_fs_allowed(store, settings)
+    redaction.install()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -97,6 +102,7 @@ def create_app(
         metrics=metrics_port(settings.metrics_key),
         blob_store=store,
         timers=Timers(),
+        secret_grants=secret_grants if secret_grants is not None else secret_grants_for(settings),
     )
     app.add_middleware(RequestIdMiddleware)
     problems.install(app)
@@ -113,6 +119,18 @@ def create_app(
         app.include_router(blobs_router)
     _install_openapi(app)
     return app
+
+
+def secret_grants_for(settings: Settings) -> SecretGrants | None:
+    """The cell's grants when both its agent and its intake are configured, else ``None``."""
+    if not (settings.cell_agent_url and settings.secret_intake_url):
+        return None
+    return CellSecretGrants(
+        agent_url=settings.cell_agent_url,
+        intake_origin=settings.secret_intake_url,
+        agent_tokens=MetadataIdTokens(),
+        grant_tokens=MetadataIdTokens(cache=False),
+    )
 
 
 def _install_openapi(app: FastAPI) -> None:

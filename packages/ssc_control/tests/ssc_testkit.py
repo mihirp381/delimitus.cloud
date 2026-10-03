@@ -8,12 +8,14 @@ The fixtures that wrap them (``dsns``, ``signing_key``) are in ``conftest.py``.
 from __future__ import annotations
 
 import asyncio
+import base64
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 import jwt
@@ -74,6 +76,50 @@ def control_db() -> Iterator[Dsns]:
         d = Dsns(su, with_role(su, MIGRATE_ROLE, "migrate"), with_role(su, APP_ROLE, "app"))
         upgrade(d.migrate)
         yield d
+
+
+SCANNED_SCHEMAS = ("ssc", "procrastinate")
+
+
+def secret_forms(value: str) -> set[str]:
+    """``value`` as it could be stored: as is, JSON-escaped, URL-encoded, base64 and hex."""
+    raw = value.encode()
+    return {
+        value,
+        value.replace("\\", "\\\\").replace('"', '\\"'),
+        quote(value, safe=""),
+        base64.b64encode(raw).decode(),
+        base64.urlsafe_b64encode(raw).decode().rstrip("="),
+        raw.hex(),
+    }
+
+
+def find_secret_in(superuser_dsn: str, value: str) -> list[str]:
+    """Every place ``value`` appears in the control database, as ``schema.table`` (``.args`` for
+    job arguments, ``.before``/``.after`` for audit rows): every table of ``ssc`` and
+    ``procrastinate``, whole rows as text, past RLS. Empty when the secret is nowhere."""
+    forms = secret_forms(value)
+    found: list[str] = []
+    with psycopg.connect(superuser_dsn) as conn:
+        tables = conn.execute(
+            "select table_schema, table_name from information_schema.tables "
+            "where table_schema = any(%s) and table_type = 'BASE TABLE' order by 1, 2",
+            (list(SCANNED_SCHEMAS),),
+        ).fetchall()
+        for schema, table in tables:
+            rows = conn.execute(f'select t::text from "{schema}"."{table}" t').fetchall()
+            if any(form in row for (row,) in rows for form in forms):
+                found.append(f"{schema}.{table}")
+        named = (
+            ("procrastinate.procrastinate_jobs.args", "procrastinate.procrastinate_jobs", "args"),
+            ("ssc.audit_event.before", "ssc.audit_event", "before"),
+            ("ssc.audit_event.after", "ssc.audit_event", "after"),
+        )
+        for where, table, column in named:
+            rows = conn.execute(f"select {column}::text from {table}").fetchall()
+            if any(form in (row or "") for (row,) in rows for form in forms):
+                found.append(where)
+    return found
 
 
 def wait_for_a_lock_wait(dsn: str, *, seconds: float = 10.0, blocker: int | None = None) -> None:

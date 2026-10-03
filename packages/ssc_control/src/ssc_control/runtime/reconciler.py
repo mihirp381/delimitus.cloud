@@ -98,7 +98,7 @@ class Outcome:
 
 
 _DESIRED_ROWS = text(
-    "select e.app_id, e.name, a.status, r.id, r.image_digest "
+    "select e.app_id, e.name, a.status, r.id, r.image_digest, d.secret_refs "
     "from ssc.environment e "
     "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
     "join ssc.deployment d on d.org_id = e.org_id and d.id = e.current_deployment_id "
@@ -110,13 +110,14 @@ _DESIRED_ROWS = text(
 async def load_desired(
     engine: AsyncEngine, specs: ReleaseSpecs, *, org_id: str, env_id: str
 ) -> ServiceSpec | Stopped | OutcomeKind:
-    """Desired state from the database: the live pointer's release, its manifest, the app's
-    status. Returns an outcome kind instead when there is nothing to reconcile."""
+    """Desired state from the database: the live pointer's release and secret versions, its
+    manifest, the app's status. Returns an outcome kind instead when there is nothing to
+    reconcile."""
     async with bound_org(engine, org_id) as conn:
         row = (await conn.execute(_DESIRED_ROWS, {"org": org_id, "env": env_id})).one_or_none()
         if row is None:
             return "no_release"
-        app_id, env_name, app_status, release_id, image_digest = row
+        app_id, env_name, app_status, release_id, image_digest, secret_refs = row
         try:
             spec = await specs.get(conn, org_id=org_id, app_id=app_id, release_id=release_id)
         except ReleaseSpecUnavailableError:
@@ -127,6 +128,7 @@ async def load_desired(
         manifest=spec.manifest,
         app_status=app_status,
         framework=spec.framework,
+        secrets=secret_refs,
     )
 
 

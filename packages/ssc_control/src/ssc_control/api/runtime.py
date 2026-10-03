@@ -1,5 +1,5 @@
 """What one running API process holds: settings, the engine, the verifier, the limiter, the
-metrics recorder, the blob store, the production gate and the timers."""
+metrics recorder, the blob store, the production gate, the timers and the secret grants."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ssc_control.api.auth import Verifier
     from ssc_control.api.ratelimit import RateLimiter
     from ssc_control.api.settings import Settings
+    from ssc_control.runtime.secret_grants import SecretGrants
     from ssc_shared.blobstore import BlobStore
 
 
@@ -34,6 +35,9 @@ class Runtime:
     """Checked when a ``prod`` deployment is posted; the deploy job checks it again."""
     timers: TimersPort = field(default_factory=NullTimersPort)
     """Resumes the schedules the kill switch paused when an app is enabled."""
+    secret_grants: SecretGrants | None = None
+    """Prepares a secret in the cell and grants one upload of its value (SSC-026); ``None``
+    when the cell is not configured, and secret writes refuse."""
 
 
 def runtime_of(request: Request) -> Runtime:

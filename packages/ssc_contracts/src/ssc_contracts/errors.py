@@ -77,6 +77,8 @@ class ErrorCode(StrEnum):
     # promote (SSC-042)
     NOTHING_TO_PROMOTE = "NOTHING_TO_PROMOTE"
     PROD_REQUIRES_PROMOTE = "PROD_REQUIRES_PROMOTE"
+    # secrets (SSC-026)
+    SECRETS_UNAVAILABLE = "SECRETS_UNAVAILABLE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -205,8 +207,9 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
     ),
     ErrorCode.AGENT_SESSION_REFUSED: CatalogueEntry(
         403,
-        "An agent session cannot decide approvals.",
-        "Approvals are decided by a person in an interactive session, never through an agent.",
+        "An agent session cannot do this.",
+        "Approvals, cell resources and secrets are handled by a person in an interactive "
+        "session, never through an agent.",
     ),
     ErrorCode.APPROVER_NOT_ELIGIBLE: CatalogueEntry(
         403,
@@ -304,6 +307,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         409,
         "Production builds only through promote.",
         "Production runs only source that ran in preview. Deploy to preview, then promote the app.",
+    ),
+    ErrorCode.SECRETS_UNAVAILABLE: CatalogueEntry(
+        503,
+        "Secrets cannot be set right now.",
+        "The cell that keeps this app's secrets is not reachable from here. Nothing was "
+        "changed; retry later.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

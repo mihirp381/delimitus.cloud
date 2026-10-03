@@ -55,9 +55,21 @@ class Settings:
     bundle_max_files: int = 20_000
     apps_domain: str = APPS_DOMAIN
     """``SSC_APPS_DOMAIN``: the registrable domain apps are served on (decision 004)."""
+    cell_agent_url: str = ""
+    """``SSC_CELL_AGENT_URL``: the cell agent, which prepares each secret (SSC-026). One cell
+    until placement has its ticket, as for the worker."""
+    secret_intake_url: str = ""
+    """``SSC_SECRET_INTAKE_URL``: the cell's secret intake origin, where ``ssc secret set`` sends
+    the value. Unset, with or without the agent: secret writes refuse ``SECRETS_UNAVAILABLE``."""
 
     def __post_init__(self) -> None:
         check_apps_domain(self.apps_domain)
+        for name, url in (
+            ("SSC_CELL_AGENT_URL", self.cell_agent_url),
+            ("SSC_SECRET_INTAKE_URL", self.secret_intake_url),
+        ):
+            if url and not url.startswith("https://"):
+                raise ValueError(f"{name} must be an https URL")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -83,6 +95,8 @@ class Settings:
             bundle_max_unpacked_bytes=int(e.get("SSC_BUNDLE_MAX_UNPACKED_BYTES", str(500 * MIB))),
             bundle_max_files=int(e.get("SSC_BUNDLE_MAX_FILES", "20000")),
             apps_domain=e.get("SSC_APPS_DOMAIN", APPS_DOMAIN),
+            cell_agent_url=e.get("SSC_CELL_AGENT_URL", ""),
+            secret_intake_url=e.get("SSC_SECRET_INTAKE_URL", ""),
         )
 
     @classmethod

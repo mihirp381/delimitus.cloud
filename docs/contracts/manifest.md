@@ -71,7 +71,7 @@ Every table refuses unknown keys, and every value has one TOML type: `port = "80
 | `public_names` | array of string | `[]` | Extra names allowed in `public_env`, beyond `VITE_*` and `NEXT_PUBLIC_*`. Unique, at most 50. |
 | `public_env` | table of tables | `{}` | `[build.public_env.<env>]` with `<env>` `prod` or `preview`; `NAME = "value"`, at most 50 per environment, values at most 4096 characters. |
 
-A name is `^[A-Z][A-Z0-9_]{0,127}$` and must start with `VITE_` or `NEXT_PUBLIC_` (plus at least one more character) or be listed in `public_names`. These values are compiled into the browser bundle, so any name containing `SECRET`, `PASSWORD`, `PASSWD`, `SERVICE_ROLE` or `PRIVATE_KEY` is refused, and so are names the platform sets (`PORT`, `HOME`, `PATH`, `DATABASE_URL`, `SSC_*`). Secrets go through `ssc secrets`, never here.
+A name is `^[A-Z][A-Z0-9_]{0,127}$` and must start with `VITE_` or `NEXT_PUBLIC_` (plus at least one more character) or be listed in `public_names`. These values are compiled into the browser bundle, so any name containing `SECRET`, `PASSWORD`, `PASSWD`, `SERVICE_ROLE` or `PRIVATE_KEY` is refused, and so are names the platform sets (`PORT`, `HOME`, `PATH`, `DATABASE_URL`, `SSC_*`). Secrets go through `ssc secret set`, never here.
 
 `[state]`:
 
