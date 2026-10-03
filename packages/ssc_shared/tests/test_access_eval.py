@@ -7,6 +7,8 @@ import pytest
 
 from ssc_contracts.snapshot import FORMAT_V1, SnapshotDoc
 from ssc_shared.access import AccessView, SnapshotInvalidError, ViewHolder, decide
+from ssc_shared.canonical import canonical_bytes
+from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS, SESSION_TIMEOUT_SECONDS
 
 ORG = "org_" + "a" * 20
 OTHER_ORG = "org_" + "b" * 20
@@ -182,6 +184,27 @@ def test_the_holder_swaps_only_to_a_valid_newer_document_of_its_org() -> None:
     assert holder.view.version == 2
     assert decide(holder.view, PROD, ADA).reason == "no_grant"
     assert holder.apply(doc(1)) is False
+
+
+def test_an_environment_timeout_is_optional_and_missing_means_the_lower_figure() -> None:
+    plain = doc()
+    assert view().environments[PROD].timeout_seconds == REQUEST_TIMEOUT_SECONDS
+    parsed = SnapshotDoc.model_validate(plain)
+    assert canonical_bytes(parsed.model_dump(mode="json")) == canonical_bytes(plain)
+    envs = {**plain["environments"]}
+    envs[PROD] = {**envs[PROD], "timeout_seconds": SESSION_TIMEOUT_SECONDS}
+    session = AccessView.from_document(doc(environments=envs))
+    assert session.environments[PROD].timeout_seconds == SESSION_TIMEOUT_SECONDS
+    assert session.environments[PREVIEW].timeout_seconds == REQUEST_TIMEOUT_SECONDS
+    assert decide(session, PROD, ADA) == decide(view(), PROD, ADA)
+
+
+@pytest.mark.parametrize("seconds", [0, -300, 1.5, "soon"])
+def test_a_bad_environment_timeout_is_refused(seconds: object) -> None:
+    envs = {**doc()["environments"]}
+    envs[PROD] = {**envs[PROD], "timeout_seconds": seconds}
+    with pytest.raises(SnapshotInvalidError):
+        AccessView.from_document(json.dumps(doc(environments=envs)))
 
 
 def test_the_view_is_read_only() -> None:

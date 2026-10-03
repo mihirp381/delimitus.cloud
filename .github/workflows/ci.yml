@@ -110,6 +110,8 @@ jobs:
           node-version: "24"
       - run: npm test
         working-directory: helpers/node/ssc-identity
+      - run: npm test
+        working-directory: helpers/node/ssc-reconnect
 
   console:
     runs-on: ubuntu-24.04

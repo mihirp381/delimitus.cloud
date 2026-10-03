@@ -30,6 +30,11 @@ SSC-015 (the build reads the stored bundle first):
   * SQLite on disk is refused                    -> test_sqlite_on_disk_fails_the_build_before_...
   * the framework migration                      -> test_0015_downgrades_and_upgrades,
                                                     test_a_framework_must_be_a_short_lowercase_name
+SSC-090 (the request deadline the gateway tells the app):
+  * the snapshot carries a longer timeout only   -> test_the_snapshot_carries_only_a_longer_timeout
+  * never later than the revision serving        -> test_a_billing_change_never_makes_the_....
+  * an unconfirmed lower timeout keeps traffic   -> test_an_unconfirmed_lower_timeout_keeps_the_...
+  * a failed deploy puts the timeout back        -> test_a_failed_session_to_request_deploy_puts_...
 Plus: the build API and job, build failures and timeouts, the health timeout, going live locking
 schedule rows before ``audit_head``, the deploy and first_url metrics, history and release
 listings, and the worker's wiring.
@@ -127,22 +132,32 @@ from ssc_control.deploy.deployments import (
     HEALTH_POLL_SECONDS,
     HEALTH_TIMEOUT_SECONDS,
     RELEASE_SPEC_UNAVAILABLE,
+    RUNTIME_ERROR,
+    SNAPSHOT_UNCONFIRMED,
     HealthWait,
     run_deployment,
 )
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.lifecycle import kill_switch
 from ssc_control.metrics import metrics_port
-from ssc_control.ports import DeclaredSchedule, GateResult, NullMetricsPort, NullTimersPort
+from ssc_control.ports import (
+    DeclaredSchedule,
+    GateResult,
+    NullMetricsPort,
+    NullSnapshotPort,
+    NullTimersPort,
+)
 from ssc_control.runtime.cell_agent import CellAgentDriver
 from ssc_control.runtime.driver import service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
+from ssc_control.snapshot.compiler import compile_document
 from ssc_control.timers.service import Timers
 from ssc_control.worker import CompositionError, Ports, build_app, compose_ports
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.canonical import manifest_digest
 from ssc_shared.clock import SystemClock
+from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS, SESSION_TIMEOUT_SECONDS
 
 MASTER = bytes(range(32))
 FAST = HealthWait(within=2.0, every=0.01)
@@ -1194,6 +1209,214 @@ async def test_deploys_record_the_deploy_and_first_url_metrics(b: Bench) -> None
             "person": True,
         },
     ]
+
+
+# ── the request deadline (SSC-090) ───────────────────────────────────────────
+
+SESSION_APP = {"runtime": {"sessions": True}}
+
+
+async def told(b: Bench, env: str) -> int:
+    """The timeout a snapshot compiled now tells the gateway for ``env``."""
+    async with bound_org(b.ports.engine, b.w.org) as conn:
+        doc = await compile_document(conn, b.w.org, version=0, compiled_at=datetime.now(UTC))
+    return doc.environments[env].timeout_seconds or REQUEST_TIMEOUT_SECONDS
+
+
+class Cell(NullSnapshotPort):
+    """The org's cell as the deploy job sees it. ``holds`` is the timeout of the snapshot it
+    last confirmed; it confirms a version only while ``answering``."""
+
+    def __init__(self, b: Bench, env: str, *, answering: bool = True) -> None:
+        self.b, self.env, self.answering = b, env, answering
+        self.version = 0
+        self.holds = REQUEST_TIMEOUT_SECONDS
+        self.events: list[str] = []
+
+    async def request(self, conn: AsyncConnection, org_id: str) -> int:
+        self.version += 1
+        self.events.append("request")
+        return self.version
+
+    async def confirmed(self, org_id: str, version: int) -> bool:
+        self.events.append("confirmed")
+        if self.answering:
+            self.holds = await told(self.b, self.env)
+        return self.answering
+
+    async def catch_up(self) -> None:
+        self.holds = await told(self.b, self.env)
+
+
+def watch_traffic(
+    b: Bench, cell: Cell, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[int | None, int, int, int]]:
+    """Each ``set_traffic``, just before it: the serving revision's timeout, the new one's,
+    what a compile now would tell, and what the cell holds."""
+    seen: list[tuple[int | None, int, int, int]] = []
+    move = b.runtime.set_traffic
+
+    async def watched(service: str, revision: str) -> None:
+        svc = b.runtime.services[service]
+        serving = [r.timeout_seconds for r in svc.revisions if svc.traffic.get(r.name) == 100]
+        (new,) = [r.timeout_seconds for r in svc.revisions if r.name == revision]
+        seen.append((serving[0] if serving else None, new, await told(b, cell.env), cell.holds))
+        cell.events.append("set_traffic")
+        await move(service, revision)
+
+    monkeypatch.setattr(b.runtime, "set_traffic", watched)
+    return seen
+
+
+async def test_the_snapshot_carries_only_a_longer_timeout(b: Bench) -> None:
+    async with bound_org(b.ports.engine, b.w.org) as conn:
+        doc = await compile_document(conn, b.w.org, version=0, compiled_at=datetime.now(UTC))
+    assert "timeout_seconds" not in doc.model_dump(mode="json")["environments"][b.w.preview]
+    for stored, member in ((REQUEST_TIMEOUT_SECONDS, None), (3600, 3600), (None, None)):
+        execute(
+            b.dsn,
+            b.w.org,
+            "update ssc.environment set request_timeout_seconds = %s where id = %s",
+            stored,
+            b.w.preview,
+        )
+        async with bound_org(b.ports.engine, b.w.org) as conn:
+            doc = await compile_document(conn, b.w.org, version=0, compiled_at=datetime.now(UTC))
+        envs = doc.model_dump(mode="json")["environments"]
+        assert envs[b.w.preview].get("timeout_seconds") == member
+        assert "timeout_seconds" not in envs[b.w.prod]
+    with pytest.raises(psycopg.errors.CheckViolation):
+        execute(
+            b.dsn,
+            b.w.org,
+            "update ssc.environment set request_timeout_seconds = 0 where id = %s",
+            b.w.preview,
+        )
+
+
+@pytest.mark.parametrize(
+    ("first", "then"),
+    [({}, SESSION_APP), (SESSION_APP, {})],
+    ids=["request-to-session", "session-to-request"],
+)
+async def test_a_billing_change_never_makes_the_deadline_late(
+    b: Bench, monkeypatch: pytest.MonkeyPatch, first: dict[str, Any], then: dict[str, Any]
+) -> None:
+    cell = Cell(b, b.w.preview)
+    ports = replace(b.ports, snapshot=cell)
+    seen = watch_traffic(b, cell, monkeypatch)
+    before, after = (
+        SESSION_TIMEOUT_SECONDS if m else REQUEST_TIMEOUT_SECONDS for m in (first, then)
+    )
+    r1 = await build_release(b, b.w.preview, manifest_of(**first))
+    assert await run(b, start_deploy(b, b.w.preview, r1).json()["operation_id"], ports) == "healthy"
+    assert await told(b, b.w.preview) == before
+    await cell.catch_up()
+    cell.events.clear()
+    r2 = await build_release(b, b.w.preview, manifest_of(**then))
+    op = start_deploy(b, b.w.preview, r2).json()["operation_id"]
+    assert await run(b, op, ports) == "healthy"
+    serving, new, compiled, held = seen[-1]
+    assert (serving, new) == (before, after)
+    assert compiled <= min(serving, new)
+    assert held <= new
+    assert await told(b, b.w.preview) == after
+    if after < before:
+        assert cell.events == ["request", "confirmed", "set_traffic"]
+    else:
+        assert cell.events == ["set_traffic", "request"]
+
+
+def stored_timeout(b: Bench, env: str) -> int | None:
+    (row,) = rows_of(
+        b.dsn, b.w.org, "select request_timeout_seconds from ssc.environment where id = %s", env
+    )
+    return row["request_timeout_seconds"]
+
+
+async def test_an_unconfirmed_lower_timeout_keeps_the_old_revision(b: Bench) -> None:
+    cell = Cell(b, b.w.preview, answering=False)
+    ports = replace(b.ports, snapshot=cell)
+    r1 = await build_release(b, b.w.preview, manifest_of(**SESSION_APP))
+    first = start_deploy(b, b.w.preview, r1).json()["operation_id"]
+    assert await run(b, first, ports) == "healthy"
+    r2 = await build_release(b, b.w.preview)
+    second = start_deploy(b, b.w.preview, r2).json()["operation_id"]
+    wait = HealthWait(within=2.0, every=0.01, confirm_within=0.05)
+    assert (
+        await run_deployment(ports, org_id=b.w.org, deployment_id=second, health=wait) == "failed"
+    )
+    assert (
+        operation(b, second)["failure_code"]
+        == SNAPSHOT_UNCONFIRMED
+        == ErrorCode.SNAPSHOT_UNCONFIRMED
+    )
+    assert pointer(b, b.w.preview) == first
+    assert live_image(b, b.w.preview) == image_of(b, r1)
+
+
+@pytest.mark.parametrize(
+    ("how", "code", "stored"),
+    [
+        ("unconfirmed", SNAPSHOT_UNCONFIRMED, SESSION_TIMEOUT_SECONDS),
+        ("unhealthy", HEALTH_CHECK_FAILED, SESSION_TIMEOUT_SECONDS),
+        ("runtime-error", RUNTIME_ERROR, SESSION_TIMEOUT_SECONDS),
+        ("unhealthy", HEALTH_CHECK_FAILED, None),
+    ],
+    ids=["unconfirmed", "unhealthy", "runtime-error", "unhealthy-before-0024"],
+)
+async def test_a_failed_session_to_request_deploy_puts_the_timeout_back(
+    b: Bench, how: str, code: str, stored: int | None
+) -> None:
+    cell = Cell(b, b.w.preview, answering=how != "unconfirmed")
+    ports = replace(b.ports, snapshot=cell)
+    r1 = await build_release(b, b.w.preview, manifest_of(**SESSION_APP))
+    first = start_deploy(b, b.w.preview, r1).json()["operation_id"]
+    assert await run(b, first, ports) == "healthy"
+    execute(
+        b.dsn,
+        b.w.org,
+        "update ssc.environment set request_timeout_seconds = %s where id = %s",
+        stored,
+        b.w.preview,
+    )
+    r2 = await build_release(b, b.w.preview)
+    if how == "unhealthy":
+        b.runtime.unhealthy(image_of(b, r2))
+    if how == "runtime-error":
+        b.runtime.fail_next("apply", RuntimeError("boom"))
+    second = start_deploy(b, b.w.preview, r2).json()["operation_id"]
+    cell.events.clear()
+    wait = HealthWait(within=2.0, every=0.01, confirm_within=0.05)
+    assert (
+        await run_deployment(ports, org_id=b.w.org, deployment_id=second, health=wait) == "failed"
+    )
+    assert operation(b, second)["failure_code"] == code
+    assert pointer(b, b.w.preview) == first
+    assert live_image(b, b.w.preview) == image_of(b, r1)
+    assert stored_timeout(b, b.w.preview) == SESSION_TIMEOUT_SECONDS
+    assert await told(b, b.w.preview) == SESSION_TIMEOUT_SECONDS
+    assert cell.events[0] == "request"
+    assert cell.events[-1] == "request"
+
+
+async def test_a_failed_first_deploy_has_nothing_to_put_back(b: Bench) -> None:
+    cell = Cell(b, b.w.preview)
+    ports = replace(b.ports, snapshot=cell)
+    execute(
+        b.dsn,
+        b.w.org,
+        "update ssc.environment set request_timeout_seconds = %s where id = %s",
+        SESSION_TIMEOUT_SECONDS,
+        b.w.preview,
+    )
+    release = await build_release(b, b.w.preview)
+    b.runtime.unhealthy(image_of(b, release))
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    assert await run(b, op, ports) == "failed"
+    assert pointer(b, b.w.preview) is None
+    assert stored_timeout(b, b.w.preview) == REQUEST_TIMEOUT_SECONDS
+    assert cell.events == ["request"]
 
 
 # ── through the cell agent, on the emulators ─────────────────────────────────

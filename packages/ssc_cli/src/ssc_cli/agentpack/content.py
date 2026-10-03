@@ -132,6 +132,15 @@ finding marked `block`.
   are session apps. A session app runs as one instance, billed while it runs, and each
   connection is closed after 60 minutes. Streamlit loses its session state when that happens, so
   keep anything that must last in Postgres. `ssc doctor` notes this as `SESSION_FRAMEWORK`.
+- An app that runs its own WebSocket or event stream should use the reconnect helpers, so the
+  browser reconnects before the limit the gateway reports (5 minutes for most apps, 60 for
+  session apps), without a reload. Python
+  (`ssc_app.reconnect`): return `end_before_deadline(events, request.headers)` as the event
+  stream, and run `close_before_deadline(ws.close, ws.headers)` as a task beside a WebSocket.
+  Node (`@delimitus/ssc-reconnect`): `endBeforeDeadline(res, req.headers)` and
+  `closeBeforeDeadline(socket, req.headers)`. In the page, serve `browser_client()` (Node:
+  `browserClient()`) and use `sscSocket(url, {{ onopen, onmessage }})` instead of
+  `new WebSocket(url)`; resend what the server needs in `onopen`.
 - SQLite on disk is refused (`STATE_SQLITE_EPHEMERAL`) by `ssc doctor`, `ssc deploy` and the
   build, because the disk is memory. Use Postgres with `postgres = true` under `[state]`.
   SQLite in memory (`:memory:`) and in test files is fine.

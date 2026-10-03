@@ -24,9 +24,10 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `packages/ssc_datagw` | Read-only data gateway and file broker. | SSC-050, SSC-046 |
 | `packages/ssc_egress` | Egress proxy control. | SSC-053 |
 | `packages/ssc_cli` | The `ssc` command. | SSC-022 |
-| `packages/ssc_app` | The helper apps install to read the identity note (`ssc_app.identity`); pyright strict. | SSC-020 |
-| `conformance/` | Black-box tests any deployment must pass. `identity_note/` holds the shared identity-note vectors and their generator; `ssc_conformance/contracts/` holds contract suites every implementation of a port runs (`BlobStoreContract`, `RuntimeDriverContract`); `ssc_conformance/runtime_probes.py` and `runtime/probe_app/` are the fourteen runtime probes (four local, ten waiting for a staging cell). | SSC-020, SSC-044, SSC-056, SSC-017 |
+| `packages/ssc_app` | The helper apps install to read the identity note (`ssc_app.identity`) and to keep a WebSocket or event stream going past the gateway's limit (`ssc_app.reconnect`, with the browser client `reconnect.js`); pyright strict. | SSC-020, SSC-090 |
+| `conformance/` | Black-box tests any deployment must pass. `identity_note/` holds the shared identity-note vectors and their generator; `reconnect/` the shared reconnect-helper vectors; `ssc_conformance/contracts/` holds contract suites every implementation of a port runs (`BlobStoreContract`, `RuntimeDriverContract`); `ssc_conformance/runtime_probes.py` and `runtime/probe_app/` are the fourteen runtime probes (four local, ten waiting for a staging cell). | SSC-020, SSC-044, SSC-056, SSC-017 |
 | `helpers/node/ssc-identity` | Node verifier for the identity note, zero dependencies, `npm test` runs the shared vectors. | SSC-020 |
+| `helpers/node/ssc-reconnect` | Node reconnect helper and the browser client `browser.js`, zero dependencies; `npm test` runs the shared vectors and holds a stream across a shortened limit. | SSC-090 |
 | `console/` | Admin console (decision 018): React 19, Vite 8, TanStack Router and Query, a client generated from `docs/api/openapi.json`, `--ssc-*` tokens, Vitest and a Playwright smoke test against the API in Docker. See `console/README.md`. | SSC-057 |
 | `.github/actions/ssc-deploy` | GitHub Action: deploys a folder to an app's preview with `ssc deploy` and outputs `preview-url`, `release-id` and `operation-id` (decision 017). CI job `action` runs it against the dev stack. | SSC-023 |
 | `infra/` | Pulumi in Python: the `platform` stack and one `c-<cell label>` stack per cell, plus the done-when checks. | SSC-013 |
@@ -56,6 +57,7 @@ uv run python tools/openapi_breaking.py OLD NEW  # CI runs it against the merge 
 uv run pytest            # needs Docker: control-db, API and job-queue tests start postgres:18
 uv run python gates/run_gates.py
 (cd helpers/node/ssc-identity && npm test)   # Node 22+
+(cd helpers/node/ssc-reconnect && npm test)  # Node 22+
 uv run python tools/npm_lock_age_check.py      # console/package-lock.json
 (cd console && npm ci && npm run typecheck && npm test && npm run build)   # Node 22.22.2+, 24.15+ or 26+
 ```

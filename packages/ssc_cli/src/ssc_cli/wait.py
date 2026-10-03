@@ -46,6 +46,8 @@ FIXES: Final = {
     "database (db-g1-small, about $26 a month), or remove an environment that has a database.",
     "DATABASE_UNAVAILABLE": "The app's database could not be reached from the platform. Deploy "
     "again to retry; if it fails again, tell an org admin.",
+    "SNAPSHOT_UNCONFIRMED": "The platform did not confirm the new version in time. Nothing "
+    "changed and the old version is still serving. Deploy again.",
     **FIX_ITS,
 }
 

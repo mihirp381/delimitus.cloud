@@ -25,6 +25,8 @@ from ssc_contracts.manifest import (
 SERVICE_PREFIX: Final = "ssc-a-"
 FINGERPRINT_VERSION: Final = "ssc-spec-v2"
 MAX_TIMEOUT_SECONDS: Final = 3600
+SESSION_TIMEOUT_SECONDS: Final = MAX_TIMEOUT_SECONDS
+REQUEST_TIMEOUT_SECONDS: Final = 300
 MAX_CONCURRENCY: Final = 1000
 
 Billing = Literal["instance", "request"]
@@ -41,6 +43,14 @@ def billing_for(runtime: Runtime, framework: str | None = None) -> Billing:
     """``instance`` for a session app (``is_session_app``): its one instance is billed while it
     runs. ``request`` for any other: billed only while it answers."""
     return "instance" if is_session_app(runtime, framework) else "request"
+
+
+def timeout_for(runtime: Runtime, framework: str | None = None) -> int:
+    """Seconds Cloud Run lets one request run: ``SESSION_TIMEOUT_SECONDS`` for a session app, so
+    one WebSocket can last an hour; ``REQUEST_TIMEOUT_SECONDS`` for any other."""
+    return (
+        SESSION_TIMEOUT_SECONDS if is_session_app(runtime, framework) else REQUEST_TIMEOUT_SECONDS
+    )
 
 
 def service_name(environment_id: str) -> str:

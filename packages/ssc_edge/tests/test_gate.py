@@ -53,7 +53,12 @@ from ssc_edge.session import (
     wake_cookie,
 )
 from ssc_shared.access import AccessView
-from ssc_shared.runtime import MAX_TIMEOUT_SECONDS, service_name
+from ssc_shared.runtime import (
+    MAX_TIMEOUT_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+    SESSION_TIMEOUT_SECONDS,
+    service_name,
+)
 
 UPSTREAM = "ssc-a-" + "p" * 20 + "-123456789012.us-central1.run.app"
 
@@ -363,11 +368,41 @@ def test_the_upstream_is_the_service_the_agent_names() -> None:
         upstream_host("env_short", project_number="1", region="us-central1")
 
 
-async def test_the_app_learns_when_cloud_run_will_end_the_request(world: World) -> None:
+@pytest.mark.parametrize(
+    ("host", "seconds"),
+    [(HOST, REQUEST_TIMEOUT_SECONDS), (PAY_HOST, SESSION_TIMEOUT_SECONDS)],
+    ids=["request-billed", "session"],
+)
+async def test_the_app_learns_when_cloud_run_will_end_the_request(
+    world: World, host: str, seconds: int
+) -> None:
+    out = await check(world, facts(host, cookie=world.cookie(session(), host)))
+    assert isinstance(out, Allow)
+    assert REQUEST_SECONDS == MAX_TIMEOUT_SECONDS == SESSION_TIMEOUT_SECONDS == 3600
+    assert REQUEST_TIMEOUT_SECONDS == 300
+    assert out.headers[DEADLINE_HEADER] == str(NOW + seconds)
+
+
+async def test_an_environment_without_a_timeout_gets_the_lower_figure(world: World) -> None:
+    doc = snapshot()
+    assert "timeout_seconds" not in doc["environments"][PROD]
+    world.view = AccessView.from_document(doc)
+    assert world.view.environments[PROD].timeout_seconds == REQUEST_TIMEOUT_SECONDS
     out = await check(world, facts(cookie=world.cookie()))
     assert isinstance(out, Allow)
-    assert REQUEST_SECONDS == MAX_TIMEOUT_SECONDS == 3600
-    assert out.headers[DEADLINE_HEADER] == str(NOW + 3600)
+    assert out.headers[DEADLINE_HEADER] == str(NOW + REQUEST_TIMEOUT_SECONDS)
+
+
+@pytest.mark.parametrize(("stored", "told"), [(7200, 3600), (600, 600)])
+async def test_the_deadline_is_the_lower_of_the_gateway_and_the_environment(
+    world: World, stored: int, told: int
+) -> None:
+    envs = snapshot()["environments"]
+    envs[PROD] = {**envs[PROD], "timeout_seconds": stored}
+    world.view = AccessView.from_document(snapshot(2, environments=envs))
+    out = await check(world, facts(cookie=world.cookie()))
+    assert isinstance(out, Allow)
+    assert out.headers[DEADLINE_HEADER] == str(NOW + told)
 
 
 PAGE_LOAD = {

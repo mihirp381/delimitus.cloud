@@ -35,6 +35,7 @@ Revision 0022 adds ``app_database`` (SSC-040), keyed by org and environment, so 
 Revision 0023 adds ``usage_collection`` (SSC-028), keyed by org alone, so it is in
 ``UNKEYED_TABLES``, and ``environment_id`` and ``dedup_key`` on ``metrics_event``: counts and
 durations of usage, never request content, paths, user ids or IP addresses.
+Revision 0024 adds a column only (SSC-090): ``environment.request_timeout_seconds``.
 """
 
 from collections.abc import Mapping

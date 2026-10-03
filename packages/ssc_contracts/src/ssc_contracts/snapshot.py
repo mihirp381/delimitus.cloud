@@ -38,12 +38,17 @@ class _Frozen(BaseModel):
 
 
 class SnapshotEnvironment(_Frozen):
-    """One app environment. ``floor`` is the lowest role that grants access to it."""
+    """One app environment. ``floor`` is the lowest role that grants access to it.
+    ``timeout_seconds``: how long one request to it may run (SSC-090). Left out when unset, which
+    means the request-billed figure, so documents without it keep their bytes."""
 
     app_id: AppId
     name: EnvironmentName
     status: AppStatus
     floor: GrantRole
+    timeout_seconds: int | None = Field(
+        default=None, gt=0, le=MAX_VERSION, exclude_if=lambda v: v is None
+    )
 
 
 class SnapshotGrant(_Frozen):

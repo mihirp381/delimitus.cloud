@@ -772,7 +772,11 @@ def session_framework_rule(t: Tree) -> list[Finding]:
     name = session_framework(m.runtime.start) or framework
     where = MANIFEST_FILE if m.runtime.start or m.runtime.sessions else "."
     what = f"This is a {name.capitalize()} app" if name else "ssc.toml sets sessions = true"
-    lost = " Streamlit loses its session state then." if name == "streamlit" else ""
+    lost = (
+        " Streamlit loses its session state then and the page reloads."
+        if name == "streamlit"
+        else ""
+    )
     return [
         finding(
             SESSION_FRAMEWORK,

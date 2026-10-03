@@ -63,8 +63,9 @@ IDENTITY_HEADER: Final = "x-ssc-identity"
 UPSTREAM_HEADER: Final = "x-ssc-upstream"
 """Internal: the service host Envoy forwards to. Envoy removes it before forwarding."""
 DEADLINE_HEADER: Final = "x-ssc-request-deadline"
-"""Unix seconds by which Cloud Run will have ended the request: the gateway's 3600-second request
-timeout from the check. An app's own timeout may end it sooner."""
+"""Unix seconds by which Cloud Run will have ended the request: from the check, the lower of the
+gateway's request timeout and the environment's own (``timeout_seconds`` in the snapshot, 300
+seconds when it has none)."""
 WAKE_HEADER: Final = "x-ssc-wake"
 """Internal: a browser page load that gets the "waking up" page when the app is slow. Envoy
 removes it before forwarding."""
@@ -380,7 +381,7 @@ class Gate:
         headers = {
             IDENTITY_HEADER: self._sign(note),
             UPSTREAM_HEADER: upstream,
-            DEADLINE_HEADER: str(now + REQUEST_SECONDS),
+            DEADLINE_HEADER: str(now + min(REQUEST_SECONDS, env.timeout_seconds)),
         }
         client: tuple[tuple[str, str], ...] = ()
         if page_load(facts) and not cookie_values(facts.headers.get("cookie", ""), WAKE_COOKIE):

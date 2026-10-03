@@ -22,6 +22,7 @@ from ssc_control.domain.grant_rules import floor_of
 from ssc_shared.blobstore import BlobError, BlobStore
 from ssc_shared.canonical import canonical_bytes, canonical_digest
 from ssc_shared.hosts import host_label, slug_problem
+from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS
 from ssc_shared.snapshot_feed import latest_key, object_key
 
 LOCK_CLASS: Final = 21
@@ -51,8 +52,8 @@ _INSERT = text(
 # One statement, so one read snapshot: every grant's environment and user is in the result.
 _READ_ORG = text(
     "select "
-    "(select coalesce(jsonb_agg(jsonb_build_array(e.id, e.app_id, e.name, a.status, a.slug) "
-    "order by e.id), '[]') from ssc.environment e join ssc.app a "
+    "(select coalesce(jsonb_agg(jsonb_build_array(e.id, e.app_id, e.name, a.status, a.slug, "
+    "e.request_timeout_seconds) order by e.id), '[]') from ssc.environment e join ssc.app a "
     "on a.org_id = e.org_id and a.id = e.app_id where e.org_id = :org), "
     "(select coalesce(jsonb_agg(jsonb_build_array(g.id, g.environment_id, g.role, "
     "g.subject_kind, coalesce(g.user_id, g.group_id)) order by g.environment_id, g.id), '[]') "
@@ -77,17 +78,29 @@ def content_digest(doc: SnapshotDoc) -> str:
     return canonical_digest(body)
 
 
+def _longer_timeout(seconds: int | None) -> int | None:
+    """An environment's stored request timeout when it is longer than the request-billed one;
+    None, which the document leaves out and a reader takes as that figure, otherwise."""
+    return seconds if seconds is not None and seconds > REQUEST_TIMEOUT_SECONDS else None
+
+
 async def compile_document(
     conn: AsyncConnection, org_id: str, *, version: int, compiled_at: datetime
 ) -> SnapshotDoc:
     """The org's snapshot as of one read. Pure reads in ``conn``'s org-bound transaction."""
     envs, grants, users, members = (await conn.execute(_READ_ORG, {"org": org_id})).one()
     environments: dict[str, Any] = {
-        env_id: {"app_id": app_id, "name": name, "status": status, "floor": floor_of(name)}
-        for env_id, app_id, name, status, _ in envs
+        env_id: {
+            "app_id": app_id,
+            "name": name,
+            "status": status,
+            "floor": floor_of(name),
+            "timeout_seconds": _longer_timeout(timeout),
+        }
+        for env_id, app_id, name, status, _, timeout in envs
     }
     hosts: dict[str, str] = {}
-    for env_id, _, name, _, slug in envs:
+    for env_id, _, name, _, slug, _ in envs:
         if slug_problem(slug) is None:
             hosts[host_label(slug, name)] = env_id
     by_env: dict[str, list[dict[str, Any]]] = {env_id: [] for env_id in environments}
