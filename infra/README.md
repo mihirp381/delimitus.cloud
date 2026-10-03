@@ -30,7 +30,7 @@ pulumi config set --stack c-<label> database true
 pulumi up --stack c-<label>
 ```
 
-Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
+Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
 
 The stack exports `flags`, so `cell_diff` compares two cells with different flags without their flagged resources.
 
@@ -60,6 +60,36 @@ The control plane turns on a cell's `database`, `egress` or `connections` flag w
 3. Re-apply each existing cell once (`pulumi up --stack c-<label>`) so its state exports `config`.
 4. Set the two worker settings above on the control plane.
 5. Deploy a stateful app into an empty staging cell, then run `cell_diff` and `pulumi preview --stack c-<label> --expect-no-changes`.
+
+## Builds
+
+The cell agent runs each build in the cell's own Cloud Build as `ssc-build` (SSC-015, `ssc_agent.cloud_build`). The stack wires it in:
+
+- **Settings.** `build_tools_image` and `build_frontend_image`, both or neither, each `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/<image>@sha256:<digest>`. Anything else, or one without the other, fails the stack before apply: a partial set would stop the agent from starting.
+- **Agent environment.** With `agent_image` and both images set: `SSC_BUILD_SA` (`ssc-build@ssc-c-<label>.iam.gserviceaccount.com`), `SSC_BUILD_TOOLS_IMAGE` and `SSC_BUILD_FRONTEND_IMAGE`. Without them none of the three is set, and the agent answers builds with `BUILD_NOT_CONFIGURED`.
+- **Agent permissions.** `cloudbuild.builds.create` in `sscCellAgentCreate`; `cloudbuild.builds.get` and `cloudbuild.builds.list` in `sscCellAgentRuntime`. Acting as `ssc-build` is the `iam.serviceAccounts.actAs` that `sscCellAgentRuntime` already holds on the project (it covers every account in the cell, as for app identities).
+- **`ssc-build`.** `artifactregistry.writer` on the cell's `ssc-apps`; `artifactregistry.reader` on `ssc-platform` in `ssc-platform-0`, which holds the tools image and the Railpack frontend mirror (and the cell deployer's image, which builds can therefore pull); `logging.logWriter`. No storage role of any kind: the bundle's signed URL is all it reads (`tests/test_cell.py`).
+- **Policies.** None of the folder policies touches this: the builds run in `us-central1`, on Google's default pool (no VM in the cell), and the registry grant is on a platform project, to an organisation identity.
+
+The cell stack writes the reader grant into `ssc-platform-0`, as it writes the apps zone's records. The operator's run creates it. The cell deployer has no role on that registry, so re-apply each existing cell by hand once before the deployer next runs on it.
+
+**Live steps** (operator, not run by SSC-015):
+
+```
+REG=us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform
+gcloud auth configure-docker us-central1-docker.pkg.dev
+docker buildx build --platform linux/amd64 --provenance=false --metadata-file /tmp/tools.json \
+  --tag $REG/ssc-build-tools:railpack-0.40.1 --push infra/build_tools
+jq -r '."containerimage.digest"' /tmp/tools.json
+docker buildx imagetools create --tag $REG/railpack-frontend:v0.40.1 \
+  ghcr.io/railwayapp/railpack-frontend:v0.40.1@sha256:f1973377693af30c9b37a92c97c661c07b277ccdc6be909213c74c771f8d2d6d
+docker buildx imagetools inspect $REG/railpack-frontend:v0.40.1
+pulumi config set --stack c-<label> build_tools_image $REG/ssc-build-tools@<tools digest>
+pulumi config set --stack c-<label> build_frontend_image $REG/railpack-frontend@<mirror digest>
+pulumi up --stack c-<label>
+```
+
+Railpack tags its frontend `v0.40.1`; there is no `0.40.1` tag.
 
 ## Public entry
 

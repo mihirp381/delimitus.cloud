@@ -5,6 +5,7 @@ project number, addresses and the resources their flags name; ``python -m ssc_in
 checks exactly that.
 """
 
+import re
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -90,10 +91,12 @@ CREATE_PERMISSIONS: Final = (
     "run.services.create",
     "secretmanager.secrets.create",
     "cloudsql.databases.create",
+    "cloudbuild.builds.create",
 )
 # Cloud Run and service accounts take no resource-name IAM conditions (only Secret Manager of
 # the agent's APIs does), so these are granted on the project and the agent's code holds it to
-# ``ssc-a-`` names. Exactly what ``ssc_agent.cloud_run`` calls; no delete.
+# ``ssc-a-`` names. Exactly what ``ssc_agent.cloud_run`` and ``ssc_agent.cloud_build`` call; no
+# delete.
 RUNTIME_PERMISSIONS: Final = (
     "run.services.get",
     "run.services.update",
@@ -102,6 +105,12 @@ RUNTIME_PERMISSIONS: Final = (
     "run.revisions.get",
     "run.revisions.list",
     "iam.serviceAccounts.actAs",
+    "cloudbuild.builds.get",
+    "cloudbuild.builds.list",
+)
+BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
+PINNED_IMAGE: Final = re.compile(
+    rf"{re.escape(n.platform_registry())}(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{{64}}"
 )
 
 
@@ -119,6 +128,8 @@ class CellConfig:
     egress: bool
     connections: bool
     warm: bool
+    build_tools_image: str | None = None
+    build_frontend_image: str | None = None
 
     @property
     def project_id(self) -> str:
@@ -154,6 +165,8 @@ class CellConfig:
             "agent_image": self.agent_image,
             "probe_digest": self.probe_digest,
             "billing_account": self.billing_account,
+            "build_tools_image": self.build_tools_image,
+            "build_frontend_image": self.build_frontend_image,
             **self.flags,
         }
         return {
@@ -168,6 +181,7 @@ def read_config(stack: str) -> CellConfig:
     stage = config.get("stage") or "staging"
     if stage != "prod" and stage != "staging":  # noqa: PLR1714  (narrows to Stage)
         raise ValueError(f"stage must be one of {n.STAGES}, not {stage!r}")
+    tools, frontend = build_images(config.get(BUILD_IMAGES[0]), config.get(BUILD_IMAGES[1]))
     return CellConfig(
         label=n.label_of_stack(stack),
         stage=stage,
@@ -181,7 +195,23 @@ def read_config(stack: str) -> CellConfig:
         egress=config.get_bool("egress") or False,
         connections=config.get_bool("connections") or False,
         warm=config.get_bool("warm") or False,
+        build_tools_image=tools,
+        build_frontend_image=frontend,
     )
+
+
+def build_images(tools: str | None, frontend: str | None) -> tuple[str | None, str | None]:
+    """Both build images or neither (the agent refuses to start on a partial set), each in the
+    platform registry and pinned by digest."""
+    if not tools and not frontend:
+        return None, None
+    for key, value in zip(BUILD_IMAGES, (tools, frontend), strict=True):
+        if not value or not PINNED_IMAGE.fullmatch(value):
+            raise ValueError(
+                f"{key} must be {n.platform_registry()}/<image>@sha256:<digest> when "
+                f"{' or '.join(BUILD_IMAGES)} is set"
+            )
+    return tools, frontend
 
 
 def _int_or(value: int | None, default: int) -> int:
@@ -661,6 +691,15 @@ class Cell:
             member=self.build_sa.member,
             opts=self._o(),
         )
+        gcp.artifactregistry.RepositoryIamMember(
+            "registry-build-tools",
+            project=n.BOOTSTRAP_PROJECT,
+            location=n.REGION,
+            repository=n.PLATFORM_REPOSITORY,
+            role="roles/artifactregistry.reader",
+            member=self.build_sa.member,
+            opts=self._o(),
+        )
         # Cloud Run checks that whoever deploys an image may read it.
         gcp.artifactregistry.RepositoryIamMember(
             "registry-agent",
@@ -1025,7 +1064,8 @@ class Cell:
         """Runs ``python -m ssc_agent`` (decision 014) once ``agent_image`` names a build of
         ``packages/ssc_agent/Dockerfile`` in the cell's ``ssc-platform`` repository. Reached only
         through the cell's load balancer on its reserved host, and invoked only by the control
-        plane, with an ID token whose audience is that host's URL (SSC-095)."""
+        plane, with an ID token whose audience is that host's URL (SSC-095). With both build images
+        set it runs builds in the cell's Cloud Build as ``ssc-build`` (SSC-015)."""
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
             "SSC_CELL_REGION": n.REGION,
@@ -1034,6 +1074,13 @@ class Cell:
             "SSC_IMAGE_REPOSITORY": self.app_images,
             "SSC_GATEWAY_SA": self.gateway_sa.email,
         }
+        tools, frontend = self.cfg.build_tools_image, self.cfg.build_frontend_image
+        if tools and frontend:
+            env |= {
+                "SSC_BUILD_SA": self.build_sa.email,
+                "SSC_BUILD_TOOLS_IMAGE": tools,
+                "SSC_BUILD_FRONTEND_IMAGE": frontend,
+            }
         self.agent_ = self._run(
             n.CELL_AGENT,
             self.agent_sa,

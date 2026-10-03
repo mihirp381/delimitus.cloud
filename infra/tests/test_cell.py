@@ -67,6 +67,10 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_IMAGE_REPOSITORY",
     "SSC_GATEWAY_SA",
 }
+TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
+FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
+BUILD = {"build_tools_image": TOOLS_IMAGE, "build_frontend_image": FRONTEND_IMAGE}
+BUILD_ENV = {"SSC_BUILD_SA", "SSC_BUILD_TOOLS_IMAGE", "SSC_BUILD_FRONTEND_IMAGE"}
 
 
 @pytest.fixture(scope="module")
@@ -324,6 +328,42 @@ def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
     assert (subnet["subnetwork"], subnet["role"]) == ("apps", "roles/compute.networkUser")
 
 
+def test_the_agent_runs_builds_as_ssc_build_once_both_images_are_set() -> None:
+    image = "us-central1-docker.pkg.dev/ssc-c-testcell05/ssc-platform/agent@sha256:" + "a" * 64
+    declared = run(naming.cell_stack("testcell05"), {"agent_image": image} | BUILD)
+    agent = one(declared, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
+    env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
+    assert set(env) == AGENT_ENV | BUILD_ENV
+    assert env["SSC_BUILD_SA"] == naming.sa_email("ssc-build", "ssc-c-testcell05")
+    assert (env["SSC_BUILD_TOOLS_IMAGE"], env["SSC_BUILD_FRONTEND_IMAGE"]) == (
+        TOOLS_IMAGE,
+        FRONTEND_IMAGE,
+    )
+
+
+@pytest.mark.parametrize(
+    ("tools", "frontend"),
+    [
+        (TOOLS_IMAGE, None),
+        (None, FRONTEND_IMAGE),
+        (TOOLS_IMAGE, f"{naming.platform_registry()}/railpack-frontend:v0.40.1"),
+        (TOOLS_IMAGE, "ghcr.io/railwayapp/railpack-frontend@sha256:" + "e" * 64),
+        (f"{naming.platform_registry()}@sha256:" + "d" * 64, FRONTEND_IMAGE),
+    ],
+)
+def test_build_images_are_both_set_in_the_platform_registry_and_pinned(
+    tools: str | None, frontend: str | None
+) -> None:
+    with pytest.raises(ValueError, match="build_tools_image or build_frontend_image"):
+        cell.build_images(tools, frontend)
+
+
+def test_without_build_images_the_agent_sets_none_of_the_build_variables() -> None:
+    assert cell.build_images(None, None) == (None, None)
+    assert cell.build_images("", "") == (None, None)
+    assert cell.build_images(TOOLS_IMAGE, FRONTEND_IMAGE) == (TOOLS_IMAGE, FRONTEND_IMAGE)
+
+
 def test_without_an_agent_image_the_agent_is_a_placeholder(cell_a: list[Declared]) -> None:
     agent = one(cell_a, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     (container,) = agent["template"]["containers"]
@@ -414,6 +454,11 @@ def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared])
     assert not any(p.endswith((".delete", ".create")) for p in runtime)
     assert "iam.serviceAccounts.actAs" in runtime
     assert {"run.services.setIamPolicy", "run.revisions.list"} <= set(runtime)
+    assert "cloudbuild.builds.create" in roles["sscCellAgentCreate"]
+    assert {p for p in runtime if p.startswith("cloudbuild.")} == {
+        "cloudbuild.builds.get",
+        "cloudbuild.builds.list",
+    }
 
 
 def test_app_images_are_read_by_the_agent_and_written_by_builds(cell_a: list[Declared]) -> None:
@@ -424,8 +469,42 @@ def test_app_images_are_read_by_the_agent_and_written_by_builds(cell_a: list[Dec
     }
     assert grants == {
         "registry-build": ("serviceAccount:ssc-build", "roles/artifactregistry.writer"),
+        "registry-build-tools": ("serviceAccount:ssc-build", "roles/artifactregistry.reader"),
         "registry-agent": ("serviceAccount:ssc-cell-agent", "roles/artifactregistry.reader"),
     }
+
+
+def test_builds_read_the_platform_registry_and_push_to_the_cell_s_own(
+    cell_a: list[Declared],
+) -> None:
+    kind = "gcp:artifactregistry/repositoryIamMember:RepositoryIamMember"
+    tools = one(cell_a, kind, "registry-build-tools").inputs
+    assert (tools["project"], tools["location"], tools["repository"]) == (
+        naming.BOOTSTRAP_PROJECT,
+        naming.REGION,
+        naming.PLATFORM_REPOSITORY,
+    )
+    push = one(cell_a, kind, "registry-build").inputs
+    assert (push["project"], push["role"]) == (
+        naming.cell_project(A),
+        "roles/artifactregistry.writer",
+    )
+
+
+def test_the_build_account_holds_no_storage_role(cell_a: list[Declared]) -> None:
+    build = f"serviceAccount:{naming.sa_email('ssc-build', naming.cell_project(A))}"
+    held = [
+        (d.type, d.inputs["role"])
+        for d in cell_a
+        if d.inputs.get("member") == build or build in d.inputs.get("members", [])
+    ]
+    assert sorted(role for _, role in held) == [
+        "roles/artifactregistry.reader",
+        "roles/artifactregistry.writer",
+        "roles/logging.logWriter",
+    ]
+    assert not [t for t, role in held if t.startswith("gcp:storage/") or "storage" in role]
+    assert not [r for _, r in held if not r.startswith("roles/")]
 
 
 def test_the_cell_deny_rule_names_every_ssc_identity(cell_a: list[Declared]) -> None:

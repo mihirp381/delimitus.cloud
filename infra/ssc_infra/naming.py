@@ -122,5 +122,11 @@ def agent_url(label: str) -> str:
     return f"https://{agent_host(label)}"
 
 
+def platform_registry() -> str:
+    """The platform's own images in ``ssc-platform-0``: the cell deployer, the build tools image
+    and the Railpack frontend mirror."""
+    return f"{REGION}-docker.pkg.dev/{BOOTSTRAP_PROJECT}/{PLATFORM_REPOSITORY}"
+
+
 def platform_stack_ref() -> str:
     return f"organization/{PROJECT}/{PLATFORM_STACK}"

@@ -149,8 +149,12 @@ def test_the_applied_config_restores_the_same_cell(monkeypatch: pytest.MonkeyPat
         "egress": "true",
         "probe_digest": "sha256:" + "a" * 64,
         "billing_account": "0000AA-BBBBBB-CCCCCC",
+        "build_tools_image": f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64,
+        "build_frontend_image": f"{naming.platform_registry()}/railpack-frontend@sha256:"
+        + "e" * 64,
     }
     first = _exported(applied, monkeypatch)["config"]
+    assert first["build_tools_image"] == applied["build_tools_image"]
     assert all(isinstance(v, str) for v in first.values())
     assert _exported(first, monkeypatch)["config"] == first
     assert _names(run(STACK, first)) == _names(run(STACK, applied))
