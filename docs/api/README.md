@@ -159,6 +159,21 @@ nothing is live); `404 NOT_FOUND` without a database, `409 DEPLOYMENT_IN_FLIGHT`
 `503 DATABASE_UNAVAILABLE` when the cell agent is not configured or fails. A deployment that
 needs a database the instance has no room for fails with `DB_TIER_FULL`.
 
+**Logs are read through the cell, never from the app** (SSC-024). `GET
+/v1/apps/{app}/environments/{env}/logs?source=app|build|deploy` needs a person who may change
+the environment (`require_builder`, agent credentials included; a `user` grant is `403
+FORBIDDEN`). `app` and `build` lines come from the cell agent, which builds the Cloud Logging
+filter itself from the environment's service name and its last five builds; `deploy` lines come
+from the deployment rows. `since` (seconds, default 3600, at most 7 days) reads history; `after`
+(the last answer's `cursor`) with `wait` (at most 20 seconds) follows, holding the request until a
+new line arrives. Every line is redacted in the agent and again here. The agent shares one
+upstream read every 2 seconds among all followers and budgets other reads, so the cell stays
+under Cloud Logging's 60 reads a minute; a caller over its share or a cell over its budget gets
+`429 LOGS_RATE_LIMITED` with `Retry-After`, and a cell that cannot read gets `503
+LOGS_UNAVAILABLE`. `GET .../health` answers `running`, `asleep` (starts on the next request) or
+`failing`, with a reason, from Cloud Run's revision state and the cell's own request and error
+logs: no request ever reaches the app. Anyone who can see the app may ask.
+
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's
 call once there is more than one replica.

@@ -1,6 +1,6 @@
 """What one running API process holds: settings, the engine, the verifier, the limiter, the
-metrics recorder, the blob store, the production gate, the timers, the secret grants and the app
-databases."""
+metrics recorder, the blob store, the production gate, the timers, the secret grants, the app
+databases and the cell's logs."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ssc_control.runtime.app_databases import AppDatabases
     from ssc_control.runtime.secret_grants import SecretGrants
     from ssc_shared.blobstore import BlobStore
+    from ssc_shared.logs import CellLogs
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,9 @@ class Runtime:
     app_databases: AppDatabases | None = None
     """Rotates and reads app databases through the cell agent (SSC-040); ``None`` when the cell
     is not configured, and rotation refuses."""
+    cell_logs: CellLogs | None = None
+    """App logs and health through the cell agent (SSC-024); ``None`` when the cell is not
+    configured, and log reads answer ``LOGS_UNAVAILABLE``."""
 
 
 def runtime_of(request: Request) -> Runtime:

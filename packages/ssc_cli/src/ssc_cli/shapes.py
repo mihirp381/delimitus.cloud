@@ -87,6 +87,16 @@ class DatabaseRow(Shape):
     places_total: int | None
 
 
+class HealthRow(Shape):
+    """``status``: ``running``, ``asleep`` (starts on the next request) or ``failing``; ``state``
+    is null when nothing runs or the cell cannot tell, and ``reason`` says which."""
+
+    state: str | None
+    reason: str
+    last_request_at: str | None
+    checked_at: str
+
+
 class EnvironmentRow(Shape):
     id: str
     name: str
@@ -97,6 +107,9 @@ class EnvironmentRow(Shape):
     url: str | None = Field(description="Where the environment is served.")
     database: DatabaseRow | None = Field(
         default=None, description="Only from ``status``; null when there is none."
+    )
+    health: HealthRow | None = Field(
+        default=None, description="Only from ``status``; null when the API did not say."
     )
 
 
@@ -334,6 +347,27 @@ class SecretsResult(Shape):
     secrets: list[SecretRow]
 
 
+class LogLineRow(Shape):
+    """``logs``: one redacted line. ``logs --follow --json`` prints one per line as it comes."""
+
+    timestamp: str
+    severity: str
+    source: str
+    text: str
+
+
+class LogsResult(Shape):
+    """``logs``: the newest lines, oldest first. ``cursor`` continues after the last of them."""
+
+    app_id: str
+    slug: str
+    environment: str
+    environment_id: str
+    source: str
+    lines: list[LogLineRow]
+    cursor: str | None
+
+
 class ErrorResult(Shape):
     error: ErrorBody
 
@@ -350,6 +384,7 @@ SHAPES: dict[str, type[BaseModel]] = {
         AppsResult,
         DeploymentRow,
         DatabaseRow,
+        HealthRow,
         EnvironmentRow,
         AppResult,
         GrantRow,
@@ -373,6 +408,8 @@ SHAPES: dict[str, type[BaseModel]] = {
         SecretSetResult,
         SecretRow,
         SecretsResult,
+        LogLineRow,
+        LogsResult,
         ErrorBody,
         ErrorResult,
     )

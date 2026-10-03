@@ -10,7 +10,7 @@ import pytest
 from pydantic import BaseModel
 
 from ssc_cli import models
-from ssc_cli.commands import access, deploy, lifecycle, releases, rollback, share
+from ssc_cli.commands import access, deploy, lifecycle, logs, releases, rollback, share
 from ssc_cli.commands.share import DEFAULT_ROLE, SUBJECT_KINDS, Env, Role
 from ssc_cli.shapes import SHAPES
 
@@ -52,6 +52,9 @@ RESPONSES = (
     models.SecretGrantOut,
     models.SecretSetOut,
     models.DatabaseOut,
+    models.LogLineOut,
+    models.LogPageOut,
+    models.HealthOut,
 )
 REQUESTS = (
     models.AppCreate,
@@ -159,6 +162,15 @@ def test_admin_and_access_values_match_the_api(server):
     (builder,) = paths["/v1/apps"]["get"]["parameters"]
     assert builder["name"] == "builder"
     assert builder["schema"]["anyOf"][0]["const"] == "me"
+
+
+def test_log_queries_are_checked_as_the_api_checks_them(server):
+    paths = json.loads(OPENAPI.read_text())["paths"]
+    get = paths["/v1/apps/{app_id}/environments/{environment_id}/logs"]["get"]
+    params = {p["name"]: p["schema"] for p in get["parameters"]}
+    assert params["since"]["maximum"] == logs.since_seconds("7d")
+    assert params["wait"]["maximum"] >= logs.FOLLOW_WAIT
+    assert {s.value for s in logs.Source} == set(server["LogSource"]["enum"])
 
 
 # ── --json shapes: append-only ───────────────────────────────────────────────

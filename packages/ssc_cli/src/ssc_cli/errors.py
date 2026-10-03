@@ -101,6 +101,7 @@ class CliError(Exception):
         self.exit_code = exit_code
         # The next step, printed as a ``Fix:`` line without ``--json``. Not part of the JSON.
         self.fix = fix
+        self.retry_after: float | None = None
 
 
 def local_error(

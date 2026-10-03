@@ -10,17 +10,21 @@ from ssc_cli.errors import CliError
 from ssc_cli.models import AppOut
 from ssc_cli.output import dash, print_json, say, table
 from ssc_cli.resolve import resolve_app
-from ssc_cli.shapes import AppResult, DatabaseRow, DeploymentRow, EnvironmentRow
+from ssc_cli.shapes import AppResult, DatabaseRow, DeploymentRow, EnvironmentRow, HealthRow
 from ssc_contracts.app_database import POOL_FIX_IT
 
 AppArg = Annotated[str, typer.Argument(help="App slug or app_ id.")]
 
 
 def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
-    """Show an app's environments, what is deployed to each, and each one's database."""
+    """Show an app's environments: what is deployed, whether it runs, and its database."""
     with handled(json_mode), session(ctx).client() as client:
         result = app_result(
-            client, resolve_app(client, app), with_deployments=True, with_databases=True
+            client,
+            resolve_app(client, app),
+            with_deployments=True,
+            with_databases=True,
+            with_health=True,
         )
     if json_mode:
         print_json(result)
@@ -35,11 +39,21 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
             dash(e.current_deployment_id),
             dash(e.deployment.finished_at if e.deployment else None),
             dash(e.url),
+            health_text(e.health),
             database_text(e.database),
         )
         for e in result.environments
     ]
-    headers = ("ENVIRONMENT", "STATE", "RELEASE", "DEPLOYMENT", "FINISHED", "URL", "DATABASE")
+    headers = (
+        "ENVIRONMENT",
+        "STATE",
+        "RELEASE",
+        "DEPLOYMENT",
+        "FINISHED",
+        "URL",
+        "HEALTH",
+        "DATABASE",
+    )
     say(table(headers, rows))
     databases = [e.database for e in result.environments if e.database is not None]
     if databases:
@@ -51,6 +65,26 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
                 f"{places.places_total}, previews included."
             )
         say(POOL_FIX_IT)
+
+
+def health_text(health: HealthRow | None) -> str:
+    """``running``, ``asleep``, ``failing (reason)``, or a dash when nothing runs or none said."""
+    if health is None or health.state is None:
+        return "-"
+    return f"failing ({health.reason})" if health.state == "failing" else health.state
+
+
+def _health(client: ApiClient, app_id: str, environment_id: str) -> HealthRow | None:
+    try:
+        out = client.get_health(app_id, environment_id)
+    except CliError:
+        return None
+    return HealthRow(
+        state=out.state,
+        reason=out.reason,
+        last_request_at=out.last_request_at,
+        checked_at=out.checked_at,
+    )
 
 
 def database_text(database: DatabaseRow | None) -> str:
@@ -82,7 +116,12 @@ def _database(client: ApiClient, app_id: str, environment_id: str) -> DatabaseRo
 
 
 def app_result(
-    client: ApiClient, app: AppOut, *, with_deployments: bool, with_databases: bool = False
+    client: ApiClient,
+    app: AppOut,
+    *,
+    with_deployments: bool,
+    with_databases: bool = False,
+    with_health: bool = False,
 ) -> AppResult:
     envs: list[EnvironmentRow] = []
     for e in app.environments:
@@ -107,6 +146,7 @@ def app_result(
                 deployment=deployment,
                 url=e.url,
                 database=_database(client, app.id, e.id) if with_databases else None,
+                health=_health(client, app.id, e.id) if with_health else None,
             )
         )
     return AppResult(

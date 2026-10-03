@@ -13,6 +13,7 @@ from ssc_cli.commands.doctor import doctor
 from ssc_cli.commands.init import init
 from ssc_cli.commands.lifecycle import disable, enable
 from ssc_cli.commands.login import login, logout
+from ssc_cli.commands.logs import logs
 from ssc_cli.commands.mcp import mcp
 from ssc_cli.commands.promote import promote
 from ssc_cli.commands.releases import releases
@@ -66,6 +67,7 @@ app.command()(whoami)
 app.add_typer(token_app)
 app.add_typer(apps_app)
 app.command()(status)
+app.command()(logs)
 app.command()(share)
 app.command()(unshare)
 app.command()(doctor)

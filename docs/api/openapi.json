@@ -1806,6 +1806,8 @@
           "SECRETS_UNAVAILABLE",
           "DB_TIER_FULL",
           "DATABASE_UNAVAILABLE",
+          "LOGS_RATE_LIMITED",
+          "LOGS_UNAVAILABLE",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -2118,6 +2120,63 @@
           "removed"
         ],
         "title": "GroupMembersOut",
+        "type": "object"
+      },
+      "HealthOut": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "last_request_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Request At"
+          },
+          "reason": {
+            "description": "`serving`, `always_on`, `idle`, `revision_failed`, `server_error`, `crashed`, `not_deployed`, `stopped` or `logs_unavailable`.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "running",
+                  "asleep",
+                  "failing"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`running`; `asleep`, which starts on the next request; `failing`; or null when nothing runs or the cell cannot tell (`reason`).",
+            "title": "State"
+          }
+        },
+        "required": [
+          "environment_id",
+          "state",
+          "reason",
+          "last_request_at",
+          "checked_at"
+        ],
+        "title": "HealthOut",
         "type": "object"
       },
       "Heartbeat": {
@@ -2599,6 +2658,85 @@
         ],
         "title": "Linked",
         "type": "object"
+      },
+      "LogLineOut": {
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "description": "Cloud Logging's: `DEFAULT`, `INFO`, `ERROR`...",
+            "title": "Severity",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/LogSource"
+          },
+          "text": {
+            "description": "Redacted.",
+            "title": "Text",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timestamp",
+          "severity",
+          "source",
+          "text"
+        ],
+        "title": "LogLineOut",
+        "type": "object"
+      },
+      "LogPageOut": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as `after` for the lines that follow.",
+            "title": "Cursor"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "lines": {
+            "description": "Oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/LogLineOut"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "source": {
+            "$ref": "#/components/schemas/LogSource"
+          }
+        },
+        "required": [
+          "environment_id",
+          "source",
+          "lines",
+          "cursor"
+        ],
+        "title": "LogPageOut",
+        "type": "object"
+      },
+      "LogSource": {
+        "enum": [
+          "app",
+          "build",
+          "deploy"
+        ],
+        "type": "string"
       },
       "OperationAccepted": {
         "additionalProperties": false,
@@ -6382,6 +6520,276 @@
           }
         },
         "summary": "Put Grants",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/health": {
+      "get": {
+        "description": "Whether the environment runs, sleeps or fails, without sending the app a request.",
+        "operationId": "get_health_v1_apps__app_id__environments__environment_id__health_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`LOGS_UNAVAILABLE`"
+          }
+        },
+        "summary": "Get Health",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/logs": {
+      "get": {
+        "description": "Lines of one source, redacted. Builders, the owner and org admins only.",
+        "operationId": "get_logs_v1_apps__app_id__environments__environment_id__logs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`app`: what the app printed and its requests; `build`: its last builds; `deploy`: its deployments.",
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LogSource",
+              "default": "app",
+              "description": "`app`: what the app printed and its requests; `build`: its last builds; `deploy`: its deployments."
+            }
+          },
+          {
+            "description": "Seconds back; ignored with `after`.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": 3600,
+              "description": "Seconds back; ignored with `after`.",
+              "maximum": 604800,
+              "minimum": 1,
+              "title": "Since",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The newest lines; ignored with `after`.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "description": "The newest lines; ignored with `after`.",
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "A previous page's `cursor`: only lines after it.",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9]{1,19}\\.[0-9]{1,19}\\.[0-9]{1,19}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A previous page's `cursor`: only lines after it.",
+              "title": "After"
+            }
+          },
+          {
+            "description": "With `after`, seconds to wait for a line before answering with none.",
+            "in": "query",
+            "name": "wait",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "With `after`, seconds to wait for a line before answering with none.",
+              "maximum": 20,
+              "minimum": 0,
+              "title": "Wait",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogPageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`, `LOGS_RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`LOGS_UNAVAILABLE`"
+          }
+        },
+        "summary": "Get Logs",
         "tags": [
           "v1"
         ]

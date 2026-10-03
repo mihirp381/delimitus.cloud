@@ -3,7 +3,7 @@
 import httpx2
 import pytest
 
-from ssc_agent.__main__ import ENV, ConfigError, cell_from_env
+from ssc_agent.__main__ import ENV, LOG_VIEW_ENV, ConfigError, cell_from_env, log_views_from_env
 from ssc_agent.cloud_run import (  # pyright: ignore[reportPrivateUsage]
     _bare,
     _cpu,
@@ -23,6 +23,17 @@ def test_cell_from_env_needs_every_name() -> None:
     for name in ENV.values():
         with pytest.raises(ConfigError, match=name):
             cell_from_env({k: v for k, v in FULL.items() if k != name})
+
+
+def test_log_views_from_env_takes_one_or_more_views() -> None:
+    app = "projects/cell-project/locations/us-central1/buckets/_Default/views/ssc-app-logs"
+    builds = app.replace("ssc-app-logs", "ssc-build-logs")
+    assert log_views_from_env({}) is None
+    assert log_views_from_env({LOG_VIEW_ENV: app}) == (app,)
+    assert log_views_from_env({LOG_VIEW_ENV: f"{app}, {builds}"}) == (app, builds)
+    for bad in ("projects/cell-project/logs/run", f"{app},", f"{app},logs/x", "a b"):
+        with pytest.raises(ConfigError, match=LOG_VIEW_ENV):
+            log_views_from_env({LOG_VIEW_ENV: bad})
 
 
 async def test_access_token_is_cached() -> None:
