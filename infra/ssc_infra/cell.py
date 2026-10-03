@@ -53,6 +53,9 @@ ENTRY_TIMEOUT_SECONDS: Final = 3600
 GATEWAY_TIMEOUT: Final = f"{ENTRY_TIMEOUT_SECONDS}s"
 ENTRY: Final = "ssc-entry"
 LB_SCHEME: Final = "EXTERNAL_MANAGED"
+TLS_MIN: Final = "TLS_1_2"
+TLS_PROFILE: Final = "MODERN"
+AGENT_PATHS: Final = "agent"
 DNS_TTL: Final = 300
 CELL_BUDGET_USD: Final = 50
 CELL_RANGE: Final = "10.20.0.0/16"
@@ -184,8 +187,8 @@ class Cell:
     """Builds the resources in dependency order; each step keeps what later steps need.
 
     Onboarding builds everything but the lazy resources, which only their flags add
-    (``naming.LAZY_RESOURCES``). The public entry (SSC-088) fronts ``gateway_``; SSC-095 adds
-    the agent's host rule to ``url_map``."""
+    (``naming.LAZY_RESOURCES``). The public entry (SSC-088) fronts ``gateway_`` and, on its
+    reserved host only, ``agent_`` (SSC-095)."""
 
     def __init__(self, cfg: CellConfig, platform: pulumi.StackReference) -> None:
         self.cfg = cfg
@@ -219,8 +222,8 @@ class Cell:
         self.dns_policy()
         self.bucket()
         self.gateway()
-        self.entry()
         self.cell_agent()
+        self.entry()
         if cfg.egress:
             self.proxy()
         if cfg.connections:
@@ -748,6 +751,7 @@ class Cell:
         env: dict[str, pulumi.Input[str]] | None = None,
         timeout: str | None = None,
         concurrency: int | None = None,
+        audiences: Sequence[str] | None = None,
     ) -> gcp.cloudrunv2.Service:
         """A request-billed service: CPU only while a request is open."""
         min_instances, max_instances = instances
@@ -757,6 +761,7 @@ class Cell:
             name=name,
             location=n.REGION,
             ingress=ingress,
+            custom_audiences=list(audiences) if audiences else None,
             deletion_protection=not self.cfg.disposable,
             scaling=gcp.cloudrunv2.ServiceScalingArgs(max_instance_count=max_instances),
             template=gcp.cloudrunv2.ServiceTemplateArgs(
@@ -797,7 +802,8 @@ class Cell:
     def gateway(self) -> None:
         """Internal and load-balancer ingress keeps the ``run.app`` host closed, so the invoker
         is ``allUsers`` and the authoriser refuses requests without a session (SSC-088). The
-        ``allUsers`` grant needs the SSC-095 policy exception first."""
+        folder's member policy allows ``allUsers`` only where the platform's public-invoker tag is
+        bound, so the tag goes on this service, and only this one, before the grant (SSC-095)."""
         self.gateway_ = self._run(
             n.GATEWAY,
             self.gateway_sa,
@@ -807,6 +813,18 @@ class Cell:
             timeout=GATEWAY_TIMEOUT,
             concurrency=GATEWAY_CONCURRENCY,
         )
+        public = gcp.tags.LocationTagBinding(
+            "gateway-public-tag",
+            parent=pulumi.Output.concat(
+                "//run.googleapis.com/projects/",
+                self.project_.number,
+                f"/locations/{n.REGION}/services/",
+                self.gateway_.name,
+            ),
+            tag_value=self.platform.require_output("public_invoker_tag"),
+            location=n.REGION,
+            opts=self._o(),
+        )
         gcp.cloudrunv2.ServiceIamMember(
             "gateway-invoker",
             project=self.pid,
@@ -814,12 +832,13 @@ class Cell:
             name=self.gateway_.name,
             role="roles/run.invoker",
             member="allUsers",
-            opts=self._o(),
+            opts=self._o(public),
         )
 
     def entry(self) -> None:
         """The cell's own public door: a global external Application Load Balancer on one
-        address, HTTPS to the gateway through a serverless NEG, and HTTP answered with a redirect
+        address, HTTPS (TLS 1.2 or later) to the gateway through a serverless NEG, the agent's
+        reserved host alone to the agent through a second one, and HTTP answered with a redirect
         on the same address. A serverless NEG's backend timeout is fixed at 60 minutes and cannot
         be set, so the gateway's 3600 s request timeout is what bounds a WebSocket."""
         label = self.cfg.label
@@ -831,39 +850,38 @@ class Cell:
             ip_version="IPV4",
             opts=self._o(),
         )
-        neg = gcp.compute.RegionNetworkEndpointGroup(
-            "gateway-neg",
-            project=self.pid,
-            name=n.GATEWAY,
-            region=n.REGION,
-            network_endpoint_type="SERVERLESS",
-            cloud_run=gcp.compute.RegionNetworkEndpointGroupCloudRunArgs(
-                service=self.gateway_.name
-            ),
-            opts=self._o(),
-        )
-        backend = gcp.compute.BackendService(
-            "gateway-backend",
-            project=self.pid,
-            name=n.GATEWAY,
-            load_balancing_scheme=LB_SCHEME,
-            protocol="HTTPS",
-            backends=[gcp.compute.BackendServiceBackendArgs(group=neg.id)],
-            opts=self._o(),
-        )
+        gateway = self._backend("gateway", n.GATEWAY, self.gateway_)
+        agent = self._backend("agent", n.CELL_AGENT, self.agent_)
         self.url_map = gcp.compute.URLMap(
             "entry-map",
             project=self.pid,
             name=ENTRY,
-            default_service=backend.id,
+            default_service=gateway.id,
+            host_rules=[
+                gcp.compute.URLMapHostRuleArgs(
+                    hosts=[n.agent_host(label)], path_matcher=AGENT_PATHS
+                )
+            ],
+            path_matchers=[
+                gcp.compute.URLMapPathMatcherArgs(name=AGENT_PATHS, default_service=agent.id)
+            ],
             opts=self._o(),
         )
         self.certificate = self._certificate()
+        tls = gcp.compute.SSLPolicy(
+            "entry-tls",
+            project=self.pid,
+            name=ENTRY,
+            min_tls_version=TLS_MIN,
+            profile=TLS_PROFILE,
+            opts=self._o(),
+        )
         https = gcp.compute.TargetHttpsProxy(
             "entry-https",
             project=self.pid,
             name=ENTRY,
             url_map=self.url_map.id,
+            ssl_policy=tls.id,
             certificate_map=pulumi.Output.concat(
                 "//certificatemanager.googleapis.com/", self.certificate_map.id
             ),
@@ -900,6 +918,29 @@ class Cell:
                 opts=self._o(),
             )
         self._record("dns-wildcard", f"{n.cell_wildcard(label)}.", "A", self.entry_ip.address)
+
+    def _backend(
+        self, resource: str, name: str, service: gcp.cloudrunv2.Service
+    ) -> gcp.compute.BackendService:
+        """A serverless NEG on one Cloud Run service and the backend service in front of it."""
+        neg = gcp.compute.RegionNetworkEndpointGroup(
+            f"{resource}-neg",
+            project=self.pid,
+            name=name,
+            region=n.REGION,
+            network_endpoint_type="SERVERLESS",
+            cloud_run=gcp.compute.RegionNetworkEndpointGroupCloudRunArgs(service=service.name),
+            opts=self._o(),
+        )
+        return gcp.compute.BackendService(
+            f"{resource}-backend",
+            project=self.pid,
+            name=name,
+            load_balancing_scheme=LB_SCHEME,
+            protocol="HTTPS",
+            backends=[gcp.compute.BackendServiceBackendArgs(group=neg.id)],
+            opts=self._o(),
+        )
 
     def _certificate(self) -> gcp.certificatemanager.Certificate:
         """The wildcard certificate, issued once the authorisation CNAME this run writes into
@@ -963,7 +1004,9 @@ class Cell:
 
     def cell_agent(self) -> None:
         """Runs ``python -m ssc_agent`` (decision 014) once ``agent_image`` names a build of
-        ``packages/ssc_agent/Dockerfile`` in the cell's ``ssc-platform`` repository."""
+        ``packages/ssc_agent/Dockerfile`` in the cell's ``ssc-platform`` repository. Reached only
+        through the cell's load balancer on its reserved host, and invoked only by the control
+        plane, with an ID token whose audience is that host's URL (SSC-095)."""
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
             "SSC_CELL_REGION": n.REGION,
@@ -972,14 +1015,15 @@ class Cell:
             "SSC_IMAGE_REPOSITORY": self.app_images,
             "SSC_GATEWAY_SA": self.gateway_sa.email,
         }
-        agent = self._run(
-            "ssc-cell-agent",
+        self.agent_ = self._run(
+            n.CELL_AGENT,
             self.agent_sa,
-            ingress="INGRESS_TRAFFIC_ALL",
+            ingress="INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
             vpc=None,
             instances=(0, AGENT_MAX),
             image=self.cfg.agent_image,
             env=env if self.cfg.agent_image else None,
+            audiences=[n.agent_url(self.cfg.label)],
         )
         gcp.compute.SubnetworkIAMMember(
             "agent-apps-subnet",
@@ -994,7 +1038,7 @@ class Cell:
             "agent-invoker",
             project=self.pid,
             location=n.REGION,
-            name=agent.name,
+            name=self.agent_.name,
             role="roles/run.invoker",
             member=pulumi.Output.concat("serviceAccount:", self.control_sa),
             opts=self._o(),
@@ -1199,10 +1243,7 @@ class Cell:
             pulumi.export("sql_instance", self.sql.connection_name)
         pulumi.export("registry", self.repo.name)
         pulumi.export("app_images", self.app_images)
-        pulumi.export(
-            "agent_url",
-            self.project_.number.apply(lambda p: n.run_url("ssc-cell-agent", p)),
-        )
+        pulumi.export("agent_url", n.agent_url(self.cfg.label))
         pulumi.export("entry_address", self.entry_ip.address)
         pulumi.export("public_host_suffix", n.host_suffix(self.cfg.label))
         pulumi.export("certificate_id", self.certificate.id)

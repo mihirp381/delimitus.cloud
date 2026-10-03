@@ -30,7 +30,9 @@ EMPTY_FLAGS = {
     "warm": False,
 }
 NEG = "gcp:compute/regionNetworkEndpointGroup:RegionNetworkEndpointGroup"
+BACKEND = "gcp:compute/backendService:BackendService"
 RECORD = "gcp:dns/recordSet:RecordSet"
+TAG_BINDING = "gcp:tags/locationTagBinding:LocationTagBinding"
 LB_KINDS = {
     "gcp:compute/backendService:BackendService",
     "gcp:compute/globalForwardingRule:GlobalForwardingRule",
@@ -38,7 +40,10 @@ LB_KINDS = {
 ENTRY_RESOURCES = {
     "gcp:compute/globalAddress:GlobalAddress::entry-ip",
     f"{NEG}::gateway-neg",
-    "gcp:compute/backendService:BackendService::gateway-backend",
+    f"{NEG}::agent-neg",
+    f"{BACKEND}::gateway-backend",
+    f"{BACKEND}::agent-backend",
+    "gcp:compute/sSLPolicy:SSLPolicy::entry-tls",
     "gcp:compute/uRLMap:URLMap::entry-map",
     "gcp:compute/uRLMap:URLMap::entry-redirect",
     "gcp:compute/targetHttpsProxy:TargetHttpsProxy::entry-https",
@@ -52,6 +57,7 @@ ENTRY_RESOURCES = {
     f"{RECORD}::dns-cert-auth",
     f"{RECORD}::dns-wildcard",
     "gcp:cloudrunv2/serviceIamMember:ServiceIamMember::gateway-invoker",
+    f"{TAG_BINDING}::gateway-public-tag",
 }
 AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_CELL_PROJECT",
@@ -250,7 +256,7 @@ def test_no_internal_load_balancer_remains(cell_a: list[Declared]) -> None:
     kinds = {d.type for d in cell_a}
     regional = {k for k in kinds if "region" in k.lower() and "compute/" in k}
     assert regional == {NEG}
-    assert one(cell_a, NEG).inputs["networkEndpointType"] == "SERVERLESS"
+    assert {d.inputs["networkEndpointType"] for d in cell_a if d.type == NEG} == {"SERVERLESS"}
     assert "gcp:compute/forwardingRule:ForwardingRule" not in kinds
     schemes = {d.inputs.get("loadBalancingScheme") for d in cell_a if d.type in LB_KINDS}
     assert schemes == {"EXTERNAL_MANAGED"}
@@ -665,13 +671,18 @@ def test_one_https_rule_and_a_redirect_on_the_same_address(bare: list[Declared])
     assert "defaultService" not in redirect
 
 
-def test_the_backend_reaches_the_gateway_through_a_serverless_neg(bare: list[Declared]) -> None:
-    neg = one(bare, NEG).inputs
+@pytest.mark.parametrize(
+    ("resource", "service"), [("gateway", naming.GATEWAY), ("agent", naming.CELL_AGENT)]
+)
+def test_each_backend_reaches_its_service_through_a_serverless_neg(
+    bare: list[Declared], resource: str, service: str
+) -> None:
+    neg = one(bare, NEG, f"{resource}-neg").inputs
     assert neg["networkEndpointType"] == "SERVERLESS"
-    assert neg["cloudRun"] == {"service": naming.GATEWAY}
+    assert neg["cloudRun"] == {"service": service}
     assert neg["region"] == naming.REGION
-    backend = one(bare, "gcp:compute/backendService:BackendService").inputs
-    assert backend["backends"] == [{"group": "gateway-neg-id"}]
+    backend = one(bare, BACKEND, f"{resource}-backend").inputs
+    assert backend["backends"] == [{"group": f"{resource}-neg-id"}]
     assert backend["loadBalancingScheme"] == "EXTERNAL_MANAGED"
     assert "healthChecks" not in backend
     assert one(bare, "gcp:compute/uRLMap:URLMap", "entry-map").inputs["defaultService"] == (
@@ -682,8 +693,7 @@ def test_the_backend_reaches_the_gateway_through_a_serverless_neg(bare: list[Dec
 def test_a_request_through_the_load_balancer_may_last_3600_seconds(bare: list[Declared]) -> None:
     """A serverless NEG's backend timeout is fixed at 3600 s and Google refuses ``timeoutSec``
     on it, so the stack must leave it unset and the gateway's own timeout must match."""
-    backend = one(bare, "gcp:compute/backendService:BackendService").inputs
-    assert "timeoutSec" not in backend
+    assert not [d for d in bare if d.type == BACKEND and "timeoutSec" in d.inputs]
     assert cell.ENTRY_TIMEOUT_SECONDS == 3600
     gw = one(bare, "gcp:cloudrunv2/service:Service", naming.GATEWAY).inputs
     assert gw["template"]["timeout"] == f"{cell.ENTRY_TIMEOUT_SECONDS}s"
@@ -726,8 +736,8 @@ def test_the_certificate_and_dns_records_follow_the_label(cell_a: list[Declared]
 
 def test_no_cloud_armor(cell_a: list[Declared]) -> None:
     assert not [d for d in cell_a if d.type.startswith("gcp:compute/securityPolicy")]
-    backend = one(cell_a, "gcp:compute/backendService:BackendService").inputs
-    assert "securityPolicy" not in backend and "edgeSecurityPolicy" not in backend
+    for backend in (d.inputs for d in cell_a if d.type == BACKEND):
+        assert "securityPolicy" not in backend and "edgeSecurityPolicy" not in backend
 
 
 def test_a_second_label_changes_only_label_derived_values(
@@ -739,6 +749,7 @@ def test_a_second_label_changes_only_label_derived_values(
         (A, B),
         (entry_address(naming.cell_project(A)), entry_address(naming.cell_project(B))),
         (_auth_data(cell_a), _auth_data(cell_b)),
+        (project_number(naming.cell_project(A)), project_number(naming.cell_project(B))),
     )
     changed = 0
     for key, d in first.items():
@@ -808,7 +819,25 @@ def test_the_gateway_is_public_only_through_the_load_balancer(bare: list[Declare
     assert public == {naming.GATEWAY}
 
 
-def test_the_agent_host_is_reserved_and_not_yet_routed(bare: list[Declared]) -> None:
+def test_the_public_invoker_tag_goes_on_the_gateway_alone_before_its_grant(
+    monkeypatch: pytest.MonkeyPatch, bare: list[Declared]
+) -> None:
+    binding = one(bare, TAG_BINDING).inputs
+    number = project_number("ssc-c-testcell09")
+    assert binding["parent"] == (
+        f"//run.googleapis.com/projects/{number}/locations/{naming.REGION}/services/"
+        f"{naming.GATEWAY}"
+    )
+    assert binding["tagValue"] == mockcloud.PUBLIC_TAG
+    assert binding["location"] == naming.REGION
+    invoker = _options(monkeypatch)[
+        "gcp:cloudrunv2/serviceIamMember:ServiceIamMember::gateway-invoker"
+    ]
+    after = {d._name for d in cast(list[pulumi.Resource], invoker.depends_on or [])}  # pyright: ignore[reportPrivateUsage]
+    assert "gateway-public-tag" in after
+
+
+def test_the_agent_host_is_routed_to_the_agent_alone(bare: list[Declared]) -> None:
     assert check_apps_domain(naming.APPS_DOMAIN) == "delimitusapps.com"
     assert slug_problem(naming.AGENT_HOST_LABEL) == "double_dash"
     host = naming.agent_host("testcell09")
@@ -816,7 +845,37 @@ def test_the_agent_host_is_reserved_and_not_yet_routed(bare: list[Declared]) -> 
     assert parse_app_host(host, naming.APPS_DOMAIN) is None
     assert host.split(".", 1)[1] == naming.cell_wildcard("testcell09").removeprefix("*.")
     url_map = one(bare, "gcp:compute/uRLMap:URLMap", "entry-map").inputs
-    assert "hostRules" not in url_map and "pathMatchers" not in url_map
+    assert url_map["hostRules"] == [{"hosts": [host], "pathMatcher": "agent"}]
+    assert url_map["pathMatchers"] == [{"name": "agent", "defaultService": "agent-backend-id"}]
+    assert url_map["defaultService"] == "gateway-backend-id"
+    text = json.dumps(url_map)
+    assert text.count("agent-backend-id") == 1
+    assert text.count("gateway-backend-id") == 1
+
+
+def test_the_agent_is_internal_and_load_balancer_with_the_host_as_audience(
+    bare: list[Declared],
+) -> None:
+    agent = one(bare, "gcp:cloudrunv2/service:Service", naming.CELL_AGENT).inputs
+    assert agent["ingress"] == "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+    assert agent["customAudiences"] == ["https://ssc--agent.testcell09.delimitusapps.com"]
+    assert naming.agent_url("testcell09") == agent["customAudiences"][0]
+    invokers = [
+        d.inputs["member"]
+        for d in bare
+        if d.type == "gcp:cloudrunv2/serviceIamMember:ServiceIamMember"
+        and d.inputs["name"] == naming.CELL_AGENT
+    ]
+    assert invokers == [f"serviceAccount:{mockcloud.CONTROL['staging']}"]
+    gateway = one(bare, "gcp:cloudrunv2/service:Service", naming.GATEWAY).inputs
+    assert "customAudiences" not in gateway
+
+
+def test_the_https_proxy_refuses_anything_below_tls_1_2(bare: list[Declared]) -> None:
+    tls = one(bare, "gcp:compute/sSLPolicy:SSLPolicy").inputs
+    assert (tls["name"], tls["minTlsVersion"], tls["profile"]) == ("ssc-entry", "TLS_1_2", "MODERN")
+    proxy = one(bare, "gcp:compute/targetHttpsProxy:TargetHttpsProxy").inputs
+    assert proxy["sslPolicy"] == "entry-tls-id"
 
 
 def test_the_stack_exports_its_public_entry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -826,3 +885,4 @@ def test_the_stack_exports_its_public_entry(monkeypatch: pytest.MonkeyPatch) -> 
     assert {"entry_address", "public_host_suffix", "certificate_id", "agent_host"} <= set(exported)
     assert exported["public_host_suffix"] == "testcell10.delimitusapps.com"
     assert exported["agent_host"] == "ssc--agent.testcell10.delimitusapps.com"
+    assert exported["agent_url"] == "https://ssc--agent.testcell10.delimitusapps.com"

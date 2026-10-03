@@ -9,6 +9,12 @@ load balancer address, certificate authorisation record) become placeholders whe
 so a record pointing at another cell's address still shows. Where the stacks' ``flags`` output
 differ, the lazy resources of a differing flag and the gateway's minimum (``gateway_min``,
 ``warm``) are left out. Prints each difference; exit 1 if there is any.
+
+Then, for each cell, the organisation policies in force (SSC-095): the table the platform stack
+applied to the ``ssc-cells`` folder (its ``cell_policies`` output), and what would weaken it there
+— the project outside a stage folder, a policy the cell stack declares, or a policy set on the
+project itself. The last is the one cloud read, ``gcloud org-policies list`` on the project;
+exit 1 if any is found or the read fails.
 """
 
 import json
@@ -18,7 +24,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from ssc_infra import naming as n
-from ssc_infra.run import CommandError, pulumi
+from ssc_infra.run import CommandError, gcloud_json, pulumi
 
 type Json = Any
 type Flat = dict[str, str]
@@ -98,6 +104,7 @@ ASSIGNED_PATHS: Final = {
     ),
 }
 DNS_AUTHORIZATION: Final = "gcp:certificatemanager/dnsAuthorization:DnsAuthorization"
+PROJECT_TYPE: Final = "gcp:organizations/project:Project"
 FLAG_DEFAULTS: Final[dict[str, Json]] = {
     "database": False,
     "egress": False,
@@ -231,6 +238,66 @@ def compare(
     return diffs
 
 
+def platform_outputs() -> Json:
+    return json.loads(pulumi("stack", "output", "--stack", n.PLATFORM_STACK, "--json"))
+
+
+def project_policies(label: str) -> list[str]:
+    """Constraints set on the cell's project itself, not inherited from its folders."""
+    found: list[Mapping[str, Json]] = (
+        gcloud_json(
+            "org-policies",
+            "list",
+            f"--project={n.cell_project(label)}",
+            f"--billing-project={n.BOOTSTRAP_PROJECT}",
+        )
+        or []
+    )
+    return [str(p["constraint"]) for p in found]
+
+
+def in_force(
+    platform: Mapping[str, Json], state: Json, on_project: Sequence[str]
+) -> tuple[list[str], list[str]]:
+    """The folder's policies a cell inherits, and each thing that would override them."""
+    table: Mapping[str, str] = platform.get("cell_policies") or {}
+    stages: Mapping[str, Json] = platform.get("stage_folder_ids") or {}
+    folders = {str(f) for f in stages.values()}
+    resources: list[Mapping[str, Json]] = state["deployment"].get("resources", [])
+    overrides = [] if table else ["the platform stack exports no cell policies"]
+    for res in resources:
+        name = res["urn"].rsplit("::", 1)[-1]
+        if res["type"] == PROJECT_TYPE:
+            folder = str(res.get("inputs", {}).get("folderId") or "")
+            if folder.removeprefix("folders/") not in folders:
+                overrides.append(f"project in folder {folder or '?'}, not a stage folder")
+        elif res["type"].startswith("gcp:orgpolicy/"):
+            overrides.append(f"the cell stack declares {res['type']}::{name}")
+    if not any(res["type"] == PROJECT_TYPE for res in resources):
+        overrides.append("no project in the cell stack")
+    overrides += [f"set on the project: {constraint}" for constraint in on_project]
+    return [f"{c}: {s}" for c, s in sorted(table.items())], overrides
+
+
+def _report_policies(labels: Sequence[str], exports: Sequence[Json]) -> int:
+    try:
+        platform = platform_outputs()
+        on_project = [project_policies(label) for label in labels]
+    except (CommandError, ValueError) as exc:
+        print(exc, file=sys.stderr)  # noqa: T201
+        return 1
+    failed = 0
+    for label, state, local in zip(labels, exports, on_project, strict=True):
+        lines, overrides = in_force(platform, state, local)
+        print(f"policies in force on {n.cell_project(label)}:")  # noqa: T201
+        for line in lines:
+            print(f"  {line}")  # noqa: T201
+        for line in overrides:
+            print(f"  override: {line}")  # noqa: T201
+        failed |= bool(overrides)
+    return failed
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print(__doc__, file=sys.stderr)  # noqa: T201
@@ -250,7 +317,8 @@ def main(argv: list[str]) -> int:
         print(line)  # noqa: T201
     count = len(states[0])
     print(f"{count} resources compared, {len(diffs)} difference(s)", file=sys.stderr)  # noqa: T201
-    return 1 if diffs or count == 0 else 0
+    policies_failed = _report_policies(argv, exports)
+    return 1 if diffs or count == 0 or policies_failed else 0
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ NIGHTLY_WORKFLOW: Final = ".github/workflows/nightly.yml"
 SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S105
 
 GATEWAY: Final = "ssc-gateway"
+CELL_AGENT: Final = "ssc-cell-agent"
 DATA_GATEWAY: Final = "ssc-datagw"
 FLAGS: Final = ("database", "egress", "connections", "gateway_min", "warm")
 LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
@@ -111,6 +112,11 @@ def cell_wildcard(label: str) -> str:
 def agent_host(label: str) -> str:
     """The cell agent's reserved host (SSC-095). A slug never holds ``--``, so no app is ever it."""
     return f"{AGENT_HOST_LABEL}.{host_suffix(label)}"
+
+
+def agent_url(label: str) -> str:
+    """The cell agent's URL through the cell's load balancer, and its ID token audience."""
+    return f"https://{agent_host(label)}"
 
 
 def platform_stack_ref() -> str:

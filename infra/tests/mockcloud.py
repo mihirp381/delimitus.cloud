@@ -13,6 +13,7 @@ from ssc_infra import cell, naming, platform
 FOLDERS = {"prod": "111111111111", "staging": "222222222222"}
 NIGHTLY = naming.sa_email(naming.NIGHTLY_SA, naming.control_project("staging"))
 CONTROL = {s: naming.sa_email(naming.CONTROL_SA, naming.control_project(s)) for s in naming.STAGES}
+PUBLIC_TAG = "tagValues/555555555555"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,7 @@ class Recorder(pulumi.runtime.Mocks):
                 "stage_folder_ids": FOLDERS,
                 "control_service_accounts": CONTROL,
                 "nightly_service_account": NIGHTLY,
+                "public_invoker_tag": PUBLIC_TAG,
             }
             return f"{args.name}-id", {"name": args.name, "outputs": outputs}
         state = dict(args.inputs)
@@ -61,7 +63,9 @@ class Recorder(pulumi.runtime.Mocks):
                     "name": f"projects/{project}/serviceAccounts/{email}",
                 }
             case "gcp:projects/serviceIdentity:ServiceIdentity":
-                agent = f"service-{project_number(project)}@{args.name}.iam.gserviceaccount.com"
+                agent = (
+                    f"service-{project_number(project)}@gcp-sa-{args.name}.iam.gserviceaccount.com"
+                )
                 state |= {"email": agent, "member": f"serviceAccount:{agent}"}
             case "gcp:iam/workloadIdentityPool:WorkloadIdentityPool":
                 number = project_number(project)
@@ -69,6 +73,8 @@ class Recorder(pulumi.runtime.Mocks):
                     f"projects/{number}/locations/global/workloadIdentityPools/"
                     f"{state['workloadIdentityPoolId']}"
                 )
+            case "gcp:tags/tagKey:TagKey" | "gcp:tags/tagValue:TagValue":
+                state["name"] = str(700_000_000_000 + zlib.crc32(args.name.encode()))
             case "gcp:projects/iAMCustomRole:IAMCustomRole":
                 state["name"] = f"projects/{project}/roles/{state['roleId']}"
             case "gcp:compute/globalAddress:GlobalAddress" if (

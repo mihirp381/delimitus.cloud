@@ -1,10 +1,13 @@
 """The platform program, run against mocks."""
 
+import json
+from typing import Any
+
 import pulumi
 import pytest
 
 from mockcloud import Declared, one, run
-from ssc_infra import naming
+from ssc_infra import naming, policies
 
 PLATFORM_FOLDER = "333333333333"
 
@@ -34,17 +37,114 @@ def test_every_folder_keeps_its_logs_in_region(declared: list[Declared]) -> None
     assert settings == {f.outputs["folderId"]: naming.REGION for f in _folders(declared).values()}
 
 
-def test_platform_and_cells_allow_only_the_region(declared: list[Declared]) -> None:
-    policies = {
-        d.inputs["parent"]: d.inputs for d in declared if d.type == "gcp:orgpolicy/policy:Policy"
+def _policies(declared: list[Declared], folder: str) -> dict[str, dict[str, Any]]:
+    return {
+        d.inputs["name"].rsplit("/", 1)[-1]: d.inputs
+        for d in declared
+        if d.type == "gcp:orgpolicy/policy:Policy" and d.inputs["parent"] == f"folders/{folder}"
     }
-    cells = _folders(declared)["ssc-cells"].outputs["folderId"]
-    assert set(policies) == {f"folders/{PLATFORM_FOLDER}", f"folders/{cells}"}
-    for policy in policies.values():
-        assert policy["name"].endswith("/policies/gcp.resourceLocations")
-        assert policy["spec"]["rules"] == [
-            {"values": {"allowedValues": ["in:us-central1-locations"]}}
-        ]
+
+
+def test_platform_and_cells_allow_only_the_region(declared: list[Declared]) -> None:
+    """Cells also allow ``global``: the wildcard certificate and its DNS authorisation exist only
+    there, and Certificate Manager checks the location policy (SSC-088)."""
+    platform_policies = _policies(declared, PLATFORM_FOLDER)
+    assert list(platform_policies) == ["gcp.resourceLocations"]
+    assert platform_policies["gcp.resourceLocations"]["spec"]["rules"] == [
+        {"values": {"allowedValues": ["in:us-central1-locations"]}}
+    ]
+    cells = _policies(declared, _folders(declared)["ssc-cells"].outputs["folderId"])
+    assert cells["gcp.resourceLocations"]["spec"]["rules"] == [
+        {"values": {"allowedValues": ["in:us-central1-locations", "global"]}}
+    ]
+    locations = one(declared, "gcp:orgpolicy/policy:Policy", "ssc-cells-locations").inputs
+    assert locations["name"].endswith("/policies/gcp.resourceLocations")
+
+
+def test_the_cells_folder_holds_the_policy_table(declared: list[Declared]) -> None:
+    cells_id = _folders(declared)["ssc-cells"].outputs["folderId"]
+    cells = _policies(declared, cells_id)
+    assert set(cells) == {
+        "gcp.resourceLocations",
+        "storage.publicAccessPrevention",
+        "iam.managed.allowedPolicyMembers",
+        "iam.disableServiceAccountKeyCreation",
+        "compute.restrictVpcPeering",
+        "compute.restrictSharedVpcHostProjects",
+        "run.allowedIngress",
+        "compute.vmExternalIpAccess",
+        "sql.restrictPublicIp",
+    }
+    for name, policy in cells.items():
+        assert policy["name"] == f"folders/{cells_id}/policies/{name}"
+    rules = {k: v["spec"]["rules"] for k, v in cells.items()}
+    for boolean in (
+        "storage.publicAccessPrevention",
+        "iam.disableServiceAccountKeyCreation",
+        "sql.restrictPublicIp",
+    ):
+        assert rules[boolean] == [{"enforce": "TRUE"}]
+    for denied in ("compute.restrictSharedVpcHostProjects", "compute.vmExternalIpAccess"):
+        assert rules[denied] == [{"denyAll": "TRUE"}]
+    assert rules["run.allowedIngress"] == [
+        {"values": {"allowedValues": ["is:internal", "is:internal-and-cloud-load-balancing"]}}
+    ]
+    assert rules["compute.restrictVpcPeering"] == [
+        {"values": {"allowedValues": [policies.GOOGLE_PRODUCERS]}}
+    ]
+
+
+def test_the_peering_allowance_is_set_in_config() -> None:
+    declared = run(
+        naming.PLATFORM_STACK,
+        {
+            "platform_folder_id": PLATFORM_FOLDER,
+            "peering_allowed": json.dumps(["under:organizations/1"]),
+        },
+    )
+    peering = one(declared, "gcp:orgpolicy/policy:Policy", "ssc-cells-vpc-peering").inputs
+    assert peering["spec"]["rules"] == [{"values": {"allowedValues": ["under:organizations/1"]}}]
+
+
+def test_only_the_operator_and_the_org_may_hold_roles_in_a_cell(declared: list[Declared]) -> None:
+    members = one(declared, "gcp:orgpolicy/policy:Policy", "ssc-cells-policy-members").inputs
+    enforced, exception = members["spec"]["rules"]
+    assert enforced["enforce"] == "TRUE"
+    assert json.loads(enforced["parameters"]) == {
+        "allowedMemberSubjects": [naming.OPERATOR],
+        "allowedPrincipalSets": [
+            f"//cloudresourcemanager.googleapis.com/organizations/{naming.ORG_ID}"
+        ],
+    }
+    key = one(declared, "gcp:tags/tagKey:TagKey").outputs["name"]
+    value = one(declared, "gcp:tags/tagValue:TagValue").outputs["name"]
+    assert exception == {
+        "enforce": "FALSE",
+        "condition": {
+            "title": "the cell gateway's public invoker",
+            "expression": f"resource.matchTagId('tagKeys/{key}', 'tagValues/{value}')",
+        },
+    }
+
+
+def test_only_the_operator_may_bind_the_public_invoker_tag(declared: list[Declared]) -> None:
+    key = one(declared, "gcp:tags/tagKey:TagKey")
+    assert (key.inputs["parent"], key.inputs["shortName"]) == (
+        f"organizations/{naming.ORG_ID}",
+        "ssc-public-invoker",
+    )
+    value = one(declared, "gcp:tags/tagValue:TagValue")
+    assert (value.inputs["parent"], value.inputs["shortName"]) == (
+        f"tagKeys/{key.outputs['name']}",
+        "gateway",
+    )
+    binders = one(declared, "gcp:tags/tagValueIamBinding:TagValueIamBinding").inputs
+    assert binders == {
+        "tagValue": f"tagValues/{value.outputs['name']}",
+        "role": "roles/resourcemanager.tagUser",
+        "members": [naming.OPERATOR],
+    }
+    assert not [d for d in declared if d.type == "gcp:tags/tagValueIamMember:TagValueIamMember"]
 
 
 def test_the_folder_deny_rule_names_the_control_plane(declared: list[Declared]) -> None:
@@ -177,3 +277,12 @@ def test_the_zone_name_servers_are_exported(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
     run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER})
     assert {"apps_zone_name_servers", "platform_zone_name_servers"} <= set(exported)
+
+
+def test_the_tag_and_the_policy_table_are_exported(monkeypatch: pytest.MonkeyPatch) -> None:
+    exported: dict[str, Any] = {}
+    monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
+    run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER})
+    assert {"public_invoker_tag", "cell_policies"} <= set(exported)
+    assert exported["cell_policies"] == policies.summaries(policies.cell_rules(naming.OPERATOR))
+    assert exported["cell_policies"]["compute.vmExternalIpAccess"] == "deny all"

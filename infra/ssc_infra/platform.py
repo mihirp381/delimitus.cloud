@@ -1,17 +1,21 @@
 """The ``platform`` stack: folders, folder policies, the staging control identity, the secret-read
-deny rule, just-in-time staff access, the budget (decisions 021 and 022) and the public DNS zones
-(SSC-088).
+deny rule, just-in-time staff access, the budget (decisions 021 and 022), the public DNS zones
+(SSC-088) and the cells' organisation policies with the gateway's public-invoker tag (SSC-095).
 
 The ``ssc-platform`` folder and the ``ssc-platform-0`` project that holds this program's state are
 made by ``python -m ssc_infra.bootstrap`` first; this stack takes the folder's ID from config.
 """
 
+import json
+from collections.abc import Sequence
+
 import pulumi
 import pulumi_gcp as gcp
 
 from ssc_infra import naming as n
+from ssc_infra import policies
+from ssc_infra.policies import LOCATIONS, PUBLIC_TAG_KEY, PUBLIC_TAG_VALUE, Rule
 
-LOCATIONS = "in:us-central1-locations"
 BUDGET_USD = 250
 BUDGET_THRESHOLDS = (
     (0.5, "CURRENT_SPEND"),
@@ -19,6 +23,7 @@ BUDGET_THRESHOLDS = (
     (1.0, "CURRENT_SPEND"),
     (1.0, "FORECASTED_SPEND"),
 )
+TAG_USER = "roles/resourcemanager.tagUser"
 JIT_ROLE = "roles/writer"
 JIT_MAX = "3600s"
 PAM_AGENT = f"serviceAccount:service-org-{n.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
@@ -71,6 +76,84 @@ def _location_policy(name: str, folder_id: pulumi.Input[str], opts: pulumi.Resou
         ),
         opts=opts,
     )
+
+
+def _public_tag(
+    operator: str, opts: pulumi.ResourceOptions
+) -> tuple[pulumi.Output[str], pulumi.Output[str]]:
+    """The tag that marks the one resource allowed a public member: each cell's gateway service.
+    Only ``operator`` may bind it; the grant is authoritative, so another holder added by hand is
+    removed by the next run. Returns the tag key and value IDs."""
+    key = gcp.tags.TagKey(
+        "public-invoker-key",
+        parent=f"organizations/{n.ORG_ID}",
+        short_name=PUBLIC_TAG_KEY,
+        description="Bound only to a cell's gateway service: lifts domain-restricted sharing.",
+        opts=opts,
+    )
+    key_id = pulumi.Output.concat("tagKeys/", key.name)
+    value = gcp.tags.TagValue(
+        "public-invoker-gateway",
+        parent=key_id,
+        short_name=PUBLIC_TAG_VALUE,
+        description="The cell gateway's allUsers invoker (SSC-088, SSC-095).",
+        opts=opts,
+    )
+    value_id = pulumi.Output.concat("tagValues/", value.name)
+    gcp.tags.TagValueIamBinding(
+        "public-invoker-binders",
+        tag_value=value_id,
+        role=TAG_USER,
+        members=[operator],
+        opts=opts,
+    )
+    return key_id, value_id
+
+
+def _spec_rules(
+    rule: Rule, tag: tuple[pulumi.Output[str], pulumi.Output[str]]
+) -> list[gcp.orgpolicy.PolicySpecRuleArgs]:
+    """A list constraint takes values or deny-all; a boolean or managed one ``enforce``, with
+    the managed one's parameters. The tag exception is a second rule, off where the tag is."""
+    if rule.deny_all:
+        main = gcp.orgpolicy.PolicySpecRuleArgs(deny_all="TRUE")
+    elif rule.allowed:
+        main = gcp.orgpolicy.PolicySpecRuleArgs(
+            values=gcp.orgpolicy.PolicySpecRuleValuesArgs(allowed_values=list(rule.allowed))
+        )
+    else:
+        params = {k: list(v) for k, v in rule.parameters.items()}
+        main = gcp.orgpolicy.PolicySpecRuleArgs(
+            enforce="TRUE", parameters=json.dumps(params) if params else None
+        )
+    if not rule.tag_exception:
+        return [main]
+    key_id, value_id = tag
+    exception = gcp.orgpolicy.PolicySpecRuleArgs(
+        enforce="FALSE",
+        condition=gcp.orgpolicy.PolicySpecRuleConditionArgs(
+            title="the cell gateway's public invoker",
+            expression=pulumi.Output.format("resource.matchTagId('{0}', '{1}')", key_id, value_id),
+        ),
+    )
+    return [main, exception]
+
+
+def _cell_policies(
+    folder_id: pulumi.Input[str],
+    rules: Sequence[Rule],
+    tag: tuple[pulumi.Output[str], pulumi.Output[str]],
+    opts: pulumi.ResourceOptions,
+) -> None:
+    ref = folder_ref(folder_id)
+    for rule in rules:
+        gcp.orgpolicy.Policy(
+            f"{n.CELLS_FOLDER}-{rule.key}",
+            name=pulumi.Output.concat(ref, "/policies/", rule.constraint),
+            parent=ref,
+            spec=gcp.orgpolicy.PolicySpecArgs(rules=_spec_rules(rule, tag)),
+            opts=opts,
+        )
 
 
 def _folder(
@@ -219,7 +302,9 @@ def build() -> None:
     _location_policy(n.PLATFORM_FOLDER, platform_folder, opts)
 
     cells = _folder(n.CELLS_FOLDER, n.CELLS_FOLDER, org, opts)
-    _location_policy(n.CELLS_FOLDER, cells.folder_id, opts)
+    rules = policies.cell_rules(operator, config.get_object("peering_allowed"))
+    tag = _public_tag(operator, opts)
+    _cell_policies(cells.folder_id, rules, tag, opts)
     stages = {
         stage: _folder(f"{n.CELLS_FOLDER}-{stage}", stage, cells.name, opts) for stage in n.STAGES
     }
@@ -341,3 +426,5 @@ def build() -> None:
     pulumi.export("nightly_service_account", nightly.email)
     pulumi.export("apps_zone_name_servers", zones["apps"].name_servers)
     pulumi.export("platform_zone_name_servers", zones["platform"].name_servers)
+    pulumi.export("public_invoker_tag", tag[1])
+    pulumi.export("cell_policies", policies.summaries(rules))
