@@ -5,6 +5,7 @@ import tomllib
 import zoneinfo
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,6 +18,8 @@ from ssc_contracts.manifest import (
     MAX_MANIFEST_BYTES,
     RESOURCE_CLASSES,
     SCHEMA_V1,
+    SESSION_FRAMEWORKS,
+    SQLITE_FIX_IT,
     Manifest,
     ManifestError,
     ManifestProblem,
@@ -25,8 +28,10 @@ from ssc_contracts.manifest import (
     _Positions,
     default_manifest,
     dump_manifest,
+    is_session_app,
     load_manifest,
     max_instances,
+    session_framework,
 )
 from ssc_shared.canonical import manifest_digest
 
@@ -177,6 +182,36 @@ def test_a_key_value_store_gets_the_fix_it() -> None:
     assert KV_FIX_IT in err.message
 
 
+def test_sqlite_on_disk_gets_the_fix_it() -> None:
+    for text, line, field in (
+        ('schema = "ssc/v1"\n[state]\npostgres = false\nsqlite = true\n', 4, "state.sqlite"),
+        ('schema = "ssc/v1"\n[state]\nSQLite3 = { path = "app.db" }\n', 3, "state.SQLite3"),
+    ):
+        err = refusal(text)
+        assert (err.line, err.field, err.message) == (line, field, SQLITE_FIX_IT)
+        assert "STATE_SQLITE_EPHEMERAL" in err.message and "postgres = true" in err.message
+    err = refusal('schema = "ssc/v1"\nstate = "sqlite"\n')
+    assert (err.line, err.field) == (2, "state")
+    assert SQLITE_FIX_IT in err.message
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'schema = "ssc/v1"\n[runtime]\nbilling = "instance"\n',
+        'schema = "ssc/v1"\n[runtime]\nbilling = "request"\n',
+        'schema = "ssc/v1"\n[runtime]\nbilling = "gpu"\n',
+        'schema = "ssc/v1"\n[runtime]\nclass = "small"\nbilling = true\n',
+    ],
+)
+def test_billing_is_not_a_manifest_key(text: str) -> None:
+    err = refusal(text)
+    assert [(p.field, p.message) for p in err.problems] == [("runtime.billing", "unknown key")]
+    assert err.line == text.count("\n")
+    top = refusal('schema = "ssc/v1"\nbilling = "instance"\n')
+    assert (top.line, top.field, top.message) == (2, "billing", "unknown key")
+
+
 # --- defaults and platform policy --------------------------------------------------------
 
 
@@ -201,6 +236,65 @@ def test_resource_classes_and_the_session_cap() -> None:
     }
     assert max_instances(Runtime.model_validate({"class": "large"})) == 8
     assert max_instances(Runtime.model_validate({"class": "large", "sessions": True})) == 1
+    assert max_instances(Runtime.model_validate({"class": "large", "start": "gradio app.py"})) == 1
+    assert max_instances(Runtime.model_validate({"class": "medium"}), framework="Dash") == 1
+    assert max_instances(Runtime.model_validate({"class": "medium"}), framework="flask") == 4
+
+
+# --- session apps ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("start", "framework"),
+    [
+        (None, None),
+        ("streamlit run app.py --server.port $PORT --server.address 0.0.0.0", "streamlit"),
+        ("uv run /opt/venv/bin/streamlit run app.py", "streamlit"),
+        ("python -m streamlit run app.py", "streamlit"),
+        ("gradio app.py", "gradio"),
+        ("python -m gradio app.py", "gradio"),
+        ("shiny run app.py --host 0.0.0.0 --port $PORT", "shiny"),
+        ("uv run shiny run --port 8080 app.py", "shiny"),
+        ("Rscript -e \"shiny::runApp('.', host='0.0.0.0', port=8080)\"", "shiny"),
+        ("sh -c 'streamlit run app.py'", "streamlit"),
+        ("python app.py", None),
+        ("gunicorn app:server", None),
+        ("dash -c 'node server.js'", None),
+        ("python streamlit_app.py", None),
+        ("python -m uvicorn app:app", None),
+        ("npm start", None),
+    ],
+)
+def test_session_framework_is_detected_from_the_start_command(
+    start: str | None, framework: str | None
+) -> None:
+    assert session_framework(start) == framework
+    runtime = Runtime.model_validate({} if start is None else {"start": start})
+    assert is_session_app(runtime) == (framework is not None)
+
+
+def test_the_session_framework_list() -> None:
+    assert SESSION_FRAMEWORKS == {"streamlit", "gradio", "dash", "shiny"}
+
+
+def test_a_session_app_is_sessions_true_a_detected_framework_or_a_start_command() -> None:
+    plain = Runtime.model_validate({"start": "python app.py"})
+    assert not is_session_app(plain)
+    assert is_session_app(Runtime.model_validate({"sessions": True}))
+    for name in ("streamlit", "Gradio", "dash", "SHINY"):
+        assert is_session_app(plain, framework=name)
+    assert not is_session_app(plain, framework="fastapi")
+
+
+def test_detection_never_changes_the_manifest_or_its_digest() -> None:
+    text = 'schema = "ssc/v1"\n[runtime]\nstart = "streamlit run app.py --server.port $PORT"\n'
+    m = load_manifest(text)
+    assert is_session_app(m.runtime) and m.runtime.sessions is False
+    assert m.model_dump(mode="json", by_alias=True)["runtime"]["sessions"] is False
+    assert "sessions = false" in dump_manifest(m)
+    assert manifest_digest(m) == PINNED_DIGESTS["streamlit start"][1]
+    declared = load_manifest(text.replace("[runtime]\n", "[runtime]\nsessions = true\n"))
+    assert manifest_digest(declared) != manifest_digest(m)
 
 
 def test_the_model_is_frozen_and_strict() -> None:
@@ -745,3 +839,49 @@ def test_the_default_digest_is_frozen() -> None:
     assert manifest_digest(default_manifest()) == (
         "sha256:0ff2f05525bd8d69855565619833b59eb4945c2d58f949300bec78b9aac1fdf3"
     )
+
+
+PINNED_DIGESTS: dict[str, tuple[str, str]] = {
+    "schema only": (
+        'schema = "ssc/v1"\n',
+        "sha256:0ff2f05525bd8d69855565619833b59eb4945c2d58f949300bec78b9aac1fdf3",
+    ),
+    "streamlit start": (
+        'schema = "ssc/v1"\n[runtime]\nstart = "streamlit run app.py --server.port $PORT"\n',
+        "sha256:2f49b1bf5b204069ce74aeb12d8540d2ae4401c6825b3bf1c0457d7c526c200c",
+    ),
+    "gradio start": (
+        'schema = "ssc/v1"\n[runtime]\nstart = "gradio app.py"\n',
+        "sha256:2b36df62482674dbb26841bc6eddad4d430908f8d07d3d2c5d01061ec5f6b76d",
+    ),
+    "shiny start": (
+        'schema = "ssc/v1"\n[runtime]\nclass = "medium"\nstart = "shiny run app.py --port 8080"\n',
+        "sha256:e254211805c5150533d485e48b0bcbe91f4ca1ee4babf6405fbff645a0015869",
+    ),
+    "sessions declared": (
+        'schema = "ssc/v1"\n[runtime]\nsessions = true\n',
+        "sha256:b79d99e9e93c3ed6ad88471c958e55c9382c5d73ca2e1af2eb9f8defa42e1707",
+    ),
+}
+DOCTOR_FIXTURES = Path(__file__).resolve().parents[3] / "packages/ssc_cli/tests/fixtures/doctor"
+
+
+@pytest.mark.parametrize("name", PINNED_DIGESTS)
+def test_accepted_manifests_keep_their_digests(name: str) -> None:
+    text, digest = PINNED_DIGESTS[name]
+    assert manifest_digest(load_manifest(text)) == digest
+
+
+def test_the_base_manifest_keeps_its_digest() -> None:
+    assert manifest_digest(Manifest.model_validate(BASE)) == (
+        "sha256:da1899d4e00ab7e15fe2ba06ec14c9f3c546a387dfe42fcb5e25e6f5c7c41558"
+    )
+
+
+def test_the_doctor_fixture_manifests_keep_their_digests() -> None:
+    files = sorted(DOCTOR_FIXTURES.glob("*/ssc.toml"))
+    valid = [f for f in files if f.parent.name != "MANIFEST_INVALID"]
+    assert len(valid) == len(files) - 1 >= 7
+    want = PINNED_DIGESTS["schema only"][1]
+    for path in valid:
+        assert manifest_digest(load_manifest(path.read_bytes())) == want, path

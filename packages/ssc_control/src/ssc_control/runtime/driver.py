@@ -8,7 +8,7 @@ Every ``RuntimeDriver`` passes ``conformance/ssc_conformance/contracts/runtime_d
 """
 
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Literal
 
 from ssc_contracts import app_env
 from ssc_contracts.manifest import Manifest, max_instances
@@ -25,10 +25,6 @@ from ssc_shared.runtime import (
     revision_fingerprint,
     service_name,
 )
-
-# Frameworks that keep per-user state in process memory; more than one instance breaks them.
-# Anything else declares ``sessions = true`` in ssc.toml.
-SESSION_FRAMEWORKS: Final = frozenset({"streamlit"})
 
 EnvName = Literal["prod", "preview"]
 AppStatus = Literal["active", "disabled", "quarantined"]
@@ -67,15 +63,9 @@ def min_instances_for(env_name: EnvName, manifest: Manifest) -> int:
 
 
 def max_instances_for(manifest: Manifest, framework: str | None) -> int:
-    """The class limit, or 1 for session apps and session frameworks (C11). A start command that
-    names a session framework anywhere counts too (``uv run streamlit run app.py``); a false match
-    only lowers the ceiling, which is the safe direction."""
-    if framework is not None and framework.lower() in SESSION_FRAMEWORKS:
-        return 1
-    start = manifest.runtime.start or ""
-    if any(token.rsplit("/", 1)[-1] in SESSION_FRAMEWORKS for token in start.split()):
-        return 1
-    return max_instances(manifest.runtime)
+    """The class limit, or 1 for a session app (C11), detected by
+    ``ssc_contracts.manifest.is_session_app``."""
+    return max_instances(manifest.runtime, framework)
 
 
 def desired_for(
@@ -108,7 +98,6 @@ def desired_for(
 __all__ = [
     "FINGERPRINT_VERSION",
     "SERVICE_PREFIX",
-    "SESSION_FRAMEWORKS",
     "AppStatus",
     "EnvName",
     "EnvironmentRow",

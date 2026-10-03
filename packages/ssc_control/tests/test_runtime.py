@@ -108,6 +108,11 @@ def test_min_instances_rule(env_name: str, tables: dict[str, Any], expected: int
         ({"class": "large"}, "Streamlit", 1),
         ({"class": "large", "start": "streamlit run app.py --server.port $PORT"}, None, 1),
         ({"class": "large", "start": "uv run /opt/venv/bin/streamlit run app.py"}, None, 1),
+        ({"class": "large", "start": "gradio app.py"}, None, 1),
+        ({"class": "large", "start": "shiny run app.py --port 8080"}, None, 1),
+        ({"class": "large", "start": "gunicorn app:server"}, "dash", 1),
+        ({"class": "medium", "start": "python app.py"}, "gradio", 1),
+        ({"class": "medium", "start": "dash -c 'node server.js'"}, None, 4),
         ({"class": "large", "start": "python -m uvicorn app:app"}, "fastapi", 8),
     ],
 )
