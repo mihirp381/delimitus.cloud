@@ -4,9 +4,11 @@ timestamps are taken out, apart from what their flags name.
     uv run python -m ssc_infra.cell_diff testcell01 testcell02
 
 Compares ``pulumi stack export`` of both stacks: the same resources, the same inputs, and the same
-outputs apart from values the cloud assigns. Where the stacks' ``flags`` output differ, the lazy
-resources of a differing flag and the gateway's minimum (``gateway_min``, ``warm``) are left out.
-Prints each difference; exit 1 if there is any.
+outputs apart from values the cloud assigns. A stack's own cloud-assigned values (project number,
+load balancer address, certificate authorisation record) become placeholders wherever they appear,
+so a record pointing at another cell's address still shows. Where the stacks' ``flags`` output
+differ, the lazy resources of a differing flag and the gateway's minimum (``gateway_min``,
+``warm``) are left out. Prints each difference; exit 1 if there is any.
 """
 
 import json
@@ -89,7 +91,13 @@ ASSIGNED_KEYS: Final = frozenset(
         "lastUpdateTime",
     }
 )
-ASSIGNED_PATHS: Final = {"gcp:billing/budget:Budget": frozenset({"out.name"})}
+ASSIGNED_PATHS: Final = {
+    "gcp:billing/budget:Budget": frozenset({"out.name"}),
+    "gcp:certificatemanager/certificate:Certificate": frozenset(
+        {"out.managed.authorizationAttemptInfos", "out.managed.provisioningIssues"}
+    ),
+}
+DNS_AUTHORIZATION: Final = "gcp:certificatemanager/dnsAuthorization:DnsAuthorization"
 FLAG_DEFAULTS: Final[dict[str, Json]] = {
     "database": False,
     "egress": False,
@@ -104,15 +112,18 @@ def export(stack: str) -> Json:
     return json.loads(pulumi("stack", "export", "--stack", stack))
 
 
-def _swap(value: str, label: str, number: str, *, outputs: bool) -> str:
+type Swaps = Sequence[tuple[re.Pattern[str], str]]
+
+
+def _swap(value: str, swaps: Swaps, *, outputs: bool) -> str:
     """Inputs keep their addresses (fixed ranges); outputs lose them (the cloud assigns them)."""
-    out = value.replace(label, "<cell>")
-    if number:
-        out = out.replace(number, "<number>")
+    out = value
+    for pattern, placeholder in swaps:
+        out = pattern.sub(placeholder, out)
     return IPV4.sub("<ip>", out) if outputs else out
 
 
-def flatten(value: Json, label: str, number: str, prefix: str = "", *, outputs: bool) -> Flat:
+def flatten(value: Json, swaps: Swaps, prefix: str = "", *, outputs: bool) -> Flat:
     """Dotted paths to normalised scalars. Null counts as absent, as the provider writes either.
 
     For outputs, keys the cloud assigns are left out.
@@ -127,14 +138,12 @@ def flatten(value: Json, label: str, number: str, prefix: str = "", *, outputs: 
         for key, inner in items.items():
             if outputs and key in ASSIGNED_KEYS:
                 continue
-            flat |= flatten(
-                inner, label, number, f"{prefix}.{key}" if prefix else key, outputs=outputs
-            )
+            flat |= flatten(inner, swaps, f"{prefix}.{key}" if prefix else key, outputs=outputs)
     elif isinstance(value, list):
         for i, inner in enumerate(value):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-            flat |= flatten(inner, label, number, f"{prefix}[{i}]", outputs=outputs)
+            flat |= flatten(inner, swaps, f"{prefix}[{i}]", outputs=outputs)
     else:
-        flat[prefix] = _swap(json.dumps(value), label, number, outputs=outputs)
+        flat[prefix] = _swap(json.dumps(value), swaps, outputs=outputs)
     return flat
 
 
@@ -145,9 +154,28 @@ def _stack_outputs(state: Json) -> Mapping[str, Json]:
     return {}
 
 
+def _own_values(state: Json, label: str) -> Swaps:
+    """The label and the values the cloud gave this stack, each with its placeholder."""
+    outputs = _stack_outputs(state)
+    found = [(label, "<cell>"), (str(outputs.get("project_number") or ""), "<number>")]
+    for res in state["deployment"].get("resources", []):
+        if res["type"] == DNS_AUTHORIZATION:
+            records: list[Mapping[str, Json]] = res.get("outputs", {}).get("dnsResourceRecords")
+            found += [(str(r.get("data") or ""), "<dns-authorization>") for r in records or []]
+    swaps = [(re.compile(re.escape(value)), placeholder) for value, placeholder in found if value]
+    if address := str(outputs.get("entry_address") or ""):
+        exact = re.compile(rf"(?<![\d.]){re.escape(address)}(?!\d|\.\d)")
+        swaps.append((exact, "<entry-address>"))
+    return swaps
+
+
+def _assigned(path: str, prefixes: frozenset[str]) -> bool:
+    return any(path == p or path.startswith((f"{p}.", f"{p}[")) for p in prefixes)
+
+
 def normalise(state: Json, label: str) -> dict[str, Flat]:
     """``type::name`` → flattened inputs and outputs, for every cloud resource in a stack."""
-    number = str(_stack_outputs(state).get("project_number", ""))
+    swaps = _own_values(state, label)
     out: dict[str, Flat] = {}
     for res in state["deployment"].get("resources", []):
         kind: str = res["type"]
@@ -155,15 +183,13 @@ def normalise(state: Json, label: str) -> dict[str, Flat]:
             continue
         name = res["urn"].rsplit("::", 1)[-1]
         flat = {
-            f"in.{k}": v
-            for k, v in flatten(res.get("inputs", {}), label, number, outputs=False).items()
+            f"in.{k}": v for k, v in flatten(res.get("inputs", {}), swaps, outputs=False).items()
         }
         flat |= {
-            f"out.{k}": v
-            for k, v in flatten(res.get("outputs", {}), label, number, outputs=True).items()
+            f"out.{k}": v for k, v in flatten(res.get("outputs", {}), swaps, outputs=True).items()
         }
         assigned = ASSIGNED_PATHS.get(kind, frozenset())
-        out[f"{kind}::{name}"] = {k: v for k, v in flat.items() if k not in assigned}
+        out[f"{kind}::{name}"] = {k: v for k, v in flat.items() if not _assigned(k, assigned)}
     return out
 
 

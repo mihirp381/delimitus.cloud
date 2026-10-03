@@ -61,6 +61,12 @@ LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
 GATEWAY_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{GATEWAY}"
 GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
 
+APPS_DOMAIN: Final = "delimitusapps.com"
+PLATFORM_DOMAIN: Final = "delimitus.com"
+APPS_ZONE: Final = "delimitusapps"
+PLATFORM_ZONE: Final = "delimitus"
+AGENT_HOST_LABEL: Final = "ssc--agent"
+
 
 def control_project(stage: Stage) -> str:
     return f"ssc-control-{stage}"
@@ -91,6 +97,20 @@ def sa_email(account: str, project: str) -> str:
 def run_url(service: str, project_number: str) -> str:
     """A Cloud Run service's deterministic URL."""
     return f"https://{service}-{project_number}.{REGION}.run.app"
+
+
+def host_suffix(label: str) -> str:
+    """Every public host of a cell ends in ``.<this>``: ``<cell label>.<apps domain>``."""
+    return f"{check_cell_label(label)}.{APPS_DOMAIN}"
+
+
+def cell_wildcard(label: str) -> str:
+    return f"*.{host_suffix(label)}"
+
+
+def agent_host(label: str) -> str:
+    """The cell agent's reserved host (SSC-095). A slug never holds ``--``, so no app is ever it."""
+    return f"{AGENT_HOST_LABEL}.{host_suffix(label)}"
 
 
 def platform_stack_ref() -> str:

@@ -1,5 +1,6 @@
 """The platform program, run against mocks."""
 
+import pulumi
 import pytest
 
 from mockcloud import Declared, one, run
@@ -139,3 +140,40 @@ def test_the_nightly_project_can_read_cell_logs(declared: list[Declared]) -> Non
     logging_api = one(declared, "gcp:projects/service:Service", "control-staging-logging")
     assert logging_api.inputs["service"] == "logging.googleapis.com"
     assert logging_api.inputs["project"] == naming.control_project("staging")
+
+
+def test_the_two_public_zones_live_in_the_platform_project(declared: list[Declared]) -> None:
+    zones = {
+        d.inputs["name"]: d.inputs for d in declared if d.type == "gcp:dns/managedZone:ManagedZone"
+    }
+    assert {k: v["dnsName"] for k, v in zones.items()} == {
+        "delimitusapps": "delimitusapps.com.",
+        "delimitus": "delimitus.com.",
+    }
+    for zone in zones.values():
+        assert zone["project"] == naming.BOOTSTRAP_PROJECT
+        assert zone["visibility"] == "public"
+        assert zone["dnssecConfig"] == {"state": "off"}
+
+
+def test_cell_stacks_may_write_records_only_in_the_apps_zone(declared: list[Declared]) -> None:
+    grant = one(declared, "gcp:dns/dnsManagedZoneIamMember:DnsManagedZoneIamMember").inputs
+    assert (grant["project"], grant["managedZone"], grant["member"]) == (
+        naming.BOOTSTRAP_PROJECT,
+        naming.APPS_ZONE,
+        naming.OPERATOR,
+    )
+    role = one(declared, "gcp:projects/iAMCustomRole:IAMCustomRole", "apps-zone-records").inputs
+    assert grant["role"] == f"projects/{naming.BOOTSTRAP_PROJECT}/roles/{role['roleId']}"
+    assert all(p.startswith("dns.") for p in role["permissions"])
+    zone_powers = {p for p in role["permissions"] if p.startswith("dns.managedZones.")}
+    assert zone_powers == {"dns.managedZones.get"}
+    project_grants = [d for d in declared if d.type == "gcp:projects/iAMMember:IAMMember"]
+    assert not [g for g in project_grants if g.inputs["role"] == grant["role"]]
+
+
+def test_the_zone_name_servers_are_exported(monkeypatch: pytest.MonkeyPatch) -> None:
+    exported: dict[str, object] = {}
+    monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
+    run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER})
+    assert {"apps_zone_name_servers", "platform_zone_name_servers"} <= set(exported)

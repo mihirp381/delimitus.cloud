@@ -1,13 +1,15 @@
 """The cell program, run against mocks: same shape for every label, and the rules SSC-013 names."""
 
+import json
 from typing import Any, cast
 
 import pulumi
 import pytest
 
 import mockcloud
-from mockcloud import Declared, as_export, one, project_number, run
+from mockcloud import Declared, as_export, entry_address, one, project_number, run
 from ssc_infra import cell, cell_diff, naming
+from ssc_shared.hosts import check_apps_domain, parse_app_host, slug_problem
 
 A, B = "testcell01", "testcell02"
 LAZY = {"database": "true", "egress": "true", "connections": "true"}
@@ -26,6 +28,30 @@ EMPTY_FLAGS = {
     "connections": False,
     "gateway_min": 0,
     "warm": False,
+}
+NEG = "gcp:compute/regionNetworkEndpointGroup:RegionNetworkEndpointGroup"
+RECORD = "gcp:dns/recordSet:RecordSet"
+LB_KINDS = {
+    "gcp:compute/backendService:BackendService",
+    "gcp:compute/globalForwardingRule:GlobalForwardingRule",
+}
+ENTRY_RESOURCES = {
+    "gcp:compute/globalAddress:GlobalAddress::entry-ip",
+    f"{NEG}::gateway-neg",
+    "gcp:compute/backendService:BackendService::gateway-backend",
+    "gcp:compute/uRLMap:URLMap::entry-map",
+    "gcp:compute/uRLMap:URLMap::entry-redirect",
+    "gcp:compute/targetHttpsProxy:TargetHttpsProxy::entry-https",
+    "gcp:compute/targetHttpProxy:TargetHttpProxy::entry-http",
+    "gcp:compute/globalForwardingRule:GlobalForwardingRule::entry-https",
+    "gcp:compute/globalForwardingRule:GlobalForwardingRule::entry-http",
+    "gcp:certificatemanager/dnsAuthorization:DnsAuthorization::cert-dns-auth",
+    "gcp:certificatemanager/certificate:Certificate::cert",
+    "gcp:certificatemanager/certificateMap:CertificateMap::cert-map",
+    "gcp:certificatemanager/certificateMapEntry:CertificateMapEntry::cert-map-entry",
+    f"{RECORD}::dns-cert-auth",
+    f"{RECORD}::dns-wildcard",
+    "gcp:cloudrunv2/serviceIamMember:ServiceIamMember::gateway-invoker",
 }
 AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_CELL_PROJECT",
@@ -156,7 +182,7 @@ def test_the_proxy_data_gateway_and_database_addresses_are_reserved_at_onboardin
         "ssc-proxy": ("10.20.4.10", "subnet-gateway-id"),
         "ssc-datagw": ("10.20.4.11", "subnet-gateway-id"),
     }
-    psa = one(empty_b, "gcp:compute/globalAddress:GlobalAddress").inputs
+    psa = one(empty_b, "gcp:compute/globalAddress:GlobalAddress", "psa-range").inputs
     assert (psa["address"], psa["prefixLength"], psa["purpose"]) == ("10.21.0.0", 20, "VPC_PEERING")
     one(empty_b, "gcp:servicenetworking/connection:Connection")
 
@@ -222,8 +248,12 @@ def test_the_gateway_is_request_billed_from_zero_with_an_hour_per_request(
 
 def test_no_internal_load_balancer_remains(cell_a: list[Declared]) -> None:
     kinds = {d.type for d in cell_a}
-    assert not {k for k in kinds if "region" in k.lower() and "compute/" in k}
+    regional = {k for k in kinds if "region" in k.lower() and "compute/" in k}
+    assert regional == {NEG}
+    assert one(cell_a, NEG).inputs["networkEndpointType"] == "SERVERLESS"
     assert "gcp:compute/forwardingRule:ForwardingRule" not in kinds
+    schemes = {d.inputs.get("loadBalancingScheme") for d in cell_a if d.type in LB_KINDS}
+    assert schemes == {"EXTERNAL_MANAGED"}
 
 
 @pytest.mark.parametrize(
@@ -334,7 +364,9 @@ def test_the_diff_ignores_assigned_ids_and_nulls(
 
 
 def test_only_the_control_plane_invokes_the_cell_agent(cell_a: list[Declared]) -> None:
-    invoker = one(cell_a, "gcp:cloudrunv2/serviceIamMember:ServiceIamMember").inputs
+    invoker = one(
+        cell_a, "gcp:cloudrunv2/serviceIamMember:ServiceIamMember", "agent-invoker"
+    ).inputs
     assert (
         invoker["member"]
         == "serviceAccount:ssc-control@ssc-control-staging.iam.gserviceaccount.com"
@@ -592,3 +624,205 @@ def test_the_budget_alert_is_on_the_project_and_its_billing_account() -> None:
 def test_the_billing_account_defaults_to_ours(empty_b: list[Declared]) -> None:
     project = one(empty_b, "gcp:organizations/project:Project").inputs
     assert project["billingAccount"] == naming.BILLING_ACCOUNT
+
+
+@pytest.fixture(scope="module")
+def bare() -> list[Declared]:
+    return run(naming.cell_stack("testcell09"))
+
+
+def _entry(declared: list[Declared]) -> dict[str, Declared]:
+    return {k: d for d in declared if (k := f"{d.type}::{d.name}") in ENTRY_RESOURCES}
+
+
+def _auth_data(declared: list[Declared]) -> str:
+    auth = one(declared, "gcp:certificatemanager/dnsAuthorization:DnsAuthorization")
+    return auth.outputs["dnsResourceRecords"][0]["data"]
+
+
+def test_the_public_entry_exists_at_onboarding_with_no_flags(bare: list[Declared]) -> None:
+    assert set(_entry(bare)) == ENTRY_RESOURCES
+    assert not ENTRY_RESOURCES & set().union(*naming.LAZY_RESOURCES.values())
+
+
+def test_one_https_rule_and_a_redirect_on_the_same_address(bare: list[Declared]) -> None:
+    address = entry_address("ssc-c-testcell09")
+    ip = one(bare, "gcp:compute/globalAddress:GlobalAddress", "entry-ip").inputs
+    assert (ip["addressType"], ip["ipVersion"]) == ("EXTERNAL", "IPV4")
+    rules = {
+        d.inputs["portRange"]: d.inputs
+        for d in bare
+        if d.type == "gcp:compute/globalForwardingRule:GlobalForwardingRule"
+    }
+    assert set(rules) == {"443", "80"}
+    assert {r["ipAddress"] for r in rules.values()} == {address}
+    assert rules["443"]["target"] == "entry-https-id"
+    assert rules["80"]["target"] == "entry-http-id"
+    http = one(bare, "gcp:compute/targetHttpProxy:TargetHttpProxy").inputs
+    assert http["urlMap"] == "entry-redirect-id"
+    redirect = one(bare, "gcp:compute/uRLMap:URLMap", "entry-redirect").inputs
+    assert redirect["defaultUrlRedirect"]["httpsRedirect"] is True
+    assert "defaultService" not in redirect
+
+
+def test_the_backend_reaches_the_gateway_through_a_serverless_neg(bare: list[Declared]) -> None:
+    neg = one(bare, NEG).inputs
+    assert neg["networkEndpointType"] == "SERVERLESS"
+    assert neg["cloudRun"] == {"service": naming.GATEWAY}
+    assert neg["region"] == naming.REGION
+    backend = one(bare, "gcp:compute/backendService:BackendService").inputs
+    assert backend["backends"] == [{"group": "gateway-neg-id"}]
+    assert backend["loadBalancingScheme"] == "EXTERNAL_MANAGED"
+    assert "healthChecks" not in backend
+    assert one(bare, "gcp:compute/uRLMap:URLMap", "entry-map").inputs["defaultService"] == (
+        "gateway-backend-id"
+    )
+
+
+def test_a_request_through_the_load_balancer_may_last_3600_seconds(bare: list[Declared]) -> None:
+    """A serverless NEG's backend timeout is fixed at 3600 s and Google refuses ``timeoutSec``
+    on it, so the stack must leave it unset and the gateway's own timeout must match."""
+    backend = one(bare, "gcp:compute/backendService:BackendService").inputs
+    assert "timeoutSec" not in backend
+    assert cell.ENTRY_TIMEOUT_SECONDS == 3600
+    gw = one(bare, "gcp:cloudrunv2/service:Service", naming.GATEWAY).inputs
+    assert gw["template"]["timeout"] == f"{cell.ENTRY_TIMEOUT_SECONDS}s"
+
+
+def test_the_certificate_and_dns_records_follow_the_label(cell_a: list[Declared]) -> None:
+    wildcard = "*.testcell01.delimitusapps.com"
+    auth = one(cell_a, "gcp:certificatemanager/dnsAuthorization:DnsAuthorization").inputs
+    assert auth["domain"] == "testcell01.delimitusapps.com"
+    cert = one(cell_a, "gcp:certificatemanager/certificate:Certificate").inputs
+    assert cert["managed"] == {"domains": [wildcard], "dnsAuthorizations": ["cert-dns-auth-id"]}
+    entry = one(cell_a, "gcp:certificatemanager/certificateMapEntry:CertificateMapEntry").inputs
+    assert (entry["map"], entry["hostname"], entry["certificates"]) == (
+        "ssc-entry",
+        wildcard,
+        ["cert-id"],
+    )
+    proxy = one(cell_a, "gcp:compute/targetHttpsProxy:TargetHttpsProxy").inputs
+    assert proxy["certificateMap"] == "//certificatemanager.googleapis.com/cert-map-id"
+    assert "sslCertificates" not in proxy
+    records = {
+        d.name: d.inputs
+        for d in cell_a
+        if d.type == RECORD and d.inputs["project"] == naming.BOOTSTRAP_PROJECT
+    }
+    assert set(records) == {"dns-wildcard", "dns-cert-auth"}
+    for record in records.values():
+        assert (record["project"], record["managedZone"]) == ("ssc-platform-0", "delimitusapps")
+    assert (records["dns-wildcard"]["name"], records["dns-wildcard"]["type"]) == (
+        f"{wildcard}.",
+        "A",
+    )
+    assert records["dns-wildcard"]["rrdatas"] == [entry_address(naming.cell_project(A))]
+    assert (records["dns-cert-auth"]["name"], records["dns-cert-auth"]["type"]) == (
+        "_acme-challenge.testcell01.delimitusapps.com.",
+        "CNAME",
+    )
+    assert records["dns-cert-auth"]["rrdatas"] == [_auth_data(cell_a)]
+
+
+def test_no_cloud_armor(cell_a: list[Declared]) -> None:
+    assert not [d for d in cell_a if d.type.startswith("gcp:compute/securityPolicy")]
+    backend = one(cell_a, "gcp:compute/backendService:BackendService").inputs
+    assert "securityPolicy" not in backend and "edgeSecurityPolicy" not in backend
+
+
+def test_a_second_label_changes_only_label_derived_values(
+    cell_a: list[Declared], cell_b: list[Declared]
+) -> None:
+    first, second = _entry(cell_a), _entry(cell_b)
+    assert set(first) == set(second) == ENTRY_RESOURCES
+    swaps = (
+        (A, B),
+        (entry_address(naming.cell_project(A)), entry_address(naming.cell_project(B))),
+        (_auth_data(cell_a), _auth_data(cell_b)),
+    )
+    changed = 0
+    for key, d in first.items():
+        text = json.dumps(d.inputs, sort_keys=True)
+        moved = text
+        for old, new in swaps:
+            moved = moved.replace(old, new)
+        assert moved == json.dumps(second[key].inputs, sort_keys=True), key
+        changed += text != moved
+    assert changed >= 10
+
+
+def test_the_diff_shows_a_record_pointing_at_another_cell(
+    cell_a: list[Declared], cell_b: list[Declared]
+) -> None:
+    stolen = entry_address(naming.cell_project(A))
+    drifted = [
+        Declared(d.type, d.name, {**d.inputs, "rrdatas": [stolen]}, d.outputs)
+        if d.name == "dns-wildcard"
+        else d
+        for d in cell_b
+    ]
+    first = cell_diff.normalise(as_export(cell_a, A), A)
+    second = cell_diff.normalise(as_export(drifted, B), B)
+    diffs = cell_diff.compare(first, second)
+    assert [d.split(" ")[:2] for d in diffs] == [[f"{RECORD}::dns-wildcard", "in.rrdatas[0]:"]]
+
+
+def test_the_diff_hides_certificate_progress_but_not_its_state(
+    cell_a: list[Declared], cell_b: list[Declared]
+) -> None:
+    def issued(declared: list[Declared], state: str, attempt: str) -> list[Declared]:
+        progress = {
+            "state": state,
+            "authorizationAttemptInfos": [{"state": attempt, "details": attempt}],
+            "provisioningIssues": [{"reason": attempt}],
+        }
+        return [
+            Declared(d.type, d.name, d.inputs, {**d.outputs, "managed": progress})
+            if d.type == "gcp:certificatemanager/certificate:Certificate"
+            else d
+            for d in declared
+        ]
+
+    first = cell_diff.normalise(as_export(issued(cell_a, "ACTIVE", "AUTHORIZED"), A), A)
+    second = cell_diff.normalise(as_export(issued(cell_b, "ACTIVE", "AUTHORIZING"), B), B)
+    assert cell_diff.compare(first, second) == []
+    failed = cell_diff.normalise(as_export(issued(cell_b, "FAILED", "AUTHORIZED"), B), B)
+    assert [d.split(" ")[1] for d in cell_diff.compare(first, failed)] == ["out.managed.state:"]
+
+
+def test_the_gateway_is_public_only_through_the_load_balancer(bare: list[Declared]) -> None:
+    gw = one(bare, "gcp:cloudrunv2/service:Service", naming.GATEWAY).inputs
+    assert gw["ingress"] == "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+    assert gw["ingress"] != "INGRESS_TRAFFIC_ALL"
+    invoker = one(bare, "gcp:cloudrunv2/serviceIamMember:ServiceIamMember", "gateway-invoker")
+    assert (invoker.inputs["name"], invoker.inputs["role"], invoker.inputs["member"]) == (
+        naming.GATEWAY,
+        "roles/run.invoker",
+        "allUsers",
+    )
+    public = {
+        d.inputs["name"]
+        for d in bare
+        if d.type.endswith("IamMember") and d.inputs.get("member") == "allUsers"
+    }
+    assert public == {naming.GATEWAY}
+
+
+def test_the_agent_host_is_reserved_and_not_yet_routed(bare: list[Declared]) -> None:
+    assert check_apps_domain(naming.APPS_DOMAIN) == "delimitusapps.com"
+    assert slug_problem(naming.AGENT_HOST_LABEL) == "double_dash"
+    host = naming.agent_host("testcell09")
+    assert host == "ssc--agent.testcell09.delimitusapps.com"
+    assert parse_app_host(host, naming.APPS_DOMAIN) is None
+    assert host.split(".", 1)[1] == naming.cell_wildcard("testcell09").removeprefix("*.")
+    url_map = one(bare, "gcp:compute/uRLMap:URLMap", "entry-map").inputs
+    assert "hostRules" not in url_map and "pathMatchers" not in url_map
+
+
+def test_the_stack_exports_its_public_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    exported: dict[str, Any] = {}
+    monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
+    run(naming.cell_stack("testcell10"))
+    assert {"entry_address", "public_host_suffix", "certificate_id", "agent_host"} <= set(exported)
+    assert exported["public_host_suffix"] == "testcell10.delimitusapps.com"
+    assert exported["agent_host"] == "ssc--agent.testcell10.delimitusapps.com"

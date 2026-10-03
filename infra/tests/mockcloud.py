@@ -27,6 +27,12 @@ def project_number(project_id: str) -> str:
     return str(100_000_000_000 + zlib.crc32(project_id.encode()))
 
 
+def entry_address(project_id: str) -> str:
+    """A different public address for each project, as the cloud would assign."""
+    crc = zlib.crc32(project_id.encode())
+    return f"34.{crc >> 16 & 255}.{crc >> 8 & 255}.{crc & 255}"
+
+
 class Recorder(pulumi.runtime.Mocks):
     def __init__(self) -> None:
         self.declared: list[Declared] = []
@@ -65,6 +71,21 @@ class Recorder(pulumi.runtime.Mocks):
                 )
             case "gcp:projects/iAMCustomRole:IAMCustomRole":
                 state["name"] = f"projects/{project}/roles/{state['roleId']}"
+            case "gcp:compute/globalAddress:GlobalAddress" if (
+                state.get("addressType") != "INTERNAL"
+            ):
+                state["address"] = entry_address(project)
+            case "gcp:certificatemanager/dnsAuthorization:DnsAuthorization":
+                state["dnsResourceRecords"] = [
+                    {
+                        "name": f"_acme-challenge.{state['domain']}.",
+                        "type": "CNAME",
+                        "data": f"{zlib.crc32(project.encode()):08x}.7.authorize."
+                        "certificatemanager.goog.",
+                    }
+                ]
+            case "gcp:dns/managedZone:ManagedZone" if state.get("visibility") == "public":
+                state["nameServers"] = [f"ns-cloud-a{i}.googledomains.com." for i in range(1, 5)]
             case _:
                 pass
         if args.typ != "pulumi:providers:gcp":
@@ -105,7 +126,11 @@ def as_export(
 ) -> dict[str, Any]:
     """The shape of ``pulumi stack export`` for ``cell_diff``."""
     stack = naming.cell_stack(label)
-    outputs: dict[str, Any] = {"project_number": project_number(naming.cell_project(label))}
+    project = naming.cell_project(label)
+    outputs: dict[str, Any] = {
+        "project_number": project_number(project),
+        "entry_address": entry_address(project),
+    }
     if flags is not None:
         outputs["flags"] = flags
     resources: list[dict[str, Any]] = [

@@ -1,5 +1,6 @@
 """The ``platform`` stack: folders, folder policies, the staging control identity, the secret-read
-deny rule, just-in-time staff access and the budget (decisions 021 and 022).
+deny rule, just-in-time staff access, the budget (decisions 021 and 022) and the public DNS zones
+(SSC-088).
 
 The ``ssc-platform`` folder and the ``ssc-platform-0`` project that holds this program's state are
 made by ``python -m ssc_infra.bootstrap`` first; this stack takes the folder's ID from config.
@@ -22,6 +23,16 @@ JIT_ROLE = "roles/writer"
 JIT_MAX = "3600s"
 PAM_AGENT = f"serviceAccount:service-org-{n.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
 PAM_AGENT_ROLE = "roles/privilegedaccessmanager.folderServiceAgent"
+ZONE_RECORD_PERMISSIONS = (
+    "dns.changes.create",
+    "dns.changes.get",
+    "dns.managedZones.get",
+    "dns.resourceRecordSets.create",
+    "dns.resourceRecordSets.delete",
+    "dns.resourceRecordSets.get",
+    "dns.resourceRecordSets.list",
+    "dns.resourceRecordSets.update",
+)
 
 
 def provider() -> gcp.Provider:
@@ -157,6 +168,47 @@ def _nightly(
     return nightly
 
 
+def _zone(name: str, domain: str, opts: pulumi.ResourceOptions) -> gcp.dns.ManagedZone:
+    """A public zone in ``ssc-platform-0``; the founder points the registrar at its name
+    servers. DNSSEC is off until the registrar's old DS records are gone."""
+    return gcp.dns.ManagedZone(
+        f"zone-{name}",
+        project=n.BOOTSTRAP_PROJECT,
+        name=name,
+        dns_name=f"{domain}.",
+        description=f"SSC public names under {domain}",
+        visibility="public",
+        dnssec_config=gcp.dns.ManagedZoneDnssecConfigArgs(state="off"),
+        opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(protect=True)),
+    )
+
+
+def _zones(operator: str, opts: pulumi.ResourceOptions) -> dict[str, gcp.dns.ManagedZone]:
+    """The apps zone, where each cell stack writes its own wildcard and certificate
+    authorisation records, and the platform zone for ``api``, ``auth`` and ``keys``. A cell stack
+    runs as the operator today; the identity SSC-087 adds to run them joins this grant."""
+    apps = _zone(n.APPS_ZONE, n.APPS_DOMAIN, opts)
+    platform_hosts = _zone(n.PLATFORM_ZONE, n.PLATFORM_DOMAIN, opts)
+    writer = gcp.projects.IAMCustomRole(
+        "apps-zone-records",
+        project=n.BOOTSTRAP_PROJECT,
+        role_id="sscZoneRecords",
+        title="SSC: write records in one zone",
+        description="Granted on a zone, never on the project.",
+        permissions=list(ZONE_RECORD_PERMISSIONS),
+        opts=opts,
+    )
+    gcp.dns.DnsManagedZoneIamMember(
+        "apps-zone-cell-deployer",
+        project=n.BOOTSTRAP_PROJECT,
+        managed_zone=apps.name,
+        role=writer.name,
+        member=operator,
+        opts=opts,
+    )
+    return {"apps": apps, "platform": platform_hosts}
+
+
 def build() -> None:
     config = pulumi.Config()
     platform_folder = config.require("platform_folder_id")
@@ -199,6 +251,7 @@ def build() -> None:
     )
 
     nightly = _nightly(control_project.project_id, control, opts)
+    zones = _zones(operator, opts)
 
     gcp.iam.DenyPolicy(
         "cells-secret-read",
@@ -286,3 +339,5 @@ def build() -> None:
     pulumi.export("sandbox_folder_id", sandbox.folder_id)
     pulumi.export("control_service_accounts", {"staging": control.email})
     pulumi.export("nightly_service_account", nightly.email)
+    pulumi.export("apps_zone_name_servers", zones["apps"].name_servers)
+    pulumi.export("platform_zone_name_servers", zones["platform"].name_servers)

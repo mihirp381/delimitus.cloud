@@ -19,6 +19,7 @@ INFRA_DIR: Final = str(Path(__file__).resolve().parent.parent)
 PLATFORM_APIS: Final = (
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
+    "certificatemanager.googleapis.com",
     "cloudbilling.googleapis.com",
     "cloudbuild.googleapis.com",
     "cloudkms.googleapis.com",

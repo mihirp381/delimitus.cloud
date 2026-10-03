@@ -21,6 +21,7 @@ from ssc_shared.runtime import service_name
 
 APIS: Final = (
     "artifactregistry.googleapis.com",
+    "certificatemanager.googleapis.com",
     "cloudbuild.googleapis.com",
     "cloudkms.googleapis.com",
     # Answers testIamPermissions, which the metadata_token_no_roles probe asks as the app.
@@ -48,7 +49,11 @@ PROXY_ZONE: Final = f"{n.REGION}-a"
 PROXY_BOOT_IMAGE: Final = "cos-cloud/cos-stable"
 HEALTH_CHECK_RANGES: Final = ("35.191.0.0/16", "130.211.0.0/22")
 GATEWAY_CONCURRENCY: Final = 1000
-GATEWAY_TIMEOUT: Final = "3600s"
+ENTRY_TIMEOUT_SECONDS: Final = 3600
+GATEWAY_TIMEOUT: Final = f"{ENTRY_TIMEOUT_SECONDS}s"
+ENTRY: Final = "ssc-entry"
+LB_SCHEME: Final = "EXTERNAL_MANAGED"
+DNS_TTL: Final = 300
 CELL_BUDGET_USD: Final = 50
 CELL_RANGE: Final = "10.20.0.0/16"
 PSA_ADDRESS: Final = "10.21.0.0"
@@ -179,7 +184,8 @@ class Cell:
     """Builds the resources in dependency order; each step keeps what later steps need.
 
     Onboarding builds everything but the lazy resources, which only their flags add
-    (``naming.LAZY_RESOURCES``). The public entry (SSC-088) fronts ``gateway_``."""
+    (``naming.LAZY_RESOURCES``). The public entry (SSC-088) fronts ``gateway_``; SSC-095 adds
+    the agent's host rule to ``url_map``."""
 
     def __init__(self, cfg: CellConfig, platform: pulumi.StackReference) -> None:
         self.cfg = cfg
@@ -213,6 +219,7 @@ class Cell:
         self.dns_policy()
         self.bucket()
         self.gateway()
+        self.entry()
         self.cell_agent()
         if cfg.egress:
             self.proxy()
@@ -788,7 +795,9 @@ class Cell:
         )
 
     def gateway(self) -> None:
-        """Internal and load-balancer ingress; SSC-088 adds the load balancer and invoker."""
+        """Internal and load-balancer ingress keeps the ``run.app`` host closed, so the invoker
+        is ``allUsers`` and the authoriser refuses requests without a session (SSC-088). The
+        ``allUsers`` grant needs the SSC-095 policy exception first."""
         self.gateway_ = self._run(
             n.GATEWAY,
             self.gateway_sa,
@@ -797,6 +806,159 @@ class Cell:
             instances=(self.cfg.gateway_floor, self.cfg.gateway_max),
             timeout=GATEWAY_TIMEOUT,
             concurrency=GATEWAY_CONCURRENCY,
+        )
+        gcp.cloudrunv2.ServiceIamMember(
+            "gateway-invoker",
+            project=self.pid,
+            location=n.REGION,
+            name=self.gateway_.name,
+            role="roles/run.invoker",
+            member="allUsers",
+            opts=self._o(),
+        )
+
+    def entry(self) -> None:
+        """The cell's own public door: a global external Application Load Balancer on one
+        address, HTTPS to the gateway through a serverless NEG, and HTTP answered with a redirect
+        on the same address. A serverless NEG's backend timeout is fixed at 60 minutes and cannot
+        be set, so the gateway's 3600 s request timeout is what bounds a WebSocket."""
+        label = self.cfg.label
+        self.entry_ip = gcp.compute.GlobalAddress(
+            "entry-ip",
+            project=self.pid,
+            name=ENTRY,
+            address_type="EXTERNAL",
+            ip_version="IPV4",
+            opts=self._o(),
+        )
+        neg = gcp.compute.RegionNetworkEndpointGroup(
+            "gateway-neg",
+            project=self.pid,
+            name=n.GATEWAY,
+            region=n.REGION,
+            network_endpoint_type="SERVERLESS",
+            cloud_run=gcp.compute.RegionNetworkEndpointGroupCloudRunArgs(
+                service=self.gateway_.name
+            ),
+            opts=self._o(),
+        )
+        backend = gcp.compute.BackendService(
+            "gateway-backend",
+            project=self.pid,
+            name=n.GATEWAY,
+            load_balancing_scheme=LB_SCHEME,
+            protocol="HTTPS",
+            backends=[gcp.compute.BackendServiceBackendArgs(group=neg.id)],
+            opts=self._o(),
+        )
+        self.url_map = gcp.compute.URLMap(
+            "entry-map",
+            project=self.pid,
+            name=ENTRY,
+            default_service=backend.id,
+            opts=self._o(),
+        )
+        self.certificate = self._certificate()
+        https = gcp.compute.TargetHttpsProxy(
+            "entry-https",
+            project=self.pid,
+            name=ENTRY,
+            url_map=self.url_map.id,
+            certificate_map=pulumi.Output.concat(
+                "//certificatemanager.googleapis.com/", self.certificate_map.id
+            ),
+            opts=self._o(),
+        )
+        redirect = gcp.compute.URLMap(
+            "entry-redirect",
+            project=self.pid,
+            name=f"{ENTRY}-redirect",
+            default_url_redirect=gcp.compute.URLMapDefaultUrlRedirectArgs(
+                https_redirect=True,
+                strip_query=False,
+                redirect_response_code="MOVED_PERMANENTLY_DEFAULT",
+            ),
+            opts=self._o(),
+        )
+        http = gcp.compute.TargetHttpProxy(
+            "entry-http",
+            project=self.pid,
+            name=f"{ENTRY}-redirect",
+            url_map=redirect.id,
+            opts=self._o(),
+        )
+        for scheme, target, port in (("https", https.id, "443"), ("http", http.id, "80")):
+            gcp.compute.GlobalForwardingRule(
+                f"entry-{scheme}",
+                project=self.pid,
+                name=f"{ENTRY}-{scheme}",
+                target=target,
+                ip_address=self.entry_ip.address,
+                ip_protocol="TCP",
+                port_range=port,
+                load_balancing_scheme=LB_SCHEME,
+                opts=self._o(),
+            )
+        self._record("dns-wildcard", f"{n.cell_wildcard(label)}.", "A", self.entry_ip.address)
+
+    def _certificate(self) -> gcp.certificatemanager.Certificate:
+        """The wildcard certificate, issued once the authorisation CNAME this run writes into
+        the apps zone resolves. The label is opaque because certificate logs are public."""
+        wildcard = n.cell_wildcard(self.cfg.label)
+        auth = gcp.certificatemanager.DnsAuthorization(
+            "cert-dns-auth",
+            project=self.pid,
+            name="ssc-cell",
+            domain=n.host_suffix(self.cfg.label),
+            opts=self._o(),
+        )
+        record = auth.dns_resource_records.apply(lambda records: records[0])
+        self._record(
+            "dns-cert-auth",
+            record.apply(lambda r: r.name or ""),
+            record.apply(lambda r: r.type or ""),
+            record.apply(lambda r: r.data or ""),
+        )
+        certificate = gcp.certificatemanager.Certificate(
+            "cert",
+            project=self.pid,
+            name="ssc-cell-wildcard",
+            managed=gcp.certificatemanager.CertificateManagedArgs(
+                domains=[wildcard], dns_authorizations=[auth.id]
+            ),
+            opts=self._o(),
+        )
+        self.certificate_map = gcp.certificatemanager.CertificateMap(
+            "cert-map", project=self.pid, name=ENTRY, opts=self._o()
+        )
+        gcp.certificatemanager.CertificateMapEntry(
+            "cert-map-entry",
+            project=self.pid,
+            name="ssc-wildcard",
+            map=self.certificate_map.name,
+            hostname=wildcard,
+            certificates=[certificate.id],
+            opts=self._o(),
+        )
+        return certificate
+
+    def _record(
+        self,
+        name: str,
+        dns_name: pulumi.Input[str],
+        kind: pulumi.Input[str],
+        value: pulumi.Input[str],
+    ) -> None:
+        """A record in the platform's apps zone, written by this stack (no hand step)."""
+        gcp.dns.RecordSet(
+            name,
+            project=n.BOOTSTRAP_PROJECT,
+            managed_zone=n.APPS_ZONE,
+            name=dns_name,
+            type=kind,
+            ttl=DNS_TTL,
+            rrdatas=[value],
+            opts=self._o(),
         )
 
     def cell_agent(self) -> None:
@@ -1041,6 +1203,10 @@ class Cell:
             "agent_url",
             self.project_.number.apply(lambda p: n.run_url("ssc-cell-agent", p)),
         )
+        pulumi.export("entry_address", self.entry_ip.address)
+        pulumi.export("public_host_suffix", n.host_suffix(self.cfg.label))
+        pulumi.export("certificate_id", self.certificate.id)
+        pulumi.export("agent_host", n.agent_host(self.cfg.label))
         pulumi.export("nat_ip", self.nat_ip.address)
         pulumi.export("proxy_ip", self.proxy_ip.address)
         pulumi.export("datagw_ip", self.datagw_ip.address)

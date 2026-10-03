@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ssc_infra import deny_probe, run, snapshot_rtt
+from ssc_infra import deny_probe, entry_probe, run, snapshot_rtt
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
 
@@ -72,3 +72,59 @@ async def test_the_round_trip_is_measured_and_cleaned_up(
     assert len(times) == 2
     assert max(times) < snapshot_rtt.LIMIT_SECONDS
     assert [info async for info in store.list("snapshots/")] == []
+
+
+PUBLIC = "https://www.testcell01.delimitusapps.com/"
+DIRECT = "https://ssc-gateway-123456789012.us-central1.run.app/"
+GATEWAY_404 = (404, b"<html>the gateway's one not-found page</html>")
+INGRESS_404 = (404, b"<html>Error: Page not found</html>")
+
+
+def _entry(
+    monkeypatch: pytest.MonkeyPatch, answers: dict[str, list[tuple[int, bytes]]]
+) -> list[str]:
+    calls: list[str] = []
+
+    def fake(url: str) -> entry_probe.Answer:
+        calls.append(url)
+        status, body = answers[url].pop(0) if len(answers[url]) > 1 else answers[url][0]
+        return entry_probe.Answer(url, status, body, "" if status else "certificate not ready")
+
+    monkeypatch.setattr(entry_probe, "fetch", fake)
+    monkeypatch.setattr(entry_probe, "RETRY_SECONDS", 0)
+    return calls
+
+
+def test_the_entry_probe_names_the_public_and_direct_hosts() -> None:
+    assert entry_probe.public_url("testcell01") == PUBLIC
+    assert entry_probe.direct_url("123456789012") == DIRECT
+
+
+def test_the_entry_probe_waits_for_the_certificate_then_expects_a_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _entry(monkeypatch, {PUBLIC: [(0, b""), GATEWAY_404], DIRECT: [INGRESS_404]})
+    through, direct = entry_probe.run(
+        "testcell01", "123456789012", get=entry_probe.fetch, deadline=float("inf"), sleep=0
+    )
+    assert calls == [PUBLIC, PUBLIC, DIRECT]
+    assert entry_probe.refused(direct, through)
+    assert entry_probe.main(["testcell01", "123456789012"]) == 0
+
+
+@pytest.mark.parametrize(
+    ("public", "direct"),
+    [
+        (GATEWAY_404, GATEWAY_404),
+        ((200, b"hello"), (200, b"hello")),
+        ((200, b"hello"), (302, b"")),
+        ((0, b""), INGRESS_404),
+    ],
+    ids=["direct-reaches-the-gateway", "direct-answers", "direct-redirects", "no-entry"],
+)
+def test_the_entry_probe_fails_unless_ingress_refuses_a_direct_request(
+    monkeypatch: pytest.MonkeyPatch, public: tuple[int, bytes], direct: tuple[int, bytes]
+) -> None:
+    _entry(monkeypatch, {PUBLIC: [public], DIRECT: [direct]})
+    monkeypatch.setattr(entry_probe, "CERTIFICATE_SECONDS", 0)
+    assert entry_probe.main(["testcell01", "123456789012"]) == 1
