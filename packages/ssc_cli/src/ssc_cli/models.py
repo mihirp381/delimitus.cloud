@@ -299,6 +299,17 @@ class HealthOut(Wire):
     checked_at: str
 
 
+class UsageOut(Wire):
+    """One environment's usage in a month, for metrics only; never a bill."""
+
+    environment_id: str
+    month: str
+    usage_type: str | None = None
+    session_hours: float
+    instance_hours: float
+    cold_starts: int
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

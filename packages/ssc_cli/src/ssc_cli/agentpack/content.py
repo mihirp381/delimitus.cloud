@@ -67,7 +67,8 @@ admin's approval first; without `--json` the error says how to ask.
 token) and a group by `grp_` id or name. When more than one fits, it exits 2 and lists their ids.
 
 `ssc status <app>` shows each environment: what runs, its billing (`request`, or `instance` for
-a session app), its health (`running`, `asleep` or `failing`) and the database places used.
+a session app), its health (`running`, `asleep` or `failing`), the database places used, and
+this month's usage type (`rare`, `daily`, `session` or `heavy`) and session hours.
 `ssc logs <app> --env preview` shows what the app printed; `--source build` or `--source deploy`
 shows the build or the deployment, and `--follow` keeps printing new lines.
 

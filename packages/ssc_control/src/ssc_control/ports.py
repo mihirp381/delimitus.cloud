@@ -183,6 +183,9 @@ class MetricKind(StrEnum):
     DATA_QUERY = "data_query"
     DATABASE_USE = "database_use"
     TIMER_RUN = "timer_run"
+    USAGE_HOUR = "usage_hour"
+    COLD_START = "cold_start"
+    FIXED_RESOURCE = "fixed_resource"
 
 
 MetricValue = str | int | float | bool | None

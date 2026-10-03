@@ -42,10 +42,12 @@ from ssc_control.identity import jobs as identity_jobs
 from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
 from ssc_control.lifecycle import jobs as lifecycle_jobs
 from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
+from ssc_control.metrics import jobs as metrics_jobs
 from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases, FakeAppDatabases
 from ssc_control.runtime.cell_agent import CellAgentDriver, MetadataIdTokens
+from ssc_control.runtime.cell_usage import AgentCellUsage
 from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
@@ -64,6 +66,7 @@ from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_
 from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.hosts import check_apps_domain, check_cell_label
+from ssc_shared.usage import CellUsage
 
 log = logging.getLogger(__name__)
 
@@ -174,6 +177,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(timers_jobs.blueprint(), namespace="timers")
     app.add_tasks_from(cell_jobs.blueprint(), namespace="cell")
     app.add_tasks_from(identity_jobs.blueprint(), namespace="identity")
+    app.add_tasks_from(metrics_jobs.blueprint(), namespace="metrics")
     return app
 
 
@@ -208,6 +212,17 @@ def app_databases_from_env(env: Mapping[str, str]) -> AppDatabases | None:
             return CellAppDatabases(url, MetadataIdTokens())
         case _:
             return None
+
+
+def cell_usage_from_env(env: Mapping[str, str]) -> CellUsage | None:
+    """Usage reads (SSC-028) go through the cell agent with ``SSC_RUNTIME_DRIVER=cell_agent``;
+    otherwise there is no cell to read and the usage collection does nothing."""
+    if env.get(RUNTIME_DRIVER_ENV, "") != "cell_agent":
+        return None
+    url = env.get(CELL_AGENT_URL_ENV, "")
+    if not url.startswith("https://"):
+        raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
+    return AgentCellUsage(url, MetadataIdTokens())
 
 
 def build_driver_from_env(
@@ -373,6 +388,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         app_databases=app_databases_from_env(env),
         app_identity=app_identity_from_env(env),
         directory=directory_from_env(env),
+        cell_usage=cell_usage_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports
@@ -437,6 +453,7 @@ __all__ = [
     "cell_stores_of",
     "build_app",
     "build_driver_from_env",
+    "cell_usage_from_env",
     "compose_ports",
     "core_blueprint",
     "directory_from_env",

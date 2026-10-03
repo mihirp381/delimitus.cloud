@@ -32,6 +32,7 @@ from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
 from ssc_control.runtime.specs import NoReleaseSpecs, ReleaseSpecs
 from ssc_control.timers.dispatch import ScheduleDispatcher
 from ssc_shared.blobstore import BlobStore
+from ssc_shared.usage import CellUsage
 
 PORTS_KEY: Final = "ssc_ports"
 
@@ -51,7 +52,8 @@ class Ports:
     ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087). ``app_databases`` None fails the first deployment
     of an environment that declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040).
     ``app_identity`` None gives apps no identity keys and no origin (SSC-018). ``directory`` None
-    skips the directory sync (SSC-064)."""
+    skips the directory sync (SSC-064). ``cell_usage`` None skips the usage collection and records
+    no usage events (SSC-028)."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -69,6 +71,7 @@ class Ports:
     app_databases: AppDatabases | None = None
     app_identity: AppIdentity | None = None
     directory: WorkOSClient | None = None
+    cell_usage: CellUsage | None = None
 
 
 class PortsMissingError(RuntimeError):

@@ -662,6 +662,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app_id}/environments/{environment_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Usage
+         * @description One environment's usage this month, or in ``month``. Zero when none was recorded.
+         */
+        get: operations["get_usage_v1_apps__app_id__environments__environment_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app_id}/kill-switch": {
         parameters: {
             query?: never;
@@ -984,6 +1004,26 @@ export interface paths {
          *     is not active.
          */
         post: operations["link_login_v1_unlinked_logins__unlinked_login_id__link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Cell Usage
+         * @description Every environment's usage in the month and the cell's fixed resources. Admins only.
+         */
+        get: operations["get_cell_usage_v1_usage_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1456,6 +1496,15 @@ export interface components {
              */
             state: "off" | "requested" | "creating" | "ready" | "failed";
         };
+        /** CellUsageOut */
+        CellUsageOut: {
+            /** Environments */
+            environments: components["schemas"]["UsageOut"][];
+            /** Fixed Resources */
+            fixed_resources: components["schemas"]["FixedResourceOut"][];
+            /** Month */
+            month: string;
+        };
         /** CurrentRelease */
         CurrentRelease: {
             /** Number */
@@ -1703,6 +1752,19 @@ export interface components {
              * @enum {string}
              */
             subject_kind: "user" | "group" | "org";
+        };
+        /** FixedResourceOut */
+        FixedResourceOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Resource
+             * @description `database`, `egress` or `connections`.
+             */
+            resource: string;
         };
         /** GrantIn */
         GrantIn: {
@@ -2481,6 +2543,58 @@ export interface components {
              * @description A credential until `expires_at`: do not log or share it.
              */
             url: string;
+        };
+        /** UsageOut */
+        UsageOut: {
+            /**
+             * Active Days
+             * @description Days with any running instance.
+             */
+            active_days: number;
+            /** App Id */
+            app_id: string | null;
+            /**
+             * Cold Start P50 Seconds
+             * @description Median start time; null under 20 cold starts (`small_sample`).
+             */
+            cold_start_p50_seconds: number | null;
+            /**
+             * Cold Start P95 Seconds
+             * @description 95th percentile start time; null under 20 cold starts (`small_sample`).
+             */
+            cold_start_p95_seconds: number | null;
+            /**
+             * Cold Starts
+             * @description How many times an instance started.
+             */
+            cold_starts: number;
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Instance Hours
+             * @description Hours of running instance the cell counted.
+             */
+            instance_hours: number;
+            /**
+             * Month
+             * @description `YYYY-MM` (UTC).
+             */
+            month: string;
+            /**
+             * Session Hours
+             * @description Hours with at least one session open.
+             */
+            session_hours: number;
+            /**
+             * Small Sample
+             * @description Fewer than 20 cold starts: no percentiles.
+             */
+            small_sample: boolean;
+            /**
+             * Usage Type
+             * @description `rare`, `daily`, `session` or `heavy`, read from this month's usage after the fact; null with no usage. Never used to size or bill anything.
+             */
+            usage_type: ("rare" | "daily" | "session" | "heavy") | null;
         };
         /** UserMatch */
         UserMatch: {
@@ -5370,6 +5484,68 @@ export interface operations {
             };
         };
     };
+    get_usage_v1_apps__app_id__environments__environment_id__usage_get: {
+        parameters: {
+            query?: {
+                /** @description `YYYY-MM` (UTC); this month if left out. */
+                month?: string | null;
+            };
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     pull_kill_switch_v1_apps__app_id__kill_switch_post: {
         parameters: {
             query?: never;
@@ -6481,6 +6657,65 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_cell_usage_v1_usage_get: {
+        parameters: {
+            query?: {
+                /** @description `YYYY-MM` (UTC); this month if left out. */
+                month?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CellUsageOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;

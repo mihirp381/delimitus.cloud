@@ -10,7 +10,9 @@ Each step locks the resource's row, does one thing and, unless the resource is `
    ``MAX_ATTEMPTS`` attempts the resource is ``failed`` with ``CELL_DEPLOYER_FAILED``, before
    that a new run after a back-off. Succeeded: ``ready``.
 3. ``ready`` or ``failed``: one transaction audits it (only when this step made it so), in the
-   name of whoever asked for the resource, and re-defers every deployment waiting for it.
+   name of whoever asked for the resource, and re-defers every deployment waiting for it. The
+   step that makes it ``ready`` also writes its ``fixed_resource`` metrics event (SSC-028), keyed
+   by the resource so the cell has exactly one per resource however often the step runs.
 
 With no deployer configured the resource fails at once with ``CELL_DEPLOYER_UNAVAILABLE``.
 """
@@ -30,6 +32,8 @@ from ssc_control.cell.resources import TARGET_KIND, CellResourceRow, lock
 from ssc_control.cell.tasks import defer_create
 from ssc_control.db.bind import bound_org
 from ssc_control.deploy.tasks import defer_deployment
+from ssc_control.metrics.events import record_once
+from ssc_control.ports import MetricKind
 from ssc_control.worker_ports import Ports
 
 log = logging.getLogger(__name__)
@@ -130,6 +134,13 @@ async def _poll(ports: Ports, org_id: str, resource: CellResource, execution: st
             await _later(ports, conn, org_id, resource, POLL_SECONDS)
             return row.state.value
         await conn.execute(_READY, {"org": org_id, "res": resource.value})
+        await record_once(
+            conn,
+            org_id=org_id,
+            kind=MetricKind.FIXED_RESOURCE,
+            dedup_key=resource.value,
+            properties={"resource": resource.value},
+        )
         await wake(conn, org_id, resource)
         await _audit(conn, org_id, row, AuditAction.CELL_RESOURCE_READY, "ready", None)
     return CellResourceState.READY.value

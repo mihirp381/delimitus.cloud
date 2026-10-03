@@ -4,7 +4,7 @@
 ``python -m ssc_control.metrics.report``.
 """
 
-from ssc_control.metrics.events import Metrics, MetricsPropertyError, metrics_port
+from ssc_control.metrics.events import Metrics, MetricsPropertyError, metrics_port, record_once
 from ssc_control.metrics.pseudonym import (
     DerivedKeys,
     MetricsKeyError,
@@ -24,5 +24,6 @@ __all__ = [
     "metrics_port",
     "parse_master_key",
     "pseudonym",
+    "record_once",
     "source_tool_of",
 ]
