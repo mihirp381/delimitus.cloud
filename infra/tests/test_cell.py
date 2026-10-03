@@ -864,7 +864,8 @@ def test_only_the_control_plane_invokes_the_cell_agent(cell_a: list[Declared]) -
 
 
 def test_the_control_plane_reads_and_writes_the_cell_bucket(cell_a: list[Declared]) -> None:
-    """Snapshots go to the cell bucket from the worker's jobs (SSC-064)."""
+    """Snapshots and audit anchors go to the cell bucket from the worker's jobs (SSC-064,
+    SSC-012); the API never touches it, so it holds no grant there."""
     grants = {
         d.name: (d.inputs["member"], d.inputs["role"])
         for d in cell_a
@@ -872,12 +873,44 @@ def test_the_control_plane_reads_and_writes_the_cell_bucket(cell_a: list[Declare
         and d.name.startswith("bucket-control")
     }
     assert grants == {
-        "bucket-control": (CONTROL_MEMBER, "roles/storage.objectUser"),
         "bucket-control-worker": (
             f"serviceAccount:{mockcloud.WORKERS['staging']}",
             "roles/storage.objectUser",
         ),
     }
+
+
+def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Declared]) -> None:
+    """Audit anchors sit in the cell bucket under ``audit-anchors/`` (SSC-012): only the control
+    plane's worker may write or delete there, the gateway and the agent only read, and no other
+    account of the cell holds a storage role or permission anywhere in the project."""
+    viewer = "roles/storage.objectViewer"
+    on_bucket = {
+        d.name: (d.inputs["member"], d.inputs["role"])
+        for d in cell_a
+        if d.type.startswith("gcp:storage/bucketIAM")
+    }
+    project = naming.cell_project(A)
+    assert {name: grant for name, grant in on_bucket.items() if grant[1] == viewer} == {
+        "bucket-gateway": (f"serviceAccount:{naming.sa_email(naming.GATEWAY, project)}", viewer),
+        "bucket-agent": (f"serviceAccount:{naming.sa_email(naming.CELL_AGENT, project)}", viewer),
+    }
+    assert {member for member, role in on_bucket.values() if role != viewer} == {
+        f"serviceAccount:{mockcloud.WORKERS['staging']}"
+    }
+    project_roles = {
+        d.inputs["role"] for d in cell_a if d.type == "gcp:projects/iAMMember:IAMMember"
+    }
+    basic = {"roles/owner", "roles/editor", "roles/writer"}
+    assert not [role for role in project_roles if "storage" in role or role in basic]
+    permissions = [
+        permission
+        for d in cell_a
+        if d.type == "gcp:projects/iAMCustomRole:IAMCustomRole"
+        for permission in d.inputs["permissions"]
+    ]
+    assert permissions
+    assert not [p for p in permissions if p.startswith(("storage.", "resourcemanager."))]
 
 
 def _grants(declared: list[Declared], member: str) -> dict[str, dict[str, str] | None]:
@@ -1095,14 +1128,12 @@ def test_a_cell_trusts_the_control_plane_behind_the_public_hosts() -> None:
     members = {
         d.name: d.inputs["member"]
         for d in declared
-        if d.name
-        in {"agent-invoker", "agent-invoker-worker", "bucket-control", "bucket-control-worker"}
+        if d.name in {"agent-invoker", "agent-invoker-worker", "bucket-control-worker"}
     }
     prod = (mockcloud.CONTROL["prod"], mockcloud.WORKERS["prod"])
     assert members == {
         "agent-invoker": f"serviceAccount:{prod[0]}",
         "agent-invoker-worker": f"serviceAccount:{prod[1]}",
-        "bucket-control": f"serviceAccount:{prod[0]}",
         "bucket-control-worker": f"serviceAccount:{prod[1]}",
     }
 

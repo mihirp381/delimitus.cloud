@@ -12,7 +12,8 @@ signed through IAM ``signBlob`` as ``SSC_BLOB_SIGNER`` (decision 015): one bucke
 
 ``cell_stores_from_env`` is the other store family (SSC-013): one bucket per customer cell,
 named by ``SSC_CELL_BUCKET_TEMPLATE`` with ``{cell}`` standing for the org's cell label. Access
-snapshots go there, so a cell reads its rules from its own project.
+snapshots go there, so a cell reads its rules from its own project, and so do the org's audit
+anchors (decision 012). ``org_store`` makes that choice for one org, for both.
 """
 
 import base64
@@ -22,6 +23,10 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final, cast
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from ssc_control.db.bind import bound_org
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.blobstore_gcs import GcsBlobStore, IamSigner, bucket_of
@@ -42,6 +47,7 @@ _BUCKET = re.compile(r"[a-z0-9][a-z0-9_-]{1,61}[a-z0-9]")
 _SERVICE_ACCOUNT = re.compile(
     r"[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com"
 )
+_CELL_LABEL = text("select cell_label from ssc.org where id = :org")
 
 
 class StorageConfigError(ValueError):
@@ -164,3 +170,19 @@ def cell_stores_from_env(env: Mapping[str, str]) -> CellStores | None:
     """``SSC_CELL_BUCKET_TEMPLATE``, or None when it is unset."""
     template = env.get(CELL_BUCKET_ENV, "")
     return cell_stores(template) if template else None
+
+
+async def org_store(
+    engine: AsyncEngine,
+    org_id: str,
+    *,
+    blob_store: BlobStore | None,
+    cell_stores: CellStores | None,
+) -> BlobStore | None:
+    """Where the org's snapshots and audit anchors go: its cell's bucket when ``cell_stores`` is
+    set, else the one blob store (None when neither is configured)."""
+    if cell_stores is None:
+        return blob_store
+    async with bound_org(engine, org_id) as conn:
+        label = (await conn.execute(_CELL_LABEL, {"org": org_id})).scalar_one()
+    return cell_stores(str(label))

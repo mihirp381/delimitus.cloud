@@ -9,7 +9,9 @@ others are deferred, and the tick then fails so it is retried; deferring again i
 
 ``anchor`` writes the org's anchor for its day. It is retried forever, backing off to once an
 hour, because a missing anchor is a gap an operator must see (``verify --anchors`` reports it
-after 36 hours), not a job that gave up. With no blob store configured both do nothing.
+after 36 hours), not a job that gave up. It writes to the org's cell bucket when
+``Ports.cell_stores`` is set, else to ``Ports.blob_store`` (``storage.org_store``, the choice the
+snapshot compile makes); with neither configured both do nothing.
 
 ``blueprint()`` builds fresh tasks on each call: ``App.add_tasks_from`` renames what it copies.
 """
@@ -28,6 +30,7 @@ from ssc_control.audit.anchor import daily_key, write_anchor
 from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
 from ssc_control.deferral import defer
+from ssc_control.storage import org_store
 from ssc_control.worker_ports import ports_of
 
 log = logging.getLogger(__name__)
@@ -69,7 +72,7 @@ def blueprint(*, tick_cron: str = TICK_CRON) -> Blueprint:
     async def anchor_tick(context: JobContext, timestamp: int) -> int:  # pyright: ignore[reportUnusedFunction]
         """Defer the day's anchor for every org without one; returns how many were deferred."""
         ports = ports_of(context)
-        if ports.blob_store is None:
+        if ports.blob_store is None and ports.cell_stores is None:
             log.warning("anchor tick skipped: no blob store", extra={"tick": timestamp})
             return 0
         day = datetime.fromtimestamp(timestamp, UTC).date()
@@ -100,13 +103,14 @@ def blueprint(*, tick_cron: str = TICK_CRON) -> Blueprint:
     async def anchor(context: JobContext, org_id: str, day: str) -> int | None:  # pyright: ignore[reportUnusedFunction]
         """Write the org's anchor for ``day``; returns the anchored seq."""
         ports = ports_of(context)
-        if ports.blob_store is None:
+        store = await org_store(
+            ports.engine, org_id, blob_store=ports.blob_store, cell_stores=ports.cell_stores
+        )
+        if store is None:
             log.warning("anchor skipped: no blob store", extra={"org_id": org_id})
             return None
         async with bound_org(ports.engine, org_id) as conn:
-            written = await write_anchor(
-                conn, org_id, ports.blob_store, "daily", day=date.fromisoformat(day)
-            )
+            written = await write_anchor(conn, org_id, store, "daily", day=date.fromisoformat(day))
         return written.seq
 
     return bp

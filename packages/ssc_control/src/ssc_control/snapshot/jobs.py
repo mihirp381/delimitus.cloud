@@ -19,7 +19,8 @@ from sqlalchemy.exc import DBAPIError
 from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
 from ssc_control.snapshot.compiler import is_stale, point_latest, publish
-from ssc_control.snapshot.service import mark_dirty, published_store
+from ssc_control.snapshot.service import mark_dirty
+from ssc_control.storage import org_store
 from ssc_control.worker_ports import Ports, ports_of
 from ssc_shared.blobstore import BlobError, BlobStore
 
@@ -37,7 +38,7 @@ RETRY: Final = RetryStrategy(
 
 async def snapshot_store(ports: Ports, org_id: str) -> BlobStore | None:
     """Where the org's snapshots are published: its cell's bucket, else the one blob store."""
-    return await published_store(
+    return await org_store(
         ports.engine, org_id, blob_store=ports.blob_store, cell_stores=ports.cell_stores
     )
 

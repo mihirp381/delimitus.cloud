@@ -126,6 +126,16 @@ PLANTED: dict[str, tuple[str, Plant]] = {
         "iam.disableServiceAccountKeyCreation",
         _add("gcp:serviceaccount/key:Key", "build-key", serviceAccountId="ssc-build"),
     ),
+    "editor-on-the-default-account": (
+        "iam.automaticIamGrantsForDefaultServiceAccounts",
+        _add(
+            "gcp:projects/iAMMember:IAMMember",
+            "default-editor",
+            project=naming.cell_project(A),
+            role="roles/editor",
+            member="serviceAccount:100000000000-compute@developer.gserviceaccount.com",
+        ),
+    ),
     "peer-another-cell": (
         "compute.restrictVpcPeering",
         _add(

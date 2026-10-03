@@ -109,7 +109,8 @@ pulumi up --stack c-$LABEL
 ```
 
 The preview should change only these, from `ssc-control-staging` to `ssc-control-prod`:
-- `agent-invoker` and `bucket-control` move to `ssc-control@ssc-control-prod`;
+- `agent-invoker` moves to `ssc-control@ssc-control-prod`;
+- `bucket-control` is deleted if it is still there (SSC-012: only the worker uses the cell bucket);
 - `agent-invoker-worker` and `bucket-control-worker` are new, for `ssc-control-worker@ssc-control-prod`;
 - the intake's `SSC_CONTROL_SA`.
 

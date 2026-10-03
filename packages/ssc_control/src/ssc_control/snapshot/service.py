@@ -16,6 +16,7 @@ from ssc_control.db.bind import bound_org
 from ssc_control.deferral import defer
 from ssc_control.ports import SnapshotPort
 from ssc_control.snapshot.compiler import LOCK_CLASS, LOCK_SHARED, NEXT_VERSION, pointed_version
+from ssc_control.storage import org_store
 from ssc_shared.blobstore import BlobStore
 
 NAMESPACE: Final = "snapshot"
@@ -30,7 +31,6 @@ _CONFIRMED = text(
     "select 1 from ssc.snapshot_ack k join ssc.org o on o.id = k.org_id "
     "where k.org_id = :org and k.version >= :version and o.cell_label = k.cell_label"
 )
-_CELL_LABEL = text("select cell_label from ssc.org where id = :org")
 
 
 def compile_lock(org_id: str) -> str:
@@ -55,21 +55,6 @@ async def record_ack(conn: AsyncConnection, org_id: str, *, cell_label: str, ver
     """The cell's applied version, as its latest heartbeat reports it (a lower one replaces a
     higher one: the report is the truth). An unpublished version is a foreign-key refusal."""
     await conn.execute(_UPSERT_ACK, {"org": org_id, "cell": cell_label, "version": version})
-
-
-async def published_store(
-    engine: AsyncEngine,
-    org_id: str,
-    *,
-    blob_store: BlobStore | None,
-    cell_stores: Callable[[str], BlobStore] | None,
-) -> BlobStore | None:
-    """Where the org's snapshots are published: its cell's bucket, else the one blob store."""
-    if cell_stores is None:
-        return blob_store
-    async with bound_org(engine, org_id) as conn:
-        label = (await conn.execute(_CELL_LABEL, {"org": org_id})).scalar_one()
-    return cell_stores(str(label))
 
 
 class Snapshots(SnapshotPort):
@@ -97,7 +82,7 @@ class Snapshots(SnapshotPort):
             row = (await conn.execute(_CONFIRMED, {"org": org_id, "version": version})).first()
         if row is not None:
             return True
-        store = await published_store(
+        store = await org_store(
             self._engine, org_id, blob_store=self._blob_store, cell_stores=self._cell_stores
         )
         if store is None:
