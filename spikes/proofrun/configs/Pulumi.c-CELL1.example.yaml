@@ -1,0 +1,18 @@
+config:
+  ssc-infra:stage: staging
+  ssc-infra:probe: "true"
+  ssc-infra:gateway_min: "0"
+  ssc-infra:gateway_max: "20"
+  ssc-infra:warm: "false"
+  ssc-infra:database: "true"
+  ssc-infra:egress: "true"
+  ssc-infra:connections: "true"
+  ssc-infra:billing_account: <billing account id>
+  ssc-infra:agent_image: us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/<agent image>@sha256:<agent digest>
+  ssc-infra:probe_digest: sha256:<runtime probe image digest>
+  ssc-infra:build_tools_image: us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-build-tools@sha256:<tools digest>
+  ssc-infra:build_frontend_image: us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/railpack-frontend@sha256:<mirror digest>
+  ssc-infra:gateway_image: us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-gateway@sha256:<gateway digest>
+  ssc-infra:gateway_keyring: <cell 1 keyring, base64 KMS ciphertext>
+  ssc-infra:gateway_jwks: <cell 1 identity JWKS JSON>
+  ssc-infra:org_id: <org id served by cell 1>
