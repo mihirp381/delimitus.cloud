@@ -85,6 +85,8 @@ class ErrorCode(StrEnum):
     DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
     # deployments (SSC-090)
     SNAPSHOT_UNCONFIRMED = "SNAPSHOT_UNCONFIRMED"
+    # rollback (SSC-043)
+    SCHEMA_AHEAD = "SCHEMA_AHEAD"
     # logs and health (SSC-024)
     LOGS_RATE_LIMITED = "LOGS_RATE_LIMITED"
     LOGS_UNAVAILABLE = "LOGS_UNAVAILABLE"
@@ -350,6 +352,14 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "The new version was not made live.",
         "The platform's gateway did not confirm the new version's settings in time. Nothing "
         "changed: the previous version is still serving. Deploy again.",
+    ),
+    ErrorCode.SCHEMA_AHEAD: CatalogueEntry(
+        409,
+        "The database has migrations this release does not have.",
+        "A later release ran database migrations that the release you picked does not know, and "
+        "it may not work against the database as it is now. Nothing was started. The migrations "
+        "are listed at migrations-ahead for the environment and release. Roll back again with "
+        "confirm set to true to go ahead, or deploy a fix forward instead.",
     ),
     ErrorCode.LOGS_RATE_LIMITED: CatalogueEntry(
         429,

@@ -12,6 +12,11 @@ A ``prod`` deployment is checked against the production gate here, so the approv
 opened with the deployment; the job checks the gate again and never boots before it clears. A
 rollback supersedes the environment's in-flight forward deploy and keeps the environment's
 current config and sharing versions: it changes the running code, nothing else.
+
+A rollback to a release that lacks migrations the environment's database may have run is
+``SCHEMA_AHEAD`` unless the request says ``confirm`` (SSC-043): the problem carries fixed text, so
+``GET .../migrations-ahead`` names the migrations. A confirmed one is audited with them. A
+``prod`` deployment of an environment with a database shows the recovery point its job recorded.
 """
 
 from collections.abc import Mapping
@@ -36,6 +41,7 @@ from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.cell.resources import needs_for, notice_for, states, waiting_on
+from ssc_control.deploy import ledgers
 from ssc_control.deploy.tasks import defer_build, defer_deployment
 from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
 from ssc_control.ports import MetricKind
@@ -56,6 +62,39 @@ BuildState = Literal["queued", "running", "succeeded", "failed"]
 class DeploymentCreate(Strict):
     release_id: str = Field(pattern=r"^rel_[a-z0-9]{20}$")
     kind: DeploymentKind = "deploy"
+    confirm: bool = Field(
+        default=False,
+        description="For a rollback: go ahead although the environment's database has "
+        "migrations the release lacks (`SCHEMA_AHEAD` otherwise). Ignored for a deploy.",
+    )
+
+
+class RecoveryPointOut(Strict):
+    at: datetime = Field(description="When the database was at this point.")
+    lsn: str | None = Field(
+        description="The instance's write-ahead log position then; null when the cell could "
+        "not say and `at` is the control plane's time."
+    )
+
+
+class LedgerAhead(Strict):
+    ledger: str = Field(
+        description="The migration tool: `prisma`, `alembic`, `django`, `drizzle` or `knex`."
+    )
+    names: list[str] = Field(
+        description="The migrations the database may have run that the release lacks, in the "
+        "order the tool applies them."
+    )
+
+
+class MigrationsAhead(Strict):
+    environment_id: str
+    release_id: str
+    ledgers: list[LedgerAhead] = Field(
+        description="Empty when a rollback to the release needs no `confirm`: the environment "
+        "has no database, the database has run nothing the release lacks, or the release was "
+        "made before migrations were recorded."
+    )
 
 
 class OperationAccepted(Strict):
@@ -90,6 +129,11 @@ class OperationOut(Strict):
         description="How the release is billed while it runs: `instance` for a session app, "
         "`request` for any other. Null when its manifest cannot be read.",
     )
+    recovery_point: RecoveryPointOut | None = Field(
+        default=None,
+        description="Where the environment's database was before this production deployment "
+        "started; null for any other deployment.",
+    )
 
 
 class ActorOut(Strict):
@@ -109,6 +153,11 @@ class DeploymentOut(Strict):
     actor: ActorOut
     started_at: datetime
     finished_at: datetime | None
+    recovery_point: RecoveryPointOut | None = Field(
+        default=None,
+        description="Where the environment's database was before this production deployment "
+        "started; null for any other deployment.",
+    )
 
 
 class DeploymentList(Strict):
@@ -154,6 +203,12 @@ class ReleaseOut(Strict):
     built_for_environment_id: str | None = Field(
         description="The environment a build made it for; null when no build made it."
     )
+    latest_migrations: dict[str, str] | None = Field(
+        default=None,
+        description="The latest migration of each migration tool the build found in the "
+        'source, such as `{"prisma": "20261003120000_add_total"}`; null when the build did not '
+        "read the source.",
+    )
     created_at: datetime
     actor: ActorOut
 
@@ -189,13 +244,14 @@ _INSERT_DEPLOYMENT = text(
 )
 _SELECT_DEPLOYMENT = text(
     "select id as operation_id, kind, state, app_id, environment_id, release_id, started_at, "
-    "finished_at, failure_code from ssc.deployment where org_id = :org and id = :id"
+    "finished_at, failure_code, recovery_at, recovery_lsn from ssc.deployment "
+    "where org_id = :org and id = :id"
 )
 _SELECT_DEPLOYMENTS = text(
     "select d.id as operation_id, d.kind, d.state, d.release_id, r.number as release_number, "
     "d.failure_code, coalesce(e.current_deployment_id = d.id, false) as current, "
-    "d.actor_kind, d.actor_id, d.actor_via_agent, d.started_at, d.finished_at "
-    "from ssc.deployment d "
+    "d.actor_kind, d.actor_id, d.actor_via_agent, d.started_at, d.finished_at, d.recovery_at, "
+    "d.recovery_lsn from ssc.deployment d "
     "join ssc.environment e on e.org_id = d.org_id and e.id = d.environment_id "
     "join ssc.release r on r.org_id = d.org_id and r.id = d.release_id "
     "where d.org_id = :org and d.environment_id = :env "
@@ -221,7 +277,10 @@ _SELECT_CONNECTION_NAMES = text("select name from ssc.connection where org_id = 
 _RELEASE_COLUMNS = (
     "select r.id as release_id, r.number, r.image_digest, r.manifest_digest, r.source_digest, "
     "r.source_commit, b.environment_id as built_for_environment_id, r.created_at, "
-    "r.actor_kind, r.actor_id, r.actor_via_agent from ssc.release r "
+    "r.actor_kind, r.actor_id, r.actor_via_agent, case when r.migrations is null then null "
+    "else coalesce((select jsonb_object_agg(m.key, m.value ->> -1) "
+    "from jsonb_each(r.migrations) m), '{}'::jsonb) end as latest_migrations "
+    "from ssc.release r "
     "left join ssc.build b on b.org_id = r.org_id and b.release_id = r.id "
 )
 _SELECT_RELEASES = text(
@@ -243,10 +302,16 @@ SourceTool = Annotated[
     ),
 ]
 Limit = Annotated[int, Query(ge=1, le=MAX_PAGE)]
+ReleaseRef = Annotated[str, Query(pattern=r"^rel_[a-z0-9]{20}$", description="A release id.")]
 
 
 def _actor(row: RowMapping) -> ActorOut:
     return ActorOut(kind=row["actor_kind"], id=row["actor_id"], via_agent=row["actor_via_agent"])
+
+
+def _recovery_point(row: RowMapping) -> RecoveryPointOut | None:
+    at = row["recovery_at"]
+    return None if at is None else RecoveryPointOut(at=at, lsn=row["recovery_lsn"])
 
 
 def _actor_params(uow: UnitOfWork) -> dict[str, Any]:
@@ -293,6 +358,7 @@ def _release(row: RowMapping) -> ReleaseOut:
         source_digest=row["source_digest"],
         source_commit=row["source_commit"],
         built_for_environment_id=row["built_for_environment_id"],
+        latest_migrations=row["latest_migrations"],
         created_at=row["created_at"],
         actor=_actor(row),
     )
@@ -314,6 +380,7 @@ def _release(row: RowMapping) -> ReleaseOut:
         ErrorCode.DEPLOYMENT_IN_FLIGHT,
         ErrorCode.RELEASE_ENVIRONMENT_MISMATCH,
         ErrorCode.REFERENCE_NOT_FOUND,
+        ErrorCode.SCHEMA_AHEAD,
     ),
 )
 async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to the request)
@@ -329,7 +396,9 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
 
     A release a build made for another environment is ``RELEASE_ENVIRONMENT_MISMATCH``: prod
     builds separately from the same source. A second forward deploy while one is in flight is
-    ``DEPLOYMENT_IN_FLIGHT``; a rollback supersedes the in-flight forward deploy instead."""
+    ``DEPLOYMENT_IN_FLIGHT``; a rollback supersedes the in-flight forward deploy instead. A
+    rollback to a release that lacks migrations the environment's database may have run is
+    ``SCHEMA_AHEAD`` without ``confirm``; ``GET .../migrations-ahead`` names them."""
     env = await _environment(uow, app_id, environment_id)
     if env["status"] != "active":
         raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"app_id": app_id})
@@ -343,7 +412,23 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
             evidence={"release_id": body.release_id, "built_for_environment_id": release[0]},
         )
     superseded: list[str] = []
+    ahead: ledgers.Ledgers = {}
     if body.kind == "rollback":
+        ahead = await ledgers.ahead(
+            uow.conn,
+            org_id=uow.org_id,
+            app_id=app_id,
+            environment_id=environment_id,
+            release_id=body.release_id,
+        )
+        if ahead and not body.confirm:
+            raise Refusal(
+                ErrorCode.SCHEMA_AHEAD,
+                evidence={
+                    "release_id": body.release_id,
+                    "ahead": {ledger: len(names) for ledger, names in ahead.items()},
+                },
+            )
         superseded = [
             str(i) for i in (await uow.conn.execute(_SUPERSEDE_IN_FLIGHT_DEPLOY, params)).scalars()
         ]
@@ -357,6 +442,7 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
         release_id=body.release_id,
         kind=body.kind,
         superseded=superseded,
+        migrations_ahead=ahead,
     )
     if body.kind == "deploy":
         await uow.metrics.record_event(
@@ -405,10 +491,13 @@ async def start_deployment(  # noqa: PLR0913  (keyword-only)
     release_id: str,
     kind: DeploymentKind,
     superseded: list[str] | None = None,
+    migrations_ahead: Mapping[str, list[str]] | None = None,
 ) -> str:
     """Insert a ``pending`` deployment with the environment's config and sharing ``versions``, open
     the production gate's approvals for ``prod``, audit it and defer its job. The caller has
-    checked the environment, the caller, the app's status and the release."""
+    checked the environment, the caller, the app's status and the release. ``migrations_ahead``
+    are the migrations a confirmed rollback goes back past, kept in the audit as
+    ``<ledger>:<name>``."""
     dep_id = new_id("dep")
     await uow.conn.execute(
         _INSERT_DEPLOYMENT,
@@ -437,6 +526,11 @@ async def start_deployment(  # noqa: PLR0913  (keyword-only)
     after: dict[str, object] = {"environment_id": environment_id, "release_id": release_id}
     if superseded:
         after["superseded"] = superseded
+    if migrations_ahead:
+        after["migrations_ahead"] = [
+            f"{ledger}:{name}" for ledger, names in migrations_ahead.items() for name in names
+        ]
+        after["confirmed"] = True
     await uow.audit(
         _STARTED[kind],
         target_kind="deployment",
@@ -470,7 +564,13 @@ async def get_operation(operation_id: Id, uow: UserUoW) -> OperationOut:
     waiting = await waiting_on(uow.conn, uow.org_id, operation_id)
     spec = await release_spec(uow.conn, uow.org_id, str(row["release_id"]))
     billing = None if spec is None else billing_for(spec.manifest.runtime, spec.framework)
-    return OperationOut(**dict(row), notice=notice_for(waiting), billing=billing)
+    fields = {k: v for k, v in row.items() if k not in ("recovery_at", "recovery_lsn")}
+    return OperationOut(
+        **fields,
+        notice=notice_for(waiting),
+        billing=billing,
+        recovery_point=_recovery_point(row),
+    )
 
 
 @router.get(
@@ -497,10 +597,39 @@ async def list_deployments(
             actor=_actor(r),
             started_at=r["started_at"],
             finished_at=r["finished_at"],
+            recovery_point=_recovery_point(r),
         )
         for r in found
     ]
     return DeploymentList(environment_id=environment_id, items=items)
+
+
+@router.get(
+    "/apps/{app_id}/environments/{environment_id}/migrations-ahead",
+    response_model=MigrationsAhead,
+    responses=problem_responses(*AUTHENTICATED, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND),
+)
+async def migrations_ahead(
+    app_id: Id, environment_id: Id, release_id: ReleaseRef, uow: UserUoW
+) -> MigrationsAhead:
+    """The migrations the environment's database may have run that ``release_id`` lacks: what a
+    rollback to it goes back past, and why it is ``SCHEMA_AHEAD`` without ``confirm``."""
+    await _environment(uow, app_id, environment_id)
+    params = {"org": uow.org_id, "app": app_id, "rel": release_id}
+    if (await uow.conn.execute(_SELECT_RELEASE_BUILD_ENV, params)).first() is None:
+        raise Refusal(ErrorCode.NOT_FOUND, evidence={"release_id": release_id})
+    ahead = await ledgers.ahead(
+        uow.conn,
+        org_id=uow.org_id,
+        app_id=app_id,
+        environment_id=environment_id,
+        release_id=release_id,
+    )
+    return MigrationsAhead(
+        environment_id=environment_id,
+        release_id=release_id,
+        ledgers=[LedgerAhead(ledger=k, names=v) for k, v in ahead.items()],
+    )
 
 
 # ── builds ───────────────────────────────────────────────────────────────────

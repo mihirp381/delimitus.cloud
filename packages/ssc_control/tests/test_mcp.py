@@ -15,6 +15,8 @@ Ticket "done when" checks:
   * every call records agent and client id           -> test_mutations_audited_as_agent,
                                                         test_deploy_to_preview,
                                                         test_request_share_pending
+SSC-043: a rollback past migrations names them and needs confirm
+                                -> test_a_rollback_past_migrations_names_them_and_needs_confirm
 Plus: only agent credentials get in, the tool set is the allowlist, both protocol eras work,
 refusals are tool errors carrying the problem, rate limits are per credential, and the OpenAPI
 file is unchanged. Deferred: local `ssc mcp` (lane C), logs (SSC-024).
@@ -337,6 +339,47 @@ async def test_mutations_audited_as_agent(world: World) -> None:
         (op,),
     )
     assert audit == [("rollback.started", "user", world.org.admin_user_id, True, CLIENT_ID)]
+
+
+async def test_a_rollback_past_migrations_names_them_and_needs_confirm(world: World) -> None:
+    dsn, org, prod = world.dsns.app, world.org.org_id, env_id(world.app, "prod")
+    older = new_id("rel")
+    d = "sha256:" + hashlib.sha256(older.encode()).hexdigest()
+    rows(
+        dsn,
+        org,
+        "insert into ssc.release (id, org_id, app_id, number, image_digest, manifest_digest, "
+        "source_digest, actor_kind, actor_id, migrations) values (%s, %s, %s, 2, %s, %s, %s, "
+        "'user', %s, %s::jsonb) returning id",
+        (older, org, world.app["id"], d, d, d, new_id("usr"), json.dumps({"prisma": ["m1"]})),
+    )
+    rows(
+        dsn,
+        org,
+        "insert into ssc.app_database (org_id, environment_id, host, port, connection_limit, "
+        "migrations) values (%s, %s, '10.0.0.5', 5432, 20, %s::jsonb) returning org_id",
+        (org, prod, json.dumps({"prisma": ["m1", "m2_add_total"]})),
+    )
+    rows(
+        dsn,
+        org,
+        "update ssc.deployment set state = 'superseded', finished_at = now() "
+        "where environment_id = %s and state in ('pending', 'running') returning id",
+        (prod,),
+    )
+    args = {"app": "mcp-app", "release": older, "env": "prod", "idempotency_key": new_key()}
+    async with session(world.url, world.agent) as client:
+        warned = await client.call_tool("rollback", args)
+        confirmed = await client.call_tool("rollback", {**args, "confirm": True})
+    assert warned.is_error
+    error = warned.structured_content["error"]
+    assert error["code"] == "SCHEMA_AHEAD"
+    assert "prisma m2_add_total" in error["detail"]
+    assert "confirm=true" in error["detail"]
+    assert not confirmed.is_error, confirmed.content
+    op = confirmed.structured_content["operation_id"]
+    (after,) = rows(dsn, org, "select after from ssc.audit_event where target_id = %s", (op,))
+    assert after[0]["migrations_ahead"] == ["prisma:m2_add_total"]
 
 
 async def test_preview_scoped_agent_cannot_roll_back_prod(world: World) -> None:

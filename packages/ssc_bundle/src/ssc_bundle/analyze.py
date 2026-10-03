@@ -4,7 +4,8 @@ Stdlib only, no execution: the files of a stored bundle and its manifest in, one
 out. A refusal stops the build with a code from ``ssc_contracts.build`` before any builder is
 called; notices are warnings for the build log; ``framework`` is the session framework the app
 uses (Streamlit, Gradio, Dash, Shiny), which makes it a session app (``is_session_app``) without
-``sessions = true``.
+``sessions = true``; ``migrations`` are the migration ledgers in the source
+(``ssc_bundle.migrations``, SSC-043), which the build keeps on the release.
 
 Refused, in this order: Java and chat bots (``BUILD_UNSUPPORTED_RUNTIME``), a private package
 registry (``BUILD_PRIVATE_REGISTRY``), SQLite on disk (``STATE_SQLITE_EPHEMERAL``) and an app
@@ -21,10 +22,11 @@ import json
 import re
 import tomllib
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final, cast
 from urllib.parse import urlsplit
 
+from ssc_bundle.migrations import Ledgers, ledgers
 from ssc_contracts.build import (
     BUILD_NO_ENTRYPOINT,
     BUILD_PRIVATE_REGISTRY,
@@ -108,6 +110,7 @@ class Analysis:
     framework: str | None
     refusal: Refusal | None
     notices: tuple[str, ...]
+    migrations: Ledgers = field(default_factory=dict[str, tuple[str, ...]])
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +130,8 @@ class _Source:
 
 
 def analyze(files: Iterable[tuple[str, bytes | None]], manifest: Manifest) -> Analysis:
-    """Refusal, notices and framework of the app in ``files`` (POSIX path, content or None)."""
+    """Refusal, notices, framework and migrations of the app in ``files`` (POSIX path, content or
+    None)."""
     src = _Source(dict(files))
     py, node = _python_deps(src), _node_deps(src)
     framework = _framework(src, py)
@@ -137,7 +141,7 @@ def analyze(files: Iterable[tuple[str, bytes | None]], manifest: Manifest) -> An
         or _sqlite(src, node, postgres=manifest.state.postgres)
         or _no_entrypoint(src, manifest, framework)
     )
-    return Analysis(framework, refusal, _notices(src, py | node))
+    return Analysis(framework, refusal, _notices(src, py | node), ledgers(src.files))
 
 
 def sqlite_on_disk(files: Iterable[tuple[str, bytes | None]], manifest: Manifest) -> Refusal | None:

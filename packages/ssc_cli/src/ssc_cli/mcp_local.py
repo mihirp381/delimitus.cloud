@@ -40,6 +40,7 @@ from ssc_cli.errors import (
 from ssc_cli.models import BundleCreate
 from ssc_cli.session import Session
 from ssc_cli.wait import Budget, wait_for_build, wait_for_operation
+from ssc_contracts.errors import ErrorCode
 
 TOOLS: Final = (
     "list_apps",
@@ -117,6 +118,13 @@ IdempotencyKey = Annotated[
         description="Send the same key to retry safely; a new one is made when absent.",
     ),
 ]
+Confirm = Annotated[
+    bool,
+    Field(
+        description="Go back although the environment's database has migrations the release "
+        "lacks. Set it only after a `SCHEMA_AHEAD` refusal, once you have told the person."
+    ),
+]
 
 type Body = dict[str, Any]
 type Opener = Callable[[], ApiClient]
@@ -151,6 +159,37 @@ def run(open_client: Opener, work: Callable[[ApiClient], Body]) -> CallToolResul
 
 def _json(r: Any) -> Body:
     return cast("Body", r.json())
+
+
+def ahead_note(ledgers: list[Body]) -> str:
+    """The migrations of a ``SCHEMA_AHEAD`` refusal, for its detail: the problem's own text is
+    fixed, so a tool names them from ``migrations-ahead``."""
+    named = "; ".join(f"{x['ledger']} {', '.join(x['names'])}" for x in ledgers)
+    return (
+        f"The database may have run: {named or 'none listed'}. If the release works with them, "
+        "call rollback again with confirm=true; otherwise deploy a fix forward."
+    )
+
+
+def rollback_to(  # noqa: PLR0913  (the rollback tool's arguments)
+    c: ApiClient, app: str, release: str, env: str, *, key: str, confirm: bool
+) -> Body:
+    """Post the rollback; a ``SCHEMA_AHEAD`` refusal comes back with the migrations named."""
+    found = resolve_app(c, app)
+    env_path = f"/v1/apps/{found['id']}/environments/{environment_id(found, env)}"
+    sent: Body = {"release_id": release, "kind": "rollback"}
+    if confirm:
+        sent["confirm"] = True
+    try:
+        r = c.post_json(f"{env_path}/deployments", sent, key)
+    except CliError as e:
+        if e.body.code == ErrorCode.SCHEMA_AHEAD:
+            query = urlencode({"release_id": release})
+            ahead = c.get_json(f"{env_path}/migrations-ahead?{query}")
+            note = ahead_note(ahead["ledgers"])
+            e.body = e.body.model_copy(update={"detail": f"{e.body.detail} {note}"})
+        raise
+    return {**_json(r), "location": r.headers["Location"], "idempotency_key": key}
 
 
 def resolve_app(c: ApiClient, ref: str) -> Body:
@@ -474,20 +513,18 @@ def build_server(open_client: Opener, sleep: Sleep, wait: float = WAIT_SECONDS) 
         release: ReleaseId,
         env: Literal["prod", "preview"],
         idempotency_key: IdempotencyKey | None = None,
+        confirm: Confirm = False,
     ) -> CallToolResult:
         """Put an earlier release back in one environment. This starts an operation and returns
         its id at once; follow it with get_status(app, operation=...). Only one deployment runs
         per environment at a time. To retry after an error, send the same idempotency_key: the
-        same operation comes back and nothing starts twice."""
+        same operation comes back and nothing starts twice. A rollback does not undo database
+        migrations: when the database has some the release lacks, it is refused with
+        SCHEMA_AHEAD naming them, and goes ahead only with confirm=true."""
         key = idempotency_key or fresh_key()
-
-        def work(c: ApiClient) -> Body:
-            found = resolve_app(c, app)
-            path = f"/v1/apps/{found['id']}/environments/{environment_id(found, env)}/deployments"
-            r = c.post_json(path, {"release_id": release, "kind": "rollback"}, key)
-            return {**_json(r), "location": r.headers["Location"], "idempotency_key": key}
-
-        return run(open_client, work)
+        return run(
+            open_client, lambda c: rollback_to(c, app, release, env, key=key, confirm=confirm)
+        )
 
     def deploy(
         app: AppRef, path: Folder = ".", idempotency_key: IdempotencyKey | None = None

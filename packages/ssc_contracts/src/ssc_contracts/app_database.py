@@ -8,8 +8,13 @@ stateful environment runs ``MAX_INSTANCES`` instance with a pool of ``POOL_SIZE`
 connection; the second is kept free for the incoming revision during a deploy or rotation, while
 the old one still serves, and for a migration run at start. The cell agent counts the
 environments on the instance itself and refuses one past ``ceiling`` with ``DB_TIER_FULL``.
+
+Before a production deployment of an environment with a database, the cell agent tells the
+instance's time and write-ahead log position, the recovery point a restore goes back to
+(SSC-043); ``LSN`` is the form of the position.
 """
 
+import re
 from typing import Final
 
 from ssc_contracts.app_env import DATABASE_CA, DATABASE_URL, PGPASSWORD
@@ -31,6 +36,9 @@ BASE_TIER_MAX_CONNECTIONS: Final = 25
 SUPERUSER_RESERVE: Final = 3
 BIGGER_TIER: Final = "db-g1-small"
 BIGGER_TIER_MONTHLY_USD: Final = 26
+
+LSN: Final = re.compile(r"[0-9A-F]{1,8}/[0-9A-F]{1,8}")
+"""A write-ahead log position as Postgres prints it, such as ``0/16B3748``."""
 
 SECRETS: Final = (DATABASE_URL, PGPASSWORD, DATABASE_CA)
 """The secrets the cell agent writes for an app database; it alone ever sees their values."""

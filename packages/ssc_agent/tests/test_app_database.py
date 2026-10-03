@@ -16,11 +16,16 @@ routes and the Admin API client.
 SSC-042: dropping an environment's database frees its place, is safe to re-run and is refused
 while the environment's service still runs -> test_a_drop_frees_the_place_..., test_the_agent_
 drops_only_a_database_whose_service_is_gone_or_stopped.
+
+SSC-043: a recovery point is the instance's time and write-ahead log position, read by the role
+that is no superuser -> test_a_recovery_point_is_the_instances_time_and_log_position, and its
+route in test_the_agent_answers_references_never_a_value.
 """
 
 import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import AsyncExitStack
+from datetime import datetime
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -266,6 +271,30 @@ async def test_usage_tells_presence_size_limit_and_places(
     assert (seen.environments, seen.ceiling) == (1, 10)
 
 
+def lsn_value(lsn: str) -> int:
+    high, low = lsn.split("/")
+    return (int(high, 16) << 32) | int(low, 16)
+
+
+async def test_a_recovery_point_is_the_instances_time_and_log_position(
+    dbs: CellAppDatabases, instance: CloudSqlLike
+) -> None:
+    svc = service(8)
+    with pytest.raises(DatabaseMissingError):
+        await dbs.recovery_point(svc)
+    await dbs.ensure(svc)
+    first = await dbs.recovery_point(svc)
+    assert app_database.LSN.fullmatch(first.lsn) is not None
+    assert datetime.fromisoformat(first.at).tzinfo is not None
+    assert first.at.endswith("Z")
+    with psycopg.connect(instance.superuser, autocommit=True) as conn:
+        conn.execute("create table ssc_043_moves (x int)")
+        conn.execute("drop table ssc_043_moves")
+    later = await dbs.recovery_point(svc)
+    assert lsn_value(later.lsn) > lsn_value(first.lsn)
+    assert later.at >= first.at
+
+
 # ── ten places, and not one more ─────────────────────────────────────────────
 
 
@@ -427,11 +456,16 @@ async def test_the_agent_answers_references_never_a_value(
     assert rotated.json()["versions"] == {DATABASE_URL: "2", PGPASSWORD: "2", DATABASE_CA: "2"}
     usage = await agent.post("/v1/databases/usage", json={"service": svc})
     assert usage.json()["present"] is True
+    point = await agent.post("/v1/databases/recovery_point", json={"service": svc})
+    assert point.status_code == 200, point.text
+    assert set(point.json()) == {"at", "lsn"}
     for value in [*passwords.made, url_of(vault, svc)]:
-        assert value not in made.text + rotated.text + usage.text
+        assert value not in made.text + rotated.text + usage.text + point.text
 
     missing = await agent.post("/v1/databases/rotate", json={"service": service(7)})
     assert (missing.status_code, missing.json()["code"]) == (404, "DATABASE_NOT_FOUND")
+    nowhere = await agent.post("/v1/databases/recovery_point", json={"service": service(7)})
+    assert (nowhere.status_code, nowhere.json()["code"]) == (404, "DATABASE_NOT_FOUND")
     bad = await agent.post("/v1/databases/ensure", json={"service": "postgres"})
     assert (bad.status_code, bad.json()["code"]) == (400, "INVALID_REQUEST")
     unknown = await agent.post("/v1/databases/delete", json={"service": svc})

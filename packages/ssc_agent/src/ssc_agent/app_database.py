@@ -14,7 +14,10 @@ Admin API (``AdminSql``):
 Before it creates anything it counts the app databases on the instance and refuses one past
 ``app_database.ceiling`` (``TierFullError``); the count runs under an advisory lock, so two
 environments cannot both take the last place. ``ensure`` and ``rotate`` then set a new password.
-``drop`` frees the place again (SSC-042): it stops the login, drops the database and both roles,
+``recovery_point`` tells the instance's time and write-ahead log position, which a production
+deployment records before it starts so a restore can go back to it (SSC-043); it reads only
+server functions on ``postgres``, never the app's database. ``drop`` frees the place again
+(SSC-042): it stops the login, drops the database and both roles,
 and deletes the database secrets. It is safe to re-run, and the agent's route refuses it while
 the environment's service still runs.
 
@@ -94,6 +97,14 @@ class AppDatabase:
     port: int
     connection_limit: int
     versions: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RecoveryPoint:
+    """The instance's time (UTC, ISO 8601) and write-ahead log position, read together."""
+
+    at: str
+    lsn: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -247,6 +258,28 @@ class CellAppDatabases:
             environments=_int(row["environments"]),
             ceiling=_ceiling(row),
         )
+
+    async def recovery_point(self, service: str) -> RecoveryPoint:
+        """Where the instance is now, read in one statement. ``DatabaseMissingError`` when the
+        service has no database."""
+        name = database_name(service)
+        rows = await self._sql.run(
+            "postgres",
+            [
+                "SELECT "  # noqa: S608  (constant SQL fragments; names are validated)
+                f"(SELECT count(*) FROM pg_database WHERE datname = '{name}') AS has_database, "
+                "to_char(clock_timestamp() AT TIME ZONE 'UTC', "
+                '\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') AS at, '
+                "pg_current_wal_lsn()::text AS lsn"
+            ],
+        )
+        row = rows[0]
+        if _int(row["has_database"]) == 0:
+            raise DatabaseMissingError(f"{service} has no app database")
+        at, lsn = str(row["at"]), str(row["lsn"])
+        if app_database.LSN.fullmatch(lsn) is None:
+            raise AdminSqlError("the instance gave no log position")
+        return RecoveryPoint(at=at, lsn=lsn)
 
     async def _state(self, name: str, owner: str) -> dict[str, Any]:
         rows = await self._sql.run(

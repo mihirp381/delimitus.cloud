@@ -748,7 +748,7 @@ describe('rollback', () => {
     expect(submit.disabled).toBe(true);
     await confirmIn(dialog, 'Roll back');
     const post = api.of('POST', `${APP_PATH}/environments/${PROD}/deployments`)[0];
-    expect(post?.body).toEqual({ release_id: `rel_${'2'.repeat(20)}`, kind: 'rollback' });
+    expect(post?.body).toEqual({ release_id: `rel_${'2'.repeat(20)}`, kind: 'rollback', confirm: false });
     expect(post?.headers.get('Idempotency-Key')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
     const status = await within(prod).findByText(/Rollback of Production to R2/);
@@ -803,7 +803,49 @@ describe('rollback', () => {
     expect(api.of('POST', `${APP_PATH}/environments/${PROD}/deployments`)[0]?.body).toEqual({
       release_id: `rel_${'7'.repeat(20)}`,
       kind: 'rollback',
+      confirm: false,
     });
+  });
+
+  it('lists the migrations a rollback goes back past and needs them accepted', async () => {
+    const ahead = {
+      environment_id: PROD,
+      release_id: `rel_${'2'.repeat(20)}`,
+      ledgers: [{ ledger: 'prisma', names: ['20261002090000_add_total', '20261003090000_index'] }],
+    };
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        [`GET ${APP_PATH}/releases`]: releases,
+        [`GET ${APP_PATH}/environments/${PROD}/deployments`]: deployments,
+        [`POST ${APP_PATH}/environments/${PROD}/deployments`]: [
+          () => problem(409, 'SCHEMA_AHEAD', 'The database has migrations this release does not have.'),
+          () => json(202, { operation_id: OP, state: 'pending' }),
+        ],
+        [`GET ${APP_PATH}/environments/${PROD}/migrations-ahead`]: () => json(200, ahead),
+        [`GET /v1/operations/${OP}`]: () => json(200, operation('running')),
+      }),
+      signedIn(),
+    );
+    const { dialog } = await openRollback();
+    fireEvent.click(await within(dialog).findByRole('radio', { name: /R2/ }));
+    await confirmIn(dialog, 'Roll back');
+    const warning = await within(dialog).findByRole('alert');
+    expect(warning.textContent).toContain('20261002090000_add_total');
+    expect(warning.textContent).toContain('20261003090000_index');
+    expect(api.of('GET', `${APP_PATH}/environments/${PROD}/migrations-ahead`)[0]?.query.get('release_id')).toBe(
+      `rel_${'2'.repeat(20)}`,
+    );
+    const anyway = within(dialog).getByRole('button', { name: 'Roll back anyway' }) as HTMLButtonElement;
+    expect(anyway.disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: /R2 works with these migrations/ }));
+    expect(anyway.disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(anyway);
+    });
+    const posts = api.of('POST', `${APP_PATH}/environments/${PROD}/deployments`);
+    expect(posts.map((p) => (p.body as { confirm: boolean }).confirm)).toEqual([false, true]);
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('shows who may not list releases', async () => {

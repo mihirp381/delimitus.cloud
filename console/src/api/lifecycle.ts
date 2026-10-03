@@ -7,6 +7,7 @@ export type KillSwitchMode = components['schemas']['KillSwitchCreate']['mode'];
 export type KillSwitchRun = components['schemas']['KillSwitchRun'];
 export type Release = components['schemas']['ReleaseOut'];
 export type Operation = components['schemas']['OperationOut'];
+export type LedgerAhead = components['schemas']['LedgerAhead'];
 
 /** How often a running kill switch or rollback is read again. */
 export const POLL_MS = 1000;
@@ -42,20 +43,39 @@ export async function transferOwner(api: ApiClient, appId: string, userId: strin
   );
 }
 
-/** Starts a rollback to `releaseId`; the operation id to poll. */
+/**
+ * Starts a rollback to `releaseId`; the operation id to poll. Without `confirm`, a release that
+ * lacks migrations the environment's database may have run is refused with SCHEMA_AHEAD.
+ */
 export async function rollBack(
   api: ApiClient,
   appId: string,
   environmentId: string,
   releaseId: string,
+  confirm = false,
 ): Promise<string> {
   const body = must(
     await api.POST('/v1/apps/{app_id}/environments/{environment_id}/deployments', {
       params: { path: { app_id: appId, environment_id: environmentId } },
-      body: { release_id: releaseId, kind: 'rollback' },
+      body: { release_id: releaseId, kind: 'rollback', confirm },
     }),
   );
   return body.operation_id;
+}
+
+/** The migrations the environment's database may have run that `releaseId` lacks, per tool. */
+export async function migrationsAhead(
+  api: ApiClient,
+  appId: string,
+  environmentId: string,
+  releaseId: string,
+): Promise<readonly LedgerAhead[]> {
+  const body = must(
+    await api.GET('/v1/apps/{app_id}/environments/{environment_id}/migrations-ahead', {
+      params: { path: { app_id: appId, environment_id: environmentId }, query: { release_id: releaseId } },
+    }),
+  );
+  return body.ledgers;
 }
 
 /**

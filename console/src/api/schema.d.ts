@@ -393,7 +393,9 @@ export interface paths {
          *
          *     A release a build made for another environment is ``RELEASE_ENVIRONMENT_MISMATCH``: prod
          *     builds separately from the same source. A second forward deploy while one is in flight is
-         *     ``DEPLOYMENT_IN_FLIGHT``; a rollback supersedes the in-flight forward deploy instead.
+         *     ``DEPLOYMENT_IN_FLIGHT``; a rollback supersedes the in-flight forward deploy instead. A
+         *     rollback to a release that lacks migrations the environment's database may have run is
+         *     ``SCHEMA_AHEAD`` without ``confirm``; ``GET .../migrations-ahead`` names them.
          */
         post: operations["create_deployment_v1_apps__app_id__environments__environment_id__deployments_post"];
         delete?: never;
@@ -463,6 +465,27 @@ export interface paths {
          * @description Lines of one source, redacted. Builders, the owner and org admins only.
          */
         get: operations["get_logs_v1_apps__app_id__environments__environment_id__logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/environments/{environment_id}/migrations-ahead": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Migrations Ahead
+         * @description The migrations the environment's database may have run that ``release_id`` lacks: what a
+         *     rollback to it goes back past, and why it is ``SCHEMA_AHEAD`` without ``confirm``.
+         */
+        get: operations["migrations_ahead_v1_apps__app_id__environments__environment_id__migrations_ahead_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1605,6 +1628,12 @@ export interface components {
         /** DeploymentCreate */
         DeploymentCreate: {
             /**
+             * Confirm
+             * @description For a rollback: go ahead although the environment's database has migrations the release lacks (`SCHEMA_AHEAD` otherwise). Ignored for a deploy.
+             * @default false
+             */
+            confirm: boolean;
+            /**
              * Kind
              * @default deploy
              * @enum {string}
@@ -1642,6 +1671,8 @@ export interface components {
             kind: "deploy" | "rollback";
             /** Operation Id */
             operation_id: string;
+            /** @description Where the environment's database was before this production deployment started; null for any other deployment. */
+            recovery_point?: components["schemas"]["RecoveryPointOut"] | null;
             /** Release Id */
             release_id: string;
             /** Release Number */
@@ -1730,7 +1761,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -2061,6 +2092,19 @@ export interface components {
              */
             state: "pending" | "running" | "healthy" | "failed" | "superseded";
         };
+        /** LedgerAhead */
+        LedgerAhead: {
+            /**
+             * Ledger
+             * @description The migration tool: `prisma`, `alembic`, `django`, `drizzle` or `knex`.
+             */
+            ledger: string;
+            /**
+             * Names
+             * @description The migrations the database may have run that the release lacks, in the order the tool applies them.
+             */
+            names: string[];
+        };
         /** LinkIn */
         LinkIn: {
             /** User Id */
@@ -2110,6 +2154,18 @@ export interface components {
         };
         /** @enum {string} */
         LogSource: "app" | "build" | "deploy";
+        /** MigrationsAhead */
+        MigrationsAhead: {
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Ledgers
+             * @description Empty when a rollback to the release needs no `confirm`: the environment has no database, the database has run nothing the release lacks, or the release was made before migrations were recorded.
+             */
+            ledgers: components["schemas"]["LedgerAhead"][];
+            /** Release Id */
+            release_id: string;
+        };
         /** OperationAccepted */
         OperationAccepted: {
             /**
@@ -2155,6 +2211,8 @@ export interface components {
             notice?: string | null;
             /** Operation Id */
             operation_id: string;
+            /** @description Where the environment's database was before this production deployment started; null for any other deployment. */
+            recovery_point?: components["schemas"]["RecoveryPointOut"] | null;
             /** Release Id */
             release_id: string;
             /**
@@ -2229,6 +2287,20 @@ export interface components {
              */
             preview_release_id?: string | null;
         };
+        /** RecoveryPointOut */
+        RecoveryPointOut: {
+            /**
+             * At
+             * Format: date-time
+             * @description When the database was at this point.
+             */
+            at: string;
+            /**
+             * Lsn
+             * @description The instance's write-ahead log position then; null when the cell could not say and `at` is the control plane's time.
+             */
+            lsn: string | null;
+        };
         /** ReleaseList */
         ReleaseList: {
             /**
@@ -2262,6 +2334,13 @@ export interface components {
              * @description How the number is shown: `R<number>`.
              */
             label: string;
+            /**
+             * Latest Migrations
+             * @description The latest migration of each migration tool the build found in the source, such as `{"prisma": "20261003120000_add_total"}`; null when the build did not read the source.
+             */
+            latest_migrations?: {
+                [key: string]: string;
+            } | null;
             /** Manifest Digest */
             manifest_digest: string;
             /** Number */
@@ -4330,7 +4409,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`, `RELEASE_ENVIRONMENT_MISMATCH` */
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`, `RELEASE_ENVIRONMENT_MISMATCH`, `SCHEMA_AHEAD` */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4677,6 +4756,77 @@ export interface operations {
             };
             /** @description `LOGS_UNAVAILABLE` */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    migrations_ahead_v1_apps__app_id__environments__environment_id__migrations_ahead_get: {
+        parameters: {
+            query: {
+                /** @description A release id. */
+                release_id: string;
+            };
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationsAhead"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

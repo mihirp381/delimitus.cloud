@@ -18,7 +18,12 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    deployment (``secret_refs``, SSC-026); a rerun keeps the copy, so the spec never changes
    under it. A release whose request timeout (``ssc_shared.runtime.timeout_for``) is shorter
    than the live release's, or than the environment's ``request_timeout_seconds``, lowers that
-   column and asks for the access snapshot that carries it (SSC-090).
+   column and asks for the access snapshot that carries it (SSC-090). For an environment with a
+   database, the release's migrations join the database's (``ledgers.record_seen``, SSC-043),
+   which a later rollback is checked against.
+   A ``prod`` deployment of an environment with a database then records a recovery point
+   before any runtime call, once: the instance's time and log position from the cell agent, or
+   the control plane's time alone when the agent cannot say, so the deployment goes ahead.
 2. ``apply`` the release's spec, then poll ``observe`` until the new revision is ready, fails, or
    the health timeout passes. A deployment another one pre-empted (``superseded``) stops at the
    next poll without touching traffic. So does one whose app stopped (the kill switch): it
@@ -54,8 +59,14 @@ from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_control.audit import Actor, NewEvent, append_event
 from ssc_control.cell.resources import hold_deployment
 from ssc_control.db.bind import bound_org
+from ssc_control.deploy.ledgers import record_seen
 from ssc_control.ports import MetricKind
-from ssc_control.runtime.app_databases import AppDatabaseError, database_of, record_database
+from ssc_control.runtime.app_databases import (
+    AppDatabaseError,
+    RecoveryPoint,
+    database_of,
+    record_database,
+)
 from ssc_control.runtime.driver import (
     EnvironmentRow,
     ReleaseRow,
@@ -105,7 +116,8 @@ _CLAIM = text(
 _LOAD = text(
     "select d.state, d.kind, d.app_id, d.environment_id, d.release_id, d.actor_kind, "
     "d.actor_id, d.actor_via_agent, d.actor_client_id, e.name as env_name, "
-    "a.status as app_status, a.owner_user_id, a.slug as app_slug, r.image_digest "
+    "a.status as app_status, a.owner_user_id, a.slug as app_slug, r.image_digest, "
+    "r.migrations as release_migrations, d.recovery_at "
     "from ssc.deployment d "
     "join ssc.environment e on e.org_id = d.org_id and e.id = d.environment_id "
     "join ssc.app a on a.org_id = d.org_id and a.id = d.app_id "
@@ -120,6 +132,10 @@ _PIN_SECRETS = text(
     "where org_id = :org and id = :id and secret_refs is null"
 )
 _SECRET_REFS = text("select secret_refs from ssc.deployment where org_id = :org and id = :id")
+_SET_RECOVERY = text(
+    "update ssc.deployment set recovery_at = coalesce(cast(:at as timestamptz), now()), "
+    "recovery_lsn = :lsn where org_id = :org and id = :id and recovery_at is null"
+)
 _POLL = text(
     "select d.state, a.status as app_status from ssc.deployment d "
     "join ssc.app a on a.org_id = d.org_id and a.id = d.app_id "
@@ -192,6 +208,8 @@ class _Ready:
     spec: ReleaseSpec
     driver: RuntimeDriver
     lowered: _Lowered | None = None
+    recovery_point: bool = False
+    """A ``prod`` deployment of an environment with a database, with no recovery point yet."""
 
 
 def _deployment(deployment_id: str, row: Any) -> _Deployment:
@@ -245,6 +263,8 @@ async def run_deployment(
     if isinstance(ready, str):
         return ready
     dep, health = ready.deployment, health or HealthWait()
+    if ready.recovery_point:
+        await _record_recovery_point(ports, org_id, dep)
     try:
         revision = await ready.driver.apply(ready.desired)
         verdict = await _wait_healthy(ports, org_id, ready, revision, health)
@@ -310,12 +330,31 @@ async def _make_database(
     return ready
 
 
+async def _record_recovery_point(ports: Ports, org_id: str, dep: _Deployment) -> None:
+    """Outside any transaction, before the runtime is called: where the instance is now, from
+    the cell agent; the control plane's time alone when it cannot say."""
+    point: RecoveryPoint | None = None
+    if ports.app_databases is not None:
+        try:
+            point = await ports.app_databases.recovery_point(service_name(dep.environment_id))
+        except AppDatabaseError as exc:
+            log.warning("recovery point failed", extra={"deployment_id": dep.id, "error": str(exc)})
+    params = {
+        "org": org_id,
+        "id": dep.id,
+        "at": None if point is None else point.at,
+        "lsn": None if point is None else point.lsn,
+    }
+    async with bound_org(ports.engine, org_id) as conn:
+        await conn.execute(_SET_RECOVERY, params)
+
+
 async def _prepare(  # noqa: PLR0911  (one return per refusal)
     conn: AsyncConnection, ports: Ports, org_id: str, dep: _Deployment, row: Any
 ) -> _Ready | _NeedsDatabase | _Refused | Literal["running"]:
     """The checks before any runtime call: an active app, a manifest, the production gate for
     ``prod``, a driver, the cell resources the manifest needs, the app database. Then the
-    pinned secrets."""
+    release's migrations on the database and the pinned secrets."""
     if row.app_status != "active":
         return _Refused(APP_NOT_ACTIVE)
     try:
@@ -348,6 +387,13 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         if ports.app_databases is None:
             return _Refused(DATABASE_UNAVAILABLE, decision)
         return _NeedsDatabase(dep, decision)
+    if database is not None:
+        await record_seen(
+            conn,
+            org_id=org_id,
+            environment_id=dep.environment_id,
+            migrations=row.release_migrations,
+        )
     params = {"org": org_id, "id": dep.id, "env": dep.environment_id}
     await conn.execute(_PIN_SECRETS, params)
     secrets = (await conn.execute(_SECRET_REFS, params)).scalar_one()
@@ -368,7 +414,12 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         raise AssertionError("an active app has a service spec")
     lowered = await _lower_timeout(conn, ports, org_id, dep, desired.timeout_seconds)
     return _Ready(
-        deployment=dep, desired=desired, spec=spec, driver=ports.runtime_driver, lowered=lowered
+        deployment=dep,
+        desired=desired,
+        spec=spec,
+        driver=ports.runtime_driver,
+        lowered=lowered,
+        recovery_point=dep.env_name == "prod" and database is not None and row.recovery_at is None,
     )
 
 

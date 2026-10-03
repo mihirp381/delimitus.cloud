@@ -410,6 +410,7 @@ async def test_prod_runs_its_own_secrets_never_previews(b: Bench, dsns: Dsns) ->
     assert databases.calls == [
         ("ensure", service_name(b.w.preview)),
         ("ensure", service_name(b.w.prod)),
+        ("recovery_point", service_name(b.w.prod)),
     ]
     names = rows_of(
         b.dsn,

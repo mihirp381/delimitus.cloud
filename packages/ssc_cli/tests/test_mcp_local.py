@@ -226,6 +226,37 @@ async def test_rollback_sends_the_given_key(fake_api):
     assert json.loads(post.content) == {"release_id": release, "kind": "rollback"}
 
 
+async def test_a_rollback_past_migrations_names_them_and_needs_confirm(fake_api, fake_problem):
+    app_id = "app_" + "a" * 20
+    env_id = "env_" + "p" * 20
+    release = "rel_" + "r" * 20
+    app = {"id": app_id, "slug": "a1", "environments": [{"id": env_id, "name": "prod"}]}
+    env_path = f"/v1/apps/{app_id}/environments/{env_id}"
+    accepted = httpx2.Response(
+        202, json={"operation_id": "dep_1", "state": "pending"}, headers={"Location": "/v1/o"}
+    )
+    ahead = {
+        "environment_id": env_id,
+        "release_id": release,
+        "ledgers": [{"ledger": "alembic", "names": ["b2", "c3"]}],
+    }
+    fake_api.add("GET", f"/v1/apps/{app_id}", httpx2.Response(200, json=app))
+    fake_api.add("POST", f"{env_path}/deployments", fake_problem(409, "SCHEMA_AHEAD"), accepted)
+    fake_api.add("GET", f"{env_path}/migrations-ahead", httpx2.Response(200, json=ahead))
+    args = {"app": app_id, "release": release, "env": "prod", "idempotency_key": "k1"}
+    async with Client(local_server(fake_api), cache=None) as client:
+        warned = await client.call_tool("rollback", args)
+        confirmed = await client.call_tool("rollback", {**args, "confirm": True})
+    assert warned.is_error
+    error = warned.structured_content["error"]
+    assert error["code"] == "SCHEMA_AHEAD"
+    assert "alembic b2, c3" in error["detail"]
+    assert "confirm=true" in error["detail"]
+    assert not confirmed.is_error
+    posted = [json.loads(q.content) for q in fake_api.seen if q.method == "POST"]
+    assert [p.get("confirm") for p in posted] == [None, True]
+
+
 async def test_request_share_never_lowers_a_role(fake_api):
     app_id = "app_" + "a" * 20
     env_id = "env_" + "p" * 20

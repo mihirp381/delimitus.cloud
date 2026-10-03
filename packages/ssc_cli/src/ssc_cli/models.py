@@ -5,7 +5,7 @@ CLI. Enumerations are plain strings for the same reason. A test checks every fie
 ``docs/api/openapi.json``.
 """
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Wire(BaseModel):
@@ -155,6 +155,7 @@ class ReleaseOut(Wire):
     source_digest: str
     source_commit: str | None = None
     built_for_environment_id: str | None = None
+    latest_migrations: dict[str, str] | None = None
     created_at: str
     actor: ActorOut
 
@@ -162,6 +163,17 @@ class ReleaseOut(Wire):
 class ReleaseList(Wire):
     items: list[ReleaseOut]
     next_before: int | None = None
+
+
+class LedgerAhead(Wire):
+    ledger: str
+    names: list[str]
+
+
+class MigrationsAhead(Wire):
+    environment_id: str
+    release_id: str
+    ledgers: list[LedgerAhead]
 
 
 class UserMatch(Wire):
@@ -341,6 +353,7 @@ class BuildCreate(Body):
 class DeploymentCreate(Body):
     release_id: str
     kind: str
+    confirm: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class PromoteIn(Body):
