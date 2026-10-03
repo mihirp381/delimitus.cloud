@@ -20,7 +20,7 @@ import pulumi
 import pulumi_gcp as gcp
 
 from ssc_infra import naming as n
-from ssc_infra.platform import BUDGET_THRESHOLDS, provider, sa_principal
+from ssc_infra.platform import BUDGET_THRESHOLDS, ZONE_RECORD_PERMISSIONS, provider, sa_principal
 from ssc_shared.runtime import service_name
 
 APIS: Final = (
@@ -60,6 +60,7 @@ LB_SCHEME: Final = "EXTERNAL_MANAGED"
 TLS_MIN: Final = "TLS_1_2"
 TLS_PROFILE: Final = "MODERN"
 AGENT_PATHS: Final = "agent"
+INTAKE_PATHS: Final = "intake"
 DNS_TTL: Final = 300
 CELL_BUDGET_USD: Final = 50
 PSA_ADDRESS: Final = "10.21.0.0"
@@ -68,9 +69,16 @@ GOOGLE_PRIVATE: Final = ("199.36.153.8", "199.36.153.9", "199.36.153.10", "199.3
 GOOGLE_PRIVATE_RANGE: Final = "199.36.153.8/30"
 GATEWAY_TAG: Final = "ssc-gateway"
 AGENT_MAX: Final = 3
+INTAKE_MAX: Final = 3
+INTAKE_COMMAND: Final = ("python", "-m", "ssc_agent.intake")
 DATAGW_MAX: Final = 10
 KEY_ROTATION: Final = "7776000s"
 SQL_TIER: Final = "db-f1-micro"
+SQL_INSTANCE: Final = "ssc-cell"
+SQL_MAX_CONNECTIONS: Final = "25"
+SQL_CA_MODE: Final = "GOOGLE_MANAGED_CAS_CA"
+SQL_DNS_ZONE: Final = "sql.goog."
+SQL_DNS_NAMES: Final = f"*.{SQL_DNS_ZONE}"
 PLACEHOLDER_IMAGE: Final = "us-docker.pkg.dev/cloudrun/container/hello"
 GOOGLE_DNS_PASSTHRU: Final = (
     "googleapis.com.",
@@ -92,7 +100,6 @@ CREATE_PERMISSIONS: Final = (
     "iam.serviceAccounts.create",
     "run.services.create",
     "secretmanager.secrets.create",
-    "cloudsql.databases.create",
     "cloudbuild.builds.create",
 )
 # Cloud Run and service accounts take no resource-name IAM conditions (only Secret Manager of
@@ -109,6 +116,14 @@ RUNTIME_PERMISSIONS: Final = (
     "iam.serviceAccounts.actAs",
     "cloudbuild.builds.get",
     "cloudbuild.builds.list",
+)
+DATABASE_PERMISSIONS: Final = (
+    "cloudsql.instances.executeSql",
+    "cloudsql.instances.login",
+    "cloudsql.instances.get",
+    "cloudsql.instances.listServerCas",
+    "cloudsql.databases.create",
+    "cloudsql.databases.delete",
 )
 BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
 PINNED_IMAGE: Final = re.compile(
@@ -294,8 +309,8 @@ class Cell:
     """Builds the resources in dependency order; each step keeps what later steps need.
 
     Onboarding builds everything but the lazy resources, which only their flags add
-    (``naming.LAZY_RESOURCES``). The public entry (SSC-088) fronts ``gateway_`` and, on its
-    reserved host only, ``agent_`` (SSC-095)."""
+    (``naming.LAZY_RESOURCES``). The public entry (SSC-088) fronts ``gateway_`` and, each on its
+    reserved host only, ``agent_`` (SSC-095) and ``intake_`` (SSC-026)."""
 
     def __init__(self, cfg: CellConfig, platform: pulumi.StackReference) -> None:
         self.cfg = cfg
@@ -330,6 +345,7 @@ class Cell:
         self.bucket()
         self.gateway()
         self.cell_agent()
+        self.secret_intake()
         self.entry()
         if cfg.egress:
             self.proxy()
@@ -418,10 +434,14 @@ class Cell:
         )
 
     def identities(self) -> None:
+        """Every grant is made here at onboarding, whatever the flags: the cell deployer that
+        turns flags on holds no IAM role (SSC-087). The control plane holds none in the cell; the
+        secret intake adds versions to app secrets and does nothing else (SSC-026)."""
         self.gateway_sa = self._sa("ssc-gateway", "SSC cell gateway")
         self.agent_sa = self._sa("ssc-cell-agent", "SSC cell agent")
         self.build_sa = self._sa("ssc-build", "SSC builds")
         self.data_sa = self._sa("ssc-data", "SSC data gateway and file broker")
+        self.intake_sa = self._sa(n.SECRET_INTAKE, "SSC secret intake")
         agent = self.agent_sa.member
         create_role = gcp.projects.IAMCustomRole(
             "agent-create",
@@ -442,19 +462,29 @@ class Cell:
             permissions=list(RUNTIME_PERMISSIONS),
             opts=self._o(),
         )
-        for name, role in (("agent-create", create_role), ("agent-runtime", runtime_role)):
+        database_role = gcp.projects.IAMCustomRole(
+            "agent-database",
+            project=self.pid,
+            role_id="sscCellAgentDatabase",
+            title="SSC cell agent: app databases",
+            description="What the agent calls on the cell's Cloud SQL instance (SSC-040, SSC-042).",
+            permissions=list(DATABASE_PERMISSIONS),
+            opts=self._o(),
+        )
+        for name, role in (
+            ("agent-create", create_role),
+            ("agent-runtime", runtime_role),
+            ("agent-database", database_role),
+        ):
             gcp.projects.IAMMember(
                 name, project=self.pid, member=agent, role=role.name, opts=self._o()
             )
         self._project_role(
             "agent-secrets", agent, "roles/secretmanager.admin", app_condition("secrets")
         )
-        self._project_role("agent-sql", agent, "roles/cloudsql.admin")
-        self._project_role("agent-sql-client", agent, "roles/cloudsql.client")
-        self._project_role("agent-sql-login", agent, "roles/cloudsql.instanceUser")
         self._project_role(
-            "control-secret-versions",
-            pulumi.Output.concat("serviceAccount:", self.control_sa),
+            "intake-secret-versions",
+            self.intake_sa.member,
             "roles/secretmanager.secretVersionAdder",
             app_condition("secrets"),
         )
@@ -462,6 +492,7 @@ class Cell:
         self._project_role("gateway-logs", self.gateway_sa.member, "roles/logging.logWriter")
         self._project_role("agent-logs", agent, "roles/logging.logWriter")
         self._project_role("data-logs", self.data_sa.member, "roles/logging.logWriter")
+        self._project_role("intake-logs", self.intake_sa.member, "roles/logging.logWriter")
 
     def keys(self) -> None:
         ring = gcp.kms.KeyRing(
@@ -561,6 +592,7 @@ class Cell:
         self._ingress("ingress-proxy", [SUBNETS[APPS_SUBNET]], PROXY_TAG, PROXY_PORT)
         self._ingress("ingress-proxy-health", HEALTH_CHECK_RANGES, PROXY_TAG, PROXY_PORT)
         self._private_google_dns()
+        self._database_dns()
         router = gcp.compute.Router(
             "router",
             project=self.pid,
@@ -693,12 +725,53 @@ class Cell:
             opts=self._o(),
         )
 
+    def _database_dns(self) -> None:
+        """The zone the database's name is answered from (SSC-040), empty until the ``database``
+        flag adds its record. The cell deployer that adds it may write records in this zone
+        alone, through a role holding only record permissions."""
+        self.sql_zone = gcp.dns.ManagedZone(
+            "sql-zone",
+            project=self.pid,
+            name="ssc-sql",
+            dns_name=SQL_DNS_ZONE,
+            visibility="private",
+            private_visibility_config=gcp.dns.ManagedZonePrivateVisibilityConfigArgs(
+                networks=[
+                    gcp.dns.ManagedZonePrivateVisibilityConfigNetworkArgs(network_url=self.vpc.id)
+                ]
+            ),
+            opts=self._o(),
+        )
+        records = gcp.projects.IAMCustomRole(
+            "deployer-sql-records",
+            project=self.pid,
+            role_id="sscDeployerRecords",
+            title="SSC cell deployer: database DNS records",
+            description="Records in the ssc-sql zone, where it is granted, and nothing else.",
+            permissions=list(ZONE_RECORD_PERMISSIONS),
+            opts=self._o(),
+        )
+        deployer = self.platform.require_output("cell_deployer").apply(
+            lambda d: f"serviceAccount:{d['service_account']}"
+        )
+        gcp.dns.DnsManagedZoneIamMember(
+            "deployer-sql-records",
+            project=self.pid,
+            managed_zone=self.sql_zone.name,
+            role=records.name,
+            member=deployer,
+            opts=self._o(),
+        )
+
     def database(self) -> None:
+        """The ``database`` flag: one instance for every app database in the cell, reached by
+        apps on its private address under its DNS name, which its CA-issued certificate names
+        (``sslmode=verify-full``), and by the agent through the Data API only (SSC-040)."""
         cfg = self.cfg
         self.sql = gcp.sql.DatabaseInstance(
             "sql",
             project=self.pid,
-            name="ssc-cell",
+            name=SQL_INSTANCE,
             region=n.REGION,
             database_version="POSTGRES_18",
             encryption_key_name=self.sql_key.id,
@@ -710,7 +783,10 @@ class Cell:
                 deletion_protection_enabled=not cfg.disposable,
                 data_api_access="ALLOW_DATA_API",
                 ip_configuration=gcp.sql.DatabaseInstanceSettingsIpConfigurationArgs(
-                    ipv4_enabled=False, private_network=self.vpc.id, ssl_mode="ENCRYPTED_ONLY"
+                    ipv4_enabled=False,
+                    private_network=self.vpc.id,
+                    ssl_mode="ENCRYPTED_ONLY",
+                    server_ca_mode=SQL_CA_MODE,
                 ),
                 backup_configuration=gcp.sql.DatabaseInstanceSettingsBackupConfigurationArgs(
                     enabled=True,
@@ -721,7 +797,10 @@ class Cell:
                 database_flags=[
                     gcp.sql.DatabaseInstanceSettingsDatabaseFlagArgs(
                         name="cloudsql.iam_authentication", value="on"
-                    )
+                    ),
+                    gcp.sql.DatabaseInstanceSettingsDatabaseFlagArgs(
+                        name="max_connections", value=SQL_MAX_CONNECTIONS
+                    ),
                 ],
                 user_labels={n.CELL_LABEL_KEY: cfg.label},
             ),
@@ -734,6 +813,16 @@ class Cell:
             name=self.agent_sa.email.apply(lambda e: e.removesuffix(".gserviceaccount.com")),
             type="CLOUD_IAM_SERVICE_ACCOUNT",
             database_roles=["cloudsqlsuperuser"],
+            opts=self._o(),
+        )
+        gcp.dns.RecordSet(
+            "sql-dns",
+            project=self.pid,
+            managed_zone=self.sql_zone.name,
+            name=self.sql.dns_name.apply(lambda d: d if d.endswith(".") else f"{d}."),
+            type="A",
+            ttl=DNS_TTL,
+            rrdatas=[self.sql.private_ip_address],
             opts=self._o(),
         )
 
@@ -811,6 +900,8 @@ class Cell:
         gets a ``*.<tld>.`` rule answering with a CNAME, which covers every type, to a name that
         only this policy answers. Google's names bypass it by the longer match, and so do the
         platform hosts the gateway calls (``GATEWAY_PLATFORM_HOSTS``), each by its exact name.
+        Cloud SQL's names (``*.sql.goog.``) bypass it to the cell's own ``ssc-sql`` zone, which
+        answers them all, so none leaves the cell either.
 
         The policy holds for the whole VPC, so an app resolves those hosts too, and nothing more:
         no allow rule covers their addresses and the apps subnet has no NAT, so the answer leads
@@ -865,6 +956,15 @@ class Cell:
                 behavior="bypassResponsePolicy",
                 opts=self._o(),
             )
+        gcp.dns.ResponsePolicyRule(
+            "dns-sql",
+            project=self.pid,
+            response_policy=policy.response_policy_name,
+            rule_name="sql",
+            dns_name=SQL_DNS_NAMES,
+            behavior="bypassResponsePolicy",
+            opts=self._o(),
+        )
         for host in n.GATEWAY_PLATFORM_HOSTS:
             label = host.split(".", 1)[0]
             gcp.dns.ResponsePolicyRule(
@@ -912,6 +1012,7 @@ class Cell:
         vpc: gcp.cloudrunv2.ServiceTemplateVpcAccessArgs | None,
         instances: tuple[int, int],
         image: str | None = None,
+        command: Sequence[str] | None = None,
         env: dict[str, pulumi.Input[str]] | None = None,
         timeout: str | None = None,
         concurrency: int | None = None,
@@ -938,6 +1039,7 @@ class Cell:
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image or PLACEHOLDER_IMAGE,
+                        commands=list(command) if command else None,
                         envs=[
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=k, value=v)
                             for k, v in sorted((env or {}).items())
@@ -968,7 +1070,8 @@ class Cell:
         """Internal and load-balancer ingress keeps the ``run.app`` host closed, so the invoker
         is ``allUsers`` and the authoriser refuses requests without a session (SSC-088). The
         folder's member policy allows ``allUsers`` only where the platform's public-invoker tag is
-        bound, so the tag goes on this service, and only this one, before the grant (SSC-095).
+        bound, so the tag goes on this service and the secret intake, and on no other, before the
+        grant (SSC-095).
 
         With the gateway settings it runs ``gateway_image``, a build of
         ``packages/ssc_edge/Dockerfile`` that decrypts its keyring with the cell's ``gateway`` key
@@ -985,26 +1088,31 @@ class Cell:
             concurrency=GATEWAY_CONCURRENCY,
             after=[self.gateway_key_grant],
         )
-        public = gcp.tags.LocationTagBinding(
-            "gateway-public-tag",
+        self._public("gateway", self.gateway_)
+
+    def _public(self, resource: str, service: gcp.cloudrunv2.Service) -> None:
+        """``allUsers`` may invoke ``service``, which the folder's member policy allows only once
+        the platform's public-invoker tag is bound to it (SSC-095)."""
+        tag = gcp.tags.LocationTagBinding(
+            f"{resource}-public-tag",
             parent=pulumi.Output.concat(
                 "//run.googleapis.com/projects/",
                 self.project_.number,
                 f"/locations/{n.REGION}/services/",
-                self.gateway_.name,
+                service.name,
             ),
             tag_value=self.platform.require_output("public_invoker_tag"),
             location=n.REGION,
             opts=self._o(),
         )
         gcp.cloudrunv2.ServiceIamMember(
-            "gateway-invoker",
+            f"{resource}-invoker",
             project=self.pid,
             location=n.REGION,
-            name=self.gateway_.name,
+            name=service.name,
             role="roles/run.invoker",
             member="allUsers",
-            opts=self._o(public),
+            opts=self._o(tag),
         )
 
     def _gateway_env(self) -> dict[str, pulumi.Input[str]] | None:
@@ -1029,9 +1137,10 @@ class Cell:
     def entry(self) -> None:
         """The cell's own public door: a global external Application Load Balancer on one
         address, HTTPS (TLS 1.2 or later) to the gateway through a serverless NEG, the agent's
-        reserved host alone to the agent through a second one, and HTTP answered with a redirect
-        on the same address. A serverless NEG's backend timeout is fixed at 60 minutes and cannot
-        be set, so the gateway's 3600 s request timeout is what bounds a WebSocket."""
+        reserved host alone to the agent through a second one, the secret intake's alone to the
+        intake through a third, and HTTP answered with a redirect on the same address. A
+        serverless NEG's backend timeout is fixed at 60 minutes and cannot be set, so the
+        gateway's 3600 s request timeout is what bounds a WebSocket."""
         label = self.cfg.label
         self.entry_ip = gcp.compute.GlobalAddress(
             "entry-ip",
@@ -1043,6 +1152,7 @@ class Cell:
         )
         gateway = self._backend("gateway", n.GATEWAY, self.gateway_)
         agent = self._backend("agent", n.CELL_AGENT, self.agent_)
+        intake = self._backend("intake", n.SECRET_INTAKE, self.intake_)
         self.url_map = gcp.compute.URLMap(
             "entry-map",
             project=self.pid,
@@ -1051,10 +1161,14 @@ class Cell:
             host_rules=[
                 gcp.compute.URLMapHostRuleArgs(
                     hosts=[n.agent_host(label)], path_matcher=AGENT_PATHS
-                )
+                ),
+                gcp.compute.URLMapHostRuleArgs(
+                    hosts=[n.intake_host(label)], path_matcher=INTAKE_PATHS
+                ),
             ],
             path_matchers=[
-                gcp.compute.URLMapPathMatcherArgs(name=AGENT_PATHS, default_service=agent.id)
+                gcp.compute.URLMapPathMatcherArgs(name=AGENT_PATHS, default_service=agent.id),
+                gcp.compute.URLMapPathMatcherArgs(name=INTAKE_PATHS, default_service=intake.id),
             ],
             opts=self._o(),
         )
@@ -1198,7 +1312,8 @@ class Cell:
         ``packages/ssc_agent/Dockerfile`` in the cell's ``ssc-platform`` repository. Reached only
         through the cell's load balancer on its reserved host, and invoked only by the control
         plane, with an ID token whose audience is that host's URL (SSC-095). With both build images
-        set it runs builds in the cell's Cloud Build as ``ssc-build`` (SSC-015)."""
+        set it runs builds in the cell's Cloud Build as ``ssc-build`` (SSC-015); with the
+        ``database`` flag it makes app databases on the cell's instance (SSC-040)."""
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
             "SSC_CELL_REGION": n.REGION,
@@ -1214,6 +1329,8 @@ class Cell:
                 "SSC_BUILD_TOOLS_IMAGE": tools,
                 "SSC_BUILD_FRONTEND_IMAGE": frontend,
             }
+        if self.cfg.database:
+            env[n.SQL_INSTANCE_ENV] = self.sql.name
         self.agent_ = self._run(
             n.CELL_AGENT,
             self.agent_sa,
@@ -1242,6 +1359,30 @@ class Cell:
             member=pulumi.Output.concat("serviceAccount:", self.control_sa),
             opts=self._o(),
         )
+
+    def secret_intake(self) -> None:
+        """Runs ``python -m ssc_agent.intake`` from ``agent_image`` (SSC-026): the one door a
+        secret value comes in by. Public on its reserved host through the cell's load balancer,
+        where the CLI sends the value with the control plane's write grant, which the intake
+        checks itself. No VPC egress, so it reaches Google's certificates and Secret Manager as
+        the agent does, never through the apps' network."""
+        cfg = self.cfg
+        env: dict[str, pulumi.Input[str]] = {
+            "SSC_CELL_PROJECT": self.pid,
+            "SSC_INTAKE_ORIGIN": n.intake_url(cfg.label),
+            "SSC_CONTROL_SA": self.control_sa,
+        }
+        self.intake_ = self._run(
+            n.SECRET_INTAKE,
+            self.intake_sa,
+            ingress="INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
+            vpc=None,
+            instances=(0, INTAKE_MAX),
+            image=cfg.agent_image,
+            command=INTAKE_COMMAND if cfg.agent_image else None,
+            env=env if cfg.agent_image else None,
+        )
+        self._public("intake", self.intake_)
 
     def proxy(self) -> None:
         """The ``egress`` flag: one machine at the reserved address, no external address, in a
@@ -1305,7 +1446,7 @@ class Cell:
 
     def deny(self) -> None:
         """The folder rule names the control plane; this one names the cell's own identities."""
-        ours = (self.gateway_sa, self.agent_sa, self.build_sa, self.data_sa)
+        ours = (self.gateway_sa, self.agent_sa, self.build_sa, self.data_sa, self.intake_sa)
         denied = [sa_principal(sa.email) for sa in ours]
         if self.cfg.probe:
             self.denied_probe = self._sa(n.PROBE_DENIED_SA, "SSC deny probe (always refused)")
@@ -1452,6 +1593,8 @@ class Cell:
         pulumi.export("public_host_suffix", n.host_suffix(self.cfg.label))
         pulumi.export("certificate_id", self.certificate.id)
         pulumi.export("agent_host", n.agent_host(self.cfg.label))
+        pulumi.export("intake_url", n.intake_url(self.cfg.label))
+        pulumi.export("intake_host", n.intake_host(self.cfg.label))
         pulumi.export("nat_ip", self.nat_ip.address)
         pulumi.export("proxy_ip", self.proxy_ip.address)
         pulumi.export("datagw_ip", self.datagw_ip.address)
@@ -1468,6 +1611,7 @@ class Cell:
                 "agent": self.agent_sa.email,
                 "build": self.build_sa.email,
                 "data": self.data_sa.email,
+                "intake": self.intake_sa.email,
             },
         )
 

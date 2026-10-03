@@ -22,6 +22,7 @@ GOOGLE_PRODUCERS: Final = "under:organizations/433637338589"
 PUBLIC_TAG_KEY: Final = "ssc-public-invoker"
 PUBLIC_TAG_VALUE: Final = "gateway"
 PUBLIC_MEMBERS: Final = frozenset({"allUsers", "allAuthenticatedUsers"})
+PUBLIC_SERVICES: Final = frozenset({n.GATEWAY, n.SECRET_INTAKE})
 INGRESS: Final = {
     "is:all": "INGRESS_TRAFFIC_ALL",
     "is:internal": "INGRESS_TRAFFIC_INTERNAL_ONLY",
@@ -42,7 +43,7 @@ RUN_SERVICE: Final = re.compile(
 class Rule:
     """One folder policy: ``enforce`` for boolean and managed constraints, ``allowed`` or
     ``deny_all`` for list constraints. ``tag_exception`` turns it off where the public-invoker
-    tag is bound, which only the gateway service carries."""
+    tag is bound, which only the ``PUBLIC_SERVICES`` carry."""
 
     key: str
     constraint: str
@@ -156,15 +157,15 @@ def _policy_members(rule: Rule, resources: Sequence[Resource], tag: str) -> Iter
     for type_, name, inputs in resources:
         if type_.startswith("gcp:tags/") and inputs.get("tagValue") == tag:
             match = RUN_SERVICE.match(str(inputs.get("parent", "")))
-            if not match or match.group(1) != n.GATEWAY:
+            if not match or match.group(1) not in PUBLIC_SERVICES:
                 yield f"{type_}::{name} binds the public-invoker tag to {inputs.get('parent')}"
         for member in _members(type_, inputs):
             if member in PUBLIC_MEMBERS:
-                on_gateway = type_ == "gcp:cloudrunv2/serviceIamMember:ServiceIamMember" and (
+                on_tagged = type_ == "gcp:cloudrunv2/serviceIamMember:ServiceIamMember" and (
                     inputs.get("name") in tagged
                 )
-                if not on_gateway:
-                    yield f"{type_}::{name} grants {member} outside the tagged gateway"
+                if not on_tagged:
+                    yield f"{type_}::{name} grants {member} outside a tagged public service"
             elif member not in subjects and not (
                 OWN_ACCOUNT.match(member) or SERVICE_AGENT.match(member)
             ):

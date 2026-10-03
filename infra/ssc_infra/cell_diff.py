@@ -7,8 +7,9 @@ Compares ``pulumi stack export`` of both stacks: the same resources, the same in
 outputs apart from values the cloud assigns. A stack's own cloud-assigned values (project number,
 load balancer address, certificate authorisation record) and its customer's settings (``org_id``,
 ``gateway_keyring``, ``gateway_jwks``) become placeholders wherever they appear, so a record
-pointing at another cell's address still shows. Where the stacks' ``flags`` output differ, the
-lazy resources of a differing flag and the gateway's minimum (``gateway_min``,
+pointing at another cell's address still shows; so do the database's DNS name and private
+address. Where the stacks' ``flags`` output differ, the lazy resources of a differing flag, the
+agent's ``SSC_SQL_INSTANCE`` for ``database`` and the gateway's minimum (``gateway_min``,
 ``warm``) are left out. Prints each difference; exit 1 if there is any.
 
 Then, for each cell, the organisation policies in force (SSC-095): the table the platform stack
@@ -105,6 +106,7 @@ ASSIGNED_PATHS: Final = {
     ),
 }
 DNS_AUTHORIZATION: Final = "gcp:certificatemanager/dnsAuthorization:DnsAuthorization"
+SQL_INSTANCE: Final = "gcp:sql/databaseInstance:DatabaseInstance"
 PROJECT_TYPE: Final = "gcp:organizations/project:Project"
 FLAG_DEFAULTS: Final[dict[str, Json]] = {
     "database": False,
@@ -139,7 +141,8 @@ def _swap(value: str, swaps: Swaps, *, outputs: bool) -> str:
 def flatten(value: Json, swaps: Swaps, prefix: str = "", *, outputs: bool) -> Flat:
     """Dotted paths to normalised scalars. Null counts as absent, as the provider writes either.
 
-    For outputs, keys the cloud assigns are left out.
+    For outputs, keys the cloud assigns are left out. A container's variables are keyed by name,
+    so one a flag adds shows as itself.
     """
     flat: Flat = {}
     if value is None:
@@ -152,6 +155,10 @@ def flatten(value: Json, swaps: Swaps, prefix: str = "", *, outputs: bool) -> Fl
             if outputs and key in ASSIGNED_KEYS:
                 continue
             flat |= flatten(inner, swaps, f"{prefix}.{key}" if prefix else key, outputs=outputs)
+    elif isinstance(value, list) and prefix.endswith(".envs"):
+        envs: list[Mapping[str, Json]] = value  # pyright: ignore[reportUnknownVariableType]
+        for env in envs:
+            flat |= flatten(env, swaps, f"{prefix}.{env.get('name')}", outputs=outputs)
     elif isinstance(value, list):
         for i, inner in enumerate(value):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
             flat |= flatten(inner, swaps, f"{prefix}[{i}]", outputs=outputs)
@@ -178,14 +185,20 @@ def _own_values(state: Json, label: str) -> Swaps:
         if settings.get(key)
     ]
     found += [(label, "<cell>"), (str(outputs.get("project_number") or ""), "<number>")]
+    addresses = [(str(outputs.get("entry_address") or ""), "<entry-address>")]
     for res in state["deployment"].get("resources", []):
+        assigned: Mapping[str, Json] = res.get("outputs", {})
         if res["type"] == DNS_AUTHORIZATION:
-            records: list[Mapping[str, Json]] = res.get("outputs", {}).get("dnsResourceRecords")
-            found += [(str(r.get("data") or ""), "<dns-authorization>") for r in records or []]
+            records: list[Mapping[str, Json]] = assigned.get("dnsResourceRecords") or []
+            found += [(str(r.get("data") or ""), "<dns-authorization>") for r in records]
+        elif res["type"] == SQL_INSTANCE:
+            found.append((str(assigned.get("dnsName") or "").rstrip("."), "<sql-dns>"))
+            addresses.append((str(assigned.get("privateIpAddress") or ""), "<sql-address>"))
     swaps = [(re.compile(re.escape(value)), placeholder) for value, placeholder in found if value]
-    if address := str(outputs.get("entry_address") or ""):
-        exact = re.compile(rf"(?<![\d.]){re.escape(address)}(?!\d|\.\d)")
-        swaps.append((exact, "<entry-address>"))
+    for address, placeholder in addresses:
+        if address:
+            exact = re.compile(rf"(?<![\d.]){re.escape(address)}(?!\d|\.\d)")
+            swaps.append((exact, placeholder))
     return swaps
 
 
@@ -226,6 +239,8 @@ def _flagged(key: str, path: str, flags_differ: Sequence[str]) -> bool:
     """Whether a differing flag names this resource, or this path of it."""
     if any(key in n.LAZY_RESOURCES.get(f, ()) for f in flags_differ):
         return True
+    if "database" in flags_differ and key == n.AGENT_SERVICE:
+        return f".envs.{n.SQL_INSTANCE_ENV}." in f"{path}."
     gateway_min = {"gateway_min", "warm"} & set(flags_differ)
     return bool(gateway_min) and key == n.GATEWAY_SERVICE and path.endswith(n.GATEWAY_MIN_PATH)
 
