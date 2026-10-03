@@ -27,7 +27,7 @@ from ssc_control.ports import (
     TimersPort,
 )
 from ssc_control.runtime.app_databases import AppDatabases
-from ssc_control.runtime.driver import RuntimeDriver
+from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
 from ssc_control.runtime.specs import NoReleaseSpecs, ReleaseSpecs
 from ssc_control.timers.dispatch import ScheduleDispatcher
 from ssc_shared.blobstore import BlobStore
@@ -48,7 +48,8 @@ class Ports:
     each org's snapshots to its cell's bucket instead. ``timer_dispatcher`` None fails timer runs
     with ``dispatch_unavailable``. ``cell_deployer`` None fails a lazy cell resource with
     ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087). ``app_databases`` None fails the first deployment
-    of an environment that declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040)."""
+    of an environment that declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040).
+    ``app_identity`` None gives apps no identity keys and no origin (SSC-018)."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -64,6 +65,7 @@ class Ports:
     timer_dispatcher: ScheduleDispatcher | None = None
     cell_deployer: CellDeployer | None = None
     app_databases: AppDatabases | None = None
+    app_identity: AppIdentity | None = None
 
 
 class PortsMissingError(RuntimeError):

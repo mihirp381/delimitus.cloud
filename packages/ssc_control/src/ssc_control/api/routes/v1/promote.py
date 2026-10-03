@@ -4,6 +4,13 @@ Promote is the only way to make a prod release: it builds, for prod, the bundle 
 release live in preview, and answers ``202`` with that build to poll. Putting the new release
 live is the ordinary forward deploy to prod, behind the production gate, which also syncs the
 app's timers. Nothing here changes the worker or the schema.
+
+Prod is always rebuilt, never handed preview's image: the build keeps preview's source digest and
+takes ``[build.public_env.prod]``, and gets an image of its own even when the two inputs match.
+Secrets are never copied. Promote refuses with ``PROD_SECRET_MISSING`` while preview has a secret
+prod lacks, before anything is built: the same code reads the same names, so prod would otherwise
+run a configuration preview never ran. The database secrets are not counted; prod's own database
+is made on its first deploy.
 """
 
 from typing import Final
@@ -12,6 +19,7 @@ from fastapi import APIRouter, Response
 from pydantic import Field
 from sqlalchemy import text
 
+from ssc_contracts import app_database
 from ssc_contracts.errors import ErrorCode
 from ssc_control.api.authz import require_builder
 from ssc_control.api.idempotency import UserIdempotent
@@ -53,6 +61,14 @@ _SELECT_IN_FLIGHT = text(
     "exists (select 1 from ssc.build where org_id = :org and environment_id = :env "
     "and state in ('queued', 'running'))"
 )
+_SELECT_MISSING_SECRETS = text(
+    "select s.name from ssc.secret_ref s "
+    "join ssc.environment e on e.org_id = s.org_id and e.id = s.environment_id "
+    "where e.org_id = :org and e.app_id = :app and e.name = 'preview' "
+    "and s.name <> all(:platform) and not exists (select 1 from ssc.secret_ref p "
+    "where p.org_id = s.org_id and p.environment_id = :env and p.name = s.name) "
+    "order by s.name"
+)
 _SELECT_SOURCE_BUNDLE = text(
     "select coalesce("
     "(select bundle_id from ssc.build where org_id = :org and release_id = :rel), "
@@ -73,6 +89,7 @@ _SELECT_SOURCE_BUNDLE = text(
         ErrorCode.NOTHING_TO_PROMOTE,
         ErrorCode.DEPLOYMENT_IN_FLIGHT,
         ErrorCode.BUILD_IN_FLIGHT,
+        ErrorCode.PROD_SECRET_MISSING,
         ErrorCode.BUNDLE_NOT_UPLOADED,
         ErrorCode.REFERENCE_NOT_FOUND,
         ErrorCode.PRECONDITION_STALE,
@@ -84,7 +101,8 @@ async def promote(app_id: Id, body: PromoteIn, uow: UserUoW) -> Response:
 
     Needs a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a
     healthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when
-    given (``PRECONDITION_STALE``), and prod must have no deployment or build in flight."""
+    given (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every
+    secret set on preview must be set on prod too (``PROD_SECRET_MISSING``)."""
     params = {"org": uow.org_id, "app": app_id}
     status = (await uow.conn.execute(_SELECT_APP, params)).scalar_one_or_none()
     prod = (await uow.conn.execute(_LOCK_PROD, params)).scalar_one_or_none()
@@ -109,6 +127,20 @@ async def promote(app_id: Id, body: PromoteIn, uow: UserUoW) -> Response:
         raise Refusal(ErrorCode.DEPLOYMENT_IN_FLIGHT, evidence={"environment_id": prod})
     if building:
         raise Refusal(ErrorCode.BUILD_IN_FLIGHT, evidence={"environment_id": prod})
+    missing = (
+        (
+            await uow.conn.execute(
+                _SELECT_MISSING_SECRETS,
+                {**params, "env": prod, "platform": list(app_database.SECRETS)},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if missing:
+        raise Refusal(
+            ErrorCode.PROD_SECRET_MISSING, evidence={"environment_id": prod, "names": missing}
+        )
     bundle_id = (
         await uow.conn.execute(
             _SELECT_SOURCE_BUNDLE, {**params, "rel": release_id, "digest": live["source_digest"]}

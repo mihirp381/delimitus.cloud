@@ -1802,6 +1802,7 @@
           "SCHEDULE_CANNOT_RESUME",
           "NOTHING_TO_PROMOTE",
           "PROD_REQUIRES_PROMOTE",
+          "PROD_SECRET_MISSING",
           "SECRETS_UNAVAILABLE",
           "DB_TIER_FULL",
           "DATABASE_UNAVAILABLE",
@@ -7952,7 +7953,7 @@
     },
     "/v1/apps/{app_id}/promote": {
       "post": {
-        "description": "Build for prod the source of the release live in preview: 202 plus a ``Location`` to\npoll. Deploy the release it makes to prod with ``POST .../deployments``.\n\nNeeds a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a\nhealthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when\ngiven (``PRECONDITION_STALE``), and prod must have no deployment or build in flight.",
+        "description": "Build for prod the source of the release live in preview: 202 plus a ``Location`` to\npoll. Deploy the release it makes to prod with ``POST .../deployments``.\n\nNeeds a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a\nhealthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when\ngiven (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every\nsecret set on preview must be set on prod too (``PROD_SECRET_MISSING``).",
         "operationId": "promote_v1_apps__app_id__promote_post",
         "parameters": [
           {
@@ -8051,7 +8052,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `NOTHING_TO_PROMOTE`, `DEPLOYMENT_IN_FLIGHT`, `BUILD_IN_FLIGHT`, `BUNDLE_NOT_UPLOADED`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `NOTHING_TO_PROMOTE`, `DEPLOYMENT_IN_FLIGHT`, `BUILD_IN_FLIGHT`, `PROD_SECRET_MISSING`, `BUNDLE_NOT_UPLOADED`"
           },
           "412": {
             "content": {

@@ -4,9 +4,10 @@ Statements go through ``instances.executeSql`` as the agent's own IAM database u
 (``autoIamAuthn``), a member of ``cloudsqlsuperuser``, so the agent needs no password and no
 network path to the instance. The Data API runs a batch in one transaction, for at most 30
 seconds, and reports a failed statement as HTTP 200 with ``status.code`` set, so the status is
-checked as well as the HTTP code. ``CREATE DATABASE`` cannot run in a transaction:
-``databases.insert`` makes the database. Apps connect to the instance's DNS name when it has one,
-else to its private address, and verify it against every CA ``listServerCas`` returns.
+checked as well as the HTTP code. ``CREATE DATABASE`` and ``DROP DATABASE`` cannot run in a
+transaction: ``databases.insert`` makes the database and ``databases.delete`` drops it. Apps
+connect to the instance's DNS name when it has one, else to its private address, and verify it
+against every CA ``listServerCas`` returns.
 """
 
 import asyncio
@@ -25,6 +26,7 @@ CALL_TIMEOUT_SECONDS: Final = 45.0
 OPERATION_POLL_SECONDS: Final = 0.5
 OPERATION_TIMEOUT_SECONDS: Final = 120.0
 _HTTP_BAD_REQUEST: Final = 400
+_HTTP_NOT_FOUND: Final = 404
 _HTTP_CONFLICT: Final = 409
 _EXISTS: Final = "already exists"
 
@@ -75,10 +77,19 @@ class CloudSqlAdmin:
     async def create_database(self, name: str) -> None:
         try:
             operation = await self._call("POST", f"{self._instance}/databases", {"name": name})
-            await self._wait(str(operation.get("name") or ""))
+            await self._wait("databases.insert", str(operation.get("name") or ""))
         except AdminSqlError as exc:
             if exc.status != _HTTP_CONFLICT and _EXISTS not in str(exc):
                 raise
+
+    async def drop_database(self, name: str) -> None:
+        try:
+            operation = await self._call("DELETE", f"{self._instance}/databases/{name}")
+        except AdminSqlError as exc:
+            if exc.status != _HTTP_NOT_FOUND:
+                raise
+            return
+        await self._wait("databases.delete", str(operation.get("name") or ""))
 
     async def endpoint(self) -> tuple[str, int]:
         instance = await self._call("GET", self._instance)
@@ -96,19 +107,19 @@ class CloudSqlAdmin:
             raise AdminSqlError("the instance lists no server CA")
         return "\n".join(pems) + "\n"
 
-    async def _wait(self, operation: str) -> None:
+    async def _wait(self, what: str, operation: str) -> None:
         if not operation:
-            raise AdminSqlError("databases.insert returned no operation")
+            raise AdminSqlError(f"{what} returned no operation")
         waited = 0.0
         while waited < OPERATION_TIMEOUT_SECONDS:
             op = await self._call("GET", f"{self._base}/operations/{operation}")
             if op.get("status") == "DONE":
                 if errors := _objs(_obj(op.get("error")).get("errors")):
-                    raise AdminSqlError(redact(f"databases.insert: {errors[0].get('message')}"))
+                    raise AdminSqlError(redact(f"{what}: {errors[0].get('message')}"))
                 return
             await self._sleep(OPERATION_POLL_SECONDS)
             waited += OPERATION_POLL_SECONDS
-        raise AdminSqlError("databases.insert did not finish in time")
+        raise AdminSqlError(f"{what} did not finish in time")
 
     async def _call(self, method: str, url: str, body: dict[str, Any] | None = None) -> Any:
         what = f"{method} {url.rsplit('/', 1)[-1]}"

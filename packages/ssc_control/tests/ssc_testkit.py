@@ -237,6 +237,13 @@ class LocalAdminSql:
             except psycopg.errors.DuplicateDatabase:
                 pass
 
+    async def drop_database(self, name: str) -> None:
+        """As ``databases.delete`` runs it: as Cloud SQL's own superuser."""
+        async with await psycopg.AsyncConnection.connect(
+            self.db.superuser, autocommit=True
+        ) as conn:
+            await conn.execute(f"DROP DATABASE IF EXISTS {name}".encode())
+
     async def endpoint(self) -> tuple[str, int]:
         return self.db.host, self.db.port
 
@@ -253,6 +260,9 @@ class MemoryVault:
 
     async def ensure(self, secret: str) -> None:
         self.secrets.setdefault(secret, [])
+
+    async def remove(self, secret: str) -> None:
+        self.secrets.pop(secret, None)
 
     async def add_version(self, secret: str, value: bytes) -> str:
         self.secrets[secret].append(value)

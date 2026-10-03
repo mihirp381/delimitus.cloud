@@ -14,6 +14,9 @@ Admin API (``AdminSql``):
 Before it creates anything it counts the app databases on the instance and refuses one past
 ``app_database.ceiling`` (``TierFullError``); the count runs under an advisory lock, so two
 environments cannot both take the last place. ``ensure`` and ``rotate`` then set a new password.
+``drop`` frees the place again (SSC-042): it stops the login, drops the database and both roles,
+and deletes the database secrets. It is safe to re-run, and the agent's route refuses it while
+the environment's service still runs.
 
 The password is made here and goes nowhere but the cell's Secret Manager, as new versions of
 ``DATABASE_URL`` and ``PGPASSWORD``: the role gets a SCRAM verifier computed here, so no SQL
@@ -67,11 +70,14 @@ class DatabaseMissingError(AppDatabaseError):
 class AdminSql(Protocol):
     """The instance as the cell agent reaches it, with ``cloudsqlsuperuser``'s privileges after
     ``SET ROLE``. ``run`` executes every statement in one transaction and returns the rows of the
-    last; ``create_database`` makes a database and succeeds when it already exists."""
+    last; ``create_database`` makes a database and succeeds when it already exists;
+    ``drop_database`` drops one and succeeds when it is already gone."""
 
     async def run(self, database: str, statements: Sequence[str]) -> Rows: ...
 
     async def create_database(self, name: str) -> None: ...
+
+    async def drop_database(self, name: str) -> None: ...
 
     async def endpoint(self) -> tuple[str, int]: ...
 
@@ -184,6 +190,30 @@ class CellAppDatabases:
         if not (state["has_login"] and state["finished"]):
             raise DatabaseMissingError(f"{service} has no app database")
         return await self._new_password(service, name)
+
+    async def drop(self, service: str) -> None:
+        """Drop the service's database, its roles and its database secrets, freeing its place.
+        Whatever is already gone is skipped."""
+        name = database_name(service)
+        owner = f"{name}_owner"
+        state = await self._state(name, owner)
+        if state["has_login"]:
+            await self._sql.run(
+                "postgres", [f"SET ROLE {ADMIN_ROLE}", f"ALTER ROLE {name} NOLOGIN"]
+            )
+        if state["has_database"]:
+            await self._sql.drop_database(name)
+        if state["has_login"] or state["has_owner"]:
+            await self._sql.run(
+                "postgres",
+                [
+                    f"SET ROLE {ADMIN_ROLE}",
+                    f"DROP ROLE IF EXISTS {name}",
+                    f"DROP ROLE IF EXISTS {owner}",
+                ],
+            )
+        for secret_name in app_database.SECRETS:
+            await self._custody.remove(secret_id(service, secret_name))
 
     async def usage(self, service: str) -> Usage:
         """The service's database: whether it exists, its size, its connections, and how many of

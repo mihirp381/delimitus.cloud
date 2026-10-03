@@ -73,7 +73,12 @@ def blueprint(*, tick_cron: str = TICK_CRON) -> Blueprint:
         if ports.runtime_driver is None:
             raise NoRuntimeDriverError("reconcile_env needs Ports.runtime_driver")
         outcome = await reconciler.reconcile_env(
-            ports.engine, ports.runtime_driver, ports.release_specs, org_id=org_id, env_id=env_id
+            ports.engine,
+            ports.runtime_driver,
+            ports.release_specs,
+            org_id=org_id,
+            env_id=env_id,
+            identity=ports.app_identity,
         )
         return outcome.kind
 

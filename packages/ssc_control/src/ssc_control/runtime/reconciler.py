@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.db.bind import bound_org
 from ssc_control.runtime.driver import (
+    AppIdentity,
     DatabaseRow,
     EnvironmentRow,
     ReleaseRow,
@@ -100,7 +101,7 @@ class Outcome:
 
 _DESIRED_ROWS = text(
     "select e.app_id, e.name, a.status, r.id, r.image_digest, d.secret_refs, "
-    "db.host as db_host, db.port as db_port "
+    "db.host as db_host, db.port as db_port, a.slug "
     "from ssc.environment e "
     "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
     "join ssc.deployment d on d.org_id = e.org_id and d.id = e.current_deployment_id "
@@ -111,16 +112,21 @@ _DESIRED_ROWS = text(
 
 
 async def load_desired(
-    engine: AsyncEngine, specs: ReleaseSpecs, *, org_id: str, env_id: str
+    engine: AsyncEngine,
+    specs: ReleaseSpecs,
+    *,
+    org_id: str,
+    env_id: str,
+    identity: AppIdentity | None = None,
 ) -> ServiceSpec | Stopped | OutcomeKind:
     """Desired state from the database: the live pointer's release and secret versions, its
-    manifest, the app's status, where its app database is. Returns an outcome kind instead when
-    there is nothing to reconcile."""
+    manifest, the app's status, where its app database is, its slug for ``identity``. Returns an
+    outcome kind instead when there is nothing to reconcile."""
     async with bound_org(engine, org_id) as conn:
         row = (await conn.execute(_DESIRED_ROWS, {"org": org_id, "env": env_id})).one_or_none()
         if row is None:
             return "no_release"
-        app_id, env_name, app_status, release_id, image_digest, secret_refs, host, port = row
+        app_id, env_name, app_status, release_id, image_digest, secret_refs, host, port, slug = row
         try:
             spec = await specs.get(conn, org_id=org_id, app_id=app_id, release_id=release_id)
         except ReleaseSpecUnavailableError:
@@ -133,19 +139,22 @@ async def load_desired(
         framework=spec.framework,
         secrets=secret_refs,
         database=None if host is None else DatabaseRow(host=host, port=port),
+        slug=slug,
+        identity=identity,
     )
 
 
-async def reconcile_env(
+async def reconcile_env(  # noqa: PLR0913  (keyword-only)
     engine: AsyncEngine,
     driver: RuntimeDriver,
     specs: ReleaseSpecs,
     *,
     org_id: str,
     env_id: str,
+    identity: AppIdentity | None = None,
 ) -> Outcome:
     """One pass for one app environment: at most one change."""
-    desired = await load_desired(engine, specs, org_id=org_id, env_id=env_id)
+    desired = await load_desired(engine, specs, org_id=org_id, env_id=env_id, identity=identity)
     if isinstance(desired, str):
         return Outcome(desired)
     outcome = await reconcile_once(driver, desired)
