@@ -1,7 +1,8 @@
 """What ``ssc doctor`` reports: stable codes, their severity, and one fix text per code.
 
-Codes and severities are part of decision 017; the set of codes may only grow. Fix texts name
-only features that exist or are agreed in a decision (the manifest is decision 013).
+Codes and severities are part of decision 017; the set of codes may only grow. ``info`` never
+blocks: it tells the builder how the app will run. Fix texts name only features that exist or are
+agreed in a decision (the manifest is decision 013).
 """
 
 from typing import Final, Literal
@@ -9,8 +10,9 @@ from typing import Final, Literal
 from pydantic import BaseModel, ConfigDict
 
 from ssc_contracts import app_env
+from ssc_contracts.build import SQLITE_ON_DISK
 
-Severity = Literal["block", "warn"]
+Severity = Literal["block", "warn", "info"]
 DoctorCode = Literal[
     "LOCKFILE_STALE",
     "PUBLIC_ENV_AT_BUILD",
@@ -21,6 +23,10 @@ DoctorCode = Literal[
     "NOT_SINGLE_APP",
     "MANIFEST_MISSING",
     "MANIFEST_INVALID",
+    "STATE_SQLITE_EPHEMERAL",
+    "SECRET_IN_BUNDLE",
+    "NATIVE_LIBRARY",
+    "SESSION_FRAMEWORK",
 ]
 
 LOCKFILE_STALE: Final = "LOCKFILE_STALE"
@@ -32,6 +38,10 @@ WRITES_HOME: Final = "WRITES_HOME"
 NOT_SINGLE_APP: Final = "NOT_SINGLE_APP"
 MANIFEST_MISSING: Final = "MANIFEST_MISSING"
 MANIFEST_INVALID: Final = "MANIFEST_INVALID"
+STATE_SQLITE_EPHEMERAL: Final = "STATE_SQLITE_EPHEMERAL"
+SECRET_IN_BUNDLE: Final = "SECRET_IN_BUNDLE"  # noqa: S105  (a doctor code, not a secret)
+NATIVE_LIBRARY: Final = "NATIVE_LIBRARY"
+SESSION_FRAMEWORK: Final = "SESSION_FRAMEWORK"
 
 SEVERITY: Final[dict[DoctorCode, Severity]] = {
     LOCKFILE_STALE: "block",
@@ -43,6 +53,10 @@ SEVERITY: Final[dict[DoctorCode, Severity]] = {
     NOT_SINGLE_APP: "block",
     MANIFEST_MISSING: "warn",
     MANIFEST_INVALID: "block",
+    STATE_SQLITE_EPHEMERAL: "block",
+    SECRET_IN_BUNDLE: "block",
+    NATIVE_LIBRARY: "info",
+    SESSION_FRAMEWORK: "info",
 }
 
 FIX: Final[dict[DoctorCode, str]] = {
@@ -89,6 +103,21 @@ FIX: Final[dict[DoctorCode, str]] = {
     MANIFEST_INVALID: (
         'Correct each line listed. ssc.toml must start with schema = "ssc/v1", and the format '
         "is strict: an unknown key or a value of the wrong type is refused, never guessed."
+    ),
+    STATE_SQLITE_EPHEMERAL: SQLITE_ON_DISK,
+    SECRET_IN_BUNDLE: (
+        "Take the value out of the file and give it to the app with `ssc secret set`, which "
+        "reaches it as an environment variable. If the file is not part of the app, list it in "
+        ".sscignore. The deploy refuses a bundle that holds a secret."
+    ),
+    NATIVE_LIBRARY: (
+        "Nothing to change if the build passes. If it stops while compiling the library, switch "
+        "to a version that needs no compiler, such as bcryptjs for bcrypt or psycopg2-binary "
+        "for psycopg2."
+    ),
+    SESSION_FRAMEWORK: (
+        "Nothing to change: this does not stop the deploy. A session app is billed while its "
+        "instance runs. Keep anything that must outlast a connection in Postgres."
     ),
 }
 

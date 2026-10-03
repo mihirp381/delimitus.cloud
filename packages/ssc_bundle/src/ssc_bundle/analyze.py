@@ -10,8 +10,10 @@ Refused, in this order: Java and chat bots (``BUILD_UNSUPPORTED_RUNTIME``), a pr
 registry (``BUILD_PRIVATE_REGISTRY``), SQLite on disk (``STATE_SQLITE_EPHEMERAL``) and an app
 with nothing to start (``BUILD_NO_ENTRYPOINT``: only notebooks, or Streamlit or Shiny without a
 start command). With ``postgres = true`` a ``sqlite:///`` URL is taken for a local fallback and
-not refused; a ``sqlite3.connect`` call, a SQLite driver or a SQLite file always is. Test files
-are not read for SQLite. A Dockerfile is never used, and gets a notice.
+not refused; a ``sqlite3.connect`` call, a SQLite driver or a SQLite file always is. In-memory
+SQLite (``:memory:``, ``mode=memory``) and test files are never refused. ``sqlite_on_disk`` is the
+same SQLite rule alone, for ``ssc doctor`` and ``ssc deploy``. A Dockerfile is never used, and gets
+a notice.
 """
 
 import ipaddress
@@ -138,6 +140,12 @@ def analyze(files: Iterable[tuple[str, bytes | None]], manifest: Manifest) -> An
     return Analysis(framework, refusal, _notices(src, py | node))
 
 
+def sqlite_on_disk(files: Iterable[tuple[str, bytes | None]], manifest: Manifest) -> Refusal | None:
+    """The ``STATE_SQLITE_EPHEMERAL`` refusal ``analyze`` would give these files, if any."""
+    src = _Source(dict(files))
+    return _sqlite(src, _node_deps(src), postgres=manifest.state.postgres)
+
+
 def _unsupported(src: _Source, deps: frozenset[str]) -> Refusal | None:
     java = sorted(JAVA_FILES & src.files.keys())
     if java:
@@ -177,8 +185,9 @@ def _private_registry(src: _Source) -> Refusal | None:
 
 def _sqlite(src: _Source, node: frozenset[str], *, postgres: bool) -> Refusal | None:
     for path, data in sorted(src.files.items()):
-        lower = path.lower()
-        if lower.endswith((".sqlite", ".sqlite3")) or (
+        if _is_test(path):
+            continue
+        if path.lower().endswith((".sqlite", ".sqlite3")) or (
             data is not None and data.startswith(_SQLITE_HEADER)
         ):
             return Refusal(STATE_SQLITE_EPHEMERAL, path, "a SQLite database file")
@@ -193,17 +202,22 @@ def _sqlite(src: _Source, node: frozenset[str], *, postgres: bool) -> Refusal | 
 
 
 def _sqlite_use(path: str, text: str, *, node_sqlite: bool, postgres: bool) -> str | None:
-    if any(m.group(1) != ":memory:" for m in _SQLITE_CONNECT.finditer(text)):
+    if any(not _in_memory(m.group(1)) for m in _SQLITE_CONNECT.finditer(text)):
         return "a SQLite connect on a file"
-    files = ("", ":memory:")
-    if not postgres and any(m.group(1) not in files for m in _SQLITE_URL.finditer(text)):
+    if not postgres and any(
+        m.group(1) and not _in_memory(m.group(1)) for m in _SQLITE_URL.finditer(text)
+    ):
         return "a sqlite:/// file URL"
     if _PRISMA_SQLITE.search(text) or _DJANGO_SQLITE.search(text):
         return "a SQLite database setting"
     if node_sqlite and path.endswith(_JS):
-        if any(m.group(1) not in files for m in _JS_DATABASE.finditer(text)):
+        if any(m.group(1) and not _in_memory(m.group(1)) for m in _JS_DATABASE.finditer(text)):
             return "a SQLite driver on a file"
     return None
+
+
+def _in_memory(name: str | None) -> bool:
+    return name is not None and (":memory:" in name or "mode=memory" in name)
 
 
 def _no_entrypoint(src: _Source, manifest: Manifest, framework: str | None) -> Refusal | None:

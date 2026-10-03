@@ -83,11 +83,13 @@ class OperationOut(Wire):
     finished_at: str | None = None
     failure_code: str | None = None
     notice: str | None = None
+    billing: str | None = None
 
 
 class OperationAccepted(Wire):
     operation_id: str
     state: str
+    notice: str | None = None
 
 
 class UploadTarget(Wire):

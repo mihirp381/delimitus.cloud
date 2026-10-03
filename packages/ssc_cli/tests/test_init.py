@@ -229,3 +229,44 @@ def test_pack_names_the_platform_env(cli, tmp_path):
     assert f"`{app_env.HOME}` is `{app_env.HOME_VALUE}`" in agents
     assert "--port $PORT" in agents
     assert "not fixed yet" not in agents
+
+
+_SPAN = re.compile(r"`(ssc [^`]+)`")
+
+
+def test_pack_uses_only_real_options(cli, tmp_path):
+    init(cli, tmp_path)
+    root = get_command(app)
+    assert isinstance(root, TyperGroup)
+    checked = set()
+    for span in _SPAN.findall((tmp_path / "AGENTS.md").read_text()):
+        words = span.split()
+        cmd = root.commands.get(words[1])
+        if cmd is None:
+            continue
+        if isinstance(cmd, TyperGroup) and len(words) > 2 and words[2] in cmd.commands:
+            cmd = cmd.commands[words[2]]
+        known = {o for p in cmd.params for o in p.opts}
+        for word in words:
+            if word.startswith("--"):
+                assert word in known, f"`{span}`: {word} is not an option"
+                checked.add((cmd.name, word))
+    assert {("logs", "--env"), ("set", "--env"), ("deploy", "--app")} <= checked
+
+
+def test_pack_gives_the_session_and_cold_start_facts(cli, tmp_path):
+    init(cli, tmp_path)
+    agents = (tmp_path / "AGENTS.md").read_text()
+    for fact in (
+        '"waking up" page',
+        "one instance",
+        "closed after 60 minutes",
+        "Streamlit loses its session state",
+        "SESSION_FRAMEWORK",
+        "STATE_SQLITE_EPHEMERAL",
+        "set every connection pool to 1",
+        "creates the company's database",
+        "`ssc logs <app>",
+        "`ssc secret set <app> NAME --env <env>`",
+    ):
+        assert fact in " ".join(agents.split()), fact

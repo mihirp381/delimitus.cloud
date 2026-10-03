@@ -14,7 +14,13 @@ from typing import Any, Final, Literal, Protocol, cast, get_args
 
 from ssc_contracts import app_database
 from ssc_contracts.app_env import secret_name_problem
-from ssc_contracts.manifest import RESOURCE_CLASSES, ResourceClass, ResourceClassName
+from ssc_contracts.manifest import (
+    RESOURCE_CLASSES,
+    ResourceClass,
+    ResourceClassName,
+    Runtime,
+    is_session_app,
+)
 
 SERVICE_PREFIX: Final = "ssc-a-"
 FINGERPRINT_VERSION: Final = "ssc-spec-v2"
@@ -29,6 +35,12 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 SERVICE_NAME: Final = re.compile(re.escape(SERVICE_PREFIX) + r"[a-z0-9]{20}")
 SECRET_ID: Final = re.compile(re.escape(SERVICE_PREFIX) + r"[a-z0-9]{20}-[A-Z][A-Z0-9_]{0,63}")
 SECRET_VERSION: Final = re.compile(r"[1-9][0-9]{0,18}")
+
+
+def billing_for(runtime: Runtime, framework: str | None = None) -> Billing:
+    """``instance`` for a session app (``is_session_app``): its one instance is billed while it
+    runs. ``request`` for any other: billed only while it answers."""
+    return "instance" if is_session_app(runtime, framework) else "request"
 
 
 def service_name(environment_id: str) -> str:

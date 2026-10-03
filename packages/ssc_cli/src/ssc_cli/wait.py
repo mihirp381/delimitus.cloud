@@ -116,11 +116,11 @@ def wait_for_operation(  # noqa: PLR0913  (keyword-only)
     budget: Budget,
     next_step: str,
     note: Callable[[str], None] | None = None,
+    told: str | None = None,
 ) -> OperationOut:
     """The deployment once it is ``healthy``. Each new ``notice`` (a deployment waiting for the
-    company's database, SSC-087) goes to ``note`` once."""
+    company's database, SSC-087) goes to ``note`` once; ``told`` is one already given."""
     instance = f"/v1/operations/{operation_id}"
-    told: str | None = None
     while True:
         op = client.get_operation(operation_id)
         if note is not None and op.notice is not None and op.notice != told:

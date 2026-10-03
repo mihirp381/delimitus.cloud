@@ -1,6 +1,6 @@
 """``ssc status``."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 
@@ -11,13 +11,14 @@ from ssc_cli.models import AppOut
 from ssc_cli.output import dash, print_json, say, table
 from ssc_cli.resolve import resolve_app
 from ssc_cli.shapes import AppResult, DatabaseRow, DeploymentRow, EnvironmentRow, HealthRow
+from ssc_contracts import app_database
 from ssc_contracts.app_database import POOL_FIX_IT
 
 AppArg = Annotated[str, typer.Argument(help="App slug or app_ id.")]
 
 
 def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
-    """Show an app's environments: what is deployed, whether it runs, and its database."""
+    """Show an app's environments: what runs, how it is billed, its health and its database."""
     with handled(json_mode), session(ctx).client() as client:
         result = app_result(
             client,
@@ -35,6 +36,7 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
         (
             e.name,
             dash(e.deployment.state if e.deployment else None),
+            dash(e.deployment.billing if e.deployment else None),
             dash(e.deployment.release_id if e.deployment else None),
             dash(e.current_deployment_id),
             dash(e.deployment.finished_at if e.deployment else None),
@@ -47,6 +49,7 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
     headers = (
         "ENVIRONMENT",
         "STATE",
+        "BILLING",
         "RELEASE",
         "DEPLOYMENT",
         "FINISHED",
@@ -60,8 +63,9 @@ def status(ctx: typer.Context, app: AppArg, json_mode: JsonOpt = False) -> None:
         say()
         places = next((d for d in databases if d.places_total is not None), None)
         if places is not None:
+            tier = f" ({places.tier})" if places.tier else ""
             say(
-                f"Database places on your company's instance: {places.places_used} of "
+                f"Database places on your company's instance{tier}: {places.places_used} of "
                 f"{places.places_total}, previews included."
             )
         say(POOL_FIX_IT)
@@ -112,7 +116,18 @@ def _database(client: ApiClient, app_id: str, environment_id: str) -> DatabaseRo
         connections=out.connections,
         places_used=out.places_used,
         places_total=out.places_total,
+        tier=app_database.tier_for(out.places_total),
     )
+
+
+def _billing(value: str | None) -> Literal["request", "instance"] | None:
+    match value:
+        case "request":
+            return "request"
+        case "instance":
+            return "instance"
+        case _:
+            return None
 
 
 def app_result(
@@ -135,6 +150,7 @@ def app_result(
                 release_id=op.release_id,
                 started_at=op.started_at,
                 finished_at=op.finished_at,
+                billing=_billing(op.billing),
             )
         envs.append(
             EnvironmentRow(

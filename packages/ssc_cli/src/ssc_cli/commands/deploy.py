@@ -1,9 +1,13 @@
 """``ssc deploy``: pack a folder, check it, upload it, build it for preview and deploy it.
 
 Everything that can refuse the bundle runs before anything leaves the machine: the manifest,
-packing (caps, links, ``.env`` files) and the secret scan (``ssc_bundle.client.prepare``). Such a
-refusal exits 4 with the code the API would give, and ``status: null``. ``deploy`` always
-targets preview (decision 017); production changes only through ``promote``.
+packing (caps, links, ``.env`` files), the secret scan (``ssc_bundle.client.prepare``) and SQLite
+on disk (``ssc_bundle.analyze.sqlite_on_disk``, the rule the build applies). Such a refusal exits
+4 with the code the API would give, and ``status: null``. ``deploy`` always targets preview
+(decision 017); production changes only through ``promote``.
+
+The deployment's ``notice`` says what it sets off, such as the company's database being created
+(SSC-087). The first deploy of an app also says how a sleeping app wakes up.
 
 The build is always waited for, because only its release can be deployed. ``--wait`` also waits
 for the deployment to be live. ``--build`` picks up a build an earlier run stopped waiting for:
@@ -19,8 +23,10 @@ from typing import Annotated, Final
 
 import typer
 
+from ssc_bundle.analyze import MAX_ANALYZE_BYTES, sqlite_on_disk
 from ssc_bundle.client import Prepared, SecretFoundError, prepare
-from ssc_bundle.limits import BundleError, BundleTooLargeError
+from ssc_bundle.limits import DEFAULT_LIMITS, BundleError, BundleTooLargeError
+from ssc_bundle.tarcheck import iter_entries
 from ssc_cli.api import ApiClient
 from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.errors import (
@@ -36,6 +42,7 @@ from ssc_cli.output import print_json, say
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import BundleWarning, CapabilityChangeRow, DeployResult
 from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_build, wait_for_operation
+from ssc_contracts.build import SQLITE_ON_DISK, STATE_SQLITE_EPHEMERAL
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.manifest import ManifestError
 
@@ -44,6 +51,10 @@ DEPLOY: Final = "deploy"
 COMMIT: Final = re.compile(r"[0-9a-f]{40}")
 BUILD_ID: Final = re.compile(r"bld_[a-z0-9]{20}")
 MAX_DETAIL_LINES: Final = 5
+WAKING: Final = (
+    "The app sleeps when nobody uses it. The first visit after a quiet spell wakes it in a few "
+    'seconds, and a browser shows a "waking up" page until it answers.'
+)
 
 type Note = Callable[[str], None]
 
@@ -130,6 +141,8 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
             digest = started.digest or client.get_release(target.id, release_id).source_digest
             note(f"Built R{number}. Deploying it to preview.")
             op = client.create_deployment(target.id, env.id, release_id, DEPLOY)
+            if op.notice is not None:
+                note(op.notice)
             state = op.state
             if wait:
                 state = wait_for_operation(
@@ -139,6 +152,7 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
                     budget=budget,
                     next_step=f"Follow it with `ssc status {target.slug}`.",
                     note=note,
+                    told=op.notice,
                 ).state
     result = DeployResult(
         app_id=target.id,
@@ -154,6 +168,7 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
         operation_id=op.operation_id,
         state=state,
         url=env.url,
+        notice=op.notice,
         warnings=[
             BundleWarning(path=w.path, line=w.line, rule=w.rule, masked=w.masked)
             for w in (prepared.warnings if prepared is not None else ())
@@ -170,6 +185,8 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
         say(f"Follow it with `ssc status {target.slug}`.")
     if env.url:
         say(f"Preview: {env.url}")
+    if env.current_deployment_id is None:
+        say(WAKING)
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,7 +247,10 @@ def _progress(json_mode: bool) -> Note:
 def prepare_folder(root: Path, dest: Path) -> Prepared:
     """The packed and scanned folder, or a :class:`CliError` (exit 4) saying what blocks it."""
     try:
-        return prepare(root, dest)
+        prepared = prepare(root, dest)
+        with dest.open("rb") as f:
+            files = iter_entries(f, DEFAULT_LIMITS, MAX_ANALYZE_BYTES)
+            sqlite = sqlite_on_disk(files, prepared.manifest)
     except ManifestError as e:
         lines = [str(p) for p in e.problems[:MAX_DETAIL_LINES]]
         raise _blocked(
@@ -261,6 +281,17 @@ def prepare_folder(root: Path, dest: Path) -> Prepared:
         raise _blocked(
             ErrorCode.BUNDLE_MALFORMED, "The folder cannot be read.", f"{e.filename}: {e.strerror}"
         ) from None
+    if sqlite is not None:
+        raise CliError(
+            ErrorBody(
+                code=STATE_SQLITE_EPHEMERAL,
+                title="The app keeps SQLite on disk, so nothing was uploaded.",
+                detail=f"{sqlite.detail} at {sqlite.path}",
+            ),
+            ExitCode.BLOCKED,
+            SQLITE_ON_DISK,
+        )
+    return prepared
 
 
 def _blocked(code: ErrorCode, title: str, detail: str, fix: str | None = None) -> CliError:

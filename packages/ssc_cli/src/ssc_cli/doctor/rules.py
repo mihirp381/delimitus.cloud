@@ -1,10 +1,13 @@
 """The offline rules behind ``ssc doctor``: plain file reads and regular expressions.
 
-The six causes come from the SSC-003 corpus (spikes/corpus20/RESULTS.md). Each rule is a pure
-function from a :class:`Tree` to findings. The checks are heuristics. Version drift is checked
-only where the lock file records the declared ranges as text (``bun.lock``); other lock files are
-checked for the names they list. ``ssc.toml`` itself is checked by the manifest loader
-(decision 013); the other rules read what they can from it even when it is invalid.
+The causes come from the SSC-003 corpus (spikes/corpus20/RESULTS.md), both its runtime list and
+its static list. Each rule is a pure function from a :class:`Tree` to findings. The checks are
+heuristics, except the ones the platform also runs: SQLite on disk and the session framework use
+``ssc_bundle.analyze`` and secrets use ``ssc_bundle.secrets``, over the files a deploy would pack.
+Version drift is checked only where the lock file records the declared ranges as text
+(``bun.lock``); other lock files are checked for the names they list. ``ssc.toml`` itself is
+checked by the manifest loader (decision 013); the other rules read what they can from it even
+when it is invalid.
 """
 
 import json
@@ -16,20 +19,36 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, cast
 
+from ssc_bundle.analyze import MAX_ANALYZE_BYTES, analyze, sqlite_on_disk
+from ssc_bundle.ignore import Ignore
+from ssc_bundle.secrets import allowed_values, scan
 from ssc_cli.doctor.finding import (
     EXTERNAL_SERVICE,
     LOCKFILE_STALE,
     MANIFEST_INVALID,
     MANIFEST_MISSING,
+    NATIVE_LIBRARY,
     NO_START_COMMAND,
     NOT_SINGLE_APP,
     PORT_BINDING,
     PUBLIC_ENV_AT_BUILD,
+    SECRET_IN_BUNDLE,
+    SESSION_FRAMEWORK,
+    STATE_SQLITE_EPHEMERAL,
     WRITES_HOME,
     Finding,
     finding,
 )
-from ssc_contracts.manifest import MANIFEST_FILE, MAX_MANIFEST_BYTES, ManifestError, load_manifest
+from ssc_contracts.manifest import (
+    MANIFEST_FILE,
+    MAX_MANIFEST_BYTES,
+    Manifest,
+    ManifestError,
+    default_manifest,
+    is_session_app,
+    load_manifest,
+    session_framework,
+)
 
 SKIP_DIRS: Final = frozenset(
     {
@@ -78,6 +97,8 @@ PY_LOCKS: Final = {
     "Pipfile.lock": "pipenv",
     "pdm.lock": "pdm",
 }
+NATIVE_NODE: Final = frozenset({"bcrypt", "sharp", "canvas"})
+NATIVE_PY: Final = frozenset({"psycopg2", "mysqlclient", "pycairo"})
 
 
 @dataclass
@@ -88,6 +109,7 @@ class Tree:
     files: frozenset[str]
     top_dirs: frozenset[str]
     _text: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    _packed: list[tuple[str, bytes | None]] | None = None
 
     def text(self, rel: str) -> str | None:
         if rel not in self._text:
@@ -109,6 +131,18 @@ class Tree:
                 text = self.text(rel)
                 if text is not None:
                     yield rel, text
+
+    def packed(self) -> list[tuple[str, bytes | None]]:
+        """The files a deploy would pack, as the build reads them: content, or None if large."""
+        if self._packed is None:
+            ignore = Ignore.load(self.root)
+            self._packed = []
+            for rel in sorted(self.files):
+                if ignore.reason(rel, is_dir=False) is None:
+                    data = self.data(rel, MAX_ANALYZE_BYTES + 1)
+                    small = data is not None and len(data) <= MAX_ANALYZE_BYTES
+                    self._packed.append((rel, data if small else None))
+        return self._packed
 
 
 def load_tree(root: Path) -> Tree:
@@ -668,6 +702,86 @@ def manifest(t: Tree) -> list[Finding]:
     return []
 
 
+def _loaded_manifest(t: Tree) -> Manifest:
+    """The manifest the platform would use, or the defaults if it is missing or invalid."""
+    data = t.data(MANIFEST_FILE, MAX_MANIFEST_BYTES + 1)
+    if data is None:
+        return default_manifest()
+    try:
+        return load_manifest(data)
+    except ManifestError:
+        return default_manifest()
+
+
+def state_sqlite_ephemeral(t: Tree) -> list[Finding]:
+    refusal = sqlite_on_disk(t.packed(), _loaded_manifest(t))
+    if refusal is None:
+        return []
+    return [
+        finding(
+            STATE_SQLITE_EPHEMERAL,
+            refusal.path,
+            f"This file keeps SQLite on disk ({refusal.detail}). The file system is memory, so "
+            "the data is lost when the app stops, and the build is refused.",
+        )
+    ]
+
+
+def secret_in_bundle(t: Tree) -> list[Finding]:
+    files = [(rel, data) for rel, data in t.packed() if data is not None]
+    found = scan(files, allowed_values(_loaded_manifest(t)))
+    return [
+        finding(
+            SECRET_IN_BUNDLE,
+            f.path,
+            f"This line holds what looks like a secret ({f.rule}), so the deploy is refused.",
+            f.line,
+        )
+        for f in found
+        if f.blocking
+    ]
+
+
+def native_library(t: Tree) -> list[Finding]:
+    declared: list[tuple[str, str]] = []
+    pkg = _package_json(t)
+    if pkg is not None:
+        declared += [(n, "package.json") for n in _node_deps(pkg) if n in NATIVE_NODE]
+    declared += [(n, src) for n, src in _python_deps(t).items() if n in NATIVE_PY]
+    out: list[Finding] = []
+    for name, src in sorted(declared):
+        text = t.text(src) or ""
+        pos = text.find(f'"{name}"') if src == "package.json" else text.find(name)
+        out.append(
+            finding(
+                NATIVE_LIBRARY,
+                src,
+                f"{name} is compiled for the machine it runs on. The build usually gets a "
+                "prebuilt copy, but if none fits, it stops while compiling.",
+                _line_of(text, pos) if pos >= 0 else None,
+            )
+        )
+    return out
+
+
+def session_framework_rule(t: Tree) -> list[Finding]:
+    m = _loaded_manifest(t)
+    framework = analyze(t.packed(), m).framework
+    if not is_session_app(m.runtime, framework):
+        return []
+    name = session_framework(m.runtime.start) or framework
+    where = MANIFEST_FILE if m.runtime.start or m.runtime.sessions else "."
+    what = f"This is a {name.capitalize()} app" if name else "ssc.toml sets sessions = true"
+    lost = " Streamlit loses its session state then." if name == "streamlit" else ""
+    return [
+        finding(
+            SESSION_FRAMEWORK,
+            where,
+            f"{what}, so it runs as one instance and its connections drop at 60 minutes.{lost}",
+        )
+    ]
+
+
 Rule = Callable[[Tree], Iterable[Finding]]
 
 RULES: Final[tuple[Rule, ...]] = (
@@ -679,4 +793,8 @@ RULES: Final[tuple[Rule, ...]] = (
     writes_home,
     not_single_app,
     manifest,
+    state_sqlite_ephemeral,
+    secret_in_bundle,
+    native_library,
+    session_framework_rule,
 )
