@@ -67,6 +67,9 @@ GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
 
 APPS_DOMAIN: Final = "delimitusapps.com"
 PLATFORM_DOMAIN: Final = "delimitus.com"
+AUTH_HOST: Final = f"auth.{PLATFORM_DOMAIN}"
+KEYS_HOST: Final = f"keys.{PLATFORM_DOMAIN}"
+GATEWAY_PLATFORM_HOSTS: Final = (AUTH_HOST, KEYS_HOST)
 APPS_ZONE: Final = "delimitusapps"
 PLATFORM_ZONE: Final = "delimitus"
 AGENT_HOST_LABEL: Final = "ssc--agent"

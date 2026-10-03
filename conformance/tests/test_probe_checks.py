@@ -275,6 +275,35 @@ def test_the_peer_cell_comes_from_three_variables() -> None:
         assert runner.peer_cell_from(full | {name: ""}) is None
 
 
+def test_the_egress_hosts_come_from_one_variable() -> None:
+    hosts = {runner.EGRESS_HOSTS_ENV: "auth.delimitus.com, keys.delimitus.com,"}
+    assert runner.egress_hosts_from(hosts) == ("auth.delimitus.com", "keys.delimitus.com")
+    assert runner.egress_hosts_from({}) == ()
+
+
+def test_no_direct_egress_also_dials_each_host_that_resolves(
+    local_app: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialled: list[str] = []
+
+    def connect(host: str, port: int, family: int = 0) -> dict[str, object]:
+        dialled.append(f"{host}:{port}")
+        return {"blocked": host != "keys.delimitus.com", "detail": f"Timeout {family}"}
+
+    monkeypatch.setattr(app, "_tcp", connect)
+    monkeypatch.setattr(app, "_udp", lambda host, port, payload: {"blocked": True})
+    probe = runner.Probe(local_app, "t")
+    hosts = ("auth.delimitus.com", "keys.delimitus.com")
+    with pytest.raises(checks.ProbeFailedError, match=r"internet: tcp keys\.delimitus\.com:443$"):
+        runner.plan(probe, local_app + "/", "/health", None, hosts)["no_direct_egress"]()
+    assert dialled[-2:] == ["auth.delimitus.com:443", "keys.delimitus.com:443"]
+    dialled.clear()
+    assert runner.plan(probe, local_app + "/", "/health")["no_direct_egress"]() == (
+        "5 direct connections refused"
+    )
+    assert all(not d.endswith(".com:443") for d in dialled)
+
+
 @pytest.mark.parametrize(
     ("own", "status", "legs"),
     [

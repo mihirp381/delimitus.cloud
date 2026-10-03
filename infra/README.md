@@ -36,6 +36,53 @@ The stack exports `flags`, so `cell_diff` compares two cells with different flag
 
 **Subnets.** Two IPv4 `/24`s: `apps` (10.20.0.0/24) holds only apps; `gateway` (10.20.4.0/24) holds everything that may reach the internet: the gateway, the data gateway and the proxy. Only `gateway` is behind the NAT, so an app has no route out even if a firewall rule were wrong. To put everything in one `/24`, set `SUBNETS` in `cell.py` to the `apps` entry alone and `EDGE_SUBNET` to `"apps"`; the reserved addresses move with it.
 
+## No-internet floor
+
+Apps have no internet (SSC-027). The rules are written once at onboarding, against addresses reserved then, and no flag changes them: `tests/test_cell.py` checks that the network, firewall, NAT, private zone and response policy are identical on an empty cell and after `database`, then `egress`, then `connections`.
+
+| Egress rule | Priority | Applies to | Destinations |
+| --- | --- | --- | --- |
+| `egress-internal` | 1000 | everything | 10.20.4.10/32 (proxy), 10.20.4.11/32 (data gateway), 10.21.0.0/20 (database range) |
+| `egress-google-private` | 1000 | everything | 199.36.153.8/30 (`private.googleapis.com`) |
+| `egress-gateway`, `egress-proxy`, `egress-data` | 1000 | tags `ssc-gateway`, `ssc-proxy`, `ssc-data` | 0.0.0.0/0 |
+| `egress-deny-all` | 65534 | everything | 0.0.0.0/0, denied |
+
+Apps carry no tag, so an app reaches the two reserved addresses (a dead end until the proxy or data gateway takes its address), the database range and Google's private APIs, and nothing else: not another app, not the gateway subnet, not another cell. `ingress-proxy` lets the apps subnet reach the proxy on tcp 3128 only. Until SSC-027, `egress-internal` allowed all of 10.20.0.0/16.
+
+**No IPv6.** The VPC has no internal IPv6 range, both subnets and the proxy's interface are `IPV4_ONLY`, and every firewall range is IPv4, so an IPv6 connection has no route.
+
+**DNS.** The response policy `ssc-cell` answers every name under every top-level domain with an unroutable sinkhole. Two lists bypass it: Google's names (`cell.GOOGLE_DNS_PASSTHRU`) and the platform hosts the gateway calls, `naming.GATEWAY_PLATFORM_HOSTS`: `auth.delimitus.com` (login) and `keys.delimitus.com` (identity note issuer and keys). Each platform rule is the exact name, so `x.auth.delimitus.com` still gets the sinkhole and a query can carry data only in those two fixed names. To add a host, add it to that tuple; it adds one rule.
+
+**Why apps stay blocked.** A response policy belongs to the whole VPC: Cloud DNS cannot answer the apps subnet differently from the gateway subnet, so an app resolves the two platform hosts too. Resolving is not reaching. Their addresses are public, no allow rule names them for an untagged source, so `egress-deny-all` drops the packet; and the apps subnet is not behind the NAT, so there would be no route out even if a rule were wrong. The probe checks it: the probe runner job sets `PROBE_EGRESS_HOSTS` to the two hosts, and `no_direct_egress` dials each on 443 from the app, as well as its five fixed attempts (tcp 443 and 80, udp 53 and 443, IPv6).
+
+Keep `auth` and `keys` as A records. Neither record is in the platform stack yet; a CNAME to a name outside the bypass lists may be answered with the sinkhole.
+
+**What SSC-053 must do** (the proxy machine; nothing here blocks it):
+- Run the proxy at the reserved address 10.20.4.10, listening on tcp 3128, with its health check on the same port. The ingress rules (`ingress-proxy`, `ingress-proxy-health`) and `PROXY_PORT` already say so; a different port changes `PROXY_PORT` only.
+- Resolve allowed hosts itself, through a public resolver over the NAT (the proxy tag may reach 0.0.0.0/0, and the gateway subnet is behind the NAT), not through the cell's resolver, which sinkholes them. Never add approved hosts to the response policy: it is VPC-wide, so apps would resolve them too, and it would change with every approval.
+- Refuse any destination that resolves to a private, link-local or Google private address (10.0.0.0/8, 169.254.0.0/16, 199.36.153.8/30, and the like) and any IP literal. The proxy tag may reach everything, so the proxy alone keeps an app from using it to reach the gateway subnet, the database or the metadata server.
+- Fetch its software without opening the floor per cell. The template has no service account and the boot image is Container-Optimized OS. Pulling from Artifact Registry needs a service account with `artifactregistry.reader` and `*.pkg.dev` names, which the `*.dev.` rule sinkholes; either add `pkg.dev.` and `*.pkg.dev.` to `GOOGLE_DNS_PASSTHRU` with a private `pkg.dev.` zone pointing at `private.googleapis.com` (one change for every cell, written at onboarding), or resolve through the public resolver as above.
+- Leave `egress-internal`, the ingress rules and the NAT alone, and keep the before-and-after test passing.
+
+**Live check** (operator, not run by SSC-027). On a staging probe cell with the nightly's settings (SSC-017: stack settings `probe`, `probe_digest` and `agent_image`; environment `SSC_PROBE_PROJECT`, `SSC_PROBE_AGENT_URL` and `SSC_PROBE_DIGEST`), all flags off:
+
+```
+P=ssc-c-testcell01
+pulumi up --stack c-testcell01
+gcloud compute firewall-rules list --project=$P --format=json > /tmp/fw-empty.json
+gcloud dns response-policies rules list ssc-cell --project=$P --format=json > /tmp/dns-empty.json
+uv run python -m ssc_conformance.nightly            # no_direct_egress passed, 7 connections refused
+for flag in database egress connections; do
+  pulumi config set --stack c-testcell01 $flag true
+  pulumi up --stack c-testcell01
+  gcloud compute firewall-rules list --project=$P --format=json | diff /tmp/fw-empty.json -
+  gcloud dns response-policies rules list ssc-cell --project=$P --format=json | diff /tmp/dns-empty.json -
+  uv run python -m ssc_conformance.nightly
+done
+```
+
+Each `diff` prints nothing, and `no_direct_egress` passes every time. The sinkhole's first creation takes about 78 minutes (SSC-091).
+
 ## The cell deployer
 
 The control plane turns on a cell's `database`, `egress` or `connections` flag without a person and without new powers of its own (SSC-087, decision 022 amendment pending). NAT and the fixed IP are not lazy.
