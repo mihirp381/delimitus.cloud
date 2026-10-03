@@ -1,0 +1,22 @@
+{
+  "name": "@delimitus/ssc-reconnect",
+  "version": "0.1.0",
+  "description": "Keep a WebSocket or an event stream going past the SSC request limit (X-SSC-Request-Deadline). Zero dependencies.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./browser.js": "./browser.js"
+  },
+  "files": ["index.js", "index.d.ts", "browser.js", "README.md"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --experimental-eventsource --test test/*.test.js"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

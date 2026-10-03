@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from ssc_contracts.identity import EnvironmentName
 from ssc_contracts.snapshot import GrantRole, SnapshotDoc, SubjectKind
+from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS
 
 Reason = Literal[
     "no_view",
@@ -53,7 +54,8 @@ class AccessDecision:
 
 @dataclass(frozen=True, slots=True)
 class EnvironmentIndex:
-    """One environment's grants, split by subject for lookup."""
+    """One environment's grants, split by subject for lookup. ``timeout_seconds`` is the
+    document's, or ``REQUEST_TIMEOUT_SECONDS`` when it has none."""
 
     app_id: str
     name: EnvironmentName
@@ -62,6 +64,7 @@ class EnvironmentIndex:
     org_wide: tuple[GrantRef, ...]
     by_user: Mapping[str, tuple[GrantRef, ...]]
     by_group: Mapping[str, tuple[GrantRef, ...]]
+    timeout_seconds: int = REQUEST_TIMEOUT_SECONDS
 
 
 def _index(doc: SnapshotDoc, env_id: str) -> EnvironmentIndex:
@@ -84,6 +87,7 @@ def _index(doc: SnapshotDoc, env_id: str) -> EnvironmentIndex:
         org_wide=tuple(org_wide),
         by_user=MappingProxyType({k: tuple(v) for k, v in by_user.items()}),
         by_group=MappingProxyType({k: tuple(v) for k, v in by_group.items()}),
+        timeout_seconds=env.timeout_seconds or REQUEST_TIMEOUT_SECONDS,
     )
 
 

@@ -535,7 +535,7 @@ def test_a_streamlit_folder_gets_session_framework_and_still_deploys(cli):
     assert "INFO   SESSION_FRAMEWORK  ." in r.stdout
     assert "one instance" in r.stdout
     assert "connections drop at 60 minutes" in r.stdout
-    assert "Streamlit loses its session state" in r.stdout
+    assert "Streamlit loses its session state then and the page reloads." in r.stdout
     assert "0 blocking, 0 warnings, 1 note." in r.stdout
     assert cli("doctor", str(folder), "--json").json()["blocking"] is False
 

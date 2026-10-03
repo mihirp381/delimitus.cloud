@@ -514,6 +514,7 @@ def test_a_succeeded_build_without_a_release_is_a_bad_response(cli, api, folder)
     [
         ("failed", "HEALTH_CHECK_FAILED", "HEALTH_CHECK_FAILED", "$PORT"),
         ("failed", "APPROVAL_REQUIRED", "APPROVAL_REQUIRED", "approval requests"),
+        ("failed", "SNAPSHOT_UNCONFIRMED", "SNAPSHOT_UNCONFIRMED", "still serving"),
         ("failed", None, "DEPLOYMENT_FAILED", None),
         ("superseded", None, "DEPLOYMENT_SUPERSEDED", None),
     ],

@@ -16,7 +16,9 @@ from ssc_contracts.manifest import Manifest, is_session_app, max_instances
 from ssc_shared.hosts import app_origin, slug_problem
 from ssc_shared.runtime import (
     FINGERPRINT_VERSION,
+    REQUEST_TIMEOUT_SECONDS,
     SERVICE_PREFIX,
+    SESSION_TIMEOUT_SECONDS,
     Billing,
     RevisionNotFoundError,
     RevisionObservation,
@@ -29,12 +31,11 @@ from ssc_shared.runtime import (
     database_name,
     revision_fingerprint,
     service_name,
+    timeout_for,
 )
 
 EnvName = Literal["prod", "preview"]
 AppStatus = Literal["active", "disabled", "quarantined"]
-SESSION_TIMEOUT_SECONDS: Final = 3600
-REQUEST_TIMEOUT_SECONDS: Final = 300
 SESSION_CONCURRENCY: Final = 1000
 REQUEST_CONCURRENCY: Final = 80
 
@@ -158,7 +159,7 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
         resource_class=runtime.class_,
         env=plain,
         billing=billing,
-        timeout_seconds=SESSION_TIMEOUT_SECONDS if session else REQUEST_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_for(runtime, framework),
         concurrency=SESSION_CONCURRENCY if session else REQUEST_CONCURRENCY,
         min_instances=0,
         max_instances=max_instances_for(manifest, framework),

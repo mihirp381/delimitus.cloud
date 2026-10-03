@@ -83,6 +83,8 @@ class ErrorCode(StrEnum):
     # app databases (SSC-040)
     DB_TIER_FULL = "DB_TIER_FULL"
     DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
+    # deployments (SSC-090)
+    SNAPSHOT_UNCONFIRMED = "SNAPSHOT_UNCONFIRMED"
     # logs and health (SSC-024)
     LOGS_RATE_LIMITED = "LOGS_RATE_LIMITED"
     LOGS_UNAVAILABLE = "LOGS_UNAVAILABLE"
@@ -342,6 +344,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "The app's database cannot be reached right now.",
         "The cell that keeps this app's database is not reachable from here. Nothing was "
         "changed; retry later.",
+    ),
+    ErrorCode.SNAPSHOT_UNCONFIRMED: CatalogueEntry(
+        503,
+        "The new version was not made live.",
+        "The platform's gateway did not confirm the new version's settings in time. Nothing "
+        "changed: the previous version is still serving. Deploy again.",
     ),
     ErrorCode.LOGS_RATE_LIMITED: CatalogueEntry(
         429,

@@ -107,7 +107,10 @@ pseudonym; properties are flat scalars and never carry a user id or an email.
 `409 DEPLOYMENT_IN_FLIGHT`. Running the deployment is the reconciler's job (SSC-016). The `202`
 carries `notice` when the deployment sets off a cell resource that is not ready yet, such as the
 company's database (SSC-087); the operation carries `notice` while it waits, and `billing`
-(`instance` for a session app, `request` for any other) from its release's manifest.
+(`instance` for a session app, `request` for any other) from its release's manifest. A
+deployment that shortens the request timeout (a session app becoming request-billed) fails with
+`SNAPSHOT_UNCONFIRMED` when the org's gateway does not confirm the new limit within 60 seconds;
+the previous version keeps serving (SSC-090).
 
 **A `scope: preview` credential never touches production** (decision 011, SSC-042). Before any
 handler runs, the unit of work refuses it with `403 FORBIDDEN` on any path naming the prod

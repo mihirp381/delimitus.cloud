@@ -12,7 +12,7 @@ One JSON object, published as RFC 8785 canonical JSON (`ssc_shared.canonical`). 
 | `org_id` | string | `org_…`. A holder refuses a document for another org. |
 | `version` | int | 1 to 2^53−1, one more than the org's previous published version. `0` means a live evaluation (explain) and is never published. |
 | `compiled_at` | string | RFC 3339 timestamp with offset. |
-| `environments` | object | `env_…` → `{app_id, name, status, floor}`. `name` is `prod` or `preview`; `status` is the app's, `active`, `disabled` or `quarantined`; `floor` is the least role that grants access, `user` for prod and `builder` for preview. Every environment of the org is listed. |
+| `environments` | object | `env_…` → `{app_id, name, status, floor, timeout_seconds?}`. `name` is `prod` or `preview`; `status` is the app's, `active`, `disabled` or `quarantined`; `floor` is the least role that grants access, `user` for prod and `builder` for preview. `timeout_seconds` (since SSC-090) is how long Cloud Run lets one request run on the environment; it is present only when longer than the request-billed 300 seconds (3600 for a session app), and absent means 300. The gateway tells the app `now + min(3600, timeout_seconds)` in `X-SSC-Request-Deadline`. Every environment of the org is listed. |
 | `hosts` | object | host label → `env_…`. The host label is the first label of the environment's host (decision 004): the slug for prod, `<slug>--preview` for preview. An environment whose app's slug breaks the slug rule (stored before the rule) has no entry. Filled since SSC-018; the gateway finds an environment by it. |
 | `grants` | object | `env_…` → list of `{grant_id, role, subject_kind, subject_id}`. `role` is `builder` or `user`; `subject_kind` is `user` (`subject_id` a `usr_…`), `group` (a `grp_…`) or `org` (`subject_id` null). |
 | `groups_by_user` | object | `usr_…` → list of `grp_…`: every group membership in the org. |
@@ -20,6 +20,8 @@ One JSON object, published as RFC 8785 canonical JSON (`ssc_shared.canonical`). 
 | `ceiling` | null | Reserved for the audience ceiling (SSC-052). Always null in v1. |
 
 Amendment SSC-019 (2026-10-01): `sessions_not_before` is an optional member, left out when unset, so a document without it keeps its bytes and digest. A reader older than SSC-019 refuses a document that carries it, so every cell runs the SSC-019 gateway before the control plane publishes one; no cell was serving users when it was added.
+
+Amendment SSC-090 (2026-10-03): `timeout_seconds` is an optional member on the same terms: left out for every request-billed environment, so an org without a session app keeps its bytes and digest, and absent means the lower figure, so a missing value makes the deadline early, never late. A reader older than SSC-090 refuses a document that carries it, so every cell runs the SSC-090 gateway before the control plane publishes one. The value is the environment's `request_timeout_seconds`, which a deployment lowers, and waits for the cell to confirm, before a revision with a shorter timeout gets traffic, and raises only after a revision with a longer one has it (`ssc_control.deploy.deployments`).
 
 References must resolve or the document is refused: every `grants` key and `hosts` value is in `environments`, every `groups_by_user` key and every user grant's subject is in `users`. The document holds ids and states only: no name, email, identity subject or group name.
 

@@ -16,17 +16,26 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    deployment with ``DB_TIER_FULL`` before anything is created; an unreachable one with
    ``DATABASE_UNAVAILABLE``. The first claim copies the environment's secret versions onto the
    deployment (``secret_refs``, SSC-026); a rerun keeps the copy, so the spec never changes
-   under it.
+   under it. A release whose request timeout (``ssc_shared.runtime.timeout_for``) is shorter
+   than the live release's, or than the environment's ``request_timeout_seconds``, lowers that
+   column and asks for the access snapshot that carries it (SSC-090).
 2. ``apply`` the release's spec, then poll ``observe`` until the new revision is ready, fails, or
    the health timeout passes. A deployment another one pre-empted (``superseded``) stops at the
    next poll without touching traffic. So does one whose app stopped (the kill switch): it
-   fails with ``APP_NOT_ACTIVE`` and frees ``env:<id>`` within one poll.
+   fails with ``APP_NOT_ACTIVE`` and frees ``env:<id>`` within one poll. A deployment that
+   lowered the timeout then waits for the org's cell to confirm that snapshot, so the gateway
+   never tells an app it has longer than the revision serving it allows; unconfirmed within
+   ``confirm_within`` it fails with ``SNAPSHOT_UNCONFIRMED``, the pointer and traffic untouched.
+   Any end short of going live puts the column back to the live release's timeout, in the
+   transaction that records it, if the pointer has not moved, and asks for a snapshot.
 3. Healthy: one transaction checks the app is still active (``FOR SHARE``, so it waits for a
    kill switch pulled at the same moment; ``APP_NOT_ACTIVE`` otherwise), marks it ``healthy``
    (only if still ``running``), supersedes the previous live deployment, moves the
    environment's pointer, records ``first_url`` for the environment's first live deployment,
    for a forward deploy only syncs the manifest's schedules, and audits ``*.finished``. Then
-   traffic moves; if that call fails the reconciler finishes it. Unhealthy or stopped:
+   traffic moves; if that call fails the reconciler finishes it. Once traffic is on the new
+   revision, a longer timeout raises ``request_timeout_seconds`` and asks for a snapshot; a lost
+   traffic call leaves it at the lower figure until the next deployment. Unhealthy or stopped:
    ``failed`` with the reason code and ``*.failed``; the pointer and traffic are untouched, and
    a service that never had a live deployment is scaled to zero.
 """
@@ -58,11 +67,13 @@ from ssc_control.runtime.driver import (
 )
 from ssc_control.runtime.specs import ReleaseSpec, ReleaseSpecUnavailableError
 from ssc_control.worker_ports import Ports
+from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS, timeout_for
 
 log = logging.getLogger(__name__)
 
 HEALTH_TIMEOUT_SECONDS: Final = 180.0
 HEALTH_POLL_SECONDS: Final = 1.0
+CONFIRM_TIMEOUT_SECONDS: Final = 60.0
 
 APPROVAL_REQUIRED: Final = "APPROVAL_REQUIRED"
 APP_NOT_ACTIVE: Final = "APP_NOT_ACTIVE"
@@ -72,15 +83,20 @@ RUNTIME_UNAVAILABLE: Final = "RUNTIME_UNAVAILABLE"
 RUNTIME_ERROR: Final = "RUNTIME_ERROR"
 DB_TIER_FULL: Final = "DB_TIER_FULL"
 DATABASE_UNAVAILABLE: Final = "DATABASE_UNAVAILABLE"
+SNAPSHOT_UNCONFIRMED: Final = "SNAPSHOT_UNCONFIRMED"
 
 Kind = Literal["deploy", "rollback"]
-type _Verdict = Literal["ready", "unhealthy", "stopped", "preempted"]
+type _Verdict = Literal["ready", "unhealthy", "stopped", "preempted", "unconfirmed"]
 _FINISHED: Final = {
     "deploy": AuditAction.DEPLOY_FINISHED,
     "rollback": AuditAction.ROLLBACK_FINISHED,
 }
 _FAILED: Final = {"deploy": AuditAction.DEPLOY_FAILED, "rollback": AuditAction.ROLLBACK_FAILED}
-_VERDICT_CODE: Final = {"unhealthy": HEALTH_CHECK_FAILED, "stopped": APP_NOT_ACTIVE}
+_VERDICT_CODE: Final = {
+    "unhealthy": HEALTH_CHECK_FAILED,
+    "stopped": APP_NOT_ACTIVE,
+    "unconfirmed": SNAPSHOT_UNCONFIRMED,
+}
 
 _CLAIM = text(
     "update ssc.deployment set state = 'running' "
@@ -124,6 +140,24 @@ _SUPERSEDE_LIVE = text(
 _MOVE_POINTER = text(
     "update ssc.environment set current_deployment_id = :id where org_id = :org and id = :env"
 )
+_LIVE_TIMEOUT = text(
+    "select e.request_timeout_seconds, d.id, d.release_id from ssc.environment e "
+    "left join ssc.deployment d on d.org_id = e.org_id and d.id = e.current_deployment_id "
+    "where e.org_id = :org and e.id = :env"
+)
+_LOWER_TIMEOUT = text(
+    "update ssc.environment set request_timeout_seconds = :seconds "
+    "where org_id = :org and id = :env and request_timeout_seconds > :seconds"
+)
+_RAISE_TIMEOUT = text(
+    "update ssc.environment set request_timeout_seconds = :seconds "
+    "where org_id = :org and id = :env and coalesce(request_timeout_seconds, :floor) < :seconds"
+)
+_RESTORE_TIMEOUT = text(
+    "update ssc.environment set request_timeout_seconds = :seconds "
+    "where org_id = :org and id = :env and current_deployment_id = :live "
+    "and coalesce(request_timeout_seconds, :floor) < :seconds"
+)
 
 type Sleep = Callable[[float], Awaitable[None]]
 
@@ -141,11 +175,23 @@ class _Deployment:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _Lowered:
+    """A lowered ``request_timeout_seconds``: the snapshot ``version`` to wait for, and the live
+    deployment (``live_id``, None when there is none) whose timeout, ``seconds``, it goes back to
+    if this deployment does not go live."""
+
+    version: int
+    live_id: str | None
+    seconds: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _Ready:
     deployment: _Deployment
     desired: ServiceSpec
     spec: ReleaseSpec
     driver: RuntimeDriver
+    lowered: _Lowered | None = None
 
 
 def _deployment(deployment_id: str, row: Any) -> _Deployment:
@@ -168,11 +214,13 @@ def _deployment(deployment_id: str, row: Any) -> _Deployment:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class HealthWait:
-    """How long a new revision has to become ready, how often to look, and how to wait."""
+    """How long a new revision has to become ready, how long the cell has to confirm a lowered
+    timeout's snapshot, how often to look, and how to wait."""
 
     within: float = HEALTH_TIMEOUT_SECONDS
     every: float = HEALTH_POLL_SECONDS
     sleep: Sleep = asyncio.sleep
+    confirm_within: float = CONFIRM_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,25 +244,25 @@ async def run_deployment(
         ready = await _make_database(ports, org_id, deployment_id, ready)
     if isinstance(ready, str):
         return ready
-    dep, driver, desired = ready.deployment, ready.driver, ready.desired
+    dep, health = ready.deployment, health or HealthWait()
     try:
-        revision = await driver.apply(desired)
-        verdict = await _wait_healthy(ports, org_id, ready, revision, health or HealthWait())
+        revision = await ready.driver.apply(ready.desired)
+        verdict = await _wait_healthy(ports, org_id, ready, revision, health)
     except Exception:
         log.exception("runtime call failed", extra={"deployment_id": dep.id})
         return await _fail_after_runtime(ports, org_id, ready, RUNTIME_ERROR)
+    if verdict == "ready" and ready.lowered is not None:
+        verdict = await _confirmed(ports, org_id, ready.lowered.version, health)
     if verdict == "preempted":
+        async with bound_org(ports.engine, org_id) as conn:
+            await _restore_timeout(conn, ports, org_id, ready)
         return "superseded"
     if verdict != "ready":
         return await _fail_after_runtime(ports, org_id, ready, _VERDICT_CODE[verdict])
     state = await _go_live(ports, org_id, ready)
-    if state != "healthy":
-        return state
-    try:
-        await driver.set_traffic(desired.service, revision)
-    except Exception:
-        log.exception("set_traffic failed; the reconciler repairs it", extra={"id": dep.id})
-    return "healthy"
+    if state == "healthy":
+        await _move_traffic(ports, org_id, ready, revision)
+    return state
 
 
 async def _claim(ports: Ports, org_id: str, deployment_id: str) -> _Ready | _NeedsDatabase | str:
@@ -318,7 +366,87 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
     )
     if not isinstance(desired, ServiceSpec):
         raise AssertionError("an active app has a service spec")
-    return _Ready(deployment=dep, desired=desired, spec=spec, driver=ports.runtime_driver)
+    lowered = await _lower_timeout(conn, ports, org_id, dep, desired.timeout_seconds)
+    return _Ready(
+        deployment=dep, desired=desired, spec=spec, driver=ports.runtime_driver, lowered=lowered
+    )
+
+
+async def _lower_timeout(
+    conn: AsyncConnection, ports: Ports, org_id: str, dep: _Deployment, seconds: int
+) -> _Lowered | None:
+    """When ``seconds`` is shorter than the live release's timeout or the environment's
+    ``request_timeout_seconds``: lower the column and ask for the snapshot carrying it. A rerun
+    asks again, the live release unchanged."""
+    params = {"org": org_id, "env": dep.environment_id}
+    stored, live_id, live = (await conn.execute(_LIVE_TIMEOUT, params)).one()
+    longest = REQUEST_TIMEOUT_SECONDS if stored is None else int(stored)
+    if live is not None:
+        try:
+            spec = await ports.release_specs.get(
+                conn, org_id=org_id, app_id=dep.app_id, release_id=str(live)
+            )
+            longest = max(longest, timeout_for(spec.manifest.runtime, spec.framework))
+        except ReleaseSpecUnavailableError:
+            log.warning("live release has no spec", extra={"deployment_id": dep.id})
+    if seconds >= longest:
+        return None
+    await conn.execute(_LOWER_TIMEOUT, {**params, "seconds": seconds})
+    version = await ports.snapshot.request(conn, org_id)
+    return _Lowered(
+        version=version, live_id=None if live_id is None else str(live_id), seconds=longest
+    )
+
+
+async def _restore_timeout(conn: AsyncConnection, ports: Ports, org_id: str, ready: _Ready) -> None:
+    """Put a lowered ``request_timeout_seconds`` back to the live release's timeout and ask for
+    a snapshot, if the pointer still names that release. Safe: the live revision allows it."""
+    lowered = ready.lowered
+    if lowered is None or lowered.live_id is None:
+        return
+    params = {
+        "org": org_id,
+        "env": ready.deployment.environment_id,
+        "live": lowered.live_id,
+        "seconds": lowered.seconds,
+        "floor": REQUEST_TIMEOUT_SECONDS,
+    }
+    if (await conn.execute(_RESTORE_TIMEOUT, params)).rowcount:
+        await ports.snapshot.request(conn, org_id)
+
+
+async def _confirmed(ports: Ports, org_id: str, version: int, health: HealthWait) -> _Verdict:
+    """``ready`` once the org's cell has ``version``; ``unconfirmed`` after
+    ``health.confirm_within``."""
+    deadline = time.monotonic() + health.confirm_within
+    while not await ports.snapshot.confirmed(org_id, version):
+        if time.monotonic() >= deadline:
+            return "unconfirmed"
+        await health.sleep(health.every)
+    return "ready"
+
+
+async def _move_traffic(ports: Ports, org_id: str, ready: _Ready, revision: str) -> None:
+    """Traffic to ``revision``; then a longer timeout raises ``request_timeout_seconds`` and asks
+    for the snapshot carrying it. A failure of either leaves the lower figure, which is safe."""
+    dep = ready.deployment
+    try:
+        await ready.driver.set_traffic(ready.desired.service, revision)
+    except Exception:
+        log.exception("set_traffic failed; the reconciler repairs it", extra={"id": dep.id})
+        return
+    params = {
+        "org": org_id,
+        "env": dep.environment_id,
+        "seconds": ready.desired.timeout_seconds,
+        "floor": REQUEST_TIMEOUT_SECONDS,
+    }
+    try:
+        async with bound_org(ports.engine, org_id) as conn:
+            if (await conn.execute(_RAISE_TIMEOUT, params)).rowcount:
+                await ports.snapshot.request(conn, org_id)
+    except Exception:
+        log.exception("raising the request timeout failed", extra={"id": dep.id})
 
 
 async def _wait_healthy(
@@ -361,7 +489,11 @@ async def _go_live(ports: Ports, org_id: str, ready: _Ready) -> str:
     async with bound_org(ports.engine, org_id) as conn:
         app = {"org": org_id, "app": dep.app_id}
         if (await conn.execute(_SHARE_APP_STATUS, app)).scalar() == "active":
-            return "healthy" if await _mark_healthy(conn, ports, org_id, ready) else "superseded"
+            if await _mark_healthy(conn, ports, org_id, ready):
+                return "healthy"
+            await _restore_timeout(conn, ports, org_id, ready)
+            return "superseded"
+        await _restore_timeout(conn, ports, org_id, ready)
         state, never_live = await _record_failure(conn, org_id, dep, APP_NOT_ACTIVE)
     return await _scale_down_if_never_live(ready, state, never_live=never_live)
 
@@ -402,8 +534,10 @@ async def _mark_healthy(conn: AsyncConnection, ports: Ports, org_id: str, ready:
 
 
 async def _fail_after_runtime(ports: Ports, org_id: str, ready: _Ready, code: str) -> str:
-    """Record the failure; scale a service that never had a live deployment to zero."""
+    """Put a lowered timeout back and record the failure; scale a service that never had a
+    live deployment to zero."""
     async with bound_org(ports.engine, org_id) as conn:
+        await _restore_timeout(conn, ports, org_id, ready)
         state, never_live = await _record_failure(conn, org_id, ready.deployment, code)
     return await _scale_down_if_never_live(ready, state, never_live=never_live)
 

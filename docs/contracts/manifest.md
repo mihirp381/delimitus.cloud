@@ -126,6 +126,10 @@ A session app keeps each user's state in process memory, so a second instance wo
 
 A session app runs on at most one instance, and each connection to it, a WebSocket or a stream, ends at 60 minutes. Streamlit loses its session state when that happens.
 
+**Streamlit at 60 minutes.** Streamlit keeps each user's state (widget values and `st.session_state`) in the server process, tied to one browser connection. After 60 minutes the platform ends that connection. Streamlit opens a new one by itself, but the state is gone: the user sees the page reload and start again from the top. We cannot change this from outside Streamlit. Keep anything a user should not lose in Postgres, or in the page's URL with `st.query_params`.
+
+An app that runs its own WebSocket or event stream can avoid the drop: the reconnect helpers `ssc_app.reconnect` (Python) and `@delimitus/ssc-reconnect` (Node) read the gateway's `X-SSC-Request-Deadline` header, end the stream a little before the limit and let the browser reconnect without a reload.
+
 Every app sleeps at zero instances when nobody uses it, so its first request after a quiet spell is slow.
 
 There is no `billing` key. How an app is billed is the platform's choice; a manifest that has the key is refused like any unknown key.

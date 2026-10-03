@@ -1,0 +1,31 @@
+{
+  "_comment": "Shared reconnect-helper test vectors (SSC-090): ssc_app.reconnect and @delimitus/ssc-reconnect read the gateway's X-SSC-Request-Deadline the same way (cases) and keep a stream for the same time (waits). Hand-written.",
+  "constants": {
+    "deadline_header": "X-SSC-Request-Deadline",
+    "restart_code": 1012,
+    "margin_seconds": 30,
+    "retry_ms": 1000
+  },
+  "now": 1790000000,
+  "cases": [
+    { "name": "an hour left", "headers": { "x-ssc-request-deadline": "1790003600" }, "expect": 3600 },
+    { "name": "any case of the name", "headers": { "X-SSC-Request-Deadline": "1790000090" }, "expect": 90 },
+    { "name": "spaces around the value", "headers": { "x-ssc-request-deadline": " 1790000010 " }, "expect": 10 },
+    { "name": "already past is zero", "headers": { "x-ssc-request-deadline": "1789999000" }, "expect": 0 },
+    { "name": "no header", "headers": { "x-ssc-identity": "x" }, "expect": null },
+    { "name": "empty", "headers": { "x-ssc-request-deadline": "" }, "expect": null },
+    { "name": "not a number", "headers": { "x-ssc-request-deadline": "soon" }, "expect": null },
+    { "name": "negative", "headers": { "x-ssc-request-deadline": "-5" }, "expect": null },
+    { "name": "fraction", "headers": { "x-ssc-request-deadline": "1790000010.5" }, "expect": null }
+  ],
+  "waits": [
+    { "name": "a session app's hour", "left": 3600, "margin": 30, "expect": 3570 },
+    { "name": "five minutes", "left": 300, "margin": 30, "expect": 270 },
+    { "name": "twice the margin", "left": 60, "margin": 30, "expect": 30 },
+    { "name": "just inside twice the margin", "left": 40, "margin": 30, "expect": 20 },
+    { "name": "less than the margin gets half", "left": 10, "margin": 30, "expect": 5 },
+    { "name": "no margin", "left": 300, "margin": 0, "expect": 300 },
+    { "name": "already past cuts nothing", "left": 0, "margin": 30, "expect": null },
+    { "name": "no deadline cuts nothing", "left": null, "margin": 30, "expect": null }
+  ]
+}

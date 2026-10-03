@@ -38,15 +38,17 @@ from edge_world import (
 from fastapi import FastAPI
 
 from ssc_app.identity import verify
+from ssc_app.reconnect import seconds_left
 from ssc_edge import pages
 from ssc_edge.envoy import ENVOY_VERSION, WAKE_SECONDS, EnvoyConfig, render
-from ssc_edge.gate import DEADLINE_HEADER, REQUEST_SECONDS, STREAM_HEADER, WAKE_HEADER
+from ssc_edge.gate import DEADLINE_HEADER, STREAM_HEADER, WAKE_HEADER
 from ssc_edge.identity_note import jwks
 from ssc_edge.keys import new_keyring, parse_keyring
 from ssc_edge.server import create_app
 from ssc_edge.session import WAKE_COOKIE, wake_cookie
 from ssc_edge.streams import WATCH_SECONDS, Streams
 from ssc_shared.access import AccessView
+from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS, SESSION_TIMEOUT_SECONDS
 
 ENVOY_IMAGE = (
     f"envoyproxy/envoy:v{ENVOY_VERSION}"
@@ -70,6 +72,10 @@ class Echo(BaseHTTPRequestHandler):
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
         self.end_headers()
+        if self.path.startswith("/events/seen"):
+            seen = [[k.lower(), v] for k, v in self.headers.items()]
+            self.wfile.write(b"data: " + json.dumps(seen).encode() + b"\\n\\n")
+            return
         for n in range(3):
             self.wfile.write(f"data: {n}\\n\\n".encode())
             self.wfile.flush()
@@ -550,12 +556,53 @@ def test_an_answer_that_has_started_is_never_cut(stack: Stack) -> None:
     assert sorted(r.headers.get_list("set-cookie")) == sorted(["app=2; Path=/", wake_cookie()])
 
 
-def test_the_app_learns_when_cloud_run_will_end_the_request(stack: Stack) -> None:
-    r, _ = timed(stack, "/limit", PAGE_LOAD)
+@pytest.mark.parametrize(
+    ("host", "seconds"),
+    [(HOST, REQUEST_TIMEOUT_SECONDS), (PAY_HOST, SESSION_TIMEOUT_SECONDS)],
+    ids=["request-billed", "session"],
+)
+def test_the_app_learns_when_cloud_run_will_end_the_request(
+    stack: Stack, host: str, seconds: int
+) -> None:
+    w = stack.world
+    r = stack.get(
+        host, "/limit", headers={"cookie": w.cookie(session(iat=w.now - 60), host), **PAGE_LOAD}
+    )
     assert r.status_code == 200, r.text
     seen = echoed(r)
-    assert seen[DEADLINE_HEADER] == [str(stack.world.now + REQUEST_SECONDS)]
+    assert seen[DEADLINE_HEADER] == [str(w.now + seconds)]
     assert WAKE_HEADER not in seen
+
+
+def test_a_relayed_stream_still_tells_the_app_its_deadline(stack: Stack) -> None:
+    w = stack.world
+    sock, seen = open_socket(stack, w.cookie())
+    sock.close()
+    assert [DEADLINE_HEADER, str(w.now + REQUEST_TIMEOUT_SECONDS)] in seen
+    assert seconds_left(dict(seen), now=w.now) == REQUEST_TIMEOUT_SECONDS
+    assert stack.relayed[-1] == UPSTREAM
+
+
+def test_a_relayed_event_stream_tells_the_app_its_deadline(stack: Stack) -> None:
+    w = stack.world
+    with httpx2.stream(
+        "GET",
+        stack.url + "/events/seen",
+        headers={
+            "host": PAY_HOST,
+            "cookie": w.cookie(session(iat=w.now - 60), PAY_HOST),
+            "accept": "text/event-stream",
+        },
+        timeout=10,
+    ) as r:
+        assert r.status_code == 200
+        lines = [line for line in r.iter_lines() if line.startswith("data: ")]
+    seen = json.loads(lines[0].removeprefix("data: "))
+    names = {k for k, _ in seen}
+    assert STREAM_HEADER not in names and "x-ssc-identity" in names
+    assert [DEADLINE_HEADER, str(w.now + SESSION_TIMEOUT_SECONDS)] in seen
+    assert seconds_left(dict(seen), now=w.now) == SESSION_TIMEOUT_SECONDS
+    assert stack.relayed[-1] == PAY_UPSTREAM
 
 
 def test_everything_is_refused_when_the_authoriser_stops(stack: Stack) -> None:

@@ -1836,6 +1836,7 @@
           "SECRETS_UNAVAILABLE",
           "DB_TIER_FULL",
           "DATABASE_UNAVAILABLE",
+          "SNAPSHOT_UNCONFIRMED",
           "LOGS_RATE_LIMITED",
           "LOGS_UNAVAILABLE",
           "INTERNAL"

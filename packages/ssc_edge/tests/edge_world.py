@@ -1,4 +1,5 @@
-"""One org with two apps, used by the gateway tests (SSC-018). Imported as ``edge_world``."""
+"""One org with two apps, used by the gateway tests (SSC-018). Imported as ``edge_world``.
+Payroll is a session app: its environment carries ``timeout_seconds``; ledger's do not."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,6 +12,7 @@ from ssc_edge.keys import Keyring, new_keyring, parse_keyring
 from ssc_edge.server import gate_for
 from ssc_edge.session import Session, SessionCodec, new_sid
 from ssc_shared.access import AccessView
+from ssc_shared.runtime import SESSION_TIMEOUT_SECONDS
 
 ORG = "org_" + "a" * 20
 OTHER_ORG = "org_" + "b" * 20
@@ -43,7 +45,13 @@ def snapshot(version: int = 1, **changes: Any) -> dict[str, Any]:
         "environments": {
             PROD: {"app_id": LEDGER, "name": "prod", "floor": "user", **env},
             PREVIEW: {"app_id": LEDGER, "name": "preview", "floor": "builder", **env},
-            PAY: {"app_id": PAYROLL, "name": "prod", "floor": "user", **env},
+            PAY: {
+                "app_id": PAYROLL,
+                "name": "prod",
+                "floor": "user",
+                "timeout_seconds": SESSION_TIMEOUT_SECONDS,
+                **env,
+            },
         },
         "hosts": {"ledger": PROD, "ledger--preview": PREVIEW, "payroll": PAY},
         "grants": {
