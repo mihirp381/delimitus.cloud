@@ -1,0 +1,5 @@
+schema = "ssc/v1"
+
+[runtime]
+start = "node server.mjs"
+sessions = true

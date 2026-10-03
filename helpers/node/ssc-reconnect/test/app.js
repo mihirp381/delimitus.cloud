@@ -75,13 +75,22 @@ class Socket {
   drop() {
     this.#tcp.destroy();
   }
+
+  /** A close frame without a code: what WebKit reports for every close the server starts. */
+  closeBare() {
+    if (this.closed || this.closeCode !== null) return;
+    this.closeCode = 1005;
+    this.#tcp.write(frame(0x8, Buffer.alloc(0)));
+    setTimeout(() => this.#tcp.destroy(), 1000).unref();
+  }
 }
 
 /**
  * Start the app on a free port. `limit` is seconds to each deadline (null: no header, as on a
  * laptop); `margin` and `retryMs` go to the helper; `ws` is `restart` (the helper), `drop` (the
- * first socket is cut without a close after 300 ms), `done` (closed with 1000 after 300 ms) or
- * `refuse` (every upgrade answered 404).
+ * first socket is cut without a close after 300 ms), `bare` (the first socket is closed without
+ * a code after 300 ms), `done` (closed with 1000 after 300 ms) or `refuse` (every upgrade answered
+ * 404).
  */
 export async function startApp({ limit = 2, margin = 0.5, retryMs = 50, ws = 'restart' } = {}) {
   const connections = [];
@@ -133,6 +142,7 @@ export async function startApp({ limit = 2, margin = 0.5, retryMs = 50, ws = 're
       seen.closeCode = socket.closeCode;
     });
     if (ws === 'drop' && connections.length === 1) setTimeout(() => socket.drop(), 300);
+    if (ws === 'bare' && connections.length === 1) setTimeout(() => socket.closeBare(), 300);
     if (ws === 'done') setTimeout(() => socket.close(1000, 'done'), 300);
     closeBeforeDeadline(socket, req.headers, { margin });
   });

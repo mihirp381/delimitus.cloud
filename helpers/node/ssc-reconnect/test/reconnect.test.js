@@ -160,6 +160,33 @@ test('the browser client comes back after an unclean drop', async () => {
   assert.ok(continuous(got), 'it resumed where the dropped socket stopped');
 });
 
+test('the browser client reconnects at once after a close without a code, as WebKit reports 1012', async () => {
+  const app = await startApp({ limit: null, ws: 'bare' });
+  let last = -1;
+  const got = [];
+  let gaveUp = null;
+  const socket = globalThis.sscSocket(() => `${app.wsUrl}?after=${last}`, {
+    delayMs: 5000,
+    onmessage: (event) => {
+      last = Number(event.data);
+      got.push(last);
+    },
+    onclose: (event) => {
+      gaveUp = event;
+    },
+  });
+  try {
+    await until(() => app.connections.length === 2 && got.length >= 6);
+  } finally {
+    socket.close();
+    await app.close();
+  }
+  assert.equal(app.connections[0].closeCode, 1005);
+  assert.ok(app.connections[1].opened - app.connections[0].ended < 2000, 'it did not wait the unclean-drop pause');
+  assert.ok(continuous(got), 'it resumed where the closed socket stopped');
+  assert.equal(gaveUp, null);
+});
+
 test('the browser client stops on a clean close and gives up when it cannot get back in', async () => {
   for (const [ws, connections, code] of [
     ['done', 1, 1000],
