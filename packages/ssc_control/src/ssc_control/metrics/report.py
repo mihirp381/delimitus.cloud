@@ -19,7 +19,8 @@ to ``--as-of``, with the app's status as it is now. Two misses by day 60 means s
 
 Usage (2026-10-03) is per environment per UTC month, for every month the window touches, and the
 cell's fixed resources with the time each was created (``metrics.usage``). It is for metrics and
-the cost view only; nothing bills from it.
+the cost view only; nothing bills from it. The month's bill against the cost model is
+``metrics.reconcile`` (SSC-096).
 """
 
 from __future__ import annotations

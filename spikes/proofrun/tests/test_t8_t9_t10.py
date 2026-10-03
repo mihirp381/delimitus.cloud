@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 import threading
 import time
 from collections.abc import Mapping
@@ -173,6 +174,29 @@ def test_cost_figures_match_the_model() -> None:
     assert cost.within(1.15, 1.0)
     assert not cost.within(1.25, 1.0)
     assert not cost.within(0.0, 0.0)
+
+
+def test_the_kit_reads_the_products_cost_model_as_data() -> None:
+    assert cost.MODEL_FILE.is_file()
+    assert cost.MODEL_FILE.parts[-6:] == (
+        "packages",
+        "ssc_control",
+        "src",
+        "ssc_control",
+        "metrics",
+        "cost_model.toml",
+    )
+    assert cost.MODEL["format"] == "ssc-cost-model/v1"
+    assert cost.RATES == {
+        "request": {"vcpu": 0.000024, "gib": 0.0000025},
+        "instance": {"vcpu": 0.000018, "gib": 0.000002},
+    }
+    assert cost.TOLERANCE == 0.20
+    assert cost.EMPTY_CELL_MONTH_USD == 23.0
+    reference = cost.MODEL["cloud_run"]["reference"]
+    assert round(cost.hourly("request"), 4) == reference["request_hourly"]
+    assert round(cost.hourly("instance"), 4) == reference["instance_hourly"]
+    assert "ssc_control" not in sys.modules
 
 
 def t9_state(
