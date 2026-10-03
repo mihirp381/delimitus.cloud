@@ -1,0 +1,67 @@
+#cloud-config
+write_files:
+- path: /etc/systemd/resolved.conf.d/proofrun.conf
+  permissions: "0644"
+  content: |
+    [Resolve]
+    DNS=@RESOLVER@
+    Domains=~.
+- path: /var/lib/proofrun/envoy.yaml
+  permissions: "0644"
+  content: |
+    static_resources:
+      listeners:
+      - name: connect
+        address: {socket_address: {address: 0.0.0.0, port_value: 3128}}
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: connect
+              upgrade_configs: [{upgrade_type: CONNECT}]
+              http2_protocol_options: {allow_connect: true}
+              route_config:
+                name: allowlist
+                virtual_hosts:
+                - name: allowed
+                  domains: [@DOMAINS@]
+                  routes:
+                  - match: {connect_matcher: {}}
+                    route:
+                      cluster: dynamic
+                      upgrade_configs: [{upgrade_type: CONNECT, connect_config: {}}]
+                - name: refused
+                  domains: ["*"]
+                  routes:
+                  - match: {connect_matcher: {}}
+                    direct_response: {status: 403}
+                  - match: {prefix: "/"}
+                    direct_response: {status: 403}
+              http_filters:
+              - name: envoy.filters.http.dynamic_forward_proxy
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+                  dns_cache_config: &cache
+                    name: public
+                    dns_lookup_family: V4_ONLY
+                    typed_dns_resolver_config:
+                      name: envoy.network.dns_resolver.cares
+                      typed_config:
+                        "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
+                        resolvers: [{socket_address: {address: "@RESOLVER@", port_value: 53}}]
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+      - name: dynamic
+        lb_policy: CLUSTER_PROVIDED
+        cluster_type:
+          name: envoy.clusters.dynamic_forward_proxy
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+            dns_cache_config: *cache
+runcmd:
+- systemctl restart systemd-resolved
+- iptables -A INPUT -p tcp --dport 3128 -j ACCEPT
+- docker run -d --name proofrun-envoy --restart always --network host -v /var/lib/proofrun:/etc/proofrun:ro @IMAGE@ -c /etc/proofrun/envoy.yaml
