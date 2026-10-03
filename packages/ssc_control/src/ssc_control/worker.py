@@ -83,7 +83,7 @@ class WorkerSettings:
     heartbeat_seconds: float = 5.0
     stalled_worker_timeout: float = 30.0
     polling_seconds: float = 5.0
-    concurrency: int = 1
+    concurrency: int = 4
     delete_jobs: Literal["never", "successful", "always"] = "successful"
     """Succeeded jobs are deleted: a tick every 15 s would otherwise grow the table forever.
     Failed jobs stay for inspection."""

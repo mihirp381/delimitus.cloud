@@ -1,10 +1,16 @@
 """SSC-016: builds, numbered releases, deployments and rollback, against the fake build and
-runtime drivers and postgres:18.
+runtime drivers and postgres:18, and through the cell agent on the Cloud Build and Cloud Run
+emulators.
 
 Ticket "done when" checks:
+  * rollback in under 30 seconds                 -> test_rollback_through_the_cell_agent_is_...,
+                                                    test_a_rollback_job_goes_ahead_of_waiting_jobs
+                                                    test_the_kill_switch_outranks_a_rollback
   * a failed health check leaves the old pointer -> test_a_failed_health_check_keeps_the_old_pointer
+                                                    (on the emulators: test_rollback_through_...)
   * a release row cannot be edited               -> test_a_release_row_cannot_be_edited,
                                                     test_no_route_mutates_a_release
+  * a cold revision has time to start            -> test_the_health_window_outlasts_cloud_runs_...
   * R numbering                                  -> test_concurrent_builds_number_releases_r1_to_r5
   * one in flight                                -> test_one_deployment_in_flight_per_environment
                                                     (and test_api's test_deployment_is_accepted_...)
@@ -37,13 +43,16 @@ import hashlib
 import importlib
 import json
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import parse_qsl, urlsplit
 
+import httpx2
 import psycopg
 import pytest
 from fastapi import FastAPI
@@ -68,7 +77,17 @@ from ssc_testkit import (
 )
 
 import ssc_control.api
+from ssc_agent.app import create_app as create_agent
+from ssc_agent.cloud_build import CellBuildConfig, CloudBuildDriver
+from ssc_agent.cloud_run import (
+    STARTUP_FAILURES,
+    STARTUP_PERIOD_SECONDS,
+    CellRuntime,
+    CloudRunDriver,
+)
 from ssc_bundle.client import prepare
+from ssc_conformance.cloud_build_emulator import CloudBuildEmulator
+from ssc_conformance.cloud_run_emulator import PROJECT, REGION, CloudRunEmulator
 from ssc_contracts.audit import ActorKind
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
@@ -90,6 +109,7 @@ from ssc_control.db import (
     make_engine,
     upgrade,
 )
+from ssc_control.deferral import KILL_SWITCH_PRIORITY, MANUAL_TIMER_PRIORITY, ROLLBACK_PRIORITY
 from ssc_control.deploy import tasks
 from ssc_control.deploy.build_driver import (
     BUILD_TIMED_OUT,
@@ -104,6 +124,8 @@ from ssc_control.deploy.deployments import (
     APP_NOT_ACTIVE,
     APPROVAL_REQUIRED,
     HEALTH_CHECK_FAILED,
+    HEALTH_POLL_SECONDS,
+    HEALTH_TIMEOUT_SECONDS,
     RELEASE_SPEC_UNAVAILABLE,
     HealthWait,
     run_deployment,
@@ -112,6 +134,7 @@ from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.lifecycle import kill_switch
 from ssc_control.metrics import metrics_port
 from ssc_control.ports import DeclaredSchedule, GateResult, NullMetricsPort, NullTimersPort
+from ssc_control.runtime.cell_agent import CellAgentDriver
 from ssc_control.runtime.driver import service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
@@ -126,6 +149,25 @@ FAST = HealthWait(within=2.0, every=0.01)
 FINANCE = {"connections": {"names": ["finance"]}}
 FIXTURES = Path(__file__).resolve().parents[3] / "conformance" / "build_fixtures"
 NIGHTLY = {"schedules": [{"name": "nightly", "cron": "0 3 * * *", "path": "/tasks/nightly"}]}
+AGENT = "https://ssc-cell-agent.test"
+REPO = f"{REGION}-docker.pkg.dev/{PROJECT}/ssc-apps/apps"
+ROLLBACK_LIMIT_SECONDS = 30.0
+CELL_BUILD = CellBuildConfig(
+    project=PROJECT,
+    region=REGION,
+    image_repository=REPO,
+    service_account=f"ssc-build@{PROJECT}.iam.gserviceaccount.com",
+    tools_image=f"{REGION}-docker.pkg.dev/ssc-platform/tools/ssc-build-tools@sha256:" + "a" * 64,
+    frontend_image="ghcr.io/railwayapp/railpack-frontend@sha256:" + "f" * 64,
+)
+CELL_RUNTIME = CellRuntime(
+    project=PROJECT,
+    region=REGION,
+    network=f"projects/{PROJECT}/global/networks/ssc-cell",
+    subnetwork=f"projects/{PROJECT}/regions/{REGION}/subnetworks/apps",
+    image_repository=REPO,
+    invoker=f"ssc-gateway@{PROJECT}.iam.gserviceaccount.com",
+)
 
 # ── world ────────────────────────────────────────────────────────────────────
 
@@ -1135,6 +1177,161 @@ async def test_deploys_record_the_deploy_and_first_url_metrics(b: Bench) -> None
             "person": True,
         },
     ]
+
+
+# ── through the cell agent, on the emulators ─────────────────────────────────
+
+
+class Clock:
+    """The seconds each driver would have slept; sleeping settles the Cloud Run emulator."""
+
+    def __init__(self, emulator: CloudRunEmulator) -> None:
+        self.emulator = emulator
+        self.driver: list[float] = []
+        self.health: list[float] = []
+
+    async def driver_sleep(self, seconds: float) -> None:
+        self.driver.append(seconds)
+        self.emulator.settle()
+
+    async def health_sleep(self, seconds: float) -> None:
+        self.health.append(seconds)
+        self.emulator.settle()
+
+
+async def agent_token(_: str) -> str:
+    return "id-token"
+
+
+async def access_token() -> str:
+    return "access-token"
+
+
+async def cell_build(b: Bench, ports: Ports) -> str:
+    bundle = rows_of(b.dsn, b.w.org, "select id from ssc.bundle")[0]["id"]
+    build = start_build(b, b.w.preview, bundle).json()["build_id"]
+    for _ in range(5):
+        take_job(b.dsn, f"bld:{build}")
+        if await run_build(ports, org_id=b.w.org, build_id=build) != "running":
+            break
+    out = get(b, f"/v1/builds/{build}").json()
+    assert out["state"] == "succeeded", out
+    return str(out["release_id"])
+
+
+async def test_rollback_through_the_cell_agent_is_quick_and_never_rebuilds(
+    b: Bench, tmp_path: Path
+) -> None:
+    ports, _ = await stored_fixture(b, "cs-fastapi-hello", tmp_path)
+    data = (tmp_path / "bundle.tar.gz").read_bytes()
+    signer = UrlSigner({"k1": MASTER}, active="k1", clock=SystemClock())
+
+    def fetch(url: str) -> bytes:
+        parts = urlsplit(url)
+        key = parts.path.removeprefix("/v1/blobs/")
+        signer.verify("GET", key, dict(parse_qsl(parts.query)))
+        return data
+
+    run_emulator, build_emulator = CloudRunEmulator(), CloudBuildEmulator(fetch, polls=0)
+    clock = Clock(run_emulator)
+    cloud_run = CloudRunDriver(
+        CELL_RUNTIME,
+        access_token,
+        client=httpx2.AsyncClient(transport=httpx2.MockTransport(run_emulator.handler)),
+        sleep=clock.driver_sleep,
+    )
+    cloud_build = CloudBuildDriver(
+        CELL_BUILD,
+        access_token,
+        client=httpx2.AsyncClient(transport=httpx2.MockTransport(build_emulator.handler)),
+    )
+    agent = httpx2.ASGITransport(app=create_agent(cloud_run, cloud_build))
+    runtime = CellAgentDriver(AGENT, agent_token, client=httpx2.AsyncClient(transport=agent))
+    builder = CellAgentBuildDriver(
+        AGENT, agent_token, ports.blob_store, client=httpx2.AsyncClient(transport=agent)
+    )
+    ports = replace(ports, runtime_driver=runtime, build_driver=builder)
+    health = HealthWait(within=5.0, every=HEALTH_POLL_SECONDS, sleep=clock.health_sleep)
+
+    async def deploy_through_the_cell(release: str, kind: str = "deploy") -> tuple[str, str]:
+        op = start_deploy(b, b.w.preview, release, kind).json()["operation_id"]
+        out = await run_deployment(ports, org_id=b.w.org, deployment_id=op, health=health)
+        return op, out
+
+    r1, r2, r3 = [await cell_build(b, ports) for _ in range(3)]
+    _, state = await deploy_through_the_cell(r1)
+    assert state == "healthy"
+    svc = run_emulator.services[service_name(b.w.preview)]
+    (r1_revision,) = [t["revision"] for t in svc.traffic_statuses]
+    second, state = await deploy_through_the_cell(r2)
+    assert state == "healthy"
+    (r2_revision,) = [t["revision"] for t in svc.traffic_statuses]
+
+    run_emulator.unhealthy(image_of(b, r3))
+    third, state = await deploy_through_the_cell(r3)
+    assert (state, operation(b, third)["failure_code"]) == ("failed", HEALTH_CHECK_FAILED)
+    assert pointer(b, b.w.preview) == second
+    assert [(t["revision"], t["percent"]) for t in svc.traffic_statuses] == [(r2_revision, 100)]
+
+    revisions = [r["name"] for r in svc.revisions]
+    template = json.dumps(svc.body["template"], sort_keys=True)
+    builds = rows_of(b.dsn, b.w.org, "select count(*) as n from ssc.build")
+    build_calls = len(build_emulator.calls)
+    run_emulator.calls.clear()
+    clock.driver.clear()
+    clock.health.clear()
+    started = time.monotonic()
+    rollback, state = await deploy_through_the_cell(r1, "rollback")
+    elapsed = time.monotonic() - started
+
+    assert state == "healthy"
+    assert pointer(b, b.w.preview) == rollback
+    assert [(t["revision"], t["percent"]) for t in svc.traffic_statuses] == [(r1_revision, 100)]
+    assert len(build_emulator.calls) == build_calls
+    assert rows_of(b.dsn, b.w.org, "select count(*) as n from ssc.build") == builds
+    assert [r["name"] for r in svc.revisions] == revisions
+    assert json.dumps(svc.body["template"], sort_keys=True) == template
+    assert [m for m, _ in run_emulator.calls].count("PATCH") == 1
+    assert clock.health == []
+    assert len(run_emulator.calls) * 1.0 + sum(clock.driver) < ROLLBACK_LIMIT_SECONDS
+    assert elapsed < ROLLBACK_LIMIT_SECONDS
+    await runtime.aclose()
+    await builder.aclose()
+    await cloud_run.aclose()
+    await cloud_build.aclose()
+
+
+def test_the_health_window_outlasts_cloud_runs_startup_probe() -> None:
+    assert HEALTH_TIMEOUT_SECONDS > STARTUP_PERIOD_SECONDS * STARTUP_FAILURES
+
+
+def job_priority(b: Bench, queueing_lock: str) -> int:
+    (row,) = rows_of(
+        b.dsn,
+        b.w.org,
+        "select priority from procrastinate.procrastinate_jobs where queueing_lock = %s",
+        queueing_lock,
+    )
+    return int(row["priority"])
+
+
+async def test_a_rollback_job_goes_ahead_of_waiting_jobs(b: Bench) -> None:
+    r1 = await build_release(b, b.w.preview)
+    forward = start_deploy(b, b.w.preview, r1).json()["operation_id"]
+    rollback = start_deploy(b, b.w.preview, r1, "rollback").json()["operation_id"]
+    assert job_priority(b, f"dep:{forward}") == 0
+    assert job_priority(b, f"dep:{rollback}") == ROLLBACK_PRIORITY
+    assert worker.WorkerSettings().concurrency > 1
+
+
+async def test_the_kill_switch_outranks_a_rollback(b: Bench) -> None:
+    assert KILL_SWITCH_PRIORITY > ROLLBACK_PRIORITY > MANUAL_TIMER_PRIORITY > 0
+    r1 = await build_release(b, b.w.preview)
+    rollback = start_deploy(b, b.w.preview, r1, "rollback").json()["operation_id"]
+    r = post(b, f"/v1/apps/{b.w.app}/kill-switch", {"mode": "disable"}, b.t.admin)
+    assert r.status_code == 202, r.text
+    assert job_priority(b, f"kil:{b.w.app}") == KILL_SWITCH_PRIORITY
+    assert job_priority(b, f"dep:{rollback}") == ROLLBACK_PRIORITY
 
 
 # ── the worker ───────────────────────────────────────────────────────────────

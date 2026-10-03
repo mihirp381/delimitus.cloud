@@ -10,7 +10,7 @@ from typing import Final
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from ssc_control.deferral import defer, env_lock
+from ssc_control.deferral import KILL_SWITCH_PRIORITY, defer, env_lock
 
 NAMESPACE: Final = "lifecycle"
 RUN_KILL_SWITCH: Final = f"{NAMESPACE}:run_kill_switch"
@@ -36,6 +36,7 @@ async def defer_kill_switch(  # noqa: PLR0913  (keyword-only)
         queueing_lock=queueing_lock(app_id),
         lock=None if env_id is None else env_lock(env_id),
         schedule_at=schedule_at,
+        priority=KILL_SWITCH_PRIORITY,
         org_id=org_id,
         run_id=run_id,
         env_id=env_id,

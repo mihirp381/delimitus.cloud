@@ -5,7 +5,8 @@ job per schedule and instant (``queueing_lock`` ``sch:<id>:<instant>``, deferred
 ``schedule_at``); a manual run is one job per run. No timer job takes a ``lock``: Procrastinate
 3.10 holds a later job behind an earlier one with the same lock even while the earlier one waits
 for its ``schedule_at``, and a timer job never calls the runtime driver, so it needs no
-``env:<id>`` lock. Overlap is refused by ``timer_run``'s partial unique indexes instead.
+``env:<id>`` lock. Overlap is refused by ``timer_run``'s partial unique indexes instead. A manual
+run has ``MANUAL_TIMER_PRIORITY``, ahead of scheduled runs that are already due.
 """
 
 from datetime import UTC, datetime
@@ -13,12 +14,10 @@ from typing import Final
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from ssc_control.deferral import defer
+from ssc_control.deferral import MANUAL_TIMER_PRIORITY, defer
 
 NAMESPACE: Final = "timers"
 RUN: Final = f"{NAMESPACE}:run"
-MANUAL_PRIORITY: Final = 1
-"""Ahead of scheduled runs that are already due (Procrastinate's default priority is 0)."""
 
 
 def instant_key(instant: datetime) -> str:
@@ -48,7 +47,7 @@ async def defer_manual_run(
         conn,
         RUN,
         queueing_lock=f"tmr:{run_id}",
-        priority=MANUAL_PRIORITY,
+        priority=MANUAL_TIMER_PRIORITY,
         org_id=org_id,
         schedule_id=schedule_id,
         run_id=run_id,

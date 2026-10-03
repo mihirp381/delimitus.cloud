@@ -52,7 +52,7 @@ from ssc_control.worker_ports import Ports
 
 log = logging.getLogger(__name__)
 
-HEALTH_TIMEOUT_SECONDS: Final = 60.0
+HEALTH_TIMEOUT_SECONDS: Final = 180.0
 HEALTH_POLL_SECONDS: Final = 1.0
 
 APPROVAL_REQUIRED: Final = "APPROVAL_REQUIRED"
