@@ -29,6 +29,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 023 | Gateway: Envoy 1.39 with an HTTP `ext_authz` service on loopback (`ssc_edge`), config rendered from Python and validated; fixed check order; a forbidden app answered byte for byte like an address with no app; host-only `__Host-ssc-session` sealed per host with AES-GCM; Fetch-Metadata and WebSocket `Origin` rules; platform cookies stripped both ways; apps reached at their `run.app` host with the gateway's ID token; fail closed on a stopped authoriser, no snapshot, or a snapshot unconfirmed for 5 minutes | SSC-018 (`packages/ssc_edge/`) | decided 2026-10-01; cell wiring, JWKS publication and the live check wait for SSC-017; login hand-back built 2026-10-01 (decision 024) |
 | 024 | Login and directory sync: the auth host `auth.delimitus.com` with WorkOS SSO (SAML) only, a profile accepted only from the org's WorkOS organisation and SSO connections, consumer connection types refused; people keyed by `(workos:<directory id>, idp_id)`, joined by `idp_id` (Okta) or by the one active directory person with the email (Google SAML), unmatched logins listed for an admin; 12-hour sessions never extended; one-time 60 s codes bound to the app host and the gateway's login nonce; RFC 8628 device flow with rotated refresh tokens for the command line; directory events as triggers, a full reconcile every 6 h; deactivation revokes sessions and sets `sessions_not_before` for the gateway | SSC-019 (`packages/ssc_control/src/ssc_control/identity/`, `ssc_edge/redeemer.py`, `ssc_cli/login.py`) | decided 2026-10-01; Okta live check passed 2026-10-01, Google moved to SSC-064 (`docs/runbooks/ssc-019-login.md`); deploy waits for SSC-064 |
 | 025 | Architecture review of 2026-10-03: isolation first, cost second; project, VPC, gateway, database and outbound IP per customer kept; one external load balancer per cell; everything at minimum 0; database, proxy and NAT created on first use; no warm instances by default. Amendments to 001, 004, 006, 014, 021, 022 and 023 are pending the staging proof run (SSC-086) | `Cloud_for_small_soft/SSC_Final_Architecture_2026-10-03.md`; tickets SSC-086 to SSC-096 | direction agreed by the founder 2026-10-03; amendments pending SSC-086 |
+| 026 | Billing slots: no raise requested; the Delimitus project paused (billing unlinked, project kept); account one holds the platform, both control projects and the staging cells; customer cells go on a second billing account opened before the first paid pilot; a $0 trial is a real cell on the second account for 30 days and ten tools | SSC-089; facts from SSC-086 T12 | draft 2026-10-03, awaits founder sign-off; T12 and the new account's project limit still open |
 
 ## 001 Cloud and runtime
 
@@ -611,3 +612,29 @@ Considered and rejected: a Shared VPC host project (proposed 2026-10-02, withdra
 Order: the staging proof run (SSC-086, tests T1 to T12) runs first. Decisions 001, 004, 006, 014, 021, 022 and 023 carry an "amendment pending" line until it reports; each is then amended from the results, not from the model. Points where the code and the architecture document disagree are listed in the tickets (section 9, "Open") and are settled in the tickets named there.
 
 Reverse if: a proof-run test fails with no fallback (SSC-086 names one per test); the first reconciled bills (SSC-096) put a cell more than 20 % over the model with no fixable cause; or the billing-slot limit cannot be solved without sharing a project between customers.
+
+## 026 Billing slots
+
+Choice: customer cells go on a second billing account. The first account keeps the platform and staging. No project is ever shared between two customers to save a slot.
+- Facts: a billing account links at most five projects. Unlinked projects do not count; deleting a project does not free a slot faster than unlinking it. No raise is requested, because the wait for Google's review is not acceptable (founder, 2026-10-03).
+- Delimitus: `ristretto-506621` is paused. Its billing was unlinked on 2026-10-03 and the project is kept, not deleted. Its two DNS zones were exported first. The infrastructure tools still refuse every command that names it.
+- Account one (`0103B6-DAEFDE-DA776C`), five slots: `ssc-platform-0`, `ssc-control-staging`, `ssc-control-prod`, staging cell A (kept as the probe cell and for dogfood), staging cell B.
+- Account two: opened by the founder before the first paid pilot, owned by the same organisation. Every customer cell is linked to it; the cell stack takes the account as the `billing_account` setting. Each cell keeps its own $50 budget; the $250 folder budget is repeated on the second account, because a budget cannot span two accounts.
+- A $0 trial is a real cell on account two: ten tools, 30 days, then it becomes a paid cell or is destroyed. It costs us about $23 a month and one slot, so at most two trials run at once.
+
+Slot calendar, account one:
+
+| When | Slot 4 | Slot 5 |
+|---|---|---|
+| Proof run (SSC-086) | staging cell A | staging cell B |
+| After the proof run, through dogfood (SSC-030) | staging cell A | free; taken by `ssc-control-prod` when SSC-064 creates it only if cell B is gone |
+| Two-cell window (SSC-056, SSC-061, later SSC-055), one window, not three | staging cell A | staging cell B, recreated for the window, destroyed at its end |
+| From the first pilot | staging cell A | free for a second staging cell when a test needs one |
+
+`ssc-control-prod` takes slot 3 from SSC-064 onward, so account one is full whenever cell B exists. Cell B is destroyed, and its billing unlinked the same day, at the end of the proof run and at the end of the two-cell window.
+
+Account two, from the first pilot: customer cells and trials, in order of signing, up to the account's limit. Assume five until the account exists and its limit is read. At four linked projects the founder asks for a raise on account two, which by then has a payment history, or opens a third account. The "billing slots are full" runbook (SSC-059) is: link the new cell to the account with a free slot; never unlink a customer's cell.
+
+Open: the project limit a new account receives (read on the day it is opened); whether a deleted cell frees its slot the same day (SSC-086 T12; until measured, unlink billing before deleting).
+
+Reverse if: Google refuses a second account or gives it fewer than three slots; or T12 shows a slot stays held after unlinking.
