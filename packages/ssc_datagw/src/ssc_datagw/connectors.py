@@ -1,4 +1,5 @@
-"""What the data gateway asks of a database driver (SSC-050). The Postgres connector is SSC-051.
+"""What the data gateway asks of a database driver (SSC-050). The Postgres connector is
+:mod:`ssc_datagw.postgres` (SSC-051).
 
 A connector opens one read for a :class:`Query` and yields its rows; the gateway counts rows and
 bytes, stops reading at a cap, and leaves the context, which ends the read on the database. The

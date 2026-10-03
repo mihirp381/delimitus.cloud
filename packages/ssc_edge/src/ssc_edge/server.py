@@ -383,10 +383,19 @@ def production_app(
 
 
 def main() -> None:
+    """Serve until SIGTERM, with no access log: a callback's query string carries a one-time
+    login code. Once the server and its lifespan have finished, the process ends without joining
+    a worker thread still in a blocking bucket read, which the storage client retries for up to
+    two minutes when the bucket cannot be reached; ``uvicorn.run`` would wait for it, past the
+    supervisor's grace, so the loop is our own."""
     logging.basicConfig(level=logging.INFO)
     port = int(os.environ.get("SSC_AUTHZ_PORT", "9001"))
-    # No access log: a callback's query string carries a one-time login code.
-    uvicorn.run(production_app(), host="127.0.0.1", port=port, log_config=None, access_log=False)
+    config = uvicorn.Config(
+        production_app(), host="127.0.0.1", port=port, log_config=None, access_log=False
+    )
+    asyncio.new_event_loop().run_until_complete(uvicorn.Server(config).serve())
+    logging.shutdown()
+    os._exit(0)
 
 
 if __name__ == "__main__":

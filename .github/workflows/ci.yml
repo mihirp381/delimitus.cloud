@@ -59,7 +59,7 @@ jobs:
         with:
           version: "0.12.19"
       - run: uv sync --all-packages --locked
-      - run: docker pull postgres:18
+      - run: docker pull postgres:17 && docker pull postgres:18
       - run: uv run pytest
 
   gates:
