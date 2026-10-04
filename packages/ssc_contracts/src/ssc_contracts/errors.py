@@ -67,6 +67,7 @@ class ErrorCode(StrEnum):
     APP_NOT_ACTIVE = "APP_NOT_ACTIVE"
     # builds, releases and deployments (SSC-016)
     BUILD_IN_FLIGHT = "BUILD_IN_FLIGHT"
+    ADD_APPROVED_PACKAGE = "ADD_APPROVED_PACKAGE"
     RELEASE_ENVIRONMENT_MISMATCH = "RELEASE_ENVIRONMENT_MISMATCH"
     # kill switch (SSC-025)
     KILL_SWITCH_IN_FLIGHT = "KILL_SWITCH_IN_FLIGHT"
@@ -251,6 +252,14 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "The bundle contains a secret.",
         "A value that looks like a credential was found in the source. Remove it from the code, "
         "store it as an app secret and deploy again.",
+    ),
+    ErrorCode.ADD_APPROVED_PACKAGE: CatalogueEntry(
+        422,
+        "The app needs a system package the platform does not carry.",
+        "A dependency needs a native library, a font or a tool that is not on the platform "
+        "package list, so nothing was built. Run ssc doctor to see the package and the dependency "
+        "that needs it, then ask SSC support to add it to the list, or use a dependency that "
+        "needs no system package.",
     ),
     ErrorCode.BUNDLE_DIGEST_MISMATCH: CatalogueEntry(
         422,

@@ -9,8 +9,9 @@ tools image, pinned by digest:
    holds no storage role: the URL is all it can read, and it can list no bucket.
 2. ``scan``: gitleaks with ``--redact`` over the source, default rules plus SSC's (Supabase keys,
    database URLs with a password; ``gitleaks_config``). A finding stops the build.
-3. ``plan``: ``railpack prepare`` with the public build values and the manifest's start command.
-   A Dockerfile in the source is never used.
+3. ``plan``: ``railpack prepare`` with the public build values, the manifest's start command and
+   the system packages from the platform package list the source needs (``system_packages``,
+   SSC-093), installed in the build and in the image. A Dockerfile in the source is never used.
 4. ``build``: BuildKit with the Railpack frontend, pinned by digest. On failure the log is
    classified (``PRIVATE_REGISTRY``, ``DEPENDENCY_UNRESOLVED``).
 5. ``harden``: a platform-written layer on top: user 10001, ``HOME=/tmp``.
@@ -118,6 +119,10 @@ PLAN: Final = """set -uo pipefail
 args=(prepare /workspace/src --plan-out /workspace/.ssc/plan.json
       --info-out /workspace/.ssc/info.json --error-missing-start)
 if [ -n "${SSC_START:-}" ]; then args+=(--start-cmd "$SSC_START"); fi
+if [ -n "${SSC_APT_PACKAGES:-}" ]; then
+  args+=(--env "RAILPACK_BUILD_APT_PACKAGES=$SSC_APT_PACKAGES")
+  args+=(--env "RAILPACK_DEPLOY_APT_PACKAGES=$SSC_APT_PACKAGES")
+fi
 while IFS= read -r -d '' pair; do
   args+=(--env "$pair")
   printf '%s' "${pair#*=}" > "/workspace/.ssc/secrets/${pair%%=*}"
@@ -235,6 +240,7 @@ def build_config(cell: CellBuildConfig, build: CellBuild) -> Json:
         "scan": {"SSC_GITLEAKS_CONFIG": _b64(gitleaks_config(build.public_env.values()))},
         "plan": {
             "SSC_START": build.start or "",
+            "SSC_APT_PACKAGES": " ".join(build.system_packages),
             "SSC_PUBLIC_ENV": _b64("".join(f"{k}={v}\0" for k, v in build.public_env.items())),
         },
         "build": {

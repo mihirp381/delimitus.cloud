@@ -56,6 +56,11 @@ RESPONSES = (
     models.LogPageOut,
     models.HealthOut,
     models.UsageOut,
+    models.PolicyHost,
+    models.PolicyConnection,
+    models.PolicyApproval,
+    models.PolicyDatabase,
+    models.DeploymentPolicy,
 )
 REQUESTS = (
     models.AppCreate,

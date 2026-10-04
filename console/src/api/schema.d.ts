@@ -1016,6 +1016,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/org/deployment-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Deployment Policy
+         * @description The hosts, connections, approvals, database room and packages the caller may see.
+         */
+        get: operations["get_deployment_policy_v1_org_deployment_policy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/unlinked-logins": {
         parameters: {
             query?: never;
@@ -1722,6 +1742,43 @@ export interface components {
              */
             state: "pending" | "running" | "healthy" | "failed" | "superseded";
         };
+        /** DeploymentPolicy */
+        DeploymentPolicy: {
+            /**
+             * Approvals
+             * @description Which changes wait for a person.
+             */
+            approvals: components["schemas"]["PolicyApproval"][];
+            /**
+             * Approved Packages
+             * @description The system packages a build may install: the platform package list.
+             */
+            approved_packages: string[];
+            /**
+             * Approver
+             * @description Who decides an approval request.
+             */
+            approver: string;
+            /**
+             * Connections
+             * @description Data connections by name; never their address.
+             */
+            connections: components["schemas"]["PolicyConnection"][];
+            database: components["schemas"]["PolicyDatabase"];
+            /**
+             * Hosts
+             * @description Internet hosts approved for an environment.
+             */
+            hosts: components["schemas"]["PolicyHost"][];
+            /** How To Ask For A Package */
+            how_to_ask_for_a_package: string;
+            /**
+             * Scope
+             * @description `org`: every host and connection in the org (admins and operators). `own`: only those the caller's own approved requests opened.
+             * @enum {string}
+             */
+            scope: "org" | "own";
+        };
         /** DirectoryGroupIn */
         DirectoryGroupIn: {
             /**
@@ -1795,7 +1852,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -2273,6 +2330,51 @@ export interface components {
         OwnerTransfer: {
             /** User Id */
             user_id: string;
+        };
+        /** PolicyApproval */
+        PolicyApproval: {
+            kind: components["schemas"]["RequirementKind"];
+            /** When */
+            when: string;
+        };
+        /** PolicyConnection */
+        PolicyConnection: {
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "internal" | "confidential" | "restricted";
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+        };
+        /** PolicyDatabase */
+        PolicyDatabase: {
+            /**
+             * Places Total
+             * @description App databases the company's database tier holds.
+             */
+            places_total: number;
+            /**
+             * Places Used
+             * @description App databases the org's apps hold.
+             */
+            places_used: number;
+            /**
+             * Room
+             * @description Whether one more app may ask for a database.
+             */
+            room: boolean;
+        };
+        /** PolicyHost */
+        PolicyHost: {
+            /** App Id */
+            app_id: string;
+            /** Environment Id */
+            environment_id: string;
+            /** Host */
+            host: string;
         };
         /**
          * PrincipalKind
@@ -6800,6 +6902,62 @@ export interface operations {
                 };
             };
             /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_deployment_policy_v1_org_deployment_policy_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentPolicy"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
             403: {
                 headers: {
                     [name: string]: unknown;

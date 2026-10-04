@@ -695,6 +695,25 @@ async def test_sqlite_on_disk_fails_the_build_before_the_builder(b: Bench, tmp_p
     assert b.builds.requests == []
 
 
+async def test_an_unlisted_native_library_fails_the_build_before_the_builder(
+    b: Bench, tmp_path: Path
+) -> None:
+    ports, bundle = await stored_fixture(b, "unlisted-native-library", tmp_path)
+    build = start_build(b, b.w.preview, bundle).json()["build_id"]
+    assert await run_build(ports, org_id=b.w.org, build_id=build) == "failed"
+    out = get(b, f"/v1/builds/{build}").json()
+    assert (out["state"], out["failure_code"]) == ("failed", "ADD_APPROVED_PACKAGE")
+    assert b.builds.requests == []
+
+
+async def test_listed_native_libraries_reach_the_builder(b: Bench, tmp_path: Path) -> None:
+    ports, bundle = await stored_fixture(b, "listed-native-library", tmp_path)
+    build = start_build(b, b.w.preview, bundle).json()["build_id"]
+    assert await run_build(ports, org_id=b.w.org, build_id=build) == "succeeded"
+    (request,) = b.builds.requests
+    assert request.system_packages == ("poppler-utils",)
+
+
 def test_0015_downgrades_and_upgrades(dsns: Dsns) -> None:
     rev = importlib.import_module("ssc_control.db.migrations.versions.0015_build_framework")
     name = f"m{uuid.uuid4().hex[:12]}"

@@ -206,6 +206,19 @@ that month and when each of the cell's fixed resources (`database`, `egress`, `c
 created; active org admins only (`403 FORBIDDEN`). The numbers are for metrics and the cost view
 only. Nothing bills from them.
 
+**The deployment policy shows only what the caller may already see** (SSC-093, decision 016). `GET
+/v1/org/deployment-policy` answers, for the caller, the internet hosts approved for an environment
+(`host`, `app_id`, `environment_id`), the org's data connections by `name`, `kind` and
+`classification` (never their address), which changes wait for a person (`approvals`, with the
+`approver`), whether the company's database has room for another app database (`database`:
+`places_used` from the control plane's records, `places_total`, `room`; the cell agent's count is
+the one that refuses, `DB_TIER_FULL`), and the platform package list with how to ask for a
+package. Operators and active org admins get `scope: org`, the whole org; anyone else gets
+`scope: own`, only what their own approved `enable_internet_hosts` and `connect_data_source`
+requests opened. Workload credentials are `403 FORBIDDEN`; an operator's read is audited as
+`operator.access`. Until SSC-052 and SSC-053 land, approved requests are the only record of
+either.
+
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's
 call once there is more than one replica.
@@ -247,6 +260,13 @@ stateless, JSON replies. Code: `api/mcp/`.
   request's `X-Request-Id`.
 - **Tools.** `TOOLS` in `api/mcp/tools.py` is the allowlist; `app` is an `app_` id or a slug,
   as for `ssc`. Writes take an optional `idempotency_key` (a new one when absent) and return it.
+  - `get_platform_requirements()`: the runtime rules and facts (`ssc_shared.requirements`, the
+    source `ssc doctor` checks against), the resource classes and the platform package list.
+    Calls nothing. The server instructions say to call it first.
+  - `get_org_deployment_policy()`: `GET /v1/org/deployment-policy` as is (above).
+  - `preflight()`: the server has no folder to check, so it answers `ran: false` with how to run
+    it locally; local `ssc mcp` takes `path` and runs `ssc doctor` there, answering `blocking`
+    and the findings, each with its fix-it and `requirement`, and sends nothing.
   - `list_apps`; `get_app(app)`; `list_releases(app, limit?, before?)` (the releases page as is).
   - `get_status(app, operation?, build?)`: the app, the operation behind each environment's
     current release, and optionally one operation (`GET /v1/operations/{id}`) or one build
@@ -305,9 +325,11 @@ stateless, JSON replies. Code: `api/mcp/`.
   or `VALIDATION_FAILED` with `status: null` for one found before calling the API (the same
   shape as `ssc --json`).
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
-  step), a secret's value (SSC-026), listing connections (SSC-052), the warm flag (SSC-092) and
+  step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052;
+  `get_org_deployment_policy` shows only those), the warm flag (SSC-092) and
   the cell resource flags (SSC-087): no tool sets them, and the cell enable route refuses an
-  agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself.
+  agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself, and
+  `preflight` checks one.
 - **Wiring.** The SDK's routes are added to the FastAPI router rather than mounted (no
   trailing-slash redirect, metadata at the root); they are not in `openapi.json`. The session
   manager runs in the application's lifespan. `SSC_API_PUBLIC_URL` (default

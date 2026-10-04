@@ -202,7 +202,7 @@ def _requirement(body: ApprovalCreate, grants_version: int) -> tuple[Requirement
     return Requirement(body.kind, key), stored
 
 
-async def _sees_all(uow: UnitOfWork) -> bool:
+async def sees_every_request(uow: UnitOfWork) -> bool:
     """Operators and active org admins see every request; members see their own. Workload
     credentials see none."""
     principal = uow.principal
@@ -268,7 +268,7 @@ async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
 async def list_approvals(params: Annotated[ApprovalQuery, Query()], uow: UserUoW) -> ApprovalPage:
     """Newest first. Org admins and operators see every request; others see their own. An
     operator's read is audited as ``operator.access``."""
-    sees_all = await _sees_all(uow)
+    sees_all = await sees_every_request(uow)
     before: ApprovalRow | None = None
     if params.before is not None:
         before = await service.get(uow.conn, org_id=uow.org_id, approval_id=params.before)
@@ -299,7 +299,7 @@ async def list_approvals(params: Annotated[ApprovalQuery, Query()], uow: UserUoW
 )
 async def get_approval(approval_id: Id, uow: UserUoW) -> Approval:
     """One request. A request the caller may not see is ``NOT_FOUND``."""
-    sees_all = await _sees_all(uow)
+    sees_all = await sees_every_request(uow)
     row = await service.get(uow.conn, org_id=uow.org_id, approval_id=approval_id)
     if row is None or not _visible(uow, row, sees_all):
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"approval_id": approval_id})

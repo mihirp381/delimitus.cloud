@@ -151,7 +151,7 @@ def _start_command(value: str) -> str:
 def _public_name(value: str) -> str:
     if not _ENV_NAME.fullmatch(value):
         raise ValueError("must be an upper-case name of A-Z, 0-9 and _, at most 128 characters")
-    if value in _RESERVED_ENV or value.startswith("SSC_"):
+    if value in _RESERVED_ENV or value.startswith(("SSC_", "RAILPACK_")):
         raise ValueError("is set by the platform and cannot be a public build value")
     if any(word in value for word in _SECRET_WORDS):
         raise ValueError(

@@ -56,6 +56,7 @@ class CellAgentBuildDriver(BuildDriver):
             bundle_sha256=request.source_digest.removeprefix(DIGEST_PREFIX),
             public_env=request.public_env,
             start=request.manifest.runtime.start,
+            system_packages=request.system_packages,
         )
         body = await self._call("start", {"build": build_to_wire(build)})
         ref = body.get("ref")

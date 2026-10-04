@@ -23,6 +23,9 @@ Ticket "done when" checks:
   * set secret is write-only                         -> test_set_secret_takes_no_value
 SSC-043: a rollback past migrations names them and needs confirm
                                 -> test_a_rollback_past_migrations_names_them_and_needs_confirm
+SSC-093: the requirements, policy and preflight tools join the surface
+                                -> test_the_deployability_tools (who sees what in the policy:
+                                   test_approvals' test_the_deployment_policy_shows_only_...)
 Plus: only agent credentials get in, the tool set is the allowlist, both protocol eras work,
 refusals are tool errors carrying the problem, rate limits are per credential, and the OpenAPI
 file is unchanged. Local `ssc mcp`: ssc_cli's test_mcp_local. Agent login: test_auth_host.
@@ -70,9 +73,13 @@ from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
 from ssc_shared.fence import CLOSE, OPEN
 from ssc_shared.logs import Health, LogLine, LogPage, LogQuery
+from ssc_shared.requirements import platform_requirements
 
 SPEC = Path(__file__).resolve().parents[3] / "docs" / "api" / "openapi.json"
 ALLOWLIST = {
+    "get_platform_requirements",
+    "get_org_deployment_policy",
+    "preflight",
     "list_apps",
     "get_app",
     "get_status",
@@ -296,7 +303,17 @@ async def test_tool_set_is_the_allowlist(world: World) -> None:
     async with session(world.url, world.agent) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
     assert set(tools) == ALLOWLIST == set(TOOLS)
-    for name in ("list_apps", "get_app", "get_status", "list_releases", "get_logs", "set_secret"):
+    for name in (
+        "get_platform_requirements",
+        "get_org_deployment_policy",
+        "preflight",
+        "list_apps",
+        "get_app",
+        "get_status",
+        "list_releases",
+        "get_logs",
+        "set_secret",
+    ):
         assert tools[name].annotations is not None
         assert tools[name].annotations.read_only_hint is True
     for name in ("rollback", "deploy", "request_share", "request_connection"):
@@ -322,6 +339,20 @@ async def test_read_tools(world: World, mode: str) -> None:
     assert {e["name"] for e in by_id.structured_content["environments"]} == {"prod", "preview"}
     assert status.structured_content["app"]["id"] == world.app["id"]
     assert status.structured_content["current"] == {"prod": None, "preview": None}
+
+
+async def test_the_deployability_tools(world: World) -> None:
+    async with session(world.url, world.agent) as client:
+        requirements = await client.call_tool("get_platform_requirements", {})
+        policy = await client.call_tool("get_org_deployment_policy", {})
+        preflight = await client.call_tool("preflight", {})
+    assert requirements.structured_content == platform_requirements().model_dump(mode="json")
+    assert not policy.is_error
+    assert policy.structured_content["scope"] == "org"
+    assert policy.structured_content["connections"] == []
+    assert "poppler-utils" in policy.structured_content["approved_packages"]
+    assert preflight.structured_content["ran"] is False
+    assert "ssc doctor" in preflight.structured_content["next"]
 
 
 async def test_unknown_app_and_bad_arguments_are_tool_errors(world: World) -> None:

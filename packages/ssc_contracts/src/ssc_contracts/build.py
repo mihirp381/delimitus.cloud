@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Final
 
+from ssc_contracts.packages import HOW_TO_ASK
+
 BUILD_DEPENDENCY_UNRESOLVED: Final = "BUILD_DEPENDENCY_UNRESOLVED"
 BUILD_PRIVATE_REGISTRY: Final = "BUILD_PRIVATE_REGISTRY"
 BUILD_NO_ENTRYPOINT: Final = "BUILD_NO_ENTRYPOINT"
@@ -16,6 +18,7 @@ BUILD_EXITED_NONZERO: Final = "BUILD_EXITED_NONZERO"
 BUILD_UNSUPPORTED_RUNTIME: Final = "BUILD_UNSUPPORTED_RUNTIME"
 SECRET_IN_BUNDLE: Final = "SECRET_IN_BUNDLE"  # noqa: S105  (a reason code, not a secret)
 STATE_SQLITE_EPHEMERAL: Final = "STATE_SQLITE_EPHEMERAL"
+ADD_APPROVED_PACKAGE: Final = "ADD_APPROVED_PACKAGE"
 
 SQLITE_ON_DISK: Final = (
     "The app keeps SQLite on disk (STATE_SQLITE_EPHEMERAL). The file system is memory and is lost "
@@ -43,6 +46,9 @@ FIX_ITS: Final[Mapping[str, str]] = MappingProxyType(
         SECRET_IN_BUNDLE: "The build's secret scan found a secret in the source and stopped. "
         "Remove it from the code, rotate it, store it as an app secret and deploy again.",
         STATE_SQLITE_EPHEMERAL: SQLITE_ON_DISK,
+        ADD_APPROVED_PACKAGE: "A dependency needs a system package (a native library, a font, "
+        "a PDF tool) that is not on the platform package list, so the build stopped before it "
+        "began. `ssc doctor` names the package and the dependency. " + HOW_TO_ASK,
     }
 )
 

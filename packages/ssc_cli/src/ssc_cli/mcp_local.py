@@ -13,6 +13,11 @@ more; ``set_secret`` takes no value and answers with the ``ssc secret set`` comm
 A refusal is a tool error whose structured content is ``{"error": {...}}``, the members
 ``ssc --json`` prints. Absent on purpose, as on the server: approving, promote, connection
 listing, the warm flag and the cell resource flags.
+
+``get_platform_requirements`` answers from ``ssc_shared.requirements`` without a call, the same
+source ``ssc doctor`` reads; ``get_org_deployment_policy`` reads ``/v1/org/deployment-policy``.
+``preflight`` is where this server differs from the API's: it takes a folder and runs ``ssc
+doctor`` on it here, answering with the findings and their fix-its (SSC-093).
 """
 
 import asyncio
@@ -33,6 +38,7 @@ from ssc_cli.api import ApiClient, Sleep
 from ssc_cli.commands.deploy import prepare_folder, upload_bundle
 from ssc_cli.commands.share import FLOOR, RANK, Env
 from ssc_cli.credentials import agent_bearer, read_token
+from ssc_cli.doctor import run_doctor
 from ssc_cli.errors import (
     AGENT_TOKEN_REQUIRED,
     APP_NOT_FOUND,
@@ -50,8 +56,12 @@ from ssc_contracts.errors import ErrorCode
 from ssc_shared.fence import fence
 from ssc_shared.logs import MAX_LINES, MAX_SINCE_SECONDS
 from ssc_shared.redaction import redact
+from ssc_shared.requirements import platform_requirements
 
 TOOLS: Final = (
+    "get_platform_requirements",
+    "get_org_deployment_policy",
+    "preflight",
     "list_apps",
     "get_app",
     "get_status",
@@ -69,7 +79,11 @@ SHARE_ATTEMPTS: Final = 3
 RELEASE_PAGE: Final = 100
 WAIT_SECONDS: Final = 600.0
 INSTRUCTIONS: Final = (
-    "Small Software Cloud, from this machine: see the apps in your org, their releases and what "
+    "Small Software Cloud, from this machine. Before writing or changing an app, call "
+    "get_platform_requirements and follow its rules; get_org_deployment_policy says which hosts, "
+    "data connections and system packages the org allows you. Run preflight on the folder and "
+    "fix every finding marked block before you deploy. You can also see the apps in your org, "
+    "their releases and what "
     "each environment runs; deploy a folder to preview (deploy packs, uploads and builds it and "
     "answers with preview's url); roll an environment back; read an environment's logs; have a "
     "secret set; and ask for sharing or a data connection. Asking only opens an approval request: "
@@ -559,9 +573,68 @@ def secret_handoff(c: ApiClient, *, ref: str, env: str, name: str) -> Body:
     }
 
 
-def build_server(open_client: Opener, sleep: Sleep, wait: float = WAIT_SECONDS) -> MCPServer:
-    """The stdio server with the ten tools, each opening its own client."""
+PREFLIGHT_PASSED: Final = "No finding blocks the deploy: deploy the folder."
+PREFLIGHT_BLOCKED: Final = (
+    "Fix every finding marked block, following its fix, then run preflight again before you "
+    "deploy. A finding's requirement names the rule in get_platform_requirements."
+)
+
+
+def preflight_folder(folder: Path) -> Body:
+    """``ssc doctor`` on the folder, as the ``preflight`` tool answers it."""
+    if not folder.is_dir():
+        raise local_error(
+            ErrorCode.VALIDATION_FAILED, "Not a folder.", f"{folder} is not a folder."
+        )
+    findings = run_doctor(folder)
+    blocking = any(f.severity == "block" for f in findings)
+    return {
+        "ran": True,
+        "path": str(folder),
+        "blocking": blocking,
+        "findings": [f.model_dump(mode="json") for f in findings],
+        "next": PREFLIGHT_BLOCKED if blocking else PREFLIGHT_PASSED,
+    }
+
+
+def _deployability(open_client: Opener) -> MCPServer:
+    """The server with the three tools an agent calls before it deploys (SSC-093), first."""
     server = MCPServer(name="ssc", instructions=INSTRUCTIONS)
+    read = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+
+    def get_platform_requirements() -> CallToolResult:
+        """Call this first, before writing or changing an app: the rules every app must follow
+        to deploy (port, health path, memory-only disk, Postgres, timers, egress, no Dockerfile,
+        the platform package list), the facts of how it runs (sleeping, sessions, resource
+        classes) and the doctor codes that check each rule."""
+        return ok(platform_requirements().model_dump(mode="json"))
+
+    def get_org_deployment_policy() -> CallToolResult:
+        """What your org lets your apps reach and use: the internet hosts approved, the data
+        connections by name and classification, which changes wait for an approval and from
+        whom, whether the company's database has room for another app, and the system packages
+        a build may install. Only what you could see in the console."""
+        return run(open_client, lambda c: c.get_json("/v1/org/deployment-policy"))
+
+    def preflight(path: Folder = ".") -> CallToolResult:
+        """Check a folder before deploying it, as `ssc doctor` does, on this machine: each
+        finding with its code, severity (`block`, `warn` or `info`), file and line, the rule it
+        checks and how to fix it. Deploy only once nothing blocks."""
+        folder = Path(path).resolve()
+        try:
+            return ok(preflight_folder(folder))
+        except CliError as e:
+            return refused(e)
+
+    server.add_tool(get_platform_requirements, annotations=read)
+    server.add_tool(get_org_deployment_policy, annotations=read)
+    server.add_tool(preflight, annotations=read)
+    return server
+
+
+def build_server(open_client: Opener, sleep: Sleep, wait: float = WAIT_SECONDS) -> MCPServer:
+    """The stdio server with the thirteen tools, each opening its own client."""
+    server = _deployability(open_client)
     read = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     ask = ToolAnnotations(
         read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False

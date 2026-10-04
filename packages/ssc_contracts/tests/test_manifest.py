@@ -395,6 +395,7 @@ def test_sets_are_unique_bounded_and_sorted() -> None:
         ("build.public_env.staging", 'VITE_A = "x"', "'prod' or 'preview'"),
         ("build", 'public_names = ["PORT"]', "set by the platform"),
         ("build", 'public_names = ["SSC_ORG"]', "set by the platform"),
+        ("build", 'public_names = ["RAILPACK_DEPLOY_APT_PACKAGES"]', "set by the platform"),
         ("build", 'public_names = ["DATABASE_URL"]', "set by the platform"),
         ("build", 'public_names = ["DB_PASSWORD"]', "looks like a secret"),
     ],
@@ -567,7 +568,10 @@ SECRETISH = ("SECRET", "PASSWORD", "PASSWD", "SERVICE_ROLE", "PRIVATE_KEY")
 PUBLIC_SUFFIX = st.from_regex(r"[A-Z0-9_]{1,8}", fullmatch=True)
 PREFIXED = st.tuples(st.sampled_from(["VITE_", "NEXT_PUBLIC_"]), PUBLIC_SUFFIX).map("".join)
 LISTED = st.from_regex(r"[A-Z][A-Z0-9_]{0,8}", fullmatch=True).filter(
-    lambda n: n not in {"PORT", "HOME", "PATH", "DATABASE_URL"} and not n.startswith("SSC_")
+    lambda n: (
+        n not in {"PORT", "HOME", "PATH", "DATABASE_URL"}
+        and not n.startswith(("SSC_", "RAILPACK_"))
+    )
 )
 TEXT = st.text(st.characters(exclude_categories=["Cs"], exclude_characters="\x00"), max_size=12)
 LINE = TEXT.map(lambda t: "run " + "".join(c for c in t if c not in "\r\n"))

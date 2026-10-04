@@ -8,13 +8,16 @@ uses (Streamlit, Gradio, Dash, Shiny), which makes it a session app (``is_sessio
 (``ssc_bundle.migrations``, SSC-043), which the build keeps on the release.
 
 Refused, in this order: Java and chat bots (``BUILD_UNSUPPORTED_RUNTIME``), a private package
-registry (``BUILD_PRIVATE_REGISTRY``), SQLite on disk (``STATE_SQLITE_EPHEMERAL``) and an app
-with nothing to start (``BUILD_NO_ENTRYPOINT``: only notebooks, or Streamlit or Shiny without a
-start command). With ``postgres = true`` a ``sqlite:///`` URL is taken for a local fallback and
-not refused; a ``sqlite3.connect`` call, a SQLite driver or a SQLite file always is. In-memory
-SQLite (``:memory:``, ``mode=memory``) and test files are never refused. ``sqlite_on_disk`` is the
-same SQLite rule alone, for ``ssc doctor`` and ``ssc deploy``. A Dockerfile is never used, and gets
-a notice.
+registry (``BUILD_PRIVATE_REGISTRY``), a system package outside the platform package list
+(``ADD_APPROVED_PACKAGE``, ``ssc_contracts.packages``: needed by a dependency, or asked for in
+``railpack.json``), SQLite on disk (``STATE_SQLITE_EPHEMERAL``) and an app with nothing to start
+(``BUILD_NO_ENTRYPOINT``: only notebooks, or Streamlit or Shiny without a start command). With
+``postgres = true`` a ``sqlite:///`` URL is taken for a local fallback and not refused; a
+``sqlite3.connect`` call, a SQLite driver or a SQLite file always is. In-memory SQLite
+(``:memory:``, ``mode=memory``) and test files are never refused. ``sqlite_on_disk`` is the same
+SQLite rule alone, for ``ssc doctor`` and ``ssc deploy``; ``package_needs`` is the package rule's
+input, for both as well. ``system_packages`` are the listed packages the app's dependencies need,
+which the build installs. A Dockerfile is never used, and gets a notice.
 """
 
 import ipaddress
@@ -28,12 +31,14 @@ from urllib.parse import urlsplit
 
 from ssc_bundle.migrations import Ledgers, ledgers
 from ssc_contracts.build import (
+    ADD_APPROVED_PACKAGE,
     BUILD_NO_ENTRYPOINT,
     BUILD_PRIVATE_REGISTRY,
     BUILD_UNSUPPORTED_RUNTIME,
     STATE_SQLITE_EPHEMERAL,
 )
 from ssc_contracts.manifest import SESSION_FRAMEWORKS, Manifest
+from ssc_contracts.packages import APPROVED_PACKAGES, needed
 
 MAX_ANALYZE_BYTES: Final = 1024 * 1024
 JAVA_FILES: Final = frozenset(
@@ -68,6 +73,7 @@ PRIVATE_HOST_LABELS: Final = frozenset(
 )
 PRIVATE_HOST_SUFFIXES: Final = (".pkg.dev", ".codeartifact.amazonaws.com", "pkgs.dev.azure.com")
 DOCKERFILES: Final = frozenset({"dockerfile", "containerfile"})
+RAILPACK_CONFIG: Final = "railpack.json"
 
 _PY_IMPORT = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
 _PEP503 = re.compile(r"[-_.]+")
@@ -111,6 +117,22 @@ class Analysis:
     refusal: Refusal | None
     notices: tuple[str, ...]
     migrations: Ledgers = field(default_factory=dict[str, tuple[str, ...]])
+    system_packages: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PackageNeed:
+    """A system package the app needs: ``by`` is the dependency that needs it, or
+    ``railpack.json`` when that file asks for it; ``path`` is the file that says so (``.`` for a
+    dependency)."""
+
+    path: str
+    by: str
+    package: str
+
+    @property
+    def listed(self) -> bool:
+        return self.package in APPROVED_PACKAGES
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,13 +157,22 @@ def analyze(files: Iterable[tuple[str, bytes | None]], manifest: Manifest) -> An
     src = _Source(dict(files))
     py, node = _python_deps(src), _node_deps(src)
     framework = _framework(src, py)
+    needs = _package_needs(src, py, node)
     refusal = (
         _unsupported(src, py | node)
         or _private_registry(src)
+        or _unlisted(needs)
         or _sqlite(src, node, postgres=manifest.state.postgres)
         or _no_entrypoint(src, manifest, framework)
     )
-    return Analysis(framework, refusal, _notices(src, py | node), ledgers(src.files))
+    packages = tuple(sorted({n.package for n in needs if n.listed}))
+    return Analysis(framework, refusal, _notices(src, py | node), ledgers(src.files), packages)
+
+
+def package_needs(files: Iterable[tuple[str, bytes | None]]) -> tuple[PackageNeed, ...]:
+    """Every system package the app in ``files`` needs, listed or not."""
+    src = _Source(dict(files))
+    return _package_needs(src, _python_deps(src), _node_deps(src))
 
 
 def sqlite_on_disk(files: Iterable[tuple[str, bytes | None]], manifest: Manifest) -> Refusal | None:
@@ -157,6 +188,26 @@ def _unsupported(src: _Source, deps: frozenset[str]) -> Refusal | None:
     bots = sorted(BOT_PACKAGES & deps)
     if bots:
         return Refusal(BUILD_UNSUPPORTED_RUNTIME, ".", f"a chat bot library: {bots[0]}")
+    return None
+
+
+def _package_needs(
+    src: _Source, py: frozenset[str], node: frozenset[str]
+) -> tuple[PackageNeed, ...]:
+    found = [PackageNeed(".", by, p) for by, pkgs in needed(py, node).items() for p in pkgs]
+    config = _json(src.text(RAILPACK_CONFIG) or "")
+    asked = _list(config.get("buildAptPackages"))
+    asked += _list(_obj(config.get("deploy")).get("aptPackages"))
+    found += [PackageNeed(RAILPACK_CONFIG, RAILPACK_CONFIG, str(p)) for p in asked]
+    return tuple(dict.fromkeys(found))
+
+
+def _unlisted(needs: tuple[PackageNeed, ...]) -> Refusal | None:
+    for n in needs:
+        if not n.listed:
+            what = "asks for" if n.by == RAILPACK_CONFIG else "needs"
+            detail = f"{n.by} {what} {n.package[:64]}, which is not on the platform package list"
+            return Refusal(ADD_APPROVED_PACKAGE, n.path, detail)
     return None
 
 

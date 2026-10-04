@@ -7,7 +7,8 @@ Ticket "done when" checks:
                                          -> test_production_deploy_waits_on_an_open_approval
 Plus: the fail-closed gate, the ProdGate port over recorded and manifest capabilities, widening
 a data-connected app, agent grant changes (agent_share), the operator-only decision endpoint,
-who sees which request, operator.access, and the 0005 migration.
+who sees which request and what the deployment policy shows (SSC-093), operator.access, and the
+0005 migration.
 """
 
 from __future__ import annotations
@@ -983,6 +984,84 @@ def test_who_sees_which_request(
         client.get(f"/v1/approvals/{theirs}", headers=auth(stranger)), ErrorCode.NOT_FOUND
     )
     assert client.get("/v1/approvals", headers=auth(stranger)).json()["approvals"] == []
+
+
+def test_the_deployment_policy_shows_only_what_the_caller_may_see(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, world.org)
+        for name, classification in (
+            ("finance", "confidential"),
+            ("hr", "restricted"),
+            ("payroll", "internal"),
+        ):
+            conn.execute(
+                "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
+                "database_name) values (%s, %s, %s, 'postgres', %s, 'db.corp.internal', 5432, "
+                "'warehouse')",
+                (new_id("con"), world.org, name, classification),
+            )
+        conn.execute(
+            "insert into ssc.app_database (org_id, environment_id, host, port, connection_limit) "
+            "values (%s, %s, '10.21.0.3', 5432, 2)",
+            (world.org, world.prod),
+        )
+    asks = [
+        ask_api(client, tokens.builder, world.prod, subject="finance"),
+        ask_api(client, tokens.admin, world.prod, subject="hr"),
+        ask_api(client, tokens.builder, world.prod, "enable_internet_hosts", "api.mine.example"),
+        ask_api(client, tokens.admin, world.prod, "enable_internet_hosts", "api.theirs.example"),
+    ]
+    for r in asks:
+        apr = r.json()["id"]
+        decided = post(
+            client, f"/v1/approvals/{apr}/decision", tokens.operator, decision(world.approver)
+        )
+        assert decided.status_code == 200, decided.text
+    ask_api(client, tokens.builder, world.prod, "enable_internet_hosts", "api.pending.example")
+
+    def policy(token: str) -> dict[str, Any]:
+        r = client.get("/v1/org/deployment-policy", headers=auth(token))
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def seen(token: str) -> tuple[str, list[str], list[str]]:
+        p = policy(token)
+        return p["scope"], [c["name"] for c in p["connections"]], [h["host"] for h in p["hosts"]]
+
+    everything = ("org", ["finance", "hr", "payroll"], ["api.mine.example", "api.theirs.example"])
+    assert seen(tokens.approver) == everything
+    assert seen(tokens.admin_agent) == everything
+    assert seen(tokens.builder) == ("own", ["finance"], ["api.mine.example"])
+    assert seen(tokens.member) == ("own", [], [])
+    full = policy(tokens.operator)
+    assert full["connections"][0] == {
+        "name": "finance",
+        "kind": "postgres",
+        "classification": "confidential",
+    }
+    assert full["hosts"][0] == {
+        "host": "api.mine.example",
+        "app_id": world.app,
+        "environment_id": world.prod,
+    }
+    assert "db.corp.internal" not in str(full)
+    assert "warehouse" not in str(full)
+    assert full["database"] == {"places_used": 1, "places_total": 10, "room": True}
+    assert {a["kind"] for a in full["approvals"]} == {k.value for k in RequirementKind}
+    assert "never through an agent" in full["approver"]
+    assert "poppler-utils" in full["approved_packages"]
+    assert "SSC support" in full["how_to_ask_for_a_package"]
+    accesses = events_of(dsns.app, world.org, AuditAction.OPERATOR_ACCESS)
+    assert ("org", world.org) in [(a["target_kind"], a["target_id"]) for a in accesses]
+    assert_problem(
+        client.get("/v1/org/deployment-policy", headers=auth(tokens.workload)), ErrorCode.FORBIDDEN
+    )
+    other = asyncio.run(make_world(dsns.app, "Other"))
+    stranger = mint(signing_key, org=other.org, sub=other.admin, jti=f"cred_{new_key()[:16]}")
+    assert seen(stranger) == ("org", [], [])
+    assert policy(stranger)["database"]["places_used"] == 0
 
 
 # ── sharing rules ────────────────────────────────────────────────────────────

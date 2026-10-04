@@ -11,7 +11,8 @@ before any builder call.
 
 Before the builder is first called the job reads the stored bundle (``ssc_bundle.analyze``,
 SSC-015): a refusal fails the build with its code (``STATE_SQLITE_EPHEMERAL``,
-``BUILD_PRIVATE_REGISTRY`` and the rest of ``ssc_contracts.build``), notices go to the log with
+``BUILD_PRIVATE_REGISTRY``, ``ADD_APPROVED_PACKAGE`` and the rest of ``ssc_contracts.build``),
+the listed system packages the source needs go to the builder (SSC-093), notices go to the log with
 the build id, and the session framework found is kept on the build and then on its release, where
 ``desired_for`` reads it. So are the migrations of each ledger tool in the source (SSC-043),
 which a rollback is checked against. The analysis needs the blob store; only a development or test
@@ -196,8 +197,9 @@ async def run_build(
     if request is None:
         return await _fail(ports, org_id, build, ErrorCode.MANIFEST_INVALID.value)
     checked = await _check_source(ports, org_id, build, request)
-    if isinstance(checked, _Build):
-        build, status = checked, await _step(ports, driver, org_id, checked, request)
+    if isinstance(checked, tuple):
+        build, request = checked
+        status = await _step(ports, driver, org_id, build, request)
     else:
         status = checked
     return await _settle(
@@ -248,12 +250,13 @@ async def _claim(ports: Ports, org_id: str, build_id: str) -> _Build | str:
 
 async def _check_source(
     ports: Ports, org_id: str, build: _Build, request: BuildRequest
-) -> _Build | Failed | None:
+) -> tuple[_Build, BuildRequest] | Failed | None:
     """Analyse the bundle before the builder is first called: the build with its framework and
-    migrations, a refusal, or None when the bundle could not be read (try again later)."""
+    migrations and the request with the system packages to install, a refusal, or None when the
+    bundle could not be read (try again later)."""
     store = ports.blob_store
     if store is None or build.driver_ref is not None:
-        return build
+        return build, request
     try:
         found = await analyze_stored(store, request.bundle_key, request.manifest)
     except Exception:
@@ -273,7 +276,10 @@ async def _check_source(
             "migrations": json.dumps(migrations),
         }
         await conn.execute(_SET_SOURCE, params)
-    return replace(build, framework=found.framework, migrations=migrations)
+    return (
+        replace(build, framework=found.framework, migrations=migrations),
+        replace(request, system_packages=found.system_packages),
+    )
 
 
 async def _step(
