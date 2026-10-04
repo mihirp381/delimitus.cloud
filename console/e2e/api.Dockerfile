@@ -15,11 +15,13 @@ COPY --chown=ssc:ssc pyproject.toml uv.lock ./
 COPY --chown=ssc:ssc packages packages
 COPY --chown=ssc:ssc conformance conformance
 COPY --chown=ssc:ssc tools/dev_stack.py tools/dev_stack.py
-# dev_stack.py imports the control-plane test helpers, which need the dev group (testcontainers).
-RUN uv sync --locked --package ssc-control --group dev
+# dev_stack.py imports the control-plane test helpers, which need the dev group (testcontainers)
+# and ssc-agent.
+RUN uv sync --locked --all-packages
 EXPOSE 8000
 HEALTHCHECK --interval=2s --timeout=3s --start-period=5s --retries=60 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
 # `up` prints a token; it goes nowhere. e2e/run.mjs mints its own with `token`. The worker, with
 # the fake builder and runtime, runs the kill switch's steps.
-CMD ["sh", "-c", "python tools/dev_stack.py --dir /state up --dsn \"$SSC_E2E_DSN\" > /dev/null && exec python tools/dev_stack.py --dir /state serve --worker --host 0.0.0.0 --port 8000"]
+# Every spec shares one token, so its rate limit is raised.
+CMD ["sh", "-c", "python tools/dev_stack.py --dir /state up --dsn \"$SSC_E2E_DSN\" > /dev/null && exec python tools/dev_stack.py --dir /state serve --worker --rate-capacity 1000 --host 0.0.0.0 --port 8000"]
