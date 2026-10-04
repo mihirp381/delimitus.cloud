@@ -67,8 +67,8 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     ),
     "audit": frozenset({"format", "filters"}),
     "audit_anchor": frozenset({"restored_to", "prior_anchor_seq", "head_seq", "ref"}),
-    "org": frozenset({"name"}),
-    "auth_session": frozenset({"kind", "user_id", "reason", "via"}),  # SSC-019
+    "org": frozenset({"name", "agent_logs"}),
+    "auth_session": frozenset({"kind", "user_id", "reason", "via", "client_id"}),  # SSC-019
     "directory_connection": frozenset(
         {"state", "reason", "join_rule", "connection_type", "workos_directory_id"}
     ),  # SSC-019

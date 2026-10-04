@@ -184,7 +184,11 @@ FORBIDDEN`). `app` and `build` lines come from the cell agent, which builds the 
 filter itself from the environment's service name and its last five builds; `deploy` lines come
 from the deployment rows. `since` (seconds, default 3600, at most 7 days) reads history; `after`
 (the last answer's `cursor`) with `wait` (at most 20 seconds) follows, holding the request until a
-new line arrives. Every line is redacted in the agent and again here. The agent shares one
+new line arrives. Every line is redacted in the agent and again here. An agent credential is
+`403 AGENT_LOGS_OFF` where an org admin has turned log reading off for agents (SSC-048:
+`GET`/`PUT /v1/org/agent-policy` `{logs}`, on by default; the `PUT` needs an active org admin
+outside an agent session, `AGENT_SESSION_REFUSED` otherwise, and a change is audited as
+`org.updated` with `agent_logs` before and after). The agent shares one
 upstream read every 2 seconds among all followers and budgets other reads, so the cell stays
 under Cloud Logging's 60 reads a minute; a caller over its share or a cell over its budget gets
 `429 LOGS_RATE_LIMITED` with `Retry-After`, and a cell that cannot read gets `503
@@ -226,9 +230,15 @@ stateless, JSON replies. Code: `api/mcp/`.
   `agent: true` and a `client_id`. Any other bearer, or none, gets the SDK's `401` with
   `WWW-Authenticate: Bearer ... resource_metadata="<public URL>/.well-known/oauth-protected-resource/mcp"`
   (RFC 6750 and RFC 9728, not a problem body). That metadata names the API's token issuer as
-  the authorization server. Until SSC-019 issues agent tokens, only `tools/dev_stack.py token
-  --agent --client-id X` makes one. A request gets `421` unless its `Host` is the public host
-  or a loopback address (DNS rebinding).
+  the authorization server. A person makes one with `ssc login --org <org> --agent <name>`
+  (SSC-048): the device flow at our auth host with an `agent` form field (lowercase,
+  `[a-z0-9][a-z0-9._-]{0,63}`, else `invalid_request`); the consent page names the agent before
+  single sign-on, the `cli` session records it (`auth_session.agent_client_id`, also in
+  `login.succeeded` and `token.issued`), and every access token of the session, refreshed ones
+  included, carries `agent: true` and that `client_id`. `ssc mcp` uses that login, kept in its
+  own keychain entry. Remote clients' OAuth at `/mcp` itself is not built yet; in development
+  `tools/dev_stack.py token --agent --client-id X` still makes one. A request gets `421` unless
+  its `Host` is the public host or a loopback address (DNS rebinding).
 - **One code path.** Each tool calls `/v1` in process (`httpx2.ASGITransport` on this
   application) with the caller's own bearer, so authorisation, row-level security,
   `Idempotency-Key`, the per-credential rate limit, `If-Match` and audit are the route handlers'
@@ -256,7 +266,19 @@ stateless, JSON replies. Code: `api/mcp/`.
     null on `BUILD_IN_FLIGHT`). Build and deployment POSTs use `<step>-<sha256(key)>`, so a
     repeat replays the same build or operation. A remote server cannot read a laptop: the
     agent packs and PUTs the bytes itself. `deploying` and `live` also carry `url`, preview's
-    `EnvironmentOut.url`: the address the folder is served at.
+    `EnvironmentOut.url`: the address the folder is served at. When the deployment waits on a
+    one-time creation (the accepted operation's `notice`), `deploying` carries the `notice` and
+    a `next` line telling the agent to wait and check `get_status`, not to deploy, roll back or
+    change its key again; `rollback` adds the same `next`. A manifest the platform refuses (for
+    example a `billing` key, which does not exist) fails the build with `MANIFEST_INVALID`, and
+    local `ssc mcp` refuses it before uploading, naming the line.
+  - `get_logs(app, env, source?, since?, limit?, after?)`: one page of `GET .../logs`, each
+    line redacted once more and the whole log inside one `<<<UNTRUSTED ... UNTRUSTED>>>` frame
+    (`ssc_shared.fence`; a marker inside a line is broken so it cannot close the frame), with
+    `line_count` and `cursor`. `AGENT_LOGS_OFF` where the org turned it off.
+  - `set_secret(app, env, name)`: takes no value. It checks the name and answers `set: false`
+    with the `ssc secret set <slug> <NAME> --env <env>` command for the person to run, where the
+    value is typed; no value passes through the API or an agent (SSC-026).
   - `request_share(app, env, who, role?)`: `who` is a `usr_` or `grp_` id or `org`; `role`
     defaults to the floor (`user` on prod, `builder` on preview). A grant below the floor is
     `VALIDATION_FAILED` with `status: null`; a subject that already has the role asks nothing
@@ -283,8 +305,9 @@ stateless, JSON replies. Code: `api/mcp/`.
   or `VALIDATION_FAILED` with `status: null` for one found before calling the API (the same
   shape as `ssc --json`).
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
-  step), secrets (SSC-026), logs (SSC-024), connections (SSC-050/051). Local `ssc mcp`, which
-  packs and uploads a folder itself, is lane C's.
+  step), a secret's value (SSC-026), listing connections (SSC-052), the warm flag (SSC-092) and
+  the cell resource flags (SSC-087): no tool sets them, and the cell enable route refuses an
+  agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself.
 - **Wiring.** The SDK's routes are added to the FastAPI router rather than mounted (no
   trailing-slash redirect, metadata at the root); they are not in `openapi.json`. The session
   manager runs in the application's lifespan. `SSC_API_PUBLIC_URL` (default

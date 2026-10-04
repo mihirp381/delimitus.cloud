@@ -382,6 +382,53 @@ async def test_the_device_form_refuses_a_cross_site_post_and_unknown_codes(rig: 
     assert bad.json() == {"error": "invalid_request"}
 
 
+async def test_an_agent_login_names_the_agent_and_every_token_carries_it(rig: Rig) -> None:
+    """SSC-048: ``ssc login --agent claude-code``. The person confirms the agent by name before
+    single sign-on; the session, its audit rows and every access token (refreshed too) say it."""
+    start = (
+        await rig.http.post("/device/authorize", data={"org": rig.w.org, "agent": "claude-code"})
+    ).json()
+    form = {"org": rig.w.org, "user_code": start["user_code"]}
+    consent = await rig.http.post("/device", data=form)
+    assert consent.status_code == 200
+    assert "claude-code" in consent.text and "name=agent value='claude-code'" in consent.text
+    spoofed = await rig.http.post("/device", data={**form, "agent": "other"})
+    assert spoofed.status_code == 200 and "name=agent value='claude-code'" in spoofed.text
+    r = await rig.http.post("/device", data={**form, "agent": "claude-code"})
+    rig.w.wo.profile("agent-code", FOUNDER_IDP, "ada@example.com")
+    done = await rig.through_workos(r, "agent-code")
+    assert (done.status_code, done.text) == (200, pages.DEVICE_DONE)
+    got = await rig.http.post(
+        "/token", data={"grant_type": DEVICE_GRANT, "device_code": start["device_code"]}
+    )
+    assert got.status_code == 200, got.text
+    verifier = Verifier(rig.signer.jwks(), AUTH)
+    principal = verifier.verify(got.json()["access_token"], USER_AUDIENCE)
+    assert principal.subject == rig.w.founder
+    assert principal.is_agent and principal.client_id == "claude-code"
+    assert principal.session_id is not None
+    live = await rig.w.live(principal.session_id)
+    assert live is not None and live.kind == "cli" and live.agent_client_id == "claude-code"
+    issued = await rig.w.audit(AuditAction.TOKEN_ISSUED)
+    assert [i[2] for i in issued] == [{"kind": "cli", "via": "device", "client_id": "claude-code"}]
+    logins = await rig.w.audit(AuditAction.LOGIN_SUCCEEDED)
+    assert logins[-1][2]["client_id"] == "claude-code"
+    refresh = {"grant_type": "refresh_token", "refresh_token": got.json()["refresh_token"]}
+    again = await rig.http.post("/token", data=refresh)
+    assert again.status_code == 200
+    renewed = verifier.verify(again.json()["access_token"], USER_AUDIENCE)
+    assert renewed.is_agent and renewed.client_id == "claude-code"
+
+
+async def test_a_person_login_is_never_an_agent_and_a_bad_agent_name_is_refused(rig: Rig) -> None:
+    got = await device_login(rig)
+    principal = Verifier(rig.signer.jwks(), AUTH).verify(got["access_token"], USER_AUDIENCE)
+    assert not principal.is_agent and principal.client_id is None
+    for name in ("Claude Code", "x" * 65, "-lead", "a/b"):
+        bad = await rig.http.post("/device/authorize", data={"org": rig.w.org, "agent": name})
+        assert bad.json() == {"error": "invalid_request"}, name
+
+
 # ── the API ──────────────────────────────────────────────────────────────────
 
 

@@ -46,12 +46,14 @@ class LoginResult(Shape):
     org_id: str
     subject: str
     stored_in: Literal["keychain"]
+    agent: str | None = None
 
 
 class LogoutResult(Shape):
     api_url: str
     revoked: bool
     cleared: bool
+    agent: bool = False
 
 
 class AppRow(Shape):

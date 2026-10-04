@@ -763,10 +763,15 @@ def test_no_route_returns_a_value(b: Bench) -> None:
 
 
 def test_no_mcp_tool_touches_secrets() -> None:
-    from ssc_cli.mcp_local import TOOLS as LOCAL_TOOLS  # noqa: PLC0415
+    """The one secret tool, ``set_secret`` (SSC-048), only hands the person the ``ssc secret set``
+    command: it calls no secret route, so no value or grant reaches an agent."""
+    from ssc_cli import mcp_local  # noqa: PLC0415
+    from ssc_control.api.mcp import tools as server_tools  # noqa: PLC0415
 
-    for tools in (TOOLS, LOCAL_TOOLS):
-        assert not [t for t in tools if "secret" in t]
+    for tools in (TOOLS, mcp_local.TOOLS):
+        assert [t for t in tools if "secret" in t] == ["set_secret"]
+    for module in (server_tools, mcp_local):
+        assert "/secrets" not in inspect.getsource(module)
 
 
 SEAMS = (

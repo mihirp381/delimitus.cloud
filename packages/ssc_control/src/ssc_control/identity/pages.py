@@ -50,3 +50,21 @@ def device_form(org_id: str, user_code: str) -> str:
         f"<label>Code <input name=user_code value='{code}' autocomplete=off required></label> "
         "<button>Continue</button></form>",
     )
+
+
+def agent_consent(org_id: str, user_code: str, agent: str) -> str:
+    """The step before single sign-on when the login is for a coding agent (SSC-048)."""
+    name = escape(agent)
+    return page(
+        "Let a coding agent act as you",
+        f"<p>This login is for the coding agent <strong>{name}</strong>. Once you sign in, it can "
+        "do what you can do in ssc for up to 12 hours: deploy to preview, roll back, read logs "
+        "and ask for access. It cannot approve anything or handle secrets, and every call it "
+        "makes is recorded as made by it on your behalf.</p>"
+        f"<p>Continue only if you just ran <code>ssc login --agent {name}</code> yourself.</p>"
+        "<form method=post action='/device'>"
+        f"<input type=hidden name=org value='{escape(org_id)}'>"
+        f"<input type=hidden name=user_code value='{escape(user_code)}'>"
+        f"<input type=hidden name=agent value='{name}'>"
+        f"<button>Let {name} act as me</button></form>",
+    )

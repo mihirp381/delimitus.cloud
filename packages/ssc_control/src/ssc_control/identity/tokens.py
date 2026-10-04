@@ -1,12 +1,15 @@
 """Credentials the auth host issues (SSC-019, decision 024).
 
 Access tokens: ES256 ``ssc-api+jwt`` the API verifies, five minutes, with ``sid`` naming the
-session; ``jti`` is the session id, so rate limits and idempotency keys follow the session.
+session; ``jti`` is the session id, so rate limits and idempotency keys follow the session. A
+session approved for a coding agent (SSC-048) adds ``agent: true`` and ``client_id``, so the API
+records every call as the agent's.
 Refresh tokens (command line only): ``ssc_rt.<org id>.<secret>``, used once; presenting a used one
 revokes the session (``refresh_reuse``). Device grants (RFC 8628): the device code is
 ``<org id>.<secret>``, the user code eight consonants. Only SHA-256 digests are stored.
 """
 
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -31,6 +34,7 @@ DEVICE_SECONDS: Final = 600
 DEVICE_INTERVAL: Final = 5
 USER_CODE_ALPHABET: Final = "BCDFGHJKLMNPQRSTVWXZ"
 USER_CODE_LENGTH: Final = 8
+AGENT_CLIENT: Final = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 
 DeviceState = Literal["authorization_pending", "slow_down", "access_denied", "expired_token"]
 
@@ -53,9 +57,16 @@ class Signer:
         return {"keys": [jwk]}
 
     def access_token(  # noqa: PLR0913  (keyword-only)
-        self, *, org_id: str, user_id: str, session_id: str, audience: str, now: datetime
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        session_id: str,
+        audience: str,
+        now: datetime,
+        agent_client_id: str | None = None,
     ) -> str:
-        claims = {
+        claims: dict[str, Any] = {
             "iss": self.issuer,
             "aud": audience,
             "sub": user_id,
@@ -66,6 +77,8 @@ class Signer:
             "kind": "user",
             "sid": session_id,
         }
+        if agent_client_id is not None:
+            claims.update(agent=True, client_id=agent_client_id)
         return jwt.encode(
             claims, self._pem, algorithm=ALGORITHM, headers={"kid": self.kid, "typ": API_TOKEN_TYP}
         )
@@ -123,6 +136,7 @@ class Refreshed:
     user_id: str
     session_id: str
     refresh_token: str
+    agent_client_id: str | None = None
 
 
 async def rotate_refresh(
@@ -143,15 +157,18 @@ async def rotate_refresh(
     live = await live_session(conn, org_id, str(session_id))
     if live is None or live.kind != "cli":
         return None
-    return Refreshed(live.user_id, live.id, await issue_refresh(conn, org_id, live.id))
+    refresh = await issue_refresh(conn, org_id, live.id)
+    return Refreshed(live.user_id, live.id, refresh, live.agent_client_id)
 
 
 # ── device grants (RFC 8628) ─────────────────────────────────────────────────
 
 _START = text(
-    "insert into ssc.device_grant (id, org_id, device_code_hash, user_code, expires_at) "
-    "values (:id, :org, :hash, :code, now() + make_interval(secs => :secs))"
+    "insert into ssc.device_grant (id, org_id, device_code_hash, user_code, expires_at, "
+    "agent_client_id) values (:id, :org, :hash, :code, now() + make_interval(secs => :secs), "
+    ":agent)"
 )
+_AGENT = text("select agent_client_id from ssc.device_grant where org_id = :org and id = :id")
 _PENDING = text(
     "select id from ssc.device_grant where org_id = :org and user_code = :code "
     "and state = 'pending' and expires_at > now()"
@@ -187,7 +204,10 @@ def normal_user_code(raw: str) -> str:
     return "".join(c for c in raw.upper() if c.isalpha())
 
 
-async def start_device(conn: AsyncConnection, org_id: str) -> DeviceStart:
+async def start_device(
+    conn: AsyncConnection, org_id: str, agent_client_id: str | None = None
+) -> DeviceStart:
+    """A new grant; with ``agent_client_id`` the session it opens is that coding agent's."""
     device_code = f"{org_id}.{new_secret()}"
     user_code = new_user_code()
     for _ in range(5):
@@ -202,6 +222,7 @@ async def start_device(conn: AsyncConnection, org_id: str) -> DeviceStart:
             "hash": digest(device_code),
             "code": user_code,
             "secs": DEVICE_SECONDS,
+            "agent": agent_client_id,
         },
     )
     return DeviceStart(device_code, user_code, DEVICE_SECONDS, DEVICE_INTERVAL)
@@ -211,6 +232,13 @@ async def pending_grant(conn: AsyncConnection, org_id: str, user_code: str) -> s
     code = normal_user_code(user_code)
     found = (await conn.execute(_PENDING, {"org": org_id, "code": code})).scalar_one_or_none()
     return None if found is None else str(found)
+
+
+async def grant_agent(conn: AsyncConnection, org_id: str, grant_id: str) -> str | None:
+    """The coding agent a grant was started for, or None for the person's own login."""
+    found = await conn.execute(_AGENT, {"org": org_id, "id": grant_id})
+    agent = found.scalar_one_or_none()
+    return None if agent is None else str(agent)
 
 
 async def decide_grant(

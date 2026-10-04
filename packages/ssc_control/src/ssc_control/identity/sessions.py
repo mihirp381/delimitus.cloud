@@ -49,6 +49,7 @@ class LiveSession:
     created_at: datetime
     expires_at: datetime
     now: datetime
+    agent_client_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,12 +63,13 @@ class Redeemed:
 
 _OPEN = text(
     "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, created_at, "
-    "expires_at) values (:id, :org, :user, :kind, :conn, now(), "
-    "now() + make_interval(secs => :secs))"
+    "expires_at, agent_client_id) values (:id, :org, :user, :kind, :conn, now(), "
+    "now() + make_interval(secs => :secs), :agent)"
 )
 # Live: not revoked, not expired, the person active and not revoked since the session began.
 _LIVE = text(
-    "select s.id, s.user_id, s.kind, u.display_name, u.email, s.created_at, s.expires_at, now() "
+    "select s.id, s.user_id, s.kind, u.display_name, u.email, s.created_at, s.expires_at, now(), "
+    "s.agent_client_id "
     "from ssc.auth_session s join ssc.user_account u on u.org_id = s.org_id and u.id = s.user_id "
     "where s.org_id = :org and s.id = :id and s.revoked_at is null and s.expires_at > now() "
     "and u.status = 'active' "
@@ -116,7 +118,9 @@ async def open_session(  # noqa: PLR0913  (keyword-only)
     kind: SessionKind,
     connection_id: str,
     actor: Actor,
+    agent_client_id: str | None = None,
 ) -> str:
+    """A new session; a ``cli`` one may be a coding agent's (``agent_client_id``, SSC-048)."""
     session_id = new_id("ses")
     await conn.execute(
         _OPEN,
@@ -127,8 +131,12 @@ async def open_session(  # noqa: PLR0913  (keyword-only)
             "kind": kind,
             "conn": connection_id,
             "secs": SESSION_SECONDS,
+            "agent": agent_client_id,
         },
     )
+    after = {"kind": kind, "user_id": user_id}
+    if agent_client_id is not None:
+        after["client_id"] = agent_client_id
     await append_event(
         conn,
         NewEvent(
@@ -137,7 +145,7 @@ async def open_session(  # noqa: PLR0913  (keyword-only)
             actor=actor,
             target_kind="auth_session",
             target_id=session_id,
-            after={"kind": kind, "user_id": user_id},
+            after=after,
         ),
     )
     return session_id
@@ -147,8 +155,8 @@ async def live_session(conn: AsyncConnection, org_id: str, session_id: str) -> L
     row = (await conn.execute(_LIVE, {"org": org_id, "id": session_id})).one_or_none()
     if row is None:
         return None
-    sid, user_id, kind, name, email, created, expires, now = row
-    return LiveSession(sid, user_id, kind, name, email, created, expires, now)
+    sid, user_id, kind, name, email, created, expires, now, agent = row
+    return LiveSession(sid, user_id, kind, name, email, created, expires, now, agent)
 
 
 async def _audit_revoked(

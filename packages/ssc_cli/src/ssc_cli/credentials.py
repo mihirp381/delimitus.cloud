@@ -5,6 +5,10 @@ The keychain entry is either a token kept by ``ssc token set`` or the login ``ss
 refreshed a minute before its access token ends, under a lock file, so two ``ssc`` processes
 never present the same refresh token (the auth host ends the login when one is reused).
 
+A coding agent's login (``ssc login --agent NAME``, SSC-048) is kept in a second entry, the API
+address followed by ``#agent``, so ``ssc`` goes on acting as the person and only ``ssc mcp`` acts
+as the agent.
+
 A machine without a keychain backend (headless Linux, CI) still works through ``SSC_TOKEN``;
 keychain failures become a clear error, never a traceback.
 """
@@ -34,6 +38,7 @@ SERVICE: Final = "ssc"
 ENV_TOKEN: Final = "SSC_TOKEN"  # noqa: S105  (an environment variable name)
 REFRESH_MARGIN: Final = 60
 LOCK_FILE: Final = "login.lock"
+AGENT_ENTRY: Final = "#agent"
 
 type Bearer = str | Callable[[], str]
 
@@ -47,15 +52,19 @@ class Login(BaseModel):
     access_token: str
     expires_at: int
     refresh_token: str
+    agent: str | None = None
 
     @classmethod
-    def of(cls, auth_url: str, org_id: str, tokens: Tokens, now: float) -> Login:
+    def of(  # noqa: PLR0913  (the login's parts)
+        cls, auth_url: str, org_id: str, tokens: Tokens, now: float, agent: str | None = None
+    ) -> Login:
         return cls(
             auth_url=auth_url,
             org_id=org_id,
             access_token=tokens.access_token,
             expires_at=int(now) + tokens.expires_in,
             refresh_token=tokens.refresh_token,
+            agent=agent,
         )
 
     def fresh(self, now: float) -> bool:
@@ -78,33 +87,51 @@ def bearer(
     login = _as_login(stored)
     if login is None:
         return stored
+    return _refreshing(api_url, login, transport)
+
+
+def agent_bearer(api_url: str, *, transport: httpx2.BaseTransport | None = None) -> Bearer | None:
+    """The kept agent login's access token, refreshed as needed; None when there is none."""
+    login = read_login(api_url, agent=True)
+    return None if login is None else _refreshing(api_url, login, transport)
+
+
+def _refreshing(api_url: str, login: Login, transport: httpx2.BaseTransport | None) -> Bearer:
     current = login
 
     def access() -> str:
         nonlocal current
         if not current.fresh(time.time()):
-            current = refreshed(api_url, transport=transport)
+            current = refreshed(api_url, agent=login.agent is not None, transport=transport)
         return current.access_token
 
     return access
 
 
-def read_login(api_url: str) -> Login | None:
+def entry(api_url: str, *, agent: bool = False) -> str:
+    """The keychain entry of the person's login, or of the agent's."""
+    return f"{api_url}{AGENT_ENTRY}" if agent else api_url
+
+
+def read_login(api_url: str, *, agent: bool = False) -> Login | None:
     try:
-        stored = keyring.get_password(SERVICE, api_url)
+        stored = keyring.get_password(SERVICE, entry(api_url, agent=agent))
     except KeyringError:
         return None
-    return None if stored is None else _as_login(stored)
+    login = None if stored is None else _as_login(stored)
+    return login if login is None or (login.agent is not None) == agent else None
 
 
 def store_login(api_url: str, login: Login) -> None:
-    store_token(api_url, login.model_dump_json())
+    store_token(entry(api_url, agent=login.agent is not None), login.model_dump_json())
 
 
-def refreshed(api_url: str, *, transport: httpx2.BaseTransport | None = None) -> Login:
+def refreshed(
+    api_url: str, *, agent: bool = False, transport: httpx2.BaseTransport | None = None
+) -> Login:
     """The kept login with a live access token, refreshing it if no other process has."""
     with _lock():
-        login = read_login(api_url)
+        login = read_login(api_url, agent=agent)
         if login is None:
             raise _login_ended(api_url)
         if login.fresh(time.time()):
@@ -112,9 +139,9 @@ def refreshed(api_url: str, *, transport: httpx2.BaseTransport | None = None) ->
         with AuthClient(login.auth_url, transport=transport) as auth:
             tokens = auth.refresh(login.refresh_token)
         if tokens is None:
-            clear_token(api_url)
-            raise _login_ended(api_url, login.org_id)
-        login = Login.of(login.auth_url, login.org_id, tokens, time.time())
+            clear_token(api_url, agent=agent)
+            raise _login_ended(api_url, login.org_id, login.agent)
+        login = Login.of(login.auth_url, login.org_id, tokens, time.time(), login.agent)
         store_login(api_url, login)
         return login
 
@@ -138,8 +165,10 @@ def _lock() -> Generator[None]:
         yield
 
 
-def _login_ended(api_url: str, org_id: str | None = None) -> CliError:
+def _login_ended(api_url: str, org_id: str | None = None, agent: str | None = None) -> CliError:
     again = f"ssc login --org {org_id}" if org_id else "ssc login --org <org id>"
+    if agent is not None:
+        again += f" --agent {agent}"
     return local_error(
         LOGIN_ENDED,
         "Your login has ended.",
@@ -182,12 +211,13 @@ def store_token(api_url: str, token: str) -> None:
         raise _no_keychain()
 
 
-def clear_token(api_url: str) -> bool:
-    """Remove the stored token. True when one was removed."""
+def clear_token(api_url: str, *, agent: bool = False) -> bool:
+    """Remove the stored token, or the agent's login. True when one was removed."""
+    kept = entry(api_url, agent=agent)
     try:
-        if keyring.get_password(SERVICE, api_url) is None:
+        if keyring.get_password(SERVICE, kept) is None:
             return False
-        keyring.delete_password(SERVICE, api_url)
+        keyring.delete_password(SERVICE, kept)
     except KeyringError:
         return False
     return True

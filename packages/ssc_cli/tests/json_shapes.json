@@ -169,6 +169,7 @@
     "timestamp": "string"
   },
   "LoginResult": {
+    "agent": "string|null",
     "api_url": "string",
     "auth_url": "string",
     "org_id": "string",
@@ -176,6 +177,7 @@
     "subject": "string"
   },
   "LogoutResult": {
+    "agent": "boolean",
     "api_url": "string",
     "cleared": "boolean",
     "revoked": "boolean"

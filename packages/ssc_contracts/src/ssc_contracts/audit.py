@@ -14,6 +14,7 @@ class ActorKind(StrEnum):
 
 class AuditAction(StrEnum):
     ORG_CREATED = "org.created"
+    ORG_UPDATED = "org.updated"
     USER_CREATED = "user.created"
     USER_UPDATED = "user.updated"
     USER_DEACTIVATED = "user.deactivated"

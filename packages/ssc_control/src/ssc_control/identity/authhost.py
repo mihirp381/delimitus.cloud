@@ -9,7 +9,9 @@ session (12 hours, never extended) and hands the app host a one-time code at
 person with a live browser session skips WorkOS on the next app host.
 
 Command line: RFC 8628 device authorisation (``/device/authorize``, ``/device``, ``/token``) and
-RFC 7009 revocation (``/revoke``). Tokens: ``tokens``.
+RFC 7009 revocation (``/revoke``). Tokens: ``tokens``. A login for a coding agent (SSC-048) names
+it in ``/device/authorize`` (``agent``); the person confirms that agent by name before single
+sign-on, and every access token of the session carries ``agent: true`` and its ``client_id``.
 
 Every refused sign-in shows the same page (``pages.REFUSED``); the reason is logged and audited
 as ``login.failed``. Login state lives in a signed, ten-minute cookie; the WorkOS ``state`` is only
@@ -276,6 +278,7 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                 response: Response = refused()
             else:
                 kind = "cli" if login.get("flow") == "device" else "browser"
+                agent = login.get("agent") if kind == "cli" else None
                 session_id = await sessions.open_session(
                     conn,
                     org_id,
@@ -283,6 +286,7 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                     kind=kind,
                     connection_id=profile.connection_id,
                     actor=Actor(kind=ActorKind.USER, id=found.user_id),
+                    agent_client_id=agent if isinstance(agent, str) else None,
                 )
                 if kind == "cli":
                     approved = await tokens.decide_grant(
@@ -320,14 +324,15 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
 
     @app.post("/device/authorize")
     async def device_authorize(request: Request) -> JSONResponse:
-        org_id = _org(_form(await request.body()).get("org", ""))
-        if org_id is None:
+        form = _form(await request.body())
+        org_id, agent = _org(form.get("org", "")), form.get("agent")
+        if org_id is None or (agent is not None and not tokens.AGENT_CLIENT.fullmatch(agent)):
             return _oauth_error("invalid_request")
         async with bound_org(host.engine, org_id) as conn:
             connection = await connections.load(conn, org_id)
             if connection is None or connection.frozen:
                 return _oauth_error("invalid_request")
-            start = await tokens.start_device(conn, org_id)
+            start = await tokens.start_device(conn, org_id, agent)
         verify = f"{s.auth_url}/device?{urlencode({'org': org_id})}"
         complete = f"{verify}&{urlencode({'user_code': start.user_code})}"
         return JSONResponse(
@@ -361,17 +366,25 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         async with bound_org(host.engine, org_id) as conn:
             connection = await connections.load(conn, org_id)
             grant = await tokens.pending_grant(conn, org_id, form.get("user_code", ""))
+            agent = None if grant is None else await tokens.grant_agent(conn, org_id, grant)
         if connection is None or connection.frozen or grant is None:
             return bad_request()
-        return to_workos(connection, {"flow": "device", "org": org_id, "grant": grant})
+        if agent is not None and form.get("agent") != agent:
+            code = tokens.normal_user_code(form.get("user_code", ""))
+            return html(pages.agent_consent(org_id, code, agent))
+        login = {"flow": "device", "org": org_id, "grant": grant, "agent": agent}
+        return to_workos(connection, login)
 
-    def token_reply(org_id: str, user_id: str, sid: str, refresh: str) -> JSONResponse:
+    def token_reply(
+        org_id: str, user_id: str, sid: str, refresh: str, agent: str | None
+    ) -> JSONResponse:
         access = host.signer.access_token(
             org_id=org_id,
             user_id=user_id,
             session_id=sid,
             audience=s.api_audience,
             now=tokens.utcnow(),
+            agent_client_id=agent,
         )
         return JSONResponse(
             {
@@ -395,6 +408,9 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                 live = await sessions.live_session(conn, org_id, polled)
             if live is None:
                 return _oauth_error(polled if not polled.startswith("ses_") else "access_denied")
+            issued: dict[str, Any] = {"kind": "cli", "via": "device"}
+            if live.agent_client_id is not None:
+                issued["client_id"] = live.agent_client_id
             await append_event(
                 conn,
                 NewEvent(
@@ -403,11 +419,11 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                     actor=Actor(ActorKind.USER, live.user_id),
                     target_kind="auth_session",
                     target_id=live.id,
-                    after={"kind": "cli", "via": "device"},
+                    after=issued,
                 ),
             )
             refresh = await tokens.issue_refresh(conn, org_id, live.id)
-        return token_reply(org_id, live.user_id, live.id, refresh)
+        return token_reply(org_id, live.user_id, live.id, refresh, live.agent_client_id)
 
     async def refresh_token(raw: str) -> JSONResponse:
         parsed = tokens.org_of(raw, tokens.REFRESH_PREFIX)
@@ -420,7 +436,9 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             )
         if done is None:
             return _oauth_error("invalid_grant")
-        return token_reply(org_id, done.user_id, done.session_id, done.refresh_token)
+        return token_reply(
+            org_id, done.user_id, done.session_id, done.refresh_token, done.agent_client_id
+        )
 
     @app.post("/token")
     async def token(request: Request) -> JSONResponse:
