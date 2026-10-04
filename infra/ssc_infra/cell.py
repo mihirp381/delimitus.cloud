@@ -369,16 +369,21 @@ def proxy_settings(image: str | None, org: str | None) -> str | None:
 def proxy_cloud_config(image: str, org_id: str, bucket: str) -> str:
     """The proxy machine's ``user-data``: a systemd unit that runs ``image`` read-only on the
     host network and restarts it whenever it exits, after Docker is configured to pull from the
-    platform registry with the machine's own identity and the host refuses tunnels to the
-    metadata server and loopback (``PROXY_HOST_RANGES``)."""
+    platform registry with the machine's own identity, the host refuses tunnels to the
+    metadata server and loopback (``PROXY_HOST_RANGES``), and the host firewall, which drops
+    inbound TCP by default on Container-Optimized OS, admits the proxy port."""
     registry = n.platform_registry().split("/", 1)[0]
     rules = [
         f"OUTPUT -p tcp --dport {TUNNEL_PORT} -d {cidr} -j REJECT" for cidr in PROXY_HOST_RANGES
     ]
-    refuse = [
+    host = [
         f"ExecStartPre=/bin/sh -c 'iptables -w -C {rule} 2>/dev/null || iptables -w -A {rule}'"
         for rule in rules
     ]
+    accept = f"INPUT -p tcp --dport {PROXY_PORT} -j ACCEPT"
+    host.append(
+        f"ExecStartPre=/bin/sh -c 'iptables -w -C {accept} 2>/dev/null || iptables -w -I {accept}'"
+    )
     run = (
         "/usr/bin/docker run --rm --name ssc-egress --network host --read-only --tmpfs /tmp "
         "--cap-drop ALL --security-opt no-new-privileges "
@@ -395,7 +400,7 @@ def proxy_cloud_config(image: str, org_id: str, bucket: str) -> str:
             "Environment=HOME=/var/lib/ssc-egress",
             "ExecStartPre=/bin/mkdir -p /var/lib/ssc-egress",
             f"ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries {registry}",
-            *refuse,
+            *host,
             "ExecStartPre=-/usr/bin/docker rm -f ssc-egress",
             f"ExecStart={run}",
             f"ExecStop=/usr/bin/docker stop -t {PROXY_STOP_SECONDS} ssc-egress",

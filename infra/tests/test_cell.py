@@ -1663,6 +1663,8 @@ def test_the_proxy_machine_runs_its_image_read_only_and_restarts_it() -> None:
     for cidr in ("169.254.0.0/16", "127.0.0.0/8"):
         rule = f"OUTPUT -p tcp --dport 443 -d {cidr} -j REJECT"
         assert f"iptables -w -C {rule} 2>/dev/null || iptables -w -A {rule}" in user_data
+    accept = "INPUT -p tcp --dport 3128 -j ACCEPT"
+    assert f"iptables -w -C {accept} 2>/dev/null || iptables -w -I {accept}" in user_data
     assert template["metadata"]["cos-update-strategy"] == "update_disabled"
     group = one(declared, "gcp:compute/instanceGroupManager:InstanceGroupManager").inputs
     health = one(declared, "gcp:compute/healthCheck:HealthCheck").inputs
