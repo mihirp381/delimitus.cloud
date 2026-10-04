@@ -66,6 +66,8 @@ STALE_WAIT: Final = 4.0
 FIRST_READ_WAIT: Final = 10.0
 DEV_ENVS: Final = frozenset({"dev", "test"})
 STREAM_PORT: Final = 9002
+AGE_REPORT_SECONDS: Final = 60.0
+STALE_AGE_MS: Final = 60_000
 
 
 class SettingsError(ValueError):
@@ -264,10 +266,45 @@ class OnDemandView:
     def view(self) -> AccessView | None:
         return self._holder.view if self._feed.fresh(self._max_stale) else None
 
+    def age_ms(self) -> int:
+        """Milliseconds since a read last confirmed the view, or -1 before the first one."""
+        age = self._feed.age()
+        return -1 if age is None else int(age * 1000)
+
     async def aclose(self) -> None:
         if self._read is not None:
             self._read.cancel()
             await asyncio.gather(self._read, return_exceptions=True)
+
+
+class AgeReport:
+    """What the gateway says about the age of the snapshot it served from (SSC-062). Called by
+    a served request, never by a timer, so an idle instance logs nothing. At most once every
+    ``AGE_REPORT_SECONDS`` it logs the age at INFO, and the same again at WARNING when the age
+    is over ``STALE_AGE_MS``, which is the line the stale-snapshot alert counts. -1 means no
+    read has succeeded: those requests are already refused, so nothing is logged."""
+
+    def __init__(
+        self, age_ms: Callable[[], int], clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self._age_ms = age_ms
+        self._clock = clock
+        self._info: float | None = None
+        self._warning: float | None = None
+
+    def served(self) -> None:
+        age = self._age_ms()
+        if age < 0:
+            return
+        now = self._clock()
+        if self._info is None or now - self._info >= AGE_REPORT_SECONDS:
+            self._info = now
+            log.info("gateway snapshot age snapshot_age_ms=%d", age)
+        if age > STALE_AGE_MS and (
+            self._warning is None or now - self._warning >= AGE_REPORT_SECONDS
+        ):
+            self._warning = now
+            log.warning("gateway snapshot stale snapshot_age_ms=%d", age)
 
 
 def create_app(
@@ -276,10 +313,12 @@ def create_app(
     tokens: IdTokens | None = None,
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     streams: Streams | None = None,
+    age: AgeReport | None = None,
 ) -> FastAPI:
     """``gate`` returns None until start-up has loaded the keys. ``tokens`` mints the Google ID
     token for the app's service; None leaves ``X-Serverless-Authorization`` off (dev, tests).
-    ``streams`` admits an allowed WebSocket or event stream to the stream relay."""
+    ``streams`` admits an allowed WebSocket or event stream to the stream relay. ``age`` is told
+    of each request the check lets through."""
     app = FastAPI(
         title="ssc-edge", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
     )
@@ -309,6 +348,8 @@ def create_app(
                 allowed = Response(status_code=200, headers=headers)
                 for name, value in outcome.client_headers:
                     allowed.headers.append(name, value)
+                if age is not None:
+                    age.served()
                 return allowed
         except Exception:
             log.exception("authz check failed for %s", facts.host)
@@ -379,6 +420,7 @@ def production_app(
         tokens=None if dev else tokens,
         lifespan=lifespan,
         streams=streams,
+        age=AgeReport(snapshot.age_ms),
     )
 
 

@@ -8,9 +8,14 @@ set (SSC-013), else to ``Ports.blob_store``; with neither configured it does not
 ``stale_sweep`` is periodic: for every org whose newest version lags a live compile, or whose
 ``latest.json`` lags its newest version (a compile that ran out of retries, a lost job), it marks
 the snapshot dirty, which defers a compile. One org's failure is logged and the sweep goes on.
+
+Lateness is only logged (SSC-062): a compile that runs over ``COMPILE_LATE_SECONDS`` or fails for
+good logs ``snapshot compile late``, and a sweep that finds a stale snapshot logs ``stale
+snapshot marked dirty``. The control project's ``ssc-snapshot-late`` alert counts both lines.
 """
 
 import logging
+import time
 from typing import Final
 
 from procrastinate import Blueprint, JobContext, RetryStrategy
@@ -28,12 +33,24 @@ log = logging.getLogger(__name__)
 
 SWEEP_CRON: Final = "*/5 * * * *"
 """Every five minutes: each pass compiles every org once in memory, so it is not run faster."""
+COMPILE_LATE_SECONDS: Final = 60.0
 RETRY: Final = RetryStrategy(
     max_attempts=6,
     wait=1,
     linear_wait=2,
     retry_exceptions=[DBAPIError, BlobError, OSError, TimeoutError],
 )
+
+
+def report_late(org_id: str, started: float, now: float, *, failed: bool = False) -> bool:
+    """Logs ``snapshot compile late`` when a compile that began at ``started`` took longer than
+    ``COMPILE_LATE_SECONDS`` or failed with no retry left; returns whether it did."""
+    elapsed = now - started
+    if not failed and elapsed <= COMPILE_LATE_SECONDS:
+        return False
+    why = "failed for good" if failed else "ran long"
+    log.warning("snapshot compile late: %s after %.0f s", why, elapsed, extra={"org_id": org_id})
+    return True
 
 
 async def snapshot_store(ports: Ports, org_id: str) -> BlobStore | None:
@@ -50,13 +67,20 @@ def blueprint(*, sweep_cron: str = SWEEP_CRON) -> Blueprint:
     async def compile_snapshot(context: JobContext, org_id: str) -> int | None:  # pyright: ignore[reportUnusedFunction]
         """Publish the org's next version and move ``latest.json``; returns the version."""
         ports = ports_of(context)
-        store = await snapshot_store(ports, org_id)
-        if store is None:
-            log.warning("snapshot compile skipped: no blob store", extra={"org_id": org_id})
-            return None
-        async with bound_org(ports.engine, org_id) as conn:
-            version = await publish(conn, org_id, store, at=ports.clock())
-        await point_latest(ports.engine, org_id, store)
+        started = time.monotonic()
+        try:
+            store = await snapshot_store(ports, org_id)
+            if store is None:
+                log.warning("snapshot compile skipped: no blob store", extra={"org_id": org_id})
+                return None
+            async with bound_org(ports.engine, org_id) as conn:
+                version = await publish(conn, org_id, store, at=ports.clock())
+            await point_latest(ports.engine, org_id, store)
+        except Exception as exc:
+            gives_up = RETRY.get_retry_decision(exception=exc, job=context.job) is None
+            report_late(org_id, started, time.monotonic(), failed=gives_up)
+            raise
+        report_late(org_id, started, time.monotonic())
         return version
 
     @bp.periodic(cron=sweep_cron, periodic_id="snapshot_sweep", queueing_lock="snapshot_sweep")

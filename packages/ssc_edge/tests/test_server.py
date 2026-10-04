@@ -31,10 +31,12 @@ from ssc_edge import pages, server
 from ssc_edge.gate import IDENTITY_HEADER, UPSTREAM_HEADER, WAKE_HEADER, Allow, Deny, Facts, Gate
 from ssc_edge.keys import KeyringError, new_keyring, parse_keyring, public_jwks
 from ssc_edge.server import (
+    AGE_REPORT_SECONDS,
     FRESH_WAIT,
     RECHECK_SECONDS,
     SERVERLESS_AUTH,
     SETTLED_SECONDS,
+    AgeReport,
     OnDemandView,
     SettingsError,
     create_app,
@@ -508,3 +510,83 @@ def test_a_gateway_that_cannot_read_the_snapshot_at_start_refuses_everything(
         assert r.status_code == 503 and r.content == pages.UNAVAILABLE
         assert IDENTITY_HEADER not in r.headers
     assert store.reads[0] == latest_key(ORG)
+
+
+def test_the_age_is_logged_at_most_once_a_minute(caplog: pytest.LogCaptureFixture) -> None:
+    clock, age = Clock(), [2000]
+    report = AgeReport(lambda: age[0], clock)
+    with caplog.at_level("INFO", logger="ssc_edge.server"):
+        for _ in range(5):
+            report.served()
+            clock.t += AGE_REPORT_SECONDS / 10
+        assert [r.getMessage() for r in caplog.records] == [
+            "gateway snapshot age snapshot_age_ms=2000"
+        ]
+        clock.t += AGE_REPORT_SECONDS
+        report.served()
+    assert len(caplog.records) == 2
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+
+def test_a_stale_snapshot_is_a_warning_at_most_once_a_minute(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock, age = Clock(), [60_001]
+    report = AgeReport(lambda: age[0], clock)
+    with caplog.at_level("INFO", logger="ssc_edge.server"):
+        report.served()
+        clock.t += AGE_REPORT_SECONDS - 1
+        report.served()
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings == ["gateway snapshot stale snapshot_age_ms=60001"]
+        clock.t += 1
+        age[0] = 61_000
+        report.served()
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings[-1] == "gateway snapshot stale snapshot_age_ms=61000"
+    assert len(warnings) == 2
+
+
+def test_an_age_of_exactly_sixty_seconds_is_not_stale(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("INFO", logger="ssc_edge.server"):
+        AgeReport(lambda: 60_000, Clock()).served()
+    assert [r.levelname for r in caplog.records] == ["INFO"]
+
+
+def test_a_gateway_that_has_read_nothing_logs_no_age(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("INFO", logger="ssc_edge.server"):
+        AgeReport(lambda: -1, Clock()).served()
+    assert caplog.records == []
+
+
+def test_only_a_served_request_reports_the_age(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    calls: list[int] = []
+
+    def age() -> int:
+        calls.append(1)
+        return 61_000
+
+    http = TestClient(
+        create_app(lambda: world.gate(), age=AgeReport(age, Clock())),
+        raise_server_exceptions=False,
+    )
+    with caplog.at_level("INFO", logger="ssc_edge.server"):
+        denied = http.get("/authz/books", headers={"host": HOST})
+        assert denied.status_code != 200 and calls == []
+        allowed = http.get("/authz/books", headers={"host": HOST, "cookie": world.cookie()})
+    assert allowed.status_code == 200 and calls == [1]
+    messages = [r.getMessage() for r in caplog.records]
+    assert "gateway snapshot stale snapshot_age_ms=61000" in messages
+
+
+async def test_the_view_reports_the_age_of_its_last_confirmation(tmp_path: Path) -> None:
+    store, clock = CountingStore(tmp_path), Clock()
+    await publish(store, 1)
+    snap = on_demand(store, clock)
+    assert snap.age_ms() == -1
+    assert await snap.first_read()
+    assert snap.age_ms() == 0
+    clock.t += 61.5
+    assert snap.age_ms() == 61_500
