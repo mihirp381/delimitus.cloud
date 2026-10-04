@@ -301,7 +301,12 @@ class ControlProject:
     each sign as themselves (bundle URLs, decision 015)."""
 
     def __init__(
-        self, stage: n.Stage, folder: pulumi.Input[str], opts: pulumi.ResourceOptions
+        self,
+        stage: n.Stage,
+        folder: pulumi.Input[str],
+        opts: pulumi.ResourceOptions,
+        *,
+        billed: bool = True,
     ) -> None:
         self.stage: n.Stage = stage
         self.project = gcp.organizations.Project(
@@ -309,7 +314,7 @@ class ControlProject:
             project_id=n.control_project(stage),
             name=n.control_project(stage),
             folder_id=folder,
-            billing_account=n.BILLING_ACCOUNT,
+            billing_account=n.BILLING_ACCOUNT if billed else None,
             auto_create_network=False,
             deletion_policy="PREVENT",
             opts=opts,

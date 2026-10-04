@@ -211,6 +211,29 @@ def test_the_control_project_is_protected(declared: list[Declared]) -> None:
     assert project["projectId"] == "ssc-control-staging"
     assert project["folderId"] == PLATFORM_FOLDER
     assert project["deletionPolicy"] == "PREVENT"
+    assert project["billingAccount"] == naming.BILLING_ACCOUNT
+
+
+def test_staging_may_run_without_billing_while_it_has_no_control_plane() -> None:
+    """Staging holds only accounts, IAM and free APIs while no control plane runs there, so it
+    can give its billing slot to prod (SSC-089: one account holds five projects)."""
+    unbilled = run(
+        naming.PLATFORM_STACK,
+        {"platform_folder_id": PLATFORM_FOLDER, "control_staging_billing": "false"},
+    )
+    project = one(unbilled, "gcp:organizations/project:Project").inputs
+    assert project["projectId"] == "ssc-control-staging"
+    assert "billingAccount" not in project or project["billingAccount"] is None
+    staged = run(
+        naming.PLATFORM_STACK,
+        {
+            "platform_folder_id": PLATFORM_FOLDER,
+            "control_staging_billing": "false",
+            "control_stages": '["staging"]',
+        },
+    )
+    project = one(staged, "gcp:organizations/project:Project").inputs
+    assert project["billingAccount"] == naming.BILLING_ACCOUNT
 
 
 def test_the_pam_service_agent_manages_the_cells_folder(declared: list[Declared]) -> None:

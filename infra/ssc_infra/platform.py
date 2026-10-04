@@ -443,8 +443,14 @@ def build() -> None:
 
     deployer_image = config.get("deployer_image")
     cfg = control.read_config(config, deployer=deployer_image is not None)
+    staging_billed = config.get_bool("control_staging_billing")
     controls = {
-        stage: control.ControlProject(stage, platform_folder, opts)
+        stage: control.ControlProject(
+            stage,
+            platform_folder,
+            opts,
+            billed=stage != "staging" or staging_billed is not False or "staging" in cfg.stages,
+        )
         for stage in n.STAGES
         if stage == "staging" or stage in cfg.stages
     }
