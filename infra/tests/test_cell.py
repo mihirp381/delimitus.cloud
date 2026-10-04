@@ -238,7 +238,7 @@ def test_the_database_certificate_names_its_dns_name_which_resolves_in_the_cell(
     zone = one(cell_a, "gcp:dns/managedZone:ManagedZone", "sql-zone").inputs
     assert (zone["name"], zone["dnsName"], zone["visibility"]) == (
         "ssc-sql",
-        "sql.goog.",
+        "sql-psa.goog.",
         "private",
     )
     assert zone["privateVisibilityConfig"]["networks"] == [{"networkUrl": "vpc-id"}]
@@ -248,12 +248,12 @@ def test_the_database_certificate_names_its_dns_name_which_resolves_in_the_cell(
         "ssc-sql",
         "A",
     )
-    assert record["name"] == sql.outputs["dnsName"]
-    assert record["name"].endswith(".us-central1.sql.goog.")
+    assert record["name"] == sql.outputs["dnsNames"][0]["name"]
+    assert record["name"].endswith(".us-central1.sql-psa.goog.")
     assert record["rrdatas"] == [sql.outputs["privateIpAddress"]]
     assert ip_address(record["rrdatas"][0]) in ip_network(f"{cell.PSA_ADDRESS}/{cell.PSA_PREFIX}")
     rule = one(cell_a, "gcp:dns/responsePolicyRule:ResponsePolicyRule", "dns-sql").inputs
-    assert (rule["dnsName"], rule["behavior"]) == ("*.sql.goog.", "bypassResponsePolicy")
+    assert (rule["dnsName"], rule["behavior"]) == ("*.sql-psa.goog.", "bypassResponsePolicy")
 
 
 def test_the_deployer_may_write_records_in_the_database_zone_alone(

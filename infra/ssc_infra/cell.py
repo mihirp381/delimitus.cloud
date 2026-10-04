@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from ipaddress import ip_network
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 import pulumi
 import pulumi_gcp as gcp
@@ -118,7 +118,7 @@ SQL_TIER: Final = "db-f1-micro"
 SQL_INSTANCE: Final = "ssc-cell"
 SQL_MAX_CONNECTIONS: Final = "25"
 SQL_CA_MODE: Final = "GOOGLE_MANAGED_CAS_CA"
-SQL_DNS_ZONE: Final = "sql.goog."
+SQL_DNS_ZONE: Final = "sql-psa.goog."
 SQL_DNS_NAMES: Final = f"*.{SQL_DNS_ZONE}"
 GOOGLE_DNS_PASSTHRU: Final = (
     "googleapis.com.",
@@ -1050,7 +1050,9 @@ class Cell:
             "sql-dns",
             project=self.pid,
             managed_zone=self.sql_zone.name,
-            name=self.sql.dns_name.apply(lambda d: d if d.endswith(".") else f"{d}."),
+            name=pulumi.Output.all(self.sql.dns_names, self.sql.dns_name).apply(
+                lambda a: sql_dns_name(a[0], a[1])
+            ),
             type="A",
             ttl=DNS_TTL,
             rrdatas=[self.sql.private_ip_address],
@@ -1140,7 +1142,7 @@ class Cell:
         gets a ``*.<tld>.`` rule answering with a CNAME, which covers every type, to a name that
         only this policy answers. Google's names bypass it by the longer match, and so do the
         platform hosts the gateway calls (``GATEWAY_PLATFORM_HOSTS``), each by its exact name.
-        Cloud SQL's names (``*.sql.goog.``) bypass it to the cell's own ``ssc-sql`` zone, which
+        Cloud SQL's names (``*.sql-psa.goog.``) bypass it to the cell's own ``ssc-sql`` zone, which
         answers them all, so none leaves the cell either.
 
         The policy holds for the whole VPC, so an app resolves those hosts too, and nothing more:
@@ -2097,6 +2099,22 @@ class Cell:
 
 def build(stack: str) -> None:
     Cell(read_config(stack), pulumi.StackReference(n.platform_stack_ref())).build()
+
+
+def sql_dns_name(names: object, legacy: object) -> str:
+    """The instance's private services access name, fully qualified: Cloud SQL lists it in
+    ``dnsNames`` and leaves ``dnsName`` empty for such an instance."""
+    entries = cast("list[object]", names) if isinstance(names, list) else []
+    for entry in entries:
+        fields = cast("dict[str, object]", entry) if isinstance(entry, dict) else {}
+        kind = fields.get("connection_type", fields.get("connectionType"))
+        name = str(fields.get("name") or "")
+        if kind == "PRIVATE_SERVICES_ACCESS" and name:
+            return name if name.endswith(".") else f"{name}."
+    name = str(legacy or "")
+    if not name:
+        raise ValueError("the database instance has no DNS name")
+    return name if name.endswith(".") else f"{name}."
 
 
 def tlds() -> list[str]:

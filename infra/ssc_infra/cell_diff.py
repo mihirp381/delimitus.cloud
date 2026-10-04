@@ -206,7 +206,10 @@ def _own_values(state: Json, label: str) -> Swaps:
             records: list[Mapping[str, Json]] = assigned.get("dnsResourceRecords") or []
             found += [(str(r.get("data") or ""), "<dns-authorization>") for r in records]
         elif res["type"] == SQL_INSTANCE:
-            found.append((str(assigned.get("dnsName") or "").rstrip("."), "<sql-dns>"))
+            listed: list[Mapping[str, Json]] = assigned.get("dnsNames") or []
+            names = [str(d.get("name") or "") for d in listed]
+            for name in [str(assigned.get("dnsName") or ""), *names]:
+                found.append((name.rstrip("."), "<sql-dns>"))
             addresses.append((str(assigned.get("privateIpAddress") or ""), "<sql-address>"))
         elif res["type"] in TAG_TYPES:
             addresses.append((str(assigned.get("name") or ""), TAG_TYPES[res["type"]]))

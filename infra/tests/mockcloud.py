@@ -110,7 +110,14 @@ class Recorder(pulumi.runtime.Mocks):
                 crc = zlib.crc32(project.encode())
                 state |= {
                     "connectionName": f"{project}:{state['region']}:{state['name']}",
-                    "dnsName": f"{crc:08x}.{state['region']}.sql.goog.",
+                    "dnsName": "",
+                    "dnsNames": [
+                        {
+                            "connectionType": "PRIVATE_SERVICES_ACCESS",
+                            "dnsScope": "INSTANCE",
+                            "name": f"{crc:08x}.{crc:08x}.{state['region']}.sql-psa.goog.",
+                        }
+                    ],
                     "privateIpAddress": f"10.21.0.{3 + crc % 250}",
                 }
             case "gcp:dns/managedZone:ManagedZone" if state.get("visibility") == "public":

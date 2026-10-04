@@ -93,7 +93,12 @@ class CloudSqlAdmin:
 
     async def endpoint(self) -> tuple[str, int]:
         instance = await self._call("GET", self._instance)
-        if dns := str(instance.get("dnsName") or ""):
+        names = [
+            str(d.get("name") or "")
+            for d in _objs(instance.get("dnsNames"))
+            if d.get("connectionType") == "PRIVATE_SERVICES_ACCESS"
+        ]
+        if dns := next((x for x in names if x), str(instance.get("dnsName") or "")):
             return dns.rstrip("."), POSTGRES_PORT
         for address in _objs(instance.get("ipAddresses")):
             if address.get("type") == "PRIVATE" and address.get("ipAddress"):

@@ -680,6 +680,14 @@ async def test_the_endpoint_is_the_dns_name_else_the_private_address(
         "ipAddresses": [{"type": "PRIVATE", "ipAddress": "10.20.0.3"}],
     }
     assert await admin.endpoint() == ("abc.us-central1.sql.goog", 5432)
+    api.instance = {
+        "dnsName": None,
+        "dnsNames": [
+            {"connectionType": "PRIVATE_SERVICES_ACCESS", "name": "a1.b2.us-central1.sql-psa.goog."}
+        ],
+        "ipAddresses": [{"type": "PRIVATE", "ipAddress": "10.20.0.3"}],
+    }
+    assert await admin.endpoint() == ("a1.b2.us-central1.sql-psa.goog", 5432)
     api.instance = {"ipAddresses": [{"type": "PRIVATE", "ipAddress": "10.20.0.3"}]}
     assert await admin.endpoint() == ("10.20.0.3", 5432)
     api.instance = {}
