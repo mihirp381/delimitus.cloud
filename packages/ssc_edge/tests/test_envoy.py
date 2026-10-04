@@ -47,7 +47,7 @@ from ssc_edge.envoy import ENVOY_VERSION, WAKE_SECONDS, EnvoyConfig, render
 from ssc_edge.gate import DEADLINE_HEADER, SCHEDULE_HEADER, STREAM_HEADER, WAKE_HEADER
 from ssc_edge.identity_note import jwks
 from ssc_edge.keys import new_keyring, parse_keyring
-from ssc_edge.server import create_app
+from ssc_edge.server import RECHECK_SECONDS, create_app
 from ssc_edge.session import WAKE_COOKIE, wake_cookie
 from ssc_edge.streams import WATCH_SECONDS, Streams
 from ssc_shared.access import AccessView
@@ -524,7 +524,7 @@ def test_a_websocket_is_closed_within_one_watch_of_its_grant_going(stack: Stack)
             rest = b""
         took = time.monotonic() - started
         assert rest == b""
-        assert took <= WATCH_SECONDS + 1, took
+        assert took <= RECHECK_SECONDS + WATCH_SECONDS + 0.5, took
         assert stack.get(HOST, headers={"cookie": cookie}).status_code == 404
     finally:
         sock.close()

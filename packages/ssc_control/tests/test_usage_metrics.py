@@ -417,13 +417,14 @@ async def test_only_admins_read_the_cells_usage_and_fixed_resources(b: Bench, ce
     await _session_open_an_hour(b, cell)
     await _collect(b, cell, at(11, 20))
     async with bound_org(b.ports.engine, b.w.org) as conn:
-        for resource in ("database", "egress", "database"):
+        for minute, resource in enumerate(("database", "egress", "database"), start=21):
             await record_once(
                 conn,
                 org_id=b.w.org,
                 kind=MetricKind.FIXED_RESOURCE,
                 dedup_key=resource,
                 properties={"resource": resource},
+                at=at(11, minute),
             )
     assert_problem(get(b, f"/v1/usage?month={MONTH}", b.t.member), ErrorCode.FORBIDDEN)
     r = get(b, f"/v1/usage?month={MONTH}", b.t.admin)
