@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 import pulumi
 import pulumi_gcp as gcp
 
-from ssc_infra import control, policies
+from ssc_infra import alerts, control, policies
 from ssc_infra import naming as n
 from ssc_infra.policies import LOCATIONS, PUBLIC_TAG_KEY, PUBLIC_TAG_VALUE, Rule
 
@@ -421,6 +421,29 @@ def _deployer_job(
             )
 
 
+def _alerts(
+    email: str | None,
+    controls: Mapping[str, control.ControlProject],
+    opts: pulumi.ResourceOptions,
+) -> None:
+    """The control plane's on-call alerts (SSC-062), in each control project, made only when
+    ``oncall_email`` is set. Cell alerts live in the cell stacks."""
+    if not email:
+        return
+    for stage, cp in controls.items():
+        project = cp.project.project_id
+        api = gcp.projects.Service(
+            f"control-{stage}-monitoring",
+            project=project,
+            service="monitoring.googleapis.com",
+            disable_on_destroy=False,
+            opts=opts,
+        )
+        after = pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=[api]))
+        channel = alerts.notification_channel(project, email, after)
+        alerts.platform_alerts(project, channel, after)
+
+
 def build() -> None:
     config = pulumi.Config()
     platform_folder = config.require("platform_folder_id")
@@ -474,6 +497,7 @@ def build() -> None:
     }
     for plane in planes.values():
         plane.build()
+    _alerts(config.get("oncall_email"), controls, opts)
 
     gcp.iam.DenyPolicy(
         "cells-secret-read",

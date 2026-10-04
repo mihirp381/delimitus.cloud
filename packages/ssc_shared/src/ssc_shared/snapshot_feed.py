@@ -148,6 +148,11 @@ class SnapshotFeed:
         ok = self.last_ok_at
         return ok is not None and self._monotonic() - ok <= max_age
 
+    def age(self) -> float | None:
+        """Seconds since a poll last confirmed the view; None before the first good poll."""
+        ok = self.last_ok_at
+        return None if ok is None else self._monotonic() - ok
+
     def _ok(self, asked_at: float) -> None:
         self.last_ok_at = asked_at
         if self.failures:

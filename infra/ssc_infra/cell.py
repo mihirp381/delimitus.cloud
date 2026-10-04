@@ -18,6 +18,7 @@ from typing import Final, cast
 import pulumi
 import pulumi_gcp as gcp
 
+from ssc_infra import alerts
 from ssc_infra import naming as n
 from ssc_infra.control import PINNED_IMAGE, PLACEHOLDER_IMAGE, public_jwks_kids
 from ssc_infra.platform import (
@@ -212,6 +213,8 @@ class CellConfig:
     proxy_ha: bool = False
     """With ``egress``, two proxy machines in two zones behind an internal load balancer at the
     reserved address: the paid option, off by default (SSC-053)."""
+    oncall_email: str | None = None
+    """Where the cell's alerts go (SSC-062); unset, the cell has no alert resources."""
 
     @property
     def project_id(self) -> str:
@@ -259,6 +262,7 @@ class CellConfig:
             "datagw_image": self.datagw_image,
             "datagw_connections": self.datagw_connections,
             "proxy_image": self.proxy_image,
+            "oncall_email": self.oncall_email,
             **self.flags,
         }
         return {
@@ -302,6 +306,7 @@ def read_config(stack: str) -> CellConfig:
         ),
         proxy_image=proxy_settings(config.get("proxy_image"), org),
         proxy_ha=config.get_bool("proxy_ha") or False,
+        oncall_email=config.get("oncall_email"),
     )
 
 
@@ -519,6 +524,7 @@ class Cell:
         self.platform = platform
         self.opts = pulumi.ResourceOptions(provider=provider())
         self.apis: list[gcp.projects.Service] = []
+        self.oncall_channel: gcp.monitoring.NotificationChannel | None = None
 
     def _kept(self) -> pulumi.ResourceOptions:
         """Cloud Run holds addresses in a subnet for up to 2 h after a service goes; the project's
@@ -536,6 +542,7 @@ class Cell:
     def build(self) -> None:
         cfg = self.cfg
         self.project()
+        self.oncall()
         self.budget()
         self.identities()
         self.keys()
@@ -556,6 +563,7 @@ class Cell:
         if cfg.connections:
             self.data_gateway()
         self.deny()
+        self.alerts()
         if cfg.probe:
             self.probe()
             self.probe_runner()
@@ -594,8 +602,23 @@ class Cell:
             self.platform.require_output("control_workers"), public
         ).apply(lambda a: control_for(a[0], cfg.stage, a[1]))
 
+    def oncall(self) -> None:
+        """The cell's email channel (SSC-062), made only when ``oncall_email`` is set."""
+        email = self.cfg.oncall_email
+        self.oncall_channel = (
+            alerts.notification_channel(self.pid, email, self._o()) if email else None
+        )
+
+    def alerts(self) -> None:
+        """The cell's on-call alerts (SSC-062). A cell with nothing running sends none: every
+        alert counts log lines or load balancer errors, and none keys on missing data."""
+        if self.oncall_channel is not None:
+            alerts.cell_alerts(self.pid, self.oncall_channel, self._o())
+
     def budget(self) -> None:
-        """An alert on the cell project itself, sized to a full cell (A7)."""
+        """An alert on the cell project itself, sized to a full cell (A7). With an on-call
+        channel the budget notifies it too (SSC-062)."""
+        channel = self.oncall_channel
         gcp.billing.Budget(
             "cell-monthly",
             billing_account=self.cfg.billing_account,
@@ -613,6 +636,13 @@ class Cell:
                 gcp.billing.BudgetThresholdRuleArgs(threshold_percent=p, spend_basis=b)
                 for p, b in BUDGET_THRESHOLDS
             ],
+            all_updates_rule=(
+                gcp.billing.BudgetAllUpdatesRuleArgs(
+                    monitoring_notification_channels=[channel.name]
+                )
+                if channel
+                else None
+            ),
             opts=self._o(),
         )
 
@@ -1808,6 +1838,7 @@ class Cell:
             healthy_threshold=2,
             unhealthy_threshold=3,
             tcp_health_check=gcp.compute.HealthCheckTcpHealthCheckArgs(port=PROXY_PORT),
+            log_config=gcp.compute.HealthCheckLogConfigArgs(enable=True),
             opts=self._o(),
         )
 

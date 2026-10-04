@@ -21,16 +21,23 @@ as overrides (which needs ``run.jobs.runWithOverrides``) and the probe must pass
 reports it skipped (``no peer cell``), which is not a failure.
 ``ssc-nightly`` keeps its role without that permission: ordinary nights have no peer cell, and
 an operator makes the peer runs in the proof run.
-Exits 1 when a probe fails or is missing, or when the drift outlives the minute.
+Optionally ``SSC_PROBE_TLS_HOST`` (SSC-062): a host under the cell's apps domain. The run opens a
+verified TLS connection to it and fails when the cell's wildcard certificate does not verify or
+has under ``CERT_MIN_DAYS`` days left. A certificate that fails to renew keeps serving until it
+expires, so this catches a failed renewal at least 14 days ahead. Unset, the check is skipped.
+Exits 1 when a probe fails or is missing, or when the drift outlives the minute, or when that
+check fails.
 """
 
 import asyncio
 import logging
 import os
+import ssl
 import subprocess  # noqa: S404
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final, cast
@@ -53,6 +60,9 @@ ENV: Final = {
     "probe_digest": "SSC_PROBE_DIGEST",
 }
 CONTROL_SA_ENV: Final = "SSC_CONTROL_SA"
+TLS_HOST_ENV: Final = "SSC_PROBE_TLS_HOST"
+CERT_MIN_DAYS: Final = 21.0
+TLS_TIMEOUT_SECONDS: Final = 15.0
 PEER_CELL_ENV: Final = {
     "SSC_PROBE_PEER_APP_URL": "PROBE_PEER_CELL_APP_URL",
     "SSC_PROBE_PEER_GATEWAY_URL": "PROBE_PEER_CELL_GATEWAY_URL",
@@ -75,6 +85,7 @@ DRIFT_VARIABLE: Final = "PROBE_DRIFT"
 
 type Sleep = Callable[[float], Awaitable[None]]
 type Clock = Callable[[], float]
+type DaysLeft = Callable[[str], Awaitable[float]]
 type Json = dict[str, Any]
 
 
@@ -89,6 +100,7 @@ class NightlyConfig:
     probe_digest: str
     control_sa: str | None
     peer_cell: Mapping[str, str] | None
+    tls_host: str | None = None
 
 
 def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
@@ -102,6 +114,7 @@ def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
         **{field: environ[name] for field, name in ENV.items()},
         control_sa=environ.get(CONTROL_SA_ENV) or None,
         peer_cell=peer or None,
+        tls_host=environ.get(TLS_HOST_ENV) or None,
     )
 
 
@@ -305,6 +318,47 @@ class Report:
         return "\n".join(lines) + "\n"
 
 
+async def certificate_days_left(
+    host: str,
+    *,
+    port: int = 443,
+    context: ssl.SSLContext | None = None,
+    now: Callable[[], float] = time.time,
+) -> float:
+    """Days until the certificate ``host`` serves expires, over a connection that verifies the
+    chain and the name. A connection that does not verify raises ``NightlyError``."""
+    try:
+        async with asyncio.timeout(TLS_TIMEOUT_SECONDS):
+            _, writer = await asyncio.open_connection(
+                host, port, ssl=context or ssl.create_default_context(), server_hostname=host
+            )
+    except (OSError, TimeoutError) as exc:
+        raise NightlyError(f"{host} does not verify: {type(exc).__name__}: {exc}") from exc
+    try:
+        ssl_object = cast("ssl.SSLObject", writer.get_extra_info("ssl_object"))
+        expires = ssl.cert_time_to_seconds(str(ssl_object.getpeercert()["notAfter"]))  # pyright: ignore[reportOptionalSubscript]
+    finally:
+        writer.close()
+        with suppress(OSError):
+            await writer.wait_closed()
+    return (expires - now()) / 86400
+
+
+async def certificate_failure(host: str, days_left: DaysLeft = certificate_days_left) -> str | None:
+    """Why the certificate at ``host`` fails the night, or None when it has ``CERT_MIN_DAYS`` or
+    more days left."""
+    try:
+        days = await days_left(host)
+    except NightlyError as exc:
+        return f"certificate: {exc}"
+    if days < CERT_MIN_DAYS:
+        return (
+            f"certificate: {host} expires in {days:.0f} days, under {CERT_MIN_DAYS:.0f}: "
+            "its renewal has failed"
+        )
+    return None
+
+
 async def nightly(  # noqa: PLR0913  (keyword-only)
     driver: RuntimeDriver,
     job: ProbeJob,
@@ -313,6 +367,8 @@ async def nightly(  # noqa: PLR0913  (keyword-only)
     peer_cell: Mapping[str, str] | None = None,
     sleep: Sleep = asyncio.sleep,
     clock: Clock = time.monotonic,
+    tls_host: str | None = None,
+    days_left: DaysLeft = certificate_days_left,
 ) -> Report:
     specs = [probe_spec(env_id, digest) for env_id in PROBE_ENVS]
     for spec in specs:
@@ -327,6 +383,8 @@ async def nightly(  # noqa: PLR0913  (keyword-only)
         drift_seconds = await drift(driver, specs[0], sleep=sleep, clock=clock)
     except (NightlyError, RuntimeDriverError) as exc:
         failures.append(f"drift: {exc}")
+    if tls_host and (problem := await certificate_failure(tls_host, days_left)):
+        failures.append(problem)
     return Report(results, drift_seconds, failures)
 
 
@@ -367,7 +425,9 @@ async def main_async(environ: Mapping[str, str]) -> Report:
     driver = CellAgentDriver(cfg.agent_url, id_tokens)
     job = ProbeJob(cfg.project, access)
     try:
-        return await nightly(driver, job, cfg.probe_digest, peer_cell=cfg.peer_cell)
+        return await nightly(
+            driver, job, cfg.probe_digest, peer_cell=cfg.peer_cell, tls_host=cfg.tls_host
+        )
     finally:
         await driver.aclose()
         await job.aclose()

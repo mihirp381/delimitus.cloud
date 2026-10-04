@@ -8,7 +8,8 @@ outputs apart from values the cloud assigns. A stack's own cloud-assigned values
 load balancer address, certificate authorisation record) and its customer's settings (``org_id``,
 ``gateway_keyring``, ``gateway_jwks``) become placeholders wherever they appear, so a record
 pointing at another cell's address still shows; so do the database's DNS name and private
-address, and the IDs of the cell's connection tag (SSC-051). The connections the data gateway
+address, the IDs of the cell's connection tag (SSC-051) and of its notification channel
+(SSC-062). The connections the data gateway
 mounts (``datagw_connections``) are the customer's own too and are left out. Where the stacks'
 ``flags`` output differ, the lazy resources of a differing flag, the proxy's resources for
 ``proxy_ha`` (``naming.PROXY_HA_RESOURCES``), the agent's ``SSC_SQL_INSTANCE`` for ``database``
@@ -116,6 +117,7 @@ TAG_TYPES: Final = {
     "gcp:tags/tagKey:TagKey": "<tag-key>",
     "gcp:tags/tagValue:TagValue": "<tag-value>",
 }
+CHANNEL_TYPE: Final = "gcp:monitoring/notificationChannel:NotificationChannel"
 DATAGW_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{n.DATA_GATEWAY}"
 CONNECTION_ENVS: Final = ".envs.SSC_CONNECTION_"
 FLAG_DEFAULTS: Final[dict[str, Json]] = {
@@ -211,6 +213,8 @@ def _own_values(state: Json, label: str) -> Swaps:
             for name in [str(assigned.get("dnsName") or ""), *names]:
                 found.append((name.rstrip("."), "<sql-dns>"))
             addresses.append((str(assigned.get("privateIpAddress") or ""), "<sql-address>"))
+        elif res["type"] == CHANNEL_TYPE:
+            found.append((str(assigned.get("name") or "").rsplit("/", 1)[-1], "<channel>"))
         elif res["type"] in TAG_TYPES:
             addresses.append((str(assigned.get("name") or ""), TAG_TYPES[res["type"]]))
     swaps = [(re.compile(re.escape(value)), placeholder) for value, placeholder in found if value]

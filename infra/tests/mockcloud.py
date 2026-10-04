@@ -89,6 +89,10 @@ class Recorder(pulumi.runtime.Mocks):
                 )
             case "gcp:tags/tagKey:TagKey" | "gcp:tags/tagValue:TagValue":
                 state["name"] = str(700_000_000_000 + zlib.crc32(args.name.encode()))
+            case "gcp:monitoring/notificationChannel:NotificationChannel":
+                state["name"] = (
+                    f"projects/{project}/notificationChannels/{zlib.crc32(project.encode())}"
+                )
             case "gcp:projects/iAMCustomRole:IAMCustomRole":
                 state["name"] = f"projects/{project}/roles/{state['roleId']}"
             case "gcp:compute/globalAddress:GlobalAddress" if (

@@ -30,7 +30,7 @@ pulumi config set --stack c-<label> database true
 pulumi up --stack c-<label>
 ```
 
-Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below), `timer_jwks` (Timer calls, under Gateway), `datagw_image` and `datagw_connections` (Data gateway, below), `proxy_image` and `proxy_ha` (Egress proxy, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
+Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below), `timer_jwks` (Timer calls, under Gateway), `datagw_image` and `datagw_connections` (Data gateway, below), `proxy_image` and `proxy_ha` (Egress proxy, below), `oncall_email` (Alerts and on call, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
 
 The stack exports `flags`, so `cell_diff` compares two cells with different flags without their flagged resources.
 
@@ -426,6 +426,31 @@ The platform stack runs the control plane in `ssc-control-<stage>` for each stag
   - `control_sql_instances`, the connection names;
   - `control_public_stage` and `control_entry_address`, once a public stage exists.
 - **Cost a month.** Prod, with the entry: worker $30, Cloud SQL about $10, entry $18.25, the API's idle minimum instance about $10, secrets $0.42, so about $70 against $75. Staging without the entry is about $40 against $40. With the entry it is about $59, so keep the entry in prod. Set `worker_instances` to 0 to stop a stage's worker.
+
+## Alerts and on call (SSC-062)
+
+`alerts.py` builds every alert from one table (`CELL_ALERTS`, `PLATFORM_ALERTS`); `docs/runbooks/ssc-062-support-and-on-call.md` has one heading per alert name, and `docs/support/how-to-get-help.md` is the builders' page. A test checks both ways that every alert has its heading and every heading its alert.
+
+- **Setting.** `oncall_email`, in a cell stack and in the platform stack. Set, each stack makes one email channel `oncall` in its project (a cell's, and each control project's) and its alerts. Unset, no alert resource exists and the cell budget has no channel. It is not a secret.
+- **Sleeps are healthy.** A gateway or data gateway with no instances is normal. No alert uses an instance count, an uptime check, a heartbeat or missing data (`evaluation_missing_data` is inactive on all of them), so a cell with nothing running raises nothing overnight.
+- **Cell alerts** (cell stack): `ssc-gateway-authoriser-errors` (over 5 `authz check failed` lines in 5 minutes), `ssc-gateway-snapshot-stale` (any `gateway snapshot stale` line, which the gateway writes when a served request finds the snapshot over 60 s old, at most once a minute per instance), `ssc-gateway-lb-error-rate` (over 5% of the gateway's requests at the load balancer are 5xx for 5 minutes), `ssc-datagw-refusals` (over 20 refusals in 5 minutes, `APP_NOT_ACTIVE` and `served` left out) and `ssc-proxy-unhealthy` (the proxy's health check went from healthy to unhealthy). Counters are log-based metrics of the same names in the cell project.
+- **Control-plane alerts** (platform stack, in each control project): `ssc-snapshot-late` (a compile over 60 s or failed for good, or a sweep that found a stale snapshot, any in 1 minute) and `ssc-build-failures` (3 `build failed` lines in 15 minutes). A late write to a cell bucket is a late compile. The sweep still runs every 5 minutes; no migration was needed.
+- **Budget.** `Cell.budget` (`cell-monthly`, 50, 90 and 100 percent of spend and 100 percent of forecast) notifies the channel too. No second budget exists.
+- **Certificates.** No Certificate Manager expiry or renewal metric is documented in the provider schema or in this repository, so none is used. Set the nightly variable `SSC_PROBE_TLS_HOST` to a host under the probe cell's apps domain: the nightly run opens a verified TLS connection and fails when the wildcard certificate does not verify or has under 21 days left. A failed renewal keeps the old certificate serving, so the check catches it 14 or more days before it expires.
+- **Proxy health.** The `proxy-health` check now writes its logs (`log_config.enable`), on every cell, alerts or not.
+- **Gateway log lines.** The authoriser logs `gateway snapshot age snapshot_age_ms=N` at INFO at most once a minute per instance, and `gateway snapshot stale snapshot_age_ms=N` at WARNING when N is over 60000. An idle instance logs neither.
+
+**Live checks** (operator, not run by SSC-062), on a staging cell and the staging control project with `oncall_email` set to an address you read:
+
+1. Apply. `pulumi preview` shows only the channel, the metrics, the policies and the budget's notification; the first apply may need the Monitoring API to finish enabling.
+2. Health-check log filter. Read the filter on `ssc_proxy_unhealthy` (`log_id("compute.googleapis.com/healthchecks")` with `jsonPayload.healthCheckProbeResult.healthState="UNHEALTHY"` and `previousHealthState="HEALTHY"`) against a real entry in Logs Explorer: the field names are written from the documented format and must match. With `egress` on, stop the proxy machine: an email arrives and the group brings it back.
+3. Stall. Make a snapshot compile slow or fail on staging (for example block the worker's write to the cell bucket): the `ssc-snapshot-late` email arrives within 5 minutes. Restore it.
+4. Stale gateway. Block the gateway's read of the cell bucket for over a minute while sending requests: a `gateway snapshot stale` line, then the `ssc-gateway-snapshot-stale` email.
+5. Quiet night. Leave a staging cell with nothing running overnight: no alert email, and the budget unchanged.
+6. Load balancer. Check `ssc-gateway-lb-error-rate`'s filter (`https_lb_rule`, `backend_target_name`, `response_code_class`) in Metrics Explorer shows the gateway's requests.
+7. Datagw. Call the data gateway with a refused request 21 times in 5 minutes: the email arrives; a stopped app's `APP_NOT_ACTIVE` calls raise none.
+8. Budget. The budget's notification channel shows `oncall` in the Billing console; the deployer needs permission to attach a monitoring channel to it.
+9. Certificate. Set `SSC_PROBE_TLS_HOST` and run the nightly workflow: it passes. Point it at a host whose certificate is under 21 days from expiry, or a name not on the wildcard: it fails.
 
 ## Organisation policies
 

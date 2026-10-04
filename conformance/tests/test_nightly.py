@@ -1,12 +1,19 @@
 """The nightly run, end to end against the Cloud Run emulator and a scripted probe job."""
 
+import asyncio
+import datetime
 import json
+import ssl
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import httpx2
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_conformance import nightly
@@ -293,3 +300,120 @@ def test_main_reports_configuration_errors(
         monkeypatch.delenv(name, raising=False)
     assert nightly.main() == 1
     assert "missing SSC_PROBE_PROJECT" in capsys.readouterr().err
+
+
+def test_config_takes_an_optional_tls_host() -> None:
+    full = {
+        "SSC_PROBE_PROJECT": "p",
+        "SSC_PROBE_AGENT_URL": "https://agent.test",
+        "SSC_PROBE_DIGEST": DIGEST,
+    }
+    assert nightly.config_from_env(full).tls_host is None
+    assert nightly.config_from_env(full | {"SSC_PROBE_TLS_HOST": ""}).tls_host is None
+    named = nightly.config_from_env(full | {"SSC_PROBE_TLS_HOST": "tls.cell.example"})
+    assert named.tls_host == "tls.cell.example"
+
+
+def days(left: float) -> Any:
+    async def read(_host: str) -> float:
+        return left
+
+    return read
+
+
+@pytest.mark.parametrize(("left", "fails"), [(60.0, False), (21.0, False), (20.9, True)])
+async def test_a_certificate_under_21_days_fails_the_night(
+    driver: CloudRunDriver, clock: Clock, left: float, fails: bool
+) -> None:
+    script = ScriptedJob(_results())
+    report = await nightly.nightly(
+        driver,
+        _job(script, clock),
+        DIGEST,
+        sleep=clock.sleep,
+        clock=clock,
+        tls_host="x.cell.example",
+        days_left=days(left),
+    )
+    if fails:
+        assert len(report.failures) == 1
+        assert report.failures[0].startswith("certificate: x.cell.example expires in 21 days")
+        assert "renewal has failed" in report.failures[0]
+    else:
+        assert report.failures == []
+
+
+async def test_a_certificate_that_does_not_verify_fails_the_night() -> None:
+    async def refuse(host: str) -> float:
+        raise nightly.NightlyError(f"{host} does not verify: SSLCertVerificationError")
+
+    failure = await nightly.certificate_failure("x.cell.example", refuse)
+    assert failure == "certificate: x.cell.example does not verify: SSLCertVerificationError"
+
+
+async def test_without_a_tls_host_no_certificate_is_read(
+    driver: CloudRunDriver, clock: Clock
+) -> None:
+    async def never(_host: str) -> float:
+        raise AssertionError("read a certificate")
+
+    script = ScriptedJob(_results())
+    report = await nightly.nightly(
+        driver, _job(script, clock), DIGEST, sleep=clock.sleep, clock=clock, days_left=never
+    )
+    assert report.failures == []
+
+
+def certificate(tmp_path: Path, *, expires: datetime.datetime) -> tuple[Path, Path]:
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    issued = expires - datetime.timedelta(days=90)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(issued)
+        .not_valid_after(expires)
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    cert_file, key_file = tmp_path / "cert.pem", tmp_path / "key.pem"
+    cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return cert_file, key_file
+
+
+async def serve_tls(cert_file: Path, key_file: Path) -> asyncio.Server:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert_file, key_file)
+
+    async def hold(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.close()
+
+    return await asyncio.start_server(hold, "127.0.0.1", 0, ssl=context)
+
+
+async def test_the_days_left_come_from_the_certificate_the_host_serves(tmp_path: Path) -> None:
+    expires = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=10, hours=12)
+    cert_file, key_file = certificate(tmp_path, expires=expires)
+    server = await serve_tls(cert_file, key_file)
+    port = server.sockets[0].getsockname()[1]
+    trusting = ssl.create_default_context(cafile=str(cert_file))
+    try:
+        left = await nightly.certificate_days_left("localhost", port=port, context=trusting)
+        assert 10.4 < left < 10.6
+        with pytest.raises(nightly.NightlyError, match="does not verify"):
+            await nightly.certificate_days_left(
+                "localhost", port=port, context=ssl.create_default_context()
+            )
+    finally:
+        server.close()
+        await server.wait_closed()
