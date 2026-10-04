@@ -18,6 +18,9 @@ differently"). Thresholds, from the §10.1 bands at one vCPU per instance:
 - ``daily``: anything between;
 - None: no usage recorded that month.
 
+``billing`` is how the environment's latest usage hour was billed (SSC-090): ``request`` or
+``instance``; hours recorded before events carried it count as ``request``. None with no hours.
+
 These numbers are for metrics and the cost view only. Nothing bills from them (A6).
 """
 
@@ -30,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_control.domain.stats import is_reportable, percentile
+from ssc_shared.runtime import Billing
 
 UsageType = Literal["rare", "daily", "session", "heavy"]
 RARE_MAX_SECONDS: Final = 19_500.0
@@ -40,7 +44,8 @@ _HOURS = text(
     "coalesce(sum((properties->>'session_seconds')::float8), 0), "
     "coalesce(sum((properties->>'instance_seconds')::float8), 0), "
     "count(distinct (at at time zone 'UTC')::date) "
-    "filter (where (properties->>'instance_seconds')::float8 > 0) "
+    "filter (where (properties->>'instance_seconds')::float8 > 0), "
+    "(array_agg(coalesce(properties->>'billing', 'request') order by at desc))[1] "
     "from ssc.metrics_event where org_id = :org and kind = 'usage_hour' "
     "and environment_id is not null and at >= :lo and at < :hi "
     "and (cast(:envs as text[]) is null or environment_id = any(cast(:envs as text[]))) "
@@ -73,6 +78,7 @@ class EnvironmentUsage:
     small_sample: bool
     active_days: int
     usage_type: UsageType | None
+    billing: Billing | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,9 +132,9 @@ async def environment_usage(
         "hi": hi,
         "envs": None if environment_ids is None else list(environment_ids),
     }
-    hours: dict[str, tuple[str | None, float, float, int]] = {
-        str(env): (app, float(session), float(instance), int(days))
-        for env, app, session, instance, days in (await conn.execute(_HOURS, params)).all()
+    hours: dict[str, tuple[str | None, float, float, int, Billing | None]] = {
+        str(env): (app, float(session), float(instance), int(days), _billing(billing))
+        for env, app, session, instance, days, billing in (await conn.execute(_HOURS, params)).all()
     }
     cold: dict[str, tuple[str | None, list[float]]] = {}
     for env, app, counts, durations in (await conn.execute(_COLD, params)).all():
@@ -136,7 +142,7 @@ async def environment_usage(
         cold[str(env)] = (app, [float(ms) / 1000 for n, ms in pairs for _ in range(int(n))])
     out: list[EnvironmentUsage] = []
     for env_id in sorted(set(hours) | set(cold)):
-        app_h, session, instance, days = hours.get(env_id, (None, 0.0, 0.0, 0))
+        app_h, session, instance, days, billing = hours.get(env_id, (None, 0.0, 0.0, 0, None))
         app_c, samples = cold.get(env_id, (None, []))
         shown = is_reportable(len(samples))
         out.append(
@@ -151,9 +157,16 @@ async def environment_usage(
                 small_sample=not shown,
                 active_days=days,
                 usage_type=usage_type(session, instance),
+                billing=billing,
             )
         )
     return out
+
+
+def _billing(value: object) -> Billing | None:
+    if value == "instance":
+        return "instance"
+    return None if value is None else "request"
 
 
 async def fixed_resources(conn: AsyncConnection, org_id: str) -> list[FixedResource]:

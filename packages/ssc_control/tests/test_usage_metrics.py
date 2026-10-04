@@ -166,6 +166,7 @@ async def test_a_session_app_open_an_hour_gives_about_one_session_hour_and_one_i
     assert 1.0 <= body["instance_hours"] <= 1.3
     assert (body["session_hours"], body["instance_hours"]) == (1.02, 1.26)
     assert (body["usage_type"], body["month"], body["active_days"]) == ("session", MONTH, 1)
+    assert body["billing"] == "instance"
 
 
 async def test_a_cold_start_appears_with_its_duration(b: Bench, cell: Cell) -> None:
@@ -239,7 +240,46 @@ async def test_a_request_billed_app_has_instance_hours_and_no_session_hours(
         "billing": "request",
     }
     body = _usage(b, b.w.preview).json()
-    assert (body["usage_type"], body["session_hours"]) == ("rare", 0.0)
+    assert (body["usage_type"], body["session_hours"], body["billing"]) == ("rare", 0.0, "request")
+
+
+async def test_billing_is_the_latest_hours_and_hours_recorded_before_it_count_as_request(
+    b: Bench,
+) -> None:
+    """SSC-057 shows request-billed or instance-billed per app (SSC-090)."""
+    hours = (
+        (at(9), {"instance_seconds": 60.0, "session_seconds": 0}),
+        (at(10), {"instance_seconds": 60.0, "session_seconds": 0}),
+    )
+    async with bound_org(b.ports.engine, b.w.org) as conn:
+        for moment, properties in hours:
+            await record_once(
+                conn,
+                org_id=b.w.org,
+                kind=MetricKind.USAGE_HOUR,
+                dedup_key=f"{b.w.prod}:{moment.hour}",
+                app_id=b.w.app,
+                environment_id=b.w.prod,
+                properties=properties,
+                at=moment,
+            )
+    assert _usage(b, b.w.prod).json()["billing"] == "request"
+    async with bound_org(b.ports.engine, b.w.org) as conn:
+        await record_once(
+            conn,
+            org_id=b.w.org,
+            kind=MetricKind.USAGE_HOUR,
+            dedup_key=f"{b.w.prod}:11",
+            app_id=b.w.app,
+            environment_id=b.w.prod,
+            properties={"instance_seconds": 60.0, "session_seconds": 60, "billing": "instance"},
+            at=at(11),
+        )
+    assert _usage(b, b.w.prod).json()["billing"] == "instance"
+    cell_usage = get(b, f"/v1/usage?month={MONTH}", b.t.admin).json()
+    assert [(e["environment_id"], e["billing"]) for e in cell_usage["environments"]] == [
+        (b.w.prod, "instance")
+    ]
 
 
 async def test_without_a_usage_source_nothing_is_written_and_the_log_says_why(
@@ -366,6 +406,7 @@ async def test_an_environment_with_no_usage_reads_zero_and_an_unknown_one_is_not
         "cold_start_p95_seconds": None,
         "small_sample": True,
         "active_days": 0,
+        "billing": None,
     }
     assert_problem(_usage(b, new_id("env")), ErrorCode.NOT_FOUND)
     r = get(b, f"/v1/apps/{b.w.app}/environments/{b.w.prod}/usage?month=2026-13")

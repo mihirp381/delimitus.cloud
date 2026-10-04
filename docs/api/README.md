@@ -200,11 +200,23 @@ logs: no request ever reaches the app. Anyone who can see the app may ask.
 /v1/apps/{app}/environments/{env}/usage?month=YYYY-MM` (UTC, this month by default) answers one
 environment's session hours, instance hours, cold starts with their p50 and p95 start time (null
 under 20 cold starts, `small_sample: true`), active days and `usage_type`: `rare`, `daily`,
-`session` or `heavy`, read from that month's events after the fact, null with no usage. Anyone
-who can see the app may ask. `GET /v1/usage?month=YYYY-MM` answers every environment with usage
-that month and when each of the cell's fixed resources (`database`, `egress`, `connections`) was
-created; active org admins only (`403 FORBIDDEN`). The numbers are for metrics and the cost view
-only. Nothing bills from them.
+`session` or `heavy`, read from that month's events after the fact, null with no usage, and
+`billing`, how the latest hour was billed (`request` or `instance`, SSC-090; hours recorded
+before events carried it count as `request`), null with no hours. Anyone who can see the app may
+ask. `GET /v1/usage?month=YYYY-MM` answers every environment with usage that month and when each
+of the cell's fixed resources (`database`, `egress`, `connections`) was created; active org
+admins only (`403 FORBIDDEN`). The numbers are for metrics and the cost view only. Nothing bills
+from them.
+
+**The cell view is for org admins** (SSC-087, SSC-057). `GET /v1/cell` answers each lazy resource
+(`off` included) with its state, cause, what it adds a month, and the `deployment_id` or
+`approval_id` that asked for it, from its latest `cell.resource_requested` audit row; the cell's
+environments with their app slug and whether each has a database; and the database's tier,
+`places_used` (from the control plane's records) of `places_total`, the connection limit of each
+app database, `nearly_full` (two free places or fewer), `tier_full_at` (the last deployment
+refused with `DB_TIER_FULL`) and the paid "bigger database" step (`bigger_tier`, about
+`bigger_tier_monthly_usd` a month). The fixed outbound IP is in `GET /v1/egress` (SSC-053). The
+console's "Your environment" screen reads these three; its figures are not a bill (A6).
 
 **The deployment policy shows only what the caller may already see** (SSC-093, decision 016). `GET
 /v1/org/deployment-policy` answers, for the caller, the internet hosts approved for an environment
