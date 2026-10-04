@@ -3,7 +3,16 @@
 import httpx2
 import pytest
 
-from ssc_agent.__main__ import ENV, LOG_VIEW_ENV, ConfigError, cell_from_env, log_views_from_env
+from ssc_agent.__main__ import (
+    CONNECTION_TAG_ENV,
+    DATA_SA_ENV,
+    ENV,
+    LOG_VIEW_ENV,
+    ConfigError,
+    cell_from_env,
+    connections_from_env,
+    log_views_from_env,
+)
 from ssc_agent.cloud_run import (  # pyright: ignore[reportPrivateUsage]
     _bare,
     _cpu,
@@ -34,6 +43,25 @@ def test_log_views_from_env_takes_one_or_more_views() -> None:
     for bad in ("projects/cell-project/logs/run", f"{app},", f"{app},logs/x", "a b"):
         with pytest.raises(ConfigError, match=LOG_VIEW_ENV):
             log_views_from_env({LOG_VIEW_ENV: bad})
+
+
+def test_connection_secrets_need_the_data_account_and_the_tag() -> None:
+    data = "ssc-data@cell-project.iam.gserviceaccount.com"
+    tag = "tagKeys/1001=tagValues/2002"
+    assert connections_from_env({}) is None
+    found = connections_from_env({DATA_SA_ENV: data, CONNECTION_TAG_ENV: tag})
+    assert found is not None
+    assert (found.reader, found.tag_key, found.tag_value) == (
+        data,
+        "tagKeys/1001",
+        "tagValues/2002",
+    )
+    for half in ({DATA_SA_ENV: data}, {CONNECTION_TAG_ENV: tag}):
+        with pytest.raises(ConfigError, match="both"):
+            connections_from_env(half)
+    for bad in ("tagKeys/1", "tagValues/2=tagKeys/1", "proj/ssc-secret-kind=connection", f"{tag},"):
+        with pytest.raises(ConfigError, match=CONNECTION_TAG_ENV):
+            connections_from_env({DATA_SA_ENV: data, CONNECTION_TAG_ENV: bad})
 
 
 async def test_access_token_is_cached() -> None:

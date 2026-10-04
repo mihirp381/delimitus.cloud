@@ -75,6 +75,8 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_GATEWAY_SA",
     "SSC_LOG_VIEW",
     "SSC_USAGE_SOURCE",
+    "SSC_DATA_SA",
+    "SSC_CONNECTION_TAG",
 }
 TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
@@ -603,6 +605,96 @@ def test_datagw_image_is_pinned_and_needs_the_gateway_settings(
         cell.datagw_settings(image, org)
 
 
+CON_A, CON_B = "con_" + "a" * 20, "con_" + "b" * 20
+DATAGW = GATEWAY | {"connections": "true", "datagw_image": DATAGW_IMAGE}
+
+
+def test_each_granted_connection_is_a_pinned_secret_on_the_data_gateway() -> None:
+    """SSC-051: ``SSC_CONNECTION_CON_<20>`` is ``ssc-conn-<20>`` at its pinned version, read by
+    Cloud Run as ``ssc-data``; the value is never in the stack."""
+    declared = run(
+        naming.cell_stack("testcell13"),
+        DATAGW | {"datagw_connections": f"{CON_B}:3, {CON_A}:12"},
+    )
+    datagw = one(declared, "gcp:cloudrunv2/service:Service", naming.DATA_GATEWAY).inputs
+    (container,) = datagw["template"]["containers"]
+    names = [e["name"] for e in container["envs"]]
+    assert names == sorted(names)
+    mounted = {e["name"]: e for e in container["envs"] if "valueSource" in e}
+    assert mounted == {
+        "SSC_CONNECTION_CON_" + "A" * 20: {
+            "name": "SSC_CONNECTION_CON_" + "A" * 20,
+            "valueSource": {"secretKeyRef": {"secret": "ssc-conn-" + "a" * 20, "version": "12"}},
+        },
+        "SSC_CONNECTION_CON_" + "B" * 20: {
+            "name": "SSC_CONNECTION_CON_" + "B" * 20,
+            "valueSource": {"secretKeyRef": {"secret": "ssc-conn-" + "b" * 20, "version": "3"}},
+        },
+    }
+    assert {e["name"] for e in container["envs"]} - set(mounted) == DATAGW_ENV
+    assert not [d for d in declared if d.type.startswith("gcp:secretmanager/") and "conn" in d.name]
+
+
+def test_without_connections_the_data_gateway_mounts_no_secret() -> None:
+    declared = run(naming.cell_stack("testcell13"), DATAGW)
+    datagw = one(declared, "gcp:cloudrunv2/service:Service", naming.DATA_GATEWAY).inputs
+    assert not [e for e in datagw["template"]["containers"][0]["envs"] if "valueSource" in e]
+
+
+def test_datagw_connections_are_kept_sorted_one_per_connection() -> None:
+    assert cell.datagw_connections_setting(None, DATAGW_IMAGE) is None
+    assert cell.datagw_connections_setting("", None) is None
+    assert cell.datagw_connections_setting(f"{CON_B}:3,{CON_A}:12", DATAGW_IMAGE) == (
+        f"{CON_A}:12,{CON_B}:3"
+    )
+    assert cell.connection_versions(f"{CON_A}:12,{CON_B}:3") == {CON_A: "12", CON_B: "3"}
+    assert cell.connection_versions(None) == {}
+
+
+@pytest.mark.parametrize(
+    ("value", "image", "problem"),
+    [
+        (f"{CON_A}:latest", DATAGW_IMAGE, "each version a number"),
+        (f"{CON_A}:0", DATAGW_IMAGE, "each version a number"),
+        (CON_A, DATAGW_IMAGE, "each version a number"),
+        ("con_short:1", DATAGW_IMAGE, "con_<20>:<version>"),
+        (f"{CON_A.upper()}:1", DATAGW_IMAGE, "con_<20>:<version>"),
+        ("ssc-conn-" + "a" * 20 + ":1", DATAGW_IMAGE, "con_<20>:<version>"),
+        (f"{CON_A}:1,", DATAGW_IMAGE, "con_<20>:<version>"),
+        (f"{CON_A}:1,{CON_A}:2", DATAGW_IMAGE, "twice"),
+        (f"{CON_A}:1", None, "needs datagw_image"),
+    ],
+)
+def test_datagw_connections_are_pinned_and_need_the_image(
+    value: str, image: str | None, problem: str
+) -> None:
+    with pytest.raises(ValueError, match=problem):
+        cell.datagw_connections_setting(value, image)
+
+
+def test_two_customers_connections_are_their_own() -> None:
+    first = DATAGW | {"datagw_connections": f"{CON_A}:1"}
+    second = DATAGW | {"datagw_connections": f"{CON_B}:4,{CON_A}:2"}
+    a = cell_diff.normalise(as_export(run(naming.cell_stack(A), first), A, config=first), A)
+    b = cell_diff.normalise(as_export(run(naming.cell_stack(B), second), B, config=second), B)
+    assert cell_diff.compare(a, b) == []
+    drifted = DATAGW | {"datagw_connections": f"{CON_A}:1"}
+    c = run(naming.cell_stack(B), drifted)
+    service = one(c, "gcp:cloudrunv2/service:Service", naming.DATA_GATEWAY)
+    service.inputs["template"]["containers"][0]["image"] = GATEWAY_IMAGE
+    diffs = cell_diff.compare(a, cell_diff.normalise(as_export(c, B, config=drifted), B))
+    assert [d for d in diffs if ".image" in d]
+
+
+def test_the_diff_takes_out_the_cell_s_own_tag_ids(cell_a: list[Declared]) -> None:
+    flat = cell_diff.normalise(as_export(cell_a, A), A)
+    rule = flat["gcp:iam/denyPolicy:DenyPolicy::cell-secret-read"]
+    assert rule["in.rules[1].denyRule.denialCondition.expression"] == (
+        "\"!resource.matchTagId('tagKeys/<tag-key>', 'tagValues/<tag-value>')\""
+    )
+    assert flat["gcp:tags/tagKey:TagKey::secret-kind-key"]["out.name"] == '"<tag-key>"'
+
+
 def test_only_the_data_gateway_leaves_the_caller_check_to_itself(cell_a: list[Declared]) -> None:
     """The data gateway checks each caller's Google ID token itself (SSC-050), so Cloud Run's
     invoker check is off there alone. It stays internal only, with no invoker grant and no
@@ -1041,15 +1133,20 @@ def test_the_control_plane_holds_no_project_role_in_the_cell(cell_a: list[Declar
     assert not [role for _, role in held if "secretmanager" in role]
 
 
-def test_the_intake_only_adds_versions_to_app_secrets(cell_a: list[Declared]) -> None:
+SECRET_CONDITION = {
+    "title": "only ssc-a-* and ssc-conn-* secrets",
+    "expression": 'resource.name.extract("/secrets/{name}").startsWith("ssc-a-") || '
+    'resource.name.extract("/secrets/{name}").startsWith("ssc-conn-")',
+}
+
+
+def test_the_intake_only_adds_versions_to_app_and_connection_secrets(
+    cell_a: list[Declared],
+) -> None:
     intake = f"serviceAccount:{naming.sa_email(naming.SECRET_INTAKE, naming.cell_project(A))}"
     grants = _grants(cell_a, intake)
     assert set(grants) == {"roles/secretmanager.secretVersionAdder", "roles/logging.logWriter"}
-    condition = grants["roles/secretmanager.secretVersionAdder"]
-    assert condition is not None
-    assert condition["expression"] == (
-        'resource.name.extract("/secrets/{name}").startsWith("ssc-a-")'
-    )
+    assert grants["roles/secretmanager.secretVersionAdder"] == SECRET_CONDITION
     held = [d for d in cell_a if intake in (d.inputs.get("member"), *d.inputs.get("members", []))]
     assert {d.type for d in held} == {"gcp:projects/iAMMember:IAMMember"}
 
@@ -1098,14 +1195,12 @@ def test_the_agent_makes_and_writes_app_secrets_but_never_reads_one(
     cell_a: list[Declared],
 ) -> None:
     """``secretmanager.admin`` on ``ssc-a-*`` creates secrets, sets their policy, adds the
-    database's versions (SSC-040) and deletes the secret of a dropped database (SSC-042); the
-    cell's deny rule refuses it every version's value."""
+    database's versions (SSC-040) and deletes the secret of a dropped database (SSC-042); on
+    ``ssc-conn-*`` it creates connection secrets for ``ssc-data`` (SSC-051). The cell's deny rule
+    refuses it every version's value."""
     agent = naming.sa_email(naming.CELL_AGENT, naming.cell_project(A))
     condition = _grants(cell_a, f"serviceAccount:{agent}")["roles/secretmanager.admin"]
-    assert condition == {
-        "title": "only ssc-a-* secrets",
-        "expression": 'resource.name.extract("/secrets/{name}").startsWith("ssc-a-")',
-    }
+    assert condition == SECRET_CONDITION
     rule = one(cell_a, "gcp:iam/denyPolicy:DenyPolicy").inputs["rules"][0]["denyRule"]
     assert rule["deniedPermissions"] == [naming.SECRET_READ]
     assert any(p.endswith(f"/{agent}") for p in rule["deniedPrincipals"])
@@ -1175,18 +1270,81 @@ def test_the_build_account_holds_no_storage_role(cell_a: list[Declared]) -> None
     assert not [r for _, r in held if not r.startswith("roles/")]
 
 
+def _denied(rule: dict[str, Any]) -> set[str]:
+    return {p.rsplit("/", 1)[-1].split("@")[0] for p in rule["deniedPrincipals"]}
+
+
 def test_the_cell_deny_rule_names_every_ssc_identity(cell_a: list[Declared]) -> None:
-    rule = one(cell_a, "gcp:iam/denyPolicy:DenyPolicy").inputs["rules"][0]["denyRule"]
-    assert rule["deniedPermissions"] == [naming.SECRET_READ]
-    denied = {p.rsplit("/", 1)[-1].split("@")[0] for p in rule["deniedPrincipals"]}
-    assert denied == {
+    """No identity is exempt: the first rule has no condition and names every SSC identity but
+    ``ssc-data``, which the second rule names alone."""
+    first, second = (
+        r["denyRule"] for r in one(cell_a, "gcp:iam/denyPolicy:DenyPolicy").inputs["rules"]
+    )
+    assert first["deniedPermissions"] == [naming.SECRET_READ]
+    assert "denialCondition" not in first
+    assert "exceptionPrincipals" not in first
+    assert _denied(first) == {
         "ssc-gateway",
         "ssc-cell-agent",
         "ssc-build",
-        "ssc-data",
         naming.SECRET_INTAKE,
         naming.PROBE_DENIED_SA,
     }
+    assert _denied(second) == {"ssc-data"}
+
+
+def test_ssc_data_is_refused_every_secret_without_the_connection_tag(
+    cell_a: list[Declared],
+) -> None:
+    """SSC-051: the second rule refuses ``ssc-data`` every secret value unless the secret carries
+    this cell's own ``ssc-secret-kind=connection`` tag, so an untagged app secret stays denied to
+    it whatever is granted. The tag is the project's, and only the agent may bind it."""
+    project = naming.cell_project(A)
+    key = one(cell_a, "gcp:tags/tagKey:TagKey")
+    value = one(cell_a, "gcp:tags/tagValue:TagValue")
+    assert (key.inputs["parent"], key.inputs["shortName"]) == (
+        f"projects/{project}",
+        "ssc-secret-kind",
+    )
+    key_id, value_id = f"tagKeys/{key.outputs['name']}", f"tagValues/{value.outputs['name']}"
+    assert (value.inputs["parent"], value.inputs["shortName"]) == (key_id, "connection")
+    rules = one(cell_a, "gcp:iam/denyPolicy:DenyPolicy").inputs["rules"]
+    assert len(rules) == 2
+    rule = rules[1]["denyRule"]
+    assert rule["deniedPrincipals"] == [
+        f"principal://iam.googleapis.com/projects/-/serviceAccounts/"
+        f"{naming.sa_email('ssc-data', project)}"
+    ]
+    assert rule["deniedPermissions"] == [naming.SECRET_READ]
+    assert rule["denialCondition"]["expression"] == (
+        f"!resource.matchTagId('{key_id}', '{value_id}')"
+    )
+    assert "exceptionPrincipals" not in rule
+    binders = [
+        (d.inputs["tagValue"], d.inputs["role"], d.inputs["member"])
+        for d in cell_a
+        if d.type.startswith("gcp:tags/tagValueIam")
+    ]
+    agent = naming.sa_email(naming.CELL_AGENT, project)
+    assert binders == [(value_id, "roles/resourcemanager.tagUser", f"serviceAccount:{agent}")]
+
+
+def test_ssc_data_holds_no_secret_role_anywhere_in_the_stack(cell_a: list[Declared]) -> None:
+    """Its ``secretAccessor`` is set by the agent on each connection secret alone (SSC-051)."""
+    data = f"serviceAccount:{naming.sa_email('ssc-data', naming.cell_project(A))}"
+    assert _grants(cell_a, data) == {"roles/logging.logWriter": None}
+    held = [d for d in cell_a if data in (d.inputs.get("member"), *d.inputs.get("members", []))]
+    assert not [d for d in held if "secretmanager" in d.type or "secretmanager" in d.inputs["role"]]
+
+
+def test_the_agent_tags_connection_secrets_and_grants_them_to_ssc_data() -> None:
+    declared = run(naming.cell_stack(A), {"agent_image": AGENT_IMAGE})
+    agent = one(declared, "gcp:cloudrunv2/service:Service", naming.CELL_AGENT).inputs
+    env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
+    key = one(declared, "gcp:tags/tagKey:TagKey").outputs["name"]
+    value = one(declared, "gcp:tags/tagValue:TagValue").outputs["name"]
+    assert env["SSC_CONNECTION_TAG"] == f"tagKeys/{key}=tagValues/{value}"
+    assert env["SSC_DATA_SA"] == naming.sa_email("ssc-data", naming.cell_project(A))
 
 
 def test_the_probe_value_never_reaches_the_state(cell_a: list[Declared]) -> None:

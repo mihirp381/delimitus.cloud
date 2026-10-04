@@ -8,7 +8,9 @@ outputs apart from values the cloud assigns. A stack's own cloud-assigned values
 load balancer address, certificate authorisation record) and its customer's settings (``org_id``,
 ``gateway_keyring``, ``gateway_jwks``) become placeholders wherever they appear, so a record
 pointing at another cell's address still shows; so do the database's DNS name and private
-address. Where the stacks' ``flags`` output differ, the lazy resources of a differing flag, the
+address, and the IDs of the cell's connection tag (SSC-051). The connections the data gateway
+mounts (``datagw_connections``) are the customer's own too and are left out. Where the stacks'
+``flags`` output differ, the lazy resources of a differing flag, the
 agent's ``SSC_SQL_INSTANCE`` for ``database`` and the gateway's minimum (``gateway_min``,
 ``warm``) are left out. Prints each difference; exit 1 if there is any.
 
@@ -108,6 +110,12 @@ ASSIGNED_PATHS: Final = {
 DNS_AUTHORIZATION: Final = "gcp:certificatemanager/dnsAuthorization:DnsAuthorization"
 SQL_INSTANCE: Final = "gcp:sql/databaseInstance:DatabaseInstance"
 PROJECT_TYPE: Final = "gcp:organizations/project:Project"
+TAG_TYPES: Final = {
+    "gcp:tags/tagKey:TagKey": "<tag-key>",
+    "gcp:tags/tagValue:TagValue": "<tag-value>",
+}
+DATAGW_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{n.DATA_GATEWAY}"
+CONNECTION_ENVS: Final = ".envs.SSC_CONNECTION_"
 FLAG_DEFAULTS: Final[dict[str, Json]] = {
     "database": False,
     "egress": False,
@@ -194,6 +202,8 @@ def _own_values(state: Json, label: str) -> Swaps:
         elif res["type"] == SQL_INSTANCE:
             found.append((str(assigned.get("dnsName") or "").rstrip("."), "<sql-dns>"))
             addresses.append((str(assigned.get("privateIpAddress") or ""), "<sql-address>"))
+        elif res["type"] in TAG_TYPES:
+            addresses.append((str(assigned.get("name") or ""), TAG_TYPES[res["type"]]))
     swaps = [(re.compile(re.escape(value)), placeholder) for value, placeholder in found if value]
     for address, placeholder in addresses:
         if address:
@@ -235,6 +245,11 @@ def differing(a: Mapping[str, Json], b: Mapping[str, Json]) -> list[str]:
     return [f for f in n.FLAGS if a.get(f) != b.get(f)]
 
 
+def _customers(key: str, path: str) -> bool:
+    """A connection the data gateway mounts, which only the customer's connections decide."""
+    return key == DATAGW_SERVICE and CONNECTION_ENVS in path
+
+
 def _flagged(key: str, path: str, flags_differ: Sequence[str]) -> bool:
     """Whether a differing flag names this resource, or this path of it."""
     if any(key in n.LAZY_RESOURCES.get(f, ()) for f in flags_differ):
@@ -261,7 +276,9 @@ def compare(
     for key in sorted(a.keys() & b.keys()):
         left, right = a[key], b[key]
         for path in sorted(left.keys() | right.keys()):
-            if left.get(path) != right.get(path) and not _flagged(key, path, flags_differ):
+            if left.get(path) == right.get(path) or _customers(key, path):
+                continue
+            if not _flagged(key, path, flags_differ):
                 diffs.append(f"{key} {path}: {left.get(path)} != {right.get(path)}")
     return diffs
 

@@ -20,8 +20,21 @@ import pulumi_gcp as gcp
 
 from ssc_infra import naming as n
 from ssc_infra.control import PINNED_IMAGE, PLACEHOLDER_IMAGE, public_jwks_kids
-from ssc_infra.platform import BUDGET_THRESHOLDS, ZONE_RECORD_PERMISSIONS, provider, sa_principal
-from ssc_shared.runtime import service_name
+from ssc_infra.platform import (
+    BUDGET_THRESHOLDS,
+    TAG_USER,
+    ZONE_RECORD_PERMISSIONS,
+    provider,
+    sa_principal,
+)
+from ssc_shared.runtime import (
+    CONNECTION_ID,
+    CONNECTION_SECRET_PREFIX,
+    SECRET_VERSION,
+    connection_env,
+    connection_secret_id,
+    service_name,
+)
 
 APIS: Final = (
     "artifactregistry.googleapis.com",
@@ -80,6 +93,10 @@ LOG_VIEWS: Final = {
 LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
 USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
 USAGE_SOURCE: Final = "monitoring"
+DATA_SA_ENV: Final = "SSC_DATA_SA"
+CONNECTION_TAG_ENV: Final = "SSC_CONNECTION_TAG"
+SECRET_KIND_KEY: Final = "ssc-secret-kind"  # noqa: S105
+CONNECTION_KIND: Final = "connection"
 INTAKE_MAX: Final = 3
 INTAKE_COMMAND: Final = ("python", "-m", "ssc_agent.intake")
 DATAGW_MAX: Final = 10
@@ -106,6 +123,7 @@ SINKHOLE_NAME: Final = "sinkhole.ssc-cell."
 TLDS_FILE: Final = Path(__file__).with_name("tlds.txt")
 APP_IMAGE: Final = "apps"
 APP_CONDITION: Final = 'resource.name.extract("/{kind}/{{name}}").startsWith("{prefix}")'
+SECRET_PREFIXES: Final = (n.APP_PREFIX, CONNECTION_SECRET_PREFIX)
 CREATE_PERMISSIONS: Final = (
     "iam.serviceAccounts.create",
     "run.services.create",
@@ -166,6 +184,9 @@ class CellConfig:
     """The control plane's public timer JWKS (SSC-041); unset, the gateway refuses timer
     calls."""
     datagw_image: str | None = None
+    datagw_connections: str | None = None
+    """The connections ``ssc-datagw`` mounts (SSC-051), as ``datagw_connections_setting``
+    returns them."""
 
     @property
     def project_id(self) -> str:
@@ -210,6 +231,7 @@ class CellConfig:
             "org_id": self.org_id,
             "timer_jwks": self.timer_jwks,
             "datagw_image": self.datagw_image,
+            "datagw_connections": self.datagw_connections,
             **self.flags,
         }
         return {
@@ -226,6 +248,7 @@ def read_config(stack: str) -> CellConfig:
         raise ValueError(f"stage must be one of {n.STAGES}, not {stage!r}")
     tools, frontend = build_images(config.get(BUILD_IMAGES[0]), config.get(BUILD_IMAGES[1]))
     image, keyring, jwks, org = gateway_settings(*(config.get(key) for key in GATEWAY_SETTINGS))
+    datagw_image = datagw_settings(config.get("datagw_image"), org)
     return CellConfig(
         label=n.label_of_stack(stack),
         stage=stage,
@@ -246,7 +269,10 @@ def read_config(stack: str) -> CellConfig:
         gateway_jwks=jwks,
         org_id=org,
         timer_jwks=timer_jwks_setting(config.get("timer_jwks")),
-        datagw_image=datagw_settings(config.get("datagw_image"), org),
+        datagw_image=datagw_image,
+        datagw_connections=datagw_connections_setting(
+            config.get("datagw_connections"), datagw_image
+        ),
     )
 
 
@@ -299,6 +325,35 @@ def datagw_settings(image: str | None, org: str | None) -> str | None:
     return image
 
 
+def datagw_connections_setting(value: str | None, image: str | None) -> str | None:
+    """``datagw_connections``: each connection the data gateway mounts, as ``con_<20>:<version>``
+    separated by commas, every version a number (never ``latest``), and only with
+    ``datagw_image``. Returned sorted, so the same connections are always the same setting."""
+    if not value:
+        return None
+    if not image:
+        raise ValueError("datagw_connections needs datagw_image")
+    pinned: dict[str, str] = {}
+    for item in value.split(","):
+        connection, _, version = item.strip().partition(":")
+        if CONNECTION_ID.fullmatch(connection) is None or SECRET_VERSION.fullmatch(version) is None:
+            raise ValueError(
+                "datagw_connections is con_<20>:<version>, separated by commas, each version a "
+                "number"
+            )
+        if connection in pinned:
+            raise ValueError(f"datagw_connections names {connection} twice")
+        pinned[connection] = version
+    return ",".join(f"{c}:{v}" for c, v in sorted(pinned.items()))
+
+
+def connection_versions(setting: str | None) -> dict[str, str]:
+    """``datagw_connections`` as a connection id to its pinned version."""
+    if not setting:
+        return {}
+    return dict(item.split(":", 1) for item in setting.split(","))
+
+
 def _check_public_jwks(jwks: str) -> None:
     """A JWKS of named keys with no private member, as ``python -m ssc_edge.keys jwks`` prints."""
     if public_jwks_kids(jwks) is None:
@@ -321,10 +376,13 @@ def _int_or(value: int | None, default: int) -> int:
     return default if value is None else value
 
 
-def app_condition(kind: str) -> gcp.projects.IAMMemberConditionArgs:
+def secret_condition() -> gcp.projects.IAMMemberConditionArgs:
+    """App secrets (``ssc-a-*``) and connection secrets (``ssc-conn-*``, SSC-051)."""
     return gcp.projects.IAMMemberConditionArgs(
-        title=f"only {n.APP_PREFIX}* {kind}",
-        expression=APP_CONDITION.format(kind=kind, prefix=n.APP_PREFIX),
+        title=f"only {' and '.join(f'{p}*' for p in SECRET_PREFIXES)} secrets",
+        expression=" || ".join(
+            APP_CONDITION.format(kind="secrets", prefix=p) for p in SECRET_PREFIXES
+        ),
     )
 
 
@@ -473,7 +531,8 @@ class Cell:
     def identities(self) -> None:
         """Every grant is made here at onboarding, whatever the flags: the cell deployer that
         turns flags on holds no IAM role (SSC-087). The control plane holds none in the cell; the
-        secret intake adds versions to app secrets and does nothing else (SSC-026)."""
+        secret intake adds versions to app and connection secrets and does nothing else
+        (SSC-026)."""
         self.gateway_sa = self._sa("ssc-gateway", "SSC cell gateway")
         self.agent_sa = self._sa("ssc-cell-agent", "SSC cell agent")
         self.build_sa = self._sa("ssc-build", "SSC builds")
@@ -526,20 +585,49 @@ class Cell:
             gcp.projects.IAMMember(
                 name, project=self.pid, member=agent, role=role.name, opts=self._o()
             )
-        self._project_role(
-            "agent-secrets", agent, "roles/secretmanager.admin", app_condition("secrets")
-        )
+        self._project_role("agent-secrets", agent, "roles/secretmanager.admin", secret_condition())
         self._project_role(
             "intake-secret-versions",
             self.intake_sa.member,
             "roles/secretmanager.secretVersionAdder",
-            app_condition("secrets"),
+            secret_condition(),
         )
+        self.connection_tag = self._connection_tag()
         self._project_role("build-logs", self.build_sa.member, "roles/logging.logWriter")
         self._project_role("gateway-logs", self.gateway_sa.member, "roles/logging.logWriter")
         self._project_role("agent-logs", agent, "roles/logging.logWriter")
         self._project_role("data-logs", self.data_sa.member, "roles/logging.logWriter")
         self._project_role("intake-logs", self.intake_sa.member, "roles/logging.logWriter")
+
+    def _connection_tag(self) -> tuple[pulumi.Output[str], pulumi.Output[str]]:
+        """The project's own tag ``ssc-secret-kind=connection`` (SSC-051), so no organisation tag
+        permission is needed. The agent binds it to each connection secret as it creates one,
+        and the deny rule lets ``ssc-data`` read only secrets that carry it. Only the agent is
+        granted to bind it here. Returns the tag key and value IDs."""
+        key = gcp.tags.TagKey(
+            "secret-kind-key",
+            parent=pulumi.Output.concat("projects/", self.pid),
+            short_name=SECRET_KIND_KEY,
+            description="What a cell secret holds; only connection secrets are tagged.",
+            opts=self._o(),
+        )
+        key_id = pulumi.Output.concat("tagKeys/", key.name)
+        value = gcp.tags.TagValue(
+            "secret-kind-connection",
+            parent=key_id,
+            short_name=CONNECTION_KIND,
+            description="A customer connection's credentials, read by ssc-data alone (SSC-051).",
+            opts=self._o(),
+        )
+        value_id = pulumi.Output.concat("tagValues/", value.name)
+        gcp.tags.TagValueIamMember(
+            "secret-kind-connection-agent",
+            tag_value=value_id,
+            role=TAG_USER,
+            member=self.agent_sa.member,
+            opts=self._o(),
+        )
+        return key_id, value_id
 
     def keys(self) -> None:
         ring = gcp.kms.KeyRing(
@@ -1100,6 +1188,7 @@ class Cell:
         image: str | None = None,
         command: Sequence[str] | None = None,
         env: dict[str, pulumi.Input[str]] | None = None,
+        secret_env: dict[str, tuple[str, str]] | None = None,
         timeout: str | None = None,
         concurrency: int | None = None,
         audiences: Sequence[str] | None = None,
@@ -1107,8 +1196,23 @@ class Cell:
         after: Sequence[pulumi.Resource] = (),
     ) -> gcp.cloudrunv2.Service:
         """A request-billed service: CPU only while a request is open. ``invoker_iam=False``
-        leaves the caller check to the service itself."""
+        leaves the caller check to the service itself. ``secret_env`` maps a variable to a cell
+        secret and its pinned version, which Cloud Run reads as the service's identity."""
         min_instances, max_instances = instances
+        run = gcp.cloudrunv2
+        envs = {
+            k: run.ServiceTemplateContainerEnvArgs(name=k, value=v) for k, v in (env or {}).items()
+        } | {
+            k: run.ServiceTemplateContainerEnvArgs(
+                name=k,
+                value_source=run.ServiceTemplateContainerEnvValueSourceArgs(
+                    secret_key_ref=run.ServiceTemplateContainerEnvValueSourceSecretKeyRefArgs(
+                        secret=secret, version=version
+                    )
+                ),
+            )
+            for k, (secret, version) in (secret_env or {}).items()
+        }
         return gcp.cloudrunv2.Service(
             name,
             project=self.pid,
@@ -1129,11 +1233,7 @@ class Cell:
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image or PLACEHOLDER_IMAGE,
                         commands=list(command) if command else None,
-                        envs=[
-                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=k, value=v)
-                            for k, v in sorted((env or {}).items())
-                        ]
-                        or None,
+                        envs=[e for _, e in sorted(envs.items())] or None,
                         resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
                             cpu_idle=True,
                             limits={"cpu": "1", "memory": "512Mi"},
@@ -1410,7 +1510,9 @@ class Cell:
         logs through the two log views (SSC-024), and keeps under Cloud Logging's read quota per
         instance, so it runs one; its concurrency holds the 40 follows the agent allows at once
         beside every other call, and its timeout outlasts a 20 s follow and a 240 s traffic
-        switch."""
+        switch. It creates connection secrets with the connection tag, readable by ``ssc-data``
+        alone (SSC-051)."""
+        tag_key, tag_value = self.connection_tag
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
             "SSC_CELL_REGION": n.REGION,
@@ -1420,6 +1522,8 @@ class Cell:
             "SSC_GATEWAY_SA": self.gateway_sa.email,
             LOG_VIEW_ENV: ",".join(self.log_view_names),
             USAGE_SOURCE_ENV: USAGE_SOURCE,
+            DATA_SA_ENV: self.data_sa.email,
+            CONNECTION_TAG_ENV: pulumi.Output.concat(tag_key, "=", tag_value),
         }
         tools, frontend = self.cfg.build_tools_image, self.cfg.build_frontend_image
         if tools and frontend:
@@ -1547,7 +1651,14 @@ class Cell:
         app accounts (SSC-050, ``ssc_datagw.workload``), so no app needs ``run.invoker`` and no
         ``allUsers`` grant or public-invoker tag is involved. With ``datagw_image`` it runs a
         build of ``packages/ssc_datagw/Dockerfile``, which reads its snapshot from the cell
-        bucket's ``snapshots/`` (``bucket-data``)."""
+        bucket's ``snapshots/`` (``bucket-data``). Each connection in ``datagw_connections``
+        becomes ``SSC_CONNECTION_CON_<20>``, the secret ``ssc-conn-<20>`` at its pinned version
+        (SSC-051)."""
+        env = self._datagw_env()
+        secret_env = {
+            connection_env(c): (connection_secret_id(c), version)
+            for c, version in connection_versions(self.cfg.datagw_connections).items()
+        }
         self.data_gateway_ = self._run(
             n.DATA_GATEWAY,
             self.data_sa,
@@ -1555,7 +1666,8 @@ class Cell:
             vpc=self._edge_vpc(DATA_TAG),
             instances=(0, DATAGW_MAX),
             image=self.cfg.datagw_image,
-            env=self._datagw_env(),
+            env=env,
+            secret_env=secret_env if env else None,
             invoker_iam=False,
         )
 
@@ -1580,12 +1692,18 @@ class Cell:
         }
 
     def deny(self) -> None:
-        """The folder rule names the control plane; this one names the cell's own identities."""
-        ours = (self.gateway_sa, self.agent_sa, self.build_sa, self.data_sa, self.intake_sa)
+        """The folder rule names the control plane; this one names the cell's own identities.
+
+        The first rule refuses every secret value to all of them but ``ssc-data``, whatever is
+        granted. The second refuses ``ssc-data`` every secret without the cell's connection tag
+        (SSC-051), so no grant can give it an app secret; it reads a connection secret only with
+        the ``secretAccessor`` the agent sets on that secret."""
+        ours = (self.gateway_sa, self.agent_sa, self.build_sa, self.intake_sa)
         denied = [sa_principal(sa.email) for sa in ours]
         if self.cfg.probe:
             self.denied_probe = self._sa(n.PROBE_DENIED_SA, "SSC deny probe (always refused)")
             denied.append(sa_principal(self.denied_probe.email))
+        tag_key, tag_value = self.connection_tag
         gcp.iam.DenyPolicy(
             "cell-secret-read",
             parent=pulumi.Output.concat(
@@ -1599,7 +1717,20 @@ class Cell:
                     deny_rule=gcp.iam.DenyPolicyRuleDenyRuleArgs(
                         denied_principals=denied, denied_permissions=[n.SECRET_READ]
                     ),
-                )
+                ),
+                gcp.iam.DenyPolicyRuleArgs(
+                    description="The data gateway reads connection secrets and no other.",
+                    deny_rule=gcp.iam.DenyPolicyRuleDenyRuleArgs(
+                        denied_principals=[sa_principal(self.data_sa.email)],
+                        denied_permissions=[n.SECRET_READ],
+                        denial_condition=gcp.iam.DenyPolicyRuleDenyRuleDenialConditionArgs(
+                            title=f"not {SECRET_KIND_KEY}={CONNECTION_KIND}",
+                            expression=pulumi.Output.format(
+                                "!resource.matchTagId('{0}', '{1}')", tag_key, tag_value
+                            ),
+                        ),
+                    ),
+                ),
             ],
             opts=self._o(),
         )

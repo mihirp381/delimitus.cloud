@@ -157,10 +157,12 @@ def test_the_applied_config_restores_the_same_cell(monkeypatch: pytest.MonkeyPat
         "gateway_jwks": '{"keys":[{"kty":"EC","crv":"P-256","kid":"id-1","x":"AA","y":"AA"}]}',
         "org_id": "org_" + "a" * 20,
         "datagw_image": f"{naming.platform_registry()}/ssc-datagw@sha256:" + "c" * 64,
+        "datagw_connections": "con_" + "b" * 20 + ":2,con_" + "a" * 20 + ":7",
     }
     first = _exported(applied, monkeypatch)["config"]
     assert first["build_tools_image"] == applied["build_tools_image"]
     assert first["datagw_image"] == applied["datagw_image"]
+    assert first["datagw_connections"] == "con_" + "a" * 20 + ":7,con_" + "b" * 20 + ":2"
     assert {k: first[k] for k in cell.GATEWAY_SETTINGS} == {
         k: applied[k] for k in cell.GATEWAY_SETTINGS
     }

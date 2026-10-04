@@ -6,23 +6,27 @@ Two narrow seams, neither with a read:
   cell's region if it is missing, make sure the environment's own service account exists, and
   set the secret's policy so that account alone may read it, which is how Cloud Run mounts it.
   ``SecretCustody.remove`` deletes one, for an app database the agent drops (SSC-042).
+  A customer connection's credentials (SSC-051) are ``ssc-conn-<20>`` instead: created with the
+  cell's connection tag, and readable by the data gateway's account alone.
 - ``SecretWriter.add_version``, in the secret intake: add a version and return its number. The
   cell agent uses it too, for the app database secrets it makes itself (SSC-040).
 
 Neither has a method that reads a value, and ``test_secrets`` fails if one is added. The cell's
-deny rule refuses ``secretmanager.versions.access`` to every SSC service identity regardless.
+deny rule refuses ``secretmanager.versions.access`` to every SSC service identity regardless, but
+for the data gateway's on a secret with the connection tag.
 """
 
 import asyncio
 import base64
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, Final, Protocol, cast
 
 import httpx2
 
 from ssc_agent.cloud_run import AccessTokens, CellRuntime
 from ssc_shared.redaction import redact
-from ssc_shared.runtime import SECRET_ID, SECRET_VERSION
+from ssc_shared.runtime import CONNECTION_SECRET_ID, SECRET_ID, SECRET_VERSION
 from ssc_shared.secret_grants import MAX_VALUE_BYTES
 
 MANAGER_API: Final = "https://secretmanager.googleapis.com/v1"
@@ -45,9 +49,22 @@ class SecretsError(Exception):
         self.reason = reason
 
 
+@dataclass(frozen=True, slots=True)
+class ConnectionSecrets:
+    """Where connection secrets go (SSC-051): ``reader`` is the data gateway's service account,
+    the only one granted on them, and ``tag_key`` and ``tag_value`` (``tagKeys/<n>``,
+    ``tagValues/<n>``) the cell's connection tag, bound to each secret as it is created. The deny
+    rule lets that account read a secret only while it carries the tag."""
+
+    reader: str
+    tag_key: str
+    tag_value: str
+
+
 class SecretCustody(Protocol):
     async def ensure(self, secret: str) -> None:
-        """Create ``secret`` if missing and let only its environment's identity read it."""
+        """Create ``secret`` if missing and let only its environment's identity read it; for a
+        connection secret, the data gateway's."""
         ...
 
     async def remove(self, secret: str) -> None:
@@ -66,6 +83,12 @@ def service_of(secret: str) -> str:
     if SECRET_ID.fullmatch(secret) is None:
         raise ValueError(f"not an SSC app secret id: {secret!r}")
     return secret.rpartition("-")[0]
+
+
+def check_secret(secret: str) -> None:
+    """``ValueError`` unless ``secret`` is an app's secret id or a connection's (SSC-051)."""
+    if SECRET_ID.fullmatch(secret) is None and CONNECTION_SECRET_ID.fullmatch(secret) is None:
+        raise ValueError(f"not an SSC app or connection secret id: {secret!r}")
 
 
 class _Api:
@@ -106,9 +129,10 @@ class _Api:
 
 class CellSecretCustody(SecretCustody):
     """``SecretCustody`` as the cell agent, whose ``secretmanager.admin`` is limited to
-    ``ssc-a-*``; the id check here is what limits the create."""
+    ``ssc-a-*`` and ``ssc-conn-*``; the id check here is what limits the create. Without
+    ``connections`` it refuses connection secrets."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  (keyword-only)
         self,
         cell: CellRuntime,
         tokens: AccessTokens,
@@ -116,26 +140,47 @@ class CellSecretCustody(SecretCustody):
         *,
         client: httpx2.AsyncClient | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        connections: ConnectionSecrets | None = None,
     ) -> None:
         self._cell = cell
         self._api = _Api(tokens, client)
         self._identities = identities
         self._sleep = sleep
+        self._connections = connections
 
     async def ensure(self, secret: str) -> None:
+        if CONNECTION_SECRET_ID.fullmatch(secret) is not None:
+            await self._ensure_connection(secret)
+            return
         service = service_of(secret)
+        await self._create(secret, {"labels": {"ssc-service": service}})
+        await self._identities(service)
+        await self._grant(secret, self._cell.identity(service))
+
+    async def _ensure_connection(self, secret: str) -> None:
+        """Tagged at creation, so the secret never exists without the tag; one made earlier
+        without it stays unreadable to the data gateway."""
+        connections = self._connections
+        if connections is None:
+            raise SecretsError(f"{secret}: this agent keeps no connection secrets")
+        await self._create(secret, {"tags": {connections.tag_key: connections.tag_value}})
+        await self._grant(secret, connections.reader)
+
+    async def _create(self, secret: str, fields: Mapping[str, object]) -> None:
         replication = {"userManaged": {"replicas": [{"location": self._cell.region}]}}
         try:
             await self._api.call(
                 f"projects/{self._cell.project}/secrets",
-                json={"replication": replication, "labels": {"ssc-service": service}},
+                json={"replication": replication, **fields},
                 params={"secretId": secret},
             )
         except SecretsError as exc:
             if exc.status != _HTTP_CONFLICT:
                 raise
-        await self._identities(service)
-        member = f"serviceAccount:{self._cell.identity(service)}"
+
+    async def _grant(self, secret: str, account: str) -> None:
+        """``account`` alone may read ``secret``: the policy is replaced, not merged."""
+        member = f"serviceAccount:{account}"
         policy = {"bindings": [{"role": ACCESSOR_ROLE, "members": [member]}]}
         path = f"projects/{self._cell.project}/secrets/{secret}:setIamPolicy"
         for attempt in range(POLICY_TRIES):
@@ -163,7 +208,7 @@ class CellSecretCustody(SecretCustody):
 
 class CellSecretWriter(SecretWriter):
     """``SecretWriter`` as the secret intake, which holds ``secretVersionAdder`` on ``ssc-a-*``
-    and nothing else."""
+    and ``ssc-conn-*`` and nothing else."""
 
     def __init__(
         self, project: str, tokens: AccessTokens, *, client: httpx2.AsyncClient | None = None
@@ -172,7 +217,7 @@ class CellSecretWriter(SecretWriter):
         self._api = _Api(tokens, client)
 
     async def add_version(self, secret: str, value: bytes) -> str:
-        service_of(secret)
+        check_secret(secret)
         if not 0 < len(value) <= MAX_VALUE_BYTES:
             raise ValueError(f"a secret value is 1 to {MAX_VALUE_BYTES} bytes")
         body = await self._api.call(
