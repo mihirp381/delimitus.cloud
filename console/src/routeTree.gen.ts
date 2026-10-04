@@ -12,9 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
-import { Route as AuthedApprovalsRouteImport } from './routes/_authed/approvals'
 import { Route as AuthedAuditRouteImport } from './routes/_authed/audit'
 import { Route as AuthedEnvironmentRouteImport } from './routes/_authed/environment'
+import { Route as AuthedApprovalsIndexRouteImport } from './routes/_authed/approvals.index'
+import { Route as AuthedApprovalsApprovalIdRouteImport } from './routes/_authed/approvals.$approvalId'
 import { Route as AuthedAppsAppIdRouteImport } from './routes/_authed/apps.$appId'
 
 const AuthedRoute = AuthedRouteImport.update({
@@ -31,11 +32,6 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedRoute,
 } as any)
-const AuthedApprovalsRoute = AuthedApprovalsRouteImport.update({
-  id: '/approvals',
-  path: '/approvals',
-  getParentRoute: () => AuthedRoute,
-} as any)
 const AuthedAuditRoute = AuthedAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
@@ -46,6 +42,17 @@ const AuthedEnvironmentRoute = AuthedEnvironmentRouteImport.update({
   path: '/environment',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedApprovalsIndexRoute = AuthedApprovalsIndexRouteImport.update({
+  id: '/approvals/',
+  path: '/approvals/',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedApprovalsApprovalIdRoute =
+  AuthedApprovalsApprovalIdRouteImport.update({
+    id: '/approvals/$approvalId',
+    path: '/approvals/$approvalId',
+    getParentRoute: () => AuthedRoute,
+  } as any)
 const AuthedAppsAppIdRoute = AuthedAppsAppIdRouteImport.update({
   id: '/apps/$appId',
   path: '/apps/$appId',
@@ -55,44 +62,61 @@ const AuthedAppsAppIdRoute = AuthedAppsAppIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
-  '/approvals': typeof AuthedApprovalsRoute
   '/audit': typeof AuthedAuditRoute
   '/environment': typeof AuthedEnvironmentRoute
+  '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
+  '/approvals/': typeof AuthedApprovalsIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
-  '/approvals': typeof AuthedApprovalsRoute
   '/audit': typeof AuthedAuditRoute
   '/environment': typeof AuthedEnvironmentRoute
   '/': typeof AuthedIndexRoute
+  '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
+  '/approvals': typeof AuthedApprovalsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
-  '/_authed/approvals': typeof AuthedApprovalsRoute
   '/_authed/audit': typeof AuthedAuditRoute
   '/_authed/environment': typeof AuthedEnvironmentRoute
   '/_authed/': typeof AuthedIndexRoute
+  '/_authed/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/_authed/apps/$appId': typeof AuthedAppsAppIdRoute
+  '/_authed/approvals/': typeof AuthedApprovalsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/login' | '/approvals' | '/audit' | '/environment' | '/apps/$appId'
+    | '/'
+    | '/login'
+    | '/audit'
+    | '/environment'
+    | '/approvals/$approvalId'
+    | '/apps/$appId'
+    | '/approvals/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/approvals' | '/audit' | '/environment' | '/' | '/apps/$appId'
+  to:
+    | '/login'
+    | '/audit'
+    | '/environment'
+    | '/'
+    | '/approvals/$approvalId'
+    | '/apps/$appId'
+    | '/approvals'
   id:
     | '__root__'
     | '/_authed'
     | '/login'
-    | '/_authed/approvals'
     | '/_authed/audit'
     | '/_authed/environment'
     | '/_authed/'
+    | '/_authed/approvals/$approvalId'
     | '/_authed/apps/$appId'
+    | '/_authed/approvals/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -123,13 +147,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedIndexRouteImport
       parentRoute: typeof AuthedRoute
     }
-    '/_authed/approvals': {
-      id: '/_authed/approvals'
-      path: '/approvals'
-      fullPath: '/approvals'
-      preLoaderRoute: typeof AuthedApprovalsRouteImport
-      parentRoute: typeof AuthedRoute
-    }
     '/_authed/audit': {
       id: '/_authed/audit'
       path: '/audit'
@@ -144,6 +161,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedEnvironmentRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/approvals/': {
+      id: '/_authed/approvals/'
+      path: '/approvals'
+      fullPath: '/approvals/'
+      preLoaderRoute: typeof AuthedApprovalsIndexRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/approvals/$approvalId': {
+      id: '/_authed/approvals/$approvalId'
+      path: '/approvals/$approvalId'
+      fullPath: '/approvals/$approvalId'
+      preLoaderRoute: typeof AuthedApprovalsApprovalIdRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/apps/$appId': {
       id: '/_authed/apps/$appId'
       path: '/apps/$appId'
@@ -155,19 +186,21 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthedRouteChildren {
-  AuthedApprovalsRoute: typeof AuthedApprovalsRoute
   AuthedAuditRoute: typeof AuthedAuditRoute
   AuthedEnvironmentRoute: typeof AuthedEnvironmentRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
+  AuthedApprovalsApprovalIdRoute: typeof AuthedApprovalsApprovalIdRoute
   AuthedAppsAppIdRoute: typeof AuthedAppsAppIdRoute
+  AuthedApprovalsIndexRoute: typeof AuthedApprovalsIndexRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
-  AuthedApprovalsRoute: AuthedApprovalsRoute,
   AuthedAuditRoute: AuthedAuditRoute,
   AuthedEnvironmentRoute: AuthedEnvironmentRoute,
   AuthedIndexRoute: AuthedIndexRoute,
+  AuthedApprovalsApprovalIdRoute: AuthedApprovalsApprovalIdRoute,
   AuthedAppsAppIdRoute: AuthedAppsAppIdRoute,
+  AuthedApprovalsIndexRoute: AuthedApprovalsIndexRoute,
 }
 
 const AuthedRouteWithChildren =

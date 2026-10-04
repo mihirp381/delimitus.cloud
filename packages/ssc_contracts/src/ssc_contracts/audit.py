@@ -48,6 +48,7 @@ class AuditAction(StrEnum):
     KILL_SWITCH_STEP = "kill_switch.step"
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_DECIDED = "approval.decided"
+    APPROVAL_CANCELLED = "approval.cancelled"
     SCHEDULE_CREATED = "schedule.created"
     SCHEDULE_UPDATED = "schedule.updated"
     SCHEDULE_PAUSED = "schedule.paused"

@@ -4,9 +4,10 @@ A question is ``(environment, kind, subject_key)``. At most one request per ques
 (a partial unique index); asking again while one is pending or approved returns that request.
 Deciding locks the request, checks the decider (never an agent session, never the requester,
 an active org admin, or for ``exceed_ceiling`` the connection's active owner), writes a
-``policy_decision`` and audits ``approval.decided``. An approved internet host or data source
-turns on the cell's ``egress`` or ``connections`` (SSC-087), and an approved internet host joins
-the org's egress allowlist (SSC-053).
+``policy_decision`` and audits ``approval.decided``. The requester may withdraw (:func:`cancel`).
+Each new request and each decision queues its mail (SSC-049, ``notifications``). An approved
+internet host or data source turns on the cell's ``egress`` or ``connections`` (SSC-087), and an
+approved internet host joins the org's egress allowlist (SSC-053).
 """
 
 import json
@@ -16,7 +17,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, Literal, cast
 
-from sqlalchemy import Select, and_, column, literal, select, table, text, tuple_
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    and_,
+    column,
+    exists,
+    func,
+    literal,
+    or_,
+    select,
+    table,
+    text,
+    true,
+    tuple_,
+)
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.audit import AuditAction
@@ -37,13 +52,14 @@ from ssc_control.domain.approval_rules import (
     widens,
 )
 from ssc_control.egress import allowlist
+from ssc_control.notifications import service as notifications
 
 log = logging.getLogger(__name__)
 
-DecisionChannel = Literal["email", "chat", "console"]
+DecisionChannel = Literal["email", "chat", "console", "cli"]
 DecisionOutcome = Literal["approved", "denied"]
 RefusalReason = Literal[
-    "not_found", "not_pending", "agent_session", "self_approval", "not_eligible"
+    "not_found", "not_pending", "agent_session", "self_approval", "not_eligible", "not_requester"
 ]
 
 DECIDE_ACTION: Final = "approval.decide"
@@ -70,15 +86,28 @@ _R: Final = table(
     column("created_at"),
     schema="ssc",
 )
-_E: Final = table("environment", column("org_id"), column("id"), column("app_id"), schema="ssc")
+_E: Final = table(
+    "environment", column("org_id"), column("id"), column("app_id"), column("name"), schema="ssc"
+)
+_A: Final = table("app", column("org_id"), column("id"), column("slug"), schema="ssc")
+_U: Final = table(
+    "user_account", column("org_id"), column("id"), column("display_name"), schema="ssc"
+)
+_C: Final = table(
+    "connection", column("org_id"), column("name"), column("owner_user_id"), schema="ssc"
+)
 
 
 def _select() -> Select[Any]:
-    """Approval rows with their app id; callers add the ``org_id`` filter and the rest."""
+    """Approval rows with the app, environment and requester names; callers add the ``org_id``
+    filter and the rest."""
     r = _R.c
     return select(
         r.id,
         _E.c.app_id,
+        _A.c.slug.label("app"),
+        _E.c.name.label("environment"),
+        _U.c.display_name.label("requested_by_name"),
         r.environment_id,
         r.kind,
         r.subject_key,
@@ -93,7 +122,11 @@ def _select() -> Select[Any]:
         r.recorded_by_operator,
         r.policy_decision_id,
         r.created_at,
-    ).select_from(_R.join(_E, and_(_E.c.org_id == r.org_id, _E.c.id == r.environment_id)))
+    ).select_from(
+        _R.join(_E, and_(_E.c.org_id == r.org_id, _E.c.id == r.environment_id))
+        .join(_A, and_(_A.c.org_id == _E.c.org_id, _A.c.id == _E.c.app_id))
+        .join(_U, and_(_U.c.org_id == r.org_id, _U.c.id == r.requested_by_user_id))
+    )
 
 
 _INSERT_PENDING: Final = text(
@@ -117,16 +150,26 @@ _DECIDE: Final = text(
 )
 
 
+_CANCEL: Final = text(
+    "update ssc.approval_request set state = 'cancelled', decided_by_user_id = :by, "
+    "decided_at = now(), decision_reason = :reason, decision_channel = :channel "
+    "where org_id = :org and id = :id and state = 'pending'"
+)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ApprovalRow:
     id: str
     app_id: str
+    app: str
     environment_id: str
+    environment: str
     kind: RequirementKind
     subject_key: str
     payload: dict[str, Any]
     state: ApprovalState
     requested_by_user_id: str
+    requested_by_name: str
     requested_via_agent: bool
     decided_by_user_id: str | None
     decided_at: datetime | None
@@ -139,6 +182,14 @@ class ApprovalRow:
     @property
     def requirement(self) -> Requirement:
         return Requirement(self.kind, self.subject_key)
+
+    @property
+    def connection(self) -> str | None:
+        """The connection an ``exceed_ceiling`` request names; None for every other kind."""
+        name = self.payload.get("connection")
+        return (
+            name if self.kind is RequirementKind.EXCEED_CEILING and isinstance(name, str) else None
+        )
 
     def view(self) -> dict[str, Any]:
         """The ``approval_request`` audit view of this row."""
@@ -162,12 +213,15 @@ def approval_row(row: Mapping[Any, Any]) -> ApprovalRow:
     return ApprovalRow(
         id=str(row["id"]),
         app_id=str(row["app_id"]),
+        app=str(row["app"]),
         environment_id=str(row["environment_id"]),
+        environment=str(row["environment"]),
         kind=RequirementKind(str(row["kind"])),
         subject_key=str(row["subject_key"]),
         payload=cast(dict[str, Any], row["payload"]),
         state=cast(ApprovalState, state),
         requested_by_user_id=str(row["requested_by_user_id"]),
+        requested_by_name=str(row["requested_by_name"]),
         requested_via_agent=bool(row["requested_via_agent"]),
         decided_by_user_id=row["decided_by_user_id"],
         decided_at=row["decided_at"],
@@ -297,8 +351,21 @@ async def request(  # noqa: PLR0913  (keyword-only)
                 after=row.view(),
             ),
         )
+        await notifications.arrived(
+            conn,
+            org_id=org_id,
+            approval_id=apr_id,
+            requester_id=requested_by,
+            connection=row.connection,
+        )
         return row, True
     raise RuntimeError("the pending approval request kept changing under concurrent writers")
+
+
+async def connection_owner(conn: AsyncConnection, org_id: str, name: str) -> str | None:
+    """The user who owns the connection called ``name``, or None."""
+    params = {"org": org_id, "name": name}
+    return (await conn.execute(_CONNECTION_OWNER, params)).scalar_one_or_none()
 
 
 async def decide(
@@ -315,13 +382,7 @@ async def decide(
         raise ApprovalRefusedError("not_pending")
     # FOR SHARE: the approver cannot be demoted or deactivated until this decision commits.
     account = (await conn.execute(_LOCK_DECIDER, {"org": org_id, "id": decider.user_id})).first()
-    owner: str | None = None
-    if row.kind is RequirementKind.EXCEED_CEILING:
-        owner = (
-            await conn.execute(
-                _CONNECTION_OWNER, {"org": org_id, "name": row.payload.get("connection")}
-            )
-        ).scalar_one_or_none()
+    owner = None if row.connection is None else await connection_owner(conn, org_id, row.connection)
     refusal = check_decider(
         row.requested_by_user_id,
         decider.user_id,
@@ -388,7 +449,51 @@ async def decide(
             policy_decision_id=pol_id,
         ),
     )
+    await notifications.decided(
+        conn, org_id=org_id, approval_id=approval_id, requester_id=row.requested_by_user_id
+    )
     return decided
+
+
+async def cancel(  # noqa: PLR0913  (keyword-only)
+    conn: AsyncConnection,
+    *,
+    org_id: str,
+    approval_id: str,
+    user_id: str,
+    channel: DecisionChannel,
+    reason: str,
+    actor: Actor,
+) -> ApprovalRow:
+    """The requester withdraws their own pending request. Raises :class:`ApprovalRefusedError`:
+    missing, someone else's, no longer pending. Audited as ``approval.cancelled``."""
+    row = await get(conn, org_id=org_id, approval_id=approval_id, lock=True)
+    if row is None:
+        raise ApprovalRefusedError("not_found")
+    if row.requested_by_user_id != user_id:
+        raise ApprovalRefusedError("not_requester")
+    if row.state != "pending":
+        raise ApprovalRefusedError("not_pending")
+    await conn.execute(
+        _CANCEL,
+        {"org": org_id, "id": approval_id, "by": user_id, "reason": reason, "channel": channel},
+    )
+    cancelled = await get(conn, org_id=org_id, approval_id=approval_id)
+    if cancelled is None:
+        raise RuntimeError(f"approval request {approval_id} vanished while it was locked")
+    await append_event(
+        conn,
+        NewEvent(
+            org_id=org_id,
+            action=AuditAction.APPROVAL_CANCELLED,
+            actor=actor,
+            target_kind="approval_request",
+            target_id=approval_id,
+            before=row.view(),
+            after=cancelled.view(),
+        ),
+    )
+    return cancelled
 
 
 async def _allow_host(
@@ -455,22 +560,45 @@ async def share_requirements(  # noqa: PLR0913  (keyword-only)
     return out
 
 
+def _owns(user_id: str) -> ColumnElement[bool]:
+    """An ``exceed_ceiling`` request on a connection this user owns."""
+    r = _R.c
+    return and_(
+        r.kind == RequirementKind.EXCEED_CEILING.value,
+        exists().where(
+            _C.c.org_id == r.org_id,
+            _C.c.name == func.jsonb_extract_path_text(r.payload, "connection"),
+            _C.c.owner_user_id == user_id,
+        ),
+    )
+
+
 async def search(  # noqa: PLR0913  (keyword-only)
     conn: AsyncConnection,
     *,
     org_id: str,
-    requested_by: str | None,
+    visible_to: str | None,
+    decidable_by: str | None = None,
+    decider_is_admin: bool = False,
     state: ApprovalState | None,
     environment_id: str | None,
     before: ApprovalRow | None,
     limit: int,
 ) -> list[ApprovalRow]:
     """Newest first, keyed on ``(created_at, id)`` so a page boundary never skips a row.
-    ``requested_by`` limits the page to one requester's requests."""
+    ``visible_to`` limits the page to one user's own requests and the ``exceed_ceiling`` requests
+    on connections they own. ``decidable_by`` keeps the pending requests that user may decide:
+    not their own, and any when ``decider_is_admin``, else only those on connections they own."""
     r = _R.c
     query = _select().where(r.org_id == org_id)
-    if requested_by is not None:
-        query = query.where(r.requested_by_user_id == requested_by)
+    if visible_to is not None:
+        query = query.where(or_(r.requested_by_user_id == visible_to, _owns(visible_to)))
+    if decidable_by is not None:
+        query = query.where(
+            r.state == "pending",
+            r.requested_by_user_id != decidable_by,
+            true() if decider_is_admin else _owns(decidable_by),
+        )
     if state is not None:
         query = query.where(r.state == state)
     if environment_id is not None:

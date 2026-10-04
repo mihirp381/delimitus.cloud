@@ -279,9 +279,23 @@
         "title": "AppSummary",
         "type": "object"
       },
+      "ApplyOutcome": {
+        "enum": [
+          "applied",
+          "waiting",
+          "not_applied",
+          "not_applicable"
+        ],
+        "type": "string"
+      },
       "Approval": {
         "additionalProperties": false,
         "properties": {
+          "app": {
+            "description": "The app's slug.",
+            "title": "App",
+            "type": "string"
+          },
           "app_id": {
             "title": "App Id",
             "type": "string"
@@ -320,7 +334,8 @@
                 "enum": [
                   "email",
                   "chat",
-                  "console"
+                  "console",
+                  "cli"
                 ],
                 "type": "string"
               },
@@ -340,6 +355,14 @@
               }
             ],
             "title": "Decision Reason"
+          },
+          "environment": {
+            "enum": [
+              "prod",
+              "preview"
+            ],
+            "title": "Environment",
+            "type": "string"
           },
           "environment_id": {
             "title": "Environment Id",
@@ -380,6 +403,10 @@
             "description": "The SSC operator who recorded the decision, when one did.",
             "title": "Recorded By Operator"
           },
+          "requested_by_name": {
+            "title": "Requested By Name",
+            "type": "string"
+          },
           "requested_by_user_id": {
             "title": "Requested By User Id",
             "type": "string"
@@ -407,12 +434,15 @@
         "required": [
           "id",
           "app_id",
+          "app",
           "environment_id",
+          "environment",
           "kind",
           "subject_key",
           "payload",
           "state",
           "requested_by_user_id",
+          "requested_by_name",
           "requested_via_agent",
           "decided_by_user_id",
           "decided_at",
@@ -423,6 +453,58 @@
           "created_at"
         ],
         "title": "Approval",
+        "type": "object"
+      },
+      "ApprovalConnection": {
+        "additionalProperties": false,
+        "description": "The data connection an `exceed_ceiling` request is about (never its address).",
+        "properties": {
+          "ceiling_audience": {
+            "enum": [
+              "org",
+              "subjects"
+            ],
+            "title": "Ceiling Audience",
+            "type": "string"
+          },
+          "ceiling_subjects": {
+            "description": "How many groups and users the ceiling lists.",
+            "title": "Ceiling Subjects",
+            "type": "integer"
+          },
+          "classification": {
+            "enum": [
+              "internal",
+              "confidential",
+              "restricted"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          }
+        },
+        "required": [
+          "name",
+          "classification",
+          "owner_user_id",
+          "ceiling_audience",
+          "ceiling_subjects"
+        ],
+        "title": "ApprovalConnection",
         "type": "object"
       },
       "ApprovalCreate": {
@@ -461,6 +543,394 @@
           "kind"
         ],
         "title": "ApprovalCreate",
+        "type": "object"
+      },
+      "ApprovalDecided": {
+        "additionalProperties": false,
+        "description": "A decision, and what approving it did.",
+        "properties": {
+          "app": {
+            "description": "The app's slug.",
+            "title": "App",
+            "type": "string"
+          },
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "applied": {
+            "$ref": "#/components/schemas/ApplyOutcome",
+            "description": "`applied`: the grants were written. `waiting`: another requirement for the same change is still open. `not_applied`: approved, but the change no longer fits (see `applied_reason`); ask again. `not_applicable`: nothing to apply."
+          },
+          "applied_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Reason"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By User Id"
+          },
+          "decision_channel": {
+            "anyOf": [
+              {
+                "enum": [
+                  "email",
+                  "chat",
+                  "console",
+                  "cli"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Channel"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Reason"
+          },
+          "environment": {
+            "enum": [
+              "prod",
+              "preview"
+            ],
+            "title": "Environment",
+            "type": "string"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RequirementKind"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "policy_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Decision Id"
+          },
+          "recorded_by_operator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The SSC operator who recorded the decision, when one did.",
+            "title": "Recorded By Operator"
+          },
+          "requested_by_name": {
+            "title": "Requested By Name",
+            "type": "string"
+          },
+          "requested_by_user_id": {
+            "title": "Requested By User Id",
+            "type": "string"
+          },
+          "requested_via_agent": {
+            "title": "Requested Via Agent",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "subject_key": {
+            "description": "What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).",
+            "title": "Subject Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "app_id",
+          "app",
+          "environment_id",
+          "environment",
+          "kind",
+          "subject_key",
+          "payload",
+          "state",
+          "requested_by_user_id",
+          "requested_by_name",
+          "requested_via_agent",
+          "decided_by_user_id",
+          "decided_at",
+          "decision_reason",
+          "decision_channel",
+          "recorded_by_operator",
+          "policy_decision_id",
+          "created_at",
+          "applied",
+          "applied_reason"
+        ],
+        "title": "ApprovalDecided",
+        "type": "object"
+      },
+      "ApprovalDetail": {
+        "additionalProperties": false,
+        "description": "One request with what a decider needs to see: names, who asked and the change.",
+        "properties": {
+          "app": {
+            "description": "The app's slug.",
+            "title": "App",
+            "type": "string"
+          },
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "can_cancel": {
+            "description": "Whether the caller may withdraw it now.",
+            "title": "Can Cancel",
+            "type": "boolean"
+          },
+          "can_decide": {
+            "description": "Whether the caller may approve or reject it now.",
+            "title": "Can Decide",
+            "type": "boolean"
+          },
+          "connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalConnection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By User Id"
+          },
+          "decision_channel": {
+            "anyOf": [
+              {
+                "enum": [
+                  "email",
+                  "chat",
+                  "console",
+                  "cli"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Channel"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Reason"
+          },
+          "environment": {
+            "enum": [
+              "prod",
+              "preview"
+            ],
+            "title": "Environment",
+            "type": "string"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "grant_diff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantDiff"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sharing requests only; null for a data source or an internet host."
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RequirementKind"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "policy_decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Decision Id"
+          },
+          "recorded_by_operator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The SSC operator who recorded the decision, when one did.",
+            "title": "Recorded By Operator"
+          },
+          "requested_by_name": {
+            "title": "Requested By Name",
+            "type": "string"
+          },
+          "requested_by_user_id": {
+            "title": "Requested By User Id",
+            "type": "string"
+          },
+          "requested_via_agent": {
+            "title": "Requested Via Agent",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "subject_key": {
+            "description": "What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).",
+            "title": "Subject Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "app_id",
+          "app",
+          "environment_id",
+          "environment",
+          "kind",
+          "subject_key",
+          "payload",
+          "state",
+          "requested_by_user_id",
+          "requested_by_name",
+          "requested_via_agent",
+          "decided_by_user_id",
+          "decided_at",
+          "decision_reason",
+          "decision_channel",
+          "recorded_by_operator",
+          "policy_decision_id",
+          "created_at",
+          "grant_diff",
+          "connection",
+          "can_decide",
+          "can_cancel"
+        ],
+        "title": "ApprovalDetail",
         "type": "object"
       },
       "ApprovalPage": {
@@ -530,6 +1000,7 @@
           "kill_switch.step",
           "approval.requested",
           "approval.decided",
+          "approval.cancelled",
           "schedule.created",
           "schedule.updated",
           "schedule.paused",
@@ -1018,6 +1489,29 @@
           "upload"
         ],
         "title": "BundleOut",
+        "type": "object"
+      },
+      "CancelIn": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "default": "console",
+            "enum": [
+              "console",
+              "cli"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "reason": {
+            "default": "Withdrawn by the requester.",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "CancelIn",
         "type": "object"
       },
       "CapabilityChange": {
@@ -2264,6 +2758,59 @@
         "title": "DeploymentPolicy",
         "type": "object"
       },
+      "DiffGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "enum": [
+              "builder",
+              "user"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "subject_kind": {
+            "enum": [
+              "user",
+              "group",
+              "org"
+            ],
+            "title": "Subject Kind",
+            "type": "string"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The user's or group's display name, if known.",
+            "title": "Subject Name"
+          }
+        },
+        "required": [
+          "role",
+          "subject_kind",
+          "subject_id",
+          "subject_name"
+        ],
+        "title": "DiffGrant",
+        "type": "object"
+      },
       "DirectoryGroupIn": {
         "additionalProperties": false,
         "properties": {
@@ -2768,6 +3315,32 @@
           }
         },
         "title": "GrantBody",
+        "type": "object"
+      },
+      "GrantDiff": {
+        "additionalProperties": false,
+        "description": "What the request would change about the environment's sharing rules, compared with the\nrules in force now.",
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/DiffGrant"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "removed": {
+            "items": {
+              "$ref": "#/components/schemas/DiffGrant"
+            },
+            "title": "Removed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "added",
+          "removed"
+        ],
+        "title": "GrantDiff",
         "type": "object"
       },
       "GrantIn": {
@@ -3880,6 +4453,41 @@
           "user_id"
         ],
         "title": "OwnerTransfer",
+        "type": "object"
+      },
+      "PersonDecisionIn": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "default": "console",
+            "description": "Where the decision was made.",
+            "enum": [
+              "console",
+              "cli"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "approved",
+              "denied"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "reason"
+        ],
+        "title": "PersonDecisionIn",
         "type": "object"
       },
       "PolicyApproval": {
@@ -5943,9 +6551,21 @@
     },
     "/v1/approvals": {
       "get": {
-        "description": "Newest first. Org admins and operators see every request; others see their own. An\noperator's read is audited as ``operator.access``.",
+        "description": "Newest first. Org admins and operators see every request; others see their own and the\n`exceed_ceiling` requests on connections they own. `inbox` narrows to what the caller may\ndecide. An operator's read is audited as ``operator.access``.",
         "operationId": "list_approvals_v1_approvals_get",
         "parameters": [
+          {
+            "description": "Only the pending requests the caller may decide: not their own; every one for an org admin, else those on connections they own. Empty in an agent session.",
+            "in": "query",
+            "name": "inbox",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Only the pending requests the caller may decide: not their own; every one for an org admin, else those on connections they own. Empty in an agent session.",
+              "title": "Inbox",
+              "type": "boolean"
+            }
+          },
           {
             "in": "query",
             "name": "state",
@@ -6215,7 +6835,7 @@
     },
     "/v1/approvals/{approval_id}": {
       "get": {
-        "description": "One request. A request the caller may not see is ``NOT_FOUND``.",
+        "description": "One request, with the names, who asked and what it would change. A request the caller\nmay not see is ``NOT_FOUND``.",
         "operationId": "get_approval_v1_approvals__approval_id__get",
         "parameters": [
           {
@@ -6234,7 +6854,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Approval"
+                  "$ref": "#/components/schemas/ApprovalDetail"
                 }
               }
             },
@@ -6292,6 +6912,266 @@
           }
         },
         "summary": "Get Approval",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/approvals/{approval_id}/cancel": {
+      "post": {
+        "description": "Withdraw your own pending request. Allowed in an agent session for its own request.\nAudited as `approval.cancelled`.",
+        "operationId": "cancel_approval_v1_approvals__approval_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Approval Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Cancel Approval",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/approvals/{approval_id}/decide": {
+      "post": {
+        "description": "Approve or reject a request you can see, with a reason. Never in an agent session, never\nyour own request; an org admin, or for `exceed_ceiling` the connection's owner. Approving a\nsharing request applies it once every requirement for that change is approved. One that no\nlonger fits stays approved and says so in `applied`; the requester asks again.",
+        "operationId": "decide_as_approver_v1_approvals__approval_id__decide_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Approval Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonDecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDecided"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`, `SELF_APPROVAL_REFUSED`, `APPROVER_NOT_ELIGIBLE`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Decide As Approver",
         "tags": [
           "v1"
         ]

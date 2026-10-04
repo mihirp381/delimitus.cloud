@@ -47,6 +47,8 @@ Revision 0030 adds ``environment.warm`` and ``warm_gateway`` (SSC-092), keyed by
 Revision 0031 adds ``connection_grant`` (SSC-052), keyed by a ``cgr_`` id, and columns on
 ``connection``: an owner, a setup status, schemas, limits and an audience ceiling. A connection's
 address stays out of every read, and no credential is stored here.
+Revision 0032 adds ``notification_outbox`` (SSC-049), keyed by an ``ntf_`` id: a recipient, a
+template and a state, never an address or a message.
 """
 
 from collections.abc import Mapping
@@ -99,6 +101,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "egress_credential",  # SSC-053, revision 0029
         "warm_gateway",
         "connection_grant",  # SSC-052, revision 0031
+        "notification_outbox",  # SSC-049, revision 0032
     }
 )
 
@@ -186,6 +189,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "egress_credential": frozenset({"SELECT", "INSERT", "DELETE"}),  # older ones pruned
     "warm_gateway": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "connection_grant": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
+    "notification_outbox": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # sent ones pruned
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

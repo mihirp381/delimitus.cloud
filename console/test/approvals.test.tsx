@@ -6,29 +6,22 @@ import { signedIn, start } from './harness';
 
 const OWNER = 'usr_cccccccccccccccccccc';
 const ADMIN = 'usr_dddddddddddddddddddd';
-const APP = {
-  id: 'app_aaaaaaaaaaaaaaaaaaaa',
-  slug: 'expenses',
-  owner_user_id: OWNER,
-  status: 'active',
-  created_at: '2026-09-28T10:00:00Z',
-  environments: [
-    { id: 'env_preview0000000000000', name: 'preview', config_version: 1, grants_version: 0, current_deployment_id: null },
-    { id: 'env_prod0000000000000000', name: 'prod', config_version: 2, grants_version: 3, current_deployment_id: null },
-  ],
-};
+const APP_ID = 'app_aaaaaaaaaaaaaaaaaaaa';
 const GONE_APP = 'app_gggggggggggggggggggg';
 
 function approval(id: string, overrides: Record<string, unknown>) {
   return {
     id,
-    app_id: APP.id,
+    app_id: APP_ID,
     environment_id: 'env_prod0000000000000000',
     kind: 'connect_data_source',
     subject_key: 'warehouse',
     payload: {},
     state: 'pending',
     requested_by_user_id: OWNER,
+    requested_by_name: 'Olivia Owner',
+    app: 'expenses',
+    environment: 'prod',
     requested_via_agent: false,
     decided_by_user_id: null,
     decided_at: null,
@@ -67,10 +60,13 @@ const DENIED = approval('apr_000000000000000000d1', {
   decision_channel: 'chat',
   recorded_by_operator: 'op_ada',
   environment_id: 'env_preview0000000000000',
+  environment: 'preview',
 });
 const CANCELLED = approval('apr_000000000000000000c1', {
   app_id: GONE_APP,
+  app: 'old-app',
   environment_id: 'env_gone0000000000000000',
+  environment: 'preview',
   kind: 'enable_internet_hosts',
   subject_key: 'api.example.com',
   state: 'cancelled',
@@ -81,11 +77,7 @@ function page(approvals: unknown[], next: string | null = null): Handler {
 }
 
 function routes(list: Handler | Handler[]): Record<string, Handler | Handler[]> {
-  return {
-    'GET /v1/approvals': list,
-    [`GET /v1/apps/${APP.id}`]: () => json(200, APP),
-    [`GET /v1/apps/${GONE_APP}`]: () => problem(404, 'NOT_FOUND', 'Not found'),
-  };
+  return { 'GET /v1/approvals': list };
 }
 
 function rowOf(text: string): HTMLElement {
@@ -94,21 +86,72 @@ function rowOf(text: string): HTMLElement {
   return row;
 }
 
-describe('approvals', () => {
-  it('lists each request with what it asks, who asked and how it was decided', async () => {
-    const { api } = start('/approvals', routes(page([WIDEN, AGENT_SHARE, DENIED, CANCELLED])), signedIn());
+function detail(base: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return {
+    ...base,
+    grant_diff: null,
+    connection: null,
+    can_decide: false,
+    can_cancel: false,
+    ...extra,
+  };
+}
+
+const EXCEED = approval('apr_000000000000000000e1', {
+  kind: 'exceed_ceiling',
+  subject_key: 'sha256:cc',
+  payload: { connection: 'warehouse', grants: [{ role: 'user', subject_kind: 'org' }] },
+  requested_by_name: 'Bea Builder',
+});
+const DIFF = {
+  added: [
+    { role: 'user', subject_kind: 'org', subject_id: null, subject_name: null },
+    { role: 'user', subject_kind: 'group', subject_id: 'grp_a', subject_name: 'Finance' },
+  ],
+  removed: [{ role: 'user', subject_kind: 'user', subject_id: ADMIN, subject_name: 'Ada Admin' }],
+};
+const CONNECTION = {
+  name: 'warehouse',
+  classification: 'confidential',
+  owner_user_id: OWNER,
+  ceiling_audience: 'subjects',
+  ceiling_subjects: 2,
+};
+
+describe('approvals inbox', () => {
+  it('asks the API for the inbox and lists what is waiting with names', async () => {
+    const { api } = start('/approvals', routes(page([EXCEED, WIDEN])), signedIn());
+    expect(await screen.findByText('2 requests waiting for you')).toBeTruthy();
+    expect([...api.of('GET', '/v1/approvals')[0]!.query.entries()]).toEqual([['inbox', 'true']]);
+
+    const exceed = rowOf('Share beyond the audience ceiling of the connection');
+    expect(within(exceed).getByText('warehouse')).toBeTruthy();
+    expect(within(exceed).getByText(/Bea Builder/)).toBeTruthy();
+    expect(within(exceed).getByRole('link', { name: 'expenses' }).getAttribute('href')).toBe(`/apps/${APP_ID}`);
+    expect(within(exceed).getByText('prod')).toBeTruthy();
+    expect(within(exceed).getByRole('link', { name: 'Open' }).getAttribute('href')).toBe(
+      '/approvals/apr_000000000000000000e1',
+    );
+    expect(api.calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
+
+  it('says so when nothing is waiting', async () => {
+    start('/approvals', routes(page([])), signedIn());
+    expect(await screen.findByText('Nothing is waiting for you.')).toBeTruthy();
+  });
+
+  it('lists every request, with its decision, in the all view', async () => {
+    const { api } = start('/approvals?view=all', routes(page([WIDEN, AGENT_SHARE, DENIED, CANCELLED])), signedIn());
     expect(await screen.findByText('4 requests')).toBeTruthy();
+    expect([...api.of('GET', '/v1/approvals')[0]!.query.keys()]).toEqual([]);
 
     const widen = rowOf('Widen who has access, to:');
     expect(within(widen).getByText('Everyone in the organisation (user)')).toBeTruthy();
     expect(within(widen).getByText('pending')).toBeTruthy();
-    expect(within(widen).getByText('Waiting for an org admin')).toBeTruthy();
+    expect(within(widen).getByText('Waiting for an approver')).toBeTruthy();
     expect(within(widen).queryByText('agent')).toBeNull();
-    await within(widen).findByRole('link', { name: 'expenses' });
-    expect(within(widen).getByText('prod')).toBeTruthy();
 
     const share = rowOf('Sharing change made by an agent, replacing version 3, to:');
-    expect(within(share).getByText(`User ${OWNER} (builder)`)).toBeTruthy();
     expect(within(share).getByText('agent')).toBeTruthy();
     expect(within(share).getByText('approved')).toBeTruthy();
     expect(within(share).getByText(ADMIN)).toBeTruthy();
@@ -117,56 +160,39 @@ describe('approvals', () => {
     expect(within(share).getByText('op_ada')).toBeTruthy();
 
     const denied = rowOf('warehouse');
-    expect(within(denied).getByText(/Connect the data source/)).toBeTruthy();
     expect(within(denied).getByText('denied')).toBeTruthy();
     expect(within(denied).getByText(/by chat on/)).toBeTruthy();
-    expect(within(denied).getByText('preview')).toBeTruthy();
 
-    // An app the caller cannot read shows its ids.
     const cancelled = rowOf('api.example.com');
     expect(within(cancelled).getByText('Withdrawn by the requester')).toBeTruthy();
-    await within(cancelled).findByText('env_gone0000000000000000');
-    expect(within(cancelled).getByRole('link', { name: GONE_APP }).getAttribute('href')).toBe(`/apps/${GONE_APP}`);
-
-    // One read per app, however many rows name it.
-    expect(api.of('GET', `/v1/apps/${APP.id}`)).toHaveLength(1);
-    expect([...api.of('GET', '/v1/approvals')[0]!.query.keys()]).toEqual([]);
+    expect(within(cancelled).getByRole('link', { name: 'old-app' }).getAttribute('href')).toBe(`/apps/${GONE_APP}`);
   });
 
-  it('offers no way to approve or deny and sends nothing but reads', async () => {
-    const { api } = start('/approvals', routes(page([WIDEN, DENIED], 'apr_000000000000000000d1')), signedIn());
-    await screen.findByText('2 requests, more are older');
-    const names = screen.getAllByRole('button').map((b) => b.textContent ?? '');
-    expect(names).toEqual(['Sign out', 'Load older requests']);
-    expect(names.filter((n) => /approve|deny|decide|reject/i.test(n))).toEqual([]);
-    expect(api.calls.filter((c) => c.method !== 'GET')).toEqual([]);
-  });
-
-  it('filters by state through the URL', async () => {
+  it('switches views and filters by state through the URL', async () => {
     const { api, router } = start(
-      '/approvals',
+      '/approvals?view=all',
       routes((call) => (call.query.get('state') === 'pending' ? page([])(call) : page([WIDEN, DENIED])(call))),
       signedIn(),
     );
     await screen.findByText('2 requests');
     fireEvent.change(screen.getByLabelText('State'), { target: { value: 'pending' } });
     expect(await screen.findByText('No pending requests.')).toBeTruthy();
-    expect(router.state.location.search).toEqual({ state: 'pending' });
+    expect(router.state.location.search).toEqual({ view: 'all', state: 'pending' });
     expect(api.of('GET', '/v1/approvals')[1]?.query.get('state')).toBe('pending');
-    fireEvent.change(screen.getByLabelText('State'), { target: { value: '' } });
-    await screen.findByText('2 requests');
+    fireEvent.click(screen.getByRole('link', { name: 'Waiting for you' }));
+    await screen.findByText('2 requests waiting for you');
     expect(router.state.location.search).toEqual({});
   });
 
   it('drops search values from the URL that the API would refuse', async () => {
-    const { api } = start('/approvals?state=open&limit=5&before=apr_x', routes(page([WIDEN])), signedIn());
-    await screen.findByText('1 request');
-    expect([...api.of('GET', '/v1/approvals')[0]!.query.keys()]).toEqual([]);
+    const { api } = start('/approvals?view=mine&state=open&limit=5&before=apr_x', routes(page([WIDEN])), signedIn());
+    await screen.findByText('1 request waiting for you');
+    expect([...api.of('GET', '/v1/approvals')[0]!.query.entries()]).toEqual([['inbox', 'true']]);
   });
 
   it('loads older requests with the cursor the API returned', async () => {
     const { api } = start(
-      '/approvals?state=denied',
+      '/approvals?view=all&state=denied',
       routes([page([DENIED], 'apr_000000000000000000d1'), page([CANCELLED])]),
       signedIn(),
     );
@@ -191,11 +217,146 @@ describe('approvals', () => {
   });
 });
 
+describe('approval detail', () => {
+  const path = `/approvals/${EXCEED.id}`;
+  const getRoute = (body: unknown) => ({ [`GET /v1/approvals/${EXCEED.id}`]: () => json(200, body) });
+
+  it('shows the diff, who asked and the connection it goes beyond', async () => {
+    start(path, getRoute(detail(EXCEED, { grant_diff: DIFF, connection: CONNECTION, can_decide: true })), signedIn());
+    expect(await screen.findByText('Change to who has access')).toBeTruthy();
+    expect(screen.getByText(/Bea Builder/)).toBeTruthy();
+    const added = screen.getByRole('heading', { name: 'Added' }).nextElementSibling as HTMLElement;
+    expect(within(added).getByText('Everyone in the organisation (user)')).toBeTruthy();
+    expect(within(added).getByText('Group Finance (user)')).toBeTruthy();
+    const removed = screen.getByRole('heading', { name: 'Removed' }).nextElementSibling as HTMLElement;
+    expect(within(removed).getByText('User Ada Admin (user)')).toBeTruthy();
+    expect(screen.getByText(/ceiling subjects, 2 named/)).toBeTruthy();
+  });
+
+  it('requires a reason, sends the decision and says the grant is in force', async () => {
+    const { api } = start(
+      path,
+      {
+        ...getRoute(detail(EXCEED, { grant_diff: DIFF, connection: CONNECTION, can_decide: true })),
+        [`POST /v1/approvals/${EXCEED.id}/decide`]: () =>
+          json(200, { ...EXCEED, state: 'approved', applied: 'applied', applied_reason: null }),
+      },
+      signedIn(),
+    );
+    const approve = await screen.findByRole('button', { name: 'Approve' });
+    expect((approve as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Reject' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: '   ' } });
+    expect((approve as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Fine for finance' } });
+    await act(async () => {
+      fireEvent.click(approve);
+    });
+    expect(await screen.findByText('Approved, and the sharing change is now in force.')).toBeTruthy();
+    expect(api.of('POST', `/v1/approvals/${EXCEED.id}/decide`)[0]!.body).toEqual({
+      outcome: 'approved',
+      reason: 'Fine for finance',
+      channel: 'console',
+    });
+  });
+
+  it('says when an approval was not applied', async () => {
+    start(
+      path,
+      {
+        ...getRoute(detail(EXCEED, { can_decide: true })),
+        [`POST /v1/approvals/${EXCEED.id}/decide`]: () =>
+          json(200, { ...EXCEED, state: 'approved', applied: 'not_applied', applied_reason: 'stale' }),
+      },
+      signedIn(),
+    );
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: 'ok' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    });
+    expect(
+      await screen.findByText(/Approved, but the change was not applied \(the sharing rules changed after it was asked\)\. Ask again\./),
+    ).toBeTruthy();
+  });
+
+  it('rejects with the reason', async () => {
+    const { api } = start(
+      path,
+      {
+        ...getRoute(detail(EXCEED, { can_decide: true })),
+        [`POST /v1/approvals/${EXCEED.id}/decide`]: () => json(200, { ...EXCEED, state: 'denied', applied: 'not_applicable', applied_reason: null }),
+      },
+      signedIn(),
+    );
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: 'Too broad' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+    expect(await screen.findByText('Rejected. The requester has been told why.')).toBeTruthy();
+    expect(api.of('POST', `/v1/approvals/${EXCEED.id}/decide`)[0]!.body).toEqual({
+      outcome: 'denied',
+      reason: 'Too broad',
+      channel: 'console',
+    });
+  });
+
+  it('shows the refusal when the decision is refused', async () => {
+    start(
+      path,
+      {
+        ...getRoute(detail(EXCEED, { can_decide: true })),
+        [`POST /v1/approvals/${EXCEED.id}/decide`]: () => problem(403, 'AGENT_SESSION_REFUSED', 'An agent session cannot approve'),
+      },
+      signedIn(),
+    );
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: 'ok' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    });
+    expect((await screen.findByRole('alert')).textContent).toContain('An agent session cannot approve');
+  });
+
+  it('offers no decision to the requester, only to withdraw', async () => {
+    const { api } = start(
+      path,
+      {
+        ...getRoute(detail(EXCEED, { can_cancel: true })),
+        [`POST /v1/approvals/${EXCEED.id}/cancel`]: () => json(200, { ...EXCEED, state: 'cancelled' }),
+      },
+      signedIn(),
+    );
+    await screen.findByRole('button', { name: 'Withdraw this request' });
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByLabelText('Reason')).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Withdraw this request' }));
+    });
+    expect(await screen.findByText('The request was withdrawn.')).toBeTruthy();
+    expect(api.of('POST', `/v1/approvals/${EXCEED.id}/cancel`)[0]!.body).toEqual({
+      reason: 'Withdrawn by the requester.',
+      channel: 'console',
+    });
+  });
+
+  it('shows a rejection with its reason and no buttons', async () => {
+    start(path, getRoute(detail(DENIED, { id: EXCEED.id })), signedIn());
+    expect(await screen.findByText('“Not this quarter”')).toBeTruthy();
+    expect(screen.getByText(/Rejected by/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /approve|reject|withdraw/i })).toBeNull();
+  });
+
+  it('explains a data source request changes nothing by itself', async () => {
+    start(path, getRoute(detail(approval(EXCEED.id, { can_decide: true }), { can_decide: true })), signedIn());
+    expect(await screen.findByText(/changes nothing by itself/)).toBeTruthy();
+  });
+});
+
 describe('approval helpers', () => {
-  it('keeps only a known state from the URL', () => {
+  it('keeps only a known state and view from the URL', () => {
     expect(approvalsSearch({ state: 'approved' })).toEqual({ state: 'approved' });
     expect(approvalsSearch({ state: 'constructor' })).toEqual({});
-    expect(approvalsSearch({ state: 'open' })).toEqual({});
+    expect(approvalsSearch({ state: 'open', view: 'all' })).toEqual({ view: 'all' });
+    expect(approvalsSearch({ view: 'mine' })).toEqual({});
   });
 
   it('reads the requested grants only when every one is well formed', () => {

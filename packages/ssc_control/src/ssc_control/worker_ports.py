@@ -18,6 +18,7 @@ from ssc_control.cell.deployer import CellDeployer
 from ssc_control.deploy.build_driver import BuildDriver
 from ssc_control.github.client import GitHubApp
 from ssc_control.identity.workos import WorkOSClient
+from ssc_control.notifications.mailer import Mailer
 from ssc_control.ports import (
     MetricsPort,
     NullMetricsPort,
@@ -59,7 +60,9 @@ class Ports:
     skips the directory sync (SSC-064). ``cell_usage`` None skips the usage collection and records
     no usage events (SSC-028). ``github`` None leaves a push job with nothing to do (SSC-047);
     ``apps_domain`` makes the preview address it reports. ``cell_egress`` None deploys an app
-    that declares outbound hosts with no proxy credential, so it reaches none (SSC-053)."""
+    that declares outbound hosts with no proxy credential, so it reaches none (SSC-053).
+    ``mailer`` None leaves queued approval mail waiting (SSC-049); ``console_url`` is the link
+    those mails carry."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -81,6 +84,8 @@ class Ports:
     github: GitHubApp | None = None
     apps_domain: str = APPS_DOMAIN
     cell_egress: CellEgress | None = None
+    mailer: Mailer | None = None
+    console_url: str = ""
 
 
 class PortsMissingError(RuntimeError):

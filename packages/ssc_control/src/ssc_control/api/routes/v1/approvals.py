@@ -1,13 +1,15 @@
-"""Approval requests (SSC-045): ask, list, read, and the operator-recorded decision.
+"""Approval requests (SSC-045, SSC-049): ask, list, read, decide, cancel.
 
-Anyone who may change an environment may ask, agent sessions included. The decision endpoint
-takes an operator credential only: SSC staff record what a named admin of the org decided by
-email or chat. The approver is never the requester and never an agent session; the database
-refuses both even if this code is wrong.
+Anyone who may change an environment may ask, agent sessions included. Admins and the owner of
+a connection a request names decide from the inbox (``/decide``), in a normal session: the
+approver is never the requester and never an agent session, and approving applies the grant
+(:func:`ssc_control.api.routes.v1.grants.apply_approved`). The ``/decision`` endpoint stays for
+SSC staff recording what an admin decided by email or chat. The database refuses both
+self-approval and agent approval even if this code is wrong.
 """
 
 from datetime import datetime
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, cast
 
 from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -22,7 +24,7 @@ from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict, require_user
-from ssc_control.api.routes.v1.grants import GrantIn
+from ssc_control.api.routes.v1.grants import ApplyOutcome, GrantIn, apply_approved, lock_environment
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals import service
 from ssc_control.approvals.service import ApprovalRefusedError, ApprovalRow, Decider
@@ -33,6 +35,7 @@ from ssc_control.domain.approval_rules import (
     Requirement,
     RequirementKind,
     agent_share_subject_key,
+    check_decider,
     exceed_subject_key,
     share_subject_key,
 )
@@ -52,7 +55,18 @@ _REFUSALS: Final[dict[service.RefusalReason, ErrorCode]] = {
     "agent_session": ErrorCode.AGENT_SESSION_REFUSED,
     "self_approval": ErrorCode.SELF_APPROVAL_REFUSED,
     "not_eligible": ErrorCode.APPROVER_NOT_ELIGIBLE,
+    "not_requester": ErrorCode.FORBIDDEN,
 }
+_SHARING: Final = frozenset(
+    {RequirementKind.WIDEN_AUDIENCE, RequirementKind.AGENT_SHARE, RequirementKind.EXCEED_CEILING}
+)
+_USER_NAMES = text(
+    "select id, display_name from ssc.user_account where org_id = :org and id = any(:ids)"
+)
+_GROUP_NAMES = text(
+    "select id, display_name from ssc.user_group where org_id = :org and id = any(:ids)"
+)
+CANCELLED_BY_REQUESTER: Final = "Withdrawn by the requester."
 _SELECT_ENV = text("select grants_version from ssc.environment where org_id = :org and id = :env")
 _SELECT_ROLE = text("select role, status from ssc.user_account where org_id = :org and id = :id")
 
@@ -60,7 +74,9 @@ _SELECT_ROLE = text("select role, status from ssc.user_account where org_id = :o
 class Approval(Strict):
     id: str
     app_id: str
+    app: str = Field(description="The app's slug.")
     environment_id: str
+    environment: Literal["prod", "preview"]
     kind: RequirementKind
     subject_key: str = Field(
         description="What exactly is asked: a connection name, a host, or a `sha256:` digest "
@@ -69,16 +85,57 @@ class Approval(Strict):
     payload: dict[str, Any]
     state: ApprovalState
     requested_by_user_id: str
+    requested_by_name: str
     requested_via_agent: bool
     decided_by_user_id: str | None
     decided_at: datetime | None
     decision_reason: str | None
-    decision_channel: Literal["email", "chat", "console"] | None
+    decision_channel: Literal["email", "chat", "console", "cli"] | None
     recorded_by_operator: str | None = Field(
         description="The SSC operator who recorded the decision, when one did."
     )
     policy_decision_id: str | None
     created_at: datetime
+
+
+Role = Literal["builder", "user"]
+SubjectKind = Literal["user", "group", "org"]
+
+
+class DiffGrant(Strict):
+    role: Role
+    subject_kind: SubjectKind
+    subject_id: str | None
+    subject_name: str | None = Field(description="The user's or group's display name, if known.")
+
+
+class GrantDiff(Strict):
+    """What the request would change about the environment's sharing rules, compared with the
+    rules in force now."""
+
+    added: list[DiffGrant]
+    removed: list[DiffGrant]
+
+
+class ApprovalConnection(Strict):
+    """The data connection an `exceed_ceiling` request is about (never its address)."""
+
+    name: str
+    classification: Literal["internal", "confidential", "restricted"]
+    owner_user_id: str | None
+    ceiling_audience: Literal["org", "subjects"]
+    ceiling_subjects: int = Field(description="How many groups and users the ceiling lists.")
+
+
+class ApprovalDetail(Approval):
+    """One request with what a decider needs to see: names, who asked and the change."""
+
+    grant_diff: GrantDiff | None = Field(
+        description="Sharing requests only; null for a data source or an internet host."
+    )
+    connection: ApprovalConnection | None
+    can_decide: bool = Field(description="Whether the caller may approve or reject it now.")
+    can_cancel: bool = Field(description="Whether the caller may withdraw it now.")
 
 
 class ApprovalPage(Strict):
@@ -111,7 +168,36 @@ class DecisionIn(Strict):
     reason: Reason
 
 
+class PersonDecisionIn(Strict):
+    outcome: Literal["approved", "denied"]
+    reason: Reason
+    channel: Literal["console", "cli"] = Field(
+        default="console", description="Where the decision was made."
+    )
+
+
+class ApprovalDecided(Approval):
+    """A decision, and what approving it did."""
+
+    applied: ApplyOutcome = Field(
+        description="`applied`: the grants were written. `waiting`: another requirement for the "
+        "same change is still open. `not_applied`: approved, but the change no longer fits "
+        "(see `applied_reason`); ask again. `not_applicable`: nothing to apply."
+    )
+    applied_reason: str | None
+
+
+class CancelIn(Strict):
+    reason: Reason = CANCELLED_BY_REQUESTER
+    channel: Literal["console", "cli"] = "console"
+
+
 class ApprovalQuery(Strict):
+    inbox: bool = Field(
+        default=False,
+        description="Only the pending requests the caller may decide: not their own; every one "
+        "for an org admin, else those on connections they own. Empty in an agent session.",
+    )
     state: ApprovalState | None = None
     environment_id: EnvId | None = None
     before: AprId | None = Field(default=None, description="The previous page's `next_before`.")
@@ -140,12 +226,15 @@ def approval_out(row: ApprovalRow) -> Approval:
     return Approval(
         id=row.id,
         app_id=row.app_id,
+        app=row.app,
         environment_id=row.environment_id,
+        environment=cast(Literal["prod", "preview"], row.environment),
         kind=row.kind,
         subject_key=row.subject_key,
         payload=row.payload,
         state=row.state,
         requested_by_user_id=row.requested_by_user_id,
+        requested_by_name=row.requested_by_name,
         requested_via_agent=row.requested_via_agent,
         decided_by_user_id=row.decided_by_user_id,
         decided_at=row.decided_at,
@@ -227,8 +316,53 @@ async def sees_every_request(uow: UnitOfWork) -> bool:
     return row is not None and row[0] == "admin" and row[1] == "active"
 
 
-def _visible(uow: UnitOfWork, row: ApprovalRow, sees_all: bool) -> bool:
-    return sees_all or row.requested_by_user_id == uow.principal.subject
+async def _visible(uow: UnitOfWork, row: ApprovalRow, sees_all: bool) -> bool:
+    """Everyone sees their own requests; the owner of the connection an `exceed_ceiling`
+    request names sees that one."""
+    me = uow.principal.subject
+    if sees_all or row.requested_by_user_id == me:
+        return True
+    name = row.connection
+    return name is not None and await service.connection_owner(uow.conn, uow.org_id, name) == me
+
+
+async def _display_names(uow: UnitOfWork, query: Any, ids: list[str]) -> dict[str, str]:
+    if not ids:
+        return {}
+    rows = await uow.conn.execute(query, {"org": uow.org_id, "ids": ids})
+    return {str(r[0]): str(r[1]) for r in rows}
+
+
+async def _diff(uow: UnitOfWork, row: ApprovalRow) -> GrantDiff | None:
+    """The stored grant set against the environment's rules now; None for other kinds."""
+    if row.kind not in _SHARING:
+        return None
+    wanted = {
+        (g.role, g.subject_kind, g.subject_id)
+        for g in _parse(_WidenPayload, {"grants": row.payload.get("grants", [])}).grants
+    }
+    current = await connections.environment_grants(uow.conn, uow.org_id, row.environment_id)
+
+    def keyed(keys: set[GrantKey]) -> list[GrantKey]:
+        return sorted(keys, key=lambda k: (k[0], k[1], k[2] or ""))
+
+    users = {k[2] for k in wanted | current if k[1] == "user" and k[2]}
+    groups = {k[2] for k in wanted | current if k[1] == "group" and k[2]}
+    names = await _display_names(uow, _USER_NAMES, sorted(users))
+    names |= await _display_names(uow, _GROUP_NAMES, sorted(groups))
+
+    def out(keys: set[GrantKey]) -> list[DiffGrant]:
+        return [
+            DiffGrant(
+                role=cast(Role, r),
+                subject_kind=cast(SubjectKind, k),
+                subject_id=i,
+                subject_name=None if i is None else names.get(i),
+            )
+            for r, k, i in keyed(keys)
+        ]
+
+    return GrantDiff(added=out(wanted - current), removed=out(current - wanted))
 
 
 @router.post(
@@ -276,24 +410,69 @@ async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
     return uow.reply(approval_out(row), status=201 if created else 200)
 
 
+async def _detail(uow: UnitOfWork, row: ApprovalRow, sees_all: bool) -> ApprovalDetail:
+    linked = (
+        None
+        if row.connection is None
+        else await connections.get(uow.conn, uow.org_id, row.connection)
+    )
+    me = uow.principal.subject
+    pending = row.state == "pending"
+    is_user = uow.principal.kind is PrincipalKind.USER
+    can_decide = (
+        pending
+        and is_user
+        and check_decider(
+            row.requested_by_user_id,
+            me,
+            "admin" if sees_all else None,
+            True,
+            uow.principal.is_agent,
+            connection_owner_id=None if linked is None else linked.owner_user_id,
+        )
+        is None
+    )
+    return ApprovalDetail(
+        **approval_out(row).model_dump(),
+        grant_diff=await _diff(uow, row),
+        connection=None
+        if linked is None
+        else ApprovalConnection(
+            name=linked.name,
+            classification=linked.classification,
+            owner_user_id=linked.owner_user_id,
+            ceiling_audience="org" if linked.ceiling.subjects is None else "subjects",
+            ceiling_subjects=len(linked.ceiling.subjects or ()),
+        ),
+        can_decide=can_decide,
+        can_cancel=pending and is_user and row.requested_by_user_id == me,
+    )
+
+
 @router.get(
     "/approvals",
     response_model=ApprovalPage,
     responses=problem_responses(*AUTHENTICATED, ErrorCode.FORBIDDEN),
 )
 async def list_approvals(params: Annotated[ApprovalQuery, Query()], uow: UserUoW) -> ApprovalPage:
-    """Newest first. Org admins and operators see every request; others see their own. An
-    operator's read is audited as ``operator.access``."""
+    """Newest first. Org admins and operators see every request; others see their own and the
+    `exceed_ceiling` requests on connections they own. `inbox` narrows to what the caller may
+    decide. An operator's read is audited as ``operator.access``."""
     sees_all = await sees_every_request(uow)
+    me = uow.principal.subject
+    if params.inbox and (uow.principal.kind is not PrincipalKind.USER or uow.principal.is_agent):
+        return ApprovalPage(approvals=[], next_before=None)
     before: ApprovalRow | None = None
     if params.before is not None:
         before = await service.get(uow.conn, org_id=uow.org_id, approval_id=params.before)
-        if before is None or not _visible(uow, before, sees_all):
+        if before is None or not await _visible(uow, before, sees_all):
             raise Refusal(ErrorCode.VALIDATION_FAILED, evidence={"before": params.before})
     rows = await service.search(
         uow.conn,
         org_id=uow.org_id,
-        requested_by=None if sees_all else uow.principal.subject,
+        visible_to=None if sees_all else me,
+        decidable_by=me if params.inbox else None,
+        decider_is_admin=sees_all,
         state=params.state,
         environment_id=params.environment_id,
         before=before,
@@ -310,20 +489,21 @@ async def list_approvals(params: Annotated[ApprovalQuery, Query()], uow: UserUoW
 
 @router.get(
     "/approvals/{approval_id}",
-    response_model=Approval,
+    response_model=ApprovalDetail,
     responses=problem_responses(*AUTHENTICATED, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND),
 )
-async def get_approval(approval_id: Id, uow: UserUoW) -> Approval:
-    """One request. A request the caller may not see is ``NOT_FOUND``."""
+async def get_approval(approval_id: Id, uow: UserUoW) -> ApprovalDetail:
+    """One request, with the names, who asked and what it would change. A request the caller
+    may not see is ``NOT_FOUND``."""
     sees_all = await sees_every_request(uow)
     row = await service.get(uow.conn, org_id=uow.org_id, approval_id=approval_id)
-    if row is None or not _visible(uow, row, sees_all):
+    if row is None or not await _visible(uow, row, sees_all):
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"approval_id": approval_id})
     if uow.principal.kind is PrincipalKind.OPERATOR:
         await uow.audit(
             AuditAction.OPERATOR_ACCESS, target_kind="approval_request", target_id=approval_id
         )
-    return approval_out(row)
+    return await _detail(uow, row, sees_all)
 
 
 @router.post(
@@ -373,4 +553,91 @@ async def decide_approval(approval_id: Id, body: DecisionIn, uow: UserUoW) -> Re
         target_id=approval_id,
         policy_decision_id=row.policy_decision_id,
     )
+    return uow.reply(approval_out(row))
+
+
+@router.post(
+    "/approvals/{approval_id}/decide",
+    response_model=ApprovalDecided,
+    dependencies=[UserIdempotent],
+    responses=problem_responses(
+        *POST_COMMON,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
+        ErrorCode.SELF_APPROVAL_REFUSED,
+        ErrorCode.APPROVER_NOT_ELIGIBLE,
+        ErrorCode.NOT_FOUND,
+        ErrorCode.APPROVAL_NOT_PENDING,
+    ),
+)
+async def decide_as_approver(approval_id: Id, body: PersonDecisionIn, uow: UserUoW) -> Response:
+    """Approve or reject a request you can see, with a reason. Never in an agent session, never
+    your own request; an org admin, or for `exceed_ceiling` the connection's owner. Approving a
+    sharing request applies it once every requirement for that change is approved. One that no
+    longer fits stays approved and says so in `applied`; the requester asks again."""
+    principal = uow.principal
+    if principal.kind is not PrincipalKind.USER:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})
+    if principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
+    sees_all = await sees_every_request(uow)
+    seen = await service.get(uow.conn, org_id=uow.org_id, approval_id=approval_id)
+    if seen is None or not await _visible(uow, seen, sees_all):
+        raise Refusal(ErrorCode.NOT_FOUND, evidence={"approval_id": approval_id})
+    if seen.kind in _SHARING:
+        await lock_environment(uow, seen)
+    decider = Decider(
+        user_id=principal.subject,
+        via_agent=False,
+        recorded_by_operator=None,
+        channel=body.channel,
+        reason=body.reason,
+        outcome=body.outcome,
+    )
+    try:
+        row = await service.decide(
+            uow.conn,
+            org_id=uow.org_id,
+            approval_id=approval_id,
+            decider=decider,
+            actor=actor_of(principal),
+        )
+    except ApprovalRefusedError as e:
+        raise Refusal(_REFUSALS[e.reason], evidence={"approval_id": approval_id}) from None
+    applied, reason = await apply_approved(uow, row)
+    return uow.reply(
+        ApprovalDecided(**approval_out(row).model_dump(), applied=applied, applied_reason=reason)
+    )
+
+
+@router.post(
+    "/approvals/{approval_id}/cancel",
+    response_model=Approval,
+    dependencies=[UserIdempotent],
+    responses=problem_responses(
+        *POST_COMMON, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND, ErrorCode.APPROVAL_NOT_PENDING
+    ),
+)
+async def cancel_approval(approval_id: Id, body: CancelIn, uow: UserUoW) -> Response:
+    """Withdraw your own pending request. Allowed in an agent session for its own request.
+    Audited as `approval.cancelled`."""
+    principal = uow.principal
+    if principal.kind is not PrincipalKind.USER:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})
+    sees_all = await sees_every_request(uow)
+    seen = await service.get(uow.conn, org_id=uow.org_id, approval_id=approval_id)
+    if seen is None or not await _visible(uow, seen, sees_all):
+        raise Refusal(ErrorCode.NOT_FOUND, evidence={"approval_id": approval_id})
+    try:
+        row = await service.cancel(
+            uow.conn,
+            org_id=uow.org_id,
+            approval_id=approval_id,
+            user_id=principal.subject,
+            channel=body.channel,
+            reason=body.reason,
+            actor=actor_of(principal),
+        )
+    except ApprovalRefusedError as e:
+        raise Refusal(_REFUSALS[e.reason], evidence={"approval_id": approval_id}) from None
     return uow.reply(approval_out(row))

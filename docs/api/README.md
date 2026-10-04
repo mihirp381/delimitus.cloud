@@ -84,7 +84,13 @@ matching approval is approved: an agent session gets `202` with `{environment_id
 approval_ids}` (the requests are opened for it, the version and `ETag` are unchanged) and a person
 gets `409 APPROVAL_REQUIRED`, then asks with `POST /v1/approvals` (`kind: widen_audience`,
 `payload.grants` set to the same desired grants). Once approved, the same `PUT` applies. Decisions
-are recorded by SSC staff through `POST /v1/approvals/{id}/decision`, which takes an operator
+are made in the console inbox or with `ssc approvals`: `GET /v1/approvals?inbox=true` lists what the
+caller may decide and `POST /v1/approvals/{id}/decide` takes `{outcome: approved|denied, reason,
+channel}` from a person session (an agent session gets `AGENT_SESSION_REFUSED`, the requester
+`SELF_APPROVAL_REFUSED`). Approving a sharing request applies the grant when every approval it needs is in
+(the answer's `applied` says `applied`, `waiting`, `not_applied` with `applied_reason`, or
+`not_applicable`). `POST /v1/approvals/{id}/cancel` withdraws a pending request, for its requester only.
+SSC staff can still record a reply through `POST /v1/approvals/{id}/decision`, which takes an operator
 credential without the agent claim and names the org admin who decided (never the requester).
 
 **Tools say which tool they are** (SSC-028). A client sends `X-SSC-Source-Tool: <tool>` (for

@@ -113,8 +113,9 @@ export interface paths {
         };
         /**
          * List Approvals
-         * @description Newest first. Org admins and operators see every request; others see their own. An
-         *     operator's read is audited as ``operator.access``.
+         * @description Newest first. Org admins and operators see every request; others see their own and the
+         *     `exceed_ceiling` requests on connections they own. `inbox` narrows to what the caller may
+         *     decide. An operator's read is audited as ``operator.access``.
          */
         get: operations["list_approvals_v1_approvals_get"];
         put?: never;
@@ -140,11 +141,56 @@ export interface paths {
         };
         /**
          * Get Approval
-         * @description One request. A request the caller may not see is ``NOT_FOUND``.
+         * @description One request, with the names, who asked and what it would change. A request the caller
+         *     may not see is ``NOT_FOUND``.
          */
         get: operations["get_approval_v1_approvals__approval_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/approvals/{approval_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Approval
+         * @description Withdraw your own pending request. Allowed in an agent session for its own request.
+         *     Audited as `approval.cancelled`.
+         */
+        post: operations["cancel_approval_v1_approvals__approval_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/approvals/{approval_id}/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide As Approver
+         * @description Approve or reject a request you can see, with a reason. Never in an agent session, never
+         *     your own request; an org admin, or for `exceed_ceiling` the connection's owner. Approving a
+         *     sharing request applies it once every requirement for that change is approved. One that no
+         *     longer fits stays approved and says so in `applied`; the requester asks again.
+         */
+        post: operations["decide_as_approver_v1_approvals__approval_id__decide_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1502,8 +1548,15 @@ export interface components {
              */
             status: "active" | "disabled" | "quarantined";
         };
+        /** @enum {string} */
+        ApplyOutcome: "applied" | "waiting" | "not_applied" | "not_applicable";
         /** Approval */
         Approval: {
+            /**
+             * App
+             * @description The app's slug.
+             */
+            app: string;
             /** App Id */
             app_id: string;
             /**
@@ -1516,9 +1569,14 @@ export interface components {
             /** Decided By User Id */
             decided_by_user_id: string | null;
             /** Decision Channel */
-            decision_channel: ("email" | "chat" | "console") | null;
+            decision_channel: ("email" | "chat" | "console" | "cli") | null;
             /** Decision Reason */
             decision_reason: string | null;
+            /**
+             * Environment
+             * @enum {string}
+             */
+            environment: "prod" | "preview";
             /** Environment Id */
             environment_id: string;
             /** Id */
@@ -1535,6 +1593,8 @@ export interface components {
              * @description The SSC operator who recorded the decision, when one did.
              */
             recorded_by_operator: string | null;
+            /** Requested By Name */
+            requested_by_name: string;
             /** Requested By User Id */
             requested_by_user_id: string;
             /** Requested Via Agent */
@@ -1549,6 +1609,31 @@ export interface components {
              * @description What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).
              */
             subject_key: string;
+        };
+        /**
+         * ApprovalConnection
+         * @description The data connection an `exceed_ceiling` request is about (never its address).
+         */
+        ApprovalConnection: {
+            /**
+             * Ceiling Audience
+             * @enum {string}
+             */
+            ceiling_audience: "org" | "subjects";
+            /**
+             * Ceiling Subjects
+             * @description How many groups and users the ceiling lists.
+             */
+            ceiling_subjects: number;
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "internal" | "confidential" | "restricted";
+            /** Name */
+            name: string;
+            /** Owner User Id */
+            owner_user_id: string | null;
         };
         /** ApprovalCreate */
         ApprovalCreate: {
@@ -1568,6 +1653,149 @@ export interface components {
              */
             subject_key?: string | null;
         };
+        /**
+         * ApprovalDecided
+         * @description A decision, and what approving it did.
+         */
+        ApprovalDecided: {
+            /**
+             * App
+             * @description The app's slug.
+             */
+            app: string;
+            /** App Id */
+            app_id: string;
+            /** @description `applied`: the grants were written. `waiting`: another requirement for the same change is still open. `not_applied`: approved, but the change no longer fits (see `applied_reason`); ask again. `not_applicable`: nothing to apply. */
+            applied: components["schemas"]["ApplyOutcome"];
+            /** Applied Reason */
+            applied_reason: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Decided By User Id */
+            decided_by_user_id: string | null;
+            /** Decision Channel */
+            decision_channel: ("email" | "chat" | "console" | "cli") | null;
+            /** Decision Reason */
+            decision_reason: string | null;
+            /**
+             * Environment
+             * @enum {string}
+             */
+            environment: "prod" | "preview";
+            /** Environment Id */
+            environment_id: string;
+            /** Id */
+            id: string;
+            kind: components["schemas"]["RequirementKind"];
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Policy Decision Id */
+            policy_decision_id: string | null;
+            /**
+             * Recorded By Operator
+             * @description The SSC operator who recorded the decision, when one did.
+             */
+            recorded_by_operator: string | null;
+            /** Requested By Name */
+            requested_by_name: string;
+            /** Requested By User Id */
+            requested_by_user_id: string;
+            /** Requested Via Agent */
+            requested_via_agent: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "approved" | "denied" | "cancelled";
+            /**
+             * Subject Key
+             * @description What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).
+             */
+            subject_key: string;
+        };
+        /**
+         * ApprovalDetail
+         * @description One request with what a decider needs to see: names, who asked and the change.
+         */
+        ApprovalDetail: {
+            /**
+             * App
+             * @description The app's slug.
+             */
+            app: string;
+            /** App Id */
+            app_id: string;
+            /**
+             * Can Cancel
+             * @description Whether the caller may withdraw it now.
+             */
+            can_cancel: boolean;
+            /**
+             * Can Decide
+             * @description Whether the caller may approve or reject it now.
+             */
+            can_decide: boolean;
+            connection: components["schemas"]["ApprovalConnection"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Decided By User Id */
+            decided_by_user_id: string | null;
+            /** Decision Channel */
+            decision_channel: ("email" | "chat" | "console" | "cli") | null;
+            /** Decision Reason */
+            decision_reason: string | null;
+            /**
+             * Environment
+             * @enum {string}
+             */
+            environment: "prod" | "preview";
+            /** Environment Id */
+            environment_id: string;
+            /** @description Sharing requests only; null for a data source or an internet host. */
+            grant_diff: components["schemas"]["GrantDiff"] | null;
+            /** Id */
+            id: string;
+            kind: components["schemas"]["RequirementKind"];
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Policy Decision Id */
+            policy_decision_id: string | null;
+            /**
+             * Recorded By Operator
+             * @description The SSC operator who recorded the decision, when one did.
+             */
+            recorded_by_operator: string | null;
+            /** Requested By Name */
+            requested_by_name: string;
+            /** Requested By User Id */
+            requested_by_user_id: string;
+            /** Requested Via Agent */
+            requested_via_agent: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "approved" | "denied" | "cancelled";
+            /**
+             * Subject Key
+             * @description What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).
+             */
+            subject_key: string;
+        };
         /** ApprovalPage */
         ApprovalPage: {
             /** Approvals */
@@ -1582,7 +1810,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "org.created" | "org.updated" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "connection.updated" | "connection.granted" | "connection.revoked" | "connection.ceiling_lowered" | "connection.flagged" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed" | "github.installation_bound" | "repo.connected" | "repo.disconnected";
+        AuditAction: "org.created" | "org.updated" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "approval.cancelled" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "connection.updated" | "connection.granted" | "connection.revoked" | "connection.ceiling_lowered" | "connection.flagged" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed" | "github.installation_bound" | "repo.connected" | "repo.disconnected";
         /** AuditActor */
         AuditActor: {
             /** Client Id */
@@ -1741,6 +1969,20 @@ export interface components {
             stored_at: string | null;
             /** @description Where to PUT the bytes while pending; null once stored and on reads. */
             upload: components["schemas"]["UploadTarget"] | null;
+        };
+        /** CancelIn */
+        CancelIn: {
+            /**
+             * Channel
+             * @default console
+             * @enum {string}
+             */
+            channel: "console" | "cli";
+            /**
+             * Reason
+             * @default Withdrawn by the requester.
+             */
+            reason: string;
         };
         /**
          * CapabilityChange
@@ -2245,6 +2487,26 @@ export interface components {
              */
             scope: "org" | "own";
         };
+        /** DiffGrant */
+        DiffGrant: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "builder" | "user";
+            /** Subject Id */
+            subject_id: string | null;
+            /**
+             * Subject Kind
+             * @enum {string}
+             */
+            subject_kind: "user" | "group" | "org";
+            /**
+             * Subject Name
+             * @description The user's or group's display name, if known.
+             */
+            subject_name: string | null;
+        };
         /** DirectoryGroupIn */
         DirectoryGroupIn: {
             /**
@@ -2422,6 +2684,17 @@ export interface components {
         GrantBody: {
             /** @description The caps this environment's queries have, inside the connection's. */
             limits?: components["schemas"]["SnapshotLimits"] | null;
+        };
+        /**
+         * GrantDiff
+         * @description What the request would change about the environment's sharing rules, compared with the
+         *     rules in force now.
+         */
+        GrantDiff: {
+            /** Added */
+            added: components["schemas"]["DiffGrant"][];
+            /** Removed */
+            removed: components["schemas"]["DiffGrant"][];
         };
         /** GrantIn */
         GrantIn: {
@@ -2865,6 +3138,23 @@ export interface components {
         OwnerTransfer: {
             /** User Id */
             user_id: string;
+        };
+        /** PersonDecisionIn */
+        PersonDecisionIn: {
+            /**
+             * Channel
+             * @description Where the decision was made.
+             * @default console
+             * @enum {string}
+             */
+            channel: "console" | "cli";
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "approved" | "denied";
+            /** Reason */
+            reason: string;
         };
         /** PolicyApproval */
         PolicyApproval: {
@@ -3915,6 +4205,8 @@ export interface operations {
     list_approvals_v1_approvals_get: {
         parameters: {
             query?: {
+                /** @description Only the pending requests the caller may decide: not their own; every one for an org admin, else those on connections they own. Empty in an agent session. */
+                inbox?: boolean;
                 state?: ("pending" | "approved" | "denied" | "cancelled") | null;
                 environment_id?: string | null;
                 /** @description The previous page's `next_before`. */
@@ -4098,7 +4390,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Approval"];
+                    "application/json": components["schemas"]["ApprovalDetail"];
                 };
             };
             /** @description `UNAUTHENTICATED` */
@@ -4129,6 +4421,188 @@ export interface operations {
                 };
             };
             /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    cancel_approval_v1_approvals__approval_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    decide_as_approver_v1_approvals__approval_id__decide_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonDecisionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalDecided"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED`, `SELF_APPROVAL_REFUSED`, `APPROVER_NOT_ELIGIBLE` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;

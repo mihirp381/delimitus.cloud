@@ -43,6 +43,9 @@ from ssc_cli.models import (
     AppCreate,
     AppList,
     AppOut,
+    ApprovalDecided,
+    ApprovalDetail,
+    ApprovalPage,
     BuildAccepted,
     BuildCreate,
     BuildOut,
@@ -66,6 +69,7 @@ from ssc_cli.models import (
     MigrationsAhead,
     OperationAccepted,
     OperationOut,
+    PersonDecisionIn,
     PromoteIn,
     ReleaseList,
     ReleaseOut,
@@ -165,6 +169,20 @@ class ApiClient:
         """The connections one environment may reach, of those the caller may see."""
         path = f"/v1/apps/{_seg(app_id)}/environments/{_seg(environment_id)}/connections"
         return _parse(self._send("GET", path), EnvironmentConnectionsOut)
+
+    def list_approvals(self, *, inbox: bool, limit: int = 50) -> ApprovalPage:
+        """The requests the caller may decide (``inbox``), or every one they may see."""
+        query = f"?limit={limit}" + ("&inbox=true" if inbox else "")
+        return _parse(self._send("GET", f"/v1/approvals{query}"), ApprovalPage)
+
+    def get_approval(self, approval_id: str) -> ApprovalDetail:
+        return _parse(self._send("GET", f"/v1/approvals/{_seg(approval_id)}"), ApprovalDetail)
+
+    def decide_approval(self, approval_id: str, outcome: str, reason: str) -> ApprovalDecided:
+        """Approve (``approved``) or reject (``denied``) a request, as the caller."""
+        body = PersonDecisionIn(outcome=outcome, reason=reason)
+        path = f"/v1/approvals/{_seg(approval_id)}/decide"
+        return _parse(self._send("POST", path, body=body), ApprovalDecided)
 
     def list_apps(self, *, mine: bool = False) -> AppList:
         """Every app of the org, or with ``mine`` only those the caller may deploy to."""

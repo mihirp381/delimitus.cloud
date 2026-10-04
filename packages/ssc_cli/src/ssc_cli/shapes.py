@@ -461,6 +461,73 @@ class ConnectionsResult(Shape):
     connections: list[ConnectionRow]
 
 
+class ApprovalRow(Shape):
+    """One approval request. ``subject`` is the host or data source asked for; null for a change
+    to sharing, whose rules ``ssc approvals show`` lists."""
+
+    id: str
+    app: str
+    environment: str
+    kind: str
+    subject: str | None
+    state: str
+    requested_by: str
+    requested_via_agent: bool
+    created_at: str
+
+
+class ApprovalsResult(Shape):
+    """``approvals list``: what you may decide (``scope`` ``inbox``) or everything you may see
+    (``all``), newest first. ``more`` is true when older ones were left out."""
+
+    api_url: str
+    scope: Literal["inbox", "all"]
+    approvals: list[ApprovalRow]
+    more: bool
+
+
+class ApprovalGrantRow(Shape):
+    role: str
+    subject_kind: str
+    subject_id: str | None
+    subject_name: str | None
+
+
+class ApprovalShowResult(Shape):
+    """``approvals show``: one request with what it would change. ``added`` and ``removed`` are
+    the sharing rules against those in force now; both are empty for other kinds."""
+
+    api_url: str
+    id: str
+    app: str
+    environment: str
+    kind: str
+    subject: str | None
+    state: str
+    requested_by: str
+    requested_via_agent: bool
+    decided_by_user_id: str | None
+    decision_reason: str | None
+    created_at: str
+    added: list[ApprovalGrantRow]
+    removed: list[ApprovalGrantRow]
+    connection: str | None
+    can_decide: bool
+
+
+class ApprovalDecisionResult(Shape):
+    """``approvals approve`` and ``approvals reject``. ``applied`` says what approving did:
+    ``applied``, ``waiting`` (another approval is still open), ``not_applied`` (the change no
+    longer fits; ``applied_reason`` says why) or ``not_applicable``."""
+
+    api_url: str
+    id: str
+    state: str
+    reason: str
+    applied: str
+    applied_reason: str | None
+
+
 class ErrorResult(Shape):
     error: ErrorBody
 
@@ -516,5 +583,10 @@ SHAPES: dict[str, type[BaseModel]] = {
         PolicyResult,
         ConnectionRow,
         ConnectionsResult,
+        ApprovalRow,
+        ApprovalsResult,
+        ApprovalGrantRow,
+        ApprovalShowResult,
+        ApprovalDecisionResult,
     )
 }
