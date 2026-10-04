@@ -1647,6 +1647,76 @@
         "title": "DeploymentOut",
         "type": "object"
       },
+      "DeploymentPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "approvals": {
+            "description": "Which changes wait for a person.",
+            "items": {
+              "$ref": "#/components/schemas/PolicyApproval"
+            },
+            "title": "Approvals",
+            "type": "array"
+          },
+          "approved_packages": {
+            "description": "The system packages a build may install: the platform package list.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Approved Packages",
+            "type": "array"
+          },
+          "approver": {
+            "description": "Who decides an approval request.",
+            "title": "Approver",
+            "type": "string"
+          },
+          "connections": {
+            "description": "Data connections by name; never their address.",
+            "items": {
+              "$ref": "#/components/schemas/PolicyConnection"
+            },
+            "title": "Connections",
+            "type": "array"
+          },
+          "database": {
+            "$ref": "#/components/schemas/PolicyDatabase"
+          },
+          "hosts": {
+            "description": "Internet hosts approved for an environment.",
+            "items": {
+              "$ref": "#/components/schemas/PolicyHost"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "how_to_ask_for_a_package": {
+            "title": "How To Ask For A Package",
+            "type": "string"
+          },
+          "scope": {
+            "description": "`org`: every host and connection in the org (admins and operators). `own`: only those the caller's own approved requests opened.",
+            "enum": [
+              "org",
+              "own"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "hosts",
+          "connections",
+          "approvals",
+          "approver",
+          "database",
+          "approved_packages",
+          "how_to_ask_for_a_package"
+        ],
+        "title": "DeploymentPolicy",
+        "type": "object"
+      },
       "DirectoryGroupIn": {
         "additionalProperties": false,
         "properties": {
@@ -1858,6 +1928,7 @@
           "UPLOAD_URL_INVALID",
           "APP_NOT_ACTIVE",
           "BUILD_IN_FLIGHT",
+          "ADD_APPROVED_PACKAGE",
           "RELEASE_ENVIRONMENT_MISMATCH",
           "KILL_SWITCH_IN_FLIGHT",
           "APP_ALREADY_ACTIVE",
@@ -3068,6 +3139,104 @@
           "user_id"
         ],
         "title": "OwnerTransfer",
+        "type": "object"
+      },
+      "PolicyApproval": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RequirementKind"
+          },
+          "when": {
+            "title": "When",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "when"
+        ],
+        "title": "PolicyApproval",
+        "type": "object"
+      },
+      "PolicyConnection": {
+        "additionalProperties": false,
+        "properties": {
+          "classification": {
+            "enum": [
+              "internal",
+              "confidential",
+              "restricted"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "classification"
+        ],
+        "title": "PolicyConnection",
+        "type": "object"
+      },
+      "PolicyDatabase": {
+        "additionalProperties": false,
+        "properties": {
+          "places_total": {
+            "description": "App databases the company's database tier holds.",
+            "title": "Places Total",
+            "type": "integer"
+          },
+          "places_used": {
+            "description": "App databases the org's apps hold.",
+            "title": "Places Used",
+            "type": "integer"
+          },
+          "room": {
+            "description": "Whether one more app may ask for a database.",
+            "title": "Room",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "places_used",
+          "places_total",
+          "room"
+        ],
+        "title": "PolicyDatabase",
+        "type": "object"
+      },
+      "PolicyHost": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "app_id",
+          "environment_id"
+        ],
+        "title": "PolicyHost",
         "type": "object"
       },
       "PrincipalKind": {
@@ -10305,6 +10474,68 @@
           }
         },
         "summary": "Set Agent Policy",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/org/deployment-policy": {
+      "get": {
+        "description": "The hosts, connections, approvals, database room and packages the caller may see.",
+        "operationId": "get_deployment_policy_v1_org_deployment_policy_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentPolicy"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Deployment Policy",
         "tags": [
           "v1"
         ]

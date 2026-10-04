@@ -2,8 +2,9 @@
 
 The causes come from the SSC-003 corpus (spikes/corpus20/RESULTS.md), both its runtime list and
 its static list. Each rule is a pure function from a :class:`Tree` to findings. The checks are
-heuristics, except the ones the platform also runs: SQLite on disk and the session framework use
-``ssc_bundle.analyze`` and secrets use ``ssc_bundle.secrets``, over the files a deploy would pack.
+heuristics, except the ones the platform also runs: SQLite on disk, the session framework and the
+system packages off the platform package list use ``ssc_bundle.analyze`` and secrets use
+``ssc_bundle.secrets``, over the files a deploy would pack.
 Version drift is checked only where the lock file records the declared ranges as text
 (``bun.lock``); other lock files are checked for the names they list. ``ssc.toml`` itself is
 checked by the manifest loader (decision 013); the other rules read what they can from it even
@@ -19,10 +20,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, cast
 
-from ssc_bundle.analyze import MAX_ANALYZE_BYTES, analyze, sqlite_on_disk
+from ssc_bundle.analyze import MAX_ANALYZE_BYTES, analyze, package_needs, sqlite_on_disk
 from ssc_bundle.ignore import Ignore
 from ssc_bundle.secrets import allowed_values, scan
 from ssc_cli.doctor.finding import (
+    ADD_APPROVED_PACKAGE,
     EXTERNAL_SERVICE,
     LOCKFILE_STALE,
     MANIFEST_INVALID,
@@ -764,6 +766,26 @@ def native_library(t: Tree) -> list[Finding]:
     return out
 
 
+def add_approved_package(t: Tree) -> list[Finding]:
+    out: list[Finding] = []
+    for n in package_needs(t.packed()):
+        if n.listed:
+            continue
+        what = (
+            f"{n.path} asks for the system package {n.package[:64]}"
+            if n.path != "."
+            else f"{n.by} needs the system package {n.package}"
+        )
+        out.append(
+            finding(
+                ADD_APPROVED_PACKAGE,
+                n.path,
+                f"{what}, which is not on the platform package list, so the build would stop.",
+            )
+        )
+    return out
+
+
 def session_framework_rule(t: Tree) -> list[Finding]:
     m = _loaded_manifest(t)
     framework = analyze(t.packed(), m).framework
@@ -801,4 +823,5 @@ RULES: Final[tuple[Rule, ...]] = (
     secret_in_bundle,
     native_library,
     session_framework_rule,
+    add_approved_package,
 )

@@ -322,6 +322,44 @@ class UsageOut(Wire):
     cold_starts: int
 
 
+class PolicyHost(Wire):
+    host: str
+    app_id: str
+    environment_id: str
+
+
+class PolicyConnection(Wire):
+    """A data connection by name; never its address."""
+
+    name: str
+    kind: str
+    classification: str
+
+
+class PolicyApproval(Wire):
+    kind: str
+    when: str
+
+
+class PolicyDatabase(Wire):
+    places_used: int
+    places_total: int
+    room: bool
+
+
+class DeploymentPolicy(Wire):
+    """What the org lets the caller's apps reach and use, limited to what the caller may see."""
+
+    scope: str
+    hosts: list[PolicyHost]
+    connections: list[PolicyConnection]
+    approvals: list[PolicyApproval]
+    approver: str
+    database: PolicyDatabase
+    approved_packages: list[str]
+    how_to_ask_for_a_package: str
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

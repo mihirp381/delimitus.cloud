@@ -33,6 +33,7 @@ from ssc_cli.shapes import (
     LogLineRow,
     LogoutResult,
     LogsResult,
+    PolicyResult,
     PromoteResult,
     ReleasesResult,
     RollbackResult,
@@ -44,6 +45,7 @@ from ssc_cli.shapes import (
 )
 from ssc_contracts import app_database
 from ssc_contracts.app_database import POOL_FIX_IT
+from ssc_shared.requirements import PlatformRequirements, platform_requirements
 
 CLEAN = Path(__file__).resolve().parent / "fixtures" / "doctor" / "clean"
 ORG = "org_aaaaaaaaaaaaaaaaaaaa"
@@ -72,6 +74,8 @@ ALLOWED = {
     "access",
     "secret",
     "logs",
+    "requirements",
+    "policy",
 }
 
 
@@ -134,6 +138,8 @@ def test_help_lists_exact_set(cli):
         ("secret", "set"),
         ("secret", "list"),
         ("logs",),
+        ("requirements",),
+        ("policy",),
     }
     for group, subs in (
         ("token", {"set", "clear"}),
@@ -786,6 +792,47 @@ def test_whoami_shows_the_org_role(cli, fake_api, isolated):
     ]
 
 
+def test_requirements_are_the_shared_source_offline(cli):
+    r = cli("requirements", "--json")
+    assert r.code == 0
+    assert PlatformRequirements.model_validate(r.json()) == platform_requirements()
+    human = cli("requirements")
+    assert "Listen on 0.0.0.0" in human.stdout
+    assert "its first request is slow" in human.stdout
+    assert ["large", "2", "4096", "MiB", "8"] in [
+        line.split() for line in human.stdout.splitlines()
+    ]
+    assert "poppler-utils" in human.stdout
+
+
+def test_policy_shows_what_the_api_lets_the_caller_see(cli, fake_api, isolated):
+    isolated.set_password(SERVICE, "https://api.test", "tok")
+    body = {
+        "scope": "own",
+        "hosts": [{"host": "api.example.com", "app_id": APP_ID, "environment_id": PROD}],
+        "connections": [{"name": "finance", "kind": "postgres", "classification": "restricted"}],
+        "approvals": [{"kind": "agent_share", "when": "Any sharing change made by an agent."}],
+        "approver": "An active admin of the org.",
+        "database": {"places_used": 10, "places_total": 10, "room": False},
+        "approved_packages": ["ffmpeg", "poppler-utils"],
+        "how_to_ask_for_a_package": "Ask SSC support.",
+    }
+    fake_api.add(
+        "GET",
+        "/v1/org/deployment-policy",
+        httpx2.Response(200, json=body),
+        httpx2.Response(200, json=body),
+    )
+    r = cli("policy", "--json", session=fake_api.session())
+    result = PolicyResult.model_validate(r.json())
+    assert (result.scope, result.connections[0].classification) == ("own", "restricted")
+    assert result.api_url == "https://api.test"
+    human = cli("policy", session=fake_api.session())
+    assert "your own approved requests" in human.stdout
+    assert "api.example.com" in human.stdout
+    assert "10 of 10 places used, no room for another app" in human.stdout
+
+
 def test_the_floor_is_the_apis(cli):
     from ssc_cli.commands.share import FLOOR
     from ssc_control.domain.grant_rules import FLOOR as API_FLOOR
@@ -1116,6 +1163,8 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("disable",): ([name, "--timeout", "3600"], DisableResult, None),
         ("enable",): ([name], AppResult, None),
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
+        ("requirements",): ([], PlatformRequirements, None),
+        ("policy",): ([], PolicyResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),
         ("logout",): ([], LogoutResult, None),

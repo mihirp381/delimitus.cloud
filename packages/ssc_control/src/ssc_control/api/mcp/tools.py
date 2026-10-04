@@ -1,5 +1,6 @@
-"""The agent's tools: read apps, releases, status and logs, deploy to preview, roll back, ask
-for sharing or a data connection, and hand a secret to the person to set.
+"""The agent's tools: read the platform's requirements, the org's deployment policy, apps,
+releases, status and logs, check a folder, deploy to preview, roll back, ask for sharing or a data
+connection, and hand a secret to the person to set.
 
 Every tool calls ``/v1`` on this same application, in process, with the caller's own bearer. The
 route handlers therefore decide everything, exactly as for the command line: authorisation,
@@ -15,6 +16,12 @@ frame (``ssc_shared.fence``); an org admin can turn log reading off for agents (
 ``set_secret`` never takes a value: no AI agent handles one (SSC-026), so it answers with the
 command the person runs. A deploy that sets off a one-time creation (the company's database, say)
 says so, so the agent waits instead of retrying.
+
+``get_platform_requirements`` returns ``ssc_shared.requirements``, the source ``ssc doctor`` also
+reads; ``get_org_deployment_policy`` returns ``GET /v1/org/deployment-policy``, which shows only
+what the caller could see already (SSC-093). ``preflight`` runs ``ssc doctor`` on a folder, so it
+runs only in the local server (``ssc mcp``); here it answers with how to run it, as ``deploy``
+does for packing.
 
 Absent on purpose: approving (decision 016 refuses agent sessions), promote, listing connections
 (SSC-052), and anything that sets the warm flag (SSC-092) or a cell resource flag (SSC-087), which
@@ -47,8 +54,12 @@ from ssc_control.domain.approval_rules import GrantKey
 from ssc_shared.fence import fence
 from ssc_shared.logs import MAX_LINES, MAX_SINCE_SECONDS
 from ssc_shared.redaction import redact
+from ssc_shared.requirements import platform_requirements
 
 TOOLS: Final = (
+    "get_platform_requirements",
+    "get_org_deployment_policy",
+    "preflight",
     "list_apps",
     "get_app",
     "get_status",
@@ -638,6 +649,40 @@ async def secret_handoff(c: V1, *, ref: str, env: str, name: str) -> Body:
     }
 
 
+PREFLIGHT_ELSEWHERE: Final = (
+    "preflight checks a folder, so it runs where the folder is: in the local server (`ssc mcp`, "
+    "set up with `ssc login --agent` and your agent's MCP settings), or as `ssc doctor <folder> "
+    "--json` in the person's terminal. Fix every finding marked block before deploying."
+)
+
+
+def _deployability(server: MCPServer, api: FastAPI, read: ToolAnnotations) -> None:
+    """The three tools an agent calls before it deploys (SSC-093)."""
+
+    async def get_platform_requirements() -> CallToolResult:
+        """Call this first, before writing or changing an app: the rules every app must follow
+        to deploy (port, health path, memory-only disk, Postgres, timers, egress, no Dockerfile,
+        the platform package list), the facts of how it runs (sleeping, sessions, resource
+        classes) and the doctor codes that check each rule."""
+        return ok(platform_requirements().model_dump(mode="json"))
+
+    async def get_org_deployment_policy(ctx: Context) -> CallToolResult:
+        """What your org lets your apps reach and use: the internet hosts approved, the data
+        connections by name and classification, which changes wait for an approval and from
+        whom, whether the company's database has room for another app, and the system packages
+        a build may install. Only what you could see in the console."""
+        return await run(api, ctx, lambda c: c.get("/v1/org/deployment-policy"))
+
+    async def preflight() -> CallToolResult:
+        """Check a folder before deploying it, as `ssc doctor` does: findings with fix-its. It
+        needs the folder, so it runs in the local server (`ssc mcp`); here it says how."""
+        return ok({"ran": False, "next": PREFLIGHT_ELSEWHERE})
+
+    server.add_tool(get_platform_requirements, annotations=read)
+    server.add_tool(get_org_deployment_policy, annotations=read)
+    server.add_tool(preflight, annotations=read)
+
+
 def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
     read = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     ask = ToolAnnotations(
@@ -788,6 +833,7 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         command for the person to run in their own terminal, where they type the value."""
         return await run(api, ctx, lambda c: secret_handoff(c, ref=app, env=env, name=name))
 
+    _deployability(server, api, read)
     server.add_tool(list_apps, annotations=read)
     server.add_tool(get_app, annotations=read)
     server.add_tool(get_status, annotations=read)

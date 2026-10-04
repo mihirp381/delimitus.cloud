@@ -15,13 +15,15 @@ from mcp.client.stdio import StdioServerParameters
 from mcp.server.mcpserver import MCPServer
 
 import ssc_cli
+from ssc_cli.agentpack import guide
 from ssc_cli.api import ApiClient
 from ssc_cli.commands.deploy import prepare_folder
 from ssc_cli.credentials import Login, store_login
-from ssc_cli.mcp_local import TOOLS, agent_opener, build_server
+from ssc_cli.mcp_local import INSTRUCTIONS, TOOLS, agent_opener, build_server
 from ssc_control.api.mcp import tools as server_tools
 from ssc_control.api.settings import Settings
 from ssc_shared.fence import CLOSE, OPEN
+from ssc_shared.requirements import platform_requirements
 
 ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 USR = "usr_aaaaaaaaaaaaaaaaaaaa"
@@ -162,11 +164,13 @@ async def test_tools_mirror_the_api_server(fake_api):
     assert not {"approve", "promote"} & set(mine)
     for name in TOOLS:
         assert mine[name].annotations == theirs[name].annotations, name
-        if name != "deploy":
+        if name not in {"deploy", "preflight"}:
             assert mine[name].input_schema == theirs[name].input_schema, name
     deploy = mine["deploy"].input_schema
     assert set(deploy["properties"]) == {"app", "path", "idempotency_key"}
     assert deploy["required"] == ["app"]
+    assert set(mine["preflight"].input_schema["properties"]) == {"path"}
+    assert set(theirs["preflight"].input_schema.get("properties", {})) == set()
 
 
 async def test_refusals_are_tool_errors(fake_api, fake_problem):
@@ -388,6 +392,63 @@ async def test_logs_never_return_a_planted_secret(fake_api):
     assert log.startswith(OPEN) and log.endswith(CLOSE)
     assert log.count(OPEN) == 1 and log.count(CLOSE) == 1
     assert out["line_count"] == len(lines) and out["cursor"] == "0.0.1"
+
+
+async def test_requirements_come_first_and_need_no_call(fake_api):
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("get_platform_requirements", {})
+    assert r.structured_content == platform_requirements().model_dump(mode="json")
+    assert {"port", "egress", "system-packages"} <= {x["id"] for x in r.structured_content["rules"]}
+    assert fake_api.seen == []
+    assert INSTRUCTIONS.index("get_platform_requirements") < INSTRUCTIONS.index("preflight")
+
+
+def test_the_agent_pack_names_every_tool_and_the_package_list():
+    text = " ".join(guide([]).split())
+    for tool in TOOLS:
+        assert f"`{tool}`" in text, tool
+    assert "Call `get_platform_requirements` first" in text
+    assert text.index("Run `preflight`") < text.index("before `deploy`")
+    for fact in ("`ADD_APPROVED_PACKAGE`", "`[[schedules]]`", "`[egress]`", "no Java", "`large`"):
+        assert fact in text, fact
+
+
+async def test_preflight_runs_the_doctor_here_and_sends_nothing(fake_api, tmp_path: Path):
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "ssc.toml").write_text('schema = "ssc/v1"\n')
+    (folder / "requirements.txt").write_text("flask\npytesseract\n")
+    (folder / "app.py").write_text('app.run(host="0.0.0.0", port=int(os.environ["PORT"]))\n')
+    async with Client(local_server(fake_api), cache=None) as client:
+        blocked = await client.call_tool("preflight", {"path": str(folder)})
+        (folder / "requirements.txt").write_text("flask\npdf2image\n")
+        passed = await client.call_tool("preflight", {"path": str(folder)})
+        missing = await client.call_tool("preflight", {"path": str(tmp_path / "none")})
+    assert not blocked.is_error
+    body = blocked.structured_content
+    assert (body["ran"], body["blocking"]) == (True, True)
+    (finding,) = body["findings"]
+    assert (finding["code"], finding["severity"], finding["requirement"]) == (
+        "ADD_APPROVED_PACKAGE",
+        "block",
+        "system-packages",
+    )
+    assert "SSC support" in finding["fix"]
+    assert "Fix every finding marked block" in body["next"]
+    assert passed.structured_content["blocking"] is False
+    assert passed.structured_content["findings"] == []
+    assert missing.is_error
+    assert missing.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert fake_api.seen == []
+
+
+async def test_the_policy_tool_reads_the_policy_route(fake_api):
+    policy = {"scope": "own", "hosts": [], "connections": [], "approved_packages": ["ffmpeg"]}
+    fake_api.add("GET", "/v1/org/deployment-policy", httpx2.Response(200, json=policy))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("get_org_deployment_policy", {})
+    assert r.structured_content == policy
+    assert [(q.method, q.url.path) for q in fake_api.seen] == [("GET", "/v1/org/deployment-policy")]
 
 
 async def test_set_secret_takes_no_value(fake_api):

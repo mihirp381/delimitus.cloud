@@ -31,6 +31,7 @@ class Expected:
     where: str
     framework: str | None = None
     notices: tuple[str, ...] = ()
+    packages: tuple[str, ...] = ()
 
 
 EXPECTED = {
@@ -63,6 +64,8 @@ EXPECTED = {
     ),
     "sqlite-on-disk": Expected("ssc", "STATE_SQLITE_EPHEMERAL", LOCAL),
     "dash-app": Expected("ssc", "builds", LIVE, framework="dash"),
+    "unlisted-native-library": Expected("ssc", "ADD_APPROVED_PACKAGE", LOCAL),
+    "listed-native-library": Expected("ssc", "builds", LIVE, packages=("poppler-utils",)),
 }
 DELIMITUS = sorted(n for n, e in EXPECTED.items() if e.delimitus != "ssc")
 BUILD_FAILURES = {"BUILD_DEPENDENCY_UNRESOLVED", "HEALTH_CHECK_FAILED", "builds"}
@@ -110,4 +113,5 @@ def test_fixture_outcome(name: str, tmp_path: Path) -> None:
             assert refused == expected.outcome, analysis
     assert analysis.framework == expected.framework
     assert analysis.notices == expected.notices
+    assert analysis.system_packages == expected.packages
     assert (expected.where == LOCAL) is (expected.outcome not in BUILD_FAILURES)

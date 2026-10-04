@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Final, Protocol, cast
 
+from ssc_contracts.packages import APPROVED_PACKAGES
+
 BUILD_ID: Final = re.compile(r"bld_[a-z0-9]{20}")
 MAX_REF_CHARS: Final = 512
 
@@ -61,13 +63,15 @@ class BuildNotFoundError(BuildDriverError):
 class CellBuild:
     """One build in a cell. ``bundle_url`` is a signed GET for the bundle that lives at most 10
     minutes; it is a credential, so it is never logged. ``start`` is the manifest's start
-    command, or None for Railpack's own."""
+    command, or None for Railpack's own. ``system_packages`` are the packages from the platform
+    package list the build installs (``ssc_contracts.packages``); no other is accepted."""
 
     build_id: str
     bundle_url: str = field(repr=False)
     bundle_sha256: str
     public_env: Mapping[str, str] = field(default_factory=dict[str, str])
     start: str | None = None
+    system_packages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not BUILD_ID.fullmatch(self.build_id):
@@ -79,7 +83,11 @@ class CellBuild:
         bad = [k for k in self.public_env if not _ENV_NAME.fullmatch(k)]
         if bad:
             raise ValueError(f"not environment variable names: {bad}")
+        unlisted = sorted(set(self.system_packages) - APPROVED_PACKAGES)
+        if unlisted:
+            raise ValueError(f"not on the platform package list: {unlisted}")
         object.__setattr__(self, "public_env", MappingProxyType(dict(self.public_env)))
+        object.__setattr__(self, "system_packages", tuple(sorted(set(self.system_packages))))
 
 
 class CellBuilder(Protocol):
@@ -98,19 +106,25 @@ def build_to_wire(build: CellBuild) -> dict[str, object]:
         "bundle_sha256": build.bundle_sha256,
         "public_env": dict(build.public_env),
         "start": build.start,
+        "system_packages": list(build.system_packages),
     }
 
 
 def build_from_wire(body: Mapping[str, Any]) -> CellBuild:
-    """Raises ``ValueError`` for anything malformed."""
+    """Raises ``ValueError`` for anything malformed. A build without ``system_packages`` (from a
+    control plane older than SSC-093) installs none."""
     try:
         start = body["start"]
+        packages: object = body.get("system_packages", [])
+        if not isinstance(packages, list):
+            raise TypeError("system_packages must be a list")
         return CellBuild(
             build_id=_str(body["build_id"]),
             bundle_url=_str(body["bundle_url"]),
             bundle_sha256=_str(body["bundle_sha256"]),
             public_env=_str_map(body["public_env"]),
             start=None if start is None else _str(start),
+            system_packages=tuple(_str(p) for p in cast("list[object]", packages)),
         )
     except (KeyError, TypeError) as exc:
         raise ValueError(f"malformed build: {exc}") from None

@@ -15,6 +15,7 @@ from ssc_control.api.routes.v1.audit import router as audit_router
 from ssc_control.api.routes.v1.bundles import router as bundles_router
 from ssc_control.api.routes.v1.cell import router as cell_router
 from ssc_control.api.routes.v1.databases import router as databases_router
+from ssc_control.api.routes.v1.deployment_policy import router as deployment_policy_router
 from ssc_control.api.routes.v1.deployments import router as deployments_router
 from ssc_control.api.routes.v1.grants import router as grants_router
 from ssc_control.api.routes.v1.groups import router as groups_router
@@ -49,3 +50,4 @@ router.include_router(databases_router)
 router.include_router(logs_router)
 router.include_router(usage_router)
 router.include_router(agent_policy_router)
+router.include_router(deployment_policy_router)

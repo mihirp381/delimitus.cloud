@@ -15,8 +15,10 @@ from ssc_cli.commands.lifecycle import disable, enable
 from ssc_cli.commands.login import login, logout
 from ssc_cli.commands.logs import logs
 from ssc_cli.commands.mcp import mcp
+from ssc_cli.commands.policy import policy
 from ssc_cli.commands.promote import promote
 from ssc_cli.commands.releases import releases
+from ssc_cli.commands.requirements import requirements
 from ssc_cli.commands.rollback import rollback
 from ssc_cli.commands.secret import secret_app
 from ssc_cli.commands.share import share, unshare
@@ -71,6 +73,8 @@ app.command()(logs)
 app.command()(share)
 app.command()(unshare)
 app.command()(doctor)
+app.command()(requirements)
+app.command()(policy)
 app.command()(init)
 app.command()(deploy)
 app.command()(releases)

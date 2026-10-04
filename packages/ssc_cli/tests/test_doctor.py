@@ -572,3 +572,33 @@ def test_sessions_true_is_a_session_app_and_flask_is_not(tmp_path):
 def test_a_streamlit_app_without_a_start_command_gets_only_the_block(tmp_path):
     make(tmp_path, {"requirements.txt": "streamlit\n", "app.py": "import streamlit as st\n"})
     assert codes(tmp_path) == ["NO_START_COMMAND"]
+
+
+@pytest.mark.parametrize(
+    ("files", "path", "said"),
+    [
+        (
+            {"requirements.txt": "flask\npytesseract\n"},
+            ".",
+            "pytesseract needs the system package tesseract-ocr",
+        ),
+        (
+            {"railpack.json": '{"buildAptPackages": ["libldap2-dev"]}'},
+            "railpack.json",
+            "railpack.json asks for the system package libldap2-dev",
+        ),
+    ],
+)
+def test_a_system_package_off_the_platform_list_blocks_as_the_build_does(
+    tmp_path, files, path, said
+):
+    make(tmp_path, {"requirements.txt": "flask\n", "app.py": FLASK_OK, **files})
+    (f,) = [f for f in run_doctor(tmp_path) if f.code == "ADD_APPROVED_PACKAGE"]
+    assert (f.severity, f.path) == ("block", path)
+    assert f.message.startswith(said)
+    assert "SSC support" in f.fix
+
+
+def test_a_listed_system_package_is_not_reported(tmp_path):
+    make(tmp_path, {"requirements.txt": "flask\npdf2image\n", "app.py": FLASK_OK})
+    assert codes(tmp_path) == []

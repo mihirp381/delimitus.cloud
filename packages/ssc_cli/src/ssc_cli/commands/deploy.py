@@ -1,9 +1,10 @@
 """``ssc deploy``: pack a folder, check it, upload it, build it for preview and deploy it.
 
 Everything that can refuse the bundle runs before anything leaves the machine: the manifest,
-packing (caps, links, ``.env`` files), the secret scan (``ssc_bundle.client.prepare``) and SQLite
-on disk (``ssc_bundle.analyze.sqlite_on_disk``, the rule the build applies). Such a refusal exits
-4 with the code the API would give, and ``status: null``. ``deploy`` always targets preview
+packing (caps, links, ``.env`` files), the secret scan (``ssc_bundle.client.prepare``), SQLite
+on disk (``ssc_bundle.analyze.sqlite_on_disk``, the rule the build applies) and a system package
+off the platform package list (``ssc_bundle.analyze.package_needs``, likewise). Such a refusal
+exits 4 with the code the API would give, and ``status: null``. ``deploy`` always targets preview
 (decision 017); production changes only through ``promote``.
 
 The deployment's ``notice`` says what it sets off, such as the company's database being created
@@ -23,7 +24,7 @@ from typing import Annotated, Final
 
 import typer
 
-from ssc_bundle.analyze import MAX_ANALYZE_BYTES, sqlite_on_disk
+from ssc_bundle.analyze import MAX_ANALYZE_BYTES, package_needs, sqlite_on_disk
 from ssc_bundle.client import Prepared, SecretFoundError, prepare
 from ssc_bundle.limits import DEFAULT_LIMITS, BundleError, BundleTooLargeError
 from ssc_bundle.tarcheck import iter_entries
@@ -45,6 +46,7 @@ from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_build, wait_for_opera
 from ssc_contracts.build import SQLITE_ON_DISK, STATE_SQLITE_EPHEMERAL
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.manifest import ManifestError
+from ssc_contracts.packages import HOW_TO_ASK
 
 PREVIEW: Final = "preview"
 DEPLOY: Final = "deploy"
@@ -249,8 +251,9 @@ def prepare_folder(root: Path, dest: Path) -> Prepared:
     try:
         prepared = prepare(root, dest)
         with dest.open("rb") as f:
-            files = iter_entries(f, DEFAULT_LIMITS, MAX_ANALYZE_BYTES)
-            sqlite = sqlite_on_disk(files, prepared.manifest)
+            files = list(iter_entries(f, DEFAULT_LIMITS, MAX_ANALYZE_BYTES))
+        sqlite = sqlite_on_disk(files, prepared.manifest)
+        unlisted = [n for n in package_needs(files) if not n.listed]
     except ManifestError as e:
         lines = [str(p) for p in e.problems[:MAX_DETAIL_LINES]]
         raise _blocked(
@@ -290,6 +293,16 @@ def prepare_folder(root: Path, dest: Path) -> Prepared:
             ),
             ExitCode.BLOCKED,
             SQLITE_ON_DISK,
+        )
+    if unlisted:
+        raise _blocked(
+            ErrorCode.ADD_APPROVED_PACKAGE,
+            "The app needs a system package the platform does not carry, so nothing was uploaded.",
+            "\n".join(
+                f"{n.by} {'needs' if n.path == '.' else 'asks for'} {n.package[:64]}"
+                for n in unlisted[:MAX_DETAIL_LINES]
+            ),
+            HOW_TO_ASK,
         )
     return prepared
 

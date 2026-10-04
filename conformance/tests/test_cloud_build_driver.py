@@ -177,6 +177,16 @@ async def test_the_build_pushes_one_image_named_by_the_build_id(
     assert bundles.fetched == [request.bundle_key]
 
 
+async def test_the_listed_system_packages_reach_the_plan_step(
+    agent_driver: CellAgentBuildDriver, bundles: Bundles, emulator: CloudBuildEmulator
+) -> None:
+    request = bundles.new(system_packages=("pkg-config", "poppler-utils"))
+    ref = await agent_driver.start(request)
+    assert isinstance(await until_done(agent_driver, ref, 0), Succeeded)
+    plan_env = next(s["env"] for s in emulator.builds[ref]["steps"] if s["id"] == "plan")
+    assert "SSC_APT_PACKAGES=pkg-config poppler-utils" in plan_env
+
+
 @pytest.mark.parametrize(
     ("exit_code", "code"),
     [

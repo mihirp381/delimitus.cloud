@@ -50,6 +50,7 @@ from ssc_cli.models import (
     BundleOut,
     DatabaseOut,
     DeploymentCreate,
+    DeploymentPolicy,
     GrantIn,
     GrantsIn,
     GrantsOut,
@@ -148,6 +149,9 @@ class ApiClient:
 
     def whoami(self) -> Whoami:
         return _parse(self._send("GET", "/v1/whoami"), Whoami)
+
+    def deployment_policy(self) -> DeploymentPolicy:
+        return _parse(self._send("GET", "/v1/org/deployment-policy"), DeploymentPolicy)
 
     def list_apps(self, *, mine: bool = False) -> AppList:
         """Every app of the org, or with ``mine`` only those the caller may deploy to."""

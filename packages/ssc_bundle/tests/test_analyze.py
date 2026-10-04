@@ -2,7 +2,7 @@
 
 import pytest
 
-from ssc_bundle.analyze import Analysis, analyze, sqlite_on_disk
+from ssc_bundle.analyze import Analysis, analyze, package_needs, sqlite_on_disk
 from ssc_contracts.build import FIX_ITS, NOTICES, SQLITE_ON_DISK
 from ssc_contracts.manifest import Manifest, is_session_app
 
@@ -221,5 +221,67 @@ def test_every_refusal_code_has_a_fix_it() -> None:
         "BUILD_UNSUPPORTED_RUNTIME",
         "SECRET_IN_BUNDLE",
         "STATE_SQLITE_EPHEMERAL",
+        "ADD_APPROVED_PACKAGE",
     ):
         assert FIX_ITS[c]
+
+
+@pytest.mark.parametrize(
+    ("files", "path", "named"),
+    [
+        ({"requirements.txt": "pytesseract==0.3.10\n"}, ".", "pytesseract needs tesseract-ocr"),
+        (
+            {"package.json": '{"dependencies": {"node-tesseract-ocr": "2.2.1"}}'},
+            ".",
+            "node-tesseract-ocr needs tesseract-ocr",
+        ),
+        (
+            {"railpack.json": '{"buildAptPackages": ["libxmlsec1-dev"]}'},
+            "railpack.json",
+            "railpack.json asks for libxmlsec1-dev",
+        ),
+        (
+            {"railpack.json": '{"deploy": {"aptPackages": ["wkhtmltopdf"]}}'},
+            "railpack.json",
+            "railpack.json asks for wkhtmltopdf",
+        ),
+    ],
+)
+def test_an_unlisted_system_package_stops_the_build(
+    files: dict[str, str | bytes], path: str, named: str
+) -> None:
+    refusal = run(files, manifest(**START)).refusal
+    assert refusal is not None
+    assert (refusal.code, refusal.path) == ("ADD_APPROVED_PACKAGE", path)
+    assert refusal.detail.startswith(named)
+    assert "SSC support" in FIX_ITS["ADD_APPROVED_PACKAGE"]
+
+
+def test_listed_system_packages_go_to_the_build() -> None:
+    files: dict[str, str | bytes] = {
+        "requirements.txt": "pdf2image==1.17.0\nWeasyPrint==62.0\n",
+        "railpack.json": '{"deploy": {"aptPackages": ["fonts-liberation"]}}',
+    }
+    analysis = run(files, manifest(**START))
+    assert analysis.refusal is None
+    assert analysis.system_packages == (
+        "fonts-dejavu-core",
+        "fonts-liberation",
+        "libharfbuzz-subset0",
+        "libpango-1.0-0",
+        "libpangoft2-1.0-0",
+        "poppler-utils",
+    )
+    assert run({"app.py": "print(1)\n"}, manifest(**START)).system_packages == ()
+
+
+def test_package_needs_names_each_dependency_listed_or_not() -> None:
+    files = [
+        ("requirements.txt", b"pdf2image\npytesseract\n"),
+        ("railpack.json", b'{"buildAptPackages": ["poppler-utils"]}'),
+    ]
+    assert [(n.path, n.by, n.package, n.listed) for n in package_needs(files)] == [
+        (".", "pdf2image", "poppler-utils", True),
+        (".", "pytesseract", "tesseract-ocr", False),
+        ("railpack.json", "railpack.json", "poppler-utils", True),
+    ]

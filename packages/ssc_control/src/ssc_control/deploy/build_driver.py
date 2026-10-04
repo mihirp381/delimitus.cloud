@@ -46,7 +46,9 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BuildRequest:
-    """``build_id`` names the attempt: starting the same id twice is one build."""
+    """``build_id`` names the attempt: starting the same id twice is one build.
+    ``system_packages`` are the packages from the platform package list the source needs
+    (``ssc_bundle.analyze``, SSC-093), which the build installs."""
 
     build_id: str
     org_id: str
@@ -56,6 +58,7 @@ class BuildRequest:
     source_digest: str
     manifest: Manifest
     public_env: Mapping[str, str] = field(default_factory=dict[str, str])
+    system_packages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not _DIGEST.fullmatch(self.source_digest):

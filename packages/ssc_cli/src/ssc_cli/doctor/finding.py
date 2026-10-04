@@ -2,7 +2,8 @@
 
 Codes and severities are part of decision 017; the set of codes may only grow. ``info`` never
 blocks: it tells the builder how the app will run. Fix texts name only features that exist or are
-agreed in a decision (the manifest is decision 013).
+agreed in a decision (the manifest is decision 013). Each code checks one platform rule or fact,
+named by ``ssc_shared.requirements``, the source ``ssc requirements`` and the agent tools read.
 """
 
 from typing import Final, Literal
@@ -11,6 +12,8 @@ from pydantic import BaseModel, ConfigDict
 
 from ssc_contracts import app_env
 from ssc_contracts.build import SQLITE_ON_DISK
+from ssc_contracts.packages import HOW_TO_ASK
+from ssc_shared.requirements import REQUIREMENT_OF
 
 Severity = Literal["block", "warn", "info"]
 DoctorCode = Literal[
@@ -27,6 +30,7 @@ DoctorCode = Literal[
     "SECRET_IN_BUNDLE",
     "NATIVE_LIBRARY",
     "SESSION_FRAMEWORK",
+    "ADD_APPROVED_PACKAGE",
 ]
 
 LOCKFILE_STALE: Final = "LOCKFILE_STALE"
@@ -42,6 +46,7 @@ STATE_SQLITE_EPHEMERAL: Final = "STATE_SQLITE_EPHEMERAL"
 SECRET_IN_BUNDLE: Final = "SECRET_IN_BUNDLE"  # noqa: S105  (a doctor code, not a secret)
 NATIVE_LIBRARY: Final = "NATIVE_LIBRARY"
 SESSION_FRAMEWORK: Final = "SESSION_FRAMEWORK"
+ADD_APPROVED_PACKAGE: Final = "ADD_APPROVED_PACKAGE"
 
 SEVERITY: Final[dict[DoctorCode, Severity]] = {
     LOCKFILE_STALE: "block",
@@ -57,6 +62,7 @@ SEVERITY: Final[dict[DoctorCode, Severity]] = {
     SECRET_IN_BUNDLE: "block",
     NATIVE_LIBRARY: "info",
     SESSION_FRAMEWORK: "info",
+    ADD_APPROVED_PACKAGE: "block",
 }
 
 FIX: Final[dict[DoctorCode, str]] = {
@@ -119,11 +125,16 @@ FIX: Final[dict[DoctorCode, str]] = {
         "Nothing to change: this does not stop the deploy. A session app is billed while its "
         "instance runs. Keep anything that must outlast a connection in Postgres."
     ),
+    ADD_APPROVED_PACKAGE: (
+        "The build installs system packages only from the platform package list, and the deploy "
+        "is refused while one is missing. " + HOW_TO_ASK
+    ),
 }
 
 
 class Finding(BaseModel):
-    """One problem. ``path`` is relative to the checked folder, ``"."`` for the folder."""
+    """One problem. ``path`` is relative to the checked folder, ``"."`` for the folder;
+    ``requirement`` is the id of the platform rule or fact it checks (``ssc requirements``)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -133,9 +144,16 @@ class Finding(BaseModel):
     line: int | None
     message: str
     fix: str
+    requirement: str
 
 
 def finding(code: DoctorCode, path: str, message: str, line: int | None = None) -> Finding:
     return Finding(
-        code=code, severity=SEVERITY[code], path=path, line=line, message=message, fix=FIX[code]
+        code=code,
+        severity=SEVERITY[code],
+        path=path,
+        line=line,
+        message=message,
+        fix=FIX[code],
+        requirement=REQUIREMENT_OF[code],
     )

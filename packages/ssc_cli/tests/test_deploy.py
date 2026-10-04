@@ -386,6 +386,10 @@ def _sqlite(root: Path) -> None:
     (root / "db.py").write_text("import sqlite3\ndb = sqlite3.connect('data.db')\n")
 
 
+def _unlisted_package(root: Path) -> None:
+    (root / "requirements.txt").write_text("flask\npytesseract\n")
+
+
 @pytest.mark.parametrize(
     ("spoil", "code"),
     [
@@ -393,6 +397,7 @@ def _sqlite(root: Path) -> None:
         (_bad_manifest, "MANIFEST_INVALID"),
         (_link, "BUNDLE_MALFORMED"),
         (_sqlite, "STATE_SQLITE_EPHEMERAL"),
+        (_unlisted_package, "ADD_APPROVED_PACKAGE"),
     ],
 )
 def test_local_refusals_exit_4_before_any_request(cli, api, folder, spoil, code):
@@ -482,6 +487,20 @@ def test_sqlite_on_disk_is_refused_before_upload_with_the_postgres_fix(cli, api,
     (folder / "tests").mkdir()
     (folder / "db.py").rename(folder / "tests" / "test_db.py")
     (folder / "mem.py").write_text("db = sqlite3.connect(':memory:')\n")
+    assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
+
+
+def test_an_unlisted_system_package_is_named_with_how_to_ask(cli, api, folder):
+    (folder / "railpack.json").write_text('{"buildAptPackages": ["libldap2-dev"]}')
+    _unlisted_package(folder)
+    r = cli("deploy", str(folder), "--app", "demo", session=api.session())
+    assert r.code == ExitCode.BLOCKED
+    assert "pytesseract needs tesseract-ocr" in r.stderr
+    assert "railpack.json asks for libldap2-dev" in r.stderr
+    assert "Ask SSC support to add the package" in r.stderr
+    assert api.seen == []
+    (folder / "railpack.json").unlink()
+    (folder / "requirements.txt").write_text("flask\npdf2image\n")
     assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
 
 

@@ -132,11 +132,12 @@
     "path": "string"
   },
   "Finding": {
-    "code": "string[EXTERNAL_SERVICE,LOCKFILE_STALE,MANIFEST_INVALID,MANIFEST_MISSING,NATIVE_LIBRARY,NOT_SINGLE_APP,NO_START_COMMAND,PORT_BINDING,PUBLIC_ENV_AT_BUILD,SECRET_IN_BUNDLE,SESSION_FRAMEWORK,STATE_SQLITE_EPHEMERAL,WRITES_HOME]",
+    "code": "string[ADD_APPROVED_PACKAGE,EXTERNAL_SERVICE,LOCKFILE_STALE,MANIFEST_INVALID,MANIFEST_MISSING,NATIVE_LIBRARY,NOT_SINGLE_APP,NO_START_COMMAND,PORT_BINDING,PUBLIC_ENV_AT_BUILD,SECRET_IN_BUNDLE,SESSION_FRAMEWORK,STATE_SQLITE_EPHEMERAL,WRITES_HOME]",
     "fix": "string",
     "line": "integer|null",
     "message": "string",
     "path": "string",
+    "requirement": "string",
     "severity": "string[block,info,warn]"
   },
   "GrantRow": {
@@ -191,6 +192,50 @@
     "slug": "string",
     "source": "string"
   },
+  "PlatformRequirements": {
+    "approved_packages": "array<string>",
+    "facts": "array<PlatformRule>",
+    "how_to_ask_for_a_package": "string",
+    "next": "string",
+    "resource_classes": "array<ResourceSize>",
+    "rules": "array<PlatformRule>"
+  },
+  "PlatformRule": {
+    "build": "array<string>",
+    "doctor": "array<string>",
+    "id": "string",
+    "text": "string"
+  },
+  "PolicyApprovalRow": {
+    "kind": "string",
+    "when": "string"
+  },
+  "PolicyConnectionRow": {
+    "classification": "string",
+    "kind": "string",
+    "name": "string"
+  },
+  "PolicyDatabaseRow": {
+    "places_total": "integer",
+    "places_used": "integer",
+    "room": "boolean"
+  },
+  "PolicyHostRow": {
+    "app_id": "string",
+    "environment_id": "string",
+    "host": "string"
+  },
+  "PolicyResult": {
+    "api_url": "string",
+    "approvals": "array<PolicyApprovalRow>",
+    "approved_packages": "array<string>",
+    "approver": "string",
+    "connections": "array<PolicyConnectionRow>",
+    "database": "PolicyDatabaseRow",
+    "hosts": "array<PolicyHostRow>",
+    "how_to_ask_for_a_package": "string",
+    "scope": "string"
+  },
   "PromoteResult": {
     "app_id": "string",
     "build_id": "string",
@@ -225,6 +270,12 @@
     "next_before": "integer|null",
     "releases": "array<ReleaseRow>",
     "slug": "string"
+  },
+  "ResourceSize": {
+    "max_instances": "integer",
+    "memory_mib": "integer",
+    "name": "string",
+    "vcpu": "integer"
   },
   "RollbackResult": {
     "app_id": "string",

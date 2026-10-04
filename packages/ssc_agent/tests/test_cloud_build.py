@@ -373,6 +373,24 @@ def test_plan_runs_railpack_and_fails_without_a_start(
         assert (tmp_path / ".ssc" / "secrets" / "VITE_API").read_text() == "https://api.example.com"
 
 
+@needs_railpack
+def test_plan_installs_the_listed_packages_in_the_build_and_the_image(tmp_path: Path) -> None:
+    shutil.copytree(FIXTURES / "cs-fastapi-hello", tmp_path / "src")
+    (tmp_path / ".ssc" / "secrets").mkdir(parents=True)
+    build = cell_build(start=None, system_packages=("poppler-utils", "fonts-dejavu-core"))
+    env = step_env(build_config(CELL, build), "plan")
+    assert env["SSC_APT_PACKAGES"] == "fonts-dejavu-core poppler-utils"
+    result = run_step("plan", tmp_path, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = (tmp_path / ".ssc" / "plan.json").read_text()
+    assert plan.count("apt-get install -y fonts-dejavu-core poppler-utils") == 2
+    assert sorted(p.name for p in (tmp_path / ".ssc" / "secrets").iterdir()) == ["VITE_API"]
+
+
+def test_a_build_without_packages_asks_railpack_for_none() -> None:
+    assert step_env(build_config(CELL, cell_build()), "plan")["SSC_APT_PACKAGES"] == ""
+
+
 @pytest.mark.parametrize(
     ("log", "exit_code"),
     [

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ssc_cli.doctor.finding import Finding
 from ssc_cli.errors import ErrorBody
+from ssc_shared.requirements import PlatformRequirements, PlatformRule, ResourceSize
 
 
 class Shape(BaseModel):
@@ -398,6 +399,44 @@ class LogsResult(Shape):
     cursor: str | None
 
 
+class PolicyHostRow(Shape):
+    host: str
+    app_id: str
+    environment_id: str
+
+
+class PolicyConnectionRow(Shape):
+    name: str
+    kind: str
+    classification: str
+
+
+class PolicyApprovalRow(Shape):
+    kind: str
+    when: str
+
+
+class PolicyDatabaseRow(Shape):
+    places_used: int
+    places_total: int
+    room: bool
+
+
+class PolicyResult(Shape):
+    """``policy``: what the org lets the caller's apps reach and use. ``scope`` is ``org`` for an
+    org admin, else ``own``: only what the caller's own approved requests opened."""
+
+    api_url: str
+    scope: str
+    hosts: list[PolicyHostRow]
+    connections: list[PolicyConnectionRow]
+    approvals: list[PolicyApprovalRow]
+    approver: str
+    database: PolicyDatabaseRow
+    approved_packages: list[str]
+    how_to_ask_for_a_package: str
+
+
 class ErrorResult(Shape):
     error: ErrorBody
 
@@ -443,5 +482,13 @@ SHAPES: dict[str, type[BaseModel]] = {
         LogsResult,
         ErrorBody,
         ErrorResult,
+        PlatformRule,
+        ResourceSize,
+        PlatformRequirements,
+        PolicyHostRow,
+        PolicyConnectionRow,
+        PolicyApprovalRow,
+        PolicyDatabaseRow,
+        PolicyResult,
     )
 }

@@ -22,6 +22,7 @@ BUILD: dict[str, Any] = {
     "bundle_sha256": "0" * 64,
     "public_env": {"VITE_API": "https://api.example.com"},
     "start": "python app.py",
+    "system_packages": ["pkg-config", "poppler-utils"],
 }
 
 
@@ -34,6 +35,19 @@ def test_a_build_round_trips_and_hides_its_url() -> None:
     assert build_from_wire({**BUILD, "start": None}).start is None
 
 
+def test_a_build_from_an_older_control_plane_installs_no_package() -> None:
+    older = {k: v for k, v in BUILD.items() if k != "system_packages"}
+    assert build_from_wire(older).system_packages == ()
+
+
+def test_only_packages_on_the_platform_list_are_installed() -> None:
+    fields = {**BUILD, "system_packages": ("poppler-utils", "tesseract-ocr")}
+    with pytest.raises(ValueError, match="tesseract-ocr"):
+        CellBuild(**fields)
+    with pytest.raises(ValueError, match="tesseract-ocr"):
+        build_from_wire({**BUILD, "system_packages": ["tesseract-ocr"]})
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -41,6 +55,7 @@ def test_a_build_round_trips_and_hides_its_url() -> None:
         {"bundle_url": "http://control.test/b.tar.gz"},
         {"bundle_sha256": "A" * 64},
         {"public_env": {"lower": "x"}},
+        {"system_packages": ["curl"]},
     ],
 )
 def test_a_malformed_build_is_refused(change: dict[str, Any]) -> None:
@@ -58,6 +73,8 @@ def test_a_malformed_build_is_refused(change: dict[str, Any]) -> None:
         {**BUILD, "public_env": ["VITE_API"]},
         {**BUILD, "public_env": {"VITE_API": 1}},
         {**BUILD, "start": 1},
+        {**BUILD, "system_packages": "poppler-utils"},
+        {**BUILD, "system_packages": [1]},
     ],
 )
 def test_a_build_with_missing_or_mistyped_fields_is_refused(body: dict[str, Any]) -> None:
