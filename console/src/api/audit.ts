@@ -61,6 +61,9 @@ const ACTIONS: Readonly<Record<AuditAction, true>> = {
   'cell.resource_requested': true,
   'cell.resource_ready': true,
   'cell.resource_failed': true,
+  'github.installation_bound': true,
+  'repo.connected': true,
+  'repo.disconnected': true,
 };
 const KINDS: Readonly<Record<ActorKind, true>> = {
   user: true,

@@ -79,6 +79,8 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "cell_resource": frozenset(
         {"state", "cause", "attempts", "execution", "failure_code", "deployment_id"}
     ),  # SSC-087
+    "github_installation": frozenset({"installation_id"}),
+    "repo_link": frozenset({"installation_id", "repository_id", "branch", "required_checks"}),
 }
 
 FILTER_KEYS: Final = frozenset(

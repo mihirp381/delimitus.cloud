@@ -17,6 +17,8 @@ from ssc_control.api.routes.v1.cell import router as cell_router
 from ssc_control.api.routes.v1.databases import router as databases_router
 from ssc_control.api.routes.v1.deployment_policy import router as deployment_policy_router
 from ssc_control.api.routes.v1.deployments import router as deployments_router
+from ssc_control.api.routes.v1.github import router as github_router
+from ssc_control.api.routes.v1.github import webhook_router as github_webhook_router
 from ssc_control.api.routes.v1.grants import router as grants_router
 from ssc_control.api.routes.v1.groups import router as groups_router
 from ssc_control.api.routes.v1.inventory import router as inventory_router
@@ -51,3 +53,5 @@ router.include_router(logs_router)
 router.include_router(usage_router)
 router.include_router(agent_policy_router)
 router.include_router(deployment_policy_router)
+router.include_router(github_router)
+router.include_router(github_webhook_router)

@@ -706,6 +706,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app_id}/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Repository
+         * @description The connected repository; ``NOT_FOUND`` when none is connected.
+         */
+        get: operations["get_repository_v1_apps__app_id__github_get"];
+        /**
+         * Connect Repository
+         * @description Connect the app to a repository, or change the branch or the required checks. Every
+         *     push to the branch then builds that commit and deploys it to preview; prod still changes
+         *     only through promote. Needs a builder on prod.
+         */
+        put: operations["connect_repository_v1_apps__app_id__github_put"];
+        post?: never;
+        /**
+         * Disconnect Repository
+         * @description Disconnect the repository: pushes stop deploying preview and promote stops checking its
+         *     required checks. What is deployed stays. Needs a builder on prod.
+         */
+        delete: operations["disconnect_repository_v1_apps__app_id__github_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app_id}/kill-switch": {
         parameters: {
             query?: never;
@@ -787,7 +818,9 @@ export interface paths {
          *     Needs a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a
          *     healthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when
          *     given (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every
-         *     secret set on preview must be set on prod too (``PROD_SECRET_MISSING``).
+         *     secret set on preview must be set on prod too (``PROD_SECRET_MISSING``). A connected
+         *     repository's required checks must be green on the release's commit
+         *     (``REQUIRED_CHECKS_FAILING``).
          */
         post: operations["promote_v1_apps__app_id__promote_post"];
         delete?: never;
@@ -1333,7 +1366,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "org.created" | "org.updated" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed";
+        AuditAction: "org.created" | "org.updated" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed" | "github.installation_bound" | "repo.connected" | "repo.disconnected";
         /** AuditActor */
         AuditActor: {
             /** Client Id */
@@ -1852,7 +1885,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -2490,6 +2523,60 @@ export interface components {
              * @description The digest of the bundle it was built from.
              */
             source_digest: string;
+        };
+        /** RepoLinkIn */
+        RepoLinkIn: {
+            /**
+             * Branch
+             * @description The branch whose pushes deploy preview; the repository's default branch when omitted.
+             */
+            branch?: string | null;
+            /**
+             * Repository
+             * @description `owner/name`.
+             */
+            repository: string;
+            /**
+             * Required Checks
+             * @description Checks that must have passed on the commit, from a run of that workflow on the branch, before promote builds it for prod.
+             */
+            required_checks?: components["schemas"]["RequiredCheckIn"][];
+        };
+        /** RepoLinkOut */
+        RepoLinkOut: {
+            /** App Id */
+            app_id: string;
+            /** Branch */
+            branch: string;
+            /**
+             * Check Name
+             * @description The check run each push reports on its commit.
+             */
+            check_name: string;
+            /** Repository */
+            repository: string;
+            /** Repository Id */
+            repository_id: number;
+            /** Required Checks */
+            required_checks: components["schemas"]["RequiredCheckIn"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** RequiredCheckIn */
+        RequiredCheckIn: {
+            /**
+             * Name
+             * @description The check run's name as GitHub shows it on the commit.
+             */
+            name: string;
+            /**
+             * Workflow
+             * @description The workflow file the check run must come from, such as `.github/workflows/ci.yml`.
+             */
+            workflow: string;
         };
         /**
          * RequirementKind
@@ -5840,6 +5927,227 @@ export interface operations {
             };
         };
     };
+    get_repository_v1_apps__app_id__github_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoLinkOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    connect_repository_v1_apps__app_id__github_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoLinkIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoLinkOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REPOSITORY_NOT_INSTALLED` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `GITHUB_UNAVAILABLE` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    disconnect_repository_v1_apps__app_id__github_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     pull_kill_switch_v1_apps__app_id__kill_switch_post: {
         parameters: {
             query?: never;
@@ -6132,7 +6440,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `NOTHING_TO_PROMOTE`, `DEPLOYMENT_IN_FLIGHT`, `BUILD_IN_FLIGHT`, `PROD_SECRET_MISSING`, `BUNDLE_NOT_UPLOADED` */
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `NOTHING_TO_PROMOTE`, `DEPLOYMENT_IN_FLIGHT`, `BUILD_IN_FLIGHT`, `PROD_SECRET_MISSING`, `BUNDLE_NOT_UPLOADED`, `REQUIRED_CHECKS_FAILING` */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6161,6 +6469,15 @@ export interface operations {
             };
             /** @description `RATE_LIMITED` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `GITHUB_UNAVAILABLE` */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

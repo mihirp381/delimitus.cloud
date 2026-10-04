@@ -1312,7 +1312,7 @@ def test_agent_interface_revision_adds_its_columns_and_downgrade_removes_them(
     after = action_check(dsn)
     old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
     assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | {"org.updated"}
-    assert {a.value for a in AuditAction} == old | {"org.updated"}
+    assert {a.value for a in AuditAction} >= old | {"org.updated"}
     added = "select table_name, column_name, column_default from information_schema.columns " + (
         "where table_schema = 'ssc' and column_name in ('agent_logs', 'agent_client_id') "
         "order by table_name"
@@ -1325,8 +1325,67 @@ def test_agent_interface_revision_adds_its_columns_and_downgrade_removes_them(
     downgrade(dsn, "0026_migrations")
     assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
     assert run(dsn, None, added) == []
-    upgrade(dsn)
+    upgrade(dsn, "0027_agent_interface")
     assert action_check(dsn) == after
+
+
+GITHUB_ACTIONS = {"github.installation_bound", "repo.connected", "repo.disconnected"}
+
+
+def test_github_revision_adds_its_tables_and_downgrade_removes_them(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database github owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="github").render_as_string(hide_password=False)
+    upgrade(dsn, "0027_agent_interface")
+    before = action_check(dsn)
+    upgrade(dsn, "0028_github")
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | GITHUB_ACTIONS
+    assert {a.value for a in AuditAction} >= old | GITHUB_ACTIONS
+    tables = (
+        "select c.relname, c.relrowsecurity, c.relforcerowsecurity from pg_class c "
+        "join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'ssc' "
+        "and c.relname in ('github_installation', 'repo_link') order by c.relname"
+    )
+    assert run(dsn, None, tables) == [
+        ("github_installation", True, True),
+        ("repo_link", True, True),
+    ]
+    downgrade(dsn, "0027_agent_interface")
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    assert run(dsn, None, tables) == []
+    upgrade(dsn, "0028_github")
+    assert action_check(dsn) == after
+
+
+def test_an_installation_belongs_to_one_org_and_a_link_to_its_app(dsns: Dsns) -> None:
+    a, b = make_org(dsns.app, "GitHub A"), make_org(dsns.app, "GitHub B")
+    installation = int(hashlib.sha256(a.org_id.encode()).hexdigest()[:12], 16)
+    insert = (
+        "insert into ssc.github_installation (installation_id, org_id) values (%s, %s) "
+        "returning installation_id"
+    )
+    run(dsns.app, a.org_id, insert, (installation, a.org_id))
+    assert refused(dsns.app, b.org_id, insert, (installation, b.org_id)) == "23505"
+    assert refused(dsns.app, b.org_id, insert, (installation + 1, a.org_id)) == "42501"
+    assert run(dsns.app, b.org_id, "select installation_id from ssc.github_installation") == []
+    drop = "delete from ssc.github_installation where installation_id = %s"
+    assert refused(dsns.app, a.org_id, drop, (installation,)) == "42501"
+    app = new_id("app")
+    run(
+        dsns.app,
+        b.org_id,
+        "insert into ssc.app (id, org_id, slug, owner_user_id) values (%s, %s, 'ledger', %s) "
+        "returning id",
+        (app, b.org_id, b.admin_user_id),
+    )
+    link = (
+        "insert into ssc.repo_link (org_id, app_id, installation_id, repository_id, repository, "
+        "branch) values (%s, %s, %s, 1, 'acme/ledger', 'main')"
+    )
+    assert refused(dsns.app, b.org_id, link, (b.org_id, app, installation)) == "23503"
+    assert refused(dsns.app, b.org_id, link, (b.org_id, new_id("app"), installation)) == "23503"
 
 
 def test_only_a_cli_session_names_an_agent_and_the_name_is_checked(dsns: Dsns) -> None:

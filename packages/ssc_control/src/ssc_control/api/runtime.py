@@ -1,6 +1,6 @@
 """What one running API process holds: settings, the engine, the verifier, the limiter, the
 metrics recorder, the blob store, the production gate, the timers, the secret grants, the app
-databases and the cell's logs."""
+databases, the cell's logs and the GitHub App."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ssc_control.api.auth import Verifier
     from ssc_control.api.ratelimit import RateLimiter
     from ssc_control.api.settings import Settings
+    from ssc_control.github.client import GitHubApp
     from ssc_control.runtime.app_databases import AppDatabases
     from ssc_control.runtime.secret_grants import SecretGrants
     from ssc_shared.blobstore import BlobStore
@@ -47,6 +48,9 @@ class Runtime:
     cell_logs: CellLogs | None = None
     """App logs and health through the cell agent (SSC-024); ``None`` when the cell is not
     configured, and log reads answer ``LOGS_UNAVAILABLE``."""
+    github: GitHubApp | None = None
+    """The GitHub App (SSC-047); ``None`` when it is not configured, and connecting a
+    repository refuses."""
 
 
 def runtime_of(request: Request) -> Runtime:

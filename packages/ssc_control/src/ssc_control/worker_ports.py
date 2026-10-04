@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.cell.deployer import CellDeployer
 from ssc_control.deploy.build_driver import BuildDriver
+from ssc_control.github.client import GitHubApp
 from ssc_control.identity.workos import WorkOSClient
 from ssc_control.ports import (
     MetricsPort,
@@ -35,6 +36,7 @@ from ssc_shared.blobstore import BlobStore
 from ssc_shared.usage import CellUsage
 
 PORTS_KEY: Final = "ssc_ports"
+APPS_DOMAIN: Final = "delimitusapps.com"
 
 
 def _utcnow() -> datetime:
@@ -54,7 +56,8 @@ class Ports:
     of an environment that declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040).
     ``app_identity`` None gives apps no identity keys and no origin (SSC-018). ``directory`` None
     skips the directory sync (SSC-064). ``cell_usage`` None skips the usage collection and records
-    no usage events (SSC-028)."""
+    no usage events (SSC-028). ``github`` None leaves a push job with nothing to do (SSC-047);
+    ``apps_domain`` makes the preview address it reports."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -73,6 +76,8 @@ class Ports:
     app_identity: AppIdentity | None = None
     directory: WorkOSClient | None = None
     cell_usage: CellUsage | None = None
+    github: GitHubApp | None = None
+    apps_domain: str = APPS_DOMAIN
 
 
 class PortsMissingError(RuntimeError):

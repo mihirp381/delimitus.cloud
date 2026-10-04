@@ -219,6 +219,25 @@ requests opened. Workload credentials are `403 FORBIDDEN`; an operator's read is
 `operator.access`. Until SSC-052 and SSC-053 land, approved requests are the only record of
 either.
 
+**A connected GitHub repository deploys preview on every push** (SSC-047, decision 027).
+`PUT /v1/apps/{app_id}/github` names `repository` (`owner/name`), optionally `branch` (the
+repository's default branch otherwise) and up to ten `required_checks` (`name`, and the
+`workflow` file under `.github/workflows/` it must come from). The repository must be reachable
+through a GitHub App installation an SSC operator bound to the org (`409
+REPOSITORY_NOT_INSTALLED`); `503 GITHUB_UNAVAILABLE` when GitHub cannot be asked. Connecting,
+changing and `DELETE` need a builder on prod (a `scope: preview` credential is refused), `GET`
+a builder on the app. Each change is audited as `repo.connected` or `repo.disconnected` with
+the installation and repository ids, the branch and the required checks, never the repository's
+name. `POST /v1/github/webhook` is GitHub's alone and not in `openapi.json`: no bearer
+credential and no rate limit; the `X-Hub-Signature-256` HMAC of the body with the App's
+webhook secret is the credential, and a delivery without a valid one, an unset secret or a body
+over 25 MiB is `401 UNAUTHENTICATED` before the body is parsed. A `push` to a connected branch
+answers `202 {"status": "queued"}` and defers one push job per connected app; every other
+delivery, a pull request from a fork or not among them, answers `200 {"status": "ignored"}`.
+Promote then also refuses `409 REQUIRED_CHECKS_FAILING` until every required check is green on
+the commit preview runs (or when that release has no commit), and `503 GITHUB_UNAVAILABLE`
+when GitHub cannot say; an app with no connection or no required checks promotes as before.
+
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's
 call once there is more than one replica.
