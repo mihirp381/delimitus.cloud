@@ -1222,6 +1222,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/warm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Warm
+         * @description Active org admins only (``FORBIDDEN``). Which production environments and whether the
+         *     gateway are kept warm, what that costs, and where the usage events suggest it.
+         */
+        get: operations["get_warm_v1_warm_get"];
+        /**
+         * Set Warm
+         * @description Set the warm option. Active org admins only, never in an agent session. Names every
+         *     production environment to keep warm (the others go back to zero on the runtime's next pass)
+         *     and whether the gateway is kept warm. ``REFERENCE_NOT_FOUND`` for an environment the org does
+         *     not have; ``VALIDATION_FAILED`` for a preview environment or a ``monthly_usd_shown`` that is
+         *     not what the setting costs. Setting what is already set changes nothing; a change is audited
+         *     as ``org.updated`` on ``warm`` with the cost shown.
+         */
+        put: operations["set_warm_v1_warm_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/whoami": {
         parameters: {
             query?: never;
@@ -3144,6 +3174,95 @@ export interface components {
         UserMatches: {
             /** Users */
             users: components["schemas"]["UserMatch"][];
+        };
+        /** WarmEnvironmentOut */
+        WarmEnvironmentOut: {
+            /** App Id */
+            app_id: string;
+            /** App Slug */
+            app_slug: string;
+            /**
+             * Cold Start Days
+             * @description Of those days, how many had a cold start.
+             */
+            cold_start_days: number;
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Opened Days
+             * @description Working days in the last 28 it was used.
+             */
+            opened_days: number;
+            /**
+             * Suggested
+             * @description Opened on most working days lately, with users meeting cold starts.
+             */
+            suggested: boolean;
+            /** Warm */
+            warm: boolean;
+        };
+        /** WarmGatewayOut */
+        WarmGatewayOut: {
+            /** Failure Code */
+            failure_code: string | null;
+            /**
+             * State
+             * @description Where the cell's gateway is: `turning_on` until the cell deployer has set it.
+             * @enum {string}
+             */
+            state: "off" | "on" | "turning_on" | "turning_off" | "failed";
+            /**
+             * Warm
+             * @description Whether an admin asked for the gateway to be kept warm.
+             */
+            warm: boolean;
+        };
+        /** WarmIn */
+        WarmIn: {
+            /**
+             * Environment Ids
+             * @description The production environments to keep warm; every other is not.
+             */
+            environment_ids: string[];
+            /**
+             * Gateway
+             * @description Keep the cell's gateway warm too.
+             */
+            gateway: boolean;
+            /**
+             * Monthly Usd Shown
+             * @description The monthly cost shown for this setting; refused if it is not that.
+             */
+            monthly_usd_shown: number;
+        };
+        /** WarmOut */
+        WarmOut: {
+            /**
+             * Environment Monthly Usd
+             * @description About what each warm environment adds.
+             */
+            environment_monthly_usd: number;
+            /**
+             * Environments
+             * @description Every production environment. Preview environments are never warm.
+             */
+            environments: components["schemas"]["WarmEnvironmentOut"][];
+            gateway: components["schemas"]["WarmGatewayOut"];
+            /**
+             * Gateway Monthly Usd
+             * @description About what the warm gateway adds.
+             */
+            gateway_monthly_usd: number;
+            /**
+             * Monthly Usd
+             * @description About what the option adds a month as set now.
+             */
+            monthly_usd: number;
+            /**
+             * Working Days
+             * @description Working days in the last 28.
+             */
+            working_days: number;
         };
         /** Whoami */
         Whoami: {
@@ -7993,6 +8112,122 @@ export interface operations {
                 };
             };
             /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_warm_v1_warm_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarmOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    set_warm_v1_warm_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WarmIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarmOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
                     [name: string]: unknown;

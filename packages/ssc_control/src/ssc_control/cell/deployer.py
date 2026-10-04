@@ -3,8 +3,9 @@
 The deployer is the Cloud Run job ``ssc-cell-deployer`` in the platform project, with its own
 service account (``infra/ssc_infra/deployer.py``). The worker holds only
 ``run.jobsExecutorWithOverrides`` and ``run.viewer`` on that one job: it can start a run with two
-arguments, a cell label and a resource, and read the run. It never holds the deployer's
-credentials, and the job refuses any other argument or environment variable.
+arguments, a cell label and a flag, and read the run. The flag is a lazy resource to turn on
+(SSC-087) or the gateway's warm setting, ``warm=true`` or ``warm=false`` (SSC-092). It never holds
+the deployer's credentials, and the job refuses any other argument or environment variable.
 """
 
 import time
@@ -14,10 +15,11 @@ from typing import Any, Final, Literal, Protocol, cast
 
 import httpx2
 
-from ssc_contracts.cells import CellResource
+from ssc_contracts.cells import CellResource, WarmGateway
 from ssc_shared.hosts import check_cell_label
 
 type ExecutionStatus = Literal["running", "succeeded", "failed"]
+type DeployerFlag = CellResource | WarmGateway
 
 RUN_API: Final = "https://run.googleapis.com/v2"
 METADATA_IDENTITY: Final = (
@@ -39,8 +41,8 @@ class CellDeployerError(RuntimeError):
 
 
 class CellDeployer(Protocol):
-    async def start(self, label: str, resource: CellResource) -> str:
-        """Start one run for ``label`` and ``resource``; the run's execution name."""
+    async def start(self, label: str, flag: DeployerFlag) -> str:
+        """Start one run for ``label`` and ``flag``; the run's execution name."""
         ...
 
     async def status(self, execution: str) -> ExecutionStatus:
@@ -48,10 +50,17 @@ class CellDeployer(Protocol):
         ...
 
 
-def deployer_args(label: str, resource: CellResource) -> list[str]:
-    """The only arguments the worker ever passes: a checked cell label and a resource."""
+def deployer_flag(value: str) -> DeployerFlag:
+    """A lazy resource or a warm setting; ``ValueError`` for anything else."""
+    if value in WarmGateway:
+        return WarmGateway(value)
+    return CellResource(value)
+
+
+def deployer_args(label: str, flag: DeployerFlag) -> list[str]:
+    """The only arguments the worker ever passes: a checked cell label and a flag."""
     check_cell_label(label)
-    return [label, CellResource(resource).value]
+    return [label, deployer_flag(flag).value]
 
 
 def execution_status(body: Mapping[str, Any]) -> ExecutionStatus:
@@ -103,8 +112,8 @@ class CloudRunCellDeployer:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def start(self, label: str, resource: CellResource) -> str:
-        overrides = {"containerOverrides": [{"args": deployer_args(label, resource)}]}
+    async def start(self, label: str, flag: DeployerFlag) -> str:
+        overrides = {"containerOverrides": [{"args": deployer_args(label, flag)}]}
         body = await self._call("POST", f"{RUN_API}/{self._job}:run", {"overrides": overrides})
         metadata = cast("dict[str, Any]", (body or {}).get("metadata") or {})
         name = metadata.get("name")
@@ -150,17 +159,17 @@ class FakeCellDeployer:
     """In memory. Each run stays ``running`` until ``finish``; ``fail_next`` fails the next runs
     as they finish, as a run killed halfway would."""
 
-    runs: list[tuple[str, CellResource]] = field(default_factory=lambda: [])
+    runs: list[tuple[str, DeployerFlag]] = field(default_factory=lambda: [])
     outcomes: dict[str, ExecutionStatus] = field(default_factory=lambda: {})
     fail_next: int = 0
     refuse_start: int = 0
 
-    async def start(self, label: str, resource: CellResource) -> str:
-        args = deployer_args(label, resource)
+    async def start(self, label: str, flag: DeployerFlag) -> str:
+        args = deployer_args(label, flag)
         if self.refuse_start:
             self.refuse_start -= 1
             raise CellDeployerError("cell deployer: HTTP 503")
-        self.runs.append((args[0], CellResource(args[1])))
+        self.runs.append((args[0], deployer_flag(args[1])))
         name = f"{FAKE_JOB}/executions/run-{len(self.runs)}"
         self.outcomes[name] = "running"
         return name

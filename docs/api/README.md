@@ -218,6 +218,21 @@ refused with `DB_TIER_FULL`) and the paid "bigger database" step (`bigger_tier`,
 `bigger_tier_monthly_usd` a month). The fixed outbound IP is in `GET /v1/egress` (SSC-053). The
 console's "Your environment" screen reads these three; its figures are not a bill (A6).
 
+**The warm option is an org admin's choice** (SSC-092). `GET /v1/warm` answers every production
+environment with whether it is kept warm and whether the usage events suggest it (`suggested`:
+used on more than half of the working days in the last 28, UTC, with cold starts on at least half
+of those days; `opened_days` and `cold_start_days`), whether the cell's gateway is kept warm with
+its `state` (`off`, `on`, `turning_on`, `turning_off`, `failed` and its `failure_code`), and what
+each part adds a month (about $10 an environment, about $10 the gateway). `PUT /v1/warm` names
+every production environment to keep warm and whether the gateway is, with `monthly_usd_shown`,
+the cost the screen showed: `422 VALIDATION_FAILED` when it is not what the setting costs or names
+a preview environment (never warm), `422 REFERENCE_NOT_FOUND` for an environment the org does not
+have. Active org admins only (`403 FORBIDDEN`), never in an agent session (`403
+AGENT_SESSION_REFUSED`). A named environment runs at minimum 1 from the runtime's next pass,
+every other at 0; the gateway's part is the cell stack's `warm` flag, which the worker sets
+through the cell deployer. A change is audited as `org.updated` on target kind `warm`, with who
+and the cost shown; setting what is set changes and audits nothing. Nothing charges for it (A6).
+
 **The deployment policy shows only what the caller may already see** (SSC-093, decision 016). `GET
 /v1/org/deployment-policy` answers, for the caller, the internet hosts approved for an environment
 (`host`, `app_id`, `environment_id`), the org's data connections by `name`, `kind` and
@@ -358,8 +373,8 @@ stateless, JSON replies. Code: `api/mcp/`.
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
   step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052;
   `get_org_deployment_policy` shows only those), the warm flag (SSC-092) and
-  the cell resource flags (SSC-087): no tool sets them, and the cell enable route refuses an
-  agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself, and
+  the cell resource flags (SSC-087): no tool sets them, and the cell enable and warm routes
+  refuse an agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself, and
   `preflight` checks one.
 - **Wiring.** The SDK's routes are added to the FastAPI router rather than mounted (no
   trailing-slash redirect, metadata at the root); they are not in `openapi.json`. The session

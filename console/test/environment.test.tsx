@@ -1,6 +1,7 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CellOut, Usage } from '../src/api/cell';
+import type { WarmOut } from '../src/api/warm';
 import { json, problem } from './fakeApi';
 import { signedIn, start } from './harness';
 
@@ -99,10 +100,33 @@ function usage(environment: string, changes: Partial<Usage> = {}): Usage {
   };
 }
 
+function warm(changes: Partial<WarmOut> = {}): WarmOut {
+  return {
+    environments: [
+      {
+        environment_id: PROD,
+        app_id: APP_ID,
+        app_slug: 'expenses',
+        warm: false,
+        suggested: true,
+        opened_days: 17,
+        cold_start_days: 12,
+      },
+    ],
+    gateway: { warm: false, state: 'off', failure_code: null },
+    working_days: 20,
+    environment_monthly_usd: 10,
+    gateway_monthly_usd: 10,
+    monthly_usd: 0,
+    ...changes,
+  };
+}
+
 function environmentRoutes(ip: string | null = IP, database: Partial<CellOut['database']> = {}) {
   return {
     'GET /v1/cell': () => json(200, cell(database)),
     'GET /v1/egress': () => json(200, { hosts: [], outbound_ip: ip, proxy_address: null }),
+    'GET /v1/warm': () => json(200, warm()),
     'GET /v1/usage': () =>
       json(200, {
         month: '2026-10',
@@ -208,6 +232,71 @@ describe('your environment', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Not allowed');
   });
 
+  it('shows the warm option, its cost before saving, and offers the gateway in the same step', async () => {
+    const saved = warm({
+      environments: [{ ...warm().environments[0]!, warm: true, suggested: false }],
+      gateway: { warm: true, state: 'turning_on', failure_code: null },
+      monthly_usd: 20,
+    });
+    const { api } = start(
+      '/environment',
+      { ...environmentRoutes(), 'PUT /v1/warm': () => json(200, saved) },
+      signedIn(),
+    );
+    await screen.findByRole('heading', { name: 'Warm option' });
+    const panel = section('Warm option');
+    const app = await within(panel).findByRole('checkbox', { name: /expenses/ });
+    expect(app.closest('label')?.textContent).toContain('suggested');
+    expect(app.closest('label')?.textContent).toContain('used on 17 of 20 working days lately, with cold starts on 12');
+    expect(panel.textContent).toContain('Preview apps are never warm');
+    expect(panel.textContent).toContain('the warm option adds nothing more');
+    const save = within(panel).getByRole('button', { name: 'Save warm option' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+
+    fireEvent.click(app);
+    expect(panel.textContent).toContain('the warm option adds about $10 a month');
+    const note = within(panel).getByRole('status');
+    expect(note.textContent).toContain('A warm app behind a sleeping gateway still waits');
+    fireEvent.click(within(note).getByRole('button', { name: 'Keep the gateway warm too' }));
+    const gateway = within(panel).getByRole('checkbox', { name: /Keep the gateway warm too/ }) as HTMLInputElement;
+    expect(gateway.checked).toBe(true);
+    expect(within(panel).queryByText(/sleeping gateway/)).toBeNull();
+    expect(panel.textContent).toContain('the warm option adds about $20 a month');
+    expect(api.of('PUT', '/v1/warm')).toHaveLength(0);
+
+    await act(async () => {
+      fireEvent.click(save);
+    });
+    const [put] = api.of('PUT', '/v1/warm');
+    expect(put?.body).toEqual({ environment_ids: [PROD], gateway: true, monthly_usd_shown: 20 });
+    await waitFor(() => expect(section('Warm option').textContent).toContain('being kept warm'));
+    expect((within(section('Warm option')).getByRole('checkbox', { name: /expenses/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+  });
+
+  it('shows why the warm option was refused and a gateway that could not be changed', async () => {
+    start(
+      '/environment',
+      {
+        ...environmentRoutes(),
+        'GET /v1/warm': () =>
+          json(200, warm({ gateway: { warm: true, state: 'failed', failure_code: 'CELL_DEPLOYER_FAILED' } })),
+        'PUT /v1/warm': () => problem(403, 'AGENT_SESSION_REFUSED', 'Not from an agent session'),
+      },
+      signedIn(),
+    );
+    await screen.findByRole('heading', { name: 'Warm option' });
+    const panel = section('Warm option');
+    await waitFor(() => expect(panel.textContent).toContain('could not be changed'));
+    expect(panel.textContent).toContain('CELL_DEPLOYER_FAILED');
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /expenses/ }));
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole('button', { name: 'Save warm option' }));
+    });
+    expect((await within(panel).findByRole('alert')).textContent).toContain('Not from an agent session');
+  });
+
   it('is for org admins only', async () => {
     const { api } = start('/environment', { ...environmentRoutes(), 'GET /v1/whoami': member }, signedIn());
     expect(await screen.findByText('Only org admins can see the environment.')).toBeTruthy();
@@ -215,6 +304,7 @@ describe('your environment', () => {
     expect(within(nav).queryByRole('link', { name: 'Your environment' })).toBeNull();
     expect(api.of('GET', '/v1/cell')).toHaveLength(0);
     expect(api.of('GET', '/v1/usage')).toHaveLength(0);
+    expect(api.of('GET', '/v1/warm')).toHaveLength(0);
   });
 });
 

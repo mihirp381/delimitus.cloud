@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { useState } from 'react';
+import { type FormEvent, useState } from 'react';
 import {
   BILLING_TEXT,
   CAUSE_TEXT,
@@ -13,6 +13,13 @@ import {
   type Usage,
   when,
 } from '../../api/cell';
+import {
+  GATEWAY_POLL_MS,
+  setWarm,
+  type WarmGateway,
+  type WarmOut,
+  warmCost,
+} from '../../api/warm';
 import { ENV_TITLE } from '../../app-detail/names';
 import { Badge, type Tone } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -70,6 +77,7 @@ function YourEnvironment() {
       ) : (
         <>
           <Resources resources={cell.data.resources} />
+          <WarmPanel />
           <DatabasePanel database={cell.data.database} environments={cell.data.environments} />
           <section className="panel" aria-labelledby="usage-heading">
             <h2 id="usage-heading">Usage this month</h2>
@@ -191,6 +199,148 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
         empty="No parts."
       />
     </section>
+  );
+}
+
+const GATEWAY_TONE: Readonly<Record<WarmGateway['state'], Tone>> = {
+  off: 'neutral',
+  on: 'success',
+  turning_on: 'info',
+  turning_off: 'info',
+  failed: 'danger',
+};
+
+const GATEWAY_TEXT: Readonly<Record<WarmGateway['state'], string>> = {
+  off: 'sleeps when idle',
+  on: 'kept warm',
+  turning_on: 'being kept warm, a few minutes',
+  turning_off: 'going back to sleeping when idle',
+  failed: 'could not be changed',
+};
+
+/** The saved setting, so the form starts again from it after a save. */
+function savedSetting(warm: WarmOut): string {
+  const named = warm.environments.filter((e) => e.warm).map((e) => e.environment_id);
+  return `${named.join(',')}|${warm.gateway.warm}`;
+}
+
+function WarmPanel() {
+  const { queries } = Route.useRouteContext();
+  const warm = queries.useQuery('get', '/v1/warm', undefined, {
+    refetchInterval: (q) =>
+      q.state.data?.gateway.state.startsWith('turning') ? GATEWAY_POLL_MS : false,
+  });
+  return (
+    <section className="panel" aria-labelledby="warm-heading">
+      <h2 id="warm-heading">Warm option</h2>
+      <p className="muted">
+        Every app sleeps when nobody uses it, and its first visitor waits while it wakes. A warm
+        production app keeps one instance running, so it opens straight away. Preview apps are never
+        warm.
+      </p>
+      {warm.isPending ? (
+        <p className="muted">Loading…</p>
+      ) : warm.isError ? (
+        <ProblemNotice error={warm.error} />
+      ) : (
+        <WarmForm key={savedSetting(warm.data)} warm={warm.data} />
+      )}
+    </section>
+  );
+}
+
+function WarmForm({ warm }: { readonly warm: WarmOut }) {
+  const { api, queries, queryClient } = Route.useRouteContext();
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(
+    () => new Set(warm.environments.filter((e) => e.warm).map((e) => e.environment_id)),
+  );
+  const [gateway, setGateway] = useState(warm.gateway.warm);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const cost = warmCost(warm, chosen.size, gateway);
+  const unchanged =
+    gateway === warm.gateway.warm &&
+    warm.environments.every((e) => e.warm === chosen.has(e.environment_id));
+
+  function toggle(environmentId: string, on: boolean) {
+    const next = new Set(chosen);
+    if (on) next.add(environmentId);
+    else next.delete(environmentId);
+    setChosen(next);
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (busy || unchanged) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await setWarm(api, [...chosen], gateway, cost);
+      queryClient.setQueryData(queries.queryOptions('get', '/v1/warm').queryKey, saved);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (warm.environments.length === 0) {
+    return <p className="muted">No app runs in production yet.</p>;
+  }
+  return (
+    <form className="stack" onSubmit={submit}>
+      <fieldset className="choices">
+        <legend>Production apps to keep warm, about ${warm.environment_monthly_usd} a month each</legend>
+        {warm.environments.map((e) => (
+          <label key={e.environment_id} className="check">
+            <input
+              type="checkbox"
+              checked={chosen.has(e.environment_id)}
+              onChange={(event) => toggle(e.environment_id, event.target.checked)}
+            />
+            <span>
+              {e.app_slug}{' '}
+              {e.suggested ? <Badge tone="info">suggested</Badge> : null}{' '}
+              <span className="muted">
+                used on {e.opened_days} of {warm.working_days} working days lately, with cold starts
+                on {e.cold_start_days}
+              </span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <label className="check">
+        <input type="checkbox" checked={gateway} onChange={(event) => setGateway(event.target.checked)} />
+        <span>
+          Keep the gateway warm too, about ${warm.gateway_monthly_usd} a month. Now it{' '}
+          <Badge tone={GATEWAY_TONE[warm.gateway.state]}>{GATEWAY_TEXT[warm.gateway.state]}</Badge>
+          {warm.gateway.failure_code ? (
+            <>
+              {' '}
+              (<code>{warm.gateway.failure_code}</code>; ask your operator)
+            </>
+          ) : null}
+        </span>
+      </label>
+      {chosen.size > 0 && !gateway ? (
+        <div className="notice notice-warning" role="status">
+          <p>
+            A warm app behind a sleeping gateway still waits: every visit passes through the gateway,
+            and it wakes first.
+          </p>
+          <Button onClick={() => setGateway(true)}>Keep the gateway warm too</Button>
+        </div>
+      ) : null}
+      <p>
+        As chosen, the warm option adds <strong>{monthly(cost)}</strong>. This is not a bill.
+      </p>
+      {error ? <ProblemNotice error={error} /> : null}
+      <div>
+        <Button type="submit" variant="primary" disabled={busy || unchanged}>
+          Save warm option
+        </Button>
+      </div>
+    </form>
   );
 }
 

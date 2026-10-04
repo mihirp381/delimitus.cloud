@@ -351,7 +351,7 @@ Pass:
 
 Then drop the token-creator grants **[real]**.
 
-**f. The resource flags.** A non-admin is refused and an admin's change is audited. `packages/ssc_control/tests/test_cell_resources.py::test_an_admin_turns_a_resource_on_and_it_is_audited` covers this. The warm flag is SSC-092.
+**f. The resource flags.** A non-admin is refused and an admin's change is audited. `packages/ssc_control/tests/test_cell_resources.py::test_an_admin_turns_a_resource_on_and_it_is_audited` covers this. The warm flag's refusals and audit are covered by `packages/ssc_control/tests/test_warm.py::test_members_agents_previews_and_a_wrong_cost_are_refused` and `::test_one_warm_environment_takes_one_pass_and_nothing_else`.
 
 ## Record
 

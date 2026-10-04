@@ -907,6 +907,58 @@ def test_egress_rows_are_checked_and_stay_in_their_org(
     assert run(dsns.app, a.org, delete, (a.org,)) == [(1,)]
 
 
+WARM_GATEWAY = (
+    "insert into ssc.warm_gateway (org_id, wanted, execution, execution_wants, failure_code) "
+    "values (%s, %s, %s, %s, %s)"
+)
+
+
+def test_only_a_prod_environment_is_warm_and_the_gateway_row_stays_in_its_org(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    _, b = orgs
+    a = seed(dsns.app, "Org Warm", "warmco")
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        preview = add_env(conn, a.org, a.app, "preview")
+        conn.execute("update ssc.environment set warm = true where id = %s", (a.env,))
+    warm_preview = "update ssc.environment set warm = true where id = %s"
+    assert refused(dsns.app, a.org, warm_preview, (preview,)) == CHECK_VIOLATION
+    for row in (
+        (a.org, True, "run-1", None, None),
+        (a.org, True, None, True, None),
+        (a.org, True, None, None, "not a code"),
+    ):
+        assert refused(dsns.app, a.org, WARM_GATEWAY, row) == CHECK_VIOLATION
+    added = run(
+        dsns.app, a.org, f"{WARM_GATEWAY} returning wanted", (a.org, True, None, None, None)
+    )
+    assert added == [(True,)]
+    assert run(dsns.app, b.org, "select org_id from ssc.warm_gateway") == []
+    foreign = (a.org, False, None, None, None)
+    assert refused(dsns.app, b.org, WARM_GATEWAY, foreign) == INSUFFICIENT_PRIVILEGE
+    delete = "delete from ssc.warm_gateway where org_id = %s"
+    assert refused(dsns.app, a.org, delete, (a.org,)) == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.migrate, a.org, "truncate ssc.warm_gateway") == SqlState.TRUNCATE_REFUSED
+
+
+def test_warm_revision_adds_its_column_and_table_and_downgrade_removes_them(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database warm owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="warm").render_as_string(hide_password=False)
+    shape = (
+        "select (select count(*) from information_schema.columns where table_schema = 'ssc' "
+        "and table_name = 'environment' and column_name = 'warm'), "
+        "to_regclass('ssc.warm_gateway') is not null"
+    )
+    upgrade(dsn, "0030_warm")
+    assert run(dsn, None, shape) == [(1, True)]
+    downgrade(dsn, "0029_egress")
+    assert run(dsn, None, shape) == [(0, False)]
+    upgrade(dsn, "0030_warm")
+    assert run(dsn, None, shape) == [(1, True)]
+
+
 # ── timers (SSC-041, revision 0013) ──────────────────────────────────────────
 
 ARMED_SCHEDULE = (

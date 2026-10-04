@@ -123,7 +123,7 @@ _CLAIM = text(
 )
 _LOAD = text(
     "select d.state, d.kind, d.app_id, d.environment_id, d.release_id, d.actor_kind, "
-    "d.actor_id, d.actor_via_agent, d.actor_client_id, e.name as env_name, "
+    "d.actor_id, d.actor_via_agent, d.actor_client_id, e.name as env_name, e.warm as env_warm, "
     "a.status as app_status, a.owner_user_id, a.slug as app_slug, r.image_digest, "
     "r.migrations as release_migrations, d.recovery_at "
     "from ssc.deployment d "
@@ -470,6 +470,7 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         database=database,
         slug=row.app_slug,
         identity=ports.app_identity,
+        warm=bool(row.env_warm),
     )
     if not isinstance(desired, ServiceSpec):
         raise AssertionError("an active app has a service spec")

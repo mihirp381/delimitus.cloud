@@ -101,7 +101,7 @@ class Outcome:
 
 _DESIRED_ROWS = text(
     "select e.app_id, e.name, a.status, r.id, r.image_digest, d.secret_refs, "
-    "db.host as db_host, db.port as db_port, a.slug "
+    "db.host as db_host, db.port as db_port, a.slug, e.warm "
     "from ssc.environment e "
     "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
     "join ssc.deployment d on d.org_id = e.org_id and d.id = e.current_deployment_id "
@@ -120,13 +120,15 @@ async def load_desired(
     identity: AppIdentity | None = None,
 ) -> ServiceSpec | Stopped | OutcomeKind:
     """Desired state from the database: the live pointer's release and secret versions, its
-    manifest, the app's status, where its app database is, its slug for ``identity``. Returns an
-    outcome kind instead when there is nothing to reconcile."""
+    manifest, the app's status, where its app database is, its slug for ``identity``, whether the
+    warm option names it (SSC-092). Returns an outcome kind instead when there is nothing to
+    reconcile."""
     async with bound_org(engine, org_id) as conn:
         row = (await conn.execute(_DESIRED_ROWS, {"org": org_id, "env": env_id})).one_or_none()
         if row is None:
             return "no_release"
-        app_id, env_name, app_status, release_id, image_digest, secret_refs, host, port, slug = row
+        app_id, env_name, app_status, release_id, image_digest, secret_refs, *place = row
+        host, port, slug, warm = place
         try:
             spec = await specs.get(conn, org_id=org_id, app_id=app_id, release_id=release_id)
         except ReleaseSpecUnavailableError:
@@ -141,6 +143,7 @@ async def load_desired(
         database=None if host is None else DatabaseRow(host=host, port=port),
         slug=slug,
         identity=identity,
+        warm=bool(warm),
     )
 
 

@@ -1,13 +1,15 @@
 """The cell deployer (SSC-087): turns on one lazy resource of one cell by applying that cell's
-stack with the resource's flag set, and changes nothing else.
+stack with the resource's flag set, and changes nothing else. It also sets the gateway's part of
+the warm option (SSC-092), the ``warm`` flag, to true or false.
 
-    python -I -m ssc_infra.deployer <cell label> <database|egress|connections>
+    python -I -m ssc_infra.deployer <cell label> <database|egress|connections|warm=true|warm=false>
 
 It runs as the Cloud Run job ``ssc-cell-deployer`` in ``ssc-platform-0``, under its own identity.
 The control plane may start it with its own arguments and environment, so it takes exactly two
 arguments from fixed sets, refuses any environment variable it does not expect, and runs Pulumi
 with an environment of its own. The config applied is the one the stack was last applied with
-(``stack_config``) with the one flag set to true; nothing here sets a flag to false.
+(``stack_config``) with the one flag set to true, or ``warm`` set as asked; nothing here sets any
+other flag to false.
 
 A run killed halfway is converged by the next: a lock older than any run is cancelled, and a
 create Pulumi never saw finish is imported where its ID is known, dropped otherwise.
@@ -83,13 +85,20 @@ def parse(argv: Sequence[str], environ: Mapping[str, str]) -> tuple[str, str]:
     if len(argv) != 2:  # noqa: PLR2004  (a label and a flag)
         raise RefusedError("expected exactly: <cell label> <flag>")
     label, flag = argv
-    if flag not in n.LAZY_FLAGS:
-        raise RefusedError(f"the flag must be one of {', '.join(n.LAZY_FLAGS)}")
+    if flag not in n.LAZY_FLAGS and flag not in n.WARM_ARGS:
+        raise RefusedError(f"the flag must be one of {', '.join((*n.LAZY_FLAGS, *n.WARM_ARGS))}")
     try:
         check_cell_label(label)
     except ValueError as exc:
         raise RefusedError(str(exc)) from None
     return label, flag
+
+
+def setting(flag: str) -> dict[str, str]:
+    """The one config value a run changes: a lazy flag to true, or ``warm`` as asked."""
+    if flag in n.WARM_ARGS:
+        return {"warm": n.WARM_ARGS[flag]}
+    return {flag: "true"}
 
 
 def clean_pulumi(*args: str, cwd: str | None = None) -> str:
@@ -125,7 +134,7 @@ class Deployer:
     def apply(self, label: str, flag: str) -> None:
         stack = n.cell_stack(label)
         settings = stack_config.applied(label, run=self.run, infra_dir=self.infra_dir)
-        stack_config.write(label, settings | {flag: "true"}, run=self.run, infra_dir=self.infra_dir)
+        stack_config.write(label, settings | setting(flag), run=self.run, infra_dir=self.infra_dir)
         self.unlock(stack)
         self.recover(stack, label)
         self.run("up", "--yes", "--stack", stack, cwd=self.infra_dir)
@@ -174,7 +183,8 @@ def main(argv: Sequence[str], environ: Mapping[str, str], deployer: Deployer | N
     except CommandError as exc:
         print(exc, file=sys.stderr)  # noqa: T201
         return 1
-    print(f"{n.cell_stack(label)}: {flag} is on", file=sys.stderr)  # noqa: T201
+    ((name, value),) = setting(flag).items()
+    print(f"{n.cell_stack(label)}: {name} is {value}", file=sys.stderr)  # noqa: T201
     return 0
 
 
