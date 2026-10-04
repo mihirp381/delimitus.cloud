@@ -533,7 +533,10 @@
           "identity.linked",
           "cell.resource_requested",
           "cell.resource_ready",
-          "cell.resource_failed"
+          "cell.resource_failed",
+          "github.installation_bound",
+          "repo.connected",
+          "repo.disconnected"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -1945,6 +1948,9 @@
           "LOGS_RATE_LIMITED",
           "LOGS_UNAVAILABLE",
           "AGENT_LOGS_OFF",
+          "REPOSITORY_NOT_INSTALLED",
+          "REQUIRED_CHECKS_FAILING",
+          "GITHUB_UNAVAILABLE",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -3468,6 +3474,119 @@
           "actor"
         ],
         "title": "ReleaseOut",
+        "type": "object"
+      },
+      "RepoLinkIn": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9._/-]{1,255}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The branch whose pushes deploy preview; the repository's default branch when omitted.",
+            "title": "Branch"
+          },
+          "repository": {
+            "description": "`owner/name`.",
+            "pattern": "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$",
+            "title": "Repository",
+            "type": "string"
+          },
+          "required_checks": {
+            "description": "Checks that must have passed on the commit, from a run of that workflow on the branch, before promote builds it for prod.",
+            "items": {
+              "$ref": "#/components/schemas/RequiredCheckIn"
+            },
+            "maxItems": 10,
+            "title": "Required Checks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "repository"
+        ],
+        "title": "RepoLinkIn",
+        "type": "object"
+      },
+      "RepoLinkOut": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "check_name": {
+            "description": "The check run each push reports on its commit.",
+            "title": "Check Name",
+            "type": "string"
+          },
+          "repository": {
+            "title": "Repository",
+            "type": "string"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "integer"
+          },
+          "required_checks": {
+            "items": {
+              "$ref": "#/components/schemas/RequiredCheckIn"
+            },
+            "title": "Required Checks",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "repository",
+          "repository_id",
+          "branch",
+          "required_checks",
+          "check_name",
+          "updated_at"
+        ],
+        "title": "RepoLinkOut",
+        "type": "object"
+      },
+      "RequiredCheckIn": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "The check run's name as GitHub shows it on the commit.",
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+            "title": "Name",
+            "type": "string"
+          },
+          "workflow": {
+            "description": "The workflow file the check run must come from, such as `.github/workflows/ci.yml`.",
+            "maxLength": 255,
+            "pattern": "^\\.github/workflows/[A-Za-z0-9._/-]+\\.ya?ml$",
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "workflow"
+        ],
+        "title": "RequiredCheckIn",
         "type": "object"
       },
       "RequirementKind": {
@@ -8763,6 +8882,277 @@
         ]
       }
     },
+    "/v1/apps/{app_id}/github": {
+      "delete": {
+        "description": "Disconnect the repository: pushes stop deploying preview and promote stops checking its\nrequired checks. What is deployed stays. Needs a builder on prod.",
+        "operationId": "disconnect_repository_v1_apps__app_id__github_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Disconnect Repository",
+        "tags": [
+          "v1"
+        ]
+      },
+      "get": {
+        "description": "The connected repository; ``NOT_FOUND`` when none is connected.",
+        "operationId": "get_repository_v1_apps__app_id__github_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoLinkOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Repository",
+        "tags": [
+          "v1"
+        ]
+      },
+      "put": {
+        "description": "Connect the app to a repository, or change the branch or the required checks. Every\npush to the branch then builds that commit and deploys it to preview; prod still changes\nonly through promote. Needs a builder on prod.",
+        "operationId": "connect_repository_v1_apps__app_id__github_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoLinkIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoLinkOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REPOSITORY_NOT_INSTALLED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`GITHUB_UNAVAILABLE`"
+          }
+        },
+        "summary": "Connect Repository",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
     "/v1/apps/{app_id}/kill-switch": {
       "post": {
         "description": "Stop the app now: 202 plus a ``Location`` to follow the steps.\n\n``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``\nwhile an earlier pull is still running.",
@@ -9083,7 +9473,7 @@
     },
     "/v1/apps/{app_id}/promote": {
       "post": {
-        "description": "Build for prod the source of the release live in preview: 202 plus a ``Location`` to\npoll. Deploy the release it makes to prod with ``POST .../deployments``.\n\nNeeds a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a\nhealthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when\ngiven (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every\nsecret set on preview must be set on prod too (``PROD_SECRET_MISSING``).",
+        "description": "Build for prod the source of the release live in preview: 202 plus a ``Location`` to\npoll. Deploy the release it makes to prod with ``POST .../deployments``.\n\nNeeds a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a\nhealthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when\ngiven (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every\nsecret set on preview must be set on prod too (``PROD_SECRET_MISSING``). A connected\nrepository's required checks must be green on the release's commit\n(``REQUIRED_CHECKS_FAILING``).",
         "operationId": "promote_v1_apps__app_id__promote_post",
         "parameters": [
           {
@@ -9182,7 +9572,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `NOTHING_TO_PROMOTE`, `DEPLOYMENT_IN_FLIGHT`, `BUILD_IN_FLIGHT`, `PROD_SECRET_MISSING`, `BUNDLE_NOT_UPLOADED`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `NOTHING_TO_PROMOTE`, `DEPLOYMENT_IN_FLIGHT`, `BUILD_IN_FLIGHT`, `PROD_SECRET_MISSING`, `BUNDLE_NOT_UPLOADED`, `REQUIRED_CHECKS_FAILING`"
           },
           "412": {
             "content": {
@@ -9213,6 +9603,16 @@
               }
             },
             "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`GITHUB_UNAVAILABLE`"
           }
         },
         "summary": "Promote",

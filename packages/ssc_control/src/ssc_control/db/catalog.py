@@ -36,6 +36,9 @@ Revision 0023 adds ``usage_collection`` (SSC-028), keyed by org alone, so it is 
 ``UNKEYED_TABLES``, and ``environment_id`` and ``dedup_key`` on ``metrics_event``: counts and
 durations of usage, never request content, paths, user ids or IP addresses.
 Revision 0024 adds a column only (SSC-090): ``environment.request_timeout_seconds``.
+Revision 0028 adds ``github_installation`` (SSC-047), keyed by the GitHub installation id, and
+``repo_link``, keyed by org and app, so both are in ``UNKEYED_TABLES``: ids, a repository name
+and a branch, never a GitHub token or key.
 """
 
 from collections.abc import Mapping
@@ -82,6 +85,8 @@ TABLES: Final[frozenset[str]] = frozenset(
         "cell_resource_waiter",  # SSC-087, revision 0020
         "app_database",  # SSC-040, revision 0022
         "usage_collection",
+        "github_installation",
+        "repo_link",
     }
 )
 
@@ -104,6 +109,8 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "cell_resource_waiter",
         "app_database",
         "usage_collection",
+        "github_installation",
+        "repo_link",
     }
 )
 
@@ -158,6 +165,8 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "cell_resource_waiter": frozenset({"SELECT", "INSERT", "DELETE"}),
     "app_database": frozenset({"SELECT", "INSERT", "UPDATE"}),  # never removed by the app
     "usage_collection": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "github_installation": frozenset({"SELECT", "INSERT"}),
+    "repo_link": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 
@@ -186,6 +195,7 @@ PII_COLUMNS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("approval_request", "decision_reason"),
         ("unlinked_login", "subject"),
         ("unlinked_login", "email"),
+        ("repo_link", "repository"),
     }
 )
 PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(
@@ -199,6 +209,7 @@ PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(
         "family_name",
         "phone",
         "decision_reason",
+        "repository",
     }
 )
 

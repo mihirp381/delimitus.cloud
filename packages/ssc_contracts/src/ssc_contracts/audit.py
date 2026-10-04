@@ -65,3 +65,6 @@ class AuditAction(StrEnum):
     CELL_RESOURCE_REQUESTED = "cell.resource_requested"
     CELL_RESOURCE_READY = "cell.resource_ready"
     CELL_RESOURCE_FAILED = "cell.resource_failed"
+    GITHUB_INSTALLATION_BOUND = "github.installation_bound"
+    REPO_CONNECTED = "repo.connected"
+    REPO_DISCONNECTED = "repo.disconnected"

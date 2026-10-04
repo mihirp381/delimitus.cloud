@@ -11,11 +11,17 @@ Secrets are never copied. Promote refuses with ``PROD_SECRET_MISSING`` while pre
 prod lacks, before anything is built: the same code reads the same names, so prod would otherwise
 run a configuration preview never ran. The database secrets are not counted; prod's own database
 is made on its first deploy.
+
+An app connected to a GitHub repository with required checks (SSC-047) promotes only a commit on
+which each of them is green, bound to its workflow file and the connected branch:
+``REQUIRED_CHECKS_FAILING`` otherwise, and ``GITHUB_UNAVAILABLE`` when GitHub cannot say, both
+before anything is built. Such an app promotes only a release built from a bundle the push job
+made for that link, since an uploaded bundle's commit is only what the client declared.
 """
 
 from typing import Final
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import Field
 from sqlalchemy import text
 
@@ -27,6 +33,7 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.routes.v1.deployments import BuildAccepted, start_build
+from ssc_control.api.routes.v1.github import require_green_checks
 from ssc_control.api.uow import UserUoW
 
 router = APIRouter()
@@ -50,7 +57,7 @@ _LOCK_PROD = text(
     "for update"
 )
 _SELECT_PREVIEW_LIVE = text(
-    "select d.state, d.release_id, r.source_digest from ssc.environment e "
+    "select d.state, d.release_id, r.source_digest, r.source_commit from ssc.environment e "
     "join ssc.deployment d on d.org_id = e.org_id and d.id = e.current_deployment_id "
     "join ssc.release r on r.org_id = d.org_id and r.id = d.release_id "
     "where e.org_id = :org and e.app_id = :app and e.name = 'preview'"
@@ -70,7 +77,8 @@ _SELECT_MISSING_SECRETS = text(
     "order by s.name"
 )
 _SELECT_SOURCE_BUNDLE = text(
-    "select coalesce("
+    "select b.id, b.actor_kind, b.actor_id from ssc.bundle b where b.org_id = :org "
+    "and b.id = coalesce("
     "(select bundle_id from ssc.build where org_id = :org and release_id = :rel), "
     "(select id from ssc.bundle where org_id = :org and app_id = :app and digest = :digest))"
 )
@@ -93,16 +101,20 @@ _SELECT_SOURCE_BUNDLE = text(
         ErrorCode.BUNDLE_NOT_UPLOADED,
         ErrorCode.REFERENCE_NOT_FOUND,
         ErrorCode.PRECONDITION_STALE,
+        ErrorCode.REQUIRED_CHECKS_FAILING,
+        ErrorCode.GITHUB_UNAVAILABLE,
     ),
 )
-async def promote(app_id: Id, body: PromoteIn, uow: UserUoW) -> Response:
+async def promote(app_id: Id, body: PromoteIn, request: Request, uow: UserUoW) -> Response:
     """Build for prod the source of the release live in preview: 202 plus a ``Location`` to
     poll. Deploy the release it makes to prod with ``POST .../deployments``.
 
     Needs a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a
     healthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when
     given (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every
-    secret set on preview must be set on prod too (``PROD_SECRET_MISSING``)."""
+    secret set on preview must be set on prod too (``PROD_SECRET_MISSING``). A connected
+    repository's required checks must be green on the release's commit
+    (``REQUIRED_CHECKS_FAILING``)."""
     params = {"org": uow.org_id, "app": app_id}
     status = (await uow.conn.execute(_SELECT_APP, params)).scalar_one_or_none()
     prod = (await uow.conn.execute(_LOCK_PROD, params)).scalar_one_or_none()
@@ -141,18 +153,25 @@ async def promote(app_id: Id, body: PromoteIn, uow: UserUoW) -> Response:
         raise Refusal(
             ErrorCode.PROD_SECRET_MISSING, evidence={"environment_id": prod, "names": missing}
         )
-    bundle_id = (
-        await uow.conn.execute(
-            _SELECT_SOURCE_BUNDLE, {**params, "rel": release_id, "digest": live["source_digest"]}
+    bundle = (
+        (
+            await uow.conn.execute(
+                _SELECT_SOURCE_BUNDLE,
+                {**params, "rel": release_id, "digest": live["source_digest"]},
+            )
         )
-    ).scalar_one_or_none()
-    if bundle_id is None:
+        .mappings()
+        .first()
+    )
+    uploader = None if bundle is None else (bundle["actor_kind"], bundle["actor_id"])
+    await require_green_checks(uow, request, app_id, live["source_commit"], uploader)
+    if bundle is None:
         raise Refusal(ErrorCode.REFERENCE_NOT_FOUND, evidence={"release_id": release_id})
     accepted = await start_build(
         uow,
         app_id,
         prod,
-        str(bundle_id),
+        str(bundle["id"]),
         audit_extra={"via": "promote", "source_release_id": release_id},
     )
     return uow.reply(accepted, status=202, headers={"Location": f"/v1/builds/{accepted.build_id}"})

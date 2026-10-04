@@ -38,6 +38,9 @@ from ssc_control.deploy import jobs as deploy_jobs
 from ssc_control.deploy.build_driver import BuildDriver, FakeBuildDriver
 from ssc_control.deploy.cell_build import CellAgentBuildDriver
 from ssc_control.deploy.gates import approvals_prod_gate
+from ssc_control.github import jobs as github_jobs
+from ssc_control.github.client import DEFAULT_BASE as GITHUB_BASE
+from ssc_control.github.client import GitHubApp
 from ssc_control.identity import jobs as identity_jobs
 from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
 from ssc_control.lifecycle import jobs as lifecycle_jobs
@@ -63,7 +66,7 @@ from ssc_control.timers import jobs as timers_jobs
 from ssc_control.timers.dispatch import FakeScheduleDispatcher, ScheduleDispatcher
 from ssc_control.timers.https import HttpsScheduleDispatcher, ScheduleSigner
 from ssc_control.timers.service import Timers
-from ssc_control.worker_ports import PORTS_KEY, Ports, PortsMissingError, ports_of
+from ssc_control.worker_ports import APPS_DOMAIN, PORTS_KEY, Ports, PortsMissingError, ports_of
 from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.hosts import check_apps_domain, check_cell_label
@@ -83,11 +86,13 @@ TIMER_KEY_ID_ENV: Final = "SSC_TIMER_KEY_ID"
 IDENTITY_JWKS_ENV: Final = "SSC_IDENTITY_JWKS"
 IDENTITY_ISSUER_ENV: Final = "SSC_IDENTITY_ISSUER"
 APPS_DOMAIN_ENV: Final = "SSC_APPS_DOMAIN"
-APPS_DOMAIN: Final = "delimitusapps.com"
 ISSUER_PREFIX: Final = "https://keys.delimitus.com/"
 WORKOS_KEY_ENV: Final = "SSC_WORKOS_API_KEY"
 WORKOS_CLIENT_ENV: Final = "SSC_WORKOS_CLIENT_ID"
 WORKOS_BASE_ENV: Final = "SSC_WORKOS_BASE"
+GITHUB_APP_ID_ENV: Final = "SSC_GITHUB_APP_ID"
+GITHUB_KEY_ENV: Final = "SSC_GITHUB_PRIVATE_KEY"
+GITHUB_BASE_ENV: Final = "SSC_GITHUB_API_BASE"
 FAKE_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 SWEEP_CRON: Final = "* * * * * */30"
 """Every 30 seconds."""
@@ -181,6 +186,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(cell_jobs.blueprint(), namespace="cell")
     app.add_tasks_from(identity_jobs.blueprint(), namespace="identity")
     app.add_tasks_from(metrics_jobs.blueprint(), namespace="metrics")
+    app.add_tasks_from(github_jobs.blueprint(), namespace="github")
     return app
 
 
@@ -362,6 +368,25 @@ def directory_from_env(env: Mapping[str, str]) -> WorkOSClient | None:
     )
 
 
+def github_from_env(env: Mapping[str, str]) -> GitHubApp | None:
+    """``SSC_GITHUB_APP_ID`` and ``SSC_GITHUB_PRIVATE_KEY`` (the App's PEM), both or neither,
+    and optionally ``SSC_GITHUB_API_BASE``: the App push jobs call GitHub as. None: a push job
+    does nothing."""
+    app_id, key = env.get(GITHUB_APP_ID_ENV, ""), env.get(GITHUB_KEY_ENV, "")
+    if not app_id and not key:
+        return None
+    if not (app_id and key):
+        raise CompositionError(f"set both {GITHUB_APP_ID_ENV} and {GITHUB_KEY_ENV}, or neither")
+    return GitHubApp(app_id=app_id, private_key=key, base=env.get(GITHUB_BASE_ENV, GITHUB_BASE))
+
+
+def apps_domain_from_env(env: Mapping[str, str]) -> str:
+    try:
+        return check_apps_domain(env.get(APPS_DOMAIN_ENV, APPS_DOMAIN))
+    except ValueError as exc:
+        raise CompositionError(str(exc)) from None
+
+
 def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
     """Refuse any fake port unless ``SSC_ENV`` is ``dev`` or ``test``."""
     fakes = [
@@ -409,6 +434,8 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         app_identity=app_identity_from_env(env),
         directory=directory_from_env(env),
         cell_usage=cell_usage_from_env(env),
+        github=github_from_env(env),
+        apps_domain=apps_domain_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports
@@ -448,6 +475,8 @@ async def run(env: Mapping[str, str] | None = None) -> None:
     finally:
         if ports.directory is not None:
             await ports.directory.aclose()
+        if ports.github is not None:
+            await ports.github.aclose()
         if isinstance(ports.timer_dispatcher, HttpsScheduleDispatcher):
             await ports.timer_dispatcher.aclose()
         await ports.engine.dispose()

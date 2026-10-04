@@ -3,7 +3,7 @@
 The written list the ticket asks for (SSC-010). The catalog test
 `test_control_db.py::test_pii_columns_are_exactly_the_declared_ones` fails when a column with a
 personal-data name (`display_name`, `email`, `subject`, `actor_ip`, `ip_address`, `given_name`,
-`family_name`, `phone`, `decision_reason`) appears on a table not listed here, or when a listed
+`family_name`, `phone`, `decision_reason`, `repository`) appears on a table not listed here, or when a listed
 column is missing.
 The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 
@@ -17,6 +17,7 @@ The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 | `approval_request` | `decision_reason` | Free text an SSC operator writes when recording an approval decision; may name people from the email or chat exchange | The reason shown with the decision (SSC-045) | Overwrite on request; the audit row holds no reason |
 | `unlinked_login` | `subject` | The SSO login's `idp_id` (for Google Workspace SAML, the person's email) when it matched no one, or more than one active person, in the directory | Shown to active org admins in the Unlinked logins list so they can link it to a person (SSC-019) | Delete the row |
 | `unlinked_login` | `email` | The email the SSO login carried | The same list; display only | Delete the row |
+| `repo_link` | `repository` | The connected GitHub repository as `owner/name`; the owner can be a person's GitHub login | Calling GitHub for the app's pushes and checks, and showing the connection (SSC-047). Audit rows carry the repository's numeric id instead | Disconnect the repository (deletes the row) |
 
 Also personal data, but not stored here:
 

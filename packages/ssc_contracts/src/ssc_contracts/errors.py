@@ -92,6 +92,9 @@ class ErrorCode(StrEnum):
     LOGS_RATE_LIMITED = "LOGS_RATE_LIMITED"
     LOGS_UNAVAILABLE = "LOGS_UNAVAILABLE"
     AGENT_LOGS_OFF = "AGENT_LOGS_OFF"
+    REPOSITORY_NOT_INSTALLED = "REPOSITORY_NOT_INSTALLED"
+    REQUIRED_CHECKS_FAILING = "REQUIRED_CHECKS_FAILING"
+    GITHUB_UNAVAILABLE = "GITHUB_UNAVAILABLE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -387,6 +390,27 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "Agents may not read logs in this org.",
         "An org admin has turned off log reading for agents. The person whose credential the agent "
         "holds can still read the logs themselves with `ssc logs` or in the console.",
+    ),
+    ErrorCode.REPOSITORY_NOT_INSTALLED: CatalogueEntry(
+        409,
+        "The GitHub App cannot reach this repository.",
+        "No GitHub App installation connected to your company can see the repository. Install "
+        "the app on the account that owns it and give it access to the repository, ask support "
+        "to connect the installation to your company if it is new, then connect again.",
+    ),
+    ErrorCode.REQUIRED_CHECKS_FAILING: CatalogueEntry(
+        409,
+        "A check this app requires has not passed.",
+        "The app requires named checks on the commit preview runs to pass before promote, each "
+        "from its workflow file on the connected branch, and at least one has failed, is still "
+        "running or never ran. Nothing was built. Fix the commit or wait for the checks, then "
+        "promote again.",
+    ),
+    ErrorCode.GITHUB_UNAVAILABLE: CatalogueEntry(
+        503,
+        "GitHub cannot be reached right now.",
+        "The platform could not reach GitHub, or the GitHub App is not set up here, so nothing "
+        "was changed. Retry later.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

@@ -62,6 +62,17 @@ class Settings:
     secret_intake_url: str = ""
     """``SSC_SECRET_INTAKE_URL``: the cell's secret intake origin, where ``ssc secret set`` sends
     the value. Unset, with or without the agent: secret writes refuse ``SECRETS_UNAVAILABLE``."""
+    github_app_id: str = ""
+    """``SSC_GITHUB_APP_ID``: the GitHub App connected repositories are read through (SSC-047).
+    Unset with the key: connecting refuses ``GITHUB_UNAVAILABLE``, and so does promote for an
+    app with required checks."""
+    github_private_key: str = field(default="", repr=False)
+    """``SSC_GITHUB_PRIVATE_KEY``: the App's PEM private key, which signs its JWTs."""
+    github_webhook_secret: bytes | None = field(default=None, repr=False)
+    """``SSC_GITHUB_WEBHOOK_SECRET``: the secret GitHub signs deliveries with. Unset: every
+    delivery is refused."""
+    github_api_base: str = "https://api.github.com"
+    """``SSC_GITHUB_API_BASE``: GitHub's REST API."""
 
     def __post_init__(self) -> None:
         check_apps_domain(self.apps_domain)
@@ -71,6 +82,8 @@ class Settings:
         ):
             if url and not url.startswith("https://"):
                 raise ValueError(f"{name} must be an https URL")
+        if bool(self.github_app_id) != bool(self.github_private_key):
+            raise ValueError("set both SSC_GITHUB_APP_ID and SSC_GITHUB_PRIVATE_KEY, or neither")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -98,6 +111,12 @@ class Settings:
             apps_domain=e.get("SSC_APPS_DOMAIN", APPS_DOMAIN),
             cell_agent_url=e.get("SSC_CELL_AGENT_URL", ""),
             secret_intake_url=e.get("SSC_SECRET_INTAKE_URL", ""),
+            github_app_id=e.get("SSC_GITHUB_APP_ID", ""),
+            github_private_key=e.get("SSC_GITHUB_PRIVATE_KEY", ""),
+            github_webhook_secret=e["SSC_GITHUB_WEBHOOK_SECRET"].encode()
+            if e.get("SSC_GITHUB_WEBHOOK_SECRET")
+            else None,
+            github_api_base=e.get("SSC_GITHUB_API_BASE", "https://api.github.com"),
         )
 
     @classmethod

@@ -22,6 +22,7 @@ from ssc_control.api.routes.v1 import router as v1_router
 from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
+from ssc_control.github.client import GitHubApp
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases
 from ssc_control.runtime.cell_agent import MetadataIdTokens
@@ -66,10 +67,12 @@ def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
     app_databases: AppDatabases | None = None,
     *,
     cell_logs: CellLogs | None = None,
+    github: GitHubApp | None = None,
 ) -> FastAPI:
     store = blob_store if blob_store is not None else blob_store_for(settings)
     check_fs_allowed(store, settings)
     redaction.install()
+    owned_github = github_for(settings) if github is None else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -78,6 +81,8 @@ def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
         async with agent_interface.session_manager.run():
             yield
         rt = app.state.runtime
+        if owned_github is not None:
+            await owned_github.aclose()
         if isinstance(rt, Runtime) and rt.owns_engine:
             await rt.engine.dispose()
 
@@ -111,6 +116,7 @@ def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
         secret_grants=secret_grants if secret_grants is not None else secret_grants_for(settings),
         app_databases=app_databases if app_databases is not None else app_databases_for(settings),
         cell_logs=cell_logs if cell_logs is not None else cell_logs_for(settings),
+        github=github if github is not None else owned_github,
     )
     app.add_middleware(RequestIdMiddleware)
     problems.install(app)
@@ -153,6 +159,17 @@ def cell_logs_for(settings: Settings) -> CellLogs | None:
     if not settings.cell_agent_url:
         return None
     return AgentCellLogs(settings.cell_agent_url, MetadataIdTokens())
+
+
+def github_for(settings: Settings) -> GitHubApp | None:
+    """The GitHub App when its id and key are configured, else ``None``. No I/O."""
+    if not settings.github_app_id:
+        return None
+    return GitHubApp(
+        app_id=settings.github_app_id,
+        private_key=settings.github_private_key,
+        base=settings.github_api_base,
+    )
 
 
 def _install_openapi(app: FastAPI) -> None:
