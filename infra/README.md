@@ -264,6 +264,13 @@ The first `pulumi up` creates the key on a cell made before it. Still live-only:
 4. Full stop. Expected: `scale_to_zero` is `done` and the last step's `since_command_ms` is under 60,000. Cloud Run's settle time for manual scaling to 0 sets this bound (the agent waits up to 180 s), and it is known only from this run. `gcloud run services describe` shows the manual instance count at 0.
 5. Enable. Run `ssc enable <app>`. Expected: the next request after the following compile is admitted, and the app starts from zero.
 
+**Kill switch drill (SSC-054).** The published numbers come from `python -m ssc_conformance.kill_drill` (`docs/kill-switch-drill.md`, which has the setup and the settings), not from a stack change. Live steps (operator, not run by SSC-054), on a staging cell with `connections` and `egress` on, the drill app (`conformance/kill_drill_app`) deployed with its connection `drill-db` and `api.github.com` allowed:
+
+1. One run each. `SSC_DRILL_RUNS=1`: the awake run shows the query and the tunnel ended, with `running` true in their log lines, and the asleep run prints "nothing started" with the gateway's own request line found. Expected: the proxy's log lists the environment's credential in the awake run (the asleep proof relies on it), and a Cloud Logging read of the drill app's `jsonPayload.drill` lines works for the caller.
+2. Ten runs in each state, then paste the table into `docs/kill-switch-drill.md` with the date, commit and cell. Expected: front door under 10 s, everything under 60 s, both states. A fail goes back to the architecture document; it is not worked around.
+3. Names. Confirm the bucket is `<project>-cell` and the data gateway and gateway are `ssc-datagw` and `ssc-gateway` (the drill's log filters use these names), and that the request-log name `run.googleapis.com/requests` returns lines for the app.
+4. Workflow. Trust `kill-drill.yml` in the WIF binding (`naming.NIGHTLY_WORKFLOW` covers only `nightly.yml`), set the variables and secrets named at the top of the workflow, run it once from the Actions tab. The schedule stays commented out until a machine credential exists for the drill: `SSC_DRILL_TOKEN` must outlive the 5-hour run.
+
 **Timer calls (SSC-041, decision 023 amendment).** A timer run reaches its app through the cell's load balancer and gateway, as a browser does, with a schedule token signed by the control-plane worker. The cell's `timer_jwks` setting is the worker key's public JWKS, one or two named public P-256 keys, the same for every cell; the stack refuses anything else and passes it to the gateway as `SSC_TIMER_JWKS`. Unset, the gateway refuses every timer call with its `404`. Live steps (operator, not run by SSC-041):
 
 ```
