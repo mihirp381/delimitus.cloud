@@ -11,8 +11,17 @@ group names, so a document holds no personal data.
 
 from typing import Annotated, Any, Final, Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
+from ssc_contracts.egress import MAX_CREDENTIALS, MAX_HOSTS, host_pattern_problem
 from ssc_contracts.identity import EnvironmentName
 
 FORMAT_V1: Final = "ssc-snapshot/v1"
@@ -27,6 +36,8 @@ GroupId = Annotated[str, StringConstraints(pattern=r"^grp_[a-z0-9]{20}$")]
 HostName = Annotated[str, StringConstraints(pattern=r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")]
 ConnectionId = Annotated[str, StringConstraints(pattern=r"^con_[a-z0-9]{20}$")]
 ConnectionName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,62}$")]
+CredentialId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9]{12}$")]
+Sha1Digest = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9+/]{27}=$")]
 
 GrantRole = Literal["builder", "user"]
 SubjectKind = Literal["user", "group", "org"]
@@ -116,6 +127,45 @@ class SnapshotConnection(_Frozen):
     grants: dict[EnvId, SnapshotConnectionGrant]
 
 
+class SnapshotProxyCredential(_Frozen):
+    """One egress proxy credential (SSC-053): its id and base64 SHA-1 of its token, never the
+    token. The proxy user is ``<env_id>.<credential_id>``."""
+
+    credential_id: CredentialId
+    sha1: Sha1Digest
+
+
+class SnapshotEgress(_Frozen):
+    """The cell egress proxy's policy (SSC-053). ``hosts``: the org's allowlist, host names and
+    ``*.`` patterns as ``ssc_contracts.egress`` reads them. ``credentials``: each environment's
+    valid proxy credentials, at most two so one can replace the other."""
+
+    hosts: tuple[str, ...] = Field(max_length=MAX_HOSTS)
+    credentials: dict[EnvId, tuple[SnapshotProxyCredential, ...]]
+
+    @field_validator("hosts")
+    @classmethod
+    def _valid_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for host in value:
+            if (problem := host_pattern_problem(host)) is not None:
+                raise ValueError(f"host {host!r}: {problem}")
+        if len(set(value)) != len(value):
+            raise ValueError("a host is listed twice")
+        return value
+
+    @field_validator("credentials")
+    @classmethod
+    def _few_credentials(
+        cls, value: dict[str, tuple[SnapshotProxyCredential, ...]]
+    ) -> dict[str, tuple[SnapshotProxyCredential, ...]]:
+        for env_id, held in value.items():
+            if not 0 < len(held) <= MAX_CREDENTIALS:
+                raise ValueError(f"{env_id} holds 1 to {MAX_CREDENTIALS} credentials")
+            if len({c.credential_id for c in held}) != len(held):
+                raise ValueError(f"{env_id} lists a credential twice")
+        return value
+
+
 class SnapshotDoc(_Frozen):
     """One org's snapshot. ``version`` 0 is a live evaluation that was never published."""
 
@@ -136,6 +186,11 @@ class SnapshotDoc(_Frozen):
         exclude_if=lambda v: v is None,
         description="Connection name to the connection the data gateway serves (SSC-050).",
     )
+    egress: SnapshotEgress | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description="The egress proxy's allowlist and credentials (SSC-053).",
+    )
 
     @model_validator(mode="after")
     def _references_resolve(self) -> Self:
@@ -155,4 +210,11 @@ class SnapshotDoc(_Frozen):
         ids = [c.connection_id for c in connections]
         if len(ids) != len(set(ids)):
             raise ValueError("two connection names share a connection_id")
+        if (
+            self.egress is not None
+            and not self.egress.credentials.keys() <= self.environments.keys()
+        ):
+            raise ValueError(
+                "an egress credential names an environment that is not in environments"
+            )
         return self

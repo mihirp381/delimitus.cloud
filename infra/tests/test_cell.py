@@ -24,6 +24,7 @@ FULL_FLAGS = {
     "connections": True,
     "gateway_min": 0,
     "warm": False,
+    "proxy_ha": False,
 }
 EMPTY_FLAGS = {
     "database": False,
@@ -31,6 +32,7 @@ EMPTY_FLAGS = {
     "connections": False,
     "gateway_min": 0,
     "warm": False,
+    "proxy_ha": False,
 }
 NEG = "gcp:compute/regionNetworkEndpointGroup:RegionNetworkEndpointGroup"
 BACKEND = "gcp:compute/backendService:BackendService"
@@ -77,6 +79,8 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_USAGE_SOURCE",
     "SSC_DATA_SA",
     "SSC_CONNECTION_TAG",
+    "SSC_PROXY_ADDRESS",
+    "SSC_OUTBOUND_IP",
 }
 TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
@@ -393,10 +397,14 @@ def _egress_allowed(rules: list[dict[str, Any]], tags: set[str], address: str) -
 def test_an_app_reaches_only_the_reserved_addresses_the_database_and_google(
     empty_b: list[Declared], address: str, allowed: bool
 ) -> None:
+    """The proxy reaches only public addresses: a listed host that resolves into a private range
+    gets nowhere (SSC-053)."""
     rules = [d.inputs for d in empty_b if d.type == "gcp:compute/firewall:Firewall"]
     assert _egress_allowed(rules, set(), address) is allowed
-    for tag in (cell.GATEWAY_TAG, cell.PROXY_TAG, cell.DATA_TAG):
+    for tag in (cell.GATEWAY_TAG, cell.DATA_TAG):
         assert _egress_allowed(rules, {tag}, address)
+    private = any(ip_address(address) in ip_network(r) for r in cell.PRIVATE_RANGES)
+    assert _egress_allowed(rules, {cell.PROXY_TAG}, address) is not private
 
 
 def test_egress_internal_names_the_proxy_the_data_gateway_and_the_database_range(
@@ -905,6 +913,8 @@ def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
         "us-central1-docker.pkg.dev/ssc-c-testcell05/ssc-apps/apps"
     )
     assert env["SSC_GATEWAY_SA"] == naming.sa_email("ssc-gateway", "ssc-c-testcell05")
+    assert env["SSC_PROXY_ADDRESS"] == "10.20.4.10"
+    assert env["SSC_OUTBOUND_IP"] == mockcloud.nat_address("ssc-c-testcell05")
     assert set(env) == AGENT_ENV
     subnet = one(declared, "gcp:compute/subnetworkIAMMember:SubnetworkIAMMember").inputs
     assert (subnet["subnetwork"], subnet["role"]) == ("apps", "roles/compute.networkUser")
@@ -1088,10 +1098,12 @@ def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Decl
         "bucket-gateway": (f"serviceAccount:{naming.sa_email(naming.GATEWAY, project)}", viewer),
         "bucket-agent": (f"serviceAccount:{naming.sa_email(naming.CELL_AGENT, project)}", viewer),
         "bucket-data": (f"serviceAccount:{naming.sa_email('ssc-data', project)}", viewer),
+        "bucket-proxy": (f"serviceAccount:{naming.sa_email('ssc-proxy', project)}", viewer),
     }
-    data = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-data").inputs
     snapshots = f"projects/_/buckets/{naming.cell_bucket(A)}/objects/snapshots/"
-    assert data["condition"]["expression"] == f'resource.name.startsWith("{snapshots}")'
+    for name in ("bucket-data", "bucket-proxy"):
+        reader = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", name).inputs
+        assert reader["condition"]["expression"] == f'resource.name.startsWith("{snapshots}")'
     assert (
         "condition"
         not in one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-gateway").inputs
@@ -1220,6 +1232,7 @@ def test_app_images_are_read_by_the_agent_and_written_by_builds(cell_a: list[Dec
             f"serviceAccount:service-{project_number(naming.cell_project(A))}",
             "roles/artifactregistry.reader",
         ),
+        "registry-proxy-image": ("serviceAccount:ssc-proxy", "roles/artifactregistry.reader"),
     }
 
 
@@ -1289,6 +1302,7 @@ def test_the_cell_deny_rule_names_every_ssc_identity(cell_a: list[Declared]) -> 
         "ssc-build",
         naming.SECRET_INTAKE,
         naming.PROBE_DENIED_SA,
+        "ssc-proxy",
     }
     assert _denied(second) == {"ssc-data"}
 
@@ -1485,11 +1499,17 @@ def test_the_lazy_resources_are_what_the_flags_say(cell_a: list[Declared]) -> No
     assert nic["networkIp"] == "10.20.4.10"
     assert nic["subnetwork"] == "subnet-gateway-id"
     assert "accessConfigs" not in nic
-    assert "serviceAccount" not in template
+    assert template["serviceAccount"]["email"] == naming.sa_email("ssc-proxy", "ssc-c-testcell01")
+    assert template["namePrefix"] == "ssc-proxy-"
+    assert "name" not in template
+    assert "user-data" not in template["metadata"]
     group = one(cell_a, "gcp:compute/instanceGroupManager:InstanceGroupManager").inputs
     assert group["targetSize"] == 1
     assert group["zone"].startswith(naming.REGION)
     assert group["updatePolicy"]["maxSurgeFixed"] == 0
+    health = one(cell_a, "gcp:compute/healthCheck:HealthCheck").inputs
+    assert health["tcpHealthCheck"]["port"] == cell.PROXY_PORT
+    assert group["autoHealingPolicies"]["initialDelaySec"] == cell.PROXY_HEAL_DELAY
     datagw = one(cell_a, "gcp:cloudrunv2/service:Service", naming.DATA_GATEWAY).inputs
     assert datagw["ingress"] == "INGRESS_TRAFFIC_INTERNAL_ONLY"
     assert datagw["template"]["serviceAccount"] == naming.sa_email("ssc-data", "ssc-c-testcell01")
@@ -1497,6 +1517,121 @@ def test_the_lazy_resources_are_what_the_flags_say(cell_a: list[Declared]) -> No
     assert datagw["template"]["containers"][0]["resources"]["cpuIdle"] is True
     (nic,) = datagw["template"]["vpcAccess"]["networkInterfaces"]
     assert (nic["subnetwork"], nic["tags"]) == ("subnet-gateway-id", ["ssc-data"])
+
+
+PROXY_IMAGE = f"{naming.platform_registry()}/ssc-egress@sha256:" + "9" * 64
+PROXY = GATEWAY | {"egress": "true", "proxy_image": PROXY_IMAGE}
+
+
+@pytest.mark.parametrize(
+    ("image", "org", "problem"),
+    [
+        (PROXY_IMAGE.replace("@sha256:" + "9" * 64, ":v1"), GATEWAY["org_id"], "proxy_image"),
+        ("ghcr.io/x/ssc-egress@sha256:" + "9" * 64, GATEWAY["org_id"], "proxy_image"),
+        (PROXY_IMAGE, None, "needs the gateway settings"),
+    ],
+)
+def test_proxy_image_is_pinned_and_needs_the_gateway_settings(
+    image: str, org: str | None, problem: str
+) -> None:
+    assert cell.proxy_settings(None, None) is None
+    assert cell.proxy_settings(PROXY_IMAGE, GATEWAY["org_id"]) == PROXY_IMAGE
+    with pytest.raises(ValueError, match=problem):
+        cell.proxy_settings(image, org)
+
+
+def test_the_proxy_machine_runs_its_image_read_only_and_restarts_it() -> None:
+    """SSC-053: the unit runs the pinned image on the host network, read-only with no
+    capabilities, as the proxy identity that reads only snapshots, and starts it again whenever
+    it exits; the group recreates the machine when the proxy port stops answering."""
+    declared = run(naming.cell_stack("testcell09"), PROXY)
+    template = one(declared, "gcp:compute/instanceTemplate:InstanceTemplate").inputs
+    (nic,) = template["networkInterfaces"]
+    assert "accessConfigs" not in nic
+    assert nic["networkIp"] == "10.20.4.10"
+    user_data = template["metadata"]["user-data"]
+    assert user_data.startswith("#cloud-config\n")
+    assert f"path: /etc/systemd/system/{cell.PROXY_UNIT}" in user_data
+    for part in (
+        "--network host",
+        "--read-only",
+        "--cap-drop ALL",
+        "--security-opt no-new-privileges",
+        f"-e SSC_ORG_ID={GATEWAY['org_id']}",
+        f"-e SSC_CELL_BUCKET={naming.cell_bucket('testcell09')}",
+        PROXY_IMAGE,
+        "Restart=always",
+        "StartLimitIntervalSec=0",
+        f"docker-credential-gcr configure-docker --registries {naming.REGION}-docker.pkg.dev",
+        f"systemctl start {cell.PROXY_UNIT}",
+    ):
+        assert part in user_data
+    assert "docker stop -t 15" in user_data
+    for cidr in ("169.254.0.0/16", "127.0.0.0/8"):
+        rule = f"OUTPUT -p tcp --dport 443 -d {cidr} -j REJECT"
+        assert f"iptables -w -C {rule} 2>/dev/null || iptables -w -A {rule}" in user_data
+    assert template["metadata"]["cos-update-strategy"] == "update_disabled"
+    group = one(declared, "gcp:compute/instanceGroupManager:InstanceGroupManager").inputs
+    health = one(declared, "gcp:compute/healthCheck:HealthCheck").inputs
+    assert group["autoHealingPolicies"]["healthCheck"] == "proxy-health-id"
+    assert (health["checkIntervalSec"], health["unhealthyThreshold"]) == (10, 3)
+    assert "pkg.dev." in cell.GOOGLE_DNS_PASSTHRU
+    assert "*.pkg.dev." in cell.GOOGLE_DNS_PASSTHRU
+
+
+def test_the_proxy_is_denied_every_private_range(empty_b: list[Declared]) -> None:
+    rules = {d.name: d.inputs for d in empty_b if d.type == "gcp:compute/firewall:Firewall"}
+    deny = rules["egress-proxy-private"]
+    assert deny["denies"] == [{"protocol": "all"}]
+    assert deny["targetTags"] == [cell.PROXY_TAG]
+    assert deny["destinationRanges"] == list(cell.PRIVATE_RANGES)
+    assert deny["priority"] < rules["egress-internal"]["priority"]
+
+
+def test_proxy_ha_runs_two_machines_behind_an_internal_balancer_at_the_reserved_address() -> None:
+    declared = run(naming.cell_stack("testcell09"), PROXY | {"proxy_ha": "true"})
+    kinds = {d.type for d in declared}
+    assert "gcp:compute/instanceGroupManager:InstanceGroupManager" not in kinds
+    template = one(declared, "gcp:compute/instanceTemplate:InstanceTemplate").inputs
+    assert "networkIp" not in template["networkInterfaces"][0]
+    group = one(
+        declared, "gcp:compute/regionInstanceGroupManager:RegionInstanceGroupManager"
+    ).inputs
+    assert group["targetSize"] == cell.PROXY_HA_SIZE == 2
+    assert len(group["distributionPolicyZones"]) == 2
+    assert group["updatePolicy"]["maxUnavailableFixed"] == 0
+    backend = one(declared, "gcp:compute/regionBackendService:RegionBackendService").inputs
+    assert (backend["loadBalancingScheme"], backend["protocol"]) == ("INTERNAL", "TCP")
+    rule = one(declared, "gcp:compute/forwardingRule:ForwardingRule").inputs
+    assert rule["ipAddress"] == "10.20.4.10"
+    assert rule["ports"] == [str(cell.PROXY_PORT)]
+    assert rule["loadBalancingScheme"] == "INTERNAL"
+
+
+def test_proxy_ha_is_off_by_default_and_differs_only_in_the_proxy() -> None:
+    plain = run(naming.cell_stack(B), EMPTY | {"egress": "true"})
+    ha = run(naming.cell_stack(B), EMPTY | {"egress": "true", "proxy_ha": "true"})
+    flags = EMPTY_FLAGS | {"egress": True}
+    assert flags["proxy_ha"] is False
+    first = cell_diff.normalise(as_export(plain, B, flags), B)
+    second = cell_diff.normalise(as_export(ha, B, flags | {"proxy_ha": True}), B)
+    differ = cell_diff.differing(flags, flags | {"proxy_ha": True})
+    assert differ == ["proxy_ha"]
+    assert cell_diff.compare(first, second, differ) == []
+    diffs = cell_diff.compare(first, second)
+    named = {d.removeprefix("only in first: ").removeprefix("only in second: ") for d in diffs}
+    assert {d.split(" ")[0] for d in named} == naming.PROXY_HA_RESOURCES
+
+
+def test_two_customers_proxies_differ_only_in_their_own_settings() -> None:
+    first = PROXY
+    second = _gateway("org_" + "b" * 20, "id-2", b"\x0a\x24sealed-b") | {
+        "egress": "true",
+        "proxy_image": PROXY_IMAGE,
+    }
+    a = cell_diff.normalise(as_export(run(naming.cell_stack(A), first), A, config=first), A)
+    b = cell_diff.normalise(as_export(run(naming.cell_stack(B), second), B, config=second), B)
+    assert cell_diff.compare(a, b) == []
 
 
 def test_a_full_and_an_empty_cell_differ_only_in_what_their_flags_name(
@@ -1880,4 +2015,11 @@ def test_the_stack_exports_its_public_entry(monkeypatch: pytest.MonkeyPatch) -> 
     assert exported["agent_url"] == "https://ssc--agent.testcell10.delimitusapps.com"
     assert exported["intake_url"] == "https://ssc--secrets.testcell10.delimitusapps.com"
     assert exported["intake_host"] == "ssc--secrets.testcell10.delimitusapps.com"
-    assert set(exported["service_accounts"]) == {"gateway", "agent", "build", "data", "intake"}
+    assert set(exported["service_accounts"]) == {
+        "gateway",
+        "agent",
+        "build",
+        "data",
+        "intake",
+        "proxy",
+    }

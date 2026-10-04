@@ -50,6 +50,7 @@ from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases, FakeAppDatabases
 from ssc_control.runtime.cell_agent import CellAgentDriver, MetadataIdTokens
+from ssc_control.runtime.cell_egress import AgentCellEgress, CellEgress, FakeCellEgress
 from ssc_control.runtime.cell_usage import AgentCellUsage
 from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
 from ssc_control.runtime.fake import FakeRuntimeDriver
@@ -219,6 +220,21 @@ def app_databases_from_env(env: Mapping[str, str]) -> AppDatabases | None:
             if not url.startswith("https://"):
                 raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
             return CellAppDatabases(url, MetadataIdTokens())
+        case _:
+            return None
+
+
+def cell_egress_from_env(env: Mapping[str, str]) -> CellEgress | None:
+    """Proxy credentials (SSC-053) go with ``SSC_RUNTIME_DRIVER`` like app databases: none
+    without a runtime, in memory with ``fake``, and through the cell agent with ``cell_agent``."""
+    match env.get(RUNTIME_DRIVER_ENV, ""):
+        case "fake":
+            return FakeCellEgress()
+        case "cell_agent":
+            url = env.get(CELL_AGENT_URL_ENV, "")
+            if not url.startswith("https://"):
+                raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
+            return AgentCellEgress(url, MetadataIdTokens())
         case _:
             return None
 
@@ -397,6 +413,7 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             ("timer_dispatcher", ports.timer_dispatcher),
             ("cell_deployer", ports.cell_deployer),
             ("app_databases", ports.app_databases),
+            ("cell_egress", ports.cell_egress),
         )
         if isinstance(
             value,
@@ -404,7 +421,8 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             | FakeBuildDriver
             | FakeScheduleDispatcher
             | FakeCellDeployer
-            | FakeAppDatabases,
+            | FakeAppDatabases
+            | FakeCellEgress,
         )
     ]
     if fakes and env.get(ENV_ENV) not in FAKE_ENVIRONMENTS:
@@ -436,6 +454,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         cell_usage=cell_usage_from_env(env),
         github=github_from_env(env),
         apps_domain=apps_domain_from_env(env),
+        cell_egress=cell_egress_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports

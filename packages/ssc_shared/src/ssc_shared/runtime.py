@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, cast, get_args
 
-from ssc_contracts import app_database
+from ssc_contracts import app_database, egress
 from ssc_contracts.app_env import secret_name_problem
 from ssc_contracts.manifest import (
     RESOURCE_CLASSES,
@@ -68,7 +68,8 @@ def service_name(environment_id: str) -> str:
 def secret_id(service: str, name: str) -> str:
     """The cell Secret Manager id of one app environment's secret: ``<service>-<NAME>``, so the
     ``ssc-a-*`` IAM conditions cover it and the service it belongs to is its prefix. The app
-    database's own secrets (``app_database.SECRETS``) are the only platform names allowed."""
+    database's own secrets (``app_database.SECRETS``) and the egress proxy credential
+    (``egress.SECRETS``, SSC-053) are the only platform names allowed."""
     if SERVICE_NAME.fullmatch(service) is None:
         raise ValueError(f"not an SSC app service name: {service!r}")
     if (problem := _secret_problem(name)) is not None:
@@ -103,7 +104,9 @@ def connection_env(connection_id: str) -> str:
 
 
 def _secret_problem(name: str) -> str | None:
-    return None if name in app_database.SECRETS else secret_name_problem(name)
+    if name in app_database.SECRETS or name in egress.SECRETS:
+        return None
+    return secret_name_problem(name)
 
 
 def is_image_digest(value: str) -> bool:

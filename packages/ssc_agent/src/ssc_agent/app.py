@@ -22,6 +22,10 @@ instance. Logs add 429 ``LOGS_RATE_LIMITED`` (with ``retry_after``), 502 ``LOGS_
 Usage (SSC-028) has ``read``: counts and durations for every app service in the cell over whole
 hours, from Cloud Monitoring, never from an app; 502 ``USAGE_ERROR``, and 503
 ``USAGE_NOT_CONFIGURED`` without a usage source or the right to read it.
+Egress (SSC-053) has ``issue``, a new proxy credential written to an environment's
+``HTTPS_PROXY`` secret (the answer holds its id, its token's digest and the secret version,
+never the token), and ``info``, the proxy's address and the cell's fixed outbound address; 502
+``SECRETS_ERROR``, and 503 ``EGRESS_NOT_CONFIGURED`` for ``issue`` without a proxy address.
 """
 
 import logging
@@ -41,6 +45,7 @@ from ssc_agent.app_database import (
 )
 from ssc_agent.cloud_logging import CellLogHub
 from ssc_agent.cloud_monitoring import CellUsageReader
+from ssc_agent.egress import EgressNotConfiguredError, ProxyCredentials
 from ssc_agent.secret_manager import SecretCustody, SecretsError
 from ssc_shared.build import (
     BuildDriverError,
@@ -85,6 +90,7 @@ SECRETS_PREFIX: Final = "/v1/secrets"
 DATABASES_PREFIX: Final = "/v1/databases"
 LOGS_PREFIX: Final = "/v1/logs"
 USAGE_PREFIX: Final = "/v1/usage"
+EGRESS_PREFIX: Final = "/v1/egress"
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
 
@@ -97,6 +103,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
     logs: CellLogs | None = None,
     *,
     usage: CellUsage | None = None,
+    egress: ProxyCredentials | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -177,6 +184,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
     _database_routes(app, driver, databases)
     _log_routes(app, CellLogHub(None, driver) if logs is None else logs)
     _usage_routes(app, CellUsageReader(None) if usage is None else usage)
+    _egress_routes(app, egress)
     return app
 
 
@@ -333,6 +341,43 @@ def _usage_routes(app: FastAPI, usage: CellUsage) -> None:
             log.warning("usage call failed", extra={"error": str(exc)})
             return _error(502, "USAGE_ERROR", str(exc))
         return JSONResponse(result)
+
+
+def _egress_routes(app: FastAPI, egress: ProxyCredentials | None) -> None:
+    """``issue`` and ``info``; no answer holds a token."""
+
+    @app.post(EGRESS_PREFIX + "/{method}")
+    async def egress_call(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
+        if method not in ("issue", "info"):
+            return _error(404, "NOT_FOUND", f"no method {method}")
+        if method == "info":
+            return JSONResponse(
+                {
+                    "proxy_address": None if egress is None else egress.proxy_address,
+                    "outbound_ip": None if egress is None else egress.outbound_ip,
+                }
+            )
+        if egress is None:
+            return _error(503, "EGRESS_NOT_CONFIGURED", "this agent has no proxy address")
+        try:
+            body: object = await request.json()
+            if not isinstance(body, dict):
+                raise TypeError("the body is not a JSON object")
+            issued = await egress.issue(_str(cast("dict[str, Any]", body), "environment_id"))
+        except (ValueError, TypeError, KeyError) as exc:
+            return _error(400, "INVALID_REQUEST", str(exc))
+        except EgressNotConfiguredError as exc:
+            return _error(503, "EGRESS_NOT_CONFIGURED", str(exc))
+        except SecretsError as exc:
+            log.warning("egress issue failed", extra={"error": str(exc)})
+            return _error(502, "SECRETS_ERROR", str(exc))
+        return JSONResponse(
+            {
+                "credential_id": issued.credential_id,
+                "sha1": issued.sha1,
+                "version": issued.version,
+            }
+        )
 
 
 def _database_to_wire(made: AppDatabase) -> dict[str, object]:

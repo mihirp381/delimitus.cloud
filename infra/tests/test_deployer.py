@@ -158,10 +158,13 @@ def test_the_applied_config_restores_the_same_cell(monkeypatch: pytest.MonkeyPat
         "org_id": "org_" + "a" * 20,
         "datagw_image": f"{naming.platform_registry()}/ssc-datagw@sha256:" + "c" * 64,
         "datagw_connections": "con_" + "b" * 20 + ":2,con_" + "a" * 20 + ":7",
+        "proxy_image": f"{naming.platform_registry()}/ssc-egress@sha256:" + "9" * 64,
+        "proxy_ha": "true",
     }
     first = _exported(applied, monkeypatch)["config"]
     assert first["build_tools_image"] == applied["build_tools_image"]
     assert first["datagw_image"] == applied["datagw_image"]
+    assert (first["proxy_image"], first["proxy_ha"]) == (applied["proxy_image"], "true")
     assert first["datagw_connections"] == "con_" + "a" * 20 + ":7,con_" + "b" * 20 + ":2"
     assert {k: first[k] for k in cell.GATEWAY_SETTINGS} == {
         k: applied[k] for k in cell.GATEWAY_SETTINGS

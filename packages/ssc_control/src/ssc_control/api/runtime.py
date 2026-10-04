@@ -1,6 +1,6 @@
 """What one running API process holds: settings, the engine, the verifier, the limiter, the
 metrics recorder, the blob store, the production gate, the timers, the secret grants, the app
-databases, the cell's logs and the GitHub App."""
+databases, the cell's logs and egress proxy, and the GitHub App."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ssc_control.api.settings import Settings
     from ssc_control.github.client import GitHubApp
     from ssc_control.runtime.app_databases import AppDatabases
+    from ssc_control.runtime.cell_egress import CellEgress
     from ssc_control.runtime.secret_grants import SecretGrants
     from ssc_shared.blobstore import BlobStore
     from ssc_shared.logs import CellLogs
@@ -51,6 +52,9 @@ class Runtime:
     github: GitHubApp | None = None
     """The GitHub App (SSC-047); ``None`` when it is not configured, and connecting a
     repository refuses."""
+    cell_egress: CellEgress | None = None
+    """Where the cell's proxy is and its fixed outbound address, through the cell agent
+    (SSC-053); ``None`` when the cell is not configured, and the console shows neither."""
 
 
 def runtime_of(request: Request) -> Runtime:

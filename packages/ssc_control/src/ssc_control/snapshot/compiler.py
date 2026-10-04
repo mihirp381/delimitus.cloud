@@ -16,6 +16,7 @@ from typing import Any, Final
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from ssc_contracts.egress import MAX_CREDENTIALS
 from ssc_contracts.snapshot import FORMAT_V1, SnapshotDoc
 from ssc_control.db.bind import bound_org
 from ssc_control.domain.grant_rules import floor_of
@@ -49,7 +50,8 @@ _INSERT = text(
     "(org_id, version, digest, content_digest, object_key, compiled_at) "
     "values (:org, :version, :digest, :content, :key, :at)"
 )
-# One statement, so one read snapshot: every grant's environment and user is in the result.
+# One statement, so one read snapshot: every grant's environment and user is in the result, and
+# every proxy credential's environment.
 _READ_ORG = text(
     "select "
     "(select coalesce(jsonb_agg(jsonb_build_array(e.id, e.app_id, e.name, a.status, a.slug, "
@@ -62,7 +64,14 @@ _READ_ORG = text(
     "ceil(extract(epoch from u.sessions_not_before))::bigint) order by u.id), '[]') "
     "from ssc.user_account u where u.org_id = :org), "
     "(select coalesce(jsonb_agg(jsonb_build_array(m.user_id, m.group_id) "
-    "order by m.user_id, m.group_id), '[]') from ssc.group_member m where m.org_id = :org)"
+    "order by m.user_id, m.group_id), '[]') from ssc.group_member m where m.org_id = :org), "
+    "(select coalesce(jsonb_agg(h.host order by h.host collate \"C\"), '[]') "
+    "from ssc.egress_host h where h.org_id = :org), "
+    "(select coalesce(jsonb_agg(jsonb_build_array(c.environment_id, c.credential_id, c.sha1) "
+    "order by c.environment_id, c.created_at, c.credential_id), '[]') from (select k.*, "
+    "row_number() over (partition by k.environment_id order by k.created_at desc, "
+    "k.credential_id desc) as n from ssc.egress_credential k where k.org_id = :org) c "
+    "where c.n <= :keep)"
 )
 
 
@@ -78,6 +87,17 @@ def content_digest(doc: SnapshotDoc) -> str:
     return canonical_digest(body)
 
 
+def _egress(hosts: list[str], credentials: list[list[str]]) -> dict[str, Any] | None:
+    """The proxy's member: the allowlist and each environment's newest credentials, or None
+    (left out of the document) while the org has neither."""
+    if not hosts and not credentials:
+        return None
+    by_env: dict[str, list[dict[str, str]]] = {}
+    for env_id, credential_id, sha1 in credentials:
+        by_env.setdefault(env_id, []).append({"credential_id": credential_id, "sha1": sha1})
+    return {"hosts": hosts, "credentials": by_env}
+
+
 def _longer_timeout(seconds: int | None) -> int | None:
     """An environment's stored request timeout when it is longer than the request-billed one;
     None, which the document leaves out and a reader takes as that figure, otherwise."""
@@ -88,7 +108,10 @@ async def compile_document(
     conn: AsyncConnection, org_id: str, *, version: int, compiled_at: datetime
 ) -> SnapshotDoc:
     """The org's snapshot as of one read. Pure reads in ``conn``'s org-bound transaction."""
-    envs, grants, users, members = (await conn.execute(_READ_ORG, {"org": org_id})).one()
+    read = {"org": org_id, "keep": MAX_CREDENTIALS}
+    envs, grants, users, members, egress_hosts, credentials = (
+        await conn.execute(_READ_ORG, read)
+    ).one()
     environments: dict[str, Any] = {
         env_id: {
             "app_id": app_id,
@@ -126,6 +149,7 @@ async def compile_document(
                 for user_id, status, not_before in users
             },
             "ceiling": None,
+            "egress": _egress(egress_hosts, credentials),
         }
     )
 

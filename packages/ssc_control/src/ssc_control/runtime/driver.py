@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from ssc_contracts import app_database, app_env
+from ssc_contracts import app_database, app_env, egress
 from ssc_contracts.manifest import Manifest, is_session_app, max_instances
 from ssc_shared.hosts import app_origin, slug_problem
 from ssc_shared.runtime import (
@@ -136,8 +136,10 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
     is request-billed with 5 minutes and 80. ``secrets`` are the versions the deployment runs
     (``deployment.secret_refs``), each mounted as its variable (SSC-026). With ``[state] postgres
     = true`` and its ``database``, the ``PG*`` parts join them (SSC-040); without, the database's
-    secrets are left out. Every app gets ``identity_env`` from ``identity`` and its ``slug``, as
-    plain values: the keys are public."""
+    secrets are left out. With ``[egress] hosts`` and its proxy credential (``HTTPS_PROXY``),
+    ``egress.PLAIN_ENV`` joins them (SSC-053); without, the credential is left out. Every app
+    gets ``identity_env`` from ``identity`` and its ``slug``, as plain values: the keys are
+    public."""
     service = service_name(env.id)
     if app_status != "active":
         return Stopped(service=service, reason=app_status)
@@ -151,6 +153,10 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
         plain |= database_env(service, database)
     else:
         mounted = {k: v for k, v in mounted.items() if k not in app_database.SECRETS}
+    if manifest.egress.hosts and app_env.HTTPS_PROXY in mounted:
+        plain |= egress.PLAIN_ENV
+    else:
+        mounted = {k: v for k, v in mounted.items() if k not in egress.SECRETS}
     return ServiceSpec(
         service=service,
         image_digest=release.image_digest,

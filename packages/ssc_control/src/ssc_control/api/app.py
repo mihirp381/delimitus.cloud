@@ -26,6 +26,7 @@ from ssc_control.github.client import GitHubApp
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases
 from ssc_control.runtime.cell_agent import MetadataIdTokens
+from ssc_control.runtime.cell_egress import AgentCellEgress, CellEgress
 from ssc_control.runtime.cell_logs import AgentCellLogs
 from ssc_control.runtime.secret_grants import CellSecretGrants, SecretGrants
 from ssc_control.timers.service import Timers
@@ -68,6 +69,7 @@ def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
     *,
     cell_logs: CellLogs | None = None,
     github: GitHubApp | None = None,
+    cell_egress: CellEgress | None = None,
 ) -> FastAPI:
     store = blob_store if blob_store is not None else blob_store_for(settings)
     check_fs_allowed(store, settings)
@@ -117,6 +119,7 @@ def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
         app_databases=app_databases if app_databases is not None else app_databases_for(settings),
         cell_logs=cell_logs if cell_logs is not None else cell_logs_for(settings),
         github=github if github is not None else owned_github,
+        cell_egress=cell_egress if cell_egress is not None else cell_egress_for(settings),
     )
     app.add_middleware(RequestIdMiddleware)
     problems.install(app)
@@ -170,6 +173,13 @@ def github_for(settings: Settings) -> GitHubApp | None:
         private_key=settings.github_private_key,
         base=settings.github_api_base,
     )
+
+
+def cell_egress_for(settings: Settings) -> CellEgress | None:
+    """The cell's egress proxy through its agent when it is configured, else ``None``."""
+    if not settings.cell_agent_url:
+        return None
+    return AgentCellEgress(settings.cell_agent_url, MetadataIdTokens())
 
 
 def _install_openapi(app: FastAPI) -> None:

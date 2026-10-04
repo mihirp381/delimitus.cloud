@@ -41,8 +41,20 @@ APP_ORIGIN: Final = "SSC_APP_ORIGIN"
 IDENTITY_KEYS_URL: Final = "SSC_IDENTITY_KEYS_URL"
 """The cell's JWKS that verifies identity notes, inline as a ``data:`` URL (no internet needed)."""
 
+HTTPS_PROXY: Final = "HTTPS_PROXY"
+"""Only for an environment that declares ``[egress] hosts``: a pinned secret, the URL of the
+cell's egress proxy with the environment's own credential in it (SSC-053)."""
+
+NODE_USE_ENV_PROXY: Final = "NODE_USE_ENV_PROXY"
+"""``1`` beside ``HTTPS_PROXY``, so Node's built-in ``fetch`` and ``https`` use the proxy."""
+
+NO_PROXY: Final = "NO_PROXY"
+"""Beside ``HTTPS_PROXY``: the names an app reaches without the proxy."""
+
+EGRESS_NAMES: Final = (HTTPS_PROXY, NODE_USE_ENV_PROXY, NO_PROXY)
+
 PLATFORM_ENV_NAMES: Final[frozenset[str]] = frozenset(
-    {PORT, HOME, DATABASE_URL, *DATABASE_PARTS, APP_ORIGIN, IDENTITY_KEYS_URL}
+    {PORT, HOME, DATABASE_URL, *DATABASE_PARTS, APP_ORIGIN, IDENTITY_KEYS_URL, *EGRESS_NAMES}
 )
 
 SECRET_NAME: Final = re.compile(r"[A-Z][A-Z0-9_]{0,63}")

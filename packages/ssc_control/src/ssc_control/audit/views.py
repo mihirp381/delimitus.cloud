@@ -81,6 +81,7 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     ),  # SSC-087
     "github_installation": frozenset({"installation_id"}),
     "repo_link": frozenset({"installation_id", "repository_id", "branch", "required_checks"}),
+    "egress_host": frozenset({"host", "high_risk", "approval_request_id"}),  # SSC-053
 }
 
 FILTER_KEYS: Final = frozenset(

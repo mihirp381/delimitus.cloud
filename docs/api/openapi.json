@@ -151,6 +151,19 @@
         "title": "AgentPolicy",
         "type": "object"
       },
+      "AllowHost": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledge_high_risk": {
+            "default": false,
+            "description": "Required to add a high-risk catalogue host.",
+            "title": "Acknowledge High Risk",
+            "type": "boolean"
+          }
+        },
+        "title": "AllowHost",
+        "type": "object"
+      },
       "AppCreate": {
         "additionalProperties": false,
         "properties": {
@@ -1092,6 +1105,58 @@
         "title": "CapabilityDiff",
         "type": "object"
       },
+      "CatalogueEntryOut": {
+        "additionalProperties": false,
+        "properties": {
+          "high_risk": {
+            "title": "High Risk",
+            "type": "boolean"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "listed": {
+            "description": "Whether the org's allowlist has it.",
+            "title": "Listed",
+            "type": "boolean"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "purpose",
+          "high_risk",
+          "note",
+          "listed"
+        ],
+        "title": "CatalogueEntryOut",
+        "type": "object"
+      },
+      "CatalogueOut": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogueEntryOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "CatalogueOut",
+        "type": "object"
+      },
       "CellOut": {
         "additionalProperties": false,
         "properties": {
@@ -1836,6 +1901,119 @@
           "created"
         ],
         "title": "DirectoryUserOut",
+        "type": "object"
+      },
+      "EgressHostOut": {
+        "additionalProperties": false,
+        "properties": {
+          "added_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By User Id"
+          },
+          "approval_request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The approved request that added it, when an approval did.",
+            "title": "Approval Request Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "high_risk": {
+            "description": "A catalogue host data can leave by in bulk.",
+            "title": "High Risk",
+            "type": "boolean"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "high_risk",
+          "added_by_user_id",
+          "approval_request_id",
+          "created_at"
+        ],
+        "title": "EgressHostOut",
+        "type": "object"
+      },
+      "EgressHostsOut": {
+        "additionalProperties": false,
+        "properties": {
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/EgressHostOut"
+            },
+            "maxItems": 200,
+            "title": "Hosts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hosts"
+        ],
+        "title": "EgressHostsOut",
+        "type": "object"
+      },
+      "EgressOut": {
+        "additionalProperties": false,
+        "properties": {
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/EgressHostOut"
+            },
+            "maxItems": 200,
+            "title": "Hosts",
+            "type": "array"
+          },
+          "outbound_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The fixed address the cell's outbound traffic leaves from, for a partner's firewall; null when the cell cannot say.",
+            "title": "Outbound Ip"
+          },
+          "proxy_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The proxy's internal address in the cell.",
+            "title": "Proxy Address"
+          }
+        },
+        "required": [
+          "hosts",
+          "outbound_ip",
+          "proxy_address"
+        ],
+        "title": "EgressOut",
         "type": "object"
       },
       "EnvironmentOut": {
@@ -10507,6 +10685,280 @@
           }
         },
         "summary": "Enable Resource",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/egress": {
+      "get": {
+        "description": "The allowlist, and the cell's fixed outbound address when its agent can say.",
+        "operationId": "get_egress_v1_egress_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EgressOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Egress",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/egress/catalogue": {
+      "get": {
+        "description": "Common destinations IT allows, with the high-risk ones flagged, and which are listed.",
+        "operationId": "get_catalogue_v1_egress_catalogue_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogueOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Catalogue",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/egress/hosts/{host}": {
+      "delete": {
+        "description": "Remove a host. Active org admins only, never in an agent session; ``NOT_FOUND`` when it\nis not listed. The proxy closes open tunnels to it within its drain time of reading the next\nsnapshot. Audited as ``org.updated`` on ``egress_host``.",
+        "operationId": "remove_host_v1_egress_hosts__host__delete",
+        "parameters": [
+          {
+            "description": "A lower-case host name, or `*.` and a name for exactly one label more.",
+            "in": "path",
+            "name": "host",
+            "required": true,
+            "schema": {
+              "description": "A lower-case host name, or `*.` and a name for exactly one label more.",
+              "maxLength": 255,
+              "title": "Host",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EgressHostsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Remove Host",
+        "tags": [
+          "v1"
+        ]
+      },
+      "put": {
+        "description": "Add a host. Active org admins only, never in an agent session. A host already listed\nchanges nothing. ``VALIDATION_FAILED`` names why a host is not an entry (an IP address, a\nport, a wildcard anywhere but the front), a high-risk host without\n``acknowledge_high_risk``, or a full list. Audited as ``org.updated`` on ``egress_host``.",
+        "operationId": "allow_host_v1_egress_hosts__host__put",
+        "parameters": [
+          {
+            "description": "A lower-case host name, or `*.` and a name for exactly one label more.",
+            "in": "path",
+            "name": "host",
+            "required": true,
+            "schema": {
+              "description": "A lower-case host name, or `*.` and a name for exactly one label more.",
+              "maxLength": 255,
+              "title": "Host",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AllowHost"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EgressHostsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Allow Host",
         "tags": [
           "v1"
         ]

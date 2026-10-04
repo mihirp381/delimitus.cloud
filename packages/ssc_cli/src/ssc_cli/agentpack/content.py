@@ -16,6 +16,7 @@ ENV_NAMES: Final = {
     "max_instances": str(app_database.MAX_INSTANCES),
     "app_origin": app_env.APP_ORIGIN,
     "keys_url": app_env.IDENTITY_KEYS_URL,
+    "egress_names": ", ".join(f"`{name}`" for name in app_env.EGRESS_NAMES),
 }
 
 BEGIN: Final = "<!-- ssc:begin v1 -->"
@@ -221,7 +222,10 @@ postgres = true
 
 SSC sets `{port}`, `{home}`, `{database_url}` and the `PG` names (only with `postgres = true`),
 `{app_origin}` and `{keys_url}` itself; the last two are not set in every environment yet.
-`ssc.toml` cannot set them, nor any other name that starts with `SSC_` or `RAILPACK_`.
+With `[egress] hosts` it also sets {egress_names}: outbound calls go through the cell's proxy,
+only over HTTPS and only to hosts on the company's allowlist; anything else is refused with a
+message that names the host. `ssc.toml` cannot set them, nor any other name that starts with
+`SSC_` or `RAILPACK_`.
 """
 
 CLAUDE_IMPORT: Final = "@AGENTS.md\n"

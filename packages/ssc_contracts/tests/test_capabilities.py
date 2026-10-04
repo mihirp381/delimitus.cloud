@@ -77,3 +77,9 @@ def test_granted_capabilities_are_not_listed() -> None:
 
 def test_the_default_manifest_asks_for_nothing() -> None:
     assert render_diff(diff_capabilities(manifest(), NONE)).startswith("No change:")
+
+
+def test_a_listed_pattern_grants_one_label_more() -> None:
+    m = manifest(egress={"hosts": ["eu.acme.atlassian.net", "acme.atlassian.net"]})
+    caps = EnvironmentCapabilities(egress_hosts=frozenset({"*.atlassian.net"}))
+    assert [c.subject for c in diff_capabilities(m, caps).changes] == ["eu.acme.atlassian.net"]
