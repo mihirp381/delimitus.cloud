@@ -31,6 +31,7 @@ from ssc_control.metrics.usage import (
     month_of,
     parse_month,
 )
+from ssc_shared.runtime import Billing
 
 router = APIRouter()
 
@@ -66,6 +67,10 @@ class UsageOut(Strict):
     )
     small_sample: bool = Field(description="Fewer than 20 cold starts: no percentiles.")
     active_days: int = Field(description="Days with any running instance.")
+    billing: Billing | None = Field(
+        description="How the latest hour was billed (SSC-090): `request` (only while answering "
+        "requests) or `instance` (the whole time an instance runs); null with no hours."
+    )
 
 
 class FixedResourceOut(Strict):
@@ -96,6 +101,7 @@ def _out(month: date, found: EnvironmentUsage) -> UsageOut:
         cold_start_p95_seconds=found.cold_start_p95_seconds,
         small_sample=found.small_sample,
         active_days=found.active_days,
+        billing=found.billing,
     )
 
 
@@ -128,6 +134,7 @@ async def get_usage(
             small_sample=True,
             active_days=0,
             usage_type=None,
+            billing=None,
         ),
     )
 

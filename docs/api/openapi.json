@@ -1157,12 +1157,125 @@
         "title": "CatalogueOut",
         "type": "object"
       },
+      "CellDatabaseOut": {
+        "additionalProperties": false,
+        "properties": {
+          "bigger_tier": {
+            "description": "The paid \"bigger database\" step (A6: not charged).",
+            "title": "Bigger Tier",
+            "type": "string"
+          },
+          "bigger_tier_monthly_usd": {
+            "description": "About what the bigger tier costs a month.",
+            "title": "Bigger Tier Monthly Usd",
+            "type": "integer"
+          },
+          "connection_limit": {
+            "description": "Connections each app database may hold at once.",
+            "title": "Connection Limit",
+            "type": "integer"
+          },
+          "nearly_full": {
+            "description": "2 free places or fewer.",
+            "title": "Nearly Full",
+            "type": "boolean"
+          },
+          "places_total": {
+            "description": "App databases the tier holds.",
+            "title": "Places Total",
+            "type": "integer"
+          },
+          "places_used": {
+            "description": "App environments with a database, as recorded here.",
+            "title": "Places Used",
+            "type": "integer"
+          },
+          "tier": {
+            "description": "The Cloud SQL tier every cell's database is created on.",
+            "title": "Tier",
+            "type": "string"
+          },
+          "tier_full_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The last deployment refused with `DB_TIER_FULL`; null if none was.",
+            "title": "Tier Full At"
+          }
+        },
+        "required": [
+          "tier",
+          "places_used",
+          "places_total",
+          "connection_limit",
+          "nearly_full",
+          "tier_full_at",
+          "bigger_tier",
+          "bigger_tier_monthly_usd"
+        ],
+        "title": "CellDatabaseOut",
+        "type": "object"
+      },
+      "CellEnvironmentOut": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "app_slug": {
+            "title": "App Slug",
+            "type": "string"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "has_database": {
+            "title": "Has Database",
+            "type": "boolean"
+          },
+          "name": {
+            "enum": [
+              "prod",
+              "preview"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment_id",
+          "app_id",
+          "app_slug",
+          "name",
+          "has_database"
+        ],
+        "title": "CellEnvironmentOut",
+        "type": "object"
+      },
       "CellOut": {
         "additionalProperties": false,
         "properties": {
           "cell_label": {
             "title": "Cell Label",
             "type": "string"
+          },
+          "database": {
+            "$ref": "#/components/schemas/CellDatabaseOut"
+          },
+          "environments": {
+            "items": {
+              "$ref": "#/components/schemas/CellEnvironmentOut"
+            },
+            "title": "Environments",
+            "type": "array"
           },
           "resources": {
             "items": {
@@ -1174,7 +1287,9 @@
         },
         "required": [
           "cell_label",
-          "resources"
+          "resources",
+          "environments",
+          "database"
         ],
         "title": "CellOut",
         "type": "object"
@@ -1182,6 +1297,18 @@
       "CellResourceOut": {
         "additionalProperties": false,
         "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The approval that asked for it, if one did.",
+            "title": "Approval Id"
+          },
           "attempts": {
             "title": "Attempts",
             "type": "integer"
@@ -1203,6 +1330,18 @@
               }
             ],
             "title": "Cause"
+          },
+          "deployment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The deployment that asked for it, if one did.",
+            "title": "Deployment Id"
           },
           "failed_at": {
             "anyOf": [
@@ -1300,7 +1439,9 @@
           "requested_at",
           "started_at",
           "ready_at",
-          "failed_at"
+          "failed_at",
+          "deployment_id",
+          "approval_id"
         ],
         "title": "CellResourceOut",
         "type": "object"
@@ -4418,6 +4559,22 @@
             ],
             "title": "App Id"
           },
+          "billing": {
+            "anyOf": [
+              {
+                "enum": [
+                  "instance",
+                  "request"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the latest hour was billed (SSC-090): `request` (only while answering requests) or `instance` (the whole time an instance runs); null with no hours.",
+            "title": "Billing"
+          },
           "cold_start_p50_seconds": {
             "anyOf": [
               {
@@ -4501,7 +4658,8 @@
           "cold_start_p50_seconds",
           "cold_start_p95_seconds",
           "small_sample",
-          "active_days"
+          "active_days",
+          "billing"
         ],
         "title": "UsageOut",
         "type": "object"
@@ -10516,7 +10674,7 @@
     },
     "/v1/cell": {
       "get": {
-        "description": "Active org admins only (``FORBIDDEN``). Every lazy resource, ``off`` included.",
+        "description": "Active org admins only (``FORBIDDEN``). Every lazy resource, ``off`` included, the cell's\nenvironments and its database's places.",
         "operationId": "get_cell_v1_cell_get",
         "responses": {
           "200": {

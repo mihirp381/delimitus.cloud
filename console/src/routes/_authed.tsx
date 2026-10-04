@@ -32,6 +32,7 @@ function AuthedLayout() {
             Apps
           </Link>
           <Link to="/approvals">Approvals</Link>
+          {isAdmin(me.data) ? <Link to="/environment">Your environment</Link> : null}
           {isAdmin(me.data) ? <Link to="/audit">Audit log</Link> : null}
         </nav>
         <span className="spacer" />

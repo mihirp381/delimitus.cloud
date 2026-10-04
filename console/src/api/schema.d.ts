@@ -933,7 +933,8 @@ export interface paths {
         };
         /**
          * Get Cell
-         * @description Active org admins only (``FORBIDDEN``). Every lazy resource, ``off`` included.
+         * @description Active org admins only (``FORBIDDEN``). Every lazy resource, ``off`` included, the cell's
+         *     environments and its database's places.
          */
         get: operations["get_cell_v1_cell_get"];
         put?: never;
@@ -961,6 +962,75 @@ export interface paths {
          */
         post: operations["enable_resource_v1_cell_resources__resource__enable_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/egress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Egress
+         * @description The allowlist, and the cell's fixed outbound address when its agent can say.
+         */
+        get: operations["get_egress_v1_egress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/egress/catalogue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Catalogue
+         * @description Common destinations IT allows, with the high-risk ones flagged, and which are listed.
+         */
+        get: operations["get_catalogue_v1_egress_catalogue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/egress/hosts/{host}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Allow Host
+         * @description Add a host. Active org admins only, never in an agent session. A host already listed
+         *     changes nothing. ``VALIDATION_FAILED`` names why a host is not an entry (an IP address, a
+         *     port, a wildcard anywhere but the front), a high-risk host without
+         *     ``acknowledge_high_risk``, or a full list. Audited as ``org.updated`` on ``egress_host``.
+         */
+        put: operations["allow_host_v1_egress_hosts__host__put"];
+        post?: never;
+        /**
+         * Remove Host
+         * @description Remove a host. Active org admins only, never in an agent session; ``NOT_FOUND`` when it
+         *     is not listed. The proxy closes open tunnels to it within its drain time of reading the next
+         *     snapshot. Audited as ``org.updated`` on ``egress_host``.
+         */
+        delete: operations["remove_host_v1_egress_hosts__host__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1237,6 +1307,15 @@ export interface components {
              * @description Whether an agent credential may read logs. A person's own never is limited.
              */
             logs: boolean;
+        };
+        /** AllowHost */
+        AllowHost: {
+            /**
+             * Acknowledge High Risk
+             * @description Required to add a high-risk catalogue host.
+             * @default false
+             */
+            acknowledge_high_risk: boolean;
         };
         /** AppCreate */
         AppCreate: {
@@ -1566,19 +1645,112 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** CatalogueEntryOut */
+        CatalogueEntryOut: {
+            /** High Risk */
+            high_risk: boolean;
+            /** Host */
+            host: string;
+            /**
+             * Listed
+             * @description Whether the org's allowlist has it.
+             */
+            listed: boolean;
+            /** Note */
+            note: string;
+            /** Purpose */
+            purpose: string;
+        };
+        /** CatalogueOut */
+        CatalogueOut: {
+            /** Entries */
+            entries: components["schemas"]["CatalogueEntryOut"][];
+        };
+        /** CellDatabaseOut */
+        CellDatabaseOut: {
+            /**
+             * Bigger Tier
+             * @description The paid "bigger database" step (A6: not charged).
+             */
+            bigger_tier: string;
+            /**
+             * Bigger Tier Monthly Usd
+             * @description About what the bigger tier costs a month.
+             */
+            bigger_tier_monthly_usd: number;
+            /**
+             * Connection Limit
+             * @description Connections each app database may hold at once.
+             */
+            connection_limit: number;
+            /**
+             * Nearly Full
+             * @description 2 free places or fewer.
+             */
+            nearly_full: boolean;
+            /**
+             * Places Total
+             * @description App databases the tier holds.
+             */
+            places_total: number;
+            /**
+             * Places Used
+             * @description App environments with a database, as recorded here.
+             */
+            places_used: number;
+            /**
+             * Tier
+             * @description The Cloud SQL tier every cell's database is created on.
+             */
+            tier: string;
+            /**
+             * Tier Full At
+             * @description The last deployment refused with `DB_TIER_FULL`; null if none was.
+             */
+            tier_full_at: string | null;
+        };
+        /** CellEnvironmentOut */
+        CellEnvironmentOut: {
+            /** App Id */
+            app_id: string;
+            /** App Slug */
+            app_slug: string;
+            /** Environment Id */
+            environment_id: string;
+            /** Has Database */
+            has_database: boolean;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "prod" | "preview";
+        };
         /** CellOut */
         CellOut: {
             /** Cell Label */
             cell_label: string;
+            database: components["schemas"]["CellDatabaseOut"];
+            /** Environments */
+            environments: components["schemas"]["CellEnvironmentOut"][];
             /** Resources */
             resources: components["schemas"]["CellResourceOut"][];
         };
         /** CellResourceOut */
         CellResourceOut: {
+            /**
+             * Approval Id
+             * @description The approval that asked for it, if one did.
+             */
+            approval_id: string | null;
             /** Attempts */
             attempts: number;
             /** Cause */
             cause: ("deploy" | "egress_approved" | "connection_granted" | "file_use" | "admin") | null;
+            /**
+             * Deployment Id
+             * @description The deployment that asked for it, if one did.
+             */
+            deployment_id: string | null;
             /** Failed At */
             failed_at: string | null;
             /** Failure Code */
@@ -1859,6 +2031,48 @@ export interface components {
             created: boolean;
             /** User Id */
             user_id: string;
+        };
+        /** EgressHostOut */
+        EgressHostOut: {
+            /** Added By User Id */
+            added_by_user_id: string | null;
+            /**
+             * Approval Request Id
+             * @description The approved request that added it, when an approval did.
+             */
+            approval_request_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * High Risk
+             * @description A catalogue host data can leave by in bulk.
+             */
+            high_risk: boolean;
+            /** Host */
+            host: string;
+        };
+        /** EgressHostsOut */
+        EgressHostsOut: {
+            /** Hosts */
+            hosts: components["schemas"]["EgressHostOut"][];
+        };
+        /** EgressOut */
+        EgressOut: {
+            /** Hosts */
+            hosts: components["schemas"]["EgressHostOut"][];
+            /**
+             * Outbound Ip
+             * @description The fixed address the cell's outbound traffic leaves from, for a partner's firewall; null when the cell cannot say.
+             */
+            outbound_ip: string | null;
+            /**
+             * Proxy Address
+             * @description The proxy's internal address in the cell.
+             */
+            proxy_address: string | null;
         };
         /** EnvironmentOut */
         EnvironmentOut: {
@@ -2863,6 +3077,11 @@ export interface components {
             active_days: number;
             /** App Id */
             app_id: string | null;
+            /**
+             * Billing
+             * @description How the latest hour was billed (SSC-090): `request` (only while answering requests) or `instance` (the whole time an instance runs); null with no hours.
+             */
+            billing: ("instance" | "request") | null;
             /**
              * Cold Start P50 Seconds
              * @description Median start time; null under 20 cold starts (`small_sample`).
@@ -6944,6 +7163,231 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_egress_v1_egress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EgressOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_catalogue_v1_egress_catalogue_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogueOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    allow_host_v1_egress_hosts__host__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A lower-case host name, or `*.` and a name for exactly one label more. */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AllowHost"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EgressHostsOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    remove_host_v1_egress_hosts__host__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A lower-case host name, or `*.` and a name for exactly one label more. */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EgressHostsOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -12,6 +12,7 @@ import type { AppOut, EnvironmentOut } from '../../api/lifecycle';
 import { AdminActions } from '../../app-detail/AdminActions';
 import { ENV_TITLE } from '../../app-detail/names';
 import { Rollback } from '../../app-detail/Rollback';
+import { Running } from '../../app-detail/Running';
 import { ShareDialog } from '../../app-detail/ShareDialog';
 import { StatusBadge } from '../../components/Badge';
 import { ConfirmAction } from '../../components/ConfirmAction';
@@ -154,6 +155,7 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
         {ENV_TITLE[env.name]} <code className="muted">{env.name}</code>
       </h2>
       <dl className="facts">
+        <Running app={app} env={env} />
         <dt>Current deployment</dt>
         <dd>{env.current_deployment_id ? <code>{env.current_deployment_id}</code> : 'None yet'}</dd>
         <dt>Config version</dt>

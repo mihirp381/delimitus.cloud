@@ -224,7 +224,12 @@ describe('admin gating', () => {
     start('/', { ...apps, 'GET /v1/whoami': whoami('admin') }, signedIn());
     const nav = await screen.findByRole('navigation', { name: 'Main' });
     await waitFor(() =>
-      expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual(['Apps', 'Approvals', 'Audit log']),
+      expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
+        'Apps',
+        'Approvals',
+        'Your environment',
+        'Audit log',
+      ]),
     );
   });
 

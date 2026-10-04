@@ -16,6 +16,10 @@ Ticket "done when" checks that run without a cloud:
                                             -> test_the_job_is_started_with_exactly_two_arguments
 SSC-028: creating a cell's database writes exactly one fixed-resource event
                                             -> test_creating_the_cells_database_writes_exactly_...
+SSC-057: the "Your environment" screen reads which deploy or approval asked for each resource,
+the cell's environments and the database's places
+                                            -> test_the_cell_view_says_who_asked_for_each_...,
+                                               test_the_database_is_nearly_full_at_two_free_places
 The deployer's own refusals and its single flag are in ``infra/tests/test_deployer.py``.
 """
 
@@ -588,6 +592,76 @@ async def test_nothing_turns_a_ready_resource_off(cell: Cell) -> None:
             headers=auth(b.t.admin, **{IDEMPOTENCY_HEADER: new_key()}),
         )
         assert r.status_code in (404, 405)
+
+
+async def test_the_cell_view_says_who_asked_for_each_resource_and_what_the_database_holds(
+    cell: Cell,
+) -> None:
+    b = cell.b
+    body = get(b, "/v1/cell", b.t.admin).json()
+    assert {(r["deployment_id"], r["approval_id"]) for r in body["resources"]} == {(None, None)}
+    assert sorted(
+        (e["environment_id"], e["name"], e["has_database"]) for e in body["environments"]
+    ) == sorted([(b.w.prod, "prod", False), (b.w.preview, "preview", False)])
+    assert {e["app_id"] for e in body["environments"]} == {b.w.app}
+    assert body["database"] == {
+        "tier": "db-f1-micro",
+        "places_used": 0,
+        "places_total": 10,
+        "connection_limit": 2,
+        "nearly_full": False,
+        "tier_full_at": None,
+        "bigger_tier": "db-g1-small",
+        "bigger_tier_monthly_usd": 26,
+    }
+
+    ports = replace(cell.ports, app_databases=FakeAppDatabases(ceiling=1))
+    cell = replace(cell, ports=ports)
+    op = await stateful_deploy(cell, b.w.preview)
+    assert await run(b, op, ports) == "running"
+    await finish_creation(cell)
+    assert await run(b, op, ports) == "healthy"
+    full = await stateful_deploy(cell, b.w.prod)
+    assert await run(b, full, ports) == "failed"
+    assert operation(b, full)["failure_code"] == "DB_TIER_FULL"
+    await approve(b, RequirementKind.ENABLE_INTERNET_HOSTS, "api.stripe.com")
+    (approval,) = rows_of(b.dsn, b.w.org, "select id from ssc.approval_request")
+
+    body = get(b, "/v1/cell", b.t.admin).json()
+    asked = {r["resource"]: (r["deployment_id"], r["approval_id"]) for r in body["resources"]}
+    assert asked == {
+        "database": (op, None),
+        "egress": (None, approval["id"]),
+        "connections": (None, None),
+    }
+    has_db = {e["environment_id"]: e["has_database"] for e in body["environments"]}
+    assert has_db == {b.w.preview: True, b.w.prod: False}
+    database = body["database"]
+    assert (database["places_used"], database["nearly_full"]) == (1, False)
+    assert database["tier_full_at"] is not None
+    assert body["cell_label"] == cell.label
+
+
+def test_the_database_is_nearly_full_at_two_free_places() -> None:
+    def environments(n: int) -> list[cell_api.CellEnvironmentOut]:
+        return [
+            cell_api.CellEnvironmentOut(
+                environment_id=f"env_{i:020d}",
+                app_id=f"app_{i:020d}",
+                app_slug=f"app-{i}",
+                name="prod",
+                has_database=True,
+            )
+            for i in range(n)
+        ]
+
+    database = cell_api._database  # pyright: ignore[reportPrivateUsage]
+    assert cell_api.PLACES_TOTAL == 10
+    assert [database(environments(n), None).nearly_full for n in (7, 8, 10)] == [
+        False,
+        True,
+        True,
+    ]
 
 
 # ── the deployer client and the worker ───────────────────────────────────────
