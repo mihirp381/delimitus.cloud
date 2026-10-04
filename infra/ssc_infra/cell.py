@@ -173,6 +173,7 @@ DATABASE_PERMISSIONS: Final = (
 USAGE_PERMISSIONS: Final = ("monitoring.timeSeries.list",)
 FILES_PERMISSIONS: Final = ("storage.objects.delete",)
 FILES_PREFIX: Final = "files/"
+SNAPSHOTS_PREFIX: Final = "snapshots/"
 NONCURRENT_FILE_DAYS: Final = 7
 BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
 GATEWAY_SETTINGS: Final = ("gateway_image", "gateway_keyring", "gateway_jwks", "org_id")
@@ -2090,7 +2091,8 @@ class Cell:
     def probe_runner(self) -> None:
         """The in-cell probe run (SSC-017): a job that stands where the gateway stands (its
         identity, subnet and tag) and calls probe app ``a``. The nightly run starts it. The app
-        also dials the platform hosts that resolve in the cell, which must stay unreachable."""
+        also dials the platform hosts that resolve in the cell, which must stay unreachable. The
+        nightly account also reads the cell's snapshots, which the kill drill times (SSC-054)."""
         digest = self.cfg.probe_digest
         if digest is None:
             return
@@ -2155,6 +2157,18 @@ class Cell:
         # Reads the run's executions and the probe results it logs; staging probe cells only.
         self._project_role("nightly-run-viewer", member, "roles/run.viewer")
         self._project_role("nightly-logs", member, "roles/logging.viewer")
+        snapshots = f"projects/_/buckets/{n.cell_bucket(self.cfg.label)}/objects/{SNAPSHOTS_PREFIX}"
+        gcp.storage.BucketIAMMember(
+            "bucket-nightly-snapshots",
+            bucket=self.bucket_.name,
+            role="roles/storage.objectViewer",
+            member=member,
+            condition=gcp.storage.BucketIAMMemberConditionArgs(
+                title="only snapshots",
+                expression=f'resource.name.startsWith("{snapshots}")',
+            ),
+            opts=self._o(),
+        )
 
     def exports(self) -> None:
         pulumi.export("project_id", self.pid)

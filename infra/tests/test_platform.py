@@ -246,15 +246,16 @@ def test_the_pam_service_agent_manages_the_cells_folder(declared: list[Declared]
     assert grant["folder"] == _folders(declared)["ssc-cells"].outputs["name"]
 
 
-def test_only_the_nightly_workflow_on_main_becomes_the_nightly_account(
+def test_only_the_nightly_and_drill_workflows_on_main_become_the_nightly_account(
     declared: list[Declared],
 ) -> None:
     provider = one(declared, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider")
     condition = provider.inputs["attributeCondition"]
     assert f'assertion.repository == "{naming.GITHUB_REPOSITORY}"' in condition
+    repo = naming.GITHUB_REPOSITORY
     assert (
-        f'assertion.workflow_ref == "{naming.GITHUB_REPOSITORY}/.github/workflows/nightly.yml'
-        '@refs/heads/main"' in condition
+        f'assertion.workflow_ref in ["{repo}/.github/workflows/nightly.yml@refs/heads/main", '
+        f'"{repo}/.github/workflows/kill-drill.yml@refs/heads/main"]' in condition
     )
     assert provider.inputs["oidc"]["issuerUri"] == "https://token.actions.githubusercontent.com"
     members = {

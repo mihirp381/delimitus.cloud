@@ -46,6 +46,7 @@ DEPLOYER: Final = "ssc-cell-deployer"
 PLATFORM_REPOSITORY: Final = "ssc-platform"
 GITHUB_REPOSITORY: Final = "mihirp381/delimitus.cloud"
 NIGHTLY_WORKFLOW: Final = ".github/workflows/nightly.yml"
+KILL_DRILL_WORKFLOW: Final = ".github/workflows/kill-drill.yml"
 SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S105
 
 GATEWAY: Final = "ssc-gateway"

@@ -1081,6 +1081,16 @@ def test_the_probe_runner_stands_where_the_gateway_stands() -> None:
     executor = one(declared, "gcp:cloudrunv2/jobIamMember:JobIamMember").inputs
     assert (executor["role"], executor["member"]) == ("roles/run.jobsExecutor", nightly)
     assert sorted(_grants(declared, nightly)) == ["roles/logging.viewer", "roles/run.viewer"]
+    reader = one(
+        declared, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-nightly-snapshots"
+    )
+    assert (reader.inputs["role"], reader.inputs["member"]) == (
+        "roles/storage.objectViewer",
+        nightly,
+    )
+    assert reader.inputs["condition"]["expression"] == (
+        'resource.name.startsWith("projects/_/buckets/ssc-c-testcell06-cell/objects/snapshots/")'
+    )
 
 
 def test_no_probe_runner_without_a_probe_digest(cell_a: list[Declared]) -> None:

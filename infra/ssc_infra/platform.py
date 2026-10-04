@@ -215,7 +215,10 @@ def _nightly(
         display_name="SSC GitHub Actions",
         opts=after,
     )
-    workflow = f"{n.GITHUB_REPOSITORY}/{n.NIGHTLY_WORKFLOW}@refs/heads/main"
+    workflows = ", ".join(
+        f'"{n.GITHUB_REPOSITORY}/{w}@refs/heads/main"'
+        for w in (n.NIGHTLY_WORKFLOW, n.KILL_DRILL_WORKFLOW)
+    )
     gcp.iam.WorkloadIdentityPoolProvider(
         "github-provider",
         project=project,
@@ -229,7 +232,7 @@ def _nightly(
         },
         attribute_condition=(
             f'assertion.repository == "{n.GITHUB_REPOSITORY}" '
-            f'&& assertion.workflow_ref == "{workflow}"'
+            f"&& assertion.workflow_ref in [{workflows}]"
         ),
         oidc=gcp.iam.WorkloadIdentityPoolProviderOidcArgs(
             issuer_uri="https://token.actions.githubusercontent.com"
