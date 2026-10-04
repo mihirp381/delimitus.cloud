@@ -10,6 +10,7 @@ export type ExportFormat = 'csv' | 'jsonl';
 // Records keyed by the generated unions: a value the API adds or removes fails the typecheck.
 const ACTIONS: Readonly<Record<AuditAction, true>> = {
   'org.created': true,
+  'org.updated': true,
   'user.created': true,
   'user.updated': true,
   'user.deactivated': true,

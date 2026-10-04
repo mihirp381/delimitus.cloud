@@ -1293,11 +1293,55 @@ def test_cell_resources_revision_widens_the_action_check_and_downgrade_restores_
     after = action_check(dsn)
     old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
     assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | CELL_ACTIONS
-    assert {a.value for a in AuditAction} == old | CELL_ACTIONS
+    assert {a.value for a in AuditAction} >= old | CELL_ACTIONS
     downgrade(dsn, "0014_identity")
     assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    upgrade(dsn, "0020_cell_resources")
+    assert action_check(dsn) == after
+
+
+def test_agent_interface_revision_adds_its_columns_and_downgrade_removes_them(
+    dsns: Dsns,
+) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database agentif owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="agentif").render_as_string(hide_password=False)
+    upgrade(dsn, "0026_migrations")
+    before = action_check(dsn)
+    upgrade(dsn, "0027_agent_interface")
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | {"org.updated"}
+    assert {a.value for a in AuditAction} == old | {"org.updated"}
+    added = "select table_name, column_name, column_default from information_schema.columns " + (
+        "where table_schema = 'ssc' and column_name in ('agent_logs', 'agent_client_id') "
+        "order by table_name"
+    )
+    assert run(dsn, None, added) == [
+        ("auth_session", "agent_client_id", None),
+        ("device_grant", "agent_client_id", None),
+        ("org", "agent_logs", "true"),
+    ]
+    downgrade(dsn, "0026_migrations")
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    assert run(dsn, None, added) == []
     upgrade(dsn)
     assert action_check(dsn) == after
+
+
+def test_only_a_cli_session_names_an_agent_and_the_name_is_checked(dsns: Dsns) -> None:
+    created = make_org(dsns.app, "Agent sessions")
+    org, user = created.org_id, created.admin_user_id
+    insert = (
+        "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, expires_at, "
+        "agent_client_id) values (%s, %s, %s, %s, 'conn_x', now() + interval '1 hour', %s) "
+        "returning id"
+    )
+    run(dsns.app, org, insert, (new_id("ses"), org, user, "cli", "claude-code"))
+    browser = (new_id("ses"), org, user, "browser", "claude-code")
+    assert refused(dsns.app, org, insert, browser) == "23514"
+    spaced = (new_id("ses"), org, user, "cli", "Claude Code")
+    assert refused(dsns.app, org, insert, spaced) == "23514"
 
 
 # ── org_index: the single unscoped table (decision 009 amendment, revision 0006) ─────────────

@@ -1,4 +1,5 @@
-"""``ssc login`` (device flow), refreshing a kept login, and ``ssc logout`` (SSC-019)."""
+"""``ssc login`` (device flow), refreshing a kept login, and ``ssc logout`` (SSC-019), and the
+login kept for a coding agent (``--agent``, SSC-048)."""
 
 import time
 from urllib.parse import parse_qs
@@ -6,7 +7,15 @@ from urllib.parse import parse_qs
 import httpx2
 import pytest
 
-from ssc_cli.credentials import SERVICE, Login, bearer, read_login, store_login
+from ssc_cli.credentials import (
+    SERVICE,
+    Login,
+    agent_bearer,
+    bearer,
+    entry,
+    read_login,
+    store_login,
+)
 from ssc_cli.errors import CliError, ExitCode
 from ssc_cli.login import auth_url_for
 from ssc_cli.session import Session
@@ -53,13 +62,17 @@ def form(request: httpx2.Request) -> dict[str, str]:
     return {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
 
 
-def kept(n: int = 1, *, expires_in: int = 300) -> Login:
+AGENT_WHOAMI = {**WHOAMI, "is_agent": True, "client_id": "claude-code"}
+
+
+def kept(n: int = 1, *, expires_in: int = 300, agent: str | None = None) -> Login:
     return Login(
         auth_url=AUTH,
         org_id=ORG,
         access_token=f"access-{n}",
         expires_at=int(time.time()) + expires_in,
         refresh_token=f"ssc_rt.{ORG}.refresh-{n}",
+        agent=agent,
     )
 
 
@@ -171,15 +184,75 @@ def test_logout_forgets_even_when_the_auth_host_is_down(cli, isolated):
     s = Session(api_override=API, transport=httpx2.MockTransport(down))
     r = cli("logout", "--json", session=s)
     assert r.code == 0, r.stderr
-    assert r.json() == {"api_url": API, "revoked": False, "cleared": True}
+    assert r.json() == {"api_url": API, "revoked": False, "cleared": True, "agent": False}
     assert "12 hours" in r.stderr
 
 
 def test_logout_of_a_kept_token_only_forgets_it(cli, fake_api, isolated):
     isolated.store[(SERVICE, API)] = "plain-token"
     r = cli("logout", "--json", session=fake_api.session())
-    assert r.json() == {"api_url": API, "revoked": False, "cleared": True}
+    assert r.json() == {"api_url": API, "revoked": False, "cleared": True, "agent": False}
     assert fake_api.seen == []
+
+
+def test_an_agent_login_is_kept_apart_from_the_person_s(cli, fake_api, isolated):
+    store_login(API, kept(7))
+    fake_api.add("POST", "/device/authorize", httpx2.Response(200, json=START))
+    fake_api.add("POST", "/token", tokens(1))
+    fake_api.add("GET", "/v1/whoami", httpx2.Response(200, json=AGENT_WHOAMI))
+    r = cli("login", "--org", ORG, "--agent", "claude-code", "--json", session=fake_api.session())
+    assert r.code == 0, r.stderr
+    assert r.json()["agent"] == "claude-code"
+    authorize = fake_api.seen[0]
+    assert form(authorize) == {"org": ORG, "agent": "claude-code"}
+    mine, agents = read_login(API), read_login(API, agent=True)
+    assert mine is not None and mine.access_token == "access-7" and mine.agent is None
+    assert agents is not None and agents.access_token == "access-1"
+    assert agents.agent == "claude-code"
+    assert (SERVICE, entry(API, agent=True)) in isolated.store
+    access = agent_bearer(API)
+    assert callable(access) and access() == "access-1"
+    assert bearer(API, {}) != access
+
+
+def test_an_agent_login_the_api_does_not_see_as_the_agent_is_not_kept(cli, fake_api, isolated):
+    fake_api.add("POST", "/device/authorize", httpx2.Response(200, json=START))
+    fake_api.add("POST", "/token", tokens(1))
+    fake_api.add("GET", "/v1/whoami", httpx2.Response(200, json=WHOAMI))
+    r = cli("login", "--org", ORG, "--agent", "claude-code", "--json", session=fake_api.session())
+    assert r.code == ExitCode.AUTH
+    assert ErrorResult.model_validate(r.json()).error.code == "LOGIN_FAILED"
+    assert isolated.store == {}
+
+
+def test_a_bad_agent_name_is_refused_before_anything_is_sent(cli, fake_api, isolated):
+    r = cli("login", "--org", ORG, "--agent", "Claude Code", "--json", session=fake_api.session())
+    assert r.code == ExitCode.AUTH
+    assert "not an agent name" in ErrorResult.model_validate(r.json()).error.detail
+    assert fake_api.seen == []
+
+
+def test_an_ended_agent_login_says_how_to_sign_the_agent_in_again(cli, fake_api, isolated):
+    store_login(API, kept(1, expires_in=0, agent="claude-code"))
+    fake_api.add("POST", "/token", oauth("invalid_grant"))
+    access = agent_bearer(API, transport=httpx2.MockTransport(fake_api.handler))
+    assert callable(access)
+    with pytest.raises(CliError) as err:
+        access()
+    assert f"ssc login --org {ORG} --agent claude-code" in err.value.body.detail
+    assert isolated.store == {}
+
+
+def test_logout_agent_ends_only_the_agent_s_login(cli, fake_api, isolated):
+    store_login(API, kept(1))
+    store_login(API, kept(2, agent="claude-code"))
+    fake_api.add("POST", "/revoke", httpx2.Response(200))
+    r = cli("logout", "--agent", "--json", session=fake_api.session())
+    assert r.json() == {"api_url": API, "revoked": True, "cleared": True, "agent": True}
+    assert form(fake_api.seen[0]) == {"token": f"ssc_rt.{ORG}.refresh-2"}
+    assert read_login(API, agent=True) is None
+    mine = read_login(API)
+    assert mine is not None and mine.access_token == "access-1"
 
 
 def test_the_auth_address():

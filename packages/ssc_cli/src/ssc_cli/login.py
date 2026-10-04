@@ -80,9 +80,11 @@ class AuthClient:
     def __exit__(self, *_: object) -> None:
         self._http.close()
 
-    def start(self, org_id: str) -> DeviceStart | None:
-        """The device grant, or None when the auth host refuses the org."""
-        r = self._post("/device/authorize", {"org": org_id})
+    def start(self, org_id: str, agent: str | None = None) -> DeviceStart | None:
+        """The device grant, or None when the auth host refuses the org. With ``agent`` the
+        login is that coding agent's (SSC-048)."""
+        form = {"org": org_id} if agent is None else {"org": org_id, "agent": agent}
+        r = self._post("/device/authorize", form)
         if r.status_code == 400:  # noqa: PLR2004
             return None
         return self._parse(r, DeviceStart)

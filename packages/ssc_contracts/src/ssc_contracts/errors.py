@@ -90,6 +90,7 @@ class ErrorCode(StrEnum):
     # logs and health (SSC-024)
     LOGS_RATE_LIMITED = "LOGS_RATE_LIMITED"
     LOGS_UNAVAILABLE = "LOGS_UNAVAILABLE"
+    AGENT_LOGS_OFF = "AGENT_LOGS_OFF"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -371,6 +372,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         503,
         "Logs cannot be read right now.",
         "The cell that keeps this app's logs is not reachable from here. Retry later.",
+    ),
+    ErrorCode.AGENT_LOGS_OFF: CatalogueEntry(
+        403,
+        "Agents may not read logs in this org.",
+        "An org admin has turned off log reading for agents. The person whose credential the agent "
+        "holds can still read the logs themselves with `ssc logs` or in the console.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

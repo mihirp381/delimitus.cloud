@@ -7,7 +7,8 @@
   share, or the caller's, the answer is ``LOGS_RATE_LIMITED`` with ``Retry-After``. ``deploy``
   lines are this plane's own deployment records. Builders, the app's owner and org admins may
   read; a ``user``-role grant or none is ``FORBIDDEN``. An agent credential reads as its person
-  does. Every line is redacted in the cell and again here.
+  does, unless an org admin has turned log reading off for agents (``AGENT_LOGS_OFF``, SSC-048).
+  Every line is redacted in the cell and again here.
 - ``GET .../health``: ``running``, ``asleep`` (starts on the next request) or ``failing``, from
   the service's revisions and its recent request and system logs. Nothing asks the app itself, so
   a check never wakes it. Anyone who may see the app may ask, as for its database.
@@ -69,6 +70,7 @@ _BUILD_REFS = text(
     "select driver_ref from ssc.build where org_id = :org and environment_id = :env "
     "and driver_ref is not null order by created_at desc limit :n"
 )
+_AGENT_LOGS = text("select agent_logs from ssc.org where id = :org")
 _DEPLOYMENTS = text(
     "select id, kind, release_id, state, failure_code, started_at, finished_at "
     "from ssc.deployment where org_id = :org and environment_id = :env "
@@ -136,6 +138,7 @@ class HealthOut(Strict):
         *AUTHENTICATED,
         ErrorCode.FORBIDDEN,
         ErrorCode.NOT_FOUND,
+        ErrorCode.AGENT_LOGS_OFF,
         ErrorCode.LOGS_RATE_LIMITED,
         ErrorCode.LOGS_UNAVAILABLE,
     ),
@@ -147,7 +150,8 @@ async def get_logs(
     request: Request,
     principal: UserPrincipal,
 ) -> LogPageOut:
-    """Lines of one source, redacted. Builders, the owner and org admins only."""
+    """Lines of one source, redacted. Builders, the owner and org admins only; an agent only
+    while the org lets agents read logs."""
     limit(request, principal)
     engine = runtime_of(request).engine
     builds = await _authorise(request, principal, app_id, environment_id, params.source)
@@ -207,8 +211,9 @@ async def _authorise(
     environment_id: str,
     source: LogSource,
 ) -> tuple[str, ...]:
-    """The checks a ``UserUoW`` makes, then the builder rule, in a transaction of its own that
-    ends before the cell is asked; the environment's recent Cloud Build ids for ``build``."""
+    """The checks a ``UserUoW`` makes, then the builder rule and the org's agent switch, in a
+    transaction of its own that ends before the cell is asked; the environment's recent Cloud
+    Build ids for ``build``."""
     async with bound_org(runtime_of(request).engine, principal.org_id) as conn:
         await check_session(conn, principal)
         await check_scope(request, conn, principal)
@@ -217,6 +222,10 @@ async def _authorise(
         if (await conn.execute(_SELECT_ENV, params)).first() is None:
             raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
         await require_builder(uow, environment_id)
+        if principal.is_agent:
+            allowed = (await conn.execute(_AGENT_LOGS, {"org": principal.org_id})).scalar_one()
+            if not allowed:
+                raise Refusal(ErrorCode.AGENT_LOGS_OFF)
         if source != "build":
             return ()
         refs = await conn.execute(

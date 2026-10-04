@@ -136,6 +136,21 @@
         "title": "ActorOut",
         "type": "object"
       },
+      "AgentPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "logs": {
+            "description": "Whether an agent credential may read logs. A person's own never is limited.",
+            "title": "Logs",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "logs"
+        ],
+        "title": "AgentPolicy",
+        "type": "object"
+      },
       "AppCreate": {
         "additionalProperties": false,
         "properties": {
@@ -468,6 +483,7 @@
       "AuditAction": {
         "enum": [
           "org.created",
+          "org.updated",
           "user.created",
           "user.updated",
           "user.deactivated",
@@ -1857,6 +1873,7 @@
           "SCHEMA_AHEAD",
           "LOGS_RATE_LIMITED",
           "LOGS_UNAVAILABLE",
+          "AGENT_LOGS_OFF",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -6948,7 +6965,7 @@
     },
     "/v1/apps/{app_id}/environments/{environment_id}/logs": {
       "get": {
-        "description": "Lines of one source, redacted. Builders, the owner and org admins only.",
+        "description": "Lines of one source, redacted. Builders, the owner and org admins only; an agent only\nwhile the org lets agents read logs.",
         "operationId": "get_logs_v1_apps__app_id__environments__environment_id__logs_get",
         "parameters": [
           {
@@ -7073,7 +7090,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_LOGS_OFF`"
           },
           "404": {
             "content": {
@@ -10166,6 +10183,128 @@
           }
         },
         "summary": "Get Operation",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/org/agent-policy": {
+      "get": {
+        "description": "Anyone in the org, agents included, may read it.",
+        "operationId": "get_agent_policy_v1_org_agent_policy_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPolicy"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Agent Policy",
+        "tags": [
+          "v1"
+        ]
+      },
+      "put": {
+        "description": "Active org admins only, never in an agent session. Audited as ``org.updated`` when it\nchanges; setting the value it already has changes nothing.",
+        "operationId": "set_agent_policy_v1_org_agent_policy_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentPolicy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPolicy"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Set Agent Policy",
         "tags": [
           "v1"
         ]
