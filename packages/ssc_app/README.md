@@ -1,6 +1,6 @@
 # ssc-app
 
-The tiny helper an app installs to read the SSC identity note (`X-SSC-Identity`) and to reconnect streams before the gateway's limit. Depends on `pyjwt[crypto]` and `ssc-contracts` only.
+The tiny helper an app installs to read the SSC identity note (`X-SSC-Identity`), to reconnect streams before the gateway's limit and to keep files. Depends on `pyjwt[crypto]` and `ssc-contracts` only.
 
 ```python
 import os
@@ -43,3 +43,18 @@ finally:
 ```
 
 `seconds_left(request.headers)` gives the seconds until the limit, or None without the gateway. Options: `margin` (30 s) on both, `retry_ms` (1000) on `end_before_deadline`. A stream that opens with less than the margin left is ended after half the time left (`seconds_to_wait`), never at once. A reconnect is a new connection: keep what must outlive it in Postgres or in the browser. The Node helper `@delimitus/ssc-reconnect` has the same names and runs the same vectors (`conformance/reconnect/vectors.json`).
+
+## Files
+
+Ask for file storage with `[files]` in `ssc.toml`; the first deploy that asks sets it up once, in a few minutes. `ssc_app.files` asks the cell's data gateway for a signed link with the app's own ID token and sends the bytes to Cloud Storage; the app holds no storage credentials. No extra dependency.
+
+```python
+from ssc_app import files
+
+files.put("photos/cat.png", data, content_type="image/png")
+data = files.get("photos/cat.png")
+url = files.link("get", "photos/cat.png")["url"]  # redirect a browser here to download
+files.delete("photos/cat.png")
+```
+
+Each environment has its own files: at most 25 MB each and 1 GB together. A name is `/`-separated segments of `A-Z a-z 0-9 . _ -`, each starting with a letter or digit. A link lasts 10 minutes, and a download always arrives as an attachment, never shown as a page. Upload from the server: the bucket allows no browser-direct upload. Files are not scanned for viruses. Errors are `FilesError` with the data gateway's `code` (`FILE_NOT_FOUND`, `FILES_QUOTA_EXCEEDED`, `APP_NOT_ACTIVE`, ...), `STORAGE_<status>` or `UNREACHABLE`; the data gateway starts from zero, so a call to it is tried once more on a timeout, a lost connection or a 502, 503 or 504. The gateway's address comes from the metadata server (`SSC_DATAGW_URL` replaces it). The Node helper `@delimitus/ssc-files` has the same names, with `remove` for `delete`. Contract: `docs/contracts/data-gateway.md#files`.

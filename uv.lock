@@ -1666,6 +1666,8 @@ source = { editable = "packages/ssc_datagw" }
 dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "google-api-core" },
+    { name = "google-auth" },
     { name = "httpx2" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -1679,6 +1681,8 @@ dependencies = [
 requires-dist = [
     { name = "asyncpg", specifier = "==0.31.0" },
     { name = "fastapi", specifier = "==0.141.1" },
+    { name = "google-api-core", specifier = "==2.38.0" },
+    { name = "google-auth", specifier = "==2.58.0" },
     { name = "httpx2", specifier = "==2.13.0" },
     { name = "pydantic", specifier = "==2.13.5" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },

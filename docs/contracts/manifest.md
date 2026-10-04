@@ -81,7 +81,7 @@ A name is `^[A-Z][A-Z0-9_]{0,127}$` and must start with `VITE_` or `NEXT_PUBLIC_
 
 Postgres is the only state offered. A key-value request (`kv`, `redis`, `valkey`, `memcached`, `cache`, `keyvalue`, `key_value`, in any case, or `state = "redis"`) is refused with the fix-it `STATE_KV_UNSUPPORTED`: set `postgres = true` and keep the data in a table; for a cache, an `UNLOGGED` table with an `expires_at` column.
 
-SQLite on disk (a `sqlite` or `sqlite3` key in `[state]`, in any case, or `state = "sqlite"`) is refused with the fix-it `STATE_SQLITE_EPHEMERAL`: the file system is memory and is lost when the instance stops, so set `postgres = true`. There is no manifest key for file storage yet; SSC-046 decides whether one is needed.
+SQLite on disk (a `sqlite` or `sqlite3` key in `[state]`, in any case, or `state = "sqlite"`) is refused with the fix-it `STATE_SQLITE_EPHEMERAL`: the file system is memory and is lost when the instance stops, so set `postgres = true`. Files an app keeps (a photo, a PDF) go to file storage, [`[files]`](#files).
 
 `[connections]`:
 
@@ -94,6 +94,14 @@ SQLite on disk (a `sqlite` or `sqlite3` key in `[state]`, in any case, or `state
 | Key | Type | Default | Rule |
 |---|---|---|---|
 | `hosts` | array of string | `[]` | Outbound hosts, exact lower-case DNS names with at least two labels. No scheme, path, port, IP address or wildcard. Unique, at most 50. |
+
+<a id="files"></a>`[files]`, file storage (SSC-046):
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `enabled` | boolean | `true` | `[files]` alone asks for file storage; `enabled = false` keeps the table and asks for nothing. |
+
+The table itself has no default: a manifest without `[files]` leaves it out of the normalised model, so its digest is the one it had before the key existed. A deploy that asks for files waits, the first time in its cell, until the cell's data gateway exists (the `connections` cell resource, a few minutes, once). The app then asks the gateway's file broker for links with `ssc_app.files` (Python) or `@delimitus/ssc-files` (Node) and never holds storage credentials; [`data-gateway.md`](data-gateway.md#files) is the broker's contract. The capability diff has no row for files: nothing has to be granted.
 
 `[[schedules]]`, at most 20, names unique. Each entry is what the timers port reads (`ssc_control.ports.DeclaredSchedule`):
 
@@ -197,4 +205,5 @@ Each change carries one fixed plain sentence about what happens at runtime. Chan
 - v1 freezes the key set, the types, the defaults, the refusal format and the digest rule.
 - A change that would alter the digest of a manifest v1 accepts, or refuse a manifest v1 accepts, is a new schema: `ssc/v2` is added beside v1, `load_manifest` dispatches on `schema`, and v1 files keep loading and keep their digests.
 - Accepting more within v1 (wildcard hosts, a new class name, a new cron form) is a widening change: allowed by a decision, because no accepted manifest changes digest.
+- `[files]` (SSC-046) is such a widening, by decision 013's amendment of 2026-10-03: an optional table with no default, left out of the digest when absent.
 - A newer file read by an older tool is refused by name (`"ssc/v2" is not a schema this version reads`), never partially read.

@@ -81,6 +81,7 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_CONNECTION_TAG",
     "SSC_PROXY_ADDRESS",
     "SSC_OUTBOUND_IP",
+    "SSC_CELL_BUCKET",
 }
 TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
@@ -742,6 +743,62 @@ def test_only_the_gateway_decrypts_with_its_key_and_only_the_operator_seals(
     }
 
 
+def test_app_files_sit_under_the_cell_s_own_key_and_old_versions_go_after_a_week(
+    cell_a: list[Declared],
+) -> None:
+    """The cell bucket is encrypted with the customer's own key, which only Cloud Storage's agent
+    uses, and replaced or deleted app files are removed seven days on (SSC-046)."""
+    key = one(cell_a, "gcp:kms/cryptoKey:CryptoKey", "key-bucket").inputs
+    assert (key["keyRing"], key["name"], key["rotationPeriod"]) == (
+        "keyring-id",
+        "bucket",
+        cell.KEY_ROTATION,
+    )
+    number = project_number(naming.cell_project(A))
+    grants = {
+        (d.inputs["member"], d.inputs["role"])
+        for d in cell_a
+        if d.type == KEY_GRANT and d.inputs["cryptoKeyId"] == "key-bucket-id"
+    }
+    assert grants == {
+        (
+            f"serviceAccount:service-{number}@gs-project-accounts.iam.gserviceaccount.com",
+            "roles/cloudkms.cryptoKeyEncrypterDecrypter",
+        )
+    }
+    bucket = one(cell_a, "gcp:storage/bucket:Bucket").inputs
+    assert bucket["encryption"] == {"defaultKmsKeyName": "key-bucket-id"}
+    assert bucket["lifecycleRules"] == [
+        {
+            "action": {"type": "Delete"},
+            "condition": {
+                "matchesPrefixes": ["files/"],
+                "withState": "ARCHIVED",
+                "daysSinceNoncurrentTime": 7,
+            },
+        }
+    ]
+
+
+def test_the_data_gateway_signs_file_links_as_itself_with_no_key_file(
+    cell_a: list[Declared],
+) -> None:
+    """``ssc-data`` may sign as itself through IAM and nothing else may; no account key exists
+    (SSC-095)."""
+    project = naming.cell_project(A)
+    email = naming.sa_email("ssc-data", project)
+    on_data = {
+        (d.inputs["member"], d.inputs["role"])
+        for d in cell_a
+        if d.type.startswith("gcp:serviceaccount/iAM")
+        and d.inputs["serviceAccountId"] == f"projects/{project}/serviceAccounts/{email}"
+        and "TokenCreator" in d.inputs["role"]
+    }
+    assert on_data == {(f"serviceAccount:{email}", "roles/iam.serviceAccountTokenCreator")}
+    assert "iamcredentials.googleapis.com" in cell.APIS
+    assert not [d for d in cell_a if d.type == "gcp:serviceaccount/key:Key"]
+
+
 def test_the_cell_exports_its_gateway_key_and_identity_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1085,8 +1142,9 @@ def test_the_control_plane_reads_and_writes_the_cell_bucket(cell_a: list[Declare
 def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Declared]) -> None:
     """Audit anchors sit in the cell bucket under ``audit-anchors/`` (SSC-012): only the control
     plane's worker may write or delete there, the gateway and the agent only read, the data
-    gateway reads ``snapshots/`` alone (SSC-050), and no other account of the cell holds a
-    storage role or permission anywhere in the project."""
+    gateway reads ``snapshots/`` alone (SSC-050), app files under ``files/`` are written by the
+    data gateway and deleted by the agent there alone (SSC-046), and no other account of the
+    cell holds a storage role or permission anywhere in the project."""
     viewer = "roles/storage.objectViewer"
     on_bucket = {
         d.name: (d.inputs["member"], d.inputs["role"])
@@ -1108,22 +1166,52 @@ def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Decl
         "condition"
         not in one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-gateway").inputs
     )
-    assert {member for member, role in on_bucket.values() if role != viewer} == {
-        f"serviceAccount:{mockcloud.WORKERS['staging']}"
+    files_role = f"projects/{project}/roles/sscCellAgentFiles"
+    data = f"serviceAccount:{naming.sa_email('ssc-data', project)}"
+    agent = f"serviceAccount:{naming.sa_email(naming.CELL_AGENT, project)}"
+    writers = {name: grant for name, grant in on_bucket.items() if grant[1] != viewer}
+    assert writers == {
+        "bucket-control-worker": (
+            f"serviceAccount:{mockcloud.WORKERS['staging']}",
+            "roles/storage.objectUser",
+        ),
+        "bucket-data-files": (data, "roles/storage.objectUser"),
+        "bucket-agent-files": (agent, files_role),
     }
+    files = f"projects/_/buckets/{naming.cell_bucket(A)}/objects/files/"
+    for name in ("bucket-data-files", "bucket-agent-files"):
+        condition = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", name).inputs[
+            "condition"
+        ]
+        assert condition["expression"] == (
+            f'resource.name.startsWith("{files}") || '
+            "api.getAttribute('storage.googleapis.com/objectListPrefix', '')"
+            ".startsWith('files/')"
+        )
+    assert (
+        "condition"
+        not in one(
+            cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-control-worker"
+        ).inputs
+    )
     project_roles = {
         d.inputs["role"] for d in cell_a if d.type == "gcp:projects/iAMMember:IAMMember"
     }
     basic = {"roles/owner", "roles/editor", "roles/writer"}
     assert not [role for role in project_roles if "storage" in role or role in basic]
-    permissions = [
-        permission
+    permissions = {
+        d.inputs["roleId"]: d.inputs["permissions"]
         for d in cell_a
         if d.type == "gcp:projects/iAMCustomRole:IAMCustomRole"
-        for permission in d.inputs["permissions"]
-    ]
+    }
+    assert permissions.pop("sscCellAgentFiles") == ["storage.objects.delete"]
     assert permissions
-    assert not [p for p in permissions if p.startswith(("storage.", "resourcemanager."))]
+    assert not [
+        p
+        for held in permissions.values()
+        for p in held
+        if p.startswith(("storage.", "resourcemanager."))
+    ]
 
 
 def _grants(declared: list[Declared], member: str) -> dict[str, dict[str, str] | None]:
@@ -1188,9 +1276,14 @@ def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared])
     assert roles["sscCellAgentUsage"] == ["monitoring.timeSeries.list"]
     assert not any("monitoring" in role for role in grants if role.startswith("roles/"))
     custom = {f"projects/{naming.cell_project(A)}/roles/{r}" for r in roles}
+    on_bucket = f"projects/{naming.cell_project(A)}/roles/sscCellAgentFiles"
     assert {r for r in grants if r.startswith("projects/")} == custom - {
-        f"projects/{naming.cell_project(A)}/roles/sscDeployerRecords"
+        f"projects/{naming.cell_project(A)}/roles/sscDeployerRecords",
+        on_bucket,
     }
+    assert roles["sscCellAgentFiles"] == ["storage.objects.delete"]
+    bound = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-agent-files")
+    assert (bound.inputs["member"], bound.inputs["role"]) == (agent, on_bucket)
     assert all(p.endswith(".create") for p in roles["sscCellAgentCreate"])
     runtime = roles["sscCellAgentRuntime"]
     assert not any(p.endswith((".delete", ".create")) for p in runtime)

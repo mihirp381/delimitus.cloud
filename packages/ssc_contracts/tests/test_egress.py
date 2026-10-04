@@ -52,6 +52,12 @@ def test_host_names_and_one_label_wildcards_are_entries(pattern: str) -> None:
         ("-api.stripe.com", "DNS host name"),
         ("a" * 64 + ".com", "DNS host name"),
         (("a" * 60 + ".") * 5 + "com", "253"),
+        ("storage.googleapis.com", "Cloud Storage"),
+        ("my-bucket.storage.googleapis.com", "Cloud Storage"),
+        ("*.storage.googleapis.com", "Cloud Storage"),
+        ("*.googleapis.com", "Cloud Storage"),
+        ("storage.cloud.google.com", "Cloud Storage"),
+        ("*.cloud.google.com", "Cloud Storage"),
     ],
 )
 def test_other_entries_are_refused(pattern: str, reason: str) -> None:
@@ -158,3 +164,8 @@ def test_the_raw_addresses_delimitus_attacks_use_are_never_entries(address: str)
     assert host_pattern_problem(address) is not None
     for pattern in ("*.stripe.com", "api.stripe.com"):
         assert re.search(authority_regex(pattern), f"{address}:443") is None
+
+
+@pytest.mark.parametrize("pattern", ["www.googleapis.com", "*.google.com", "sheets.googleapis.com"])
+def test_google_hosts_that_are_not_storage_stay_allowed(pattern: str) -> None:
+    assert host_pattern_problem(pattern) is None

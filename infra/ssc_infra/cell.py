@@ -46,6 +46,7 @@ APIS: Final = (
     "compute.googleapis.com",
     "dns.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
     "run.googleapis.com",
@@ -104,6 +105,7 @@ LOG_VIEWS: Final = {
 LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
 PROXY_ADDRESS_ENV: Final = "SSC_PROXY_ADDRESS"
 OUTBOUND_IP_ENV: Final = "SSC_OUTBOUND_IP"
+BUCKET_ENV: Final = "SSC_CELL_BUCKET"
 USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
 USAGE_SOURCE: Final = "monitoring"
 DATA_SA_ENV: Final = "SSC_DATA_SA"
@@ -169,6 +171,9 @@ DATABASE_PERMISSIONS: Final = (
     "cloudsql.databases.delete",
 )
 USAGE_PERMISSIONS: Final = ("monitoring.timeSeries.list",)
+FILES_PERMISSIONS: Final = ("storage.objects.delete",)
+FILES_PREFIX: Final = "files/"
+NONCURRENT_FILE_DAYS: Final = 7
 BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
 GATEWAY_SETTINGS: Final = ("gateway_image", "gateway_keyring", "gateway_jwks", "org_id")
 MAX_TIMER_KEYS: Final = 2
@@ -476,6 +481,18 @@ def secret_condition() -> gcp.projects.IAMMemberConditionArgs:
     )
 
 
+def files_condition(bucket: str) -> gcp.storage.BucketIAMMemberConditionArgs:
+    """Objects under ``files/``, and a listing whose prefix is under it: a list is checked on
+    the bucket, so its prefix is the only thing to limit (SSC-046)."""
+    objects = f"projects/_/buckets/{bucket}/objects/{FILES_PREFIX}"
+    return gcp.storage.BucketIAMMemberConditionArgs(
+        title="only app files",
+        expression=f'resource.name.startsWith("{objects}") || '
+        f"api.getAttribute('storage.googleapis.com/objectListPrefix', '')"
+        f".startsWith('{FILES_PREFIX}')",
+    )
+
+
 def control_for(accounts: dict[str, str], stage: n.Stage, public: str | None = None) -> str:
     """The control account a cell trusts: the public stage's, which serves the cell's login and
     keys (SSC-064), else the cell's own stage's."""
@@ -691,6 +708,23 @@ class Cell:
         self._project_role("data-logs", self.data_sa.member, "roles/logging.logWriter")
         self._project_role("intake-logs", self.intake_sa.member, "roles/logging.logWriter")
         self._project_role("proxy-logs", self.proxy_sa.member, "roles/logging.logWriter")
+        self.files_role = gcp.projects.IAMCustomRole(
+            "agent-files",
+            project=self.pid,
+            role_id="sscCellAgentFiles",
+            title="SSC cell agent: drop app files",
+            description="Deletes an environment's files in the cell bucket, under files/ alone "
+            "(SSC-046).",
+            permissions=list(FILES_PERMISSIONS),
+            opts=self._o(),
+        )
+        gcp.serviceaccount.IAMMember(
+            "data-signs-as-itself",
+            service_account_id=self.data_sa.name,
+            role="roles/iam.serviceAccountTokenCreator",
+            member=self.data_sa.member,
+            opts=self._o(),
+        )
 
     def _connection_tag(self) -> tuple[pulumi.Output[str], pulumi.Output[str]]:
         """The project's own tag ``ssc-secret-kind=connection`` (SSC-051), so no organisation tag
@@ -759,6 +793,23 @@ class Cell:
             crypto_key_id=self.gateway_key.id,
             role="roles/cloudkms.cryptoKeyEncrypter",
             member=n.OPERATOR,
+            opts=self._o(),
+        )
+        self.bucket_key = gcp.kms.CryptoKey(
+            "key-bucket",
+            key_ring=ring.id,
+            name="bucket",
+            rotation_period=KEY_ROTATION,
+            opts=self._o(),
+        )
+        storage_agent = gcp.storage.get_project_service_account_output(
+            project=self.pid, opts=pulumi.InvokeOutputOptions(depends_on=self.apis)
+        )
+        self.bucket_key_grant = gcp.kms.CryptoKeyIAMMember(
+            "storage-agent-key",
+            crypto_key_id=self.bucket_key.id,
+            role="roles/cloudkms.cryptoKeyEncrypterDecrypter",
+            member=pulumi.Output.concat("serviceAccount:", storage_agent.email_address),
             opts=self._o(),
         )
         self.key_grants: list[pulumi.Resource] = []
@@ -1220,6 +1271,11 @@ class Cell:
             )
 
     def bucket(self) -> None:
+        """The cell bucket: snapshots, audit anchors, source bundles and the apps' files
+        (SSC-046), encrypted with the cell's own key ``bucket``. Under ``files/<env_id>/`` only
+        ``ssc-data``, the file broker, reads and writes, and the agent deletes an environment's
+        files when it is gone; a replaced or deleted file stays a noncurrent version for
+        ``NONCURRENT_FILE_DAYS``."""
         cfg = self.cfg
         self.bucket_ = gcp.storage.Bucket(
             "bucket",
@@ -1229,8 +1285,19 @@ class Cell:
             uniform_bucket_level_access=True,
             public_access_prevention="enforced",
             versioning=gcp.storage.BucketVersioningArgs(enabled=True),
+            encryption=gcp.storage.BucketEncryptionArgs(default_kms_key_name=self.bucket_key.id),
+            lifecycle_rules=[
+                gcp.storage.BucketLifecycleRuleArgs(
+                    action=gcp.storage.BucketLifecycleRuleActionArgs(type="Delete"),
+                    condition=gcp.storage.BucketLifecycleRuleConditionArgs(
+                        matches_prefixes=[FILES_PREFIX],
+                        with_state="ARCHIVED",
+                        days_since_noncurrent_time=NONCURRENT_FILE_DAYS,
+                    ),
+                )
+            ],
             force_destroy=cfg.disposable,
-            opts=self._o(),
+            opts=self._o(self.bucket_key_grant),
         )
         for name, member, role in (
             (
@@ -1257,6 +1324,23 @@ class Cell:
                 ),
                 opts=self._o(),
             )
+        files = files_condition(n.cell_bucket(cfg.label))
+        gcp.storage.BucketIAMMember(
+            "bucket-data-files",
+            bucket=self.bucket_.name,
+            role="roles/storage.objectUser",
+            member=self.data_sa.member,
+            condition=files,
+            opts=self._o(),
+        )
+        gcp.storage.BucketIAMMember(
+            "bucket-agent-files",
+            bucket=self.bucket_.name,
+            role=self.files_role.name,
+            member=self.agent_sa.member,
+            condition=files,
+            opts=self._o(),
+        )
 
     def log_views(self) -> None:
         """The agent's only window on the cell's logs (SSC-024): one view per resource type on
@@ -1621,7 +1705,8 @@ class Cell:
         switch. It creates connection secrets with the connection tag, readable by ``ssc-data``
         alone (SSC-051). It writes each app environment's egress proxy credential into its
         ``HTTPS_PROXY`` secret, naming the proxy's reserved address, and tells the console the
-        cell's fixed outbound address (SSC-053); both exist from onboarding."""
+        cell's fixed outbound address (SSC-053); both exist from onboarding. It deletes a gone
+        environment's files from the cell bucket's ``files/`` (SSC-046)."""
         tag_key, tag_value = self.connection_tag
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
@@ -1636,6 +1721,7 @@ class Cell:
             CONNECTION_TAG_ENV: pulumi.Output.concat(tag_key, "=", tag_value),
             PROXY_ADDRESS_ENV: self.proxy_ip.address,
             OUTBOUND_IP_ENV: self.nat_ip.address,
+            BUCKET_ENV: self.bucket_.name,
         }
         tools, frontend = self.cfg.build_tools_image, self.cfg.build_frontend_image
         if tools and frontend:
@@ -1859,6 +1945,9 @@ class Cell:
 
     def data_gateway(self) -> None:
         """The ``connections`` flag: the data gateway and file broker, leaving through the NAT.
+        The first deploy whose manifest asks for ``[files]`` sets it, as the first that asks for
+        a database sets ``database`` (SSC-046, SSC-087); every grant the broker needs was made
+        at onboarding, so no person acts.
 
         Ingress is internal only, so only the cell's VPC reaches it. Cloud Run's invoker check is
         off: the gateway checks each caller's Google ID token itself and admits only the cell's
@@ -1867,7 +1956,9 @@ class Cell:
         build of ``packages/ssc_datagw/Dockerfile``, which reads its snapshot from the cell
         bucket's ``snapshots/`` (``bucket-data``). Each connection in ``datagw_connections``
         becomes ``SSC_CONNECTION_CON_<20>``, the secret ``ssc-conn-<20>`` at its pinned version
-        (SSC-051)."""
+        (SSC-051). The file broker signs its links as ``ssc-data`` through ``signBlob`` on
+        itself (``data-signs-as-itself``), with no key file, and reads and writes the bucket's
+        ``files/`` alone (``bucket-data-files``)."""
         env = self._datagw_env()
         secret_env = {
             connection_env(c): (connection_secret_id(c), version)

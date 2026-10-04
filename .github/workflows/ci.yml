@@ -128,6 +128,8 @@ jobs:
         working-directory: helpers/node/ssc-identity
       - run: npm test
         working-directory: helpers/node/ssc-reconnect
+      - run: npm test
+        working-directory: helpers/node/ssc-files
 
   console:
     runs-on: ubuntu-24.04

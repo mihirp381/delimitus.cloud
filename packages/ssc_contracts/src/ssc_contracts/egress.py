@@ -46,6 +46,11 @@ CREDENTIAL_ID: Final = re.compile(r"[a-z0-9]{12}")
 DIGEST: Final = re.compile(r"[A-Za-z0-9+/]{27}=")
 """Base64 of a SHA-1 digest."""
 
+STORAGE_HOSTS: Final = ("storage.googleapis.com", "storage.cloud.google.com")
+"""Cloud Storage's hosts. No allowlist entry may reach one, or a bucket's own host under one
+(``<bucket>.storage.googleapis.com``): an app's files leave the cell only by the file broker's
+signed links (SSC-046), and a tunnel to any bucket would carry them anywhere."""
+
 _LABEL: Final = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 _LABEL_RE2: Final = "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
 _ALPHABET: Final = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -70,8 +75,20 @@ def host_pattern_problem(pattern: str) -> str | None:
             "must be a DNS host name such as api.example.com, or *.example.com",
         ),
         (not labels[-1][:1].isalpha(), "IP addresses are never allowed; name the host"),
+        (
+            _reaches_storage(pattern),
+            "Cloud Storage is never allowed; an app keeps files with the file broker (SSC-046)",
+        ),
     )
     return next((problem for failed, problem in checks if failed), None)
+
+
+def _reaches_storage(pattern: str) -> bool:
+    name = pattern.removeprefix("*.")
+    return any(
+        pattern_matches(pattern, host) or name == host or name.endswith(f".{host}")
+        for host in STORAGE_HOSTS
+    )
 
 
 def pattern_matches(pattern: str, host: str) -> bool:
