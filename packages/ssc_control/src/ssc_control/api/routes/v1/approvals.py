@@ -26,12 +26,14 @@ from ssc_control.api.routes.v1.grants import GrantIn
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals import service
 from ssc_control.approvals.service import ApprovalRefusedError, ApprovalRow, Decider
+from ssc_control.connections import service as connections
 from ssc_control.domain.approval_rules import (
     ApprovalState,
     GrantKey,
     Requirement,
     RequirementKind,
     agent_share_subject_key,
+    exceed_subject_key,
     share_subject_key,
 )
 
@@ -92,13 +94,13 @@ class ApprovalCreate(Strict):
     subject_key: str | None = Field(
         default=None,
         max_length=300,
-        description="The connection name or host. Derived by the server for `widen_audience` "
-        "and `agent_share`; when sent for those it must match.",
+        description="The connection name or host. Derived by the server for `widen_audience`, "
+        "`agent_share` and `exceed_ceiling`; when sent for those it must match.",
     )
     payload: dict[str, Any] = Field(
         default_factory=dict[str, Any],
         description="`widen_audience`: `{grants}`. `agent_share`: `{grants_version, grants}`. "
-        "Others: `{}`.",
+        "`exceed_ceiling`: `{connection, grants}`. Others: `{}`.",
     )
 
 
@@ -122,6 +124,11 @@ class _WidenPayload(Strict):
 
 class _AgentSharePayload(Strict):
     grants_version: int = Field(ge=1)
+    grants: list[GrantIn] = Field(max_length=200)
+
+
+class _ExceedPayload(Strict):
+    connection: Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,62}$")]
     grants: list[GrantIn] = Field(max_length=200)
 
 
@@ -191,6 +198,10 @@ def _requirement(body: ApprovalCreate, grants_version: int) -> tuple[Requirement
                 )
             key = agent_share_subject_key(share.grants_version, _grant_keys(share.grants))
             stored = share.model_dump(mode="json")
+        case RequirementKind.EXCEED_CEILING:
+            exceed = _parse(_ExceedPayload, body.payload)
+            key = exceed_subject_key(exceed.connection, _grant_keys(exceed.grants))
+            stored = exceed.model_dump(mode="json")
         case RequirementKind.CONNECT_DATA_SOURCE:
             key = _named(body, _NAME)
             stored = _parse(_NoPayload, body.payload).model_dump(mode="json")
@@ -238,7 +249,8 @@ def _visible(uow: UnitOfWork, row: ApprovalRow, sees_all: bool) -> bool:
 )
 async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
     """Ask another admin of the org to approve one change to one environment. Allowed to the
-    environment's builders, its app's owner and org admins, agent sessions included."""
+    environment's builders, its app's owner and org admins, agent sessions included. An
+    `exceed_ceiling` request is decided by the named connection's owner or an org admin."""
     require_user(uow)
     version = (
         await uow.conn.execute(_SELECT_ENV, {"org": uow.org_id, "env": body.environment_id})
@@ -247,6 +259,10 @@ async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": body.environment_id})
     by = await require_builder(uow, body.environment_id)
     requirement, payload = _requirement(body, int(version))
+    if requirement.kind is RequirementKind.EXCEED_CEILING:
+        named = str(payload["connection"])
+        if await connections.get(uow.conn, uow.org_id, named) is None:
+            raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": named})
     row, created = await service.request(
         uow.conn,
         org_id=uow.org_id,

@@ -82,6 +82,11 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "github_installation": frozenset({"installation_id"}),
     "repo_link": frozenset({"installation_id", "repository_id", "branch", "required_checks"}),
     "egress_host": frozenset({"host", "high_risk", "approval_request_id"}),  # SSC-053
+    "connection": frozenset(
+        {"name", "classification", "ceiling", "setup_status", "status", "owner_user_id"}
+        | {"allowed_schemas"}
+    ),  # SSC-052: ceiling is "org" or "group:<id>" and "user:<id>" entries, never an object
+    "connection_grant": frozenset({"connection_id", "environment_id", "over_ceiling_since"}),
     "warm": frozenset({"environment_ids", "gateway", "monthly_usd_shown"}),
 }
 

@@ -95,6 +95,8 @@ class ErrorCode(StrEnum):
     REPOSITORY_NOT_INSTALLED = "REPOSITORY_NOT_INSTALLED"
     REQUIRED_CHECKS_FAILING = "REQUIRED_CHECKS_FAILING"
     GITHUB_UNAVAILABLE = "GITHUB_UNAVAILABLE"
+    # connections (SSC-052)
+    CEILING_REQUIRED = "CEILING_REQUIRED"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -411,6 +413,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "GitHub cannot be reached right now.",
         "The platform could not reach GitHub, or the GitHub App is not set up here, so nothing "
         "was changed. Retry later.",
+    ),
+    ErrorCode.CEILING_REQUIRED: CatalogueEntry(
+        422,
+        "This connection needs an audience ceiling.",
+        "A confidential or restricted connection must say the widest audience an app using it may "
+        "have, for example one group. Send a ceiling with it and retry.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

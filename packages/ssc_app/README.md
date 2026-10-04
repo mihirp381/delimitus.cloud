@@ -58,3 +58,17 @@ files.delete("photos/cat.png")
 ```
 
 Each environment has its own files: at most 25 MB each and 1 GB together. A name is `/`-separated segments of `A-Z a-z 0-9 . _ -`, each starting with a letter or digit. A link lasts 10 minutes, and a download always arrives as an attachment, never shown as a page. Upload from the server: the bucket allows no browser-direct upload. Files are not scanned for viruses. Errors are `FilesError` with the data gateway's `code` (`FILE_NOT_FOUND`, `FILES_QUOTA_EXCEEDED`, `APP_NOT_ACTIVE`, ...), `STORAGE_<status>` or `UNREACHABLE`; the data gateway starts from zero, so a call to it is tried once more on a timeout, a lost connection or a 502, 503 or 504. The gateway's address comes from the metadata server (`SSC_DATAGW_URL` replaces it). The Node helper `@delimitus/ssc-files` has the same names, with `remove` for `delete`. Contract: `docs/contracts/data-gateway.md#files`.
+
+## Company data
+
+Name a connection in `[connections] names` in `ssc.toml`; an org admin grants the environment that connection. `ssc_app.data.query` sends one read-only statement to the cell's data gateway with the app's own ID token; the app holds no database credentials. No extra dependency.
+
+```python
+from ssc_app import data
+
+result = data.query("finance", "select id, total from invoices where year = $1", [2026])
+for row in result.rows:  # a list in column order
+    ...
+```
+
+`max_rows`, `max_bytes` and `timeout_ms` only narrow what the platform, the connection and the grant allow; `result.truncated` and `result.truncated_reason` say the gateway stopped reading early. To act for the signed-in user pass the request's `X-SSC-Identity` value as `identity=`; without it the app acts for itself. A decimal is a string and a timestamp is ISO 8601. Errors are `DataError` with the data gateway's `code` (`CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`, `QUERY_REFUSED`, `QUERY_FAILED` with a `sqlstate`, `DAILY_BUDGET_SPENT`, ...) or `UNREACHABLE`; a query is tried once more on a lost connection or a 502, 503 or 504, and one that timed out is not. The Node helper `@delimitus/ssc-data` has the same names with `maxRows`, `maxBytes` and `timeoutMs`. Contract: `docs/contracts/data-gateway.md`.

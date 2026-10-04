@@ -71,7 +71,12 @@ _READ_ORG = text(
     "order by c.environment_id, c.created_at, c.credential_id), '[]') from (select k.*, "
     "row_number() over (partition by k.environment_id order by k.created_at desc, "
     "k.credential_id desc) as n from ssc.egress_credential k where k.org_id = :org) c "
-    "where c.n <= :keep)"
+    "where c.n <= :keep), "
+    "(select coalesce(jsonb_agg(jsonb_build_array(k.id, k.name, k.status, k.limits, "
+    "(select coalesce(jsonb_agg(jsonb_build_array(g.environment_id, g.limits) "
+    "order by g.environment_id), '[]') from ssc.connection_grant g "
+    "where g.org_id = k.org_id and g.connection_id = k.id)) order by k.name collate \"C\"), '[]') "
+    "from ssc.connection k where k.org_id = :org and k.setup_status = 'ready')"
 )
 
 
@@ -98,6 +103,22 @@ def _egress(hosts: list[str], credentials: list[list[str]]) -> dict[str, Any] | 
     return {"hosts": hosts, "credentials": by_env}
 
 
+def _connections(linked: list[list[Any]]) -> dict[str, Any] | None:
+    """The data gateway's member: each ready connection with the environments granted it, or
+    None (left out of the document) while no connection is ready."""
+    if not linked:
+        return None
+    return {
+        name: {
+            "connection_id": con_id,
+            "status": status,
+            "limits": limits or None,
+            "grants": {env_id: {"limits": env_limits or None} for env_id, env_limits in grants},
+        }
+        for con_id, name, status, limits, grants in linked
+    }
+
+
 def _longer_timeout(seconds: int | None) -> int | None:
     """An environment's stored request timeout when it is longer than the request-billed one;
     None, which the document leaves out and a reader takes as that figure, otherwise."""
@@ -109,7 +130,7 @@ async def compile_document(
 ) -> SnapshotDoc:
     """The org's snapshot as of one read. Pure reads in ``conn``'s org-bound transaction."""
     read = {"org": org_id, "keep": MAX_CREDENTIALS}
-    envs, grants, users, members, egress_hosts, credentials = (
+    envs, grants, users, members, egress_hosts, credentials, linked = (
         await conn.execute(_READ_ORG, read)
     ).one()
     environments: dict[str, Any] = {
@@ -149,6 +170,7 @@ async def compile_document(
                 for user_id, status, not_before in users
             },
             "ceiling": None,
+            "connections": _connections(linked),
             "egress": _egress(egress_hosts, credentials),
         }
     )

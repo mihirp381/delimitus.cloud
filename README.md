@@ -29,6 +29,7 @@ The place where AI-built internal apps run, and the rules they run under. Produc
 | `helpers/node/ssc-identity` | Node verifier for the identity note, zero dependencies, `npm test` runs the shared vectors. | SSC-020 |
 | `helpers/node/ssc-reconnect` | Node reconnect helper and the browser client `browser.js`, zero dependencies; `npm test` runs the shared vectors and holds a stream across a shortened limit. | SSC-090 |
 | `helpers/node/ssc-files` | Node file helper over the file broker, zero dependencies; `npm test` runs it against a local stand-in for the metadata server, the data gateway and Cloud Storage. | SSC-046 |
+| `helpers/node/ssc-data` | Node query helper over the data gateway, zero dependencies; `npm test` runs it against a local stand-in for the metadata server and the data gateway. | SSC-052 |
 | `console/` | Admin console (decision 018): React 19, Vite 8, TanStack Router and Query, a client generated from `docs/api/openapi.json`, `--ssc-*` tokens, Vitest and a Playwright smoke test against the API in Docker. See `console/README.md`. | SSC-057 |
 | `.github/actions/ssc-deploy` | GitHub Action: deploys a folder to an app's preview with `ssc deploy` and outputs `preview-url`, `release-id` and `operation-id` (decision 017). CI job `action` runs it against the dev stack. | SSC-023 |
 | `infra/` | Pulumi in Python: the `platform` stack and one `c-<cell label>` stack per cell, plus the done-when checks. | SSC-013 |
@@ -60,6 +61,7 @@ uv run python gates/run_gates.py
 (cd helpers/node/ssc-identity && npm test)   # Node 22+
 (cd helpers/node/ssc-reconnect && npm test)  # Node 22+
 (cd helpers/node/ssc-files && npm test)      # Node 22+
+(cd helpers/node/ssc-data && npm test)       # Node 22+
 uv run python tools/npm_lock_age_check.py      # console/package-lock.json
 (cd console && npm ci && npm run typecheck && npm test && npm run build)   # Node 22.22.2+, 24.15+ or 26+
 ```

@@ -437,6 +437,30 @@ class PolicyResult(Shape):
     how_to_ask_for_a_package: str
 
 
+class ConnectionRow(Shape):
+    """One data connection. ``ceiling`` is ``org`` or ``group:<id>`` and ``user:<id>`` entries;
+    ``over_ceiling_since`` is set for an environment's connection whose audience is now wider
+    than the ceiling."""
+
+    name: str
+    classification: str
+    ceiling: list[str]
+    setup_status: str
+    status: str
+    over_ceiling_since: str | None
+
+
+class ConnectionsResult(Shape):
+    """``connections``: the org's connections the caller may see, or with an app the ones one of
+    its environments may reach (``app_id``, ``slug`` and ``environment`` are then set)."""
+
+    api_url: str
+    app_id: str | None
+    slug: str | None
+    environment: str | None
+    connections: list[ConnectionRow]
+
+
 class ErrorResult(Shape):
     error: ErrorBody
 
@@ -490,5 +514,7 @@ SHAPES: dict[str, type[BaseModel]] = {
         PolicyApprovalRow,
         PolicyDatabaseRow,
         PolicyResult,
+        ConnectionRow,
+        ConnectionsResult,
     )
 }

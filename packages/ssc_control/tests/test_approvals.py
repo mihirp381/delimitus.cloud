@@ -1040,6 +1040,8 @@ def test_the_deployment_policy_shows_only_what_the_caller_may_see(
         "name": "finance",
         "kind": "postgres",
         "classification": "confidential",
+        "owner_user_id": None,
+        "ceiling": {"audience": "org", "subjects": []},
     }
     assert full["hosts"][0] == {
         "host": "api.mine.example",

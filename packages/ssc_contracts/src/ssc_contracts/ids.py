@@ -14,6 +14,7 @@ Prefix = Literal[
     "sec",  # secret reference
     "sch",  # schedule (also the subject of a schedule-principal identity note)
     "con",  # connection to a company database
+    "cgr",  # connection grant (one environment's use of one connection)
     "apr",  # approval request
     "pol",  # policy decision
     "cell",  # customer cell

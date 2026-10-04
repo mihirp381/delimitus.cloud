@@ -8,6 +8,7 @@ from ssc_cli import __version__
 from ssc_cli.commands._common import session
 from ssc_cli.commands.access import access_app
 from ssc_cli.commands.apps import apps_app
+from ssc_cli.commands.connections import connections
 from ssc_cli.commands.deploy import deploy
 from ssc_cli.commands.doctor import doctor
 from ssc_cli.commands.init import init
@@ -75,6 +76,7 @@ app.command()(unshare)
 app.command()(doctor)
 app.command()(requirements)
 app.command()(policy)
+app.command()(connections)
 app.command()(init)
 app.command()(deploy)
 app.command()(releases)

@@ -24,6 +24,10 @@ The body is JSON, at most 1 MB, with no other member:
 
 The three asks only narrow what the platform, the connection and the grant allow (Limits, below).
 
+## Calling it from an app
+
+`ssc_app.data.query(name, sql, params=(), *, max_rows=None, max_bytes=None, timeout_ms=None, identity=None)` (Python) and `query(name, sql, params, { maxRows, maxBytes, timeoutMs, identity })` of `@delimitus/ssc-data` (Node, SSC-052) make this request: they find the gateway from the metadata server (`SSC_DATAGW_URL` replaces it), send the app's workload token, forward `identity` as `X-SSC-Identity` when given, and return `columns`, `rows`, `row_count`, `truncated`, `truncated_reason` and `request_id`. A refusal is a `DataError` carrying the code below and, for `QUERY_FAILED`, the `sqlstate`. A call is tried once more on a lost connection or a 502, 503 or 504, not on a timeout. Which environments may call which connection is the grants of `ssc.connection_grant` (`docs/runbooks/ssc-052-first-connection.md`): the snapshot admits only `ready` connections.
+
 ## Response
 
 `200`:

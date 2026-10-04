@@ -30,6 +30,7 @@ class RequirementKind(StrEnum):
     CONNECT_DATA_SOURCE = "connect_data_source"
     ENABLE_INTERNET_HOSTS = "enable_internet_hosts"
     AGENT_SHARE = "agent_share"
+    EXCEED_CEILING = "exceed_ceiling"
 
 
 DEPLOY_KINDS: Final = frozenset(
@@ -100,6 +101,12 @@ def agent_share_subject_key(base_version: int, after: Iterable[GrantKey]) -> str
     return _digest({"grants_version": base_version, "grants": _sorted(after)})
 
 
+def exceed_subject_key(connection: str, after: Iterable[GrantKey]) -> str:
+    """The ``exceed_ceiling`` key: the connection's name and the whole desired set, in any
+    order, so an approval covers exactly one audience for one connection."""
+    return _digest({"connection": connection, "grants": _sorted(after)})
+
+
 def widens(before: Collection[GrantKey], after: Collection[GrantKey]) -> bool:
     """A new subject (user, group or the org) gains access, or an org-wide grant is added."""
     subjects_before = {(kind, sid) for _, kind, sid in before}
@@ -134,20 +141,24 @@ def agent_share_needs_approval(
     return Requirement(RequirementKind.AGENT_SHARE, agent_share_subject_key(base_version, after))
 
 
-def check_decider(
+def check_decider(  # noqa: PLR0913  (the owner is keyword-only)
     requester_id: str,
     decider_id: str,
     decider_role: str | None,
     decider_active: bool,
     via_agent: bool,
+    *,
+    connection_owner_id: str | None = None,
 ) -> DeciderRefusal | None:
     """Why this person may not decide, or None. Checked in this order: an agent session, then
-    self-approval, then eligibility (an active org admin; ``decider_role`` None when unknown)."""
+    self-approval, then eligibility (an active org admin; ``decider_role`` None when unknown).
+    For an ``exceed_ceiling`` request the caller passes the connection's owner, who may decide
+    too while active."""
     if via_agent:
         return "agent_session"
     if decider_id == requester_id:
         return "self_approval"
-    if decider_role != "admin" or not decider_active:
+    if not decider_active or (decider_role != "admin" and decider_id != connection_owner_id):
         return "not_eligible"
     return None
 

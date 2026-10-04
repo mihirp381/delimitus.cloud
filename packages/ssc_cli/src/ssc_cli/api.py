@@ -48,9 +48,11 @@ from ssc_cli.models import (
     BuildOut,
     BundleCreate,
     BundleOut,
+    ConnectionsOut,
     DatabaseOut,
     DeploymentCreate,
     DeploymentPolicy,
+    EnvironmentConnectionsOut,
     GrantIn,
     GrantsIn,
     GrantsOut,
@@ -152,6 +154,17 @@ class ApiClient:
 
     def deployment_policy(self) -> DeploymentPolicy:
         return _parse(self._send("GET", "/v1/org/deployment-policy"), DeploymentPolicy)
+
+    def list_connections(self) -> ConnectionsOut:
+        """The data connections the caller may see."""
+        return _parse(self._send("GET", "/v1/connections"), ConnectionsOut)
+
+    def environment_connections(
+        self, app_id: str, environment_id: str
+    ) -> EnvironmentConnectionsOut:
+        """The connections one environment may reach, of those the caller may see."""
+        path = f"/v1/apps/{_seg(app_id)}/environments/{_seg(environment_id)}/connections"
+        return _parse(self._send("GET", path), EnvironmentConnectionsOut)
 
     def list_apps(self, *, mine: bool = False) -> AppList:
         """Every app of the org, or with ``mine`` only those the caller may deploy to."""

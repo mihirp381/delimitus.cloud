@@ -130,6 +130,8 @@ jobs:
         working-directory: helpers/node/ssc-reconnect
       - run: npm test
         working-directory: helpers/node/ssc-files
+      - run: npm test
+        working-directory: helpers/node/ssc-data
 
   console:
     runs-on: ubuntu-24.04

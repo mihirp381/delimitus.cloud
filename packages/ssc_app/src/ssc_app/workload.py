@@ -8,8 +8,8 @@
 The token comes from Cloud Run's metadata server and must be asked for with ``format=full``:
 without it Google leaves out ``email`` and ``email_verified``, and the data gateway, which knows
 the app environment only by its service account's email, refuses every query. A token is reused
-until five minutes before it expires. The gateway's URL and ``ssc_app.data.query`` arrive with
-SSC-052; this is the part that must ask for the token correctly.
+until five minutes before it expires. ``ssc_app.data.query`` and ``ssc_app.files`` find the
+gateway and send it; this is the part that must ask for the token correctly.
 """
 
 import base64
