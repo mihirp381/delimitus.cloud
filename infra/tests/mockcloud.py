@@ -38,6 +38,12 @@ def entry_address(project_id: str) -> str:
     return f"34.{crc >> 16 & 255}.{crc >> 8 & 255}.{crc & 255}"
 
 
+def nat_address(project_id: str) -> str:
+    """A different fixed outbound address for each project, as the cloud would assign."""
+    crc = zlib.crc32(project_id.encode())
+    return f"35.{crc >> 16 & 255}.{crc >> 8 & 255}.{crc & 255}"
+
+
 class Recorder(pulumi.runtime.Mocks):
     def __init__(self, platform_outputs: dict[str, Any] | None = None) -> None:
         self.declared: list[Declared] = []
@@ -89,6 +95,8 @@ class Recorder(pulumi.runtime.Mocks):
                 state.get("addressType") != "INTERNAL"
             ):
                 state["address"] = entry_address(project)
+            case "gcp:compute/address:Address" if state.get("addressType") == "EXTERNAL":
+                state["address"] = nat_address(project)
             case "gcp:certificatemanager/dnsAuthorization:DnsAuthorization":
                 state["dnsResourceRecords"] = [
                     {
@@ -158,6 +166,7 @@ def as_export(
     outputs: dict[str, Any] = {
         "project_number": project_number(project),
         "entry_address": entry_address(project),
+        "nat_ip": nat_address(project),
     }
     if flags is not None:
         outputs["flags"] = flags

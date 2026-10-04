@@ -10,9 +10,10 @@ load balancer address, certificate authorisation record) and its customer's sett
 pointing at another cell's address still shows; so do the database's DNS name and private
 address, and the IDs of the cell's connection tag (SSC-051). The connections the data gateway
 mounts (``datagw_connections``) are the customer's own too and are left out. Where the stacks'
-``flags`` output differ, the lazy resources of a differing flag, the
-agent's ``SSC_SQL_INSTANCE`` for ``database`` and the gateway's minimum (``gateway_min``,
-``warm``) are left out. Prints each difference; exit 1 if there is any.
+``flags`` output differ, the lazy resources of a differing flag, the proxy's resources for
+``proxy_ha`` (``naming.PROXY_HA_RESOURCES``), the agent's ``SSC_SQL_INSTANCE`` for ``database``
+and the gateway's minimum (``gateway_min``, ``warm``) are left out. The proxy template's name is
+assigned by the cloud. Prints each difference; exit 1 if there is any.
 
 Then, for each cell, the organisation policies in force (SSC-095): the table the platform stack
 applied to the ``ssc-cells`` folder (its ``cell_policies`` output), and what would weaken it there
@@ -103,6 +104,7 @@ ASSIGNED_KEYS: Final = frozenset(
 )
 ASSIGNED_PATHS: Final = {
     "gcp:billing/budget:Budget": frozenset({"out.name"}),
+    "gcp:compute/instanceTemplate:InstanceTemplate": frozenset({"out.name"}),
     "gcp:certificatemanager/certificate:Certificate": frozenset(
         {"out.managed.authorizationAttemptInfos", "out.managed.provisioningIssues"}
     ),
@@ -122,6 +124,7 @@ FLAG_DEFAULTS: Final[dict[str, Json]] = {
     "connections": False,
     "gateway_min": 0,
     "warm": False,
+    "proxy_ha": False,
 }
 IPV4: Final = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 OWN_SETTINGS: Final = {
@@ -193,7 +196,10 @@ def _own_values(state: Json, label: str) -> Swaps:
         if settings.get(key)
     ]
     found += [(label, "<cell>"), (str(outputs.get("project_number") or ""), "<number>")]
-    addresses = [(str(outputs.get("entry_address") or ""), "<entry-address>")]
+    addresses = [
+        (str(outputs.get("entry_address") or ""), "<entry-address>"),
+        (str(outputs.get("nat_ip") or ""), "<nat-address>"),
+    ]
     for res in state["deployment"].get("resources", []):
         assigned: Mapping[str, Json] = res.get("outputs", {})
         if res["type"] == DNS_AUTHORIZATION:
@@ -237,7 +243,7 @@ def normalise(state: Json, label: str) -> dict[str, Flat]:
 
 
 def flags(state: Json) -> dict[str, Json]:
-    """The five stack flags as the stack exported them; a stack without them has the defaults."""
+    """The stack flags as the stack exported them; a stack without them has the defaults."""
     return FLAG_DEFAULTS | dict(_stack_outputs(state).get("flags") or {})
 
 
@@ -253,6 +259,8 @@ def _customers(key: str, path: str) -> bool:
 def _flagged(key: str, path: str, flags_differ: Sequence[str]) -> bool:
     """Whether a differing flag names this resource, or this path of it."""
     if any(key in n.LAZY_RESOURCES.get(f, ()) for f in flags_differ):
+        return True
+    if "proxy_ha" in flags_differ and key in n.PROXY_HA_RESOURCES:
         return True
     if "database" in flags_differ and key == n.AGENT_SERVICE:
         return f".envs.{n.SQL_INSTANCE_ENV}." in f"{path}."

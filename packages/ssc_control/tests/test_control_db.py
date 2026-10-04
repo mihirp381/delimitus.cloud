@@ -862,6 +862,51 @@ def test_a_cell_resource_row_is_consistent(dsns: Dsns, orgs: tuple[SeededOrg, Se
         assert refused(dsns.app, a.org, sql, (a.org, a.admin)) == CHECK_VIOLATION
 
 
+# ── egress (SSC-053, revision 0029) ──────────────────────────────────────────
+
+EGRESS_HOST = "insert into ssc.egress_host (org_id, host, added_by_user_id) values (%s, %s, %s)"
+EGRESS_CREDENTIAL = (
+    "insert into ssc.egress_credential (org_id, environment_id, credential_id, sha1, "
+    "secret_version) values (%s, %s, %s, %s, %s)"
+)
+SHA1_DIGEST = "A" * 27 + "="
+
+
+def test_egress_rows_are_checked_and_stay_in_their_org(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, b = orgs
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, a.org)
+        conn.execute(EGRESS_HOST, (a.org, "api.stripe.com", a.admin))
+        conn.execute(EGRESS_HOST, (a.org, "*.atlassian.net", a.admin))
+        conn.execute(EGRESS_CREDENTIAL, (a.org, a.env, "abcdefghij12", SHA1_DIGEST, "1"))
+    long_host = ".".join(["a" * 60] * 5)
+    for host in ("API.stripe.com", "stripe", "*.*.x.com", "a.*.x.com", "x.com:443", long_host):
+        assert refused(dsns.app, a.org, EGRESS_HOST, (a.org, host, a.admin)) == CHECK_VIOLATION
+    bad = (
+        ("short", SHA1_DIGEST, "1"),
+        ("abcdefghij13", "x", "1"),
+        ("abcdefghij13", SHA1_DIGEST, "0"),
+    )
+    for cred in bad:
+        row = (a.org, a.env, *cred)
+        assert refused(dsns.app, a.org, EGRESS_CREDENTIAL, row) == CHECK_VIOLATION
+    again = (a.org, "api.stripe.com", a.admin)
+    assert refused(dsns.app, a.org, EGRESS_HOST, again) == UNIQUE_VIOLATION
+    assert run(dsns.app, b.org, "select host from ssc.egress_host") == []
+    assert run(dsns.app, b.org, "select credential_id from ssc.egress_credential") == []
+    foreign = (a.org, "x.example.com", a.admin)
+    assert refused(dsns.app, b.org, EGRESS_HOST, foreign) == INSUFFICIENT_PRIVILEGE
+    borrowed = (b.org, a.env, "abcdefghij14", SHA1_DIGEST, "1")
+    assert refused(dsns.app, b.org, EGRESS_CREDENTIAL, borrowed) == FOREIGN_KEY_VIOLATION
+    update = "update ssc.egress_host set host = 'x.example.com' where org_id = %s"
+    assert refused(dsns.app, a.org, update, (a.org,)) == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.migrate, a.org, "truncate ssc.egress_host") == SqlState.TRUNCATE_REFUSED
+    delete = "delete from ssc.egress_host where org_id = %s and host = 'api.stripe.com' returning 1"
+    assert run(dsns.app, a.org, delete, (a.org,)) == [(1,)]
+
+
 # ── timers (SSC-041, revision 0013) ──────────────────────────────────────────
 
 ARMED_SCHEDULE = (

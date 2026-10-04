@@ -29,6 +29,7 @@ from ssc_control.ports import (
     TimersPort,
 )
 from ssc_control.runtime.app_databases import AppDatabases
+from ssc_control.runtime.cell_egress import CellEgress
 from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
 from ssc_control.runtime.specs import NoReleaseSpecs, ReleaseSpecs
 from ssc_control.timers.dispatch import ScheduleDispatcher
@@ -57,7 +58,8 @@ class Ports:
     ``app_identity`` None gives apps no identity keys and no origin (SSC-018). ``directory`` None
     skips the directory sync (SSC-064). ``cell_usage`` None skips the usage collection and records
     no usage events (SSC-028). ``github`` None leaves a push job with nothing to do (SSC-047);
-    ``apps_domain`` makes the preview address it reports."""
+    ``apps_domain`` makes the preview address it reports. ``cell_egress`` None deploys an app
+    that declares outbound hosts with no proxy credential, so it reaches none (SSC-053)."""
 
     engine: AsyncEngine
     runtime_driver: RuntimeDriver | None = None
@@ -78,6 +80,7 @@ class Ports:
     cell_usage: CellUsage | None = None
     github: GitHubApp | None = None
     apps_domain: str = APPS_DOMAIN
+    cell_egress: CellEgress | None = None
 
 
 class PortsMissingError(RuntimeError):

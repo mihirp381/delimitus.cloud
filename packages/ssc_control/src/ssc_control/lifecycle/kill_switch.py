@@ -15,8 +15,10 @@ transaction locks the run's row and checks ``steps`` is still what it read. The 
    instead of holding a worker.
 2. ``datagw_suspend`` is the same version: the data gateway (SSC-050) reads it on demand, so it
    refuses each of the app's connections with ``APP_NOT_ACTIVE`` and its kill watch ends the
-   queries already running; the version confirms it. 3. ``egress_remove`` does nothing yet
-   (SSC-053); the same version confirms it.
+   queries already running; the version confirms it.
+3. ``egress_remove`` is the same version: the egress proxy (SSC-053) polls it and drops the
+   credentials of the app's environments, and its drain closes their open tunnels within
+   ``ssc_contracts.egress.DRAIN_SECONDS``; the version confirms it.
 4. ``scale_to_zero`` stops each environment, prod first, in a job holding that environment's
    lock; ``observe`` must then report it stopped or gone.
 5. ``pause_timers`` pauses the app's schedules and keeps their ids for ``enable``.

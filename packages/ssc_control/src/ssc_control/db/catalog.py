@@ -39,6 +39,9 @@ Revision 0024 adds a column only (SSC-090): ``environment.request_timeout_second
 Revision 0028 adds ``github_installation`` (SSC-047), keyed by the GitHub installation id, and
 ``repo_link``, keyed by org and app, so both are in ``UNKEYED_TABLES``: ids, a repository name
 and a branch, never a GitHub token or key.
+Revision 0029 adds ``egress_host`` and ``egress_credential`` (SSC-053), keyed by org and host
+and by org, environment and credential, so both are in ``UNKEYED_TABLES``: the allowlist and
+digests of proxy tokens, never a token.
 """
 
 from collections.abc import Mapping
@@ -87,6 +90,8 @@ TABLES: Final[frozenset[str]] = frozenset(
         "usage_collection",
         "github_installation",
         "repo_link",
+        "egress_host",  # SSC-053, revision 0029
+        "egress_credential",  # SSC-053, revision 0029
     }
 )
 
@@ -111,6 +116,8 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "usage_collection",
         "github_installation",
         "repo_link",
+        "egress_host",
+        "egress_credential",
     }
 )
 
@@ -167,6 +174,8 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "usage_collection": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "github_installation": frozenset({"SELECT", "INSERT"}),
     "repo_link": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
+    "egress_host": frozenset({"SELECT", "INSERT", "DELETE"}),  # an admin removes a host
+    "egress_credential": frozenset({"SELECT", "INSERT", "DELETE"}),  # older ones pruned
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

@@ -60,9 +60,6 @@ PULUMI_ENV: Final = {
 STALE_LOCK: Final = timedelta(hours=3)
 IMPORT_IDS: Final = {
     "gcp:sql/databaseInstance:DatabaseInstance::sql": "projects/{project}/instances/ssc-cell",
-    "gcp:compute/instanceTemplate:InstanceTemplate::proxy-template": (
-        "projects/{project}/global/instanceTemplates/ssc-proxy"
-    ),
     "gcp:compute/instanceGroupManager:InstanceGroupManager::proxy": (
         f"projects/{{project}}/zones/{PROXY_ZONE}/instanceGroupManagers/ssc-proxy"
     ),

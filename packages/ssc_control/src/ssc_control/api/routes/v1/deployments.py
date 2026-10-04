@@ -274,6 +274,7 @@ _SELECT_BUILD = text(
     "where b.org_id = :org and b.id = :id"
 )
 _SELECT_CONNECTION_NAMES = text("select name from ssc.connection where org_id = :org")
+_SELECT_EGRESS_HOSTS = text("select host from ssc.egress_host where org_id = :org")
 _RELEASE_COLUMNS = (
     "select r.id as release_id, r.number, r.image_digest, r.manifest_digest, r.source_digest, "
     "r.source_commit, b.environment_id as built_for_environment_id, r.created_at, "
@@ -336,15 +337,20 @@ async def _environment(uow: UnitOfWork, app_id: str, environment_id: str) -> Row
 
 
 async def _capability_diff(uow: UnitOfWork, manifest: object) -> CapabilityDiff:
-    """The manifest against the environment: the org's connections by name; no Postgres until
-    SSC-040 and no egress allow-list until SSC-053."""
+    """The manifest against the environment: the org's connections by name and its egress
+    allowlist (SSC-053); no Postgres until SSC-040."""
     try:
         parsed = Manifest.model_validate(manifest)
     except ValidationError as e:
         raise Refusal(ErrorCode.INTERNAL, evidence={"reason": "stored_manifest_invalid"}) from e
     names = (await uow.conn.execute(_SELECT_CONNECTION_NAMES, {"org": uow.org_id})).scalars()
+    listed = (await uow.conn.execute(_SELECT_EGRESS_HOSTS, {"org": uow.org_id})).scalars()
     return diff_capabilities(
-        parsed, EnvironmentCapabilities(connections=frozenset(str(n) for n in names))
+        parsed,
+        EnvironmentCapabilities(
+            connections=frozenset(str(n) for n in names),
+            egress_hosts=frozenset(str(h) for h in listed),
+        ),
     )
 
 

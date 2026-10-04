@@ -4,10 +4,12 @@ A question is ``(environment, kind, subject_key)``. At most one request per ques
 (a partial unique index); asking again while one is pending or approved returns that request.
 Deciding locks the request, checks the decider (never an agent session, never the requester,
 always an active org admin), writes a ``policy_decision`` and audits ``approval.decided``. An
-approved internet host or data source turns on the cell's ``egress`` or ``connections`` (SSC-087).
+approved internet host or data source turns on the cell's ``egress`` or ``connections`` (SSC-087),
+and an approved internet host joins the org's egress allowlist (SSC-053).
 """
 
 import json
+import logging
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,6 +34,9 @@ from ssc_control.domain.approval_rules import (
     widening_needs_approval,
     widens,
 )
+from ssc_control.egress import allowlist
+
+log = logging.getLogger(__name__)
 
 DecisionChannel = Literal["email", "chat", "console"]
 DecisionOutcome = Literal["approved", "denied"]
@@ -355,6 +360,8 @@ async def decide(
         await on_approval(
             conn, org_id=org_id, kind=decided.kind, actor=actor, policy_decision_id=pol_id
         )
+        if decided.kind is RequirementKind.ENABLE_INTERNET_HOSTS:
+            await _allow_host(conn, org_id, decided, actor, pol_id)
     await append_event(
         conn,
         NewEvent(
@@ -369,6 +376,27 @@ async def decide(
         ),
     )
     return decided
+
+
+async def _allow_host(
+    conn: AsyncConnection, org_id: str, decided: ApprovalRow, actor: Actor, pol_id: str
+) -> None:
+    """An approved internet host joins the org's allowlist (SSC-053). One the allowlist cannot
+    take (not a pattern it accepts, or the list is full) leaves the approval standing; the
+    deploy's capability diff then still names it."""
+    try:
+        await allowlist.allow(
+            conn,
+            org_id=org_id,
+            host=decided.subject_key,
+            actor=actor,
+            approval_request_id=decided.id,
+            policy_decision_id=pol_id,
+        )
+    except allowlist.EgressHostError as exc:
+        log.warning(
+            "approved host not allowed", extra={"approval_id": decided.id, "error": str(exc)}
+        )
 
 
 async def data_connected(

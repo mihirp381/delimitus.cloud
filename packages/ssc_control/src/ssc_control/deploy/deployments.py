@@ -14,11 +14,16 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    transaction there: the cell agent makes the database outside it (SSC-040), the database and
    its secret versions are recorded, and the claim runs again. A full instance fails the
    deployment with ``DB_TIER_FULL`` before anything is created; an unreachable one with
-   ``DATABASE_UNAVAILABLE``. The first claim copies the environment's secret versions onto the
-   deployment (``secret_refs``, SSC-026); a rerun keeps the copy, so the spec never changes
-   under it. A release whose request timeout (``ssc_shared.runtime.timeout_for``) is shorter
-   than the live release's, or than the environment's ``request_timeout_seconds``, lowers that
-   column and asks for the access snapshot that carries it (SSC-090). For an environment with a
+   ``DATABASE_UNAVAILABLE``. A manifest with ``[egress] hosts`` whose environment has no proxy
+   credential yet ends the transaction the same way: the cell agent makes one and writes it to
+   the environment's ``HTTPS_PROXY`` secret (SSC-053), the credential and its secret version are
+   recorded, the snapshot that carries it to the proxy is asked for, and the claim runs again;
+   an agent that cannot fails the deployment with ``EGRESS_UNAVAILABLE``. The first claim
+   copies the environment's secret versions onto the deployment (``secret_refs``, SSC-026); a
+   rerun keeps the copy, so the spec never changes under it. A release whose request timeout
+   (``ssc_shared.runtime.timeout_for``) is shorter than the live release's, or than the
+   environment's ``request_timeout_seconds``, lowers that column and asks for the access
+   snapshot that carries it (SSC-090). For an environment with a
    database, the release's migrations join the database's (``ledgers.record_seen``, SSC-043),
    which a later rollback is checked against.
    A ``prod`` deployment of an environment with a database then records a recovery point
@@ -28,8 +33,9 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    the health timeout passes. A deployment another one pre-empted (``superseded``) stops at the
    next poll without touching traffic. So does one whose app stopped (the kill switch): it
    fails with ``APP_NOT_ACTIVE`` and frees ``env:<id>`` within one poll. A deployment that
-   lowered the timeout then waits for the org's cell to confirm that snapshot, so the gateway
-   never tells an app it has longer than the revision serving it allows; unconfirmed within
+   lowered the timeout, or made a proxy credential, then waits for the org's cell to confirm that
+   snapshot, so the gateway never tells an app it has longer than the revision serving it allows
+   and the proxy knows the credential before traffic moves; unconfirmed within
    ``confirm_within`` it fails with ``SNAPSHOT_UNCONFIRMED``, the pointer and traffic untouched.
    Any end short of going live puts the column back to the live release's timeout, in the
    transaction that records it, if the pointer has not moved, and asks for a snapshot.
@@ -49,7 +55,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Literal
 
 from sqlalchemy import text
@@ -67,6 +73,7 @@ from ssc_control.runtime.app_databases import (
     database_of,
     record_database,
 )
+from ssc_control.runtime.cell_egress import CellEgressError, has_credential, record_credential
 from ssc_control.runtime.driver import (
     EnvironmentRow,
     ReleaseRow,
@@ -95,6 +102,7 @@ RUNTIME_ERROR: Final = "RUNTIME_ERROR"
 DB_TIER_FULL: Final = "DB_TIER_FULL"
 DATABASE_UNAVAILABLE: Final = "DATABASE_UNAVAILABLE"
 SNAPSHOT_UNCONFIRMED: Final = "SNAPSHOT_UNCONFIRMED"
+EGRESS_UNAVAILABLE: Final = "EGRESS_UNAVAILABLE"
 
 Kind = Literal["deploy", "rollback"]
 type _Verdict = Literal["ready", "unhealthy", "stopped", "preempted", "unconfirmed"]
@@ -210,6 +218,14 @@ class _Ready:
     lowered: _Lowered | None = None
     recovery_point: bool = False
     """A ``prod`` deployment of an environment with a database, with no recovery point yet."""
+    credential_version: int | None = None
+    """The snapshot version carrying a proxy credential this deployment made."""
+
+    @property
+    def confirm_version(self) -> int | None:
+        """The snapshot version the cell must have before traffic moves, if any."""
+        versions = [self.credential_version, None if self.lowered is None else self.lowered.version]
+        return max((v for v in versions if v is not None), default=None)
 
 
 def _deployment(deployment_id: str, row: Any) -> _Deployment:
@@ -253,6 +269,12 @@ class _NeedsDatabase:
     policy_decision_id: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _NeedsCredential:
+    deployment: _Deployment
+    policy_decision_id: str | None
+
+
 async def run_deployment(
     ports: Ports, *, org_id: str, deployment_id: str, health: HealthWait | None = None
 ) -> str:
@@ -260,6 +282,8 @@ async def run_deployment(
     ready = await _claim(ports, org_id, deployment_id)
     if isinstance(ready, _NeedsDatabase):
         ready = await _make_database(ports, org_id, deployment_id, ready)
+    if isinstance(ready, _NeedsCredential):
+        ready = await _make_credential(ports, org_id, deployment_id, ready)
     if isinstance(ready, str):
         return ready
     dep, health = ready.deployment, health or HealthWait()
@@ -271,8 +295,8 @@ async def run_deployment(
     except Exception:
         log.exception("runtime call failed", extra={"deployment_id": dep.id})
         return await _fail_after_runtime(ports, org_id, ready, RUNTIME_ERROR)
-    if verdict == "ready" and ready.lowered is not None:
-        verdict = await _confirmed(ports, org_id, ready.lowered.version, health)
+    if verdict == "ready" and ready.confirm_version is not None:
+        verdict = await _confirmed(ports, org_id, ready.confirm_version, health)
     if verdict == "preempted":
         async with bound_org(ports.engine, org_id) as conn:
             await _restore_timeout(conn, ports, org_id, ready)
@@ -285,7 +309,9 @@ async def run_deployment(
     return state
 
 
-async def _claim(ports: Ports, org_id: str, deployment_id: str) -> _Ready | _NeedsDatabase | str:
+async def _claim(
+    ports: Ports, org_id: str, deployment_id: str
+) -> _Ready | _NeedsDatabase | _NeedsCredential | str:
     """Step 1 in one transaction: the ready deployment, or the state it stopped in."""
     async with bound_org(ports.engine, org_id) as conn:
         params = {"org": org_id, "id": deployment_id}
@@ -307,7 +333,7 @@ async def _claim(ports: Ports, org_id: str, deployment_id: str) -> _Ready | _Nee
 
 async def _make_database(
     ports: Ports, org_id: str, deployment_id: str, need: _NeedsDatabase
-) -> _Ready | str:
+) -> _Ready | _NeedsCredential | str:
     """Outside any transaction: the cell agent makes the environment's database; its secret
     versions are recorded and the deployment is claimed again, so it pins them."""
     dep = need.deployment
@@ -328,6 +354,34 @@ async def _make_database(
     if isinstance(ready, _NeedsDatabase):
         raise AssertionError("the app database was just recorded")
     return ready
+
+
+async def _make_credential(
+    ports: Ports, org_id: str, deployment_id: str, need: _NeedsCredential
+) -> _Ready | str:
+    """Outside any transaction: the cell agent makes the environment's proxy credential; it and
+    its secret version are recorded, the snapshot carrying it is asked for, and the deployment is
+    claimed again, so it pins the version and waits for that snapshot before traffic moves."""
+    dep = need.deployment
+    if ports.cell_egress is None:
+        raise AssertionError("_prepare asks for a credential only with cell egress")
+    try:
+        issued = await ports.cell_egress.issue(dep.environment_id)
+    except CellEgressError as exc:
+        log.warning("proxy credential failed", extra={"deployment_id": dep.id, "error": str(exc)})
+        async with bound_org(ports.engine, org_id) as conn:
+            return await _fail(
+                conn, org_id, dep, EGRESS_UNAVAILABLE, policy_decision_id=need.policy_decision_id
+            )
+    async with bound_org(ports.engine, org_id) as conn:
+        await record_credential(
+            conn, org_id=org_id, environment_id=dep.environment_id, issued=issued, actor=dep.actor
+        )
+        version = await ports.snapshot.request(conn, org_id)
+    ready = await _claim(ports, org_id, deployment_id)
+    if isinstance(ready, _NeedsDatabase | _NeedsCredential):
+        raise AssertionError("the proxy credential was just recorded")
+    return ready if isinstance(ready, str) else replace(ready, credential_version=version)
 
 
 async def _record_recovery_point(ports: Ports, org_id: str, dep: _Deployment) -> None:
@@ -351,10 +405,11 @@ async def _record_recovery_point(ports: Ports, org_id: str, dep: _Deployment) ->
 
 async def _prepare(  # noqa: PLR0911  (one return per refusal)
     conn: AsyncConnection, ports: Ports, org_id: str, dep: _Deployment, row: Any
-) -> _Ready | _NeedsDatabase | _Refused | Literal["running"]:
+) -> _Ready | _NeedsDatabase | _NeedsCredential | _Refused | Literal["running"]:
     """The checks before any runtime call: an active app, a manifest, the production gate for
-    ``prod``, a driver, the cell resources the manifest needs, the app database. Then the
-    release's migrations on the database and the pinned secrets."""
+    ``prod``, a driver, the cell resources the manifest needs, the app database, the proxy
+    credential. Then the release's migrations on the database and the pinned secrets. Without
+    cell egress an app with outbound hosts deploys with no proxy, so it reaches none."""
     if row.app_status != "active":
         return _Refused(APP_NOT_ACTIVE)
     try:
@@ -387,6 +442,12 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         if ports.app_databases is None:
             return _Refused(DATABASE_UNAVAILABLE, decision)
         return _NeedsDatabase(dep, decision)
+    if (
+        spec.manifest.egress.hosts
+        and ports.cell_egress is not None
+        and not await has_credential(conn, org_id=org_id, environment_id=dep.environment_id)
+    ):
+        return _NeedsCredential(dep, decision)
     if database is not None:
         await record_seen(
             conn,

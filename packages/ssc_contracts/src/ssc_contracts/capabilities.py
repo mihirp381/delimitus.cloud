@@ -10,6 +10,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from ssc_contracts.egress import pattern_matches
 from ssc_contracts.manifest import Manifest
 
 Severity = Literal["high", "medium", "low"]
@@ -51,7 +52,8 @@ class _Frozen(BaseModel):
 
 
 class EnvironmentCapabilities(_Frozen):
-    """What one environment grants today."""
+    """What one environment grants today. ``egress_hosts`` are allowlist patterns
+    (``ssc_contracts.egress``): ``*.example.com`` grants ``api.example.com``."""
 
     postgres: bool = False
     connections: frozenset[str] = frozenset()
@@ -104,7 +106,7 @@ def diff_capabilities(manifest: Manifest, caps: EnvironmentCapabilities) -> Capa
     found += [
         _change("egress_host_missing", host)
         for host in manifest.egress.hosts
-        if host not in caps.egress_hosts
+        if not any(pattern_matches(p, host) for p in caps.egress_hosts)
     ]
     found += [_change("schedules_declared", s.name) for s in manifest.schedules]
     found.sort(key=lambda c: (SEVERITY_RANK[c.severity], c.kind, c.subject))

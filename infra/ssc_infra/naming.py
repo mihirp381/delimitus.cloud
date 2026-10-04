@@ -52,7 +52,7 @@ GATEWAY: Final = "ssc-gateway"
 CELL_AGENT: Final = "ssc-cell-agent"
 SECRET_INTAKE: Final = "ssc-secret-intake"  # noqa: S105
 DATA_GATEWAY: Final = "ssc-datagw"
-FLAGS: Final = ("database", "egress", "connections", "gateway_min", "warm")
+FLAGS: Final = ("database", "egress", "connections", "gateway_min", "warm", "proxy_ha")
 LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
     "database": frozenset(
         {
@@ -70,6 +70,17 @@ LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
     "connections": frozenset({f"gcp:cloudrunv2/service:Service::{DATA_GATEWAY}"}),
 }
 LAZY_FLAGS: Final = tuple(LAZY_RESOURCES)
+PROXY_HA_RESOURCES: Final = frozenset(
+    {
+        "gcp:compute/instanceTemplate:InstanceTemplate::proxy-template",
+        "gcp:compute/instanceGroupManager:InstanceGroupManager::proxy",
+        "gcp:compute/regionInstanceGroupManager:RegionInstanceGroupManager::proxy-ha",
+        "gcp:compute/regionBackendService:RegionBackendService::proxy-ha",
+        "gcp:compute/forwardingRule:ForwardingRule::proxy-ha",
+    }
+)
+"""What ``proxy_ha`` adds, removes or changes when ``egress`` is on (SSC-053); not lazy, since
+nothing but an operator turns it on."""
 GATEWAY_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{GATEWAY}"
 GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
 AGENT_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{CELL_AGENT}"

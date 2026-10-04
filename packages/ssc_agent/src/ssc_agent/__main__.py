@@ -14,9 +14,13 @@ set once the agent may read the cell's Cloud Monitoring; unset, the agent refuse
 the control plane records no usage events. Connection secrets (SSC-051) need both
 ``SSC_DATA_SA``, the data gateway's service account, and ``SSC_CONNECTION_TAG``, the cell's
 connection tag as ``tagKeys/<n>=tagValues/<n>``; with neither the agent refuses them, and one
-without the other or a malformed tag exits 2.
+without the other or a malformed tag exits 2. Egress proxy credentials (SSC-053) need
+``SSC_PROXY_ADDRESS``, the proxy's reserved internal address; unset, the agent refuses them.
+``SSC_OUTBOUND_IP`` is the cell's fixed outbound address, which ``info`` reports. Either one not
+an IPv4 address exits 2.
 """
 
+import ipaddress
 import logging
 import os
 import re
@@ -33,6 +37,7 @@ from ssc_agent.cloud_logging import LOG_VIEW, CellLogHub, CloudLoggingEntries
 from ssc_agent.cloud_monitoring import CellUsageReader, CloudMonitoringSeries
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_agent.cloud_sql import CloudSqlAdmin
+from ssc_agent.egress import ProxyCredentials
 from ssc_agent.metadata import MetadataAccessTokens
 from ssc_agent.secret_manager import CellSecretCustody, CellSecretWriter, ConnectionSecrets
 from ssc_shared import redaction
@@ -57,6 +62,8 @@ USAGE_SOURCES: Final = ("monitoring",)
 DATA_SA_ENV: Final = "SSC_DATA_SA"
 CONNECTION_TAG_ENV: Final = "SSC_CONNECTION_TAG"
 CONNECTION_TAG: Final = re.compile(r"(tagKeys/[0-9]+)=(tagValues/[0-9]+)")
+PROXY_ADDRESS_ENV: Final = "SSC_PROXY_ADDRESS"
+OUTBOUND_IP_ENV: Final = "SSC_OUTBOUND_IP"
 
 
 class ConfigError(ValueError):
@@ -122,6 +129,18 @@ def connections_from_env(env: Mapping[str, str]) -> ConnectionSecrets | None:
     return ConnectionSecrets(reader=reader, tag_key=m.group(1), tag_value=m.group(2))
 
 
+def ipv4_from_env(env: Mapping[str, str], name: str) -> str | None:
+    """None when unset; ``ConfigError`` for anything but an IPv4 address."""
+    value = env.get(name, "")
+    if not value:
+        return None
+    try:
+        ipaddress.IPv4Address(value)
+    except ValueError:
+        raise ConfigError(f"{name} is not an IPv4 address") from None
+    return value
+
+
 def main() -> int:
     try:
         cell = cell_from_env(os.environ)
@@ -129,6 +148,8 @@ def main() -> int:
         views = log_views_from_env(os.environ)
         usage_source = usage_source_from_env(os.environ)
         connections = connections_from_env(os.environ)
+        proxy_address = ipv4_from_env(os.environ, PROXY_ADDRESS_ENV)
+        outbound_ip = ipv4_from_env(os.environ, OUTBOUND_IP_ENV)
     except ConfigError as exc:
         print(f"ssc-agent: {exc}", file=sys.stderr)  # noqa: T201
         return 2
@@ -138,18 +159,21 @@ def main() -> int:
     builder = None if build is None else CloudBuildDriver(build, tokens)
     driver = CloudRunDriver(cell, tokens)
     custody = CellSecretCustody(cell, tokens, driver.ensure_identity, connections=connections)
+    writer = CellSecretWriter(cell.project, tokens)
     instance = os.environ.get(SQL_INSTANCE_ENV, "")
     databases = None
     if instance:
         sql = CloudSqlAdmin(cell.project, instance, tokens)
-        writer = CellSecretWriter(cell.project, tokens)
         databases = CellAppDatabases(sql, custody, writer)
+    egress = ProxyCredentials(custody, writer, proxy_address=proxy_address, outbound_ip=outbound_ip)
     entries = None if views is None else CloudLoggingEntries(views, tokens)
     series = None if usage_source is None else CloudMonitoringSeries(cell.project, tokens)
     if series is None:
         logging.getLogger(__name__).info("usage reads are off: %s is not set", USAGE_SOURCE_ENV)
     hub = CellLogHub(entries, driver)
-    app = create_app(driver, builder, custody, databases, hub, usage=CellUsageReader(series))
+    app = create_app(
+        driver, builder, custody, databases, hub, usage=CellUsageReader(series), egress=egress
+    )
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
     return 0
 

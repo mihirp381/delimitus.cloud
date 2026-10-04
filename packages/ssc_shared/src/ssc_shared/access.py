@@ -14,7 +14,13 @@ from typing import Final, Literal, Self
 from pydantic import ValidationError
 
 from ssc_contracts.identity import EnvironmentName
-from ssc_contracts.snapshot import GrantRole, SnapshotConnection, SnapshotDoc, SubjectKind
+from ssc_contracts.snapshot import (
+    GrantRole,
+    SnapshotConnection,
+    SnapshotDoc,
+    SnapshotEgress,
+    SubjectKind,
+)
 from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS
 
 Reason = Literal[
@@ -93,12 +99,14 @@ def _index(doc: SnapshotDoc, env_id: str) -> EnvironmentIndex:
 
 class AccessView:
     """A validated snapshot with its lookups built. Immutable once constructed. ``connections``
-    is the data gateway's lookup (SSC-050): name to connection, empty when the document has none."""
+    is the data gateway's lookup (SSC-050): name to connection, empty when the document has none.
+    ``egress`` is the egress proxy's allowlist and credentials (SSC-053), None when it has none."""
 
     __slots__ = (
         "active_users",
         "compiled_at",
         "connections",
+        "egress",
         "environments",
         "groups_by_user",
         "hosts",
@@ -131,6 +139,7 @@ class AccessView:
         self.connections: Mapping[str, SnapshotConnection] = MappingProxyType(
             dict(doc.connections or {})
         )
+        self.egress: SnapshotEgress | None = doc.egress
 
     @classmethod
     def from_document(cls, doc: SnapshotDoc | Mapping[str, object] | bytes | str) -> Self:

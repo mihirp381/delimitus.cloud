@@ -266,6 +266,56 @@ def test_two_connection_names_may_not_share_an_id_or_break_the_name_rule() -> No
         AccessView.from_document(json.dumps(doc(connections={"Sales": connections()["sales"]})))
 
 
+SHA = "qZk+NkcGgWq6PiVxeFDCbJzQ2J0="
+
+
+def egress(**changes: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "hosts": ["api.stripe.com", "*.atlassian.net"],
+        "credentials": {
+            PROD: [
+                {"credential_id": "a" * 12, "sha1": SHA},
+                {"credential_id": "b" * 12, "sha1": SHA},
+            ]
+        },
+    }
+    value.update(changes)
+    return value
+
+
+def test_egress_is_optional_and_reaches_the_view_byte_for_byte() -> None:
+    assert view().egress is None
+    assert "egress" not in SnapshotDoc.model_validate(doc()).model_dump(mode="json")
+    raw = doc(egress=egress())
+    parsed = SnapshotDoc.model_validate(raw)
+    assert canonical_bytes(parsed.model_dump(mode="json")) == canonical_bytes(raw)
+    found = AccessView.from_document(raw).egress
+    assert found is not None
+    assert found.hosts == ("api.stripe.com", "*.atlassian.net")
+    assert [c.credential_id for c in found.credentials[PROD]] == ["a" * 12, "b" * 12]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"hosts": ["10.0.0.1"]},
+        {"hosts": ["a.b.*.com"]},
+        {"hosts": ["api.stripe.com", "api.stripe.com"]},
+        {"hosts": ["api.stripe.com:443"]},
+        {"credentials": {"env_" + "x" * 20: [{"credential_id": "a" * 12, "sha1": SHA}]}},
+        {"credentials": {PROD: []}},
+        {"credentials": {PROD: [{"credential_id": f"{c}" * 12, "sha1": SHA} for c in "abc"]}},
+        {"credentials": {PROD: [{"credential_id": "a" * 12, "sha1": SHA}] * 2}},
+        {"credentials": {PROD: [{"credential_id": "A" * 12, "sha1": SHA}]}},
+        {"credentials": {PROD: [{"credential_id": "a" * 12, "sha1": "plain-token"}]}},
+        {"credentials": {PROD: [{"credential_id": "a" * 12, "sha1": SHA, "token": "x"}]}},
+    ],
+)
+def test_a_bad_egress_member_is_refused(bad: dict[str, Any]) -> None:
+    with pytest.raises(SnapshotInvalidError):
+        AccessView.from_document(json.dumps(doc(egress=egress(**bad))))
+
+
 def test_the_view_is_read_only() -> None:
     v = view()
     with pytest.raises(TypeError):

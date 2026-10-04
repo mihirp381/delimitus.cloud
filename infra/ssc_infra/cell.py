@@ -65,6 +65,17 @@ DATA_TAG: Final = "ssc-data"
 PROXY_MACHINE: Final = "e2-micro"
 PROXY_ZONE: Final = f"{n.REGION}-a"
 PROXY_BOOT_IMAGE: Final = "cos-cloud/cos-stable"
+PROXY_SA: Final = "ssc-proxy"
+PROXY_UNIT: Final = "ssc-egress.service"
+PROXY_HA_SIZE: Final = 2
+PROXY_HEAL_DELAY: Final = 300
+PROXY_CHECK_SECONDS: Final = 10
+PROXY_STOP_SECONDS: Final = 15
+PRIVATE_RANGES: Final = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10")
+PROXY_HOST_RANGES: Final = ("169.254.0.0/16", "127.0.0.0/8")
+"""Refused on the proxy machine itself for tunnels: the VPC firewall never sees traffic to the
+metadata server or the machine's own loopback."""
+TUNNEL_PORT: Final = 443
 HEALTH_CHECK_RANGES: Final = ("35.191.0.0/16", "130.211.0.0/22")
 GATEWAY_CONCURRENCY: Final = 1000
 ENTRY_TIMEOUT_SECONDS: Final = 3600
@@ -91,6 +102,8 @@ LOG_VIEWS: Final = {
     "ssc-build": 'resource.type = "build"',
 }
 LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
+PROXY_ADDRESS_ENV: Final = "SSC_PROXY_ADDRESS"
+OUTBOUND_IP_ENV: Final = "SSC_OUTBOUND_IP"
 USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
 USAGE_SOURCE: Final = "monitoring"
 DATA_SA_ENV: Final = "SSC_DATA_SA"
@@ -115,6 +128,8 @@ GOOGLE_DNS_PASSTHRU: Final = (
     "metadata.google.internal.",
     "*.google.internal.",
     "*.internal.",
+    "pkg.dev.",
+    "*.pkg.dev.",
 )
 SINKHOLE: Final = "192.0.2.1"  # TEST-NET-1: never routed
 SINKHOLE_V6: Final = "100::1"  # the discard prefix
@@ -187,6 +202,11 @@ class CellConfig:
     datagw_connections: str | None = None
     """The connections ``ssc-datagw`` mounts (SSC-051), as ``datagw_connections_setting``
     returns them."""
+    proxy_image: str | None = None
+    """The egress proxy (SSC-053), a build of ``packages/ssc_egress/Dockerfile``."""
+    proxy_ha: bool = False
+    """With ``egress``, two proxy machines in two zones behind an internal load balancer at the
+    reserved address: the paid option, off by default (SSC-053)."""
 
     @property
     def project_id(self) -> str:
@@ -209,6 +229,7 @@ class CellConfig:
             "connections": self.connections,
             "gateway_min": self.gateway_min,
             "warm": self.warm,
+            "proxy_ha": self.proxy_ha,
         }
 
     @property
@@ -232,6 +253,7 @@ class CellConfig:
             "timer_jwks": self.timer_jwks,
             "datagw_image": self.datagw_image,
             "datagw_connections": self.datagw_connections,
+            "proxy_image": self.proxy_image,
             **self.flags,
         }
         return {
@@ -273,6 +295,8 @@ def read_config(stack: str) -> CellConfig:
         datagw_connections=datagw_connections_setting(
             config.get("datagw_connections"), datagw_image
         ),
+        proxy_image=proxy_settings(config.get("proxy_image"), org),
+        proxy_ha=config.get_bool("proxy_ha") or False,
     )
 
 
@@ -323,6 +347,72 @@ def datagw_settings(image: str | None, org: str | None) -> str | None:
     if not org:
         raise ValueError(f"datagw_image needs the gateway settings: {', '.join(GATEWAY_SETTINGS)}")
     return image
+
+
+def proxy_settings(image: str | None, org: str | None) -> str | None:
+    """``proxy_image`` pinned in the platform registry, and only with the gateway settings: the
+    proxy reads the customer's snapshot (SSC-053)."""
+    if not image:
+        return None
+    if not PINNED_IMAGE.fullmatch(image):
+        raise ValueError(f"proxy_image must be {n.platform_registry()}/<image>@sha256:<digest>")
+    if not org:
+        raise ValueError(f"proxy_image needs the gateway settings: {', '.join(GATEWAY_SETTINGS)}")
+    return image
+
+
+def proxy_cloud_config(image: str, org_id: str, bucket: str) -> str:
+    """The proxy machine's ``user-data``: a systemd unit that runs ``image`` read-only on the
+    host network and restarts it whenever it exits, after Docker is configured to pull from the
+    platform registry with the machine's own identity and the host refuses tunnels to the
+    metadata server and loopback (``PROXY_HOST_RANGES``)."""
+    registry = n.platform_registry().split("/", 1)[0]
+    rules = [
+        f"OUTPUT -p tcp --dport {TUNNEL_PORT} -d {cidr} -j REJECT" for cidr in PROXY_HOST_RANGES
+    ]
+    refuse = [
+        f"ExecStartPre=/bin/sh -c 'iptables -w -C {rule} 2>/dev/null || iptables -w -A {rule}'"
+        for rule in rules
+    ]
+    run = (
+        "/usr/bin/docker run --rm --name ssc-egress --network host --read-only --tmpfs /tmp "
+        "--cap-drop ALL --security-opt no-new-privileges "
+        f"-e SSC_ORG_ID={org_id} -e SSC_CELL_BUCKET={bucket} {image}"
+    )
+    unit = "\n".join(
+        (
+            "[Unit]",
+            "Description=SSC egress proxy",
+            "Wants=network-online.target",
+            "After=network-online.target",
+            "StartLimitIntervalSec=0",
+            "[Service]",
+            "Environment=HOME=/var/lib/ssc-egress",
+            "ExecStartPre=/bin/mkdir -p /var/lib/ssc-egress",
+            f"ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries {registry}",
+            *refuse,
+            "ExecStartPre=-/usr/bin/docker rm -f ssc-egress",
+            f"ExecStart={run}",
+            f"ExecStop=/usr/bin/docker stop -t {PROXY_STOP_SECONDS} ssc-egress",
+            "Restart=always",
+            "RestartSec=2",
+            "[Install]",
+            "WantedBy=multi-user.target",
+        )
+    )
+    content = "\n".join(f"      {line}" for line in unit.split("\n"))
+    return (
+        "#cloud-config\n"
+        "write_files:\n"
+        f"  - path: /etc/systemd/system/{PROXY_UNIT}\n"
+        "    permissions: '0644'\n"
+        "    owner: root\n"
+        "    content: |\n"
+        f"{content}\n"
+        "runcmd:\n"
+        "  - systemctl daemon-reload\n"
+        f"  - systemctl start {PROXY_UNIT}\n"
+    )
 
 
 def datagw_connections_setting(value: str | None, image: str | None) -> str | None:
@@ -428,6 +518,7 @@ class Cell:
         self.identities()
         self.keys()
         self.network()
+        self.proxy_check()
         if cfg.database:
             self.database()
         self.registry()
@@ -538,6 +629,7 @@ class Cell:
         self.build_sa = self._sa("ssc-build", "SSC builds")
         self.data_sa = self._sa("ssc-data", "SSC data gateway and file broker")
         self.intake_sa = self._sa(n.SECRET_INTAKE, "SSC secret intake")
+        self.proxy_sa = self._sa(PROXY_SA, "SSC egress proxy")
         agent = self.agent_sa.member
         create_role = gcp.projects.IAMCustomRole(
             "agent-create",
@@ -598,6 +690,7 @@ class Cell:
         self._project_role("agent-logs", agent, "roles/logging.logWriter")
         self._project_role("data-logs", self.data_sa.member, "roles/logging.logWriter")
         self._project_role("intake-logs", self.intake_sa.member, "roles/logging.logWriter")
+        self._project_role("proxy-logs", self.proxy_sa.member, "roles/logging.logWriter")
 
     def _connection_tag(self) -> tuple[pulumi.Output[str], pulumi.Output[str]]:
         """The project's own tag ``ssc-secret-kind=connection`` (SSC-051), so no organisation tag
@@ -724,6 +817,9 @@ class Cell:
         self._egress("egress-google-private", 1000, ranges=[GOOGLE_PRIVATE_RANGE])
         for name, tag in (("gateway", GATEWAY_TAG), ("proxy", PROXY_TAG), ("data", DATA_TAG)):
             self._egress(f"egress-{name}", 1000, ranges=["0.0.0.0/0"], tags=[tag])
+        self._egress(
+            "egress-proxy-private", 900, deny=True, ranges=PRIVATE_RANGES, tags=[PROXY_TAG]
+        )
         self._ingress("ingress-proxy", [SUBNETS[APPS_SUBNET]], PROXY_TAG, PROXY_PORT)
         self._ingress("ingress-proxy-health", HEALTH_CHECK_RANGES, PROXY_TAG, PROXY_PORT)
         self._private_google_dns()
@@ -1014,6 +1110,15 @@ class Cell:
             member=run_agent.member,
             opts=self._o(),
         )
+        gcp.artifactregistry.RepositoryIamMember(
+            "registry-proxy-image",
+            project=n.BOOTSTRAP_PROJECT,
+            location=n.REGION,
+            repository=n.PLATFORM_REPOSITORY,
+            role="roles/artifactregistry.reader",
+            member=self.proxy_sa.member,
+            opts=self._o(),
+        )
         # Cloud Run checks that whoever deploys an image may read it.
         gcp.artifactregistry.RepositoryIamMember(
             "registry-agent",
@@ -1138,17 +1243,18 @@ class Cell:
                 name, bucket=self.bucket_.name, role=role, member=member, opts=self._o()
             )
         snapshots = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/snapshots/"
-        gcp.storage.BucketIAMMember(
-            "bucket-data",
-            bucket=self.bucket_.name,
-            role="roles/storage.objectViewer",
-            member=self.data_sa.member,
-            condition=gcp.storage.BucketIAMMemberConditionArgs(
-                title="only access snapshots",
-                expression=f'resource.name.startsWith("{snapshots}")',
-            ),
-            opts=self._o(),
-        )
+        for name, account in (("bucket-data", self.data_sa), ("bucket-proxy", self.proxy_sa)):
+            gcp.storage.BucketIAMMember(
+                name,
+                bucket=self.bucket_.name,
+                role="roles/storage.objectViewer",
+                member=account.member,
+                condition=gcp.storage.BucketIAMMemberConditionArgs(
+                    title="only access snapshots",
+                    expression=f'resource.name.startsWith("{snapshots}")',
+                ),
+                opts=self._o(),
+            )
 
     def log_views(self) -> None:
         """The agent's only window on the cell's logs (SSC-024): one view per resource type on
@@ -1511,7 +1617,9 @@ class Cell:
         instance, so it runs one; its concurrency holds the 40 follows the agent allows at once
         beside every other call, and its timeout outlasts a 20 s follow and a 240 s traffic
         switch. It creates connection secrets with the connection tag, readable by ``ssc-data``
-        alone (SSC-051)."""
+        alone (SSC-051). It writes each app environment's egress proxy credential into its
+        ``HTTPS_PROXY`` secret, naming the proxy's reserved address, and tells the console the
+        cell's fixed outbound address (SSC-053); both exist from onboarding."""
         tag_key, tag_value = self.connection_tag
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
@@ -1524,6 +1632,8 @@ class Cell:
             USAGE_SOURCE_ENV: USAGE_SOURCE,
             DATA_SA_ENV: self.data_sa.email,
             CONNECTION_TAG_ENV: pulumi.Output.concat(tag_key, "=", tag_value),
+            PROXY_ADDRESS_ENV: self.proxy_ip.address,
+            OUTBOUND_IP_ENV: self.nat_ip.address,
         }
         tools, frontend = self.cfg.build_tools_image, self.cfg.build_frontend_image
         if tools and frontend:
@@ -1593,13 +1703,44 @@ class Cell:
         )
         self._public("intake", self.intake_)
 
+    def proxy_check(self) -> None:
+        """The proxy's health check, written at onboarding like its firewall rules: it costs
+        nothing, and the cell deployer may then turn ``egress`` on with no load-balancing role."""
+        self.proxy_health = gcp.compute.HealthCheck(
+            "proxy-health",
+            project=self.pid,
+            name="ssc-proxy",
+            check_interval_sec=PROXY_CHECK_SECONDS,
+            timeout_sec=5,
+            healthy_threshold=2,
+            unhealthy_threshold=3,
+            tcp_health_check=gcp.compute.HealthCheckTcpHealthCheckArgs(port=PROXY_PORT),
+            opts=self._o(),
+        )
+
     def proxy(self) -> None:
-        """The ``egress`` flag: one machine at the reserved address, no external address, in a
-        group of one that recreates it. Its proxy software and health check are SSC-053."""
+        """The ``egress`` flag (SSC-053): one ``e2-micro`` at the reserved address, with no
+        external address, in a group of one that recreates it when its TCP check on the proxy
+        port fails. With ``proxy_image`` its unit runs the proxy, which reads the customer's
+        snapshot as ``ssc-proxy`` and leaves through the cell's NAT. Its template takes a new
+        name on every change, so a new image replaces the machine. ``proxy_ha`` runs two in two
+        zones instead, behind an internal load balancer that holds the reserved address."""
+        cfg = self.cfg
+        health = self.proxy_health
+        metadata = {
+            "enable-oslogin": "TRUE",
+            "block-project-ssh-keys": "true",
+            "google-logging-enabled": "true",
+            "cos-update-strategy": "update_disabled",
+        }
+        if cfg.proxy_image and cfg.org_id:
+            metadata["user-data"] = proxy_cloud_config(
+                cfg.proxy_image, cfg.org_id, n.cell_bucket(cfg.label)
+            )
         template = gcp.compute.InstanceTemplate(
             "proxy-template",
             project=self.pid,
-            name="ssc-proxy",
+            name_prefix="ssc-proxy-",
             machine_type=PROXY_MACHINE,
             tags=[PROXY_TAG],
             disks=[
@@ -1611,17 +1752,23 @@ class Cell:
                 gcp.compute.InstanceTemplateNetworkInterfaceArgs(
                     network=self.vpc.id,
                     subnetwork=self.edge_subnet.id,
-                    network_ip=self.proxy_ip.address,
+                    network_ip=None if cfg.proxy_ha else self.proxy_ip.address,
                     stack_type="IPV4_ONLY",
                 )
             ],
+            service_account=gcp.compute.InstanceTemplateServiceAccountArgs(
+                email=self.proxy_sa.email, scopes=["cloud-platform"]
+            ),
             shielded_instance_config=gcp.compute.InstanceTemplateShieldedInstanceConfigArgs(
                 enable_secure_boot=True, enable_vtpm=True, enable_integrity_monitoring=True
             ),
-            metadata={"enable-oslogin": "TRUE", "block-project-ssh-keys": "true"},
-            labels={n.CELL_LABEL_KEY: self.cfg.label},
+            metadata=metadata,
+            labels={n.CELL_LABEL_KEY: cfg.label},
             opts=self._o(),
         )
+        if cfg.proxy_ha:
+            self._proxy_ha(template, health)
+            return
         gcp.compute.InstanceGroupManager(
             "proxy",
             project=self.pid,
@@ -1632,6 +1779,9 @@ class Cell:
             versions=[
                 gcp.compute.InstanceGroupManagerVersionArgs(instance_template=template.self_link)
             ],
+            auto_healing_policies=gcp.compute.InstanceGroupManagerAutoHealingPoliciesArgs(
+                health_check=health.id, initial_delay_sec=PROXY_HEAL_DELAY
+            ),
             update_policy=gcp.compute.InstanceGroupManagerUpdatePolicyArgs(
                 type="PROACTIVE",
                 minimal_action="REPLACE",
@@ -1640,6 +1790,68 @@ class Cell:
                 max_unavailable_fixed=1,
             ),
             wait_for_instances=False,
+            opts=self._o(),
+        )
+
+    def _proxy_ha(
+        self, template: gcp.compute.InstanceTemplate, health: gcp.compute.HealthCheck
+    ) -> None:
+        """Two machines in two zones, each replaced only once its new one exists, behind an
+        internal passthrough load balancer on the proxy port at the reserved address."""
+        group = gcp.compute.RegionInstanceGroupManager(
+            "proxy-ha",
+            project=self.pid,
+            name="ssc-proxy",
+            region=n.REGION,
+            base_instance_name="ssc-proxy",
+            target_size=PROXY_HA_SIZE,
+            distribution_policy_zones=[f"{n.REGION}-a", f"{n.REGION}-b"],
+            versions=[
+                gcp.compute.RegionInstanceGroupManagerVersionArgs(
+                    instance_template=template.self_link
+                )
+            ],
+            auto_healing_policies=gcp.compute.RegionInstanceGroupManagerAutoHealingPoliciesArgs(
+                health_check=health.id, initial_delay_sec=PROXY_HEAL_DELAY
+            ),
+            update_policy=gcp.compute.RegionInstanceGroupManagerUpdatePolicyArgs(
+                type="PROACTIVE",
+                minimal_action="REPLACE",
+                instance_redistribution_type="PROACTIVE",
+                replacement_method="SUBSTITUTE",
+                max_surge_fixed=PROXY_HA_SIZE,
+                max_unavailable_fixed=0,
+            ),
+            wait_for_instances=False,
+            opts=self._o(),
+        )
+        backend = gcp.compute.RegionBackendService(
+            "proxy-ha",
+            project=self.pid,
+            name="ssc-proxy",
+            region=n.REGION,
+            protocol="TCP",
+            load_balancing_scheme="INTERNAL",
+            health_checks=health.id,
+            backends=[
+                gcp.compute.RegionBackendServiceBackendArgs(
+                    group=group.instance_group, balancing_mode="CONNECTION"
+                )
+            ],
+            opts=self._o(),
+        )
+        gcp.compute.ForwardingRule(
+            "proxy-ha",
+            project=self.pid,
+            name="ssc-proxy",
+            region=n.REGION,
+            load_balancing_scheme="INTERNAL",
+            ip_protocol="TCP",
+            ports=[str(PROXY_PORT)],
+            ip_address=self.proxy_ip.address,
+            network=self.vpc.id,
+            subnetwork=self.edge_subnet.id,
+            backend_service=backend.id,
             opts=self._o(),
         )
 
@@ -1698,7 +1910,7 @@ class Cell:
         granted. The second refuses ``ssc-data`` every secret without the cell's connection tag
         (SSC-051), so no grant can give it an app secret; it reads a connection secret only with
         the ``secretAccessor`` the agent sets on that secret."""
-        ours = (self.gateway_sa, self.agent_sa, self.build_sa, self.intake_sa)
+        ours = (self.gateway_sa, self.agent_sa, self.build_sa, self.intake_sa, self.proxy_sa)
         denied = [sa_principal(sa.email) for sa in ours]
         if self.cfg.probe:
             self.denied_probe = self._sa(n.PROBE_DENIED_SA, "SSC deny probe (always refused)")
@@ -1878,6 +2090,7 @@ class Cell:
                 "build": self.build_sa.email,
                 "data": self.data_sa.email,
                 "intake": self.intake_sa.email,
+                "proxy": self.proxy_sa.email,
             },
         )
 
