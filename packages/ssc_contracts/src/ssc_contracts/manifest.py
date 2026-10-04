@@ -378,6 +378,13 @@ class Egress(_Table):
         return _unique_sorted(value, str, "host")
 
 
+class Files(_Table):
+    """File storage through the cell's file broker (SSC-046). ``[files]`` alone asks for it;
+    ``enabled = false`` keeps the table and asks for nothing."""
+
+    enabled: StrictBool = True
+
+
 class Schedule(_Table):
     """One timer: a cron expression in a time zone that calls a path on the app."""
 
@@ -390,7 +397,10 @@ class Schedule(_Table):
 
 
 class Manifest(_Table):
-    """``ssc.toml`` ``ssc/v1``. Build it with ``load_manifest`` or ``model_validate`` (aliases)."""
+    """``ssc.toml`` ``ssc/v1``. Build it with ``load_manifest`` or ``model_validate`` (aliases).
+
+    ``files`` has no default and is left out of a dump while it is None, so a manifest without
+    ``[files]`` keeps the digest it had before the key existed (decision 013, SSC-046)."""
 
     schema_: Literal["ssc/v1"] = Field(alias="schema")
     runtime: Runtime = Field(default_factory=Runtime)
@@ -398,6 +408,7 @@ class Manifest(_Table):
     state: State = Field(default_factory=State)
     connections: Connections = Field(default_factory=Connections)
     egress: Egress = Field(default_factory=Egress)
+    files: Files | None = Field(default=None, exclude_if=lambda v: v is None)
     schedules: tuple[Schedule, ...] = Field(default=(), max_length=MAX_SCHEDULES)
 
     @field_validator("schedules")
@@ -412,6 +423,11 @@ class Manifest(_Table):
 def default_manifest() -> Manifest:
     """What an app without ``ssc.toml`` gets."""
     return Manifest.model_validate({"schema": SCHEMA_V1})
+
+
+def uses_files(manifest: Manifest) -> bool:
+    """Whether ``manifest`` asks for file storage: ``[files]`` present and not switched off."""
+    return manifest.files is not None and manifest.files.enabled
 
 
 def session_framework(start: str | None) -> str | None:
@@ -560,6 +576,7 @@ _TABLES: Final[Mapping[str, type[BaseModel]]] = MappingProxyType(
         "state": State,
         "connections": Connections,
         "egress": Egress,
+        "files": Files,
         "schedules": Schedule,
     }
 )
@@ -863,6 +880,8 @@ def dump_manifest(manifest: Manifest) -> str:
         "[egress]",
         f"hosts = {_toml(manifest.egress.hosts)}",
     ]
+    if manifest.files is not None:
+        lines += ["", "[files]", f"enabled = {_toml(manifest.files.enabled)}"]
     for schedule in manifest.schedules:
         lines += ["", "[[schedules]]"]
         lines += [f"{key} = {_toml(value)}" for key, value in schedule.model_dump().items()]

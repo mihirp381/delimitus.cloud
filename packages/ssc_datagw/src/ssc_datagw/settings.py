@@ -18,6 +18,7 @@ MAX_STALE_SECONDS: Final = 120.0
 """The snapshot age past which every query is refused with ``DATA_SNAPSHOT_STALE``."""
 _ORG = re.compile(r"org_[a-z0-9]{20}")
 _PROJECT = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]")
+DATA_ACCOUNT: Final = "ssc-data"
 CONNECTION_PREFIX: Final = "SSC_CONNECTION_"
 _CONNECTION = re.compile(r"CON_[A-Z0-9]{20}")
 
@@ -45,6 +46,12 @@ class Settings:
     connections: Mapping[str, PostgresTarget] = field(
         default_factory=dict[str, PostgresTarget], repr=False
     )
+
+    @property
+    def signer(self) -> str:
+        """The account the gateway runs as and signs file links with: ``ssc-data`` of the cell
+        project (``infra/ssc_infra/cell.py``, ``identities``), which may sign as itself."""
+        return f"{DATA_ACCOUNT}@{self.project_id}.iam.gserviceaccount.com"
 
 
 def _need(env: Mapping[str, str], name: str) -> str:

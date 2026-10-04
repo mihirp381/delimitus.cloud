@@ -17,7 +17,8 @@ connection tag as ``tagKeys/<n>=tagValues/<n>``; with neither the agent refuses 
 without the other or a malformed tag exits 2. Egress proxy credentials (SSC-053) need
 ``SSC_PROXY_ADDRESS``, the proxy's reserved internal address; unset, the agent refuses them.
 ``SSC_OUTBOUND_IP`` is the cell's fixed outbound address, which ``info`` reports. Either one not
-an IPv4 address exits 2.
+an IPv4 address exits 2. App files (SSC-046) need ``SSC_CELL_BUCKET``, the cell bucket's name;
+unset, the agent refuses to drop them.
 """
 
 import ipaddress
@@ -38,6 +39,7 @@ from ssc_agent.cloud_monitoring import CellUsageReader, CloudMonitoringSeries
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_agent.cloud_sql import CloudSqlAdmin
 from ssc_agent.egress import ProxyCredentials
+from ssc_agent.files import CellFiles
 from ssc_agent.metadata import MetadataAccessTokens
 from ssc_agent.secret_manager import CellSecretCustody, CellSecretWriter, ConnectionSecrets
 from ssc_shared import redaction
@@ -64,6 +66,7 @@ CONNECTION_TAG_ENV: Final = "SSC_CONNECTION_TAG"
 CONNECTION_TAG: Final = re.compile(r"(tagKeys/[0-9]+)=(tagValues/[0-9]+)")
 PROXY_ADDRESS_ENV: Final = "SSC_PROXY_ADDRESS"
 OUTBOUND_IP_ENV: Final = "SSC_OUTBOUND_IP"
+BUCKET_ENV: Final = "SSC_CELL_BUCKET"
 
 
 class ConfigError(ValueError):
@@ -171,8 +174,17 @@ def main() -> int:
     if series is None:
         logging.getLogger(__name__).info("usage reads are off: %s is not set", USAGE_SOURCE_ENV)
     hub = CellLogHub(entries, driver)
+    bucket = os.environ.get(BUCKET_ENV, "")
+    files = CellFiles(bucket, tokens) if bucket else None
     app = create_app(
-        driver, builder, custody, databases, hub, usage=CellUsageReader(series), egress=egress
+        driver,
+        builder,
+        custody,
+        databases,
+        hub,
+        usage=CellUsageReader(series),
+        egress=egress,
+        files=files,
     )
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
     return 0

@@ -1,6 +1,6 @@
 # Data gateway v1 (`POST /v1/connections/{name}/query`)
 
-How an app reads a database its org connected, through the cell's data gateway `ssc-datagw` (SSC-050, C19). One service per customer, in the cell, on Cloud Run at minimum 0 and request-billed; it leaves through Direct VPC egress and the cell NAT, so the customer's database sees the cell's one fixed address. Implementations: `ssc_datagw.server` (the pipeline), `ssc_datagw.workload` (the caller), `ssc_datagw.note` (the identity note), `ssc_datagw.admission` (the snapshot), `ssc_datagw.limits` (limits, budget, slots), `ssc_datagw.connectors` (the connector seam), `ssc_datagw.postgres` and `ssc_datagw.classify` (the Postgres connector, SSC-051). Cell wiring: `infra/README.md`, "Data gateway".
+How an app reads a database its org connected, through the cell's data gateway `ssc-datagw` (SSC-050, C19), and keeps files through its file broker ([Files](#files), SSC-046). One service per customer, in the cell, on Cloud Run at minimum 0 and request-billed; it leaves through Direct VPC egress and the cell NAT, so the customer's database sees the cell's one fixed address. Implementations: `ssc_datagw.server` (the pipeline), `ssc_datagw.workload` (the caller), `ssc_datagw.note` (the identity note), `ssc_datagw.admission` (the snapshot), `ssc_datagw.limits` (limits, budget, slots), `ssc_datagw.connectors` (the connector seam), `ssc_datagw.postgres` and `ssc_datagw.classify` (the Postgres connector, SSC-051). Cell wiring: `infra/README.md`, "Data gateway".
 
 ## Request
 
@@ -62,7 +62,7 @@ Every refusal has one body, and the first check that refuses answers:
 | `IDENTITY_REFUSED` | 401 | user | app | The forwarded note does not verify for the caller's environment, or its user is not active. |
 | `CONNECTION_NOT_GRANTED` | 403 | admission | admin | No such connection, or not granted to the caller's environment: the two look the same. |
 | `CONNECTION_SUSPENDED` | 403 | admission | admin | The connection is suspended. |
-| `VALIDATION_FAILED` | 422 | request | app | The body is not a query as above. |
+| `VALIDATION_FAILED` | 422 | request | app | The body is not a query as above, or not a file request ([Files](#files)). |
 | `DAILY_BUDGET_SPENT` | 429 | limits | admin | The grant has used today's rows or bytes; resets at 00:00 UTC. |
 | `CONCURRENCY_LIMIT` | 429 | limits | app | Every slot of the grant stayed taken for 2 s. |
 | `QUERY_REFUSED` | 422 | classify | app | The connector's classifier refused the statement (not one plain read). |
@@ -124,6 +124,50 @@ A grant is one connection and one environment. Within the day's budget a result 
 
 Nothing runs between requests. The snapshot is read before the first request is accepted (waited for up to 10 s), again by a request when no read confirmed it in the last 2 s (waited for up to 4 s), and by the kill watch while any query runs: every second it re-reads on the same 2 s rule, and cancels each running query its environment or connection is no longer admitted to. A suspended connection or a stopped app is therefore refused within 2 s plus one bucket read of `latest.json` moving, whether the service was awake or at zero, and a running query is ended within 3 s plus that read.
 
+<a id="files"></a>
+## Files
+
+The file broker (SSC-046, `ssc_datagw.files`) gives an app environment signed links to its own files in the cell bucket. An app asks for it with `[files]` in `ssc.toml` (`docs/contracts/manifest.md#files`); the first such deploy in a cell waits while the data gateway is created ("connections", `docs/contracts/manifest.md`), with no human step. The app never holds storage credentials: it asks the data gateway for a link and sends the bytes to Cloud Storage itself. Helpers: `ssc_app.files` (Python) and `@delimitus/ssc-files` (Node), which find the data gateway from the metadata server and retry once while it starts from zero.
+
+`POST /v1/files/put`, `POST /v1/files/get` and `POST /v1/files/delete`, with `Authorization` and `X-Request-Id` as for a query (no identity note). The body is JSON, at most 1 MB, with no other member:
+
+| Member | Type | Meaning |
+|---|---|---|
+| `name` | string | The file: `/`-separated segments of `A-Z a-z 0-9 . _ -`, each starting with a letter or digit, at most 256 characters. No `..`, no hidden, empty or leading segment. |
+| `content_type` | string | `put` only. The type the upload must carry, such as `image/png`. Default `application/octet-stream`. |
+
+The file is `files/<env_id>/<name>` in the cell bucket, and `env_id` is the caller's environment from the workload token, never from the body: no name reaches another environment, of the same app or another. `put` and `get` answer `200` with a link:
+
+| Member | Meaning |
+|---|---|
+| `url` | A V4 signed URL on `https://storage.googleapis.com/`, for this one object, valid 10 minutes. Editing its path, its query or the headers it names breaks the signature. |
+| `method` | `PUT` or `GET`. |
+| `headers` | Send each with the request. `put`: `content-type` as asked and `x-goog-content-length-range: 0,26214400`, so the bucket refuses another type or a body over 25 MB. `get`: none. |
+| `expires_at` | ISO 8601, UTC. |
+| `max_bytes` | `put` only: 26,214,400. |
+| `request_id` | As in `X-Request-Id`. |
+
+A `get` link answers with `Content-Disposition: attachment; filename="<last segment>"`, signed into the link (`response-content-disposition`), so a stored HTML or SVG file is saved by a browser, never rendered as a page. A `put` replaces a file of the same name. `delete` removes the file at once and answers `{"deleted": true, "request_id": ...}`.
+
+The links are signed by the data gateway as its own account, `ssc-data@<cell project>`, through IAM `signBlob` on itself; there is no key file (SSC-095). The files sit in the customer's cell bucket, encrypted with the cell's own key (`infra/README.md`, "File storage").
+
+| Code | Status | Stage | Fix owner | When |
+|---|---|---|---|---|
+| `NOT_FOUND` | 404 | request | app | The operation is not `put`, `get` or `delete`. |
+| `FILE_NOT_FOUND` | 404 | files | app | `get` or `delete` of a file the environment does not have. |
+| `FILES_QUOTA_EXCEEDED` | 413 | files | app | `put` while the environment's files already use 1 GB; delete some first. |
+| `FILES_UNAVAILABLE` | 503 | files | platform | The bucket or IAM did not answer, or this data gateway has no broker. |
+
+`BODY_TOO_LARGE`, `UNAUTHENTICATED`, `UNAVAILABLE`, `DATA_SNAPSHOT_STALE`, `UNKNOWN_ENVIRONMENT`, `APP_NOT_ACTIVE` and `VALIDATION_FAILED` are as for a query, in the same order: **the kill switch suspends the broker**, so a disabled or quarantined app gets no link, within the 2 s the snapshot rule allows.
+
+What v1 does not do, and says so:
+
+- **No virus scanning.** Files are stored and served as the app sent them. Scanning is deferred; the attachment disposition is what keeps a stored file from running in a browser.
+- **The quota is checked when a link is made**, by summing the environment's files. Links made just before the quota fills can each add one more file of up to 25 MB.
+- **A link outlives the kill switch** for up to its 10 minutes: a disabled app gets no new link, but one it already holds still works until it expires.
+- **No browser-direct upload.** The bucket has no CORS rule, so the app's server sends and fetches the bytes (it reaches Cloud Storage over Private Google Access; the storage host is never on the egress allowlist, `docs/contracts/manifest.md`, egress).
+- **Deletion with the environment** is a seam: the cell agent's `POST /v1/files/drop` removes an environment's live files once its service is gone, and the bucket deletes their noncurrent versions after 7 days. The flow that deletes an environment, and the database's grace period it waits out first, are not built yet; that flow calls the drop after the grace.
+
 ## Logs
 
-One `datagw query` line per answer, JSON: `request_id`, `connection`, `env_id`, `snapshot_version`, `user`, `user_context` (`verified`, `schedule`, `app_only`), `outcome` (`served` or the code), `reason` (for refusals), `rows`, `bytes`, `truncated_reason`, `received_at`, `elapsed_ms`, `instance_started_at`, `cold` (the instance's first answer) and, on that first answer, `ready_ms` (process start to ready). One `datagw ready` line at start. The SQL text, parameters and rows are never logged.
+One `datagw query` line per answer, JSON: `request_id`, `connection`, `env_id`, `snapshot_version`, `user`, `user_context` (`verified`, `schedule`, `app_only`), `outcome` (`served` or the code), `reason` (for refusals), `rows`, `bytes`, `truncated_reason`, `received_at`, `elapsed_ms`, `instance_started_at`, `cold` (the instance's first answer) and, on that first answer, `ready_ms` (process start to ready). One `datagw ready` line at start. The SQL text, parameters and rows are never logged. One `datagw file` line per file request: `request_id`, `file_op`, `env_id`, `snapshot_version`, `outcome`, `reason`, and the timing members as above. A file's name, which may say who it is about, and its link are never logged.

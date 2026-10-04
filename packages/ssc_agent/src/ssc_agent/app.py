@@ -26,6 +26,9 @@ Egress (SSC-053) has ``issue``, a new proxy credential written to an environment
 ``HTTPS_PROXY`` secret (the answer holds its id, its token's digest and the secret version,
 never the token), and ``info``, the proxy's address and the cell's fixed outbound address; 502
 ``SECRETS_ERROR``, and 503 ``EGRESS_NOT_CONFIGURED`` for ``issue`` without a proxy address.
+Files (SSC-046) have ``drop``: an environment's live files in the cell bucket, deleted only
+while its service is gone or stopped (``SERVICE_LIVE`` otherwise), like its database; 502
+``FILES_ERROR``, and 503 ``FILES_NOT_CONFIGURED`` without the cell bucket.
 """
 
 import logging
@@ -46,6 +49,7 @@ from ssc_agent.app_database import (
 from ssc_agent.cloud_logging import CellLogHub
 from ssc_agent.cloud_monitoring import CellUsageReader
 from ssc_agent.egress import EgressNotConfiguredError, ProxyCredentials
+from ssc_agent.files import CellFiles, FilesError
 from ssc_agent.secret_manager import SecretCustody, SecretsError
 from ssc_shared.build import (
     BuildDriverError,
@@ -91,6 +95,7 @@ DATABASES_PREFIX: Final = "/v1/databases"
 LOGS_PREFIX: Final = "/v1/logs"
 USAGE_PREFIX: Final = "/v1/usage"
 EGRESS_PREFIX: Final = "/v1/egress"
+FILES_PREFIX: Final = "/v1/files"
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
 
@@ -104,6 +109,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
     *,
     usage: CellUsage | None = None,
     egress: ProxyCredentials | None = None,
+    files: CellFiles | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -185,6 +191,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
     _log_routes(app, CellLogHub(None, driver) if logs is None else logs)
     _usage_routes(app, CellUsageReader(None) if usage is None else usage)
     _egress_routes(app, egress)
+    _file_routes(app, driver, files)
     return app
 
 
@@ -269,6 +276,35 @@ async def _database_answer(
         }
     made = await (databases.ensure if method == "ensure" else databases.rotate)(service)
     return _database_to_wire(made)
+
+
+def _file_routes(app: FastAPI, driver: RuntimeDriver, files: CellFiles | None) -> None:
+    """``drop`` of one service's environment's files; the agent never reads a file."""
+
+    @app.post(FILES_PREFIX + "/{method}")
+    async def file(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
+        if method != "drop":
+            return _error(404, "NOT_FOUND", f"no method {method}")
+        if files is None:
+            return _error(503, "FILES_NOT_CONFIGURED", "this agent has no cell bucket")
+        try:
+            body: object = await request.json()
+            if not isinstance(body, dict):
+                raise TypeError("the body is not a JSON object")
+            service = _service(cast("dict[str, Any]", body))
+            seen = await driver.observe(service)
+            if seen is not None and not seen.stopped:
+                return _error(409, "SERVICE_LIVE", f"{service} still runs; stop it first")
+            deleted = await files.drop(service)
+        except (ValueError, TypeError, KeyError) as exc:
+            return _error(400, "INVALID_REQUEST", str(exc))
+        except RuntimeDriverError as exc:
+            log.warning("files call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "RUNTIME_ERROR", str(exc))
+        except FilesError as exc:
+            log.warning("files call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "FILES_ERROR", str(exc))
+        return JSONResponse({"dropped": service, "files": deleted})
 
 
 def _log_routes(app: FastAPI, logs: CellLogs) -> None:

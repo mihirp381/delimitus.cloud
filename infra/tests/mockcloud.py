@@ -131,7 +131,11 @@ class Recorder(pulumi.runtime.Mocks):
     def call(
         self, args: pulumi.runtime.MockCallArgs
     ) -> tuple[dict[str, Any], list[tuple[str, str]] | None]:
-        return {}, None
+        if args.token == "gcp:storage/getProjectServiceAccount:getProjectServiceAccount":
+            number = project_number(str(args.args["project"]))
+            agent = f"service-{number}@gs-project-accounts.iam.gserviceaccount.com"
+            return {"emailAddress": agent}, []
+        return {}, []
 
 
 def run(

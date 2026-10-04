@@ -159,13 +159,16 @@ def v4_url(  # noqa: PLR0913  (keyword-only)
     headers: Mapping[str, str],
     now: datetime,
     expires_in: timedelta,
+    query: Mapping[str, str] | None = None,
 ) -> str:
-    """A V4 query-signed URL for ``method`` on ``bucket/key`` that requires ``headers``."""
+    """A V4 query-signed URL for ``method`` on ``bucket/key`` that requires ``headers``.
+    ``query`` adds parameters the signature covers, such as ``response-content-disposition``."""
     timestamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     scope = f"{timestamp[:8]}/auto/storage/goog4_request"
     signed = {k.lower(): " ".join(v.split()) for k, v in {**headers, "host": HOST}.items()}
     names = sorted(signed)
-    query = {
+    params = {
+        **(query or {}),
         "X-Goog-Algorithm": ALGORITHM,
         "X-Goog-Credential": f"{signer.email}/{scope}",
         "X-Goog-Date": timestamp,
@@ -173,7 +176,7 @@ def v4_url(  # noqa: PLR0913  (keyword-only)
         "X-Goog-SignedHeaders": ";".join(names),
     }
     canonical_query = "&".join(
-        f"{quote(k, safe='~')}={quote(v, safe='~')}" for k, v in sorted(query.items())
+        f"{quote(k, safe='~')}={quote(v, safe='~')}" for k, v in sorted(params.items())
     )
     resource = f"/{bucket}/{quote(key, safe='/~')}"
     canonical_request = "\n".join(

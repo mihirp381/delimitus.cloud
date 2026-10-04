@@ -10,6 +10,8 @@ Ticket "done when" checks that run without a cloud:
                                                test_a_step_killed_before_recording_its_run_...
   * egress and connections triggers         -> test_an_approved_internet_host_turns_on_egress,
                                                test_an_approved_data_source_turns_on_connections
+SSC-046: the first app in a cell that asks for files gets a working broker with no human step
+                                            -> test_the_first_deploy_asking_for_files_gets_...
   * set by an admin through the API, audited -> test_an_admin_turns_a_resource_on_and_it_is_audited
   * nothing turns a resource off             -> test_nothing_turns_a_ready_resource_off
   * the worker passes only a label and a resource
@@ -84,6 +86,7 @@ b = test_deploy.b
 
 STATEFUL = {"state": {"postgres": True}}
 DB = CellResource.DATABASE
+CONNECTIONS = CellResource.CONNECTIONS
 JOB = "projects/ssc-platform-0/locations/us-central1/jobs/ssc-cell-deployer"
 
 
@@ -170,12 +173,12 @@ async def stateful_deploy(cell: Cell, env: str) -> str:
     return op
 
 
-async def finish_creation(cell: Cell) -> None:
+async def finish_creation(cell: Cell, resource: CellResource = DB) -> None:
     """Start the run, see it running, end it, see it ready."""
-    assert await cell.step() == "creating"
-    assert await cell.step() == "creating"
+    assert await cell.step(resource) == "creating"
+    assert await cell.step(resource) == "creating"
     cell.fake.finish()
-    assert await cell.step() == "ready"
+    assert await cell.step(resource) == "ready"
 
 
 # ── the deploy trigger ───────────────────────────────────────────────────────
@@ -241,6 +244,36 @@ async def test_a_stateless_deploy_asks_for_nothing(cell: Cell) -> None:
     assert await run(b, op, cell.ports) == "healthy"
     assert resources_of(b) == {}
     assert operation(b, op)["notice"] is None
+
+
+async def test_the_first_deploy_asking_for_files_gets_the_broker_with_no_human_step(
+    cell: Cell,
+) -> None:
+    """SSC-046: ``[files]`` asks for the data gateway, which brokers the files, as cause
+    ``file_use``; the deploy waits for it once and goes live, and the next one does not wait."""
+    b = cell.b
+    files = await build_release(b, b.w.preview, manifest_of(files={}))
+    off = await build_release(b, b.w.preview, manifest_of(files={"enabled": False}))
+    first = start_deploy(b, b.w.preview, files)
+    assert first.status_code == 202, first.text
+    assert first.json()["notice"] == NOTICE[CONNECTIONS]
+    op = str(first.json()["operation_id"])
+    done(b.dsn, f"dep:{op}")
+    assert await run(b, op, cell.ports) == "running"
+    assert b.runtime.calls == []
+    assert set(resources_of(b)) == {"connections"}
+    (job,) = jobs(b, create_lock(b, CONNECTIONS))
+    assert job["args"] == {"org_id": b.w.org, "resource": "connections"}
+    (asked,) = cell_audit(b)
+    assert asked["after"] == {"state": "requested", "cause": "file_use", "deployment_id": op}
+    await finish_creation(cell, CONNECTIONS)
+    assert cell.fake.runs == [(cell.label, CONNECTIONS)]
+    assert await run(b, op, cell.ports) == "healthy"
+    again = start_deploy(b, b.w.preview, files)
+    assert again.json()["notice"] is None
+    assert await run(b, again.json()["operation_id"], cell.ports) == "healthy"
+    assert start_deploy(b, b.w.preview, off).json()["notice"] is None
+    assert cell.fake.runs == [(cell.label, CONNECTIONS)]
 
 
 async def test_the_accepted_deploy_says_what_it_sets_off_until_the_database_is_ready(

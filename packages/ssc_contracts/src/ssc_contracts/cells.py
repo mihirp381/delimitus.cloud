@@ -16,7 +16,8 @@ from typing import Final
 
 class CellResource(StrEnum):
     """Each is a flag in the cell's stack config and is never turned off by code: ``database``
-    the Cloud SQL instance, ``egress`` the egress proxy group, ``connections`` the data gateway."""
+    the Cloud SQL instance, ``egress`` the egress proxy group, ``connections`` the data gateway
+    and its file broker."""
 
     DATABASE = "database"
     EGRESS = "egress"
@@ -31,8 +32,8 @@ class CellResourceState(StrEnum):
 
 
 class CellResourceCause(StrEnum):
-    """``deploy``: an environment whose manifest has ``[state] postgres = true``. ``file_use`` is
-    a seam for SSC-046, which settles what the control plane sees of it."""
+    """``deploy``: an environment whose manifest has ``[state] postgres = true``. ``file_use``:
+    one whose manifest asks for ``[files]`` (SSC-046), which needs the data gateway's broker."""
 
     DEPLOY = "deploy"
     EGRESS_APPROVED = "egress_approved"
@@ -75,7 +76,8 @@ NOTICE: Final[Mapping[CellResource, str]] = MappingProxyType(
             "Setting up your company's outbound internet access, a few minutes, this happens once."
         ),
         CellResource.CONNECTIONS: (
-            "Setting up your company's data connections, a few minutes, this happens once."
+            "Setting up your company's data connections and file storage, a few minutes, "
+            "this happens once."
         ),
     }
 )

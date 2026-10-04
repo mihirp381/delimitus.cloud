@@ -1,4 +1,5 @@
-"""The data gateway: ``POST /v1/connections/{name}/query`` (SSC-050, C19).
+"""The data gateway: ``POST /v1/connections/{name}/query`` (SSC-050, C19) and the file broker,
+``POST /v1/files/{put,get,delete}`` (SSC-046, ``ssc_datagw.files``).
 
 One per customer, in the cell, on Cloud Run at minimum 0 and request-billed (decision 023
 amendment); it leaves through Direct VPC egress and the cell NAT, so the customer's database
@@ -13,6 +14,10 @@ goes through these steps, and the first that refuses answers:
    within 2 s (``ssc_datagw.limits``);
 6. the connector runs the read under a deadline, watched by the kill watch, and the gateway
    keeps at most ``max_rows`` rows and ``max_bytes`` bytes, saying when it cut the result.
+
+A file request goes through steps 1 and 2, and the kill switch refuses it there like a query:
+a disabled or quarantined app gets no link. Its name, which may say who a file is about, is
+never logged.
 
 The kill watch re-reads the snapshot every ``WATCH_SECONDS`` while any query runs (the instance
 has CPU then) and cancels each query its environment or connection no longer admits. Every
@@ -67,6 +72,14 @@ from ssc_datagw.connectors import (
     encoded_size,
     jsonable,
 )
+from ssc_datagw.files import (
+    FileBroker,
+    FileMissingError,
+    FileNameError,
+    FilesQuotaError,
+    FilesUnavailableError,
+    Link,
+)
 from ssc_datagw.limits import (
     BudgetSpentError,
     DailyBudget,
@@ -87,7 +100,7 @@ from ssc_datagw.workload import (
 from ssc_shared import redaction
 from ssc_shared.access import AccessView, ViewHolder
 from ssc_shared.blobstore import BlobStore
-from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of
+from ssc_shared.blobstore_gcs import GcsBlobStore, IamSigner, bucket_of
 from ssc_shared.hosts import PREVIEW_SUFFIX, app_origin
 from ssc_shared.snapshot_feed import SnapshotFeed
 
@@ -96,6 +109,8 @@ log = logging.getLogger(__name__)
 STARTED_AT: Final = time.time()
 """When this process started: the start of a cold start."""
 QUERY_PATH: Final = "/v1/connections/{name}/query"
+FILES_PATH: Final = "/v1/files/{op}"
+FILE_OPS: Final = ("put", "get", "delete")
 MAX_BODY: Final = 1024 * 1024
 MAX_SQL: Final = 100_000
 MAX_PARAMS: Final = 1000
@@ -105,7 +120,10 @@ TIMEOUT_GRACE_SECONDS: Final = 2.0
 timeout (``ssc_datagw.postgres``) should end it first."""
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
-Stage = Literal["request", "workload", "user", "admission", "limits", "classify", "execute"]
+Stage = Literal[
+    "request", "workload", "user", "admission", "limits", "classify", "execute", "files"
+]
+FileOp = Literal["put", "get", "delete"]
 FixOwner = Literal["app", "admin", "platform"]
 UserContext = Literal["verified", "schedule", "app_only"]
 
@@ -120,7 +138,9 @@ class DataError:
 
 ERRORS: Final[Mapping[str, DataError]] = {
     "BODY_TOO_LARGE": DataError(413, "request", "app", "The request body is over 1 MB."),
-    "VALIDATION_FAILED": DataError(422, "request", "app", "The request body is not a valid query."),
+    "VALIDATION_FAILED": DataError(
+        422, "request", "app", "The request body is not a valid query or file request."
+    ),
     "UNAUTHENTICATED": DataError(
         401, "workload", "app", "The workload token is missing or is not an app of this cell."
     ),
@@ -164,6 +184,17 @@ ERRORS: Final[Mapping[str, DataError]] = {
     "CONNECTION_UNAVAILABLE": DataError(
         503, "execute", "platform", "The database cannot be reached right now."
     ),
+    "NOT_FOUND": DataError(404, "request", "app", "There is no such file operation."),
+    "FILE_NOT_FOUND": DataError(404, "files", "app", "This app environment has no such file."),
+    "FILES_QUOTA_EXCEEDED": DataError(
+        413,
+        "files",
+        "app",
+        "This app environment's files use all of its quota; delete some before storing more.",
+    ),
+    "FILES_UNAVAILABLE": DataError(
+        503, "files", "platform", "File storage cannot be reached right now."
+    ),
 }
 
 
@@ -180,6 +211,15 @@ class QueryBody(BaseModel):
     max_rows: StrictInt | None = Field(default=None, ge=0)
     max_bytes: StrictInt | None = Field(default=None, ge=0)
     timeout_ms: StrictInt | None = Field(default=None, ge=0)
+
+
+class FileBody(BaseModel):
+    """One file of the calling environment; ``content_type`` is for ``put`` alone."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: StrictStr = Field(min_length=1, max_length=1024)
+    content_type: StrictStr | None = Field(default=None, max_length=1024)
 
 
 class RefusedError(Exception):
@@ -312,6 +352,7 @@ class DataGateway:
         workloads: Workloads,
         snapshot: Snapshot,
         connectors: Mapping[str, Connector],
+        files: FileBroker | None = None,
         instance: Instance | None = None,
         budget: DailyBudget | None = None,
         slots: Slots | None = None,
@@ -324,6 +365,7 @@ class DataGateway:
         self._workloads = workloads
         self._snapshot = snapshot
         self._connectors = connectors
+        self._files = files
         self.instance = instance or Instance()
         self._budget = budget or DailyBudget()
         self._slots = slots or Slots()
@@ -356,7 +398,78 @@ class DataGateway:
         self._record(record, received, elapsed)
         return JSONResponse(body, status_code=status, headers={"x-request-id": request_id})
 
-    def _record(self, record: dict[str, Any], received: float, elapsed: int) -> None:
+    async def file(self, op: str, request: Request) -> JSONResponse:
+        """A link to put or get one file of the calling environment, or its deletion."""
+        received = self._clock()
+        started = time.monotonic()
+        request_id = _request_id(request.headers.get("x-request-id"))
+        record: dict[str, Any] = {"request_id": request_id, "file_op": op}
+        try:
+            body, status = await self._file(op, request, record), 200
+            body["request_id"] = request_id
+            record["outcome"] = "served"
+        except RefusedError as refused:
+            body = error_body(refused.code, request_id, stage=refused.stage)
+            status = ERRORS[refused.code].status
+            record.update(outcome=refused.code, reason=refused.reason)
+        except Exception:
+            log.exception("file request failed: %s", request_id)
+            body, status = error_body("FILES_UNAVAILABLE", request_id), 503
+            record["outcome"] = "FILES_UNAVAILABLE"
+        self._record(record, received, round((time.monotonic() - started) * 1000), "file")
+        return JSONResponse(body, status_code=status, headers={"x-request-id": request_id})
+
+    async def _file(self, op: str, request: Request, record: dict[str, Any]) -> dict[str, Any]:
+        if op not in FILE_OPS:
+            raise RefusedError("NOT_FOUND")
+        length = request.headers.get("content-length", "0")
+        if not length.isdigit() or int(length) > MAX_BODY:
+            raise RefusedError("BODY_TOO_LARGE")
+        workload = await self._workload(request.headers.get("authorization"))
+        record["env_id"] = workload.env_id
+        await self._snapshot.refresh()
+        view = self._snapshot.view()
+        if view is not None:
+            record["snapshot_version"] = view.version
+        refused = environment_refusal(view, workload.env_id)
+        if refused is not None or view is None:
+            raise RefusedError(refused or "DATA_SNAPSHOT_STALE")
+        raw = await request.body()
+        if len(raw) > MAX_BODY:
+            raise RefusedError("BODY_TOO_LARGE")
+        try:
+            body = FileBody.model_validate_json(raw)
+        except ValidationError as exc:
+            raise RefusedError("VALIDATION_FAILED", reason=f"{exc.error_count()} errors") from exc
+        if self._files is None:
+            raise RefusedError("FILES_UNAVAILABLE", reason="this gateway has no file broker")
+        return await self._file_answer(op, workload.env_id, body)
+
+    async def _file_answer(self, op: FileOp, env_id: str, body: FileBody) -> dict[str, Any]:
+        files = self._files
+        assert files is not None
+        try:
+            if op == "delete":
+                await files.delete(env_id, body.name)
+                return {"deleted": True}
+            link: Link = (
+                await files.upload(env_id, body.name, body.content_type)
+                if op == "put"
+                else await files.download(env_id, body.name)
+            )
+        except (FileNameError, ValueError) as exc:
+            raise RefusedError("VALIDATION_FAILED", reason=str(exc)) from exc
+        except FileMissingError as exc:
+            raise RefusedError("FILE_NOT_FOUND") from exc
+        except FilesQuotaError as exc:
+            raise RefusedError("FILES_QUOTA_EXCEEDED") from exc
+        except FilesUnavailableError as exc:
+            raise RefusedError("FILES_UNAVAILABLE", reason=str(exc)) from exc
+        return link.to_wire()
+
+    def _record(
+        self, record: dict[str, Any], received: float, elapsed: int, kind: str = "query"
+    ) -> None:
         instance = self.instance
         record.update(
             received_at=_iso(received),
@@ -367,7 +480,7 @@ class DataGateway:
         if instance.answered == 0:
             record["ready_ms"] = instance.ready_ms
         instance.answered += 1
-        log.info("datagw query %s", json.dumps(record, sort_keys=True))
+        log.info("datagw %s %s", kind, json.dumps(record, sort_keys=True))
 
     async def _run(self, name: str, request: Request, record: dict[str, Any]) -> dict[str, Any]:
         length = request.headers.get("content-length", "0")
@@ -567,6 +680,10 @@ def create_app(
     async def query(name: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         return await gateway.query(name, request)
 
+    @app.post(FILES_PATH)
+    async def file(op: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        return await gateway.file(op, request)
+
     return app
 
 
@@ -576,13 +693,21 @@ def production_app(
     store: BlobStore | None = None,
     connectors: Mapping[str, Connector] | None = None,
     workloads: Workloads | None = None,
+    files: FileBroker | None = None,
 ) -> FastAPI:
-    """``store`` replaces the cell bucket and ``workloads`` Google's keys (tests). Each
-    ``SSC_CONNECTION_*`` variable becomes a :class:`PostgresConnector`; ``connectors`` adds to or
-    replaces them (tests). A granted connection with neither answers ``CONNECTION_UNAVAILABLE``."""
+    """``store`` replaces the cell bucket, ``workloads`` Google's keys and ``files`` the file
+    broker (tests); with ``store`` and no ``files`` there is no broker. Each ``SSC_CONNECTION_*``
+    variable becomes a :class:`PostgresConnector`; ``connectors`` adds to or replaces them
+    (tests). A granted connection with neither answers ``CONNECTION_UNAVAILABLE``. The broker
+    on the cell bucket signs as the gateway's own account, ``Settings.signer``, through IAM
+    ``signBlob``."""
     settings = settings_from_env(os.environ if env is None else env)
     holder = ViewHolder(settings.org_id)
-    feed = SnapshotFeed(store or GcsBlobStore(bucket_of(settings.bucket)), holder)
+    if store is None:
+        bucket = bucket_of(settings.bucket)
+        store = GcsBlobStore(bucket)
+        files = files or FileBroker(bucket, IamSigner(settings.signer))
+    feed = SnapshotFeed(store, holder)
     snapshot = OnDemandSnapshot(feed, holder, max_stale=settings.max_stale)
     google = GoogleWorkloads(audience=settings.audience, project_id=settings.project_id)
     gateway = DataGateway(
@@ -593,6 +718,7 @@ def production_app(
             **{cid: PostgresConnector(t) for cid, t in settings.connections.items()},
             **(connectors or {}),
         },
+        files=files,
     )
 
     @asynccontextmanager

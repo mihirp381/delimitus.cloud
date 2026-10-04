@@ -32,6 +32,7 @@ from ssc_contracts.manifest import (
     load_manifest,
     max_instances,
     session_framework,
+    uses_files,
 )
 from ssc_shared.canonical import manifest_digest
 
@@ -626,6 +627,7 @@ def manifest_data(draw: st.DrawFn) -> dict[str, Any]:
         "egress": st.fixed_dictionaries(
             {}, optional={"hosts": st.lists(HOST, max_size=4, unique=True)}
         ),
+        "files": st.fixed_dictionaries({"enabled": st.booleans()}),
         "schedules": st.lists(
             st.fixed_dictionaries(
                 {"name": NAME, "cron": CRON, "path": PATH},
@@ -889,3 +891,27 @@ def test_the_doctor_fixture_manifests_keep_their_digests() -> None:
     want = PINNED_DIGESTS["schema only"][1]
     for path in valid:
         assert manifest_digest(load_manifest(path.read_bytes())) == want, path
+
+
+def test_files_is_asked_for_by_its_table_alone() -> None:
+    plain = load_manifest('schema = "ssc/v1"\n')
+    asked = load_manifest('schema = "ssc/v1"\n[files]\n')
+    off = load_manifest('schema = "ssc/v1"\n[files]\nenabled = false\n')
+    assert plain.files is None and not uses_files(plain)
+    assert asked.files is not None and asked.files.enabled and uses_files(asked)
+    assert off.files is not None and not uses_files(off)
+    assert "files" not in plain.model_dump(mode="json", by_alias=True)
+    assert len({manifest_digest(m) for m in (plain, asked, off)}) == 3
+    assert manifest_digest(plain) == PINNED_DIGESTS["schema only"][1]
+    for m in (plain, asked, off):
+        assert load_manifest(dump_manifest(m)) == m
+    assert ("[files]" in dump_manifest(asked), "[files]" in dump_manifest(plain)) == (True, False)
+
+
+def test_files_refusals_name_the_place() -> None:
+    with pytest.raises(ManifestError) as typo:
+        load_manifest('schema = "ssc/v1"\n[files]\nenabld = true\n')
+    assert str(typo.value) == "ssc.toml:3:1: files.enabld: unknown key; did you mean 'enabled'?"
+    with pytest.raises(ManifestError) as scalar:
+        load_manifest('schema = "ssc/v1"\nfiles = true\n')
+    assert str(scalar.value) == "ssc.toml:2:1: files: must be a table"

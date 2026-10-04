@@ -27,6 +27,10 @@ def test_the_defaults() -> None:
     assert settings_from_env({**ENV, "SSC_SNAPSHOT_MAX_AGE": "30"}).max_stale == 30
 
 
+def test_file_links_are_signed_as_the_gateway_s_own_account() -> None:
+    assert SETTINGS.signer == f"ssc-data@{SETTINGS.project_id}.iam.gserviceaccount.com"
+
+
 PRIVATE = {"keys": [{**NOTE_JWKS["keys"][0], "d": "secret-part"}]}
 BAD = {
     "no org": {"SSC_ORG_ID": ""},

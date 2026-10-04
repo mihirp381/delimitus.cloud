@@ -201,6 +201,13 @@ finding marked `block`.
   worker with one thread (`gunicorn --workers 1 --threads 1`).
 - SSC offers no key-value store such as Redis. Keep that data in a Postgres table; for a cache,
   use an `UNLOGGED` table with an `expires_at` column.
+- For files (uploads, photos, exports), add `[files]` to `ssc.toml` and use the files helper:
+  Python `from ssc_app import files`, then `files.put(name, data, content_type=...)`,
+  `files.get(name)` and `files.delete(name)`; Node `@delimitus/ssc-files` with `put`, `get` and
+  `remove`. Never write files to the disk to keep them (the disk is memory) and never call Cloud
+  Storage directly. A file is at most 25 MB and a download always arrives as an attachment;
+  for a browser download, redirect to `files.link("get", name)["url"]`. Upload from the server,
+  not from the browser. The first deploy that asks sets up file storage once, in a few minutes.
 - Company data connections are not live yet. Do not write code against them until SSC documents
   the API.
 

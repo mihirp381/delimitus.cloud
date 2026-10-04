@@ -8,12 +8,13 @@ per cell and resource:
   job deferred; a ``failed`` one is asked for again; one ``requested``, ``creating`` or ``ready``
   is left as it is (a second request joins the one in flight). Nothing here turns one off.
 - ``hold_deployment`` is the deploy trigger: a manifest with ``[state] postgres = true`` needs the
-  database. While it is not ``ready`` the deployment waits (a waiter row it owns) and the job
-  re-defers it when the resource is ready or failed. A deployment woken by a failure fails with
-  ``CELL_RESOURCE_FAILED``; a later one asks again.
+  database (cause ``deploy``), one with ``[files]`` the data gateway that brokers them (cause
+  ``file_use``, SSC-046). While one is not ``ready`` the deployment waits (a waiter row it owns)
+  and the job re-defers it when the resource is ready or failed. A deployment woken by a failure
+  fails with ``CELL_RESOURCE_FAILED``; a later one asks again.
 - ``on_approval`` is the egress and connections trigger: an approved internet host or data
-  source. ``request`` with ``connection_granted`` or ``file_use`` is the seam for granting a
-  connection outside an approval and for SSC-046.
+  source. ``request`` with ``connection_granted`` is the seam for granting a connection outside
+  an approval.
 
 Audit rows are appended last, after every row lock (decision 020).
 """
@@ -34,7 +35,7 @@ from ssc_contracts.cells import (
     CellResourceCause,
     CellResourceState,
 )
-from ssc_contracts.manifest import Manifest
+from ssc_contracts.manifest import Manifest, uses_files
 from ssc_control.audit import Actor, NewEvent, append_event
 from ssc_control.cell.tasks import defer_create
 from ssc_control.domain.approval_rules import RequirementKind
@@ -137,9 +138,20 @@ def row_of(row: Any) -> CellResourceRow:
     )
 
 
+DEPLOY_CAUSES: Final = {
+    CellResource.DATABASE: CellResourceCause.DEPLOY,
+    CellResource.CONNECTIONS: CellResourceCause.FILE_USE,
+}
+"""Why a deployment asks for each resource it can wait for."""
+
+
 def needs_for(manifest: Manifest) -> tuple[CellResource, ...]:
-    """The resources a deployment of ``manifest`` waits for."""
-    return (CellResource.DATABASE,) if manifest.state.postgres else ()
+    """The resources a deployment of ``manifest`` waits for: the database for ``[state] postgres
+    = true``, the data gateway for ``[files]``."""
+    needs = [CellResource.DATABASE] if manifest.state.postgres else []
+    if uses_files(manifest):
+        needs.append(CellResource.CONNECTIONS)
+    return tuple(needs)
 
 
 def notice_for(resources: Sequence[CellResource]) -> str | None:
@@ -305,7 +317,7 @@ async def hold_deployment(
         if current is not None and current.state is CellResourceState.FAILED and was_waiting:
             await conn.execute(_STOP_WAITING, params)
             return Hold((resource,), CELL_RESOURCE_FAILED)
-        _, asked = await _ensure(conn, org_id, resource, CellResourceCause.DEPLOY, actor)
+        _, asked = await _ensure(conn, org_id, resource, DEPLOY_CAUSES[resource], actor)
         await conn.execute(_WAIT, params)
         waiting.append(resource)
         if asked is not None:

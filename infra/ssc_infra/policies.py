@@ -29,8 +29,10 @@ INGRESS: Final = {
     "is:internal-and-cloud-load-balancing": "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
 }
 SERVICE_AGENT: Final = re.compile(
-    r"^serviceAccount:service-(org-)?\d+@gcp-sa-[a-z0-9-]+\.iam\.gserviceaccount\.com$"
+    r"^serviceAccount:service-(org-)?\d+@"
+    r"(gcp-sa-[a-z0-9-]+|gs-project-accounts)\.iam\.gserviceaccount\.com$"
 )
+"""A Google service agent; Cloud Storage's has the older name ``gs-project-accounts``."""
 OWN_ACCOUNT: Final = re.compile(
     r"^serviceAccount:[a-z0-9-]+@ssc-[a-z0-9-]+\.iam\.gserviceaccount\.com$"
 )
