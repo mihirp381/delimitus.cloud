@@ -4718,6 +4718,171 @@
         "title": "UserMatches",
         "type": "object"
       },
+      "WarmEnvironmentOut": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "app_slug": {
+            "title": "App Slug",
+            "type": "string"
+          },
+          "cold_start_days": {
+            "description": "Of those days, how many had a cold start.",
+            "title": "Cold Start Days",
+            "type": "integer"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "opened_days": {
+            "description": "Working days in the last 28 it was used.",
+            "title": "Opened Days",
+            "type": "integer"
+          },
+          "suggested": {
+            "description": "Opened on most working days lately, with users meeting cold starts.",
+            "title": "Suggested",
+            "type": "boolean"
+          },
+          "warm": {
+            "title": "Warm",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "environment_id",
+          "app_id",
+          "app_slug",
+          "warm",
+          "suggested",
+          "opened_days",
+          "cold_start_days"
+        ],
+        "title": "WarmEnvironmentOut",
+        "type": "object"
+      },
+      "WarmGatewayOut": {
+        "additionalProperties": false,
+        "properties": {
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "state": {
+            "description": "Where the cell's gateway is: `turning_on` until the cell deployer has set it.",
+            "enum": [
+              "off",
+              "on",
+              "turning_on",
+              "turning_off",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "warm": {
+            "description": "Whether an admin asked for the gateway to be kept warm.",
+            "title": "Warm",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "warm",
+          "state",
+          "failure_code"
+        ],
+        "title": "WarmGatewayOut",
+        "type": "object"
+      },
+      "WarmIn": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_ids": {
+            "description": "The production environments to keep warm; every other is not.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Environment Ids",
+            "type": "array"
+          },
+          "gateway": {
+            "description": "Keep the cell's gateway warm too.",
+            "title": "Gateway",
+            "type": "boolean"
+          },
+          "monthly_usd_shown": {
+            "description": "The monthly cost shown for this setting; refused if it is not that.",
+            "minimum": 0.0,
+            "title": "Monthly Usd Shown",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "environment_ids",
+          "gateway",
+          "monthly_usd_shown"
+        ],
+        "title": "WarmIn",
+        "type": "object"
+      },
+      "WarmOut": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_monthly_usd": {
+            "description": "About what each warm environment adds.",
+            "title": "Environment Monthly Usd",
+            "type": "integer"
+          },
+          "environments": {
+            "description": "Every production environment. Preview environments are never warm.",
+            "items": {
+              "$ref": "#/components/schemas/WarmEnvironmentOut"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "gateway": {
+            "$ref": "#/components/schemas/WarmGatewayOut"
+          },
+          "gateway_monthly_usd": {
+            "description": "About what the warm gateway adds.",
+            "title": "Gateway Monthly Usd",
+            "type": "integer"
+          },
+          "monthly_usd": {
+            "description": "About what the option adds a month as set now.",
+            "title": "Monthly Usd",
+            "type": "integer"
+          },
+          "working_days": {
+            "description": "Working days in the last 28.",
+            "title": "Working Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "environments",
+          "gateway",
+          "working_days",
+          "environment_monthly_usd",
+          "gateway_monthly_usd",
+          "monthly_usd"
+        ],
+        "title": "WarmOut",
+        "type": "object"
+      },
       "Whoami": {
         "additionalProperties": false,
         "properties": {
@@ -11899,6 +12064,138 @@
           }
         },
         "summary": "Find Users",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/warm": {
+      "get": {
+        "description": "Active org admins only (``FORBIDDEN``). Which production environments and whether the\ngateway are kept warm, what that costs, and where the usage events suggest it.",
+        "operationId": "get_warm_v1_warm_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarmOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Warm",
+        "tags": [
+          "v1"
+        ]
+      },
+      "put": {
+        "description": "Set the warm option. Active org admins only, never in an agent session. Names every\nproduction environment to keep warm (the others go back to zero on the runtime's next pass)\nand whether the gateway is kept warm. ``REFERENCE_NOT_FOUND`` for an environment the org does\nnot have; ``VALIDATION_FAILED`` for a preview environment or a ``monthly_usd_shown`` that is\nnot what the setting costs. Setting what is already set changes nothing; a change is audited\nas ``org.updated`` on ``warm`` with the cost shown.",
+        "operationId": "set_warm_v1_warm_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WarmIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarmOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Set Warm",
         "tags": [
           "v1"
         ]

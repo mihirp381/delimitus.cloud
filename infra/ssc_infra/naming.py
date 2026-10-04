@@ -70,6 +70,9 @@ LAZY_RESOURCES: Final[dict[str, frozenset[str]]] = {
     "connections": frozenset({f"gcp:cloudrunv2/service:Service::{DATA_GATEWAY}"}),
 }
 LAZY_FLAGS: Final = tuple(LAZY_RESOURCES)
+WARM_ARGS: Final[dict[str, str]] = {"warm=true": "true", "warm=false": "false"}
+"""The cell deployer's two settings of the ``warm`` flag (SSC-092), the gateway's part of the
+warm option; the one flag the deployer may also set to false."""
 PROXY_HA_RESOURCES: Final = frozenset(
     {
         "gcp:compute/instanceTemplate:InstanceTemplate::proxy-template",

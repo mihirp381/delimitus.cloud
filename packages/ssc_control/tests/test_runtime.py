@@ -2,6 +2,8 @@
 
 Ticket "done when" checks (the Postgres half is in test_worker.py):
   * every environment is minimum 0, no warm instances  -> test_min_instances_is_always_zero
+    (SSC-092: a production environment the warm option names keeps one
+    instance; a preview one never   -> test_only_a_warm_prod_environment_keeps_one_instance)
   * max instances 1 for sessions or Streamlit (C11)   -> test_max_instances_rule
   * a session environment is instance-billed, one instance, 3600 s, concurrency 1000; any
     other is request-billed, 300 s, 80, minimum 0
@@ -103,6 +105,25 @@ def test_spec_carries_the_platform_env_and_labels() -> None:
 )
 def test_min_instances_is_always_zero(env_name: str, tables: dict[str, Any]) -> None:
     assert spec_for(manifest(**tables), name=env_name).min_instances == 0
+
+
+@pytest.mark.parametrize(
+    ("env_name", "warm", "expected"), [("prod", True, 1), ("prod", False, 0), ("preview", True, 0)]
+)
+def test_only_a_warm_prod_environment_keeps_one_instance(
+    env_name: str, warm: bool, expected: int
+) -> None:
+    env = env_row(env_name)
+    release = ReleaseRow(id=new_id("rel"), image_digest=IMAGE)
+    cold, desired = (
+        desired_for(env=env, release=release, manifest=manifest(), app_status="active", warm=w)
+        for w in (False, warm)
+    )
+    assert isinstance(cold, ServiceSpec)
+    assert isinstance(desired, ServiceSpec)
+    assert desired.min_instances == expected
+    assert replace(desired, min_instances=0) == cold
+    assert desired.spec_fingerprint == cold.spec_fingerprint
 
 
 @pytest.mark.parametrize("env_name", ["prod", "preview"])

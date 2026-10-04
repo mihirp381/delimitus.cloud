@@ -128,18 +128,20 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
     database: DatabaseRow | None = None,
     slug: str | None = None,
     identity: AppIdentity | None = None,
+    warm: bool = False,
 ) -> ServiceSpec | Stopped:
     """What should be running for one app environment. Pure: rows in, spec out. ``framework`` is
     what the build detected (SSC-015 records it on the release), or None. Every environment
-    scales to zero. A session environment is instance-billed with the 60-minute timeout and
-    takes 1000 requests at once, since its one instance holds every user's WebSocket; any other
-    is request-billed with 5 minutes and 80. ``secrets`` are the versions the deployment runs
-    (``deployment.secret_refs``), each mounted as its variable (SSC-026). With ``[state] postgres
-    = true`` and its ``database``, the ``PG*`` parts join them (SSC-040); without, the database's
-    secrets are left out. With ``[egress] hosts`` and its proxy credential (``HTTPS_PROXY``),
-    ``egress.PLAIN_ENV`` joins them (SSC-053); without, the credential is left out. Every app
-    gets ``identity_env`` from ``identity`` and its ``slug``, as plain values: the keys are
-    public."""
+    scales to zero except a production one the org's warm option names (``warm``, SSC-092),
+    which keeps one instance; a preview environment is never warm. A session environment is
+    instance-billed with the 60-minute timeout and takes 1000 requests at once, since its one
+    instance holds every user's WebSocket; any other is request-billed with 5 minutes and 80.
+    ``secrets`` are the versions the deployment runs (``deployment.secret_refs``), each mounted
+    as its variable (SSC-026). With ``[state] postgres = true`` and its ``database``, the ``PG*``
+    parts join them (SSC-040); without, the database's secrets are left out. With ``[egress]
+    hosts`` and its proxy credential (``HTTPS_PROXY``), ``egress.PLAIN_ENV`` joins them
+    (SSC-053); without, the credential is left out. Every app gets ``identity_env`` from
+    ``identity`` and its ``slug``, as plain values: the keys are public."""
     service = service_name(env.id)
     if app_status != "active":
         return Stopped(service=service, reason=app_status)
@@ -167,7 +169,7 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
         billing=billing,
         timeout_seconds=timeout_for(runtime, framework),
         concurrency=SESSION_CONCURRENCY if session else REQUEST_CONCURRENCY,
-        min_instances=0,
+        min_instances=1 if warm and env.name == "prod" else 0,
         max_instances=max_instances_for(manifest, framework),
         labels={"ssc-org": env.org_id, "ssc-app": env.app_id, "ssc-env": env.id},
         secrets=mounted,

@@ -1,5 +1,7 @@
 """The cell deployer (SSC-087): two arguments from fixed sets, exactly one flag set, and a run
-killed halfway converged by the next. Pulumi is a fake; nothing here reaches a cloud."""
+killed halfway converged by the next. The warm option's gateway part (SSC-092): ``warm=true`` and
+``warm=false`` set the ``warm`` flag and nothing else. Pulumi is a fake; nothing here reaches a
+cloud."""
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -11,7 +13,7 @@ import pytest
 
 import mockcloud
 from mockcloud import Declared, run
-from ssc_contracts.cells import CellResource
+from ssc_contracts.cells import CellResource, WarmGateway
 from ssc_infra import cell, deployer, naming, stack_config
 from ssc_infra.deployer import Deployer, RefusedError, parse
 
@@ -136,6 +138,32 @@ def test_the_runner_sets_exactly_its_flag_and_nothing_else(
     assert (tmp_path / f"Pulumi.{STACK}.yaml").read_text() == (
         f"secretsprovider: {naming.SECRETS_PROVIDER}\n"
     )
+    assert fake.calls[-1] == ("up", "--yes", "--stack", STACK)
+
+
+def test_each_warm_setting_is_accepted() -> None:
+    assert [parse([LABEL, w], RUN_ENV) for w in naming.WARM_ARGS] == [
+        (LABEL, "warm=true"),
+        (LABEL, "warm=false"),
+    ]
+    assert set(naming.WARM_ARGS) == {w.value for w in WarmGateway}
+
+
+@pytest.mark.parametrize(
+    ("arg", "before", "after"), [("warm=true", "false", "true"), ("warm=false", "true", "false")]
+)
+def test_the_warm_setting_changes_only_the_warm_flag(
+    arg: str, before: str, after: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    applied = {"probe": "true", "gateway_min": "1", "warm": before, "database": "true"}
+    outputs = {"config": _exported(applied, monkeypatch)["config"]}
+    assert outputs["config"]["warm"] == before
+    fake = FakePulumi(outputs)
+    assert deployer.main([LABEL, arg], RUN_ENV, _deployer(fake, tmp_path)) == 0
+    written = fake.set_all()
+    assert written == {stack_config.GLOBAL_WARNING: "true"} | outputs["config"] | {"warm": after}
+    changed = {k for k in written if outputs["config"].get(k) != written[k]}
+    assert changed == {"warm", stack_config.GLOBAL_WARNING}
     assert fake.calls[-1] == ("up", "--yes", "--stack", STACK)
 
 

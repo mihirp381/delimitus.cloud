@@ -42,6 +42,8 @@ and a branch, never a GitHub token or key.
 Revision 0029 adds ``egress_host`` and ``egress_credential`` (SSC-053), keyed by org and host
 and by org, environment and credential, so both are in ``UNKEYED_TABLES``: the allowlist and
 digests of proxy tokens, never a token.
+Revision 0030 adds ``environment.warm`` and ``warm_gateway`` (SSC-092), keyed by org, so it is in
+``UNKEYED_TABLES``: whether the gateway is kept warm and the deployer run setting it.
 """
 
 from collections.abc import Mapping
@@ -92,6 +94,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "repo_link",
         "egress_host",  # SSC-053, revision 0029
         "egress_credential",  # SSC-053, revision 0029
+        "warm_gateway",
     }
 )
 
@@ -118,6 +121,7 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "repo_link",
         "egress_host",
         "egress_credential",
+        "warm_gateway",
     }
 )
 
@@ -176,6 +180,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "repo_link": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
     "egress_host": frozenset({"SELECT", "INSERT", "DELETE"}),  # an admin removes a host
     "egress_credential": frozenset({"SELECT", "INSERT", "DELETE"}),  # older ones pruned
+    "warm_gateway": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 
