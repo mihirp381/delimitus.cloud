@@ -12,19 +12,21 @@ change that widens the audience beyond the ceiling of a data connection the envi
 agent session gets ``202`` with the pending approval ids and a person gets ``APPROVAL_REQUIRED``;
 the grants and their version stay as they were.
 
+Approving the last open requirement of a change applies it (:func:`apply_approved`, SSC-049).
+
 Each grant a change actually adds records one ``share`` metrics event (SSC-028).
 """
 
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, Response
-from pydantic import Field
+from pydantic import Field, ValidationError
 from sqlalchemy import text
 
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
-from ssc_control.api.authz import require_builder
+from ssc_control.api.authz import can_build, require_builder
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.common import (
@@ -54,6 +56,12 @@ from ssc_control.snapshot.service import mark_dirty
 from ssc_control.timers.service import pause_blocked
 
 router = APIRouter()
+
+type ApplyOutcome = Literal["applied", "waiting", "not_applied", "not_applicable"]
+
+_SHARING = frozenset(
+    {RequirementKind.WIDEN_AUDIENCE, RequirementKind.AGENT_SHARE, RequirementKind.EXCEED_CEILING}
+)
 
 
 class GrantIn(Strict):
@@ -142,6 +150,7 @@ async def _approvals_for(  # noqa: PLR0913  (keyword-only)
     existing: set[GrantKey],
     desired: dict[GrantKey, GrantIn],
     exceeded: tuple[str, ...],
+    via_agent: bool,
 ) -> tuple[list[Requirement], dict[Requirement, ApprovalRow]]:
     """What this change needs approved, and the newest request for each."""
     needed = await share_requirements(
@@ -152,7 +161,7 @@ async def _approvals_for(  # noqa: PLR0913  (keyword-only)
         base_version=version,
         before=existing,
         after=set(desired),
-        via_agent=uow.principal.is_agent,
+        via_agent=via_agent,
         source=RecordedCapabilities(),
         exceeded=exceeded,
     )
@@ -207,6 +216,183 @@ async def _ask(  # noqa: PLR0913  (keyword-only)
         )
         asked.append(row.id)
     return asked
+
+
+async def _write(  # noqa: PLR0913  (keyword-only)
+    uow: UnitOfWork,
+    *,
+    app_id: str,
+    environment_id: str,
+    environment_name: str,
+    existing: dict[GrantKey, GrantOut],
+    desired: dict[GrantKey, GrantIn],
+    needed: list[Requirement],
+    found: dict[Requirement, ApprovalRow],
+    exceeded: tuple[str, ...],
+    by: str,
+    via_agent: bool,
+    source_tool: str | None,
+) -> int:
+    """Replace the environment's grants with ``desired`` in the caller's transaction, once every
+    requirement in ``needed`` is approved in ``found``. Returns the new ``grants_version``."""
+    # The approval that let the change through, agent_share first, is linked from each grant row.
+    approved = sorted(needed, key=lambda r: r.kind is not RequirementKind.AGENT_SHARE)
+    policy_id = found[approved[0]].policy_decision_id if approved else None
+    changed = existing.keys() != desired.keys()
+    for key, old in existing.items():
+        if key not in desired:
+            await uow.conn.execute(_DELETE_GRANT, {"org": uow.org_id, "id": old.id})
+            await uow.audit(
+                AuditAction.GRANT_REMOVED,
+                target_kind="app_grant",
+                target_id=old.id,
+                before={"environment_id": environment_id, **old.model_dump(exclude={"id"})},
+                policy_decision_id=policy_id,
+            )
+    for key, new in desired.items():
+        if key not in existing:
+            gid = new_id("gnt")
+            await uow.conn.execute(
+                _INSERT_GRANT,
+                {
+                    "id": gid,
+                    "org": uow.org_id,
+                    "env": environment_id,
+                    "role": new.role,
+                    "kind": new.subject_kind,
+                    "user": new.subject_id if new.subject_kind == "user" else None,
+                    "group": new.subject_id if new.subject_kind == "group" else None,
+                    "by": by,
+                },
+            )
+            await uow.audit(
+                AuditAction.GRANT_ADDED,
+                target_kind="app_grant",
+                target_id=gid,
+                after={"environment_id": environment_id, **new.model_dump()},
+                policy_decision_id=policy_id,
+            )
+            await uow.metrics.record_event(
+                uow.conn,
+                org_id=uow.org_id,
+                kind=MetricKind.SHARE,
+                app_id=app_id,
+                user_id=by,
+                source_tool=source_tool,
+                properties={
+                    "environment": environment_name,
+                    "role": new.role,
+                    "subject_kind": new.subject_kind,
+                    "via_agent": via_agent,
+                },
+            )
+    bumped = (
+        await uow.conn.execute(_BUMP_GRANTS, {"org": uow.org_id, "env": environment_id})
+    ).scalar_one()
+    if changed:
+        approved_over = (
+            set(exceeded)
+            if any(r.kind is RequirementKind.EXCEED_CEILING for r in needed)
+            else set[str]()
+        )
+        await connections.settle_environment(
+            uow.conn,
+            uow.org_id,
+            environment_id,
+            approved=approved_over,
+            actor=actor_of(uow.principal),
+        )
+        await mark_dirty(uow.conn, uow.org_id)
+        await pause_blocked(uow.conn, uow.org_id)
+    return int(bumped)
+
+
+async def lock_environment(uow: UnitOfWork, row: ApprovalRow) -> None:
+    """Take the request's environment ``FOR UPDATE``, the order :func:`put_grants` locks in."""
+    params = {"org": uow.org_id, "app": row.app_id, "env": row.environment_id}
+    await uow.conn.execute(_LOCK_ENV, params)
+
+
+def _stored_grants(row: ApprovalRow) -> dict[GrantKey, GrantIn] | None:
+    try:
+        grants = GrantsIn.model_validate({"grants": row.payload.get("grants")}).grants
+    except ValidationError:
+        return None
+    return {_grant_key(g): g for g in grants}
+
+
+async def _blocked(
+    uow: UnitOfWork, row: ApprovalRow, desired: dict[GrantKey, GrantIn] | None
+) -> str | None:
+    """Why an approved change may not be written now: nothing stored to write, a quarantined
+    app's sharing is frozen, or the requester may no longer build the environment."""
+    if desired is None:
+        return "payload_invalid"
+    params = {"org": uow.org_id, "app": row.app_id}
+    if (await uow.conn.execute(_SHARE_APP_STATUS, params)).scalar() == "quarantined":
+        return "app_not_active"
+    if not await can_build(uow.conn, uow.org_id, row.requested_by_user_id, row.environment_id):
+        return "requester_cannot_build"
+    return None
+
+
+async def apply_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcome, str | None]:
+    """After ``row`` was approved: write its stored grant set when every requirement for that
+    exact set is now approved, in the caller's transaction. ``waiting`` while another is open;
+    ``not_applied`` with the reason when the world moved on (version, floors, ceilings,
+    quarantine, the requester's right to build); ``not_applicable`` for the kinds that apply
+    nothing. The approval stands either way."""
+    if row.kind not in _SHARING or row.state != "approved":
+        return "not_applicable", None
+    desired = _stored_grants(row)
+    params = {"org": uow.org_id, "app": row.app_id, "env": row.environment_id}
+    env = (await uow.conn.execute(_LOCK_ENV, params)).one()
+    blocked = await _blocked(uow, row, desired)
+    if blocked is not None or desired is None:
+        return "not_applied", blocked
+    requester = row.requested_by_user_id
+    current = int(env[1])
+    existing = {
+        _grant_key(g): g for g in (await _grants_out(uow, row.environment_id, current)).grants
+    }
+    ceilings = await connections.ceilings(uow.conn, uow.org_id, row.environment_id, set(desired))
+    try:
+        exceeded = _check_rules(
+            grant_rules.SharingTarget(row.environment_id, str(env[3]), str(env[2])),
+            desired,
+            ceilings,
+        )
+    except Refusal:
+        return "not_applied", "rules"
+    needed, found = await _approvals_for(
+        uow,
+        environment_id=row.environment_id,
+        profile=str(env[2]),
+        version=current,
+        existing=set(existing),
+        desired=desired,
+        exceeded=exceeded,
+        via_agent=row.requested_via_agent,
+    )
+    if row.requirement not in needed:
+        return "not_applied", "stale"
+    if any(r not in found or found[r].state != "approved" for r in needed):
+        return "waiting", None
+    await _write(
+        uow,
+        app_id=row.app_id,
+        environment_id=row.environment_id,
+        environment_name=str(env[3]),
+        existing=existing,
+        desired=desired,
+        needed=needed,
+        found=found,
+        exceeded=exceeded,
+        by=requester,
+        via_agent=row.requested_via_agent,
+        source_tool=None,
+    )
+    return "applied", None
 
 
 async def _grants_out(uow: UnitOfWork, env_id: str, version: int) -> GrantsOut:
@@ -317,6 +503,7 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
         existing=set(existing),
         desired=desired,
         exceeded=exceeded,
+        via_agent=uow.principal.is_agent,
     )
     open_ = [r for r in needed if r not in found or found[r].state != "approved"]
     if open_ and uow.principal.is_agent:
@@ -343,74 +530,18 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
                 ],
             },
         )
-    # The approval that let the change through, agent_share first, is linked from each grant row.
-    approved = sorted(needed, key=lambda r: r.kind is not RequirementKind.AGENT_SHARE)
-    policy_id = found[approved[0]].policy_decision_id if approved else None
-    changed = existing.keys() != desired.keys()
-    for key, old in existing.items():
-        if key not in desired:
-            await uow.conn.execute(_DELETE_GRANT, {"org": uow.org_id, "id": old.id})
-            await uow.audit(
-                AuditAction.GRANT_REMOVED,
-                target_kind="app_grant",
-                target_id=old.id,
-                before={"environment_id": environment_id, **old.model_dump(exclude={"id"})},
-                policy_decision_id=policy_id,
-            )
-    for key, new in desired.items():
-        if key not in existing:
-            gid = new_id("gnt")
-            await uow.conn.execute(
-                _INSERT_GRANT,
-                {
-                    "id": gid,
-                    "org": uow.org_id,
-                    "env": environment_id,
-                    "role": new.role,
-                    "kind": new.subject_kind,
-                    "user": new.subject_id if new.subject_kind == "user" else None,
-                    "group": new.subject_id if new.subject_kind == "group" else None,
-                    "by": by,
-                },
-            )
-            await uow.audit(
-                AuditAction.GRANT_ADDED,
-                target_kind="app_grant",
-                target_id=gid,
-                after={"environment_id": environment_id, **new.model_dump()},
-                policy_decision_id=policy_id,
-            )
-            await uow.metrics.record_event(
-                uow.conn,
-                org_id=uow.org_id,
-                kind=MetricKind.SHARE,
-                app_id=app_id,
-                user_id=by,
-                source_tool=source_tool_of(uow.principal, source_tool),
-                properties={
-                    "environment": str(env[3]),
-                    "role": new.role,
-                    "subject_kind": new.subject_kind,
-                    "via_agent": uow.principal.is_agent,
-                },
-            )
-    bumped = (
-        await uow.conn.execute(_BUMP_GRANTS, {"org": uow.org_id, "env": environment_id})
-    ).scalar_one()
-    version = int(bumped)
-    if changed:
-        approved_over = (
-            set(exceeded)
-            if any(r.kind is RequirementKind.EXCEED_CEILING for r in needed)
-            else set[str]()
-        )
-        await connections.settle_environment(
-            uow.conn,
-            uow.org_id,
-            environment_id,
-            approved=approved_over,
-            actor=actor_of(uow.principal),
-        )
-        await mark_dirty(uow.conn, uow.org_id)
-        await pause_blocked(uow.conn, uow.org_id)
+    version = await _write(
+        uow,
+        app_id=app_id,
+        environment_id=environment_id,
+        environment_name=str(env[3]),
+        existing=existing,
+        desired=desired,
+        needed=needed,
+        found=found,
+        exceeded=exceeded,
+        by=by,
+        via_agent=uow.principal.is_agent,
+        source_tool=source_tool_of(uow.principal, source_tool),
+    )
     return uow.reply(await _grants_out(uow, environment_id, version), headers={ETAG: etag(version)})

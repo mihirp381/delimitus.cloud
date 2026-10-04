@@ -16,3 +16,14 @@ const APP_STATUS_TONE: Readonly<Record<string, Tone>> = {
 export function StatusBadge({ status }: { readonly status: string }) {
   return <Badge tone={APP_STATUS_TONE[status] ?? 'warning'}>{status}</Badge>;
 }
+
+const APPROVAL_TONE: Readonly<Record<string, Tone>> = {
+  pending: 'warning',
+  approved: 'success',
+  denied: 'danger',
+  cancelled: 'neutral',
+};
+
+export function ApprovalBadge({ state }: { readonly state: string }) {
+  return <Badge tone={APPROVAL_TONE[state] ?? 'neutral'}>{state}</Badge>;
+}

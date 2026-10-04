@@ -44,6 +44,7 @@ const ACTIONS: Readonly<Record<AuditAction, true>> = {
   'kill_switch.step': true,
   'approval.requested': true,
   'approval.decided': true,
+  'approval.cancelled': true,
   'schedule.created': true,
   'schedule.updated': true,
   'schedule.paused': true,

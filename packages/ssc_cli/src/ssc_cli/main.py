@@ -7,6 +7,7 @@ import typer
 from ssc_cli import __version__
 from ssc_cli.commands._common import session
 from ssc_cli.commands.access import access_app
+from ssc_cli.commands.approvals import approvals_app
 from ssc_cli.commands.apps import apps_app
 from ssc_cli.commands.connections import connections
 from ssc_cli.commands.deploy import deploy
@@ -69,6 +70,7 @@ app.command()(logout)
 app.command()(whoami)
 app.add_typer(token_app)
 app.add_typer(apps_app)
+app.add_typer(approvals_app)
 app.command()(status)
 app.command()(logs)
 app.command()(share)

@@ -4,42 +4,39 @@ import { useId } from 'react';
 import {
   APPROVAL_STATES,
   type Approval,
-  type ApprovalState,
   approvalsSearch,
+  connectionName,
   grantText,
   replacedVersion,
   requestedGrants,
 } from '../../api/approvals';
 import { must } from '../../api/client';
-import { Badge, type Tone } from '../../components/Badge';
+import { ApprovalBadge, Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
-export const Route = createFileRoute('/_authed/approvals')({
+export const Route = createFileRoute('/_authed/approvals/')({
   validateSearch: approvalsSearch,
   component: ApprovalsPage,
 });
 
-const STATE_TONE: Readonly<Record<ApprovalState, Tone>> = {
-  pending: 'warning',
-  approved: 'success',
-  denied: 'danger',
-  cancelled: 'neutral',
-};
-
 function ApprovalsPage() {
   const { api } = Route.useRouteContext();
-  const { state } = approvalsSearch(Route.useSearch());
+  const { state, view } = approvalsSearch(Route.useSearch());
+  const inbox = view !== 'all';
   const navigate = useNavigate({ from: Route.fullPath });
   const stateId = useId();
   const list = useInfiniteQuery({
-    queryKey: ['approvals', state ?? null],
+    queryKey: ['approvals', inbox, inbox ? null : (state ?? null)],
     queryFn: async ({ pageParam, signal }) =>
       must(
         await api.GET('/v1/approvals', {
           params: {
-            query: { ...(state ? { state } : {}), ...(pageParam === null ? {} : { before: pageParam }) },
+            query: {
+              ...(inbox ? { inbox: true } : state ? { state } : {}),
+              ...(pageParam === null ? {} : { before: pageParam }),
+            },
           },
           signal,
         }),
@@ -48,36 +45,47 @@ function ApprovalsPage() {
     getNextPageParam: (page) => page.next_before,
   });
   const rows = list.data?.pages.flatMap((p) => p.approvals) ?? [];
+  const noun = inbox ? 'waiting for you' : '';
 
   return (
     <>
       <div className="page-head">
         <h1>Approvals</h1>
         <div className="search">
-          <label htmlFor={stateId} className="visually-hidden">
-            State
-          </label>
-          <select
-            id={stateId}
-            value={state ?? ''}
-            onChange={(e) => {
-              const next = approvalsSearch({ state: e.target.value });
-              void navigate({ search: next });
-            }}
-          >
-            <option value="">Every state</option>
-            {APPROVAL_STATES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+          <Link to="/approvals" search={{}} aria-current={inbox ? 'page' : undefined}>
+            Waiting for you
+          </Link>{' '}
+          <Link to="/approvals" search={{ view: 'all' }} aria-current={inbox ? undefined : 'page'}>
+            All requests
+          </Link>
+          {inbox ? null : (
+            <>
+              <label htmlFor={stateId} className="visually-hidden">
+                State
+              </label>
+              <select
+                id={stateId}
+                value={state ?? ''}
+                onChange={(e) => {
+                  const next = approvalsSearch({ view: 'all', state: e.target.value });
+                  void navigate({ search: next });
+                }}
+              >
+                <option value="">Every state</option>
+                {APPROVAL_STATES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
         </div>
       </div>
       <p className="muted">
-        Changes waiting for, or given, an org admin's approval (decision 016). SSC staff record each
-        decision from the admin's reply by email or chat; the console shows requests and outcomes
-        and cannot decide. Org admins see every request; others see their own.
+        {inbox
+          ? 'Requests you may approve or reject: org admins see every one, and a connection owner sees the sharing requests that go beyond their connection’s audience ceiling. Open one to see what it changes.'
+          : 'Every request you may see, and how it was decided. Org admins see every request; others see their own.'}
       </p>
       {list.data ? (
         <section className="panel">
@@ -86,11 +94,18 @@ function ApprovalsPage() {
             columns={COLUMNS}
             rows={rows}
             rowKey={(a) => a.id}
-            empty={state ? `No ${state} requests.` : 'No approval requests yet.'}
+            empty={
+              inbox
+                ? 'Nothing is waiting for you.'
+                : state
+                  ? `No ${state} requests.`
+                  : 'No approval requests yet.'
+            }
           />
           <div className="more">
             <p className="muted count" aria-live="polite">
               {rows.length} {rows.length === 1 ? 'request' : 'requests'}
+              {noun ? ` ${noun}` : ''}
               {list.hasNextPage ? ', more are older' : ''}
             </p>
             {list.hasNextPage ? (
@@ -110,19 +125,13 @@ function ApprovalsPage() {
   );
 }
 
-/** The app's slug and the environment's name, or their ids when the app cannot be read. */
 function Where({ approval }: { readonly approval: Approval }) {
-  const { queries } = Route.useRouteContext();
-  const app = queries.useQuery('get', '/v1/apps/{app_id}', {
-    params: { path: { app_id: approval.app_id } },
-  });
-  const env = app.data?.environments.find((e) => e.id === approval.environment_id);
   return (
     <>
       <Link to="/apps/$appId" params={{ appId: approval.app_id }}>
-        {app.data ? app.data.slug : <code>{approval.app_id}</code>}
+        {approval.app}
       </Link>{' '}
-      {env ? env.name : <code className="muted">{approval.environment_id}</code>}
+      {approval.environment}
     </>
   );
 }
@@ -161,6 +170,12 @@ function Change({ approval }: { readonly approval: Approval }) {
         </>
       );
     }
+    case 'exceed_ceiling':
+      return (
+        <p>
+          Share beyond the audience ceiling of the connection <code>{connectionName(approval)}</code>
+        </p>
+      );
     case 'connect_data_source':
       return (
         <p>
@@ -179,13 +194,13 @@ function Change({ approval }: { readonly approval: Approval }) {
 }
 
 function Decision({ approval: a }: { readonly approval: Approval }) {
-  if (a.state === 'pending') return <span className="muted">Waiting for an org admin</span>;
+  if (a.state === 'pending') return <span className="muted">Waiting for an approver</span>;
   if (a.state === 'cancelled') return <span className="muted">Withdrawn by the requester</span>;
   return (
     <>
       <p>
         {a.state === 'approved' ? 'Approved' : 'Denied'} by{' '}
-        {a.decided_by_user_id ? <code>{a.decided_by_user_id}</code> : 'an unnamed admin'}
+        {a.decided_by_user_id ? <code>{a.decided_by_user_id}</code> : 'an unnamed approver'}
         {a.decision_channel ? ` by ${a.decision_channel}` : ''}
         {a.decided_at ? (
           <>
@@ -215,7 +230,7 @@ const COLUMNS: readonly Column<Approval>[] = [
     header: 'Requested by',
     cell: (a) => (
       <>
-        <code>{a.requested_by_user_id}</code>
+        {a.requested_by_name}
         {a.requested_via_agent ? (
           <>
             {' '}
@@ -225,6 +240,14 @@ const COLUMNS: readonly Column<Approval>[] = [
       </>
     ),
   },
-  { header: 'State', cell: (a) => <Badge tone={STATE_TONE[a.state]}>{a.state}</Badge> },
+  { header: 'State', cell: (a) => <ApprovalBadge state={a.state} /> },
   { header: 'Decision', cell: (a) => <Decision approval={a} /> },
+  {
+    header: 'Review',
+    cell: (a) => (
+      <Link to="/approvals/$approvalId" params={{ approvalId: a.id }}>
+        Open
+      </Link>
+    ),
+  },
 ];

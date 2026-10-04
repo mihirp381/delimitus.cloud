@@ -10,6 +10,7 @@ admits those who may change some app's sharing, for ``GET /v1/groups``.
 from typing import Literal
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.errors import ErrorCode
 from ssc_control.api.auth import PrincipalKind
@@ -65,6 +66,13 @@ _SELECT_BUILDER = text(
 )
 
 
+async def can_build(conn: AsyncConnection, org_id: str, user_id: str, environment_id: str) -> bool:
+    """Whether ``user_id`` is an active org admin, the app's owner, or a builder on the
+    environment."""
+    params = {"org": org_id, "id": user_id, "env": environment_id}
+    return (await conn.execute(_SELECT_BUILDER, params)).first() is not None
+
+
 async def require_builder(uow: UnitOfWork, environment_id: str) -> str:
     """The caller's user id when they may change ``environment_id``: an active org admin, the
     app's owner, or a builder there. ``FORBIDDEN`` otherwise, including for a missing environment;
@@ -72,8 +80,7 @@ async def require_builder(uow: UnitOfWork, environment_id: str) -> str:
     principal = uow.principal
     if principal.kind is not PrincipalKind.USER:
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})
-    params = {"org": uow.org_id, "id": principal.subject, "env": environment_id}
-    if (await uow.conn.execute(_SELECT_BUILDER, params)).first() is None:
+    if not await can_build(uow.conn, uow.org_id, principal.subject, environment_id):
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "not_a_builder"})
     return principal.subject
 

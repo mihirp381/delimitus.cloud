@@ -67,6 +67,13 @@ RESPONSES = (
     models.EnvironmentConnectionsOut,
     models.PolicyDatabase,
     models.DeploymentPolicy,
+    models.Approval,
+    models.ApprovalPage,
+    models.DiffGrant,
+    models.GrantDiff,
+    models.ApprovalConnection,
+    models.ApprovalDetail,
+    models.ApprovalDecided,
 )
 REQUESTS = (
     models.AppCreate,
@@ -78,6 +85,7 @@ REQUESTS = (
     models.PromoteIn,
     models.KillSwitchCreate,
     models.SecretSet,
+    models.PersonDecisionIn,
 )
 
 

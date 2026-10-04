@@ -373,6 +373,65 @@ class EnvironmentConnectionsOut(Wire):
     connections: list[EnvironmentConnectionOut]
 
 
+class Approval(Wire):
+    id: str
+    app: str
+    environment: str
+    kind: str
+    subject_key: str
+    state: str
+    requested_by_user_id: str
+    requested_by_name: str
+    requested_via_agent: bool
+    decided_by_user_id: str | None
+    decision_reason: str | None
+    created_at: str
+
+
+class ApprovalPage(Wire):
+    approvals: list[Approval]
+    next_before: str | None
+
+
+class DiffGrant(Wire):
+    role: str
+    subject_kind: str
+    subject_id: str | None
+    subject_name: str | None
+
+
+class GrantDiff(Wire):
+    added: list[DiffGrant]
+    removed: list[DiffGrant]
+
+
+class ApprovalConnection(Wire):
+    """The data connection a request is about; never its address."""
+
+    name: str
+    classification: str
+    ceiling_audience: str
+    ceiling_subjects: int
+
+
+class ApprovalDetail(Approval):
+    grant_diff: GrantDiff | None
+    connection: ApprovalConnection | None
+    can_decide: bool
+    can_cancel: bool
+
+
+class ApprovalDecided(Approval):
+    applied: str
+    applied_reason: str | None
+
+
+class PersonDecisionIn(Wire):
+    outcome: str
+    reason: str
+    channel: str = "cli"
+
+
 class PolicyApproval(Wire):
     kind: str
     when: str

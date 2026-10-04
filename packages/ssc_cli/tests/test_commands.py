@@ -24,6 +24,7 @@ from ssc_cli.session import Session
 from ssc_cli.shapes import (
     AccessResult,
     AppResult,
+    ApprovalsResult,
     AppsResult,
     ConnectionsResult,
     DeployResult,
@@ -78,6 +79,7 @@ ALLOWED = {
     "requirements",
     "policy",
     "connections",
+    "approvals",
 }
 
 
@@ -143,12 +145,17 @@ def test_help_lists_exact_set(cli):
         ("requirements",),
         ("policy",),
         ("connections",),
+        ("approvals", "list"),
+        ("approvals", "show"),
+        ("approvals", "approve"),
+        ("approvals", "reject"),
     }
     for group, subs in (
         ("token", {"set", "clear"}),
         ("apps", {"create"}),
         ("access", {"explain"}),
         ("secret", {"set", "list"}),
+        ("approvals", {"list", "show", "approve", "reject"}),
     ):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
         assert {line.split()[0] for line in text.splitlines() if line.startswith("  ")} == subs
@@ -1169,14 +1176,19 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("requirements",): ([], PlatformRequirements, None),
         ("policy",): ([], PolicyResult, None),
         ("connections",): ([], ConnectionsResult, None),
+        ("approvals", "list"): ([], ApprovalsResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),
         ("logout",): ([], LogoutResult, None),
     }
     # `mcp` serves stdio; its --json covers start-up refusals only (test_mcp_local.py). `login`
     # needs an auth host and a browser; test_login.py covers its --json. `secret set` needs a
-    # cell's secret intake; test_secret.py covers its --json.
-    assert set(cases) | {("mcp",), ("login",), ("secret", "set")} == _paths()
+    # cell's secret intake; test_secret.py covers its --json. `approvals show`, `approve` and
+    # `reject` need a request to decide; test_approvals.py covers their --json.
+    expected = {("mcp",), ("login",), ("secret", "set")} | {
+        ("approvals", name) for name in ("show", "approve", "reject")
+    }
+    assert set(cases) | expected == _paths()
     for path, (args, shape, stdin) in cases.items():
         r = on_live(*path, *args, "--json", input=stdin)
         assert r.code == 0, (path, r.stdout, r.stderr)

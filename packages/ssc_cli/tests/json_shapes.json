@@ -34,6 +34,55 @@
     "slug": "string",
     "status": "string"
   },
+  "ApprovalDecisionResult": {
+    "api_url": "string",
+    "applied": "string",
+    "applied_reason": "string|null",
+    "id": "string",
+    "reason": "string",
+    "state": "string"
+  },
+  "ApprovalGrantRow": {
+    "role": "string",
+    "subject_id": "string|null",
+    "subject_kind": "string",
+    "subject_name": "string|null"
+  },
+  "ApprovalRow": {
+    "app": "string",
+    "created_at": "string",
+    "environment": "string",
+    "id": "string",
+    "kind": "string",
+    "requested_by": "string",
+    "requested_via_agent": "boolean",
+    "state": "string",
+    "subject": "string|null"
+  },
+  "ApprovalShowResult": {
+    "added": "array<ApprovalGrantRow>",
+    "api_url": "string",
+    "app": "string",
+    "can_decide": "boolean",
+    "connection": "string|null",
+    "created_at": "string",
+    "decided_by_user_id": "string|null",
+    "decision_reason": "string|null",
+    "environment": "string",
+    "id": "string",
+    "kind": "string",
+    "removed": "array<ApprovalGrantRow>",
+    "requested_by": "string",
+    "requested_via_agent": "boolean",
+    "state": "string",
+    "subject": "string|null"
+  },
+  "ApprovalsResult": {
+    "api_url": "string",
+    "approvals": "array<ApprovalRow>",
+    "more": "boolean",
+    "scope": "string[all,inbox]"
+  },
   "AppsResult": {
     "apps": "array<AppRow>"
   },

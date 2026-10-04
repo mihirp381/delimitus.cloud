@@ -16,6 +16,7 @@ Prefix = Literal[
     "con",  # connection to a company database
     "cgr",  # connection grant (one environment's use of one connection)
     "apr",  # approval request
+    "ntf",  # notification outbox row
     "pol",  # policy decision
     "cell",  # customer cell
     "tmr",  # timer run

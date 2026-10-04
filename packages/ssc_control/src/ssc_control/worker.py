@@ -21,7 +21,7 @@ import os
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 from procrastinate import App, Blueprint, JobContext, PsycopgConnector
 from procrastinate.exceptions import ConnectorException, UniqueViolation
@@ -46,6 +46,8 @@ from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
 from ssc_control.lifecycle import jobs as lifecycle_jobs
 from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
 from ssc_control.metrics import jobs as metrics_jobs
+from ssc_control.notifications import jobs as notify_jobs
+from ssc_control.notifications.mailer import LogMailer, Mailer, Security, SmtpConfig, SmtpMailer
 from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases, FakeAppDatabases
@@ -94,6 +96,16 @@ WORKOS_BASE_ENV: Final = "SSC_WORKOS_BASE"
 GITHUB_APP_ID_ENV: Final = "SSC_GITHUB_APP_ID"
 GITHUB_KEY_ENV: Final = "SSC_GITHUB_PRIVATE_KEY"
 GITHUB_BASE_ENV: Final = "SSC_GITHUB_API_BASE"
+MAIL_TRANSPORT_ENV: Final = "SSC_MAIL_TRANSPORT"
+SMTP_HOST_ENV: Final = "SSC_SMTP_HOST"
+SMTP_PORT_ENV: Final = "SSC_SMTP_PORT"
+SMTP_TLS_ENV: Final = "SSC_SMTP_TLS"
+SMTP_USER_ENV: Final = "SSC_SMTP_USER"
+SMTP_PASSWORD_ENV: Final = "SSC_SMTP_PASSWORD"  # noqa: S105  (an environment variable name)
+MAIL_FROM_ENV: Final = "SSC_MAIL_FROM"
+CONSOLE_URL_ENV: Final = "SSC_CONSOLE_URL"
+DEV_CONSOLE_URL: Final = "http://localhost:5173"
+SMTP_PORTS: Final[dict[str, int]] = {"starttls": 587, "tls": 465}
 FAKE_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 SWEEP_CRON: Final = "* * * * * */30"
 """Every 30 seconds."""
@@ -188,6 +200,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(identity_jobs.blueprint(), namespace="identity")
     app.add_tasks_from(metrics_jobs.blueprint(), namespace="metrics")
     app.add_tasks_from(github_jobs.blueprint(), namespace="github")
+    app.add_tasks_from(notify_jobs.blueprint(), namespace="notify")
     return app
 
 
@@ -396,6 +409,61 @@ def github_from_env(env: Mapping[str, str]) -> GitHubApp | None:
     return GitHubApp(app_id=app_id, private_key=key, base=env.get(GITHUB_BASE_ENV, GITHUB_BASE))
 
 
+def console_url_from_env(env: Mapping[str, str]) -> str:
+    """``SSC_CONSOLE_URL``: where the console lives, the base of the link in each approval mail.
+    https only, except that development and tests may use ``http://``; unset is the local
+    console there and empty elsewhere."""
+    url = env.get(CONSOLE_URL_ENV, "")
+    fake = env.get(ENV_ENV) in FAKE_ENVIRONMENTS
+    if not url:
+        return DEV_CONSOLE_URL if fake else ""
+    if not url.startswith("https://") and not (fake and url.startswith("http://")):
+        raise CompositionError(f"{CONSOLE_URL_ENV} must be an https URL")
+    return url.rstrip("/")
+
+
+def mailer_from_env(env: Mapping[str, str], console_url: str) -> Mailer | None:
+    """``SSC_MAIL_TRANSPORT``: unset is the log mailer in development and tests and none
+    elsewhere (queued mail waits), ``log`` the log mailer, ``smtp`` plain SMTP to
+    ``SSC_SMTP_HOST`` with ``SSC_SMTP_USER`` and ``SSC_SMTP_PASSWORD`` from ``SSC_MAIL_FROM``.
+    ``SSC_SMTP_TLS`` is ``starttls`` (default, port 587) or ``tls`` (port 465); there is no
+    plaintext setting. ``SSC_SMTP_PORT`` overrides the port. SMTP needs ``SSC_CONSOLE_URL``."""
+    match env.get(MAIL_TRANSPORT_ENV, ""):
+        case "":
+            if env.get(ENV_ENV) in FAKE_ENVIRONMENTS:
+                return LogMailer()
+            log.warning("%s is not set: approval mail will wait in the outbox", MAIL_TRANSPORT_ENV)
+            return None
+        case "log":
+            return LogMailer()
+        case "smtp":
+            host, user = env.get(SMTP_HOST_ENV, ""), env.get(SMTP_USER_ENV, "")
+            password, sender = env.get(SMTP_PASSWORD_ENV, ""), env.get(MAIL_FROM_ENV, "")
+            if not (host and user and password and sender and console_url):
+                raise CompositionError(
+                    f"{MAIL_TRANSPORT_ENV}=smtp needs {SMTP_HOST_ENV}, {SMTP_USER_ENV}, "
+                    f"{SMTP_PASSWORD_ENV}, {MAIL_FROM_ENV} and {CONSOLE_URL_ENV}"
+                )
+            security = env.get(SMTP_TLS_ENV, "starttls")
+            if security not in SMTP_PORTS:
+                raise CompositionError(f"{SMTP_TLS_ENV} must be starttls or tls")
+            try:
+                port = int(env.get(SMTP_PORT_ENV, SMTP_PORTS[security]))
+            except ValueError:
+                raise CompositionError(f"{SMTP_PORT_ENV} must be a port number") from None
+            config = SmtpConfig(
+                host=host,
+                port=port,
+                security=cast(Security, security),
+                username=user,
+                password=password,
+                sender=sender,
+            )
+            return SmtpMailer(config)
+        case other:
+            raise CompositionError(f"unknown {MAIL_TRANSPORT_ENV} {other!r}")
+
+
 def apps_domain_from_env(env: Mapping[str, str]) -> str:
     try:
         return check_apps_domain(env.get(APPS_DOMAIN_ENV, APPS_DOMAIN))
@@ -414,6 +482,7 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             ("cell_deployer", ports.cell_deployer),
             ("app_databases", ports.app_databases),
             ("cell_egress", ports.cell_egress),
+            ("mailer", ports.mailer),
         )
         if isinstance(
             value,
@@ -422,7 +491,8 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             | FakeScheduleDispatcher
             | FakeCellDeployer
             | FakeAppDatabases
-            | FakeCellEgress,
+            | FakeCellEgress
+            | LogMailer,
         )
     ]
     if fakes and env.get(ENV_ENV) not in FAKE_ENVIRONMENTS:
@@ -435,6 +505,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
     """The production ``Ports`` from the environment. The one place ports are chosen."""
     engine = make_engine(env[DSN_ENV])
     blob_store, cell_stores = blob_store_of(env), cell_stores_of(env)
+    console_url = console_url_from_env(env)
     ports = Ports(
         engine=engine,
         runtime_driver=runtime_driver_from_env(env),
@@ -455,6 +526,8 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         github=github_from_env(env),
         apps_domain=apps_domain_from_env(env),
         cell_egress=cell_egress_from_env(env),
+        mailer=mailer_from_env(env, console_url),
+        console_url=console_url,
     )
     refuse_fakes(ports, env)
     return ports
@@ -525,8 +598,10 @@ __all__ = [
     "build_driver_from_env",
     "cell_usage_from_env",
     "compose_ports",
+    "console_url_from_env",
     "core_blueprint",
     "directory_from_env",
+    "mailer_from_env",
     "metrics_from_env",
     "ports_of",
     "queue_conninfo",
