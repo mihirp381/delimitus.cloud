@@ -121,7 +121,8 @@ export interface paths {
         /**
          * Create Approval
          * @description Ask another admin of the org to approve one change to one environment. Allowed to the
-         *     environment's builders, its app's owner and org admins, agent sessions included.
+         *     environment's builders, its app's owner and org admins, agent sessions included. An
+         *     `exceed_ceiling` request is decided by the named connection's owner or an org admin.
          */
         post: operations["create_approval_v1_approvals_post"];
         delete?: never;
@@ -328,6 +329,55 @@ export interface paths {
          */
         post: operations["create_build_v1_apps__app_id__environments__environment_id__builds_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/environments/{environment_id}/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Environment Connections
+         * @description What the environment may reach, of the connections the caller may see.
+         */
+        get: operations["get_environment_connections_v1_apps__app_id__environments__environment_id__connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/environments/{environment_id}/connections/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Environment Connection
+         * @description Let the environment reach a connection, or change its own limits. Active org admins only,
+         *     never in an agent session. When the environment's audience already exceeds the connection's
+         *     ceiling, `APPROVAL_REQUIRED` until an `exceed_ceiling` request for the connection and the
+         *     environment's current grants is approved (ask with `POST /v1/approvals`). A pending
+         *     connection can be linked; it stays out of the snapshot until it is ready.
+         */
+        put: operations["put_environment_connection_v1_apps__app_id__environments__environment_id__connections__name__put"];
+        post?: never;
+        /**
+         * Delete Environment Connection
+         * @description Stop the environment reaching a connection. Active org admins only, never in an agent
+         *     session; `NOT_FOUND` when it did not. Audited as `connection.revoked`.
+         */
+        delete: operations["delete_environment_connection_v1_apps__app_id__environments__environment_id__connections__name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -967,6 +1017,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Connections
+         * @description The connections the caller may see, by name: all of them for operators and org admins,
+         *     otherwise only those the caller's own approved requests name. Never an address.
+         */
+        get: operations["list_connections_v1_connections_get"];
+        put?: never;
+        /**
+         * Create Connection
+         * @description Add a connection by hand with the customer. Active org admins only, never in an agent
+         *     session. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`
+         *     connection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;
+         *     `ALREADY_EXISTS` for a name in use. The address is stored and never returned; the credentials
+         *     stay a runbook step. Audited as `connection.created`.
+         */
+        post: operations["create_connection_v1_connections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/connections/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Connection
+         * @description One connection; `NOT_FOUND` for one the caller may not see.
+         */
+        get: operations["get_connection_v1_connections__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Connection
+         * @description Change a connection's owner, classification, ceiling, schemas, limits, setup status or
+         *     status. Active org admins only, never in an agent session. A new ceiling flags every
+         *     environment now over it (`over_ceiling_since`, one `connection.flagged` audit row each) and
+         *     opens no approval; the data gateway is not told. Moving to `confidential` or `restricted`
+         *     needs a ceiling in the same request.
+         */
+        patch: operations["patch_connection_v1_connections__name__patch"];
+        trace?: never;
+    };
     "/v1/egress": {
         parameters: {
             query?: never;
@@ -1450,14 +1557,14 @@ export interface components {
             kind: components["schemas"]["RequirementKind"];
             /**
              * Payload
-             * @description `widen_audience`: `{grants}`. `agent_share`: `{grants_version, grants}`. Others: `{}`.
+             * @description `widen_audience`: `{grants}`. `agent_share`: `{grants_version, grants}`. `exceed_ceiling`: `{connection, grants}`. Others: `{}`.
              */
             payload?: {
                 [key: string]: unknown;
             };
             /**
              * Subject Key
-             * @description The connection name or host. Derived by the server for `widen_audience` and `agent_share`; when sent for those it must match.
+             * @description The connection name or host. Derived by the server for `widen_audience`, `agent_share` and `exceed_ceiling`; when sent for those it must match.
              */
             subject_key?: string | null;
         };
@@ -1475,7 +1582,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "org.created" | "org.updated" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed" | "github.installation_bound" | "repo.connected" | "repo.disconnected";
+        AuditAction: "org.created" | "org.updated" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "connection.updated" | "connection.granted" | "connection.revoked" | "connection.ceiling_lowered" | "connection.flagged" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed" | "github.installation_bound" | "repo.connected" | "repo.disconnected";
         /** AuditActor */
         AuditActor: {
             /** Client Id */
@@ -1696,6 +1803,20 @@ export interface components {
             /** Entries */
             entries: components["schemas"]["CatalogueEntryOut"][];
         };
+        /**
+         * CeilingDoc
+         * @description The widest audience an app using the connection may have.
+         */
+        CeilingDoc: {
+            /**
+             * Audience
+             * @description `org`: anyone in the org. `subjects`: only the listed groups and users; a user also counts when they are an active member of a listed group when it is checked.
+             * @enum {string}
+             */
+            audience: "org" | "subjects";
+            /** Subjects */
+            subjects?: components["schemas"]["SubjectDoc"][];
+        };
         /** CellDatabaseOut */
         CellDatabaseOut: {
             /**
@@ -1816,6 +1937,116 @@ export interface components {
             fixed_resources: components["schemas"]["FixedResourceOut"][];
             /** Month */
             month: string;
+        };
+        /** ConnectionIn */
+        ConnectionIn: {
+            /** Allowed Schemas */
+            allowed_schemas?: string[];
+            /** @description Required for `confidential` and `restricted`; `internal` defaults to `org`. */
+            ceiling?: components["schemas"]["CeilingDoc"] | null;
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "internal" | "confidential" | "restricted";
+            /**
+             * Database
+             * @description Stored; never returned.
+             */
+            database: string;
+            /**
+             * Host
+             * @description Stored for the data gateway; never returned.
+             */
+            host: string;
+            /**
+             * Kind
+             * @default postgres
+             * @constant
+             */
+            kind: "postgres";
+            limits?: components["schemas"]["SnapshotLimits"] | null;
+            /** Name */
+            name: string;
+            /**
+             * Owner User Id
+             * @description The active user who decides when an app exceeds the ceiling.
+             */
+            owner_user_id: string;
+            /**
+             * Port
+             * @description Stored; never returned.
+             */
+            port: number;
+        };
+        /** ConnectionOut */
+        ConnectionOut: {
+            /** Allowed Schemas */
+            allowed_schemas: string[];
+            ceiling: components["schemas"]["CeilingDoc"];
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "internal" | "confidential" | "restricted";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "postgres";
+            limits: components["schemas"]["SnapshotLimits"];
+            /** Name */
+            name: string;
+            /** Owner User Id */
+            owner_user_id: string | null;
+            /**
+             * Setup Status
+             * @enum {string}
+             */
+            setup_status: "pending" | "ready";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "suspended";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ConnectionPatch */
+        ConnectionPatch: {
+            /** Allowed Schemas */
+            allowed_schemas?: string[] | null;
+            ceiling?: components["schemas"]["CeilingDoc"] | null;
+            /** Classification */
+            classification?: ("internal" | "confidential" | "restricted") | null;
+            limits?: components["schemas"]["SnapshotLimits"] | null;
+            /** Owner User Id */
+            owner_user_id?: string | null;
+            /**
+             * Setup Status
+             * @description `ready` once the runbook's first read worked.
+             */
+            setup_status?: ("pending" | "ready") | null;
+            /**
+             * Status
+             * @description `suspended` stops every query on it at the next snapshot.
+             */
+            status?: ("active" | "suspended") | null;
+        };
+        /** ConnectionsOut */
+        ConnectionsOut: {
+            /** Connections */
+            connections: components["schemas"]["ConnectionOut"][];
         };
         /** CurrentRelease */
         CurrentRelease: {
@@ -2104,6 +2335,28 @@ export interface components {
              */
             proxy_address: string | null;
         };
+        /** EnvironmentConnectionOut */
+        EnvironmentConnectionOut: {
+            connection: components["schemas"]["ConnectionOut"];
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            granted_at: string;
+            limits: components["schemas"]["SnapshotLimits"];
+            /**
+             * Over Ceiling Since
+             * @description Set when the environment's audience went beyond the ceiling; narrow the audience, or ask to share it wider (`exceed_ceiling`), to clear it.
+             */
+            over_ceiling_since: string | null;
+        };
+        /** EnvironmentConnectionsOut */
+        EnvironmentConnectionsOut: {
+            /** Connections */
+            connections: components["schemas"]["EnvironmentConnectionOut"][];
+        };
         /** EnvironmentOut */
         EnvironmentOut: {
             /** Config Version */
@@ -2129,7 +2382,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -2164,6 +2417,11 @@ export interface components {
              * @description `database`, `egress` or `connections`.
              */
             resource: string;
+        };
+        /** GrantBody */
+        GrantBody: {
+            /** @description The caps this environment's queries have, inside the connection's. */
+            limits?: components["schemas"]["SnapshotLimits"] | null;
         };
         /** GrantIn */
         GrantIn: {
@@ -2616,6 +2874,7 @@ export interface components {
         };
         /** PolicyConnection */
         PolicyConnection: {
+            ceiling: components["schemas"]["CeilingDoc"];
             /**
              * Classification
              * @enum {string}
@@ -2625,6 +2884,8 @@ export interface components {
             kind: string;
             /** Name */
             name: string;
+            /** Owner User Id */
+            owner_user_id: string | null;
         };
         /** PolicyDatabase */
         PolicyDatabase: {
@@ -2827,7 +3088,7 @@ export interface components {
          * @description Mirrors the ``ssc.approval_request.kind`` CHECK.
          * @enum {string}
          */
-        RequirementKind: "widen_audience" | "connect_data_source" | "enable_internet_hosts" | "agent_share";
+        RequirementKind: "widen_audience" | "connect_data_source" | "enable_internet_hosts" | "agent_share" | "exceed_ceiling";
         /** RunAccepted */
         RunAccepted: {
             /** Run Id */
@@ -2964,6 +3225,35 @@ export interface components {
              * @description Grants to single users, builders included.
              */
             users: number;
+        };
+        /**
+         * SnapshotLimits
+         * @description The caps one layer puts on a data gateway query (SSC-050). A member left out puts no cap
+         *     at this layer; 0 is a cap of zero, so absent and 0 never mean the same.
+         */
+        SnapshotLimits: {
+            /** Concurrency */
+            concurrency?: number | null;
+            /** Daily Bytes */
+            daily_bytes?: number | null;
+            /** Daily Rows */
+            daily_rows?: number | null;
+            /** Max Bytes */
+            max_bytes?: number | null;
+            /** Max Rows */
+            max_rows?: number | null;
+            /** Timeout Ms */
+            timeout_ms?: number | null;
+        };
+        /** SubjectDoc */
+        SubjectDoc: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "group" | "user";
         };
         /** TimerRunList */
         TimerRunList: {
@@ -4651,6 +4941,225 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_environment_connections_v1_apps__app_id__environments__environment_id__connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentConnectionsOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    put_environment_connection_v1_apps__app_id__environments__environment_id__connections__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrantBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentConnectionsOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `APPROVAL_REQUIRED` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_environment_connection_v1_apps__app_id__environments__environment_id__connections__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentConnectionsOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7282,6 +7791,280 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_connections_v1_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionsOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_connection_v1_connections_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `ALREADY_EXISTS` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_connection_v1_connections__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    patch_connection_v1_connections__name__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED` */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -50,6 +50,21 @@
     "severity": "string",
     "subject": "string"
   },
+  "ConnectionRow": {
+    "ceiling": "array<string>",
+    "classification": "string",
+    "name": "string",
+    "over_ceiling_since": "string|null",
+    "setup_status": "string",
+    "status": "string"
+  },
+  "ConnectionsResult": {
+    "api_url": "string",
+    "app_id": "string|null",
+    "connections": "array<ConnectionRow>",
+    "environment": "string|null",
+    "slug": "string|null"
+  },
   "DatabaseRow": {
     "connection_limit": "integer|null",
     "connections": "integer|null",

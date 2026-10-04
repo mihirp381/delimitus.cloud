@@ -59,6 +59,12 @@ RESPONSES = (
     models.PolicyHost,
     models.PolicyConnection,
     models.PolicyApproval,
+    models.SubjectDoc,
+    models.CeilingDoc,
+    models.ConnectionOut,
+    models.ConnectionsOut,
+    models.EnvironmentConnectionOut,
+    models.EnvironmentConnectionsOut,
     models.PolicyDatabase,
     models.DeploymentPolicy,
 )

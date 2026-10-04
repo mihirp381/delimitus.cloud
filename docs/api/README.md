@@ -243,8 +243,28 @@ the one that refuses, `DB_TIER_FULL`), and the platform package list with how to
 package. Operators and active org admins get `scope: org`, the whole org; anyone else gets
 `scope: own`, only what their own approved `enable_internet_hosts` and `connect_data_source`
 requests opened. Workload credentials are `403 FORBIDDEN`; an operator's read is audited as
-`operator.access`. Until SSC-052 and SSC-053 land, approved requests are the only record of
-either.
+`operator.access`. Connections also show their `owner_user_id` and `ceiling`; approved hosts remain
+the only record of hosts until SSC-053 lands.
+
+**A connection has a classification and an audience ceiling** (SSC-052). `POST /v1/connections`
+(`name`, `owner_user_id`, `classification`, `ceiling`, `allowed_schemas`, `limits`, and the `host`,
+`port` and `database` the data gateway uses, stored and never returned) creates one `pending`;
+`PATCH /v1/connections/{name}` changes it, `setup_status: ready` lets the snapshot carry it and
+`status: suspended` stops queries on it at the next snapshot. Only an active org admin in a person
+session writes; a `confidential` or `restricted` connection needs a `ceiling` (`CEILING_REQUIRED`)
+and an owner who is an active user (`OWNER_NOT_ACTIVE`). A ceiling is `{audience: org}` or
+`{audience: subjects, subjects: [{kind: group|user, id}]}`. `GET /v1/connections[/{name}]` follows
+the approvals visibility rule above. `PUT` and `DELETE`
+`/v1/apps/{app_id}/environments/{environment_id}/connections/{name}` link and unlink an
+environment (`GET` without a name lists them with `over_ceiling_since`). Sharing an environment
+beyond the ceiling of any connection it is linked to, or linking an environment whose audience is
+already beyond it, is `409 APPROVAL_REQUIRED` until an `exceed_ceiling` request (`POST
+/v1/approvals`, `payload: {connection, grants}`) is approved by the connection's owner or an org
+admin, never the requester or an agent session. It is checked on a sharing change that widens, and
+on creating a link. Lowering a ceiling opens no approval: it flags each environment now over it
+(`over_ceiling_since`, one `connection.flagged` audit row each) and clears the flag once the
+audience is inside. A user is inside a group ceiling when they are an active member of a listed
+group at the moment of the check; a later membership change is not re-checked.
 
 **A connected GitHub repository deploys preview on every push** (SSC-047, decision 027).
 `PUT /v1/apps/{app_id}/github` names `repository` (`owner/name`), optionally `branch` (the
@@ -371,8 +391,8 @@ stateless, JSON replies. Code: `api/mcp/`.
   or `VALIDATION_FAILED` with `status: null` for one found before calling the API (the same
   shape as `ssc --json`).
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
-  step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052;
-  `get_org_deployment_policy` shows only those), the warm flag (SSC-092) and
+  step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052,
+  left out for now; `get_org_deployment_policy` shows only those), the warm flag (SSC-092) and
   the cell resource flags (SSC-087): no tool sets them, and the cell enable and warm routes
   refuse an agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself, and
   `preflight` checks one.

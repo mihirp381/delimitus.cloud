@@ -959,6 +959,34 @@ def test_warm_revision_adds_its_column_and_table_and_downgrade_removes_them(dsns
     assert run(dsn, None, shape) == [(1, True)]
 
 
+def test_connections_revision_keeps_old_rows_and_downgrade_removes_it(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database connections owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="connections").render_as_string(hide_password=False)
+    org, con = new_id("org"), new_id("con")
+    upgrade(dsn, "0030_warm")
+    with psycopg.connect(dsn) as conn:
+        bind_org_sync(conn, org)
+        conn.execute("insert into ssc.org (id, name) values (%s, 'Old')", (org,))
+        conn.execute(
+            "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
+            "database_name) values (%s, %s, 'finance', 'postgres', 'internal', 'h', 5432, 'd')",
+            (con, org),
+        )
+    upgrade(dsn, "0031_connections")
+    kept = (
+        "select setup_status, status, allowed_schemas, ceiling, owner_user_id "
+        "from ssc.connection where name = 'finance'"
+    )
+    assert run(dsn, org, kept) == [("pending", "active", ["public"], {"audience": "org"}, None)]
+    assert run(dsn, None, "select to_regclass('ssc.connection_grant') is not null") == [(True,)]
+    downgrade(dsn, "0030_warm")
+    assert run(dsn, None, "select to_regclass('ssc.connection_grant') is not null") == [(False,)]
+    assert run(dsn, org, "select name from ssc.connection") == [("finance",)]
+    upgrade(dsn, "0031_connections")
+    assert run(dsn, org, kept) == [("pending", "active", ["public"], {"audience": "org"}, None)]
+
+
 # ── timers (SSC-041, revision 0013) ──────────────────────────────────────────
 
 ARMED_SCHEDULE = (

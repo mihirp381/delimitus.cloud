@@ -549,9 +549,13 @@ def test_the_audience_ceiling_hook_is_called(
     seen: list[tuple[grant_rules.SharingTarget, set[Any]]] = []
     original = grant_rules.audience_ceiling
 
-    def spy(target: grant_rules.SharingTarget, desired: set[Any]) -> None:
+    def spy(
+        target: grant_rules.SharingTarget, desired: set[Any], ceilings: dict[str, Any]
+    ) -> tuple[str, ...]:
         seen.append((target, set(desired)))
-        assert original(target, desired) is None
+        assert ceilings == {}
+        assert original(target, desired, ceilings) == ()
+        return ()
 
     monkeypatch.setattr(grant_rules, "audience_ceiling", spy)
     r = put_grants(client, world, world.prod, world.admin_token, [grant("user", "org")], 1)

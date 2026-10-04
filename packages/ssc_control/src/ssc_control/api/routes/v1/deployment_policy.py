@@ -6,16 +6,16 @@ guessing. It returns nothing the caller could not see already, by the approvals 
 approved requests opened. So:
 
 - ``hosts``: internet hosts approved for an environment (``enable_internet_hosts``);
-- ``connections``: the org's data connections by name, kind and classification, never their
-  address; a member sees only those their own approved ``connect_data_source`` requests name;
+- ``connections``: the org's data connections by name, kind, classification, owner and audience
+  ceiling, never their address; a member sees only those their own approved
+  ``connect_data_source`` requests name;
 - ``approvals``: which changes wait for a person, and who decides;
 - ``database``: whether the company's database has room for another app database, counted from
   the control plane's records (the cell agent's count is the one that refuses, ``DB_TIER_FULL``);
 - the platform package list and how to ask for a package.
 
-Until SSC-052 (connection grants) and SSC-053 (the org's host allowlist) land, approved requests
-are the only record of either. Workload credentials are ``FORBIDDEN``; an operator's read is
-audited as ``operator.access``.
+Until SSC-053 (the org's host allowlist) lands, approved requests are the only record of a host.
+Workload credentials are ``FORBIDDEN``; an operator's read is audited as ``operator.access``.
 """
 
 from typing import Final, Literal
@@ -32,6 +32,7 @@ from ssc_control.api.auth import PrincipalKind
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.approvals import sees_every_request
 from ssc_control.api.routes.v1.common import Strict
+from ssc_control.api.routes.v1.connections import CeilingDoc
 from ssc_control.api.uow import UserUoW
 from ssc_control.domain.approval_rules import RequirementKind
 
@@ -62,6 +63,11 @@ APPROVALS: Final = (
         RequirementKind.AGENT_SHARE,
         "Any sharing change made with an agent's credential.",
     ),
+    (
+        RequirementKind.EXCEED_CEILING,
+        "Showing an app wider than the audience ceiling of a data connection it uses. The "
+        "connection's owner or an org admin decides.",
+    ),
 )
 
 _MINE = " and a.requested_by_user_id = :me"
@@ -73,10 +79,11 @@ _HOSTS = (
 )
 _ORDER_HOSTS = " order by 1, 2, 3"
 _ALL_CONNECTIONS = text(
-    "select name, kind, classification from ssc.connection where org_id = :org order by name"
+    "select name, kind, classification, owner_user_id, ceiling from ssc.connection "
+    "where org_id = :org order by name"
 )
 _OWN_CONNECTIONS = text(
-    "select c.name, c.kind, c.classification from ssc.connection c "  # noqa: S608  (constant SQL fragments)
+    "select c.name, c.kind, c.classification, c.owner_user_id, c.ceiling from ssc.connection c "  # noqa: S608  (constant SQL fragments)
     "where c.org_id = :org and exists (select 1 from ssc.approval_request a "
     "where a.org_id = c.org_id and a.kind = 'connect_data_source' and a.state = 'approved' "
     "and a.subject_key = c.name" + _MINE + ") order by c.name"
@@ -94,6 +101,8 @@ class PolicyConnection(Strict):
     name: str
     kind: str
     classification: Literal["internal", "confidential", "restricted"]
+    owner_user_id: str | None
+    ceiling: CeilingDoc
 
 
 class PolicyApproval(Strict):

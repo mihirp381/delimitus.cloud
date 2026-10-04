@@ -438,7 +438,7 @@
           },
           "payload": {
             "additionalProperties": true,
-            "description": "`widen_audience`: `{grants}`. `agent_share`: `{grants_version, grants}`. Others: `{}`.",
+            "description": "`widen_audience`: `{grants}`. `agent_share`: `{grants_version, grants}`. `exceed_ceiling`: `{connection, grants}`. Others: `{}`.",
             "title": "Payload",
             "type": "object"
           },
@@ -452,7 +452,7 @@
                 "type": "null"
               }
             ],
-            "description": "The connection name or host. Derived by the server for `widen_audience` and `agent_share`; when sent for those it must match.",
+            "description": "The connection name or host. Derived by the server for `widen_audience`, `agent_share` and `exceed_ceiling`; when sent for those it must match.",
             "title": "Subject Key"
           }
         },
@@ -538,6 +538,11 @@
           "schedule.run_requested",
           "connection.created",
           "connection.removed",
+          "connection.updated",
+          "connection.granted",
+          "connection.revoked",
+          "connection.ceiling_lowered",
+          "connection.flagged",
           "operator.access",
           "audit.exported",
           "audit.reanchored",
@@ -1157,6 +1162,34 @@
         "title": "CatalogueOut",
         "type": "object"
       },
+      "CeilingDoc": {
+        "additionalProperties": false,
+        "description": "The widest audience an app using the connection may have.",
+        "properties": {
+          "audience": {
+            "description": "`org`: anyone in the org. `subjects`: only the listed groups and users; a user also counts when they are an active member of a listed group when it is checked.",
+            "enum": [
+              "org",
+              "subjects"
+            ],
+            "title": "Audience",
+            "type": "string"
+          },
+          "subjects": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectDoc"
+            },
+            "maxItems": 100,
+            "title": "Subjects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "audience"
+        ],
+        "title": "CeilingDoc",
+        "type": "object"
+      },
       "CellDatabaseOut": {
         "additionalProperties": false,
         "properties": {
@@ -1474,6 +1507,311 @@
           "fixed_resources"
         ],
         "title": "CellUsageOut",
+        "type": "object"
+      },
+      "ConnectionIn": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_schemas": {
+            "items": {
+              "pattern": "^[a-z_][a-z0-9_]{0,62}$",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Allowed Schemas",
+            "type": "array"
+          },
+          "ceiling": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CeilingDoc"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for `confidential` and `restricted`; `internal` defaults to `org`."
+          },
+          "classification": {
+            "enum": [
+              "internal",
+              "confidential",
+              "restricted"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "database": {
+            "description": "Stored; never returned.",
+            "pattern": "^[A-Za-z0-9_.-]{1,63}$",
+            "title": "Database",
+            "type": "string"
+          },
+          "host": {
+            "description": "Stored for the data gateway; never returned.",
+            "pattern": "^[A-Za-z0-9.-]{1,255}$",
+            "title": "Host",
+            "type": "string"
+          },
+          "kind": {
+            "const": "postgres",
+            "default": "postgres",
+            "title": "Kind",
+            "type": "string"
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9-]{0,62}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_user_id": {
+            "description": "The active user who decides when an app exceeds the ceiling.",
+            "pattern": "^usr_[a-z0-9]{20}$",
+            "title": "Owner User Id",
+            "type": "string"
+          },
+          "port": {
+            "description": "Stored; never returned.",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Port",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "owner_user_id",
+          "classification",
+          "host",
+          "port",
+          "database"
+        ],
+        "title": "ConnectionIn",
+        "type": "object"
+      },
+      "ConnectionOut": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_schemas": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Schemas",
+            "type": "array"
+          },
+          "ceiling": {
+            "$ref": "#/components/schemas/CeilingDoc"
+          },
+          "classification": {
+            "enum": [
+              "internal",
+              "confidential",
+              "restricted"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "postgres",
+            "title": "Kind",
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SnapshotLimits"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          },
+          "setup_status": {
+            "enum": [
+              "pending",
+              "ready"
+            ],
+            "title": "Setup Status",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "suspended"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "owner_user_id",
+          "classification",
+          "ceiling",
+          "allowed_schemas",
+          "limits",
+          "setup_status",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConnectionOut",
+        "type": "object"
+      },
+      "ConnectionPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_schemas": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[a-z_][a-z0-9_]{0,62}$",
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Schemas"
+          },
+          "ceiling": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CeilingDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "classification": {
+            "anyOf": [
+              {
+                "enum": [
+                  "internal",
+                  "confidential",
+                  "restricted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "pattern": "^usr_[a-z0-9]{20}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          },
+          "setup_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "ready"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`ready` once the runbook's first read worked.",
+            "title": "Setup Status"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "suspended"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`suspended` stops every query on it at the next snapshot.",
+            "title": "Status"
+          }
+        },
+        "title": "ConnectionPatch",
+        "type": "object"
+      },
+      "ConnectionsOut": {
+        "additionalProperties": false,
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionOut"
+            },
+            "title": "Connections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "title": "ConnectionsOut",
         "type": "object"
       },
       "CurrentRelease": {
@@ -2157,6 +2495,65 @@
         "title": "EgressOut",
         "type": "object"
       },
+      "EnvironmentConnectionOut": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/ConnectionOut"
+          },
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "title": "Granted At",
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SnapshotLimits"
+          },
+          "over_ceiling_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the environment's audience went beyond the ceiling; narrow the audience, or ask to share it wider (`exceed_ceiling`), to clear it.",
+            "title": "Over Ceiling Since"
+          }
+        },
+        "required": [
+          "environment_id",
+          "connection",
+          "limits",
+          "over_ceiling_since",
+          "granted_at"
+        ],
+        "title": "EnvironmentConnectionOut",
+        "type": "object"
+      },
+      "EnvironmentConnectionsOut": {
+        "additionalProperties": false,
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentConnectionOut"
+            },
+            "title": "Connections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "title": "EnvironmentConnectionsOut",
+        "type": "object"
+      },
       "EnvironmentOut": {
         "additionalProperties": false,
         "properties": {
@@ -2270,6 +2667,7 @@
           "REPOSITORY_NOT_INSTALLED",
           "REQUIRED_CHECKS_FAILING",
           "GITHUB_UNAVAILABLE",
+          "CEILING_REQUIRED",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -2352,6 +2750,24 @@
           "created_at"
         ],
         "title": "FixedResourceOut",
+        "type": "object"
+      },
+      "GrantBody": {
+        "additionalProperties": false,
+        "properties": {
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotLimits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The caps this environment's queries have, inside the connection's."
+          }
+        },
+        "title": "GrantBody",
         "type": "object"
       },
       "GrantIn": {
@@ -3487,6 +3903,9 @@
       "PolicyConnection": {
         "additionalProperties": false,
         "properties": {
+          "ceiling": {
+            "$ref": "#/components/schemas/CeilingDoc"
+          },
           "classification": {
             "enum": [
               "internal",
@@ -3503,12 +3922,25 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
           }
         },
         "required": [
           "name",
           "kind",
-          "classification"
+          "classification",
+          "owner_user_id",
+          "ceiling"
         ],
         "title": "PolicyConnection",
         "type": "object"
@@ -3914,7 +4346,8 @@
           "widen_audience",
           "connect_data_source",
           "enable_internet_hosts",
-          "agent_share"
+          "agent_share",
+          "exceed_ceiling"
         ],
         "title": "RequirementKind",
         "type": "string"
@@ -4235,6 +4668,116 @@
           "groups"
         ],
         "title": "Sharing",
+        "type": "object"
+      },
+      "SnapshotLimits": {
+        "additionalProperties": false,
+        "description": "The caps one layer puts on a data gateway query (SSC-050). A member left out puts no cap\nat this layer; 0 is a cap of zero, so absent and 0 never mean the same.",
+        "properties": {
+          "concurrency": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concurrency"
+          },
+          "daily_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Bytes"
+          },
+          "daily_rows": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Rows"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Bytes"
+          },
+          "max_rows": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rows"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          }
+        },
+        "title": "SnapshotLimits",
+        "type": "object"
+      },
+      "SubjectDoc": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^(grp|usr)_[a-z0-9]{20}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "group",
+              "user"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "SubjectDoc",
         "type": "object"
       },
       "TimerRunList": {
@@ -5532,7 +6075,7 @@
         ]
       },
       "post": {
-        "description": "Ask another admin of the org to approve one change to one environment. Allowed to the\nenvironment's builders, its app's owner and org admins, agent sessions included.",
+        "description": "Ask another admin of the org to approve one change to one environment. Allowed to the\nenvironment's builders, its app's owner and org admins, agent sessions included. An\n`exceed_ceiling` request is decided by the named connection's owner or an org admin.",
         "operationId": "create_approval_v1_approvals_post",
         "parameters": [
           {
@@ -6898,6 +7441,326 @@
           }
         },
         "summary": "Create Build",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/connections": {
+      "get": {
+        "description": "What the environment may reach, of the connections the caller may see.",
+        "operationId": "get_environment_connections_v1_apps__app_id__environments__environment_id__connections_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentConnectionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Environment Connections",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/connections/{name}": {
+      "delete": {
+        "description": "Stop the environment reaching a connection. Active org admins only, never in an agent\nsession; `NOT_FOUND` when it did not. Audited as `connection.revoked`.",
+        "operationId": "delete_environment_connection_v1_apps__app_id__environments__environment_id__connections__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9-]{0,62}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentConnectionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Delete Environment Connection",
+        "tags": [
+          "v1"
+        ]
+      },
+      "put": {
+        "description": "Let the environment reach a connection, or change its own limits. Active org admins only,\nnever in an agent session. When the environment's audience already exceeds the connection's\nceiling, `APPROVAL_REQUIRED` until an `exceed_ceiling` request for the connection and the\nenvironment's current grants is approved (ask with `POST /v1/approvals`). A pending\nconnection can be linked; it stays out of the snapshot until it is ready.",
+        "operationId": "put_environment_connection_v1_apps__app_id__environments__environment_id__connections__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9-]{0,62}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentConnectionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`APPROVAL_REQUIRED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Put Environment Connection",
         "tags": [
           "v1"
         ]
@@ -11008,6 +11871,352 @@
           }
         },
         "summary": "Enable Resource",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/connections": {
+      "get": {
+        "description": "The connections the caller may see, by name: all of them for operators and org admins,\notherwise only those the caller's own approved requests name. Never an address.",
+        "operationId": "list_connections_v1_connections_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "List Connections",
+        "tags": [
+          "v1"
+        ]
+      },
+      "post": {
+        "description": "Add a connection by hand with the customer. Active org admins only, never in an agent\nsession. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`\nconnection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;\n`ALREADY_EXISTS` for a name in use. The address is stored and never returned; the credentials\nstay a runbook step. Audited as `connection.created`.",
+        "operationId": "create_connection_v1_connections_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `ALREADY_EXISTS`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Create Connection",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/connections/{name}": {
+      "get": {
+        "description": "One connection; `NOT_FOUND` for one the caller may not see.",
+        "operationId": "get_connection_v1_connections__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9-]{0,62}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get Connection",
+        "tags": [
+          "v1"
+        ]
+      },
+      "patch": {
+        "description": "Change a connection's owner, classification, ceiling, schemas, limits, setup status or\nstatus. Active org admins only, never in an agent session. A new ceiling flags every\nenvironment now over it (`over_ceiling_since`, one `connection.flagged` audit row each) and\nopens no approval; the data gateway is not told. Moving to `confidential` or `restricted`\nneeds a ceiling in the same request.",
+        "operationId": "patch_connection_v1_connections__name__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9-]{0,62}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Patch Connection",
         "tags": [
           "v1"
         ]

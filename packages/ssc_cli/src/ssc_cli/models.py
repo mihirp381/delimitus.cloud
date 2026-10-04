@@ -336,6 +336,43 @@ class PolicyConnection(Wire):
     classification: str
 
 
+class SubjectDoc(Wire):
+    kind: str
+    id: str
+
+
+class CeilingDoc(Wire):
+    """The widest audience an app using a connection may have."""
+
+    audience: str
+    subjects: list[SubjectDoc] = Field(default_factory=list[SubjectDoc])
+
+
+class ConnectionOut(Wire):
+    """A data connection the caller may see; never its address."""
+
+    name: str
+    owner_user_id: str | None
+    classification: str
+    ceiling: CeilingDoc
+    setup_status: str
+    status: str
+
+
+class ConnectionsOut(Wire):
+    connections: list[ConnectionOut]
+
+
+class EnvironmentConnectionOut(Wire):
+    environment_id: str
+    connection: ConnectionOut
+    over_ceiling_since: str | None
+
+
+class EnvironmentConnectionsOut(Wire):
+    connections: list[EnvironmentConnectionOut]
+
+
 class PolicyApproval(Wire):
     kind: str
     when: str

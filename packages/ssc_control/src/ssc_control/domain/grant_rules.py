@@ -1,5 +1,6 @@
-"""Sharing rules (SSC-021, decision 019): the role floor of each environment, and the hook for
-the audience ceiling (SSC-052). Pure functions over grant keys; the API maps the problems.
+"""Sharing rules (SSC-021, decision 019): the role floor of each environment, and the audience
+ceiling of its data connections (SSC-052). Pure functions over grant keys; the API maps the
+problems.
 
 The floor is the lowest role that grants access: anyone may be given ``user`` in prod, but
 preview is for builders, so a preview ``user`` grant would grant nothing and is refused.
@@ -11,6 +12,7 @@ from types import MappingProxyType
 from typing import Final, Literal
 
 from ssc_control.domain.approval_rules import GrantKey
+from ssc_control.domain.audience import Ceiling, exceeds
 
 Role = Literal["builder", "user"]
 FLOOR: Final[Mapping[str, Role]] = MappingProxyType({"prod": "user", "preview": "builder"})
@@ -55,6 +57,10 @@ def validate(env_name: str, grants: Iterable[GrantKey]) -> tuple[GrantProblem, .
     return tuple(problems)
 
 
-def audience_ceiling(target: SharingTarget, desired: Collection[GrantKey]) -> None:
-    """The widest audience ``target`` may have. No ceiling yet (SSC-052): accepts everything."""
-    del target, desired
+def audience_ceiling(
+    target: SharingTarget, desired: Collection[GrantKey], ceilings: Mapping[str, Ceiling]
+) -> tuple[str, ...]:
+    """The names, sorted, of the connections ``target`` uses whose ceiling ``desired`` exceeds.
+    ``ceilings`` maps each connection name to its ceiling as ``audience.with_members`` left it."""
+    del target
+    return tuple(sorted(n for n, c in ceilings.items() if exceeds(c, desired)))

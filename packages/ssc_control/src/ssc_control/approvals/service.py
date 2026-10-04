@@ -3,9 +3,10 @@
 A question is ``(environment, kind, subject_key)``. At most one request per question is pending
 (a partial unique index); asking again while one is pending or approved returns that request.
 Deciding locks the request, checks the decider (never an agent session, never the requester,
-always an active org admin), writes a ``policy_decision`` and audits ``approval.decided``. An
-approved internet host or data source turns on the cell's ``egress`` or ``connections`` (SSC-087),
-and an approved internet host joins the org's egress allowlist (SSC-053).
+an active org admin, or for ``exceed_ceiling`` the connection's active owner), writes a
+``policy_decision`` and audits ``approval.decided``. An approved internet host or data source
+turns on the cell's ``egress`` or ``connections`` (SSC-087), and an approved internet host joins
+the org's egress allowlist (SSC-053).
 """
 
 import json
@@ -31,6 +32,7 @@ from ssc_control.domain.approval_rules import (
     RequirementKind,
     agent_share_needs_approval,
     check_decider,
+    exceed_subject_key,
     widening_needs_approval,
     widens,
 )
@@ -103,6 +105,9 @@ _INSERT_PENDING: Final = text(
 )
 _LOCK_DECIDER: Final = text(
     "select role, status from ssc.user_account where org_id = :org and id = :id for share"
+)
+_CONNECTION_OWNER: Final = text(
+    "select owner_user_id from ssc.connection where org_id = :org and name = :name"
 )
 _DECIDE: Final = text(
     "update ssc.approval_request set state = :state, decided_by_user_id = :by, "
@@ -310,12 +315,20 @@ async def decide(
         raise ApprovalRefusedError("not_pending")
     # FOR SHARE: the approver cannot be demoted or deactivated until this decision commits.
     account = (await conn.execute(_LOCK_DECIDER, {"org": org_id, "id": decider.user_id})).first()
+    owner: str | None = None
+    if row.kind is RequirementKind.EXCEED_CEILING:
+        owner = (
+            await conn.execute(
+                _CONNECTION_OWNER, {"org": org_id, "name": row.payload.get("connection")}
+            )
+        ).scalar_one_or_none()
     refusal = check_decider(
         row.requested_by_user_id,
         decider.user_id,
         None if account is None else str(account[0]),
         account is not None and account[1] == "active",
         decider.via_agent,
+        connection_owner_id=owner,
     )
     if refusal is not None:
         raise ApprovalRefusedError(refusal)
@@ -418,9 +431,12 @@ async def share_requirements(  # noqa: PLR0913  (keyword-only)
     after: Collection[GrantKey],
     via_agent: bool,
     source: CapabilitySource,
+    exceeded: Collection[str],
 ) -> list[Requirement]:
     """What replacing ``before`` with ``after`` needs approved: ``agent_share`` for any change
-    through an agent credential, ``widen_audience`` for widening a data-connected app."""
+    through an agent credential, ``widen_audience`` for widening a data-connected app, and
+    ``exceed_ceiling`` for each connection in ``exceeded`` (the ones whose audience ceiling
+    ``after`` goes beyond) when the change widens."""
     out: list[Requirement] = []
     agent = agent_share_needs_approval(via_agent, base_version, before, after)
     if agent is not None:
@@ -431,6 +447,11 @@ async def share_requirements(  # noqa: PLR0913  (keyword-only)
     widen = widening_needs_approval(profile, connected, before, after)
     if widen is not None:
         out.append(widen)
+    if widens(before, after):
+        out.extend(
+            Requirement(RequirementKind.EXCEED_CEILING, exceed_subject_key(name, after))
+            for name in sorted(exceeded)
+        )
     return out
 
 

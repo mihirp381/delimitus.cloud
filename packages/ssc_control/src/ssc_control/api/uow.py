@@ -47,7 +47,9 @@ PREVIEW_SCOPE_CHANGES: Final = (
 PREVIEW_SHARE_ASK: Final = "POST /v1/approvals"
 """The one change naming its environment in the body: a ``preview``-scoped credential may ask
 for a share of an environment that is not prod, and nothing else."""
-_SHARE_KINDS: Final = frozenset({RequirementKind.AGENT_SHARE, RequirementKind.WIDEN_AUDIENCE})
+_SHARE_KINDS: Final = frozenset(
+    {RequirementKind.AGENT_SHARE, RequirementKind.WIDEN_AUDIENCE, RequirementKind.EXCEED_CEILING}
+)
 _PREVIEW_SCOPE_CHANGES: Final = tuple(
     re.compile(re.sub(r"\{[a-z_]+\}", "[^/]+", change)) for change in PREVIEW_SCOPE_CHANGES
 )

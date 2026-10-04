@@ -6,9 +6,11 @@ A change that adds or removes a grant marks the org's access snapshot dirty and 
 schedules whose declarer may no longer build (decision 020).
 
 A change made through an agent credential, and a change that widens the audience of a
-data-connected app, applies only once the matching approval is approved (decision 016). Until
-then an agent session gets ``202`` with the pending approval ids and a person gets
-``APPROVAL_REQUIRED``; the grants and their version stay as they were.
+data-connected app, applies only once the matching approval is approved (decision 016). So does a
+change that widens the audience beyond the ceiling of a data connection the environment uses
+(``exceed_ceiling``, SSC-052), decided by the connection's owner or an org admin. Until then an
+agent session gets ``202`` with the pending approval ids and a person gets ``APPROVAL_REQUIRED``;
+the grants and their version stay as they were.
 
 Each grant a change actually adds records one ``share`` metrics event (SSC-028).
 """
@@ -37,8 +39,15 @@ from ssc_control.api.routes.v1.common import (
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals.capabilities import RecordedCapabilities
 from ssc_control.approvals.service import ApprovalRow, newest, request, share_requirements
+from ssc_control.connections import service as connections
 from ssc_control.domain import grant_rules
-from ssc_control.domain.approval_rules import GrantKey, Requirement, RequirementKind
+from ssc_control.domain.approval_rules import (
+    GrantKey,
+    Requirement,
+    RequirementKind,
+    exceed_subject_key,
+)
+from ssc_control.domain.audience import Ceiling
 from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
 from ssc_control.ports import MetricKind
 from ssc_control.snapshot.service import mark_dirty
@@ -132,6 +141,7 @@ async def _approvals_for(  # noqa: PLR0913  (keyword-only)
     version: int,
     existing: set[GrantKey],
     desired: dict[GrantKey, GrantIn],
+    exceeded: tuple[str, ...],
 ) -> tuple[list[Requirement], dict[Requirement, ApprovalRow]]:
     """What this change needs approved, and the newest request for each."""
     needed = await share_requirements(
@@ -144,6 +154,7 @@ async def _approvals_for(  # noqa: PLR0913  (keyword-only)
         after=set(desired),
         via_agent=uow.principal.is_agent,
         source=RecordedCapabilities(),
+        exceeded=exceeded,
     )
     found = await newest(
         uow.conn, org_id=uow.org_id, environment_id=environment_id, requirements=needed
@@ -151,30 +162,39 @@ async def _approvals_for(  # noqa: PLR0913  (keyword-only)
     return needed, found
 
 
-def _check_rules(target: grant_rules.SharingTarget, desired: dict[GrantKey, GrantIn]) -> None:
-    """Floors, one grant per subject, then the audience ceiling hook."""
+def _check_rules(
+    target: grant_rules.SharingTarget,
+    desired: dict[GrantKey, GrantIn],
+    ceilings: dict[str, Ceiling],
+) -> tuple[str, ...]:
+    """Floors and one grant per subject, then the connections whose ceiling ``desired`` exceeds."""
     problems = grant_rules.validate(target.name, desired)
     if problems:
         raise Refusal(
             ErrorCode.VALIDATION_FAILED,
             evidence={"problems": [{"problem": p.problem, "grant": p.grant} for p in problems]},
         )
-    grant_rules.audience_ceiling(target, set(desired))
+    return grant_rules.audience_ceiling(target, set(desired), ceilings)
 
 
-async def _ask(
+async def _ask(  # noqa: PLR0913  (keyword-only)
     uow: UnitOfWork,
     environment_id: str,
     open_: list[Requirement],
+    *,
     desired: dict[GrantKey, GrantIn],
     version: int,
+    exceeded: tuple[str, ...],
 ) -> list[str]:
     """Open (or find) the approval request for each open requirement; their ids."""
     asked: list[str] = []
+    names = {exceed_subject_key(n, set(desired)): n for n in exceeded}
     for req in open_:
         payload: dict[str, Any] = {"grants": _grants_payload(desired)}
         if req.kind is RequirementKind.AGENT_SHARE:
             payload["grants_version"] = version
+        if req.kind is RequirementKind.EXCEED_CEILING:
+            payload["connection"] = names[req.subject_key]
         row, _ = await request(
             uow.conn,
             org_id=uow.org_id,
@@ -285,7 +305,10 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
         )
     existing = {_grant_key(g): g for g in (await _grants_out(uow, environment_id, current)).grants}
     desired = {_grant_key(g): g for g in body.grants}
-    _check_rules(grant_rules.SharingTarget(environment_id, str(env[3]), str(env[2])), desired)
+    ceilings = await connections.ceilings(uow.conn, uow.org_id, environment_id, set(desired))
+    exceeded = _check_rules(
+        grant_rules.SharingTarget(environment_id, str(env[3]), str(env[2])), desired, ceilings
+    )
     needed, found = await _approvals_for(
         uow,
         environment_id=environment_id,
@@ -293,10 +316,13 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
         version=current,
         existing=set(existing),
         desired=desired,
+        exceeded=exceeded,
     )
     open_ = [r for r in needed if r not in found or found[r].state != "approved"]
     if open_ and uow.principal.is_agent:
-        asked = await _ask(uow, environment_id, open_, desired, current)
+        asked = await _ask(
+            uow, environment_id, open_, desired=desired, version=current, exceeded=exceeded
+        )
         pending = GrantsPending(
             environment_id=environment_id, grants_version=current, approval_ids=asked
         )
@@ -373,6 +399,18 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     ).scalar_one()
     version = int(bumped)
     if changed:
+        approved_over = (
+            set(exceeded)
+            if any(r.kind is RequirementKind.EXCEED_CEILING for r in needed)
+            else set[str]()
+        )
+        await connections.settle_environment(
+            uow.conn,
+            uow.org_id,
+            environment_id,
+            approved=approved_over,
+            actor=actor_of(uow.principal),
+        )
         await mark_dirty(uow.conn, uow.org_id)
         await pause_blocked(uow.conn, uow.org_id)
     return uow.reply(await _grants_out(uow, environment_id, version), headers={ETAG: etag(version)})

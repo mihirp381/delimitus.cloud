@@ -25,6 +25,7 @@ from ssc_cli.shapes import (
     AccessResult,
     AppResult,
     AppsResult,
+    ConnectionsResult,
     DeployResult,
     DisableResult,
     DoctorResult,
@@ -76,6 +77,7 @@ ALLOWED = {
     "logs",
     "requirements",
     "policy",
+    "connections",
 }
 
 
@@ -140,6 +142,7 @@ def test_help_lists_exact_set(cli):
         ("logs",),
         ("requirements",),
         ("policy",),
+        ("connections",),
     }
     for group, subs in (
         ("token", {"set", "clear"}),
@@ -1165,6 +1168,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
         ("requirements",): ([], PlatformRequirements, None),
         ("policy",): ([], PolicyResult, None),
+        ("connections",): ([], ConnectionsResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),
         ("logout",): ([], LogoutResult, None),

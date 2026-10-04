@@ -95,7 +95,11 @@ class RecordedCapabilities(CapabilitySource):
                     connections.add(str(subject))
                 case RequirementKind.ENABLE_INTERNET_HOSTS:
                     hosts.add(str(subject))
-                case RequirementKind.WIDEN_AUDIENCE | RequirementKind.AGENT_SHARE:
+                case (
+                    RequirementKind.WIDEN_AUDIENCE
+                    | RequirementKind.AGENT_SHARE
+                    | RequirementKind.EXCEED_CEILING
+                ):
                     pass  # sharing questions, not capabilities
         return RequestedCapabilities(
             connections=frozenset(connections),
