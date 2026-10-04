@@ -4,7 +4,8 @@ The one place a secret value enters SSC. ``ssc secret set`` asks the control pla
 grant (``ssc_shared.secret_grants``), then PUTs the value here over TLS, and the intake adds it
 to Secret Manager as a new version. The value never reaches the control plane, its database,
 a job or a log: this service holds it only for the length of the request, and its identity may
-add secret versions to ``ssc-a-*`` and do nothing else, not even read one back.
+add secret versions to ``ssc-a-*`` and to connection secrets (``ssc-conn-*``, SSC-051) and do
+nothing else, not even read one back.
 
 ``PUT /v1/secrets/<secret>?grant=<nonce>`` with ``Authorization: Bearer <grant>`` and the raw
 value as the body answers 201 ``{"secret", "version"}``. Errors are ``{"code", "message"}``: 400
@@ -32,7 +33,7 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWKSet
 
 from ssc_agent.metadata import MetadataAccessTokens
-from ssc_agent.secret_manager import CellSecretWriter, SecretsError, SecretWriter, service_of
+from ssc_agent.secret_manager import CellSecretWriter, SecretsError, SecretWriter, check_secret
 from ssc_shared import redaction
 from ssc_shared.secret_grants import GRANT_SECONDS, INTAKE_PATH, MAX_VALUE_BYTES, upload_url
 
@@ -124,7 +125,7 @@ def create_intake(writer: SecretWriter, grants: GrantCheck, origin: str) -> Fast
         secret: str, request: Request
     ) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         try:
-            service_of(secret)
+            check_secret(secret)
             audience = upload_url(origin, secret, request.query_params.get("grant", ""))
         except ValueError as exc:
             return _error(400, "INVALID_REQUEST", str(exc))

@@ -69,7 +69,9 @@ from ssc_agent.secret_manager import (
     ACCESSOR_ROLE,
     CellSecretCustody,
     CellSecretWriter,
+    ConnectionSecrets,
     SecretCustody,
+    SecretsError,
     SecretWriter,
 )
 from ssc_conformance.cloud_run_emulator import PROJECT, CloudRunEmulator
@@ -84,7 +86,13 @@ from ssc_control.runtime.driver import service_name
 from ssc_control.runtime.reconciler import load_desired, reconcile_env
 from ssc_control.runtime.secret_grants import CellSecretGrants, SecretGrants
 from ssc_control.runtime.specs import BundleReleaseSpecs
-from ssc_shared.runtime import ServiceSpec, secret_id, spec_from_wire, spec_to_wire
+from ssc_shared.runtime import (
+    ServiceSpec,
+    connection_secret_id,
+    secret_id,
+    spec_from_wire,
+    spec_to_wire,
+)
 from ssc_shared.secret_grants import GRANT_SECONDS, MAX_VALUE_BYTES
 
 world = test_deploy.world
@@ -720,6 +728,84 @@ async def test_custody_removes_a_secret_once_and_only_an_apps() -> None:
     ] * 2
     with pytest.raises(ValueError, match="not an SSC app secret id"):
         await custody.remove("ssc-control-key")
+
+
+DATA_SA = f"ssc-data@{PROJECT}.iam.gserviceaccount.com"
+CONNECTION_TAG = ConnectionSecrets(
+    reader=DATA_SA, tag_key="tagKeys/1001", tag_value="tagValues/2002"
+)
+
+
+async def test_a_connection_secret_is_tagged_at_creation_and_read_by_the_data_gateway_alone(
+    google: Google,
+) -> None:
+    """SSC-051: ``ssc-conn-<20>`` is created with the cell's connection tag in the same call, its
+    policy names ``ssc-data`` alone, and the intake adds its versions as it does an app's."""
+    run = CloudRunEmulator()
+    run.accounts["ssc-data"] = {"email": DATA_SA}
+    sm = SecretManagerEmulator(run.accounts)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == "secretmanager.googleapis.com":
+            return sm.handler(request)
+        return run.handler(request)
+
+    def mock() -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+
+    cloud_run = CloudRunDriver(CELL_RUNTIME, access_token, client=mock())
+    custody = CellSecretCustody(
+        CELL_RUNTIME,
+        access_token,
+        cloud_run.ensure_identity,
+        client=mock(),
+        connections=CONNECTION_TAG,
+    )
+    secret = connection_secret_id("con_" + "c" * 20)
+    assert secret == "ssc-conn-" + "c" * 20
+    accounts = set(run.accounts)
+    await custody.ensure(secret)
+    await custody.ensure(secret)
+    made = sm.secrets[secret]
+    assert made["tags"] == {CONNECTION_TAG.tag_key: CONNECTION_TAG.tag_value}
+    assert made["policy"] == {
+        "bindings": [{"role": ACCESSOR_ROLE, "members": [f"serviceAccount:{DATA_SA}"]}]
+    }
+    assert set(run.accounts) == accounts
+    app_secret = secret_id(service_name("env_" + "c" * 20), NAME)
+    await custody.ensure(app_secret)
+    assert "tags" not in sm.secrets[app_secret]
+    assert f"serviceAccount:{DATA_SA}" not in str(sm.secrets[app_secret]["policy"])
+
+    writer = CellSecretWriter(PROJECT, access_token, client=mock())
+    checks = GoogleGrants(CONTROL_SA, transport=httpx2.MockTransport(google.certs))
+    url = f"{INTAKE}/v1/secrets/{secret}?grant={'n' * 32}"
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=create_intake(writer, checks, INTAKE))
+    ) as intake:
+        put = await intake.put(
+            url, headers={"Authorization": f"Bearer {google.token(url)}"}, content=VALUE.encode()
+        )
+        bad = f"{INTAKE}/v1/secrets/ssc-conn-short?grant={'n' * 32}"
+        refused = await intake.put(
+            bad, headers={"Authorization": f"Bearer {google.token(bad)}"}, content=b"x"
+        )
+    assert (put.status_code, put.json()) == (201, {"secret": secret, "version": "1"})
+    assert refused.status_code == 400
+    assert sm.secrets[secret]["versions"] == [VALUE.encode()]
+
+    bare = CellSecretCustody(CELL_RUNTIME, access_token, cloud_run.ensure_identity, client=mock())
+    other = connection_secret_id("con_" + "d" * 20)
+    with pytest.raises(SecretsError, match="no connection secrets"):
+        await bare.ensure(other)
+    assert other not in sm.secrets
+    for wrong in ("ssc-conn-" + "C" * 20, "ssc-conn-" + "c" * 21, "con_" + "c" * 20):
+        with pytest.raises(ValueError, match="not"):
+            await custody.ensure(wrong)
+    with pytest.raises(ValueError, match="not a connection id"):
+        connection_secret_id("env_" + "c" * 20)
+    for client in (custody, bare, writer, checks):
+        await client.aclose()
 
 
 # ── no read, anywhere ────────────────────────────────────────────────────────

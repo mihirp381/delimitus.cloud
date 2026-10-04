@@ -37,6 +37,10 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 SERVICE_NAME: Final = re.compile(re.escape(SERVICE_PREFIX) + r"[a-z0-9]{20}")
 SECRET_ID: Final = re.compile(re.escape(SERVICE_PREFIX) + r"[a-z0-9]{20}-[A-Z][A-Z0-9_]{0,63}")
 SECRET_VERSION: Final = re.compile(r"[1-9][0-9]{0,18}")
+CONNECTION_SECRET_PREFIX: Final = "ssc-conn-"  # noqa: S105
+CONNECTION_SECRET_ID: Final = re.compile(re.escape(CONNECTION_SECRET_PREFIX) + r"[a-z0-9]{20}")
+CONNECTION_ENV_PREFIX: Final = "SSC_CONNECTION_"
+CONNECTION_ID: Final = re.compile(r"con_([a-z0-9]{20})")
 
 
 def billing_for(runtime: Runtime, framework: str | None = None) -> Billing:
@@ -78,6 +82,24 @@ def database_name(service: str) -> str:
     if SERVICE_NAME.fullmatch(service) is None:
         raise ValueError(f"not an SSC app service name: {service!r}")
     return "app_" + service.removeprefix(SERVICE_PREFIX)
+
+
+def connection_secret_id(connection_id: str) -> str:
+    """The cell Secret Manager id holding one customer connection's credentials (SSC-051):
+    ``ssc-conn-`` plus the connection id's 20 characters. Only the data gateway's identity may
+    read it, and only because the secret carries the cell's connection tag."""
+    m = CONNECTION_ID.fullmatch(connection_id)
+    if m is None:
+        raise ValueError(f"not a connection id: {connection_id!r}")
+    return CONNECTION_SECRET_PREFIX + m.group(1)
+
+
+def connection_env(connection_id: str) -> str:
+    """The data gateway's variable for one connection: ``SSC_CONNECTION_CON_<20>``, the
+    connection id in upper case (``ssc_datagw.settings``)."""
+    if CONNECTION_ID.fullmatch(connection_id) is None:
+        raise ValueError(f"not a connection id: {connection_id!r}")
+    return CONNECTION_ENV_PREFIX + connection_id.upper()
 
 
 def _secret_problem(name: str) -> str | None:

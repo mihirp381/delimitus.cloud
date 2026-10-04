@@ -11,11 +11,15 @@ of the cell's log views (``projects/<p>/locations/<l>/buckets/<b>/views/<v>``), 
 commas; unset, the agent refuses log reads and health uses the service alone. Log records are
 redacted (``ssc_shared.redaction``). App usage (SSC-028) needs ``SSC_USAGE_SOURCE=monitoring``,
 set once the agent may read the cell's Cloud Monitoring; unset, the agent refuses usage reads and
-the control plane records no usage events.
+the control plane records no usage events. Connection secrets (SSC-051) need both
+``SSC_DATA_SA``, the data gateway's service account, and ``SSC_CONNECTION_TAG``, the cell's
+connection tag as ``tagKeys/<n>=tagValues/<n>``; with neither the agent refuses them, and one
+without the other or a malformed tag exits 2.
 """
 
 import logging
 import os
+import re
 import sys
 from collections.abc import Mapping
 from typing import Final
@@ -30,7 +34,7 @@ from ssc_agent.cloud_monitoring import CellUsageReader, CloudMonitoringSeries
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_agent.cloud_sql import CloudSqlAdmin
 from ssc_agent.metadata import MetadataAccessTokens
-from ssc_agent.secret_manager import CellSecretCustody, CellSecretWriter
+from ssc_agent.secret_manager import CellSecretCustody, CellSecretWriter, ConnectionSecrets
 from ssc_shared import redaction
 
 ENV: Final = {
@@ -50,6 +54,9 @@ SQL_INSTANCE_ENV: Final = "SSC_SQL_INSTANCE"
 LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
 USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
 USAGE_SOURCES: Final = ("monitoring",)
+DATA_SA_ENV: Final = "SSC_DATA_SA"
+CONNECTION_TAG_ENV: Final = "SSC_CONNECTION_TAG"
+CONNECTION_TAG: Final = re.compile(r"(tagKeys/[0-9]+)=(tagValues/[0-9]+)")
 
 
 class ConfigError(ValueError):
@@ -102,12 +109,26 @@ def usage_source_from_env(env: Mapping[str, str]) -> str | None:
     return value
 
 
+def connections_from_env(env: Mapping[str, str]) -> ConnectionSecrets | None:
+    """None when neither is set; ``ConfigError`` when only one is, or the tag is malformed."""
+    reader, tag = env.get(DATA_SA_ENV, ""), env.get(CONNECTION_TAG_ENV, "")
+    if not reader and not tag:
+        return None
+    if not reader or not tag:
+        raise ConfigError(f"set both {DATA_SA_ENV} and {CONNECTION_TAG_ENV}, or neither")
+    m = CONNECTION_TAG.fullmatch(tag)
+    if m is None:
+        raise ConfigError(f"{CONNECTION_TAG_ENV} is not tagKeys/<n>=tagValues/<n>")
+    return ConnectionSecrets(reader=reader, tag_key=m.group(1), tag_value=m.group(2))
+
+
 def main() -> int:
     try:
         cell = cell_from_env(os.environ)
         build = build_config_from_env(os.environ, cell)
         views = log_views_from_env(os.environ)
         usage_source = usage_source_from_env(os.environ)
+        connections = connections_from_env(os.environ)
     except ConfigError as exc:
         print(f"ssc-agent: {exc}", file=sys.stderr)  # noqa: T201
         return 2
@@ -116,7 +137,7 @@ def main() -> int:
     tokens = MetadataAccessTokens()
     builder = None if build is None else CloudBuildDriver(build, tokens)
     driver = CloudRunDriver(cell, tokens)
-    custody = CellSecretCustody(cell, tokens, driver.ensure_identity)
+    custody = CellSecretCustody(cell, tokens, driver.ensure_identity, connections=connections)
     instance = os.environ.get(SQL_INSTANCE_ENV, "")
     databases = None
     if instance:
