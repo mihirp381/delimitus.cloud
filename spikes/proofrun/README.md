@@ -2,7 +2,7 @@
 
 One command per proof from SSC-086 (architecture document, section 8). Each command ends in one line, `T<n> <number> PASS|FAIL|INCOMPLETE`, appends the full result to `results/t<n>.json` and exits 0, 1 or 2. Copy the final lines into `RESULTS.md`.
 
-Steps marked **[real]** create, change or delete a real resource, as in the SSC-064 runbook. Run them in order, each only after the founder has agreed. Every other step only reads. The kit itself never creates anything: its commands read with `gcloud ... describe/list`, `ssc status`, HTTP requests to the cell's public hosts, and Cloud Monitoring. There are three exceptions, and each is called out where it happens: `t6 nat` and `t6 proxy` execute an existing Cloud Run job, `t8` runs `ssc disable`, and `t3 nightly`/`t4` run the existing nightly, which deploys the probe apps.
+Steps marked **[real]** create, change or delete a real resource, as in the SSC-064 runbook. Run them in order, each only after the founder has agreed. Every other step only reads. The kit itself never creates anything: its commands read with `gcloud ... describe/list`, `ssc status`, HTTP requests to the cell's public hosts, and Cloud Monitoring. There are three exceptions, and each is called out where it happens: `t6 nat` and the stand-in `t6 proxy` execute an existing Cloud Run job (`t6 egress` only reads), `t8` runs `ssc disable`, and `t3 nightly`/`t4` run the existing nightly, which deploys the probe apps.
 
 ## Setup
 
@@ -52,11 +52,12 @@ Everything under `apps/` deploys through `ssc deploy`. Create each app once with
 | `papi` | `apps/api` (`/vpc`, `/ws`, `/deny`) | T7, T8, T10, T11 |
 | `pstream` | `apps/streamlit` (the bake-off's workload) | T7, T9 |
 | `pg01` to `pg10` | `apps/pg` (`[state] postgres = true`) | T5 |
+| `pegress` | `apps/egress` (`/egress?host=&credentials=`, through the app's own `HTTPS_PROXY`) | T6 |
 
 The kit bypasses `ssc deploy` in two places:
 
 - **Cell 2's probe apps.** They come from the nightly (`t3 nightly` against cell 2), because the control plane does not serve cell 2.
-- **T6's stand-in jobs.** They need a chosen service account, subnet and network tag, and no SSC app can have those.
+- **T6's NAT job.** It needs a chosen service account, subnet and network tag, and no SSC app can have those. The proxy leg needs no job: it runs from the `pegress` app.
 
 ## Order, cost and teardown
 
@@ -74,7 +75,7 @@ Costs are rough list prices. The two cells cost about $40 for the week together 
 | 8 | No-internet floor live check on cell 2 **[real]** (optional, it turns on cell 2's flags) | under $1 | destroyed with cell 2 |
 | 9 | T12 destroy cell 2 **[real]** | saves about $0.75 a day | none |
 | 10 | T5 ops, cross, restore clone **[real]** | clone about $0.02 an hour | `gcloud sql instances delete ssc-cell-restore --project=$P1` **[real]** |
-| 11 | T6 stand-ins **[real]** | under $0.10 | below |
+| 11 | T6 NAT job and the org allowlist entry **[real]** | under $0.10 | below |
 | 12 | T7 alone, about 9 hours, nothing else calling cell 1 | about $0.40 (the Streamlit instance lives up to 15 min a sample) | none |
 | 13 | T8 kill drill **[real]** | cents | `uv run ssc enable papi` **[real]** |
 | 14 | T10 gateway override **[real]** | cents | `pulumi up --stack c-$L1` **[real]** |
@@ -186,9 +187,9 @@ uv run python -m proofrun t5 ops --project $P1 --restore-instance ssc-cell-resto
 
 Write the restore up in RESULTS.md, then delete the clone.
 
-### T6: NAT and the proxy, with stand-ins
+### T6: NAT and the proxy
 
-`ssc_datagw` and `ssc_egress` are empty, so T6 uses the stand-ins the ticket allows. It is evidence for neither SSC-050 nor SSC-053. Set up **[real]**. Run the `docker` and `gcloud` lines at the repository root and the kit's line in `spikes/proofrun`:
+The NAT leg uses a stand-in job in the data gateway's place, because the job needs a service account, subnet and network tag that no SSC app can have. It is no evidence for SSC-050. The proxy leg runs against the real `ssc-egress` proxy, from the `pegress` app, so an app's own `HTTPS_PROXY` credential is what is tested. Set up **[real]**. Run the `docker` and `gcloud` lines at the repository root and the kit's lines in `spikes/proofrun`:
 
 ```sh
 REG=us-central1-docker.pkg.dev/$P1/ssc-apps
@@ -196,6 +197,34 @@ docker buildx build --platform linux/amd64 --provenance=false --push --tag $REG/
 gcloud run jobs create proofrun-egress-nat --project=$P1 --region=us-central1 --image=$REG/proofrun-egress:1 \
   --service-account=ssc-data@$P1.iam.gserviceaccount.com --network=ssc-cell --subnet=gateway \
   --network-tags=ssc-data --vpc-egress=all-traffic --max-retries=0 --task-timeout=120s
+```
+
+Create and deploy `pegress` as under Probe apps (`uv run ssc apps create pegress`, `uv run ssc deploy --app pegress spikes/proofrun/apps/egress --wait`, then `uv run ssc share`). The deployment issues the app's `HTTPS_PROXY`; in preview it needs no approval. Its preview capability diff shows `egress_host_missing`: the proxy only tunnels to hosts on the org's allowlist, and the manifest's `[egress] hosts` do not feed that list.
+
+Allowlist step **[real]**: the founder, as an org admin, adds the allowed host through the API before the run, and `example.com` must not be on the list.
+
+```sh
+PUT /v1/egress/hosts/www.cloudflare.com
+```
+
+Read the cell's NAT log for the allowed host's connections (NAT logging is off in the stack, so turning it on for the run is a known difference from the stack until it is turned off again):
+
+```sh
+gcloud logging read 'resource.type="nat_gateway"' --project=$P1 --freshness=30m --format=json
+```
+
+```sh
+uv run python -m proofrun t6 nat --project $P1 --nat-ip $NAT1      # executes the job: the data gateway's place
+uv run python -m proofrun t6 egress --base https://pegress--preview.$L1.delimitusapps.com --nat-ip $NAT1   # reads only
+```
+
+`--base` is the preview host that `ssc status` shows for `pegress`; the cookie is taken from the jar by that host. `egress` calls the app three times: `www.cloudflare.com` with the credential, `example.com` with the credential, and `www.cloudflare.com` with none. Add `--allow` or `--unlisted` to use other hosts. A 403 for the allowed host usually means the allowlist step was not done.
+
+Pass: `nat` leaves from the reserved NAT address. In `egress`, the allowed host tunnels (proxy 200, host 200) and reports the NAT address, the unlisted host is refused (403 expected; the number is recorded), and the call without the credential gets 407.
+
+**Stand-in proxy, for a cell without `proxy_image` only.** Use `t6 proxy` and the stand-in Envoy instead of `egress`:
+
+```sh
 gcloud run jobs create proofrun-egress-app --project=$P1 --region=us-central1 --image=$REG/proofrun-egress:1 \
   --service-account=ssc-deny-probe@$P1.iam.gserviceaccount.com --network=ssc-cell --subnet=apps \
   --vpc-egress=all-traffic --max-retries=0 --task-timeout=120s
@@ -203,25 +232,20 @@ uv run python -m proofrun t6 envoy-config --envoy-image envoyproxy/envoy:<tag>@s
 INST=$(gcloud compute instance-groups managed list-instances ssc-proxy --zone=us-central1-a --project=$P1 --format='value(name)')
 gcloud compute instances add-metadata $INST --zone=us-central1-a --project=$P1 --metadata-from-file=user-data=spikes/proofrun/results/envoy-user-data.yaml
 gcloud compute instances reset $INST --zone=us-central1-a --project=$P1
-```
-
-The cloud-config points the proxy machine's resolver at 8.8.8.8 over the NAT, because the cell's resolver sinkholes docker.io and the allowed hosts. It then starts stock Envoy with a fixed two-host CONNECT list on 10.20.4.10:3128. If the group recreates the machine before Envoy answers its health check, the machine's name changes; repeat the last two lines.
-
-```sh
-uv run python -m proofrun t6 nat --project $P1 --nat-ip $NAT1      # executes the job: the data gateway's place
 uv run python -m proofrun t6 proxy --project $P1 --nat-ip $NAT1    # executes the job: an app's place
 ```
 
-Pass: `nat` leaves from the reserved NAT address. In `proxy`, both allowed hosts tunnel and report the NAT address, and both unlisted hosts are refused.
+Never run `add-metadata` or `reset` on a cell with the real proxy: they replace the machine's user-data, which the real proxy needs. The stand-in's cloud-config points the machine's resolver at 8.8.8.8 over the NAT and starts stock Envoy with a fixed two-host CONNECT list on 10.20.4.10:3128. If the group recreates the machine before Envoy answers its health check, its name changes; repeat the last two `gcloud` lines. Pass for `proxy`: both allowed hosts tunnel and report the NAT address, and both unlisted hosts are refused.
 
 Teardown **[real]**:
 
 ```sh
+DELETE /v1/egress/hosts/www.cloudflare.com
 gcloud run jobs delete proofrun-egress-nat --project=$P1 --region=us-central1
-gcloud run jobs delete proofrun-egress-app --project=$P1 --region=us-central1
 gcloud artifacts docker images delete $REG/proofrun-egress --delete-tags --project=$P1
-gcloud compute instance-groups managed recreate-instances ssc-proxy --instances=$INST --zone=us-central1-a --project=$P1
 ```
+
+For the stand-in proxy also delete `proofrun-egress-app` and run `gcloud compute instance-groups managed recreate-instances ssc-proxy --instances=$INST --zone=us-central1-a --project=$P1`. Delete `pegress` with `ssc apps` when done.
 
 ### T7: cold starts
 
@@ -350,7 +374,7 @@ The account is printed masked.
 
 ## What the kit cannot measure as written
 
-- **T6** measures stand-ins only.
+- **T6**'s NAT leg uses a stand-in job in the data gateway's place, and NAT logging is off in the stack, so the NAT log read needs it turned on. The proxy leg is the real proxy, but only for hosts on the org allowlist.
 - **T8** has no query or tunnel leg. Its times include `uv run ssc` starting, so they err high. The compile time is the difference between this machine's clock and the bucket's `update_time`.
 - **T2/T3** with a sealed cookie skip the real login.
 - **T4**'s range leg is not applicable while every cell has the same address plan.
@@ -361,5 +385,5 @@ The account is printed masked.
 ## Files
 
 - `proofrun/`: one module per proof (`t1.py` to `t12.py`), `instances.py`, and their shared parts (`common.py`, `probes.py`, `cloudrun.py`, `cost.py`).
-- `apps/`: the probe apps. `standins/egress/`: T6's job. `configs/`: the example stack configs. `seal_cookie.py`: the T2/T3 fallback.
+- `apps/`: the probe apps. `standins/egress/`: T6's jobs (`apps/egress` is T6's proxy leg). `configs/`: the example stack configs. `seal_cookie.py`: the T2/T3 fallback.
 - `tests/`: offline tests with fakes for every network call. None needs cloud credentials. `PROOFRUN_LIVE=1` runs the one live-only check (the operator's tools are installed).

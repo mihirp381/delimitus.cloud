@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from conftest import Clock, FakeHttp, FakeRun, answer, ok
 
+from proofrun import __main__ as cli
 from proofrun import t6, t7
 from proofrun.common import CommandError, CookieJar, StateFile
 
@@ -114,6 +115,152 @@ def test_t6_proxy_runs_the_job_with_its_hosts() -> None:
     assert "--args=proxy,10.20.4.10:3128,allow=a.example,deny=b.example" in run.calls[0]
     assert "--wait" in run.calls[0]
     assert any("proofrun-egress-app-x1" in part for part in run.calls[1])
+
+
+ALLOWED_OK = {
+    "host": "www.cloudflare.com",
+    "credentials": True,
+    "proxy_status": 200,
+    "status": 200,
+    "ip": NAT_IP,
+    "error": None,
+}
+UNLISTED_REFUSED = {**ALLOWED_OK, "host": "example.com", "proxy_status": 403, "status": None}
+UNLISTED_REFUSED["ip"] = None
+NO_CREDENTIAL = {
+    **ALLOWED_OK,
+    "credentials": False,
+    "proxy_status": 407,
+    "status": None,
+    "ip": None,
+}
+
+
+def test_egress_verdict_all_pass() -> None:
+    out = t6.egress_verdict(ALLOWED_OK, UNLISTED_REFUSED, NO_CREDENTIAL, NAT_IP)
+    assert out.passed is True
+    assert out.number == "real proxy: allowed via NAT, unlisted refused (403), no credential 407"
+    assert out.data["egress"]["unlisted"]["proxy_status"] == 403
+
+
+def test_egress_verdict_wrong_ip_fails() -> None:
+    wrong = {**ALLOWED_OK, "ip": "35.0.0.9"}
+    out = t6.egress_verdict(wrong, UNLISTED_REFUSED, NO_CREDENTIAL, NAT_IP)
+    assert out.passed is False
+    assert out.number.startswith("real proxy: allowed host failed")
+
+
+def test_egress_verdict_unlisted_tunnelled_fails() -> None:
+    leaked = {**UNLISTED_REFUSED, "proxy_status": 200}
+    out = t6.egress_verdict(ALLOWED_OK, leaked, NO_CREDENTIAL, NAT_IP)
+    assert out.passed is False
+    assert "unlisted not refused (200)" in out.number
+
+
+@pytest.mark.parametrize("status", [403, 200, None])
+def test_egress_verdict_no_credential_not_407_fails(status: int | None) -> None:
+    out = t6.egress_verdict(
+        ALLOWED_OK, UNLISTED_REFUSED, {**NO_CREDENTIAL, "proxy_status": status}, NAT_IP
+    )
+    assert out.passed is False
+
+
+def test_egress_verdict_an_app_error_fails() -> None:
+    missing = {
+        "host": "www.cloudflare.com",
+        "credentials": True,
+        "proxy_status": None,
+        "status": None,
+        "ip": None,
+        "error": "no HTTPS_PROXY",
+    }
+    assert t6.egress_verdict(missing, UNLISTED_REFUSED, NO_CREDENTIAL, NAT_IP).passed is False
+    assert t6.egress_verdict(ALLOWED_OK, missing, NO_CREDENTIAL, NAT_IP).passed is False
+    assert t6.egress_verdict(ALLOWED_OK, UNLISTED_REFUSED, missing, NAT_IP).passed is False
+    timed_out = {**missing, "proxy_status": 200, "error": "TimeoutError"}
+    assert t6.egress_verdict(timed_out, UNLISTED_REFUSED, NO_CREDENTIAL, NAT_IP).passed is False
+
+
+def test_egress_verdict_hints_at_the_allowlist_on_a_403() -> None:
+    out = t6.egress_verdict(
+        {**ALLOWED_OK, "proxy_status": 403}, UNLISTED_REFUSED, NO_CREDENTIAL, NAT_IP
+    )
+    assert out.passed is False
+    assert any("allowlist may lack it" in line for line in out.lines)
+    assert not any(
+        "allowlist" in line
+        for line in t6.egress_verdict(ALLOWED_OK, UNLISTED_REFUSED, NO_CREDENTIAL, NAT_IP).lines
+    )
+
+
+BASE = "https://pegress--preview.cellone01.delimitusapps.com"
+
+
+def egress_args(**over: Any) -> argparse.Namespace:
+    values = {
+        "step": "egress",
+        "base": BASE,
+        "nat_ip": NAT_IP,
+        "allow": t6.EGRESS_ALLOWED,
+        "unlisted": t6.EGRESS_UNLISTED,
+    }
+    return argparse.Namespace(**{**values, **over})
+
+
+def test_t6_egress_calls_the_app_three_times_with_the_cookie() -> None:
+    CookieJar().put("pegress--preview.cellone01.delimitusapps.com", "c" * 24, "browser")
+    http = FakeHttp(
+        [
+            ("host=example.com&credentials=yes", answer(200, UNLISTED_REFUSED)),
+            ("credentials=no", answer(200, NO_CREDENTIAL)),
+            ("host=www.cloudflare.com&credentials=yes", answer(200, ALLOWED_OK)),
+        ]
+    )
+    out = t6.run(egress_args(), FakeRun(), http)
+    assert out.passed is True
+    assert [url.removeprefix(BASE) for url, _ in http.calls] == [
+        "/egress?host=www.cloudflare.com&credentials=yes",
+        "/egress?host=example.com&credentials=yes",
+        "/egress?host=www.cloudflare.com&credentials=no",
+    ]
+    assert all("__Host-ssc-session=" + "c" * 24 in (h or {})["Cookie"] for _, h in http.calls)
+
+
+def test_t6_egress_is_incomplete_when_the_app_does_not_answer() -> None:
+    CookieJar().put("pegress--preview.cellone01.delimitusapps.com", "c" * 24, "browser")
+    http = FakeHttp([("/egress", answer(404, {}))])
+    out = t6.run(egress_args(), FakeRun(), http)
+    assert out.passed is None
+    assert out.lines == ["allowed: HTTP 404"]
+
+
+def test_t6_egress_needs_an_https_base() -> None:
+    with pytest.raises(CommandError, match="https"):
+        t6.run(egress_args(base="http://pegress.example"), FakeRun(), FakeHttp([]))
+
+
+def test_t6_egress_arguments() -> None:
+    parsed = cli.parser().parse_args(["t6", "egress", "--base", BASE, "--nat-ip", NAT_IP])
+    assert (parsed.step, parsed.base, parsed.nat_ip) == ("egress", BASE, NAT_IP)
+    assert (parsed.allow, parsed.unlisted) == ("www.cloudflare.com", "example.com")
+    chosen = cli.parser().parse_args(
+        [
+            "t6",
+            "egress",
+            "--base",
+            BASE,
+            "--nat-ip",
+            NAT_IP,
+            "--allow",
+            "a.example",
+            "--unlisted",
+            "b.example",
+        ]
+    )
+    assert (chosen.allow, chosen.unlisted) == ("a.example", "b.example")
+    for missing in (["--nat-ip", NAT_IP], ["--base", BASE]):
+        with pytest.raises(SystemExit):
+            cli.parser().parse_args(["t6", "egress", *missing])
 
 
 def sample_for(slot: int, seconds: float = 2.0, status: int = 200) -> dict[str, Any]:

@@ -1,38 +1,63 @@
-"""T6, with the stand-ins the ticket allows (``ssc_datagw`` and ``ssc_egress`` are empty):
+"""T6: the NAT leg with a stand-in job, and the proxy leg against the real ``ssc-egress`` proxy.
 
 - ``t6 nat --project <cell 1> --nat-ip <stack output nat_ip>`` runs the job ``proofrun-egress-nat``
   (``standins/egress``, made once by the README's T6 steps) in the data gateway's place: the
   ``ssc-data`` account and tag, the gateway subnet, Direct VPC egress for all traffic. It fetches
   ``https://1.1.1.1/cdn-cgi/trace`` (an address, so the cell's DNS sinkhole is not in the way)
-  and reports the source address. Pass: it is the reserved NAT address.
+  and reports the source address. Pass: it is the reserved NAT address. It is a stand-in, named
+  in RESULTS.md, and no evidence for SSC-050.
+- ``t6 egress --base <https://pegress--preview.<label>.delimitusapps.com> --nat-ip <ip>`` is the
+  proxy leg on a cell whose stack sets ``proxy_image``. It calls the ``egress`` probe app
+  (``apps/egress``, deployed in preview) through its public host with the jar's cookie, three
+  times: an allowed host with the app's credential (pass: the proxy answers 200, the host 200,
+  and the address it saw is the NAT address), an unlisted host with the credential (pass: the
+  proxy answers anything but 200; the number is recorded) and the allowed host without the
+  credential (pass: 407). The org's allowlist must hold the allowed host and not the unlisted one.
 - ``t6 proxy --project <cell 1> --nat-ip <ip>`` runs ``proofrun-egress-app`` from an app's place
   (the apps subnet, no tag, the zero-role ``ssc-deny-probe`` account), which sends ``CONNECT``
-  through the stand-in Envoy at the reserved proxy address 10.20.4.10:3128 for each allowed host
-  and each unlisted one. Pass: allowed hosts tunnel and leave from the NAT address; every
-  unlisted host is refused.
+  through a stand-in Envoy at the reserved proxy address 10.20.4.10:3128 for each allowed host
+  and each unlisted one. It is for a cell without ``proxy_image`` only; the real proxy answers
+  407 to a ``CONNECT`` without credentials.
 - ``t6 envoy-config --allow <host> --allow <host> --envoy-image <image@digest> --out <file>``
   writes the cloud-config that starts stock Envoy with that fixed two-host list on the proxy
-  machine.
+  machine of a cell without ``proxy_image``.
 
 The jobs print one JSON line, ``{"proofrun_egress": {...}}``, read back from Cloud Logging.
-Neither result is evidence for SSC-050 or SSC-053: both are stand-ins, named in RESULTS.md.
 """
 
 import argparse
 import json
 import time
+import urllib.parse
 from collections.abc import Callable, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any, Final
 
-from proofrun.common import REGION, CommandError, Outcome, Run, gcloud_json, last_line, run_command
+from proofrun.common import (
+    REGION,
+    CommandError,
+    CookieJar,
+    Http,
+    Outcome,
+    Run,
+    fetch,
+    gcloud_json,
+    host_of,
+    last_line,
+    run_command,
+    session_headers,
+)
 
 NAT_JOB: Final = "proofrun-egress-nat"
 APP_JOB: Final = "proofrun-egress-app"
 PROXY: Final = "10.20.4.10:3128"
 DEFAULT_ALLOWED: Final = ("ifconfig.me", "api.ipify.org")
 DEFAULT_UNLISTED: Final = ("example.org", "1.1.1.1")
+EGRESS_ALLOWED: Final = "www.cloudflare.com"
+EGRESS_UNLISTED: Final = "example.com"
+EGRESS_TIMEOUT_S: Final = 60.0
+NO_CREDENTIAL: Final = 407
 LOG_WAIT_S: Final = 180
 LOG_POLL_S: Final = 15
 
@@ -47,6 +72,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         if name == "proxy":
             p.add_argument("--allow", action="append", help="an allowed host (Envoy's list)")
             p.add_argument("--unlisted", action="append", help="a host Envoy must refuse")
+    egress = sub.add_parser("egress", help="the real proxy, through the egress probe app")
+    egress.add_argument("--base", required=True, help="the probe app's preview URL")
+    egress.add_argument("--nat-ip", required=True, help="the cell stack's nat_ip output")
+    egress.add_argument("--allow", default=EGRESS_ALLOWED, help="a host on the org's allowlist")
+    egress.add_argument("--unlisted", default=EGRESS_UNLISTED, help="a host that is not on it")
     cfg = sub.add_parser("envoy-config", help="write the proxy machine's cloud-config")
     cfg.add_argument("--allow", action="append", help="an allowed host, two in all")
     cfg.add_argument("--envoy-image", required=True, help="envoyproxy/envoy:<tag>@sha256:...")
@@ -162,7 +192,85 @@ def proxy_verdict(report: dict[str, Any], nat_ip: str) -> Outcome:
     )
 
 
-def run(args: argparse.Namespace, run: Run = run_command) -> Outcome:
+def egress_verdict(
+    allowed: dict[str, Any], unlisted: dict[str, Any], anonymous: dict[str, Any], nat_ip: str
+) -> Outcome:
+    """Pass when the allowed host tunnels and leaves from the NAT address, the unlisted host is
+    refused with the credential and the allowed host is refused without it (407)."""
+    tunnelled = (
+        allowed.get("proxy_status") == 200
+        and allowed.get("status") == 200
+        and allowed.get("ip") == nat_ip
+    )
+    refused = unlisted.get("proxy_status") not in (None, 200)
+    challenged = anonymous.get("proxy_status") == NO_CREDENTIAL
+    lines = [
+        f"allowed {allowed.get('host')}: CONNECT {allowed.get('proxy_status')}, "
+        f"host {allowed.get('status')}, left from {allowed.get('ip') or allowed.get('error')}",
+        f"unlisted {unlisted.get('host')}: CONNECT "
+        f"{unlisted.get('proxy_status') or unlisted.get('error')}",
+        f"no credential {anonymous.get('host')}: CONNECT "
+        f"{anonymous.get('proxy_status') or anonymous.get('error')}",
+        f"reserved NAT address: {nat_ip}",
+    ]
+    if allowed.get("proxy_status") == 403:
+        lines.append(
+            "403 for the allowed host: the org allowlist may lack it; see the README's T6 steps"
+        )
+    number = ", ".join(
+        (
+            "real proxy: allowed via NAT" if tunnelled else "real proxy: allowed host failed",
+            f"unlisted refused ({unlisted.get('proxy_status')})"
+            if refused
+            else f"unlisted not refused ({unlisted.get('proxy_status') or 'no answer'})",
+            "no credential 407"
+            if challenged
+            else f"no credential {anonymous.get('proxy_status') or 'no answer'}",
+        )
+    )
+    return Outcome(
+        "T6",
+        number,
+        tunnelled and refused and challenged,
+        lines,
+        {"egress": {"allowed": allowed, "unlisted": unlisted, "anonymous": anonymous}},
+    )
+
+
+def egress_call(
+    base: str, host: str, credentials: bool, http: Http
+) -> tuple[int | None, dict[str, Any]]:
+    """Ask the probe app to tunnel to ``host``; its HTTP status and its JSON answer."""
+    query = urllib.parse.urlencode({"host": host, "credentials": "yes" if credentials else "no"})
+    answer = http(
+        f"{base}/egress?{query}", session_headers(CookieJar().get(host_of(base))), EGRESS_TIMEOUT_S
+    )
+    try:
+        body = json.loads(answer.body)
+    except ValueError:
+        body = {}
+    return answer.status, body if isinstance(body, dict) else {}
+
+
+def run_egress(args: argparse.Namespace, http: Http) -> Outcome:
+    """The three calls of ``t6 egress`` and their verdict."""
+    base = str(args.base).rstrip("/")
+    if not base.startswith("https://"):
+        raise CommandError("--base is the probe app's https:// URL from `ssc status`")
+    calls = (("allowed", args.allow, True), ("unlisted", args.unlisted, True))
+    calls += (("no credential", args.allow, False),)
+    answers: list[dict[str, Any]] = []
+    for label, host, credentials in calls:
+        status, body = egress_call(base, host, credentials, http)
+        if status != 200:
+            return Outcome("T6", "the probe app did not answer", None, [f"{label}: HTTP {status}"])
+        answers.append(body)
+    return egress_verdict(answers[0], answers[1], answers[2], args.nat_ip)
+
+
+def run(args: argparse.Namespace, run: Run = run_command, http: Http = fetch) -> Outcome:
+    if args.step == "egress":
+        return run_egress(args, http)
     if args.step == "envoy-config":
         allowed = tuple(args.allow or DEFAULT_ALLOWED)
         args.out.write_text(envoy_config(allowed, args.envoy_image, args.resolver))
