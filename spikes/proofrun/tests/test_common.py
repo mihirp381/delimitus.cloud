@@ -149,6 +149,8 @@ def test_emit_prints_the_final_line_and_keeps_history(
 
 
 def test_emit_writes_where_the_environment_says_at_the_time(isolated: Path) -> None:
+    real = common.KIT / "results" / "t1.json"
+    before = real.read_bytes() if real.exists() else None
     common.emit(Outcome("T1", "x", True))
     assert (isolated / "results" / "t1.json").exists()
-    assert not (common.KIT / "results" / "t1.json").exists()
+    assert (real.read_bytes() if real.exists() else None) == before

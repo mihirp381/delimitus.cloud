@@ -208,6 +208,28 @@ def test_t5_classifies_cross_connects() -> None:
     assert t5.classify({"connected": False, "error": "timeout"}) == "error"
 
 
+def test_t5_reads_postgres_refusal_text_when_psycopg_gives_no_sqlstate() -> None:
+    at = 'connection to server at "10.21.0.3", port 5432 failed: '
+    denied = {
+        "connected": False,
+        "sqlstate": None,
+        "error": at + 'FATAL:  permission denied for database "app_x"',
+    }
+    login = {
+        "connected": False,
+        "sqlstate": None,
+        "error": at + 'FATAL:  password authentication failed for user "app_x"',
+    }
+    certificate = {
+        "connected": False,
+        "sqlstate": None,
+        "error": at + 'server certificate for "a." does not match host name "a"',
+    }
+    assert t5.classify(denied) == t5.classify(login) == "refused"
+    assert t5.sqlstate(denied) == "42501"
+    assert t5.classify(certificate) == "error"
+
+
 def test_t5_cross_verdict_leaves_the_maintenance_database_out() -> None:
     own = {"connected": True, "database": "app_x"}
     others = {f"app_{i}": {"connected": False, "sqlstate": "42501"} for i in range(9)}

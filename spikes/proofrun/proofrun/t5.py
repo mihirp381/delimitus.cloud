@@ -38,6 +38,12 @@ DATABASE_LIMIT_S: Final = 60
 DATABASES: Final = 10
 REFUSED_STATES: Final = frozenset({"42501", "28000", "28P01"})
 MAINTENANCE_DB: Final = "postgres"
+REFUSED_MESSAGES: Final = {
+    "FATAL:  permission denied for database": "42501",
+    "FATAL:  password authentication failed for user": "28P01",
+    "FATAL:  no pg_hba.conf entry": "28000",
+    "FATAL:  pg_hba.conf rejects connection": "28000",
+}
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -107,12 +113,21 @@ def ops_verdict(ops: list[dict[str, Any]], restore: list[dict[str, Any]] | None 
     )
 
 
+def sqlstate(answer: dict[str, Any]) -> str:
+    """The answer's SQLSTATE, else the one Postgres's own refusal text stands for: psycopg
+    reports none for an error raised while connecting."""
+    if state := str(answer.get("sqlstate") or ""):
+        return state
+    error = str(answer.get("error") or "")
+    return next((s for text, s in REFUSED_MESSAGES.items() if text in error), "")
+
+
 def classify(answer: dict[str, Any]) -> str:
     """``connected``, ``refused`` (privilege or login), ``missing`` (no such database) or
     ``error`` (anything else, the network included)."""
     if answer.get("connected"):
         return "connected"
-    state = str(answer.get("sqlstate") or "")
+    state = sqlstate(answer)
     if state in REFUSED_STATES:
         return "refused"
     return "missing" if state == "3D000" else "error"
@@ -122,7 +137,7 @@ def cross_verdict(own: dict[str, Any], others: dict[str, dict[str, Any]]) -> Out
     kinds = {name: classify(a) for name, a in others.items()}
     lines = [f"own database: {classify(own)} ({own.get('database') or own.get('error')})"]
     lines += [
-        f"{name}: {kinds[name]} ({a.get('sqlstate')} {a.get('error') or ''})".rstrip()
+        f"{name}: {kinds[name]} ({sqlstate(a) or None} {a.get('error') or ''})".rstrip()
         for name, a in others.items()
     ]
     counted = {n: k for n, k in kinds.items() if n != MAINTENANCE_DB}
