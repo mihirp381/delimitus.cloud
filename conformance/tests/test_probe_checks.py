@@ -275,6 +275,21 @@ def test_the_peer_cell_comes_from_three_variables() -> None:
         assert runner.peer_cell_from(full | {name: ""}) is None
 
 
+def test_the_peer_cell_probe_waits_longer_than_the_others() -> None:
+    """Two targets whose names time out in the cell took 108 s live (SSC-086 T4)."""
+    seen: list[tuple[str, float]] = []
+
+    class Recording:
+        def body(self, path: str, timeout: float = runner.TIMEOUT) -> dict[str, object]:
+            seen.append((path, timeout))
+            return {"error": "stop"}
+
+    with pytest.raises(checks.ProbeFailedError):
+        runner._peer_cell(Recording(), ("https://a", "https://g", "10.30.0.0/22"))
+    assert seen[0][0].startswith("/probe/peer-cell?")
+    assert seen[0][1] == runner.PEER_CELL_TIMEOUT > 108
+
+
 def test_the_egress_hosts_come_from_one_variable() -> None:
     hosts = {runner.EGRESS_HOSTS_ENV: "auth.delimitus.com, keys.delimitus.com,"}
     assert runner.egress_hosts_from(hosts) == ("auth.delimitus.com", "keys.delimitus.com")

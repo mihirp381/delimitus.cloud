@@ -26,6 +26,7 @@ import checks
 
 METADATA = "http://metadata.google.internal/computeMetadata/v1"
 TIMEOUT = 60.0
+PEER_CELL_TIMEOUT = 240.0
 NO_PEER_CELL = "no peer cell"
 PEER_CELL_ENV = ("PROBE_PEER_CELL_APP_URL", "PROBE_PEER_CELL_GATEWAY_URL", "PROBE_PEER_CELL_RANGE")
 EGRESS_HOSTS_ENV = "PROBE_EGRESS_HOSTS"
@@ -43,25 +44,25 @@ class Probe:
             "Authorization": checks.APP_CREDENTIAL,
         }
 
-    def open(self, path: str):  # noqa: ANN201
+    def open(self, path: str, timeout: float = TIMEOUT):  # noqa: ANN201
         request = urllib.request.Request(self.base + path, headers=self.headers)  # noqa: S310
         try:
-            return urllib.request.urlopen(request, timeout=TIMEOUT)  # noqa: S310
+            return urllib.request.urlopen(request, timeout=timeout)  # noqa: S310
         except urllib.error.HTTPError as exc:
             raise checks.ProbeFailedError(f"GET {path}: HTTP {exc.code}") from None
         except OSError as exc:
             raise checks.ProbeFailedError(f"GET {path}: {type(exc).__name__}") from None
 
-    def get(self, path: str) -> object:
-        with self.open(path) as response:
+    def get(self, path: str, timeout: float = TIMEOUT) -> object:
+        with self.open(path, timeout) as response:
             body = response.read()
         try:
             return json.loads(body)
         except ValueError:
             raise checks.ProbeFailedError(f"GET {path}: not JSON") from None
 
-    def body(self, path: str) -> checks.Body:
-        return checks._map(self.get(path), path)  # noqa: SLF001
+    def body(self, path: str, timeout: float = TIMEOUT) -> checks.Body:
+        return checks._map(self.get(path, timeout), path)  # noqa: SLF001
 
     def sse(self, path: str) -> list[float]:
         started = time.monotonic()
@@ -98,7 +99,7 @@ def _peer_cell(app: Probe, peer_cell: tuple[str, str, str] | None) -> str:
     if peer_cell is None:
         raise ProbeSkippedError(NO_PEER_CELL)
     query = urllib.parse.urlencode(dict(zip(("app", "gateway", "range"), peer_cell, strict=True)))
-    return checks.cannot_reach_peer_cell(app.body(f"/probe/peer-cell?{query}"))
+    return checks.cannot_reach_peer_cell(app.body(f"/probe/peer-cell?{query}", PEER_CELL_TIMEOUT))
 
 
 def plan(
