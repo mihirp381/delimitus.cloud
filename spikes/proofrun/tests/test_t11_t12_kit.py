@@ -213,7 +213,7 @@ def test_stage_probe_copies_the_app_and_manifest_only(tmp_path: Path) -> None:
     if not (cli.PROBE_APP / "app.py").exists():
         pytest.skip("conformance probe app not in this checkout")
     copied = cli.stage_probe(tmp_path / "probe")
-    assert sorted(copied) == ["app.py", "requirements.txt", "ssc.toml"]
+    assert sorted(copied) == [".python-version", "app.py", "requirements.txt", "ssc.toml"]
     assert not (tmp_path / "probe" / "checks.py").exists()
 
 

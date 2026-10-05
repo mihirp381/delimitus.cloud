@@ -16,3 +16,9 @@ config:
   ssc-infra:gateway_keyring: <cell 2 keyring, base64 KMS ciphertext>
   ssc-infra:gateway_jwks: <cell 2 identity JWKS JSON>
   ssc-infra:org_id: <org id served by cell 2>
+  ssc-infra:timer_jwks: <timer JWKS JSON, the worker's public key>
+  ssc-infra:datagw_connections: <data gateway connections JSON for cell 2>
+  ssc-infra:oncall_email: <on-call address>
+  ssc-infra:datagw_image: us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-datagw@sha256:<datagw digest>
+  ssc-infra:proxy_image: us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-egress@sha256:<egress digest>
+  ssc-infra:proxy_ha: "false"
