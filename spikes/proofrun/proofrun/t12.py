@@ -27,12 +27,12 @@ from pathlib import Path
 from typing import Any, Final
 
 from proofrun.common import (
-    RESULTS,
     CommandError,
     Outcome,
     Run,
     StateFile,
     gcloud_json,
+    results_dir,
     run_command,
 )
 
@@ -49,7 +49,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--expect", type=int, default=EXPECT, help="linked count once it is back")
     parser.add_argument("--interval-minutes", type=float, default=10.0)
     parser.add_argument("--hours", type=float, default=12.0)
-    parser.add_argument("--state", type=Path, default=RESULTS / "t12.state.json")
+    parser.add_argument("--state", type=Path, default=results_dir() / "t12.state.json")
     parser.add_argument("--once", action="store_true", help="one reading, then the verdict")
 
 

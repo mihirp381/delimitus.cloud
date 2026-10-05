@@ -23,7 +23,6 @@ FENCE_LENGTH: Final = 16
 REGION: Final = "us-central1"
 KIT: Final = Path(__file__).resolve().parents[1]
 REPO: Final = Path(os.environ.get("PROOFRUN_REPO") or KIT.parents[1])
-RESULTS: Final = Path(os.environ.get("PROOFRUN_RESULTS") or KIT / "results")
 COOKIE_NAME: Final = "__Host-ssc-session"
 COOKIES_ENV: Final = "PROOFRUN_COOKIES"
 SSC_ENV: Final = "PROOFRUN_SSC"
@@ -241,12 +240,18 @@ class Outcome:
         return f"{self.proof} {self.number} {self.verdict}"
 
 
-def emit(outcome: Outcome, results: Path = RESULTS) -> int:
+def results_dir() -> Path:
+    """Where results go: ``PROOFRUN_RESULTS``, read when a result is written, else ``results/``."""
+    return Path(os.environ.get("PROOFRUN_RESULTS") or KIT / "results")
+
+
+def emit(outcome: Outcome, results: Path | None = None) -> int:
     """Print the findings and the final line, append them to ``results/<proof>.json`` and return
     the exit code: 0 pass, 1 fail, 2 incomplete."""
     for line in outcome.lines:
         print(line)
     print(outcome.final_line())
+    results = results or results_dir()
     results.mkdir(parents=True, exist_ok=True)
     path = results / f"{outcome.proof.lower().replace(' ', '-')}.json"
     history: list[Any] = json.loads(path.read_text()) if path.exists() else []

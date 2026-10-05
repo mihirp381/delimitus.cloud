@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import Any, Final
 
 from proofrun.common import (
-    RESULTS,
     USER_AGENT,
     CookieError,
     CookieJar,
@@ -42,6 +41,7 @@ from proofrun.common import (
     fetch,
     host_of,
     median,
+    results_dir,
     run_command,
     seconds,
     session_headers,
@@ -60,7 +60,7 @@ TIMEOUT_S: Final = 180.0
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     sub = parser.add_subparsers(dest="step", required=True)
     go = sub.add_parser("run", help="take (or resume) the samples")
-    go.add_argument("--state", type=Path, default=RESULTS / "t7.state.json")
+    go.add_argument("--state", type=Path, default=results_dir() / "t7.state.json")
     for app in APPS:
         go.add_argument(f"--{app}", required=True, help=f"the {app} probe app's slug")
     go.add_argument("--env", default="preview")
@@ -70,7 +70,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--start-now", action="store_true", help="the cell has been idle a full gap already"
     )
     report = sub.add_parser("report", help="the medians so far")
-    report.add_argument("--state", type=Path, default=RESULTS / "t7.state.json")
+    report.add_argument("--state", type=Path, default=results_dir() / "t7.state.json")
 
 
 def series_of(slot: int) -> str:

@@ -146,3 +146,9 @@ def test_emit_prints_the_final_line_and_keeps_history(
     assert out[-1] == "T5 n/a INCOMPLETE"
     history = json.loads((results / "t5.json").read_text())
     assert [h["verdict"] for h in history] == ["PASS", "FAIL", "INCOMPLETE"]
+
+
+def test_emit_writes_where_the_environment_says_at_the_time(isolated: Path) -> None:
+    common.emit(Outcome("T1", "x", True))
+    assert (isolated / "results" / "t1.json").exists()
+    assert not (common.KIT / "results" / "t1.json").exists()
