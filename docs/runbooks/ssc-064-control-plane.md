@@ -259,11 +259,11 @@ A secret version added later reaches a service only with a new revision. To roll
      --workos-org <org_01…> --directory <directory_01…> --sso <conn_01…> --join-rule $JOIN
    ```
 
-3. Choose the org whose users test the gateway in step 11c. The label is unique, so only one org can have it. Point that org at the cell:
+3. Choose the org whose users test the gateway in step 11c. The label and the project are unique, so only one org can have them. Point that org at the cell. The auth host redeems a login code only for the gateway in the org's `cell_project`, so a missing project refuses every sign-in with "caller project mismatch":
 
    ```sh
    psql "$SSC_DATABASE_DSN" -v ON_ERROR_STOP=1 \
-     -c "begin; select set_config('ssc.org', '<org_…>', true); update ssc.org set cell_label = '$LABEL' where id = '<org_…>'; commit;"
+     -c "begin; select set_config('ssc.org', '<org_…>', true); update ssc.org set cell_label = '$LABEL', cell_project = 'ssc-c-$LABEL' where id = '<org_…>'; commit;"
    ```
 
 4. Set the cell's gateway to that org, then re-apply the cell:
