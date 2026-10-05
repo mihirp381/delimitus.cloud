@@ -35,6 +35,7 @@ ENV_ALLOWED: Final = frozenset(
         "HOME",
         "HOSTNAME",
         "PATH",
+        "PWD",
         "LANG",
         "LC_CTYPE",
         "GPG_KEY",

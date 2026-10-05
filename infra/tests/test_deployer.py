@@ -112,6 +112,10 @@ def test_the_runner_refuses_an_unexpected_environment_variable(name: str, tmp_pa
         parse([LABEL, "database"], RUN_ENV | {name: "1"})
 
 
+def test_the_runner_accepts_the_working_directory_cloud_run_sets() -> None:
+    assert parse([LABEL, "database"], RUN_ENV | {"PWD": "/app/infra"}) == (LABEL, "database")
+
+
 def test_each_lazy_flag_is_accepted() -> None:
     assert [parse([LABEL, f], RUN_ENV) for f in naming.LAZY_FLAGS] == [
         (LABEL, "database"),
