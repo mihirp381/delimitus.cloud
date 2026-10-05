@@ -74,6 +74,17 @@ def test_gcloud_json_adds_the_format_and_keeps_only_the_last_error_line() -> Non
         common.gcloud_json(failing, "run", "services", "describe", "x")
 
 
+def test_a_failed_ssc_command_reports_its_error_not_a_uv_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROOFRUN_SSC", "ssc")
+    error = {"error": {"title": "No API token.", "detail": "Run `ssc login`."}}
+    warning = "warning: `VIRTUAL_ENV=.venv` does not match the project environment path\n"
+    run = FakeRun([(["status"], common.Done(3, json.dumps(error), warning))])
+    with pytest.raises(CommandError, match=r"No API token\. Run `ssc login`\."):
+        common.ssc_json(run, "status", "a")
+
+
 def test_app_environment_reads_ssc_status(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROOFRUN_SSC", "ssc")
     env = {"id": "env_" + "b" * 20, "name": "preview", "url": "https://a.cell.example.com"}

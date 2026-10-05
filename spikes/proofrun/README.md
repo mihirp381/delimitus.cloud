@@ -43,7 +43,7 @@ Results taken with a sealed cookie say the real login was not exercised. One coo
 
 ## Probe apps
 
-Everything under `apps/` deploys through `ssc deploy`. Create each app once with `uv run ssc apps create <slug>`, then run `uv run ssc deploy --app <slug> <folder> --wait` at the repository root **[real]**. The kit always reads the `preview` environment. `ssc deploy` places apps in cell 1 only, because the control plane serves one cell (`cell_label`).
+Everything under `apps/` deploys through `ssc deploy`. Create each app once with `uv run ssc apps create <slug>`, then run `uv run ssc deploy --app <slug> <folder> --wait` at the repository root **[real]**. An app's owner gets no grant (decision 019), so give the signed-in person preview access to each app with `uv run ssc share <slug> <usr_…> --env preview`, or the gateway answers 404 `not_granted`. The kit always reads the `preview` environment. `ssc deploy` places apps in cell 1 only, because the control plane serves one cell (`cell_label`).
 
 | Slug (example) | Folder | Used by |
 | --- | --- | --- |

@@ -141,8 +141,18 @@ def ssc_json(run: Run, *args: str) -> Any:
     """``ssc <args> --json`` at the repository root, decoded."""
     done = run([*ssc_prefix(), *args, "--json"], cwd=REPO)
     if done.returncode != 0:
-        raise CommandError(f"ssc {' '.join(args[:2])}: {last_line(done.stderr or done.stdout)}")
+        raise CommandError(f"ssc {' '.join(args[:2])}: {ssc_error(done)}")
     return json.loads(done.stdout)
+
+
+def ssc_error(done: Done) -> str:
+    """What a failed ``ssc --json`` said: its error object on stdout, else the last line, which
+    may be a warning from ``uv`` rather than the error."""
+    try:
+        error = json.loads(done.stdout)["error"]
+        return f"{error['title']} {error['detail']}"
+    except ValueError, KeyError, TypeError:
+        return last_line(done.stderr or done.stdout)
 
 
 def app_environment(run: Run, slug: str, env_name: str) -> dict[str, Any]:
