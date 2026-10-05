@@ -361,6 +361,20 @@ class SecretSetResult(Shape):
     state: str | None
 
 
+class DatabaseRotateResult(Shape):
+    """``database rotate``: when the password was rotated, never the password. ``operation_id`` is
+    the deployment that puts it live (null when nothing is live); ``state`` is that deployment's,
+    ``pending`` unless ``--wait`` was given, and null when there is none."""
+
+    app_id: str
+    slug: str
+    environment: str
+    environment_id: str
+    rotated_at: str
+    operation_id: str | None
+    state: str | None
+
+
 class SecretRow(Shape):
     name: str
     version: str
@@ -569,6 +583,7 @@ SHAPES: dict[str, type[BaseModel]] = {
         SecretSetResult,
         SecretRow,
         SecretsResult,
+        DatabaseRotateResult,
         LogLineRow,
         LogsResult,
         ErrorBody,

@@ -114,6 +114,15 @@
     "environment": "string|null",
     "slug": "string|null"
   },
+  "DatabaseRotateResult": {
+    "app_id": "string",
+    "environment": "string",
+    "environment_id": "string",
+    "operation_id": "string|null",
+    "rotated_at": "string",
+    "slug": "string",
+    "state": "string|null"
+  },
   "DatabaseRow": {
     "connection_limit": "integer|null",
     "connections": "integer|null",

@@ -52,6 +52,7 @@ RESPONSES = (
     models.SecretGrantOut,
     models.SecretSetOut,
     models.DatabaseOut,
+    models.DatabaseRotateOut,
     models.LogLineOut,
     models.LogPageOut,
     models.HealthOut,

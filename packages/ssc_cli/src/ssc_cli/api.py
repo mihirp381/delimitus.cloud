@@ -53,6 +53,7 @@ from ssc_cli.models import (
     BundleOut,
     ConnectionsOut,
     DatabaseOut,
+    DatabaseRotateOut,
     DeploymentCreate,
     DeploymentPolicy,
     EnvironmentConnectionsOut,
@@ -350,6 +351,12 @@ class ApiClient:
     def get_database(self, app_id: str, environment_id: str) -> DatabaseOut:
         path = f"{_environment_path(app_id, environment_id)}/database"
         return _parse(self._send("GET", path), DatabaseOut)
+
+    def rotate_database(self, app_id: str, environment_id: str) -> DatabaseRotateOut:
+        """Give the environment's database login a new password; a deployment starts when one
+        is live. The password is never sent back."""
+        path = f"{_environment_path(app_id, environment_id)}/database/rotate"
+        return _parse(self._send("POST", path), DatabaseRotateOut)
 
     def get_logs(  # noqa: PLR0913  (keyword-only query)
         self,

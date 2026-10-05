@@ -285,6 +285,15 @@ class DatabaseOut(Wire):
     places_total: int | None = None
 
 
+class DatabaseRotateOut(Wire):
+    """A database password rotated. ``operation_id`` is the deployment that puts it live, null
+    when nothing is live."""
+
+    environment_id: str
+    rotated_at: str
+    operation_id: str | None
+
+
 class LogLineOut(Wire):
     """One redacted line of an app's logs."""
 

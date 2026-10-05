@@ -10,6 +10,7 @@ from ssc_cli.commands.access import access_app
 from ssc_cli.commands.approvals import approvals_app
 from ssc_cli.commands.apps import apps_app
 from ssc_cli.commands.connections import connections
+from ssc_cli.commands.database import database_app
 from ssc_cli.commands.deploy import deploy
 from ssc_cli.commands.doctor import doctor
 from ssc_cli.commands.init import init
@@ -89,3 +90,4 @@ app.command()(disable)
 app.command()(enable)
 app.add_typer(access_app)
 app.add_typer(secret_app)
+app.add_typer(database_app)

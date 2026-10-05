@@ -75,6 +75,7 @@ ALLOWED = {
     "enable",
     "access",
     "secret",
+    "database",
     "logs",
     "requirements",
     "policy",
@@ -141,6 +142,7 @@ def test_help_lists_exact_set(cli):
         ("access", "explain"),
         ("secret", "set"),
         ("secret", "list"),
+        ("database", "rotate"),
         ("logs",),
         ("requirements",),
         ("policy",),
@@ -155,6 +157,7 @@ def test_help_lists_exact_set(cli):
         ("apps", {"create"}),
         ("access", {"explain"}),
         ("secret", {"set", "list"}),
+        ("database", {"rotate"}),
         ("approvals", {"list", "show", "approve", "reject"}),
     ):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
@@ -1185,7 +1188,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
     # needs an auth host and a browser; test_login.py covers its --json. `secret set` needs a
     # cell's secret intake; test_secret.py covers its --json. `approvals show`, `approve` and
     # `reject` need a request to decide; test_approvals.py covers their --json.
-    expected = {("mcp",), ("login",), ("secret", "set")} | {
+    expected = {("mcp",), ("login",), ("secret", "set"), ("database", "rotate")} | {
         ("approvals", name) for name in ("show", "approve", "reject")
     }
     assert set(cases) | expected == _paths()
