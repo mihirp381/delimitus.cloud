@@ -17,6 +17,7 @@ from ssc_agent.cloud_build import (
     APP_USER,
     BUILD_DRIVER_ERROR,
     BUILD_TIMED_OUT,
+    BUILDKIT_IMAGE,
     DEPENDENCY_UNRESOLVED,
     PRIVATE_REGISTRY,
     SCRIPTS,
@@ -82,7 +83,9 @@ def fake_docker(bin_dir: Path, *, log: Path | None = None, exit_code: int = 0) -
     bin_dir.mkdir(parents=True, exist_ok=True)
     out = bin_dir / "docker-args"
     tool = bin_dir / "docker"
-    body = f'printf "%s\\n" "$@" > {out}\n'
+    created = bin_dir / "buildx-create-args"
+    body = f'if [ "$1 $2" = "buildx create" ]; then printf "%s\\n" "$@" > {created}; exit 0; fi\n'
+    body += f'printf "%s\\n" "$@" > {out}\n'
     if log is not None:
         body += f"cat {log}\n"
     tool.write_text(f"#!/bin/bash\n{body}exit {exit_code}\n")
@@ -410,9 +413,38 @@ def test_build_classifies_a_failed_build_log(
     result = run_step("build", tmp_path, env, tmp_path / "bin")
     assert result.returncode == exit_code, result.stdout + result.stderr
     passed = args.read_text().splitlines()
+    assert passed[:3] == ["buildx", "build", "--load"]
     assert f"BUILDKIT_SYNTAX={FRONTEND}" in passed
     assert f"id=VITE_API,src={tmp_path}/.ssc/secrets/VITE_API" in passed
     assert passed[-1] == str(tmp_path / "src")
+
+
+def test_build_runs_in_its_own_pinned_buildkit(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    fake_docker(tmp_path / "bin")
+    env = step_env(build_config(CELL, cell_build()), "build")
+    assert env["SSC_BUILDKIT"] == BUILDKIT_IMAGE
+    result = run_step("build", tmp_path, env, tmp_path / "bin")
+    assert result.returncode == 0, result.stdout + result.stderr
+    created = (tmp_path / "bin" / "buildx-create-args").read_text().splitlines()
+    assert "--driver" in created and "docker-container" in created
+    assert f"image={BUILDKIT_IMAGE}" in created
+
+
+def test_a_builder_that_will_not_start_is_the_platforms_fault(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "docker").write_text("#!/bin/bash\nexit 1\n")
+    (bin_dir / "docker").chmod(0o755)
+    result = run_step(
+        "build", tmp_path, step_env(build_config(CELL, cell_build()), "build"), bin_dir
+    )
+    assert result.returncode == 15
+    detail = 'Build step failure: build step 3 "x" failed: step exited with non-zero status: 15'
+    failed = status_of({"id": "b1", "status": "FAILURE", "failureInfo": {"detail": detail}})
+    assert isinstance(failed, Failed)
+    assert failed.code == BUILD_DRIVER_ERROR
 
 
 def test_build_passes_and_a_log_classifies_both_patterns() -> None:

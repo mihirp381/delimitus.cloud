@@ -12,8 +12,9 @@ tools image, pinned by digest:
 3. ``plan``: ``railpack prepare`` with the public build values, the manifest's start command and
    the system packages from the platform package list the source needs (``system_packages``,
    SSC-093), installed in the build and in the image. A Dockerfile in the source is never used.
-4. ``build``: BuildKit with the Railpack frontend, pinned by digest. On failure the log is
-   classified (``PRIVATE_REGISTRY``, ``DEPENDENCY_UNRESOLVED``).
+4. ``build``: the Railpack frontend in a BuildKit container of its own (``BUILDKIT_IMAGE``),
+   both pinned by digest. On failure the log is classified (``PRIVATE_REGISTRY``,
+   ``DEPENDENCY_UNRESOLVED``).
 5. ``harden``: a platform-written layer on top: user 10001, ``HOME=/tmp``.
 
 Cloud Build pushes the image through ``images:``, so the digest in ``results.images`` is the one
@@ -66,12 +67,19 @@ APP_USER: Final = "10001:10001"
 BUILD_DRIVER_ERROR: Final = "BUILD_DRIVER_ERROR"
 BUILD_TIMED_OUT: Final = "BUILD_TIMED_OUT"
 CALL_TIMEOUT_SECONDS: Final = 30.0
+BUILDKIT_IMAGE: Final = (
+    "docker.io/moby/buildkit:v0.33.1"
+    "@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea"
+)
+"""The Railpack frontend needs BuildKit's merge op, which the Docker daemon on Cloud Build's
+workers does not support, so the app builds in this BuildKit container instead."""
 EXIT_CODES: Final[Mapping[int, str]] = {
     10: SECRET_IN_BUNDLE,
     11: BUILD_DEPENDENCY_UNRESOLVED,
     12: BUILD_PRIVATE_REGISTRY,
     13: BUILD_NO_ENTRYPOINT,
     14: BUILD_EXITED_NONZERO,
+    15: BUILD_DRIVER_ERROR,
 }
 PRIVATE_REGISTRY: Final = (
     r"NameResolutionError|Failed to resolve|Could not resolve host"
@@ -130,7 +138,9 @@ done < <(printf '%s' "$SSC_PUBLIC_ENV" | base64 -d)
 railpack "${args[@]}" || exit 13
 """
 BUILD: Final = """set -uo pipefail
-args=(build --progress=plain --build-arg "BUILDKIT_SYNTAX=$SSC_FRONTEND"
+docker buildx create --name ssc --driver docker-container \\
+  --driver-opt "image=$SSC_BUILDKIT" --bootstrap --use || exit 15
+args=(buildx build --load --progress=plain --build-arg "BUILDKIT_SYNTAX=$SSC_FRONTEND"
       --file /workspace/.ssc/plan.json --tag ssc-app:built)
 for f in /workspace/.ssc/secrets/*; do
   [ -e "$f" ] && args+=(--secret "id=$(basename "$f"),src=$f")
@@ -245,6 +255,7 @@ def build_config(cell: CellBuildConfig, build: CellBuild) -> Json:
         },
         "build": {
             "SSC_FRONTEND": cell.frontend_image,
+            "SSC_BUILDKIT": BUILDKIT_IMAGE,
             "SSC_PRIVATE_REGISTRY": PRIVATE_REGISTRY,
             "SSC_DEPENDENCY_UNRESOLVED": DEPENDENCY_UNRESOLVED,
         },
