@@ -181,6 +181,33 @@ def test_the_diff_notices_a_drifted_cell(cell_a: list[Declared], cell_b: list[De
     assert any("in.tier" in d for d in diffs)
 
 
+def test_what_google_assigns_each_cell_is_not_drift() -> None:
+    """The live SSC-086 T1 diff: budget ids, the probe job's runs and the proxy address's user."""
+    probed = ALL | {"probe_digest": "sha256:" + "a" * 64}
+    cell_a, cell_b = run(naming.cell_stack(A), probed), run(naming.cell_stack(B), probed)
+    assigned = {
+        "gcp:billing/budget:Budget": ({"id": "budgets/1"}, {"id": "budgets/2"}),
+        "gcp:cloudrunv2/job:Job": (
+            {"executionCount": 4, "latestCreatedExecutions": [{"name": "r-a"}]},
+            {"executionCount": 2, "latestCreatedExecutions": [{"name": "r-b"}]},
+        ),
+        "gcp:compute/address:Address": ({"users": ["vm-a"]}, {}),
+    }
+
+    def with_runs(declared: list[Declared], side: int) -> list[Declared]:
+        return [
+            Declared(d.type, d.name, d.inputs, {**d.outputs, **assigned[d.type][side]})
+            if d.type in assigned
+            else d
+            for d in declared
+        ]
+
+    assert {d.type for d in cell_a} >= set(assigned)
+    first = cell_diff.normalise(as_export(with_runs(cell_a, 0), A), A)
+    second = cell_diff.normalise(as_export(with_runs(cell_b, 1), B), B)
+    assert cell_diff.compare(first, second) == []
+
+
 def test_everything_is_named_from_the_label(cell_a: list[Declared]) -> None:
     project = one(cell_a, "gcp:organizations/project:Project").inputs
     assert project["projectId"] == "ssc-c-testcell01"

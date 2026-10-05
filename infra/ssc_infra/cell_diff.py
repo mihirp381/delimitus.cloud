@@ -104,7 +104,9 @@ ASSIGNED_KEYS: Final = frozenset(
     }
 )
 ASSIGNED_PATHS: Final = {
-    "gcp:billing/budget:Budget": frozenset({"out.name"}),
+    "gcp:billing/budget:Budget": frozenset({"out.name", "out.id"}),
+    "gcp:cloudrunv2/job:Job": frozenset({"out.executionCount", "out.latestCreatedExecutions"}),
+    "gcp:compute/address:Address": frozenset({"out.users"}),
     "gcp:compute/instanceTemplate:InstanceTemplate": frozenset({"out.name"}),
     "gcp:certificatemanager/certificate:Certificate": frozenset(
         {"out.managed.authorizationAttemptInfos", "out.managed.provisioningIssues"}
