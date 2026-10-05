@@ -131,6 +131,8 @@ uv run python -m proofrun t3 nightly --project $P1 --agent-url https://ssc--agen
 uv run python -m proofrun t3 public --project $P1 --project-number $N1 --app proba --peer-app probb
 ```
 
+Before the first `nightly`, each cell needs the probe image and the probe-runner job. Copy proba's image into cell 2's `ssc-apps/apps` repository (`docker buildx imagetools create --tag <cell 2 repo>:probe <cell 1 repo>@<digest>`, which keeps the digest). Then set `probe_digest` to it on both cell stacks and apply the five resources the preview adds: `probe-runner`, `probe-runner-nightly`, `nightly-logs`, `nightly-run-viewer` and `bucket-nightly-snapshots`. Without the job, the nightly stops with 404 on `ssc-probe-runner:run`.
+
 `nightly` runs the existing nightly (`ssc_conformance.nightly`, which deploys the probe apps) without peer settings. `public` runs the same runner's probes through the public host and the gateway. An answer from the app shows that Cloud Run accepted the gateway's ID token for the app's `run.app` URL, the check SSC-018 left open. `cannot_reach_peer_cell` is T4's.
 
 Pass: 14 of 14, and the gateway's minimum is 0 on both the template and the service.
