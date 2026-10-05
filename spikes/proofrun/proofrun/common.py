@@ -315,6 +315,14 @@ def default_cookie_path() -> Path:
     return Path(raw) if raw else Path.home() / ".ssc-proofrun" / "cookies.json"
 
 
+def cookie_host(raw: str) -> str:
+    """The jar's key for a host, also when given as a URL copied from the browser."""
+    host = raw.strip().lower()
+    if "://" in host:
+        host = urllib.parse.urlsplit(host).hostname or ""
+    return host.split("/", 1)[0]
+
+
 class CookieJar:
     """Session cookies by host, in a file only its owner may read. Values are never printed."""
 
@@ -329,13 +337,14 @@ class CookieJar:
         return json.loads(self.path.read_text())
 
     def get(self, host: str) -> Cookie:
-        entry = self._load().get(host.lower())
+        key = cookie_host(host)
+        entry = self._load().get(key)
         if entry is None:
             raise CookieError(
                 f"no session cookie for {host}: log in there in a browser and run "
                 f"`python -m proofrun cookie set {host}`, or seal one (README, T2)"
             )
-        return Cookie(host.lower(), entry["value"], entry["source"], entry["saved_at"])
+        return Cookie(key, entry["value"], entry["source"], entry["saved_at"])
 
     def put(self, host: str, value: str, source: str) -> None:
         if not _COOKIE_VALUE.fullmatch(value):
@@ -343,7 +352,7 @@ class CookieJar:
         if source not in {"browser", "sealed"}:
             raise CookieError("source is browser or sealed")
         entries = self._load()
-        entries[host.lower()] = {"value": value, "source": source, "saved_at": now_iso()}
+        entries[cookie_host(host)] = {"value": value, "source": source, "saved_at": now_iso()}
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd = os.open(self.path.with_suffix(".tmp"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:

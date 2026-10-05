@@ -120,6 +120,14 @@ def test_cookie_jar_keeps_values_private(tmp_path: Path) -> None:
     assert not any(k.lower().startswith("sec-fetch") for k in headers)
 
 
+def test_cookie_jar_keys_a_url_copied_from_the_browser_by_its_host(tmp_path: Path) -> None:
+    jar = CookieJar(tmp_path / "jar.json")
+    jar.put("https://App.Cell.Example.com/health?x=1", "v1.s1." + "x" * 40, "browser")
+    assert [h for h, *_ in jar.listing()] == ["app.cell.example.com"]
+    assert jar.get("app.cell.example.com").host == "app.cell.example.com"
+    assert jar.get("https://app.cell.example.com/").host == "app.cell.example.com"
+
+
 def test_cookie_jar_refusals(tmp_path: Path) -> None:
     jar = CookieJar(tmp_path / "jar.json")
     with pytest.raises(CookieError):

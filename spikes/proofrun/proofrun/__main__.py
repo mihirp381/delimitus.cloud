@@ -23,6 +23,7 @@ from proofrun.common import (
     CookieJar,
     Outcome,
     StateMismatchError,
+    cookie_host,
     emit,
     fence,
     fence_environ,
@@ -65,7 +66,7 @@ def cookie(args: argparse.Namespace, prompt: Callable[[str], str] = getpass.getp
         return 0
     value = prompt(f"value of the session cookie for {args.host} (not echoed): ").strip()
     jar.put(args.host, value, "browser")
-    print(f"saved the cookie for {args.host.lower()}")
+    print(f"saved the cookie for {cookie_host(args.host)}")
     return 0
 
 
