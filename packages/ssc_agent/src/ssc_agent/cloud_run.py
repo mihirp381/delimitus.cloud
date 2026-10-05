@@ -73,8 +73,10 @@ CONFLICT_TRIES: Final = 6
 CA_VOLUME: Final = "ssc-db-ca"
 CA_DIR, _, CA_FILE = DATABASE_CA_PATH.rpartition("/")
 IDENTITY_TRIES: Final = 8
+IDENTITY_CREATE_TRIES: Final = 6
 _HTTP_NOT_FOUND: Final = 404
 _HTTP_CONFLICT: Final = 409
+_HTTP_TOO_MANY: Final = 429
 _HTTP_PRECONDITION: Final = 412
 _HTTP_BAD_REQUEST: Final = 400
 _HTTP_FORBIDDEN: Final = 403
@@ -133,6 +135,7 @@ class CloudRunDriver(RuntimeDriver):
         self._client = client or httpx2.AsyncClient(timeout=CALL_TIMEOUT_SECONDS)
         self._sleep = sleep
         self._poll = poll_seconds
+        self._known_identities: set[str] = set()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -341,22 +344,34 @@ class CloudRunDriver(RuntimeDriver):
 
     async def ensure_identity(self, service: str) -> None:
         """The environment's own service account, with no project roles. Its secrets name it on
-        their own policies (``secret_manager.CellSecretCustody``)."""
-        try:
-            await self._call(
-                "POST",
-                f"{IAM_API}/projects/{self.cell.project}/serviceAccounts",
-                json={
-                    "accountId": service,
-                    "serviceAccount": {
-                        "displayName": f"SSC app environment {service}",
-                        "description": "Runs one SSC app environment. Holds no roles.",
+        their own policies (``secret_manager.CellSecretCustody``). It is remembered for the
+        process's life, because the agent never deletes an account, and IAM's 429 is retried with
+        back-off."""
+        if service in self._known_identities:
+            return
+        for attempt in range(IDENTITY_CREATE_TRIES):
+            try:
+                await self._call(
+                    "POST",
+                    f"{IAM_API}/projects/{self.cell.project}/serviceAccounts",
+                    json={
+                        "accountId": service,
+                        "serviceAccount": {
+                            "displayName": f"SSC app environment {service}",
+                            "description": "Runs one SSC app environment. Holds no roles.",
+                        },
                     },
-                },
-            )
-        except _ApiError as exc:
-            if exc.status != _HTTP_CONFLICT:
-                raise
+                )
+            except _ApiError as exc:
+                if exc.status == _HTTP_TOO_MANY:
+                    if attempt == IDENTITY_CREATE_TRIES - 1:
+                        raise
+                    await self._sleep(min(2.0**attempt, 10.0))
+                    continue
+                if exc.status != _HTTP_CONFLICT:
+                    raise
+            self._known_identities.add(service)
+            return
 
     async def _set_invoker(self, service: str) -> None:
         """Only the gateway may invoke an app. ``setIamPolicy`` replaces, never merges."""
