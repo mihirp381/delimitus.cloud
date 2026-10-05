@@ -46,13 +46,16 @@ def redact(text: str) -> str:
 
 def redact_record(record: logging.LogRecord) -> logging.LogRecord:
     """Redact a record in place: its message with arguments merged in, its exception text, its
-    stack and every string attribute added through ``extra``."""
+    stack and every string attribute added through ``extra``. A message with nothing to redact
+    keeps its arguments, which some formatters (uvicorn's access log) read."""
     try:
-        message = record.getMessage()
+        message, merged = record.getMessage(), False
     except TypeError, ValueError:
-        message = f"{record.msg} {record.args}"
-    record.msg = redact(message)
-    record.args = None
+        message, merged = f"{record.msg} {record.args}", True
+    redacted = redact(message)
+    if merged or redacted != message or not isinstance(record.msg, str):
+        record.msg = redacted
+        record.args = None
     if record.exc_info and not record.exc_text:
         record.exc_text = "".join(traceback.format_exception(*record.exc_info)).rstrip("\n")
     if record.exc_text:

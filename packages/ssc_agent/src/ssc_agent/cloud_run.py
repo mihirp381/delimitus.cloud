@@ -72,11 +72,12 @@ RESERVED_ENV: Final = frozenset({"PORT", "K_SERVICE", "K_REVISION", "K_CONFIGURA
 CONFLICT_TRIES: Final = 6
 CA_VOLUME: Final = "ssc-db-ca"
 CA_DIR, _, CA_FILE = DATABASE_CA_PATH.rpartition("/")
-IDENTITY_TRIES: Final = 6
+IDENTITY_TRIES: Final = 8
 _HTTP_NOT_FOUND: Final = 404
 _HTTP_CONFLICT: Final = 409
 _HTTP_PRECONDITION: Final = 412
 _HTTP_BAD_REQUEST: Final = 400
+_HTTP_FORBIDDEN: Final = 403
 # Fields a PATCH sends; the rest of a Service is output only or unused by SSC.
 _WRITABLE: Final = ("labels", "ingress", "invokerIamDisabled", "scaling", "template", "traffic")
 
@@ -278,8 +279,10 @@ class CloudRunDriver(RuntimeDriver):
             except _ApiError as exc:
                 if exc.status == _HTTP_CONFLICT:
                     raise _ConflictError from None  # created by someone else meanwhile
-                # A new service account takes a few seconds to be usable.
-                if exc.status == _HTTP_BAD_REQUEST and "service account" in exc.reason.lower():
+                # A new service account takes a few seconds to be usable. Cloud Run says so with
+                # 400, or with 403 on actAs.
+                settling = exc.status in {_HTTP_BAD_REQUEST, _HTTP_FORBIDDEN}
+                if settling and "service account" in exc.reason.lower():
                     await self._sleep(min(2.0**attempt, 10.0))
                     continue
                 raise

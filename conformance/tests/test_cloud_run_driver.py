@@ -267,6 +267,25 @@ async def test_identity_is_created_once(
     assert len(creates) == 1
 
 
+async def test_a_new_identity_is_waited_for_until_cloud_run_may_act_as_it(
+    cloud_run: CloudRunDriver, emulator: CloudRunEmulator
+) -> None:
+    spec = new_spec(FIRST)
+    emulator.new_accounts_unusable_for(3)
+    rev = await cloud_run.apply(spec)
+    assert emulator.services[spec.service].body["template"]["revision"] == rev
+    creates = [c for c in emulator.calls if c == ("POST", f"/v2/{CELL.parent}/services")]
+    assert len(creates) == 4
+
+
+async def test_an_identity_that_never_settles_is_an_error(
+    cloud_run: CloudRunDriver, emulator: CloudRunEmulator
+) -> None:
+    emulator.new_accounts_unusable_for(100)
+    with pytest.raises(RuntimeDriverError, match="still not usable"):
+        await cloud_run.apply(new_spec(FIRST))
+
+
 async def test_refuses_names_outside_ssc(cloud_run: CloudRunDriver) -> None:
     spec = replace(new_spec(FIRST), service="ssc-a-not-an-env")
     with pytest.raises(RuntimeDriverError, match="not an SSC app"):

@@ -78,6 +78,14 @@ def test_a_record_is_redacted_in_its_message_args_extra_and_exception() -> None:
     assert MASK in str(rec.__dict__["error"])
 
 
+def test_a_record_with_nothing_to_redact_keeps_its_arguments() -> None:
+    args = ("10.0.0.1:5000", "POST", "/v1/runtime/observe", "1.1", 200)
+    rec = record('%s - "%s %s HTTP/%s" %d', *args)
+    redact_record(rec)
+    assert rec.args == args
+    assert rec.getMessage() == '10.0.0.1:5000 - "POST /v1/runtime/observe HTTP/1.1" 200'
+
+
 def test_a_record_with_bad_arguments_is_still_redacted() -> None:
     rec = record("%d items", f"password={FAKE}")
     redact_record(rec)

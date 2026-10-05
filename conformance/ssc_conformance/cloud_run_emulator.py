@@ -48,8 +48,13 @@ class CloudRunEmulator:
         self._unhealthy: set[str] = set()
         self._indexes: dict[str, str] = {}
         self._clock = itertools.count(1)
+        self.unusable_account_creates = 0
 
     # ── test controls ────────────────────────────────────────────────────────
+
+    def new_accounts_unusable_for(self, creates: int) -> None:
+        """Refuse the next ``creates`` service creates as IAM does while a new account settles."""
+        self.unusable_account_creates = creates
 
     def unhealthy(self, digest: str) -> None:
         self._unhealthy.add(digest)
@@ -128,6 +133,15 @@ class CloudRunEmulator:
         refused = self._refuse_template(name, body.get("template") or {})
         if refused:
             return refused
+        if self.unusable_account_creates:
+            self.unusable_account_creates -= 1
+            account = body["template"]["serviceAccount"]
+            return _error(
+                403,
+                "PERMISSION_DENIED",
+                f"Permission 'iam.serviceaccounts.actAs' denied on service account {account}"
+                " (or it may not exist).",
+            )
         body = copy.deepcopy(body)
         body.setdefault("traffic", [{"type": _LATEST, "percent": 100}])
         svc = _Service(name=name, body=body)
