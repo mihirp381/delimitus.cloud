@@ -4,14 +4,12 @@ name: nightly
 # becomes ssc-nightly (decision 022) only for this file on main; it may mint the control plane's
 # ID tokens for the cell agent, run the probe job, and read that job's logs.
 
-# The schedule is off while no probe cell exists (`c-probecell01` destroyed 2026-10-02 to stop its
-# cost). Deleted project IDs are not reused: after creating the probe cell of SSC-086 under a new
-# label and setting SSC_NIGHTLY_WIF_PROVIDER, SSC_PROBE_PROJECT, SSC_PROBE_AGENT_URL and
-# SSC_PROBE_DIGEST, uncomment the schedule line below. With one cell, cannot_reach_peer_cell
+# The probe cell is c-proofcell01 (SSC-086, 2026-10-05). The repository variables SSC_NIGHTLY_WIF_PROVIDER,
+# SSC_PROBE_PROJECT, SSC_PROBE_AGENT_URL and SSC_PROBE_DIGEST name it. With one cell, cannot_reach_peer_cell
 # reports skipped (no peer cell), which does not fail the run. SSC_PROBE_TLS_HOST (optional, a host
 # under the cell's apps domain) adds the certificate check of SSC-062: under 21 days left fails.
 on:
-  # schedule: [{ cron: "17 6 * * *" }]
+  schedule: [{ cron: "17 6 * * *" }]
   workflow_dispatch:
 
 permissions:
