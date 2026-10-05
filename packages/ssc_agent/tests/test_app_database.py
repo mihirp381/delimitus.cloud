@@ -672,14 +672,14 @@ async def test_drop_database_waits_for_its_operation_and_tolerates_one_already_g
     assert refused.value.status == 403
 
 
-async def test_the_endpoint_is_the_dns_name_else_the_private_address(
+async def test_the_endpoint_is_the_dns_name_as_listed_else_the_private_address(
     admin: CloudSqlAdmin, api: AdminApi
 ) -> None:
     api.instance = {
         "dnsName": "abc.us-central1.sql.goog.",
         "ipAddresses": [{"type": "PRIVATE", "ipAddress": "10.20.0.3"}],
     }
-    assert await admin.endpoint() == ("abc.us-central1.sql.goog", 5432)
+    assert await admin.endpoint() == ("abc.us-central1.sql.goog.", 5432)
     api.instance = {
         "dnsName": None,
         "dnsNames": [
@@ -687,7 +687,7 @@ async def test_the_endpoint_is_the_dns_name_else_the_private_address(
         ],
         "ipAddresses": [{"type": "PRIVATE", "ipAddress": "10.20.0.3"}],
     }
-    assert await admin.endpoint() == ("a1.b2.us-central1.sql-psa.goog", 5432)
+    assert await admin.endpoint() == ("a1.b2.us-central1.sql-psa.goog.", 5432)
     api.instance = {"ipAddresses": [{"type": "PRIVATE", "ipAddress": "10.20.0.3"}]}
     assert await admin.endpoint() == ("10.20.0.3", 5432)
     api.instance = {}

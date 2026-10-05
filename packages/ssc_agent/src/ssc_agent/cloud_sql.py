@@ -92,6 +92,9 @@ class CloudSqlAdmin:
         await self._wait("databases.delete", str(operation.get("name") or ""))
 
     async def endpoint(self) -> tuple[str, int]:
+        """The instance's private DNS name as Cloud SQL lists it, trailing dot kept: its server
+        certificate names it that way and libpq's ``verify-full`` compares names exactly. Else the
+        private address."""
         instance = await self._call("GET", self._instance)
         names = [
             str(d.get("name") or "")
@@ -99,7 +102,7 @@ class CloudSqlAdmin:
             if d.get("connectionType") == "PRIVATE_SERVICES_ACCESS"
         ]
         if dns := next((x for x in names if x), str(instance.get("dnsName") or "")):
-            return dns.rstrip("."), POSTGRES_PORT
+            return dns, POSTGRES_PORT
         for address in _objs(instance.get("ipAddresses")):
             if address.get("type") == "PRIVATE" and address.get("ipAddress"):
                 return str(address["ipAddress"]), POSTGRES_PORT
