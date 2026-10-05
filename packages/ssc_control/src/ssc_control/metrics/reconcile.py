@@ -83,12 +83,10 @@ from ssc_control.metrics.usage import (
     parse_month,
     usage_type,
 )
-from ssc_shared.hosts import check_cell_label
+from ssc_shared.hosts import CELL_PROJECT_PREFIX, check_cell_label
 
 FORMAT: Final = "ssc-cost-reconciliation/v1"
 DSN_ENV: Final = "SSC_DATABASE_DSN"
-CELL_PREFIX: Final = "ssc-c-"
-"""A cell's project is ``ssc-c-<cell label>`` (``infra/ssc_infra/naming.py``)."""
 BILL_COLUMNS: Final = ("project_id", "service", "usd")
 CELLS_COLUMNS: Final = ("project_id", "resource", "created_at")
 CLOUD_RUN_REST: Final = "Cloud Run, not apps (gateway, cell agent, data gateway, jobs)"
@@ -340,9 +338,9 @@ def read_bill(raw: str, month: date) -> tuple[BillLine, ...]:
 
 
 def check_cell_project(project_id: str) -> str:
-    if not project_id.startswith(CELL_PREFIX):
-        raise ValueError(f"{project_id!r} is not a cell project ({CELL_PREFIX}<label>)")
-    check_cell_label(project_id.removeprefix(CELL_PREFIX))
+    if not project_id.startswith(CELL_PROJECT_PREFIX):
+        raise ValueError(f"{project_id!r} is not a cell project ({CELL_PROJECT_PREFIX}<label>)")
+    check_cell_label(project_id.removeprefix(CELL_PROJECT_PREFIX))
     return project_id
 
 
@@ -422,7 +420,7 @@ async def gather_cell(conn: AsyncConnection, org_id: str, month: date) -> CellMo
     gateway = float((await conn.execute(_GATEWAY, params)).scalar_one())
     fixed = tuple(r for r in await fixed_resources(conn, org_id) if r.created_at < hi)
     return CellMonth(
-        project_id=CELL_PREFIX + str(row[1]),
+        project_id=CELL_PROJECT_PREFIX + str(row[1]),
         created_at=row[0].astimezone(UTC),
         resources=fixed,
         apps=tuple(
@@ -644,7 +642,7 @@ def reconcile(  # noqa: PLR0913  (keyword-only)
             billed_apps += sum(1 for r in rows.apps if r.app.usage_type is not None)
     for pid in sorted(set(by_project) - set(known) - set(model.platforms)):
         kind: Literal["cell, no record", "not in the model"] = (
-            "cell, no record" if pid.startswith(CELL_PREFIX) else "not in the model"
+            "cell, no record" if pid.startswith(CELL_PROJECT_PREFIX) else "not in the model"
         )
         bill = by_project[pid]
         line = _money(model, f"project:{pid}", pid, _total(bill), None)

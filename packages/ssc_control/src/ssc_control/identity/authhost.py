@@ -45,6 +45,7 @@ from ssc_control.identity.cell_callers import CallerCheck
 from ssc_control.identity.rules import LoginRefusal, ProfileError, parse_return_to
 from ssc_control.identity.settings import AuthSettings
 from ssc_control.identity.workos import WorkOSClient, WorkOSError
+from ssc_shared.hosts import cell_project
 
 log = logging.getLogger("ssc.auth")
 
@@ -52,7 +53,7 @@ LOGIN_SECONDS: Final = 600
 DEVICE_GRANT: Final = "urn:ietf:params:oauth:grant-type:device_code"
 _BINDING_LENGTH: Final = 43
 _WORKOS_ERROR: Final = re.compile(r"[a-z_]{1,64}")
-_ORG_CELL = text("select cell_label, cell_project from ssc.org where id = :org")
+_ORG_CELL = text("select cell_label from ssc.org where id = :org")
 
 Flow = Literal["browser", "device"]
 
@@ -488,7 +489,9 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             return _oauth_error("invalid_request")
         async with bound_org(host.engine, org_id) as conn:
             cell = (await conn.execute(_ORG_CELL, {"org": org_id})).one_or_none()
-            if cell is None or (caller.project is not None and cell[1] != caller.project):
+            if cell is None or (
+                caller.project is not None and cell_project(str(cell[0])) != caller.project
+            ):
                 log.warning("redeem for %s refused: caller project mismatch", org_id)
                 return _oauth_error("unauthorized", 401)
             done = await sessions.redeem_code(conn, org_id, code=code, host=host_name, nonce=nonce)

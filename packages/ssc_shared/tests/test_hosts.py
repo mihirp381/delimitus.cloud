@@ -13,6 +13,7 @@ from ssc_shared.hosts import (
     AppHost,
     app_host,
     app_origin,
+    cell_project,
     check_apps_domain,
     check_slug,
     parse_app_host,
@@ -176,3 +177,15 @@ def test_bad_cell_labels_and_environments_are_refused() -> None:
             app_host("expenses", "prod", label, DOMAIN)
     with pytest.raises(ValueError, match="environment"):
         app_host("expenses", "staging", LABEL, DOMAIN)
+
+
+@given(labels)
+def test_a_cell_project_is_the_prefix_and_the_label(label: str) -> None:
+    assert cell_project(label) == f"ssc-c-{label}"
+    assert cell_project(LABEL) == "ssc-c-k7q2m9xa"
+
+
+@pytest.mark.parametrize("label", ["short", "Upper1234", "9abcdefgh", "", "has-dash1"])
+def test_a_cell_project_rejects_a_bad_label(label: str) -> None:
+    with pytest.raises(ValueError, match="cell label"):
+        cell_project(label)

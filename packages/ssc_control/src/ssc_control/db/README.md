@@ -59,6 +59,9 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     so never a word), and it is NOT NULL; 0001's "NULL until SSC-013" comment no longer holds.
     `orgs.create_org` returns it. It is unique and never derived from the customer's name.
 
+    2026-10-05: `cell_project` is no longer read; the project is `ssc-c-<cell_label>`
+    (`ssc_shared.hosts.cell_project`). To be dropped in a later migration.
+
 ## Migrations
 
 Alembic, expand-then-contract. Every revision must be safe to run while the previous release

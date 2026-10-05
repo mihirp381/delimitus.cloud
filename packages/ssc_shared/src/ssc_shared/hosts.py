@@ -24,6 +24,7 @@ type SlugProblem = Literal["pattern", "short", "punycode", "double_dash", "reser
 SLUG_PATTERN: Final = r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$"
 LABEL_PATTERN: Final = r"^[a-z][a-z0-9]{7,15}$"
 MIN_SLUG: Final = 3
+CELL_PROJECT_PREFIX: Final = "ssc-c-"
 RESERVED_SLUGS: Final = frozenset(
     {"www", "api", "auth", "login", "console", "admin", "status", "static", "keys", "ssc", "mail"}
 )
@@ -80,6 +81,11 @@ def check_cell_label(label: str) -> str:
     if _LABEL.fullmatch(label) is None:
         raise ValueError("a cell label is 8 to 16 lower-case letters and digits, letter first")
     return label
+
+
+def cell_project(label: str) -> str:
+    """The GCP project of the cell with this label (decision 021)."""
+    return f"{CELL_PROJECT_PREFIX}{check_cell_label(label)}"
 
 
 def check_apps_domain(domain: str) -> str:

@@ -2,6 +2,7 @@
 
 from typing import Final, Literal
 
+from ssc_shared.hosts import cell_project as shared_cell_project
 from ssc_shared.hosts import check_cell_label
 
 type Stage = Literal["prod", "staging"]
@@ -108,7 +109,7 @@ def control_project(stage: Stage) -> str:
 
 
 def cell_project(label: str) -> str:
-    return f"ssc-c-{check_cell_label(label)}"
+    return shared_cell_project(label)
 
 
 def cell_bucket(label: str) -> str:

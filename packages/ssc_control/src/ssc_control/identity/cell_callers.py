@@ -3,7 +3,8 @@
 Production: the gateway presents its service account's Google ID token (``MetadataTokens``), with
 the auth host's origin as audience. It is checked against Google's keys; the account must be
 ``ssc-gateway@<project>.iam.gserviceaccount.com`` and ``<project>`` must be the org's
-``cell_project``, so one cell's gateway can never redeem another org's codes. No new secret.
+cell project, ``ssc-c-<cell_label>``, so one cell's gateway can never redeem another org's codes.
+No new secret.
 
 Dev and test only: ``Bearer dev.<secret>`` with the rig's shared secret, refused in production.
 """

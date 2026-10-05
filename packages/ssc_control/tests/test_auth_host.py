@@ -17,7 +17,6 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx2
 import jwt
-import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -35,11 +34,11 @@ from ssc_control.identity import join, pages, sessions, tokens
 from ssc_control.identity.authhost import DEVICE_GRANT, AuthHost, create_auth_app
 from ssc_control.identity.cell_callers import CallerCheck, CellCaller, DevCallers
 from ssc_control.identity.settings import AuthSettings
+from ssc_shared.hosts import cell_project
 
 AUTH = "https://auth.test"
 DOMAIN = "apps.test"
 SECRET = "s" * 32
-PROJECT = "ssc-c-testcell"
 
 
 def binding_of(nonce: str) -> str:
@@ -121,10 +120,6 @@ def client_for(host: AuthHost) -> httpx2.AsyncClient:
 async def rig(dsns: Dsns) -> AsyncIterator[Rig]:
     w = await new_world(dsns)
     await w.tick()
-    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
-        conn.execute(
-            "update ssc.org set cell_project = %s where id = %s", (f"{PROJECT}-{w.org[-6:]}", w.org)
-        )
     (label,) = await w.rows("select cell_label from ssc.org where id = :org")
     s = settings(dsns)
     signer = tokens.Signer(s.signing_pem, s.signing_kid, s.auth_url)
@@ -291,13 +286,47 @@ async def test_only_the_org_cell_may_redeem(rig: Rig) -> None:
     async with client_for(other) as http:
         r = await rig.redeem(location, nonce, bearer="google.id.token", http=http)
         assert r.status_code == 401
-    (project,) = await rig.w.rows("select cell_project from ssc.org where id = :org")
     mine = AuthHost(
-        rig.host.settings, rig.w.engine, rig.host.workos, rig.signer, FixedCallers(project[0])
+        rig.host.settings,
+        rig.w.engine,
+        rig.host.workos,
+        rig.signer,
+        FixedCallers(cell_project(rig.label)),
     )
     async with client_for(mine) as http:
         r = await rig.redeem(location, nonce, bearer="google.id.token", http=http)
         assert r.status_code == 200
+
+
+async def test_redeem_from_the_label_project_passes_with_no_cell_project_column(rig: Rig) -> None:
+    (stored,) = await rig.w.rows("select cell_project from ssc.org where id = :org")
+    assert stored[0] is None
+    location, nonce = await rig.sign_in()
+    mine = AuthHost(
+        rig.host.settings,
+        rig.w.engine,
+        rig.host.workos,
+        rig.signer,
+        FixedCallers(f"ssc-c-{rig.label}"),
+    )
+    async with client_for(mine) as http:
+        r = await rig.redeem(location, nonce, bearer="google.id.token", http=http)
+    assert r.status_code == 200
+
+
+async def test_redeem_from_another_cells_project_is_refused(rig: Rig) -> None:
+    location, nonce = await rig.sign_in()
+    other = AuthHost(
+        rig.host.settings,
+        rig.w.engine,
+        rig.host.workos,
+        rig.signer,
+        FixedCallers(cell_project("bcdfghjkmnpq")),
+    )
+    async with client_for(other) as http:
+        r = await rig.redeem(location, nonce, bearer="google.id.token", http=http)
+    assert r.status_code == 401
+    assert (await rig.redeem(location, nonce)).status_code == 200, "the refused try kept the code"
 
 
 async def test_jwks_and_health(rig: Rig) -> None:
