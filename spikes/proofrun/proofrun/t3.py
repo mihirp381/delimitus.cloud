@@ -123,7 +123,13 @@ def nightly_env(args: argparse.Namespace, environ: Mapping[str, str]) -> dict[st
 def run_nightly(run: Run, env: Mapping[str, str]) -> tuple[list[dict[str, str]], str | None, str]:
     done = run(["uv", "run", "python", "-m", "ssc_conformance.nightly"], cwd=REPO, env=env)
     rows = nightly_rows(done.stdout)
-    return rows, nightly_drift(done.stdout), last_line(done.stderr) if not rows else ""
+    return rows, nightly_drift(done.stdout), nightly_error(done.stderr) if not rows else ""
+
+
+def nightly_error(stderr: str) -> str:
+    """The nightly's own error line, which may be followed by a JSON body, else the last line."""
+    said = [line.strip() for line in stderr.splitlines() if line.startswith("nightly:")]
+    return said[-1] if said else last_line(stderr)
 
 
 def run(args: argparse.Namespace, run: Run = run_command) -> Outcome:

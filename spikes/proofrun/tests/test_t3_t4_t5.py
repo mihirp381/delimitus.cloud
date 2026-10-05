@@ -242,3 +242,9 @@ def test_t5_cross_asks_the_app_for_each_database() -> None:
     out = t5.run(args, run, http)
     assert out.passed is True
     assert out.data["kinds"] == {"app_" + "b" * 20: "refused", "postgres": "error"}
+
+
+def test_a_failed_nightly_reports_its_own_line_not_the_json_after_it() -> None:
+    stderr = 'probe app ready\nnightly: POST https://x/jobs/r:run: HTTP 404 {\n  "error": 1\n}\n'
+    assert t3.nightly_error(stderr) == "nightly: POST https://x/jobs/r:run: HTTP 404 {"
+    assert t3.nightly_error("one\ntwo\n") == "two"
