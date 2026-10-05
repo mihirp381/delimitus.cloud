@@ -57,6 +57,7 @@ PULUMI_ENV: Final = {
     "UV_NO_SYNC": "1",
     "UV_OFFLINE": "1",
     "UV_FROZEN": "1",
+    "UV_NO_DEV": "true",
     "UV_PYTHON_DOWNLOADS": "never",
     "UV_CACHE_DIR": "/home/ssc/.cache/uv",
 }

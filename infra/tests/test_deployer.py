@@ -290,6 +290,12 @@ def test_pulumi_runs_with_the_deployers_own_environment() -> None:
     assert not [k for k in env if k.startswith(("PYTHON", "GOOGLE_", "PULUMI_CONFIG"))]
 
 
+def test_pulumis_own_uv_sync_stays_offline_and_skips_dev_packages() -> None:
+    env = deployer.PULUMI_ENV
+    assert env["UV_OFFLINE"] == env["UV_FROZEN"] == "1"
+    assert env["UV_NO_DEV"] == "true"
+
+
 def test_the_operator_restores_the_applied_config(tmp_path: Path) -> None:
     stale = tmp_path / f"Pulumi.{STACK}.yaml"
     stale.write_text("secretsprovider: x\nconfig:\n  ssc-infra:database: 'false'\n")
