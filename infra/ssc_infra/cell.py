@@ -2181,7 +2181,7 @@ class Cell:
             project=self.pid,
             location=n.REGION,
             name=job.name,
-            role="roles/run.jobsExecutor",
+            role="roles/run.jobsExecutorWithOverrides",
             member=member,
             opts=self._o(),
         )
