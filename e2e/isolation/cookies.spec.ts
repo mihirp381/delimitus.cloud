@@ -4,9 +4,9 @@ import {
   A,
   B,
   canLogin,
-  canSeal,
+  fast,
+  NEEDS_SECOND_USER,
   NO_LOGIN,
-  NO_SESSIONS,
   seal,
   SESSION,
   sentToLogin,
@@ -43,7 +43,7 @@ async function sessionOn(context: BrowserContext, name: string): Promise<string[
 
 test.describe('cookies', () => {
   test('cookie tossing from app A cannot replace the session on app B', async ({ page, context }) => {
-    test.skip(!canSeal, NO_SESSIONS);
+    test.skip(!fast, NEEDS_SECOND_USER);
     const theirs = await seal(B, target.otherUser);
     await useSession(context, A, target.user);
     await useSession(context, B, target.user);
@@ -56,7 +56,7 @@ test.describe('cookies', () => {
   });
 
   test('cookie tossing from app A cannot sign a person in to app B as someone else', async ({ page, context }) => {
-    test.skip(!canSeal, NO_SESSIONS);
+    test.skip(!fast, NEEDS_SECOND_USER);
     const theirs = await seal(B, target.otherUser);
     await useSession(context, A, target.user);
     await toss(page, theirs);
@@ -74,7 +74,7 @@ test.describe('cookies', () => {
   });
 
   test("an app's platform-named Set-Cookie never reaches the browser, and the session cookie never reaches the app", async ({ page, context }) => {
-    test.skip(!canSeal, NO_SESSIONS);
+    test.skip(!canLogin, NO_LOGIN);
     await useSession(context, B, target.user);
     const before = await sessionOn(context, B);
     const answer = await page.goto(url(B, '/set-cookies'));

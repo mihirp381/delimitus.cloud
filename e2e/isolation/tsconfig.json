@@ -15,6 +15,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
   "include": ["*.ts"]

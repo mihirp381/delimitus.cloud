@@ -5,7 +5,8 @@ Reads the Playwright JSON report of ``e2e/isolation`` and adds one result per br
 the job's evidence file (``SSC_EVIDENCE_FILE``). A group is named by the suite's top-level
 ``describe``; a describe that no group names fails the job, so a new one is placed on purpose.
 A case skipped as "needs a second test user" is the group ``browser.second_user``, whatever
-describe it is in. Cases that need the Docker rig ("fail closed") are no part of a live night.
+describe it is in. Cases that need the Docker rig ("fail closed", and "the nightly sign-in",
+which tests the sign-in against a stand-in) are no part of a live night.
 """
 
 import argparse
@@ -30,7 +31,7 @@ GROUPS: Final = {
     "login sessions": matrix.BROWSER_LOGIN,
     "two cells": matrix.BROWSER_CROSS_CELL,
 }
-RIG_ONLY: Final = frozenset({"fail closed"})
+RIG_ONLY: Final = frozenset({"fail closed", "the nightly sign-in"})
 _FAILED: Final = ("unexpected", "flaky")
 
 

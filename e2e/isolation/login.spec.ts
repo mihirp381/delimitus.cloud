@@ -4,11 +4,11 @@ import {
   A,
   B,
   canLogin,
-  canSeal,
+  fast,
   holdCode,
   host,
+  NEEDS_SECOND_USER,
   NO_LOGIN,
-  NO_SESSIONS,
   otherBrowser,
   putSession,
   SESSION,
@@ -85,7 +85,7 @@ test.describe('login sessions', () => {
   });
 
   test('a person not granted app A gets exactly what an address with no app gets', async ({ page, context }) => {
-    test.skip(!canSeal || target.outsider === '', NO_SESSIONS);
+    test.skip(!fast, NEEDS_SECOND_USER);
     const nowhere = host(`nothere${Date.now().toString(36)}`);
     await useSession(context, A, target.outsider);
     await useSession(context, nowhere, target.outsider);

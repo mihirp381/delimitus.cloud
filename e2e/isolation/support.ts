@@ -3,19 +3,31 @@
  * from `SSC_ISO_*` in the environment, which `run.mjs` sets: for `fast` from the rig's
  * announcement, for `live` from the operator's settings (README). Nothing here names a real host.
  */
+import { readFileSync } from 'node:fs';
+
 import { type Browser, type BrowserContext, expect, type Page, type Response } from '@playwright/test';
 
 const env = process.env;
 
+/** The person the night signed in as: `night-login.ts` records their user id beside the cookies. */
+function userOfState(): string {
+  try {
+    const state = JSON.parse(readFileSync(env.SSC_ISO_AUTH_STATE ?? '', 'utf8')) as { user?: unknown };
+    return typeof state.user === 'string' ? state.user : '';
+  } catch {
+    return '';
+  }
+}
+
 export const target = {
   name: env.SSC_ISO_TARGET === 'live' ? 'live' : 'fast',
   base: env.SSC_ISO_CELL1_BASE ?? '',
-  cell2: env.SSC_ISO_CELL2_BASE || null,
+  peer: env.SSC_ISO_PEER_BASE || null,
   authUrl: env.SSC_ISO_AUTH_URL ?? '',
   control: env.SSC_ISO_CONTROL || null,
   proxy: env.SSC_ISO_PROXY || null,
   limitSeconds: Number(env.SSC_ISO_LIMIT_SECONDS || '3600'),
-  user: env.SSC_ISO_USER ?? '',
+  user: env.SSC_ISO_USER || userOfState(),
   otherUser: env.SSC_ISO_OTHER_USER ?? '',
   outsider: env.SSC_ISO_OUTSIDER ?? '',
   authState: env.SSC_ISO_AUTH_STATE || null,
@@ -30,12 +42,13 @@ export const SESSION = '__Host-ssc-session';
 export const WAKE = '__Host-ssc-wake';
 export const PERSON = 'iso-person';
 
-/** Sessions can be sealed: the rig, or the live sealer with the cell's keyring. */
-export const canSeal = target.control !== null && target.user !== '';
-/** A real sign-in through the auth host: the rig's stand-in, or a recorded auth host session. */
+/** A real sign-in through the auth host: the rig's stand-in, or the night's recorded auth host
+ * session (`SSC_ISO_AUTH_STATE`, which `night-login.ts` writes). */
 export const canLogin = fast || target.authState !== null;
-export const NO_SESSIONS = 'No sealed sessions: set SSC_ISO_CELL1_KEYRING, SSC_ISO_CELL1_ORG and the people (README).';
-export const NO_LOGIN = 'Needs a cookie the gateway set at sign-in: the auth host is not deployed (SSC-064), or SSC_ISO_AUTH_STATE is not set.';
+export const NO_LOGIN = 'Needs a sign-in through the auth host: SSC_ISO_AUTH_STATE (the nightly sign-in, README) is not set.';
+/** The skip reasons the nightly page reads (`ssc_conformance.evidence`): keep them as they are. */
+export const NEEDS_SECOND_USER = 'needs a second test user';
+export const NO_PEER_CELL = 'no peer cell';
 
 export function host(app: string, base = target.base): string {
   return `${app}.${base}`;
@@ -54,7 +67,9 @@ export function mark(): string {
   return `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** A session value sealed by the rig, for a person the live night has no sign-in for. Fast only. */
 export async function seal(name: string, user: string): Promise<string> {
+  expect(fast, 'only the rig seals sessions').toBe(true);
   const response = await fetch(`${target.control}/seal`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -68,9 +83,17 @@ export async function putSession(context: BrowserContext, name: string, value: s
   await context.addCookies([{ name: SESSION, value, url: url(name), secure: true, httpOnly: true, sameSite: 'Lax' }]);
 }
 
-/** A session for `user` on host `name`, sealed rather than signed in (SSC-086). */
+/** A session for `user` on host `name`: sealed by the rig, or, live, a real sign-in through the
+ * auth host as the night's one test user (SSC_ISO_USER), which has no other. */
 export async function useSession(context: BrowserContext, name: string, user: string): Promise<void> {
-  await putSession(context, name, await seal(name, user));
+  if (fast) {
+    await putSession(context, name, await seal(name, user));
+    return;
+  }
+  expect(user, 'the live night has one test user').toBe(target.user);
+  const page = await context.newPage();
+  await signIn(page, name, user);
+  await page.close();
 }
 
 /** A second browser, as another person or a thief would have; it shares nothing with the first. */
@@ -80,15 +103,14 @@ export async function otherBrowser(browser: Browser): Promise<Page> {
 }
 
 /** Lets `who` through the auth host: the rig's stand-in signs in whoever its cookie names; live,
- * the recorded auth host session (SSC_ISO_AUTH_STATE) is for SSC_ISO_USER only. */
+ * the night's auth host session (SSC_ISO_AUTH_STATE) is for SSC_ISO_USER only. */
 export async function allowLogin(context: BrowserContext, who = target.user): Promise<void> {
   if (fast) {
     await context.addCookies([{ name: PERSON, value: who, url: target.authUrl, secure: true, sameSite: 'Lax' }]);
     return;
   }
-  expect(who, 'the recorded auth host session is for SSC_ISO_USER').toBe(target.user);
-  const { readFile } = await import('node:fs/promises');
-  const state = JSON.parse(await readFile(target.authState ?? '', 'utf8')) as { cookies: Parameters<BrowserContext['addCookies']>[0] };
+  expect(who, 'the night\'s auth host session is for the one test user').toBe(target.user);
+  const state = JSON.parse(readFileSync(target.authState ?? '', 'utf8')) as { cookies: Parameters<BrowserContext['addCookies']>[0] };
   await context.addCookies(state.cookies);
 }
 

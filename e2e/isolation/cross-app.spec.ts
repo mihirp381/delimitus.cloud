@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { A, answerTo, B, canSeal, mark, NO_SESSIONS, reached, sentToLogin, target, url, useSession, whoami } from './support';
+import { A, answerTo, B, canLogin, mark, NO_LOGIN, reached, sentToLogin, target, url, useSession, whoami } from './support';
 
 /** A page on another site altogether, served by the test itself (`page.route`), never fetched. */
 const ELSEWHERE = 'https://elsewhere.example';
@@ -29,7 +29,7 @@ function openSocket(address: string) {
 }
 
 test.describe('one app cannot act on another in the same cell', () => {
-  test.skip(!canSeal, NO_SESSIONS);
+  test.skip(!canLogin, NO_LOGIN);
 
   test.beforeEach(async ({ context }) => {
     await useSession(context, A, target.user);

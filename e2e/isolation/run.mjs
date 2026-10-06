@@ -4,8 +4,8 @@
  * PLAYWRIGHT_BROWSERS_PATH says otherwise: `PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium webkit`.
  *
  *   node run.mjs fast   the gateway and real Envoy in Docker (`rig.py fast`), for the pre-merge run
- *   node run.mjs live   a staging cell named by SSC_ISO_* (README), sealing sessions with
- *                       `rig.py sealer` when SSC_ISO_CELL1_KEYRING is set
+ *   node run.mjs live   a staging cell named by SSC_ISO_* (README), signed in by `night-login.ts`
+ *                       (SSC_ISO_AUTH_STATE)
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -56,12 +56,6 @@ try {
     const missing = LIVE_REQUIRED.filter((name) => !process.env[name]);
     if (missing.length > 0) throw new Error(`live needs ${missing.join(', ')} (README)`);
     env.SSC_ISO_TARGET = 'live';
-    if (process.env.SSC_ISO_CELL1_KEYRING) {
-      const started = startRig(['sealer']);
-      rig = started.rig;
-      Object.assign(env, await started.settings);
-    }
-    delete env.SSC_ISO_CELL1_KEYRING;
   }
   const playwright = join(here, 'node_modules', '@playwright', 'test', 'cli.js');
   const result = spawnSync(process.execPath, [playwright, 'test', '-c', join(here, 'playwright.config.ts'), ...rest], {
