@@ -68,8 +68,8 @@ def test_the_runner_still_has_fourteen_probes_without_a_peer() -> None:
         pytest.skip("conformance probe app not in this checkout")
     runner = probes.load_runner()
     names = list(runner.checks.PROBES)
-    assert probes.PEER_CELL_PROBE in names
-    assert len(names) - 1 == 14
+    assert probes.NOT_COUNTED <= set(names)
+    assert len(set(names) - probes.NOT_COUNTED) == 14
 
 
 DIFF_OUT = "policies in force on ssc-c-cellone01:\n  a\n  override: run.allowedIngress\n"

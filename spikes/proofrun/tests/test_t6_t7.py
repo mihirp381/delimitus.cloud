@@ -74,6 +74,47 @@ def test_nat_verdict() -> None:
     assert t6.nat_verdict({"error": "timed out"}, NAT_IP).passed is False
 
 
+def test_nat_verdict_over_several_targets() -> None:
+    answered = {"ip": NAT_IP, "stage": "done"}
+    silent = {"stage": "connect", "error": "TimeoutError: timed out"}
+    both = t6.nat_verdict({"targets": {"a@1.0.0.1": answered, "b@2.0.0.2": answered}}, NAT_IP)
+    assert both.passed is True
+    one = t6.nat_verdict({"targets": {"a@1.0.0.1": silent, "b@2.0.0.2": answered}}, NAT_IP)
+    assert one.passed is True
+    assert any("stopped at connect" in line for line in one.lines)
+    assert t6.nat_verdict({"targets": {"a@1.0.0.1": silent}}, NAT_IP).passed is False
+    wrong = {"ip": "35.0.0.9", "stage": "done"}
+    mixed = {"targets": {"a@1.0.0.1": answered, "b@2.0.0.2": wrong}}
+    assert t6.nat_verdict(mixed, NAT_IP).passed is False
+
+
+def test_t6_nat_passes_its_targets_to_the_job() -> None:
+    report = {"targets": {"a.example@192.0.2.1": {"ip": NAT_IP, "stage": "done"}}}
+    run = FakeRun(
+        [
+            (["execute"], ok({"metadata": {"name": "proofrun-egress-nat-x1"}})),
+            (["logging"], ok([{"jsonPayload": {"proofrun_egress": report}}])),
+        ]
+    )
+    args = argparse.Namespace(
+        step="nat",
+        project="ssc-c-cellone01",
+        nat_ip=NAT_IP,
+        job=t6.NAT_JOB,
+        target=["a.example@192.0.2.1", "b.example@192.0.2.2/ip"],
+    )
+    assert t6.run(args, run).passed is True
+    assert "--args=nat,a.example@192.0.2.1,b.example@192.0.2.2/ip" in run.calls[0]
+    bare = FakeRun(
+        [
+            (["execute"], ok({"metadata": {"name": "proofrun-egress-nat-x2"}})),
+            (["logging"], ok([{"jsonPayload": {"proofrun_egress": report}}])),
+        ]
+    )
+    t6.run(argparse.Namespace(**{**vars(args), "target": None}), bare)
+    assert "--args=nat" in bare.calls[0]
+
+
 def test_proxy_verdict_needs_every_allowed_host_via_nat_and_every_unlisted_refused() -> None:
     report = {
         "allowed": {

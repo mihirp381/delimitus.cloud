@@ -3,9 +3,10 @@
 - ``t6 nat --project <cell 1> --nat-ip <stack output nat_ip>`` runs the job ``proofrun-egress-nat``
   (``standins/egress``, made once by the README's T6 steps) in the data gateway's place: the
   ``ssc-data`` account and tag, the gateway subnet, Direct VPC egress for all traffic. It fetches
-  ``https://1.1.1.1/cdn-cgi/trace`` (an address, so the cell's DNS sinkhole is not in the way)
-  and reports the source address. Pass: it is the reserved NAT address. It is a stand-in, named
-  in RESULTS.md, and no evidence for SSC-050.
+  ``https://1.1.1.1/cdn-cgi/trace``, or each ``--target <host>@<ip>[/<path>]`` (an address, so
+  the cell's DNS sinkhole is not in the way), and reports the source address each saw or the
+  stage that failed. Pass: at least one answered, and every answer is the reserved NAT address.
+  It is a stand-in, named in RESULTS.md, and no evidence for SSC-050.
 - ``t6 egress --base <https://pegress--preview.<label>.delimitusapps.com> --nat-ip <ip>`` is the
   proxy leg on a cell whose stack sets ``proxy_image``. It calls the ``egress`` probe app
   (``apps/egress``, deployed in preview) through its public host with the jar's cookie, three
@@ -69,6 +70,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         p.add_argument("--project", required=True)
         p.add_argument("--nat-ip", required=True, help="the cell stack's nat_ip output")
         p.add_argument("--job", default=NAT_JOB if name == "nat" else APP_JOB)
+        if name == "nat":
+            p.add_argument(
+                "--target",
+                action="append",
+                help="<host>@<ip>[/<path>] that answers with the caller's address (repeatable)",
+            )
         if name == "proxy":
             p.add_argument("--allow", action="append", help="an allowed host (Envoy's list)")
             p.add_argument("--unlisted", action="append", help="a host Envoy must refuse")
@@ -153,12 +160,25 @@ def read_report(
 
 
 def nat_verdict(report: dict[str, Any], nat_ip: str) -> Outcome:
-    ip = report.get("ip")
-    lines = [f"source address seen by 1.1.1.1: {ip or report.get('error')}"]
+    """Pass: at least one target answered, and every one that did saw the reserved address.
+    A report from the stand-in's first version holds a single ``ip`` (1.1.1.1's answer)."""
+    targets: dict[str, dict[str, Any]] = report.get("targets") or {
+        "1.1.1.1": {"ip": report.get("ip"), "error": report.get("error")}
+    }
+    seen = {t: str(a["ip"]) for t, a in targets.items() if a.get("ip")}
+    lines = [
+        f"{t}: saw {a['ip']}"
+        if a.get("ip")
+        else f"{t}: no answer, stopped at {a.get('stage', '?')}: "
+        f"{a.get('error') or a.get('status')}"
+        for t, a in targets.items()
+    ]
+    passed = bool(seen) and all(ip == nat_ip for ip in seen.values())
     return Outcome(
         "T6",
-        f"data-gateway stand-in left from {ip or 'nowhere'}",
-        ip == nat_ip,
+        f"data-gateway stand-in: {len(seen)}/{len(targets)} target(s) answered"
+        + (f", from {', '.join(sorted(set(seen.values())))}" if seen else ""),
+        passed,
         [*lines, f"reserved NAT address: {nat_ip}"],
         {"nat": report},
     )
@@ -278,7 +298,7 @@ def run(args: argparse.Namespace, run: Run = run_command, http: Http = fetch) ->
             "T6 envoy-config", f"{len(allowed)} allowed host(s)", True, [f"wrote {args.out}"]
         )
     if args.step == "nat":
-        execution = execute(run, args.project, args.job, ["nat"])
+        execution = execute(run, args.project, args.job, ["nat", *(args.target or ())])
         return nat_verdict(read_report(run, args.project, args.job, execution), args.nat_ip)
     allowed = args.allow or list(DEFAULT_ALLOWED)
     unlisted = args.unlisted or list(DEFAULT_UNLISTED)

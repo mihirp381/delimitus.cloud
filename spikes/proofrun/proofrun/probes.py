@@ -21,6 +21,9 @@ from proofrun.common import REPO, Cookie, session_headers
 
 PROBE_APP: Final = REPO / "conformance" / "runtime" / "probe_app"
 PEER_CELL_PROBE: Final = "cannot_reach_peer_cell"
+NOT_COUNTED: Final = frozenset({PEER_CELL_PROBE, "deny_peer_cell", "datagw_read_only"})
+"""Probes outside the ticket's 14: they need a peer cell or a data gateway, and SSC-056 added
+the last two after T3 ran."""
 LEG_NAMES: Final = tuple(
     sorted(
         (
@@ -59,7 +62,7 @@ def public_probe(runner: ModuleType, base_url: str, cookie: Cookie) -> Any:
 def probe_counts(results: Sequence[Mapping[str, str]]) -> tuple[int, int, list[str]]:
     """Passed and total among the probes that must pass without a peer cell (the ticket's 14),
     and what failed or was skipped among them."""
-    counted = [r for r in results if r["probe"] != PEER_CELL_PROBE]
+    counted = [r for r in results if r["probe"] not in NOT_COUNTED]
     bad = [
         f"{r['probe']}: {r['status']}: {r['reason']}" for r in counted if r["status"] != "passed"
     ]

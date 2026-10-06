@@ -1,8 +1,11 @@
 """T6's stand-in, run as a Cloud Run job. Standard library only. Prints one JSON line,
 ``{"proofrun_egress": {...}}``, which Cloud Logging keeps as the entry's ``jsonPayload``.
 
-- ``nat``: GET ``https://1.1.1.1/cdn-cgi/trace`` (an address, so no name is resolved through the
-  cell's sinkhole) and report the source address Cloudflare saw.
+- ``nat [<host>@<ip>[/<path>] ...]``: for each target, connect to ``<ip>:443`` (an address, so no
+  name is resolved through the cell's sinkhole), speak TLS as ``<host>``, GET ``<path>`` (``/`` if
+  none) as ``curl`` and report the source address the target saw, or the stage that failed
+  (``connect``, ``tls`` or ``http``) and how long each took. With no target it asks Cloudflare's
+  ``one.one.one.one@1.1.1.1/cdn-cgi/trace``.
 - ``proxy <ip:port> allow=<host> ... deny=<host> ...``: for each host, ``CONNECT <host>:443``
   through the proxy. For an allowed host that tunnels, GET ``/`` over TLS inside the tunnel as
   ``curl`` (both default hosts answer with the caller's address) and report it.
@@ -13,21 +16,61 @@ import json
 import socket
 import ssl
 import sys
-import urllib.request
+import time
 
 TIMEOUT = 10.0
-TRACE = "https://1.1.1.1/cdn-cgi/trace"
+TRACE = "one.one.one.one@1.1.1.1/cdn-cgi/trace"
 
 
-def nat() -> dict[str, object]:
+def target(text: str) -> tuple[str, str, str]:
+    """``<host>@<ip>[/<path>]`` as (host, ip, path)."""
+    host, _, rest = text.partition("@")
+    ip, slash, path = rest.partition("/")
+    if not host or not ip:
+        raise ValueError(f"target {text!r} is not <host>@<ip>[/<path>]")
+    return host, str(ipaddress.IPv4Address(ip)), f"/{path}" if slash else "/"
+
+
+def seen_address(body: bytes) -> str | None:
+    """The caller's address in an answer: Cloudflare's ``ip=`` line, or a bare first line."""
+    for line in body.decode(errors="replace").splitlines():
+        if line.startswith("ip="):
+            return _address(line.removeprefix("ip=").encode())
+    return _address(body)
+
+
+def ask(text: str, timeout: float = TIMEOUT, port: int = 443) -> dict[str, object]:
+    host, ip, path = target(text)
+    report: dict[str, object] = {"stage": "connect"}
+    started = time.monotonic()
     try:
-        with urllib.request.urlopen(TRACE, timeout=TIMEOUT) as response:
-            fields = dict(
-                line.split("=", 1) for line in response.read().decode().splitlines() if "=" in line
-            )
-        return {"mode": "nat", "ip": fields.get("ip")}
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
+            report["connect_s"] = round(time.monotonic() - started, 3)
+            report["stage"] = "tls"
+            with ssl.create_default_context().wrap_socket(sock, server_hostname=host) as tls:
+                report["tls_s"] = round(time.monotonic() - started, 3)
+                report["stage"] = "http"
+                tls.sendall(
+                    f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: curl/8.10.1\r\n"
+                    "Accept: */*\r\nConnection: close\r\n\r\n".encode()
+                )
+                raw = b""
+                while chunk := tls.recv(4096):
+                    raw += chunk
+        head, _, body = raw.partition(b"\r\n\r\n")
+        parts = head.split(b" ", 2)
+        report["status"] = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        report["ip"] = seen_address(body)
+        report["stage"] = "done"
     except OSError as exc:
-        return {"mode": "nat", "ip": None, "error": f"{type(exc).__name__}: {exc}"[:200]}
+        report["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    report["total_s"] = round(time.monotonic() - started, 3)
+    return report
+
+
+def nat(targets: list[str]) -> dict[str, object]:
+    asked = {t: ask(t) for t in targets or [TRACE]}
+    return {"mode": "nat", "targets": asked}
 
 
 def _status(sock: socket.socket) -> int | None:
@@ -86,9 +129,9 @@ def proxy(args: list[str]) -> dict[str, object]:
 
 
 def main(argv: list[str]) -> int:
-    report = nat() if argv[:1] == ["nat"] else proxy(argv[1:]) if argv[:1] == ["proxy"] else None
+    report = nat(argv[1:]) if argv[:1] == ["nat"] else proxy(argv[1:]) if argv[:1] == ["proxy"] else None
     if report is None:
-        print("usage: probe.py nat | proxy <ip:port> allow=<host>... deny=<host>...")
+        print("usage: probe.py nat [<host>@<ip>[/<path>]...] | proxy <ip:port> allow=<host>... deny=<host>...")
         return 2
     print(json.dumps({"proofrun_egress": report}), flush=True)
     return 0
