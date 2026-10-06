@@ -36,7 +36,7 @@ import json
 import secrets
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -103,6 +103,7 @@ IMAGE = "sha256:" + "a" * 64
 FAST = Timings(
     confirm_within=timedelta(seconds=5), confirm_every=timedelta(0), backoff=timedelta(0)
 )
+POLL = replace(FAST, confirm_every=timedelta(milliseconds=20))
 HEALTH = HealthWait(within=2.0, every=0.01)
 PAUSED = ("sch_" + "a" * 20, "sch_" + "b" * 20)
 STEP_NAMES = ["gateway_deny", "datagw_suspend", "egress_remove", "scale_to_zero", "pause_timers"]
@@ -402,6 +403,33 @@ async def drain(
         set_job(b.dsn, job["id"], "succeeded")
         ran.append(Ran(job["lock"], args["env_id"], outcome))
     return ran
+
+
+async def drain_until_gateway_waits(
+    b: Bench,
+    ports: Ports,
+    run_id: str,
+    then: Callable[[], Awaitable[None]],
+    *,
+    timings: Timings = POLL,
+) -> list[Ran]:
+    """``drain``, in a task: the gateway's job polls within itself for the version, so ``then``
+    (publishing it) runs once the step is waiting, while the job is still in its poll."""
+    task = asyncio.create_task(drain(b, ports, timings=timings))
+    try:
+        for _ in range(500):
+            steps = run_of(b, run_id)["steps"]
+            if steps and steps[0]["state"] == "running" and steps[0]["snapshot_version"]:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("the gateway step never began")
+        await then()
+        return await asyncio.wait_for(task, 30)
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 def seed_live(b: Bench) -> dict[str, str]:
@@ -721,15 +749,58 @@ async def test_no_runtime_fails_the_scale_at_once(b: Bench) -> None:
     assert got["steps"][4]["state"] == "done"
 
 
-async def test_the_gateway_polls_until_its_version_is_confirmed(b: Bench) -> None:
+async def test_the_gateway_polls_within_its_job_until_its_version_is_confirmed(b: Bench) -> None:
     b.snapshot.answers = [False, False]
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
     run_id = pulled(b)
-    ran = await drain(b)
-    assert [r.lock for r in ran][:3] == [None, None, None]  # it re-defers its own poll
+    timings = replace(FAST, confirm_every=timedelta(milliseconds=250), sleep=sleep)
+    ran = await drain(b, timings=timings)
+    assert [r.lock for r in ran] == [None, f"env:{b.w.prod}", f"env:{b.w.preview}"]  # no poll job
+    assert waits == [0.25, 0.25]
     v = b.snapshot.version
-    assert b.events[:5] == [("request", v)] + [("confirmed", v)] * 4
+    assert b.events[:4] == [("request", v)] + [("confirmed", v)] * 3
     gateway = run_of(b, run_id)["steps"][0]
     assert (gateway["state"], gateway["snapshot_version"], gateway["attempts"]) == ("done", v, 1)
+
+
+async def test_the_gateway_waits_for_confirm_by_and_no_transaction_is_open_meanwhile(
+    b: Bench,
+) -> None:
+    b.snapshot.default = False
+    open_while_waiting: list[int] = []
+
+    async def sleep(seconds: float) -> None:
+        open_while_waiting.append(
+            rows_of(
+                b.dsn,
+                b.w.org,
+                "select count(*) as n from pg_stat_activity where datname = current_database() "
+                "and pid <> pg_backend_pid() and state like 'idle in transaction%%'",
+            )[0]["n"]
+        )
+        await asyncio.sleep(seconds)
+
+    timings = replace(
+        FAST,
+        confirm_within=timedelta(milliseconds=400),
+        confirm_every=timedelta(milliseconds=50),
+        sleep=sleep,
+    )
+    run_id = pulled(b)
+    ran = await drain(b, timings=timings)
+    assert [r.lock for r in ran][0] is None and len(ran) == 3  # still no poll job
+    assert len(open_while_waiting) >= 3
+    assert open_while_waiting == [0] * len(open_while_waiting)
+    gateway = run_of(b, run_id)["steps"][0]
+    assert (gateway["state"], gateway["attempts"]) == ("unconfirmed", 1)
+    finished = datetime.fromisoformat(gateway["finished_at"])
+    late = finished - datetime.fromisoformat(gateway["started_at"]) - timings.confirm_within
+    assert timedelta(0) <= late < timedelta(seconds=1)  # recorded at confirm_by, not before
+    assert len([e for e in b.events if e[0] == "confirmed"]) >= 3 + 2  # the gateway's, then two
 
 
 async def test_an_unconfirmed_deny_is_recorded_and_the_run_goes_on(b: Bench) -> None:
@@ -749,33 +820,35 @@ async def test_an_unconfirmed_deny_is_recorded_and_the_run_goes_on(b: Bench) -> 
 
 async def test_the_deny_rides_the_next_snapshot_version(b: Bench, tmp_path: Path) -> None:
     ports = replace(b.ports, snapshot=Snapshots(b.ports.engine))
-    patient = replace(FAST, confirm_within=timedelta(seconds=60))
+    patient = replace(POLL, confirm_within=timedelta(seconds=60))
     run_id = pulled(b)
-    assert await drain(b, ports, timings=patient, most=1) == [Ran(None, None, "running")]
-    gateway = run_of(b, run_id)["steps"][0]
-    assert gateway["state"] == "running"
-    version = gateway["snapshot_version"]
-    clock = SystemClock()
-    signer = UrlSigner({"k1": secrets.token_bytes(32)}, active="k1", clock=clock)
-    blob = FsBlobStore(tmp_path, signer=signer, base_url="http://blobs.test/v1/blobs/", clock=clock)
-    async with bound_org(b.ports.engine, b.w.org) as conn:
-        assert await publish(conn, b.w.org, blob, at=datetime.now(UTC)) == version
-    (doc_row,) = rows_of(
-        b.dsn,
-        b.w.org,
-        "select object_key from ssc.access_snapshot where org_id = %s and version = %s",
-        b.w.org,
-        version,
-    )
-    doc = json.loads(b"".join([c async for c in blob.get(doc_row["object_key"])]))
-    assert {e["status"] for e in doc["environments"].values()} == {"disabled"}
-    (org,) = rows_of(b.dsn, b.w.org, "select cell_label from ssc.org where id = %s", b.w.org)
-    async with bound_org(b.ports.engine, b.w.org) as conn:
-        await record_ack(conn, b.w.org, cell_label=org["cell_label"], version=version)
-    await drain(b, ports, timings=patient)
+    published: list[int] = []
+
+    async def acknowledge() -> None:
+        gateway = run_of(b, run_id)["steps"][0]
+        assert gateway["state"] == "running"
+        version = gateway["snapshot_version"]
+        blob = fs_blob(tmp_path)
+        async with bound_org(b.ports.engine, b.w.org) as conn:
+            assert await publish(conn, b.w.org, blob, at=datetime.now(UTC)) == version
+        published.append(version)
+        (doc_row,) = rows_of(
+            b.dsn,
+            b.w.org,
+            "select object_key from ssc.access_snapshot where org_id = %s and version = %s",
+            b.w.org,
+            version,
+        )
+        doc = json.loads(b"".join([c async for c in blob.get(doc_row["object_key"])]))
+        assert {e["status"] for e in doc["environments"].values()} == {"disabled"}
+        (org,) = rows_of(b.dsn, b.w.org, "select cell_label from ssc.org where id = %s", b.w.org)
+        async with bound_org(b.ports.engine, b.w.org) as conn:
+            await record_ack(conn, b.w.org, cell_label=org["cell_label"], version=version)
+
+    await drain_until_gateway_waits(b, ports, run_id, acknowledge, timings=patient)
     got = run_of(b, run_id)
     assert [s["state"] for s in got["steps"][:3]] == ["done", "done", "done"]
-    assert got["steps"][0]["snapshot_version"] == version
+    assert got["steps"][0]["snapshot_version"] == published[0]
 
 
 def fs_blob(root: Path) -> FsBlobStore:
@@ -853,7 +926,7 @@ async def echo_app(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -
     writer.close()
 
 
-PROD_TIMINGS = replace(FAST, confirm_within=kill_switch.TIMINGS.confirm_within)
+PROD_TIMINGS = replace(POLL, confirm_within=kill_switch.TIMINGS.confirm_within)
 
 
 async def test_kill_end_to_end_with_an_awake_gateway(b: Bench, tmp_path: Path) -> None:
@@ -886,10 +959,19 @@ async def test_kill_end_to_end_with_an_awake_gateway(b: Bench, tmp_path: Path) -
 
         commanded = time.monotonic()
         run_id = pulled(b)
-        assert await drain(b, ports, timings=PROD_TIMINGS, most=1) == [Ran(None, None, "running")]
-        gateway = run_of(b, run_id)["steps"][0]
-        assert gateway["state"] == "running"
-        assert await compile_and_point(b, blob) == gateway["snapshot_version"]
+        gateway: dict[str, Any] = {}
+        pointed = asyncio.Event()
+
+        async def point() -> None:
+            gateway.update(run_of(b, run_id)["steps"][0])
+            assert gateway["state"] == "running"
+            assert await compile_and_point(b, blob) == gateway["snapshot_version"]
+            pointed.set()
+
+        task = asyncio.create_task(
+            drain_until_gateway_waits(b, ports, run_id, point, timings=PROD_TIMINGS)
+        )
+        await asyncio.wait_for(pointed.wait(), 30)
         edge.clock[0] += RECHECK_SECONDS + 0.1
         refused = await edge.gate.check(edge.facts)
         denied = time.monotonic() - commanded
@@ -898,7 +980,8 @@ async def test_kill_end_to_end_with_an_awake_gateway(b: Bench, tmp_path: Path) -
         assert await asyncio.wait_for(reader.read(), WATCH_SECONDS + 2) == b""
         assert time.monotonic() - cut <= WATCH_SECONDS + 0.5
         assert not streams.open
-        await drain(b, ports, timings=PROD_TIMINGS)
+        drained = await asyncio.wait_for(task, 30)
+        assert drained[0].lock is None  # one job took the gateway step: no poll job followed
         full_stop = time.monotonic() - commanded
     finally:
         await streams.aclose()
@@ -925,9 +1008,11 @@ async def test_kill_end_to_end_with_the_gateway_and_app_at_zero(b: Bench, tmp_pa
     await compile_and_point(b, blob)
     commanded = time.monotonic()
     run_id = pulled(b)
-    await drain(b, ports, timings=PROD_TIMINGS, most=1)
-    await compile_and_point(b, blob)
-    await drain(b, ports, timings=PROD_TIMINGS)
+
+    async def point() -> None:
+        await compile_and_point(b, blob)
+
+    await drain_until_gateway_waits(b, ports, run_id, point, timings=PROD_TIMINGS)
     full_stop = time.monotonic() - commanded
     got = run_of(b, run_id)
     assert [s["state"] for s in got["steps"]] == ["done"] * 5
