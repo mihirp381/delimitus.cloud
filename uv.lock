@@ -22,6 +22,7 @@ members = [
     "ssc-datagw",
     "ssc-edge",
     "ssc-egress",
+    "ssc-landing",
     "ssc-shared",
 ]
 
@@ -1444,6 +1445,7 @@ dependencies = [
     { name = "ssc-datagw" },
     { name = "ssc-edge" },
     { name = "ssc-egress" },
+    { name = "ssc-landing" },
     { name = "ssc-shared" },
 ]
 
@@ -1472,6 +1474,7 @@ requires-dist = [
     { name = "ssc-datagw", editable = "packages/ssc_datagw" },
     { name = "ssc-edge", editable = "packages/ssc_edge" },
     { name = "ssc-egress", editable = "packages/ssc_egress" },
+    { name = "ssc-landing", editable = "packages/ssc_landing" },
     { name = "ssc-shared", editable = "packages/ssc_shared" },
 ]
 
@@ -1734,6 +1737,23 @@ dependencies = [
 requires-dist = [
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
     { name = "ssc-shared", extras = ["gcs"], editable = "packages/ssc_shared" },
+]
+
+[[package]]
+name = "ssc-landing"
+version = "0.0.1"
+source = { editable = "packages/ssc_landing" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "google-cloud-storage" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = "==0.141.1" },
+    { name = "google-cloud-storage", specifier = "==3.14.1" },
+    { name = "uvicorn", specifier = "==0.38.0" },
 ]
 
 [[package]]

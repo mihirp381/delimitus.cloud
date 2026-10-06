@@ -98,6 +98,10 @@ AUTH_HOST: Final = f"auth.{PLATFORM_DOMAIN}"
 KEYS_HOST: Final = f"keys.{PLATFORM_DOMAIN}"
 CONTROL_HOSTS: Final = (API_HOST, AUTH_HOST, KEYS_HOST)
 GATEWAY_PLATFORM_HOSTS: Final = (AUTH_HOST, KEYS_HOST)
+LANDING_HOSTS: Final = (PLATFORM_DOMAIN, f"www.{PLATFORM_DOMAIN}")
+"""The public page's hosts (SSC-065, decision 028): the apex, then ``www``."""
+LANDING_SA: Final = "ssc-landing"
+LANDING_BUCKET_PURPOSE: Final = "pilot-requests"
 APPS_ZONE: Final = "delimitusapps"
 PLATFORM_ZONE: Final = "delimitus"
 AGENT_HOST_LABEL: Final = "ssc--agent"
