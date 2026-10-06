@@ -1,4 +1,4 @@
-"""The fast target of the browser isolation suite (SSC-029), and the session sealer of the live one.
+"""The fast target of the browser isolation suite (SSC-029).
 
 ``fast`` stands up one cell on this machine the way the Envoy tests of ``ssc_edge`` do: the
 gateway's authorisation service and stream relay in this process, real Envoy in Docker, and the
@@ -6,26 +6,23 @@ test app (``apps/server.mjs``) twice, as apps A (``alpha``) and B (``bravo``), w
 under the ``run.app`` names the gateway computes. Around them, what a browser needs and Docker does
 not give: a TLS front with a throwaway certificate (the load balancer's stand-in), an auth host
 stand-in that hands out one-time login codes and answers ``/internal/redeem`` the way the auth host
-does, and a CONNECT proxy that sends the cell's host names and the auth host to those two. The
-relay cuts every stream at its environment's limit, as Cloud Run ends a request; bravo's preview
-environment has a limit of ``--limit`` seconds, the others the request-billed 300.
+does (and, for the nightly sign-in of SSC-056, runs the device flow and an identity provider's
+two-step sign-in form), and a CONNECT proxy that sends the cell's host names and the auth host to
+those two. The relay cuts every stream at its environment's limit, as Cloud Run ends a request;
+bravo's preview environment has a limit of ``--limit`` seconds, the others the request-billed 300.
 
-``sealer`` (live target) seals sessions with a staging cell's keyring, as SSC-086 allows while
-the auth host is not deployed. It reads ``SSC_ISO_CELL1_KEYRING`` (the keyring JSON) and
-``SSC_ISO_CELL1_ORG`` from the environment.
-
-Both print one JSON line of ``SSC_ISO_*`` settings for the suite, then run until standard input
-closes or a signal arrives. On ``SSC_ISO_CONTROL``, ``POST /seal {"host", "user"}`` answers
-``{"value"}``, a session cookie value for that host. In ``fast`` only, ``POST /authoriser {"on"}``
+It prints one JSON line of ``SSC_ISO_*`` (and ``SSC_NIGHT_*``) settings for the suite, then runs
+until standard input closes or a signal arrives. On ``SSC_ISO_CONTROL``, ``POST /seal {"host",
+"user"}`` answers ``{"value"}``, a session cookie value for that host; ``POST /authoriser {"on"}``
 stops or starts the authorisation service as Envoy sees it, and ``POST /snapshot {"on"}`` makes
 the snapshot too old to use or fresh again.
 
     uv run python e2e/isolation/rig.py fast --limit 6
-    SSC_ISO_CELL1_KEYRING=... SSC_ISO_CELL1_ORG=org_... uv run python e2e/isolation/rig.py sealer
 """
 
 import argparse
 import asyncio
+import base64
 import contextlib
 import hashlib
 import hmac
@@ -44,9 +41,10 @@ import time
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from html import escape
 from pathlib import Path
 from typing import Any, Final
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx2
 import uvicorn
@@ -85,6 +83,11 @@ BASE: Final = f"{LABEL}.{DOMAIN}"
 AUTH_HOST: Final = "auth.ssc.test"
 AUTH_URL: Final = f"https://{AUTH_HOST}"
 PERSON_COOKIE: Final = "iso-person"
+IDP_COOKIE: Final = "iso-idp"
+NIGHT_USERNAME: Final = "ada@example.test"
+USER_CODE_ALPHABET: Final = "BCDFGHJKLMNPQRSTVWXZ"
+DEVICE_SECONDS: Final = 600
+ACCESS_SECONDS: Final = 900
 PROJECT_NUMBER: Final = "123456789012"
 REGION: Final = "us-central1"
 ADA, BEN, CY = ("usr_" + c * 20 for c in "abc")
@@ -197,31 +200,193 @@ class Issued:
     person: str
 
 
-def auth_app(secret: str) -> FastAPI:
+@dataclass(slots=True)
+class DeviceGrant:
+    """A device flow the auth host stand-in started: approved once a person signs in for it."""
+
+    user_code: str
+    person: str | None = None
+
+
+def page(title: str, body: str = "", status: int = 200) -> HTMLResponse:
+    head = f"<!doctype html><title>{escape(title)}</title><h1>{escape(title)}</h1>"
+    return HTMLResponse(head + body, status_code=status)
+
+
+def unsigned_jwt(claims: Mapping[str, str]) -> str:
+    """A token shaped like the auth host's, for the claims a reader looks at; it signs nothing."""
+
+    def part(value: Mapping[str, str]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+    return f"{part({'alg': 'none', 'typ': 'JWT'})}.{part(claims)}.{secrets.token_urlsafe(16)}"
+
+
+def local_path(value: str) -> str:
+    """``value`` if it is a path on this host, else ``/``."""
+    return value if value.startswith("/") and not value.startswith("//") else "/"
+
+
+def auth_app(secret: str, password: str) -> FastAPI:  # noqa: PLR0915  (one host's routes)
     """The auth host's stand-in (SSC-019). Signing in is a cookie on the auth host naming the
     person (``iso-person``), which the suite sets, as a live browser session lets a person skip
     WorkOS. ``/login`` checks the org and that ``return_to`` is an app host of this cell, then
     hands the host a code. ``/internal/redeem`` takes the rig's shared secret; as
     ``ssc_control.identity.sessions.redeem_code`` does, a code is used up by its first
     redemption whatever the outcome, and signs in only on the host it was issued for, with the
-    nonce whose hash it carries."""
+    nonce whose hash it carries.
+
+    For the nightly sign-in (SSC-056) it also stands in for WorkOS and Okta: a person with no
+    ``iso-person`` cookie is sent to ``/idp``, the identity provider's two-step form (the name,
+    then the password, with Okta Identity Engine's field names), which sets ``iso-idp`` as Okta's
+    own session would. ``/device/authorize``, ``/device`` and ``/token`` run the device flow
+    through it, and ``/callback`` approves the grant, as the real host's does."""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     codes: dict[str, Issued] = {}
+    grants: dict[str, DeviceGrant] = {}
+    refresh_tokens: dict[str, str] = {}
+    logins = {NIGHT_USERNAME: ADA}
+
+    def signed_in(request: Request) -> str:
+        return request.cookies.get(PERSON_COOKIE) or request.cookies.get(IDP_COOKIE) or ""
+
+    def tokens(person: str) -> JSONResponse:
+        refresh = secrets.token_urlsafe(32)
+        refresh_tokens[refresh] = person
+        return JSONResponse(
+            {
+                "access_token": unsigned_jwt({"sub": person, "org": ORG}),
+                "token_type": "Bearer",
+                "expires_in": ACCESS_SECONDS,
+                "refresh_token": refresh,
+            },
+            headers={"cache-control": "no-store"},
+        )
+
+    @app.post("/device/authorize")
+    async def device_authorize(request: Request) -> JSONResponse:
+        form = parse_qs((await request.body()).decode())
+        if form.get("org") != [ORG]:
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+        device_code = secrets.token_urlsafe(32)
+        user_code = "".join(secrets.choice(USER_CODE_ALPHABET) for _ in range(8))
+        grants[device_code] = DeviceGrant(user_code)
+        verify = f"{AUTH_URL}/device?{urlencode({'org': ORG})}"
+        return JSONResponse(
+            {
+                "device_code": device_code,
+                "user_code": user_code,
+                "verification_uri": verify,
+                "verification_uri_complete": f"{verify}&{urlencode({'user_code': user_code})}",
+                "expires_in": DEVICE_SECONDS,
+                "interval": 1,
+            },
+            headers={"cache-control": "no-store"},
+        )
+
+    @app.get("/device")
+    def device_page(request: Request) -> Response:
+        code = escape(request.query_params.get("user_code", ""))
+        return page(
+            "Sign in to the ssc command line",
+            "<form method=post action='/device'>"
+            f"<input type=hidden name=org value='{ORG}'>"
+            f"<label>Code <input name=user_code value='{code}' autocomplete=off required></label> "
+            "<button>Continue</button></form>",
+        )
+
+    @app.post("/device")
+    async def device_continue(request: Request) -> Response:
+        if request.headers.get("sec-fetch-site", "same-origin") not in {"same-origin", "none"}:
+            return Response(status_code=400)
+        form = parse_qs((await request.body()).decode())
+        code = form.get("user_code", [""])[0]
+        if form.get("org") != [ORG] or not any(g.user_code == code for g in grants.values()):
+            return Response(status_code=400)
+        back = "/callback?" + urlencode({"flow": "device", "user_code": code})
+        return RedirectResponse("/idp?" + urlencode({"next": back}), status_code=302)
+
+    @app.get("/callback")
+    def callback(request: Request) -> Response:
+        code = request.query_params.get("user_code", "")
+        person = request.cookies.get(IDP_COOKIE, "")
+        grant = next((g for g in grants.values() if g.user_code == code), None)
+        if request.query_params.get("flow") != "device" or grant is None or person not in PEOPLE:
+            return page("Sign-in refused", status=400)
+        grant.person = person
+        return page("You are signed in", "<p>Return to your terminal.</p>")
+
+    @app.get("/idp")
+    def idp_page(request: Request) -> Response:
+        back = local_path(request.query_params.get("next", "/"))
+        if request.cookies.get(IDP_COOKIE) in PEOPLE:
+            return RedirectResponse(back, status_code=302)
+        return page(
+            "Sign in",
+            "<form method=post action='/idp'>"
+            f"<input type=hidden name=next value='{escape(back)}'>"
+            "<input name=identifier autocomplete=off> <input type=submit value=Next></form>",
+        )
+
+    @app.post("/idp")
+    async def idp_answer(request: Request) -> Response:
+        form = parse_qs((await request.body()).decode())
+        back, name = local_path(form.get("next", ["/"])[0]), form.get("identifier", [""])[0]
+        if name not in logins:
+            return page("Sign-in refused", status=403)
+        typed = form.get("credentials.passcode")
+        if typed is None:
+            return page(
+                "Verify",
+                "<form method=post action='/idp'>"
+                f"<input type=hidden name=next value='{escape(back)}'>"
+                f"<input type=hidden name=identifier value='{escape(name)}'>"
+                "<input type=password name=credentials.passcode> <input type=submit value=Verify>"
+                "</form>",
+            )
+        if not hmac.compare_digest(typed[0], password):
+            return page("Sign-in refused", status=403)
+        answer = RedirectResponse(back, status_code=303)
+        answer.set_cookie(IDP_COOKIE, logins[name], secure=True, httponly=True, samesite="lax")
+        return answer
+
+    @app.post("/token")
+    async def token(request: Request) -> JSONResponse:
+        form = parse_qs((await request.body()).decode())
+        kind = form.get("grant_type", [""])[0]
+        if kind == "refresh_token":
+            person = refresh_tokens.pop(form.get("refresh_token", [""])[0], None)
+            if person is None:
+                return JSONResponse({"error": "invalid_grant"}, status_code=400)
+            return tokens(person)
+        device_code = form.get("device_code", [""])[0]
+        grant = grants.get(device_code)
+        if kind != "urn:ietf:params:oauth:grant-type:device_code" or grant is None:
+            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        if grant.person is None:
+            return JSONResponse({"error": "authorization_pending"}, status_code=400)
+        del grants[device_code]
+        return tokens(grant.person)
 
     @app.get("/login")
     def login(request: Request) -> Response:
         q = request.query_params
         back = urlsplit(q.get("return_to", ""))
         host, binding = back.hostname or "", q.get("binding", "")
-        person = request.cookies.get(PERSON_COOKIE, "")
+        person = signed_in(request)
         if (
             q.get("org") != ORG
             or back.scheme != "https"
             or not host.endswith("." + BASE)
-            or person not in PEOPLE
+            or (person and person not in PEOPLE)
             or len(binding) != 43
         ):
             return HTMLResponse("<h1>Sign-in refused</h1>", status_code=403)
+        if not person:
+            return RedirectResponse(
+                "/idp?" + urlencode({"next": str(request.url.path) + "?" + request.url.query}),
+                status_code=302,
+            )
         code = secrets.token_urlsafe(32)
         codes[_digest(code)] = Issued(host, binding, person)
         path = (back.path or "/") + (f"?{back.query}" if back.query else "")
@@ -522,7 +687,8 @@ async def run_fast(limit: int) -> None:  # noqa: PLR0915  (one stack, started in
     view = AccessView.from_document(snapshot(limit))
     fresh = {"on": True}
     secret = secrets.token_urlsafe(32)
-    auth = auth_app(secret)
+    night_password = secrets.token_urlsafe(18)
+    auth = auth_app(secret, night_password)
     ports = {name: free_port() for name in ("alpha", "bravo", "authz", "relay", "auth", "control")}
     apps = {
         upstream(ALPHA_PROD): ports["alpha"],
@@ -653,6 +819,10 @@ async def run_fast(limit: int) -> None:  # noqa: PLR0915  (one stack, started in
                 "SSC_ISO_USER": ADA,
                 "SSC_ISO_OTHER_USER": BEN,
                 "SSC_ISO_OUTSIDER": CY,
+                "SSC_NIGHT_AUTH_URL": AUTH_URL,
+                "SSC_NIGHT_ORG": ORG,
+                "SSC_NIGHT_USERNAME": NIGHT_USERNAME,
+                "SSC_NIGHT_PASSWORD": night_password,
             }
         )
         await until_stopped()
@@ -662,29 +832,13 @@ async def run_fast(limit: int) -> None:  # noqa: PLR0915  (one stack, started in
         shutil.rmtree(work, ignore_errors=True)
 
 
-async def run_sealer() -> None:
-    """Serve ``/seal`` with the staging cell's keyring, announce it, and run until stopped."""
-    raw, org = os.environ.get("SSC_ISO_CELL1_KEYRING"), os.environ.get("SSC_ISO_CELL1_ORG")
-    if not raw or not org:
-        raise SystemExit("sealer needs SSC_ISO_CELL1_KEYRING and SSC_ISO_CELL1_ORG")
-    seal = sealer_for(parse_keyring(raw.encode()), org)
-    port, rig = free_port(), Rig()
-    try:
-        await rig.serve(control_app(seal, {}), LOOPBACK, port)
-        announce({"SSC_ISO_CONTROL": f"http://{LOOPBACK}:{port}"})
-        await until_stopped()
-    finally:
-        await rig.stop()
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     modes = parser.add_subparsers(dest="mode", required=True)
     fast = modes.add_parser("fast", help="the cell in Docker, for the pre-merge run")
     fast.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="bravo preview's limit")
-    modes.add_parser("sealer", help="sessions sealed with a staging cell's keyring")
     args = parser.parse_args()
-    asyncio.run(run_fast(args.limit) if args.mode == "fast" else run_sealer())
+    asyncio.run(run_fast(args.limit))
 
 
 if __name__ == "__main__":

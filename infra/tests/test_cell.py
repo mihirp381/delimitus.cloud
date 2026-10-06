@@ -1153,7 +1153,10 @@ def test_the_probe_runner_stands_where_the_gateway_stands() -> None:
     assert env["PROBE_EGRESS_HOSTS"] == "auth.delimitus.com,keys.delimitus.com"
     nightly = f"serviceAccount:{mockcloud.NIGHTLY}"
     executor = one(declared, "gcp:cloudrunv2/jobIamMember:JobIamMember").inputs
-    assert (executor["role"], executor["member"]) == ("roles/run.jobsExecutor", nightly)
+    assert (executor["role"], executor["member"]) == (
+        "roles/run.jobsExecutorWithOverrides",
+        nightly,
+    )
     assert sorted(_grants(declared, nightly)) == ["roles/logging.viewer", "roles/run.viewer"]
     reader = one(
         declared, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-nightly-snapshots"

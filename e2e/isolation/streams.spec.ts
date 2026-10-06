@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { B, canSeal, fast, LIMITED, NO_SESSIONS, target, url, useSession } from './support';
+import { B, canLogin, fast, LIMITED, NO_LOGIN, target, url, useSession } from './support';
 
 type Cut = { opened: number; closed: number; deadline: number | null };
 type Counted = { opens: number; seen: number[] };
@@ -51,7 +51,7 @@ function rawStreams() {
 }
 
 test.describe('streams', () => {
-  test.skip(!canSeal, NO_SESSIONS);
+  test.skip(!canLogin, NO_LOGIN);
 
   test('server-sent events arrive as the app sends them, not buffered', async ({ page, context }) => {
     await useSession(context, B, target.user);

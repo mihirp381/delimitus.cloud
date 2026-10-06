@@ -1,25 +1,49 @@
 name: kill-drill
 
-# SSC-054: the kill switch drill against the drill app in a staging cell (docs/kill-switch-drill.md).
-# Inert until its settings exist: the job runs only on main and only once the repository variable
-# SSC_DRILL_API_URL is set. Variables: SSC_DRILL_API_URL, SSC_DRILL_APP_ID, SSC_DRILL_ENV_ID,
-# SSC_DRILL_HOST, SSC_DRILL_PROJECT, SSC_DRILL_ORG_ID, SSC_DRILL_USER, SSC_DRILL_WIF_PROVIDER,
-# SSC_DRILL_SERVICE_ACCOUNT, and optionally SSC_DRILL_RUNS. Secrets: SSC_DRILL_TOKEN (an admin's
-# access token) and SSC_DRILL_KEYRING (the cell's session keyring JSON).
-
-# The job runs by hand only (workflow_dispatch). A drill takes about 5 hours, so SSC_DRILL_TOKEN
-# must outlive the run, and there is no long-lived control plane credential yet: the weekly
-# schedule below stays commented out until a machine credential exists for the drill. The Google
-# identity named in SSC_DRILL_SERVICE_ACCOUNT must trust this file.
+# SSC-054, SSC-056: the kill switch drill against the drill app in one staging cell
+# (docs/kill-switch-drill.md). nightly.yml calls it once per cell, in parallel, after the probes
+# and the browser suite, with one run per state; run by hand it does one cell and `runs` runs
+# (the ticket's ten). `position` counts the cells of the repository variable SSC_NIGHT_CELLS from
+# 1 and selects that cell's password (SSC_NIGHT_CELL1_PASSWORD or SSC_NIGHT_CELL2_PASSWORD).
+# Each cell's entry names the drill app (its `drill` object, e2e/isolation/README.md). Variables
+# SSC_DRILL_WIF_PROVIDER and SSC_DRILL_SERVICE_ACCOUNT name the Google identity the drill uses
+# for the cell's logs and jobs; it must trust nightly.yml and this file on main.
+#
+# The night's sign-in (night-login.ts) gives the drill an admin's tokens and a session cookie for
+# the drill host, as files that are deleted when the job ends and never uploaded. A weekly
+# schedule is not wanted: nightly.yml is the only schedule.
 on:
-  # schedule: [{ cron: "23 2 * * 0" }]
+  workflow_call:
+    inputs:
+      position:
+        description: "Which cell of SSC_NIGHT_CELLS, counted from 1"
+        type: number
+        default: 1
+      runs:
+        description: "Drill runs per state"
+        type: number
+        default: 10
+    secrets:
+      SSC_NIGHT_CELL1_PASSWORD:
+        required: false
+      SSC_NIGHT_CELL2_PASSWORD:
+        required: false
   workflow_dispatch:
+    inputs:
+      position:
+        description: "Which cell of SSC_NIGHT_CELLS, counted from 1"
+        type: number
+        default: 1
+      runs:
+        description: "Drill runs per state"
+        type: number
+        default: 10
 
 permissions:
   contents: read
 
 concurrency:
-  group: kill-drill
+  group: kill-drill-${{ inputs.position }}
   cancel-in-progress: false
 
 env:
@@ -27,12 +51,14 @@ env:
 
 jobs:
   drill:
-    if: github.ref == 'refs/heads/main' && vars.SSC_DRILL_API_URL != ''
+    if: github.ref == 'refs/heads/main' && vars.SSC_NIGHT_CELLS != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 340
     permissions:
       contents: read
       id-token: write
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,6 +68,33 @@ jobs:
           version: "0.12.19"
           enable-cache: false
       - run: uv sync --all-packages --locked
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - run: npm ci
+        working-directory: e2e/isolation
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e/isolation
+      - name: This cell's settings
+        env:
+          SSC_NIGHT_CELLS: ${{ vars.SSC_NIGHT_CELLS }}
+          POSITION: ${{ inputs.position }}
+          RUNS: ${{ inputs.runs }}
+        run: |
+          uv run python -m ssc_conformance.cells drill --position "$POSITION" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "SSC_EVIDENCE_FILE=$RUNNER_TEMP/evidence/drill-$POSITION.json"
+            echo "SSC_ISO_AUTH_STATE=$RUNNER_TEMP/drill-auth-state.json"
+            echo "SSC_DRILL_CREDENTIALS_FILE=$RUNNER_TEMP/drill-credentials.json"
+            echo "SSC_DRILL_RUNS=$RUNS"
+          } >> "$GITHUB_ENV"
+      - name: Sign in through the auth host
+        env:
+          SSC_NIGHT_PASSWORD: ${{ inputs.position == 2 && secrets.SSC_NIGHT_CELL2_PASSWORD || secrets.SSC_NIGHT_CELL1_PASSWORD }}
+          SSC_NIGHT_OKTA: ${{ vars.SSC_NIGHT_OKTA }}
+        working-directory: e2e/isolation
+        run: node night-login.ts
       - id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
@@ -50,15 +103,15 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
       - name: The drill
-        env:
-          SSC_DRILL_API_URL: ${{ vars.SSC_DRILL_API_URL }}
-          SSC_DRILL_APP_ID: ${{ vars.SSC_DRILL_APP_ID }}
-          SSC_DRILL_ENV_ID: ${{ vars.SSC_DRILL_ENV_ID }}
-          SSC_DRILL_HOST: ${{ vars.SSC_DRILL_HOST }}
-          SSC_DRILL_PROJECT: ${{ vars.SSC_DRILL_PROJECT }}
-          SSC_DRILL_ORG_ID: ${{ vars.SSC_DRILL_ORG_ID }}
-          SSC_DRILL_USER: ${{ vars.SSC_DRILL_USER }}
-          SSC_DRILL_RUNS: ${{ vars.SSC_DRILL_RUNS }}
-          SSC_DRILL_TOKEN: ${{ secrets.SSC_DRILL_TOKEN }}
-          SSC_DRILL_KEYRING: ${{ secrets.SSC_DRILL_KEYRING }}
         run: uv run python -m ssc_conformance.kill_drill
+      - name: Evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: evidence-drill-${{ inputs.position }}
+          path: ${{ runner.temp }}/evidence/drill-${{ inputs.position }}.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Clear the sign-in files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/drill-auth-state.json" "$RUNNER_TEMP/drill-credentials.json"

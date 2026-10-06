@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
-from ssc_conformance import nightly
+from ssc_conformance import evidence, nightly
 from ssc_conformance.cloud_run_emulator import PROJECT, REGION, CloudRunEmulator
 from ssc_conformance.runtime_probes import PROBES
 from ssc_shared.runtime import RuntimeDriver, ServiceObservation, ServiceSpec
@@ -131,14 +131,37 @@ def test_config_needs_every_variable() -> None:
 def test_config_takes_a_peer_cell_whole_or_not_at_all() -> None:
     full = {name: "x" for name in nightly.ENV.values()}
     assert nightly.config_from_env(full).peer_cell is None
-    peer = dict(zip(nightly.PEER_CELL_ENV, ("https://a", "https://g", "10.30.0.0/22"), strict=True))
+    values = ("https://a", "https://g", "10.30.0.0/22", "ssc-c-peer")
+    peer = dict(zip(nightly.PEER_CELL_ENV, values, strict=True))
     assert nightly.config_from_env(full | peer).peer_cell == {
         "PROBE_PEER_CELL_APP_URL": "https://a",
         "PROBE_PEER_CELL_GATEWAY_URL": "https://g",
         "PROBE_PEER_CELL_RANGE": "10.30.0.0/22",
+        "PROBE_PEER_CELL_PROJECT": "ssc-c-peer",
     }
     with pytest.raises(nightly.NightlyError, match="or none"):
         nightly.config_from_env(full | {"SSC_PROBE_PEER_RANGE": "10.30.0.0/22"})
+    with pytest.raises(nightly.NightlyError, match="or none"):
+        nightly.config_from_env(full | peer | {"SSC_PROBE_PEER_PROJECT": ""})
+
+
+CONNECTION = "con_" + "a1b2c3d4e5f6g7h8i9j0"
+DATAGW = {
+    "SSC_PROBE_DATAGW_URL": "https://datagw.run.app",
+    "SSC_PROBE_DATAGW_CONNECTION": CONNECTION,
+}
+
+
+def test_config_takes_an_optional_data_gateway() -> None:
+    full = {name: "x" for name in nightly.ENV.values()}
+    assert nightly.config_from_env(full).datagw_url is None
+    assert nightly.config_from_env(full | {"SSC_PROBE_DATAGW_URL": ""}).datagw_url is None
+    named = nightly.config_from_env(full | DATAGW)
+    assert (named.datagw_url, named.datagw_connection) == ("https://datagw.run.app", CONNECTION)
+    with pytest.raises(nightly.NightlyError, match="both"):
+        nightly.config_from_env(full | {"SSC_PROBE_DATAGW_URL": "https://datagw.run.app"})
+    with pytest.raises(nightly.NightlyError, match="both"):
+        nightly.config_from_env(full | {"SSC_PROBE_DATAGW_CONNECTION": CONNECTION})
 
 
 def test_probe_apps_are_the_cell_runner_targets() -> None:
@@ -193,13 +216,15 @@ async def test_failed_probe_fails_the_night(driver: CloudRunDriver, clock: Clock
     assert "- FAILED no_dns_exfil: r" in report.markdown()
 
 
-def _peer_cell_skipped() -> list[dict[str, str]]:
+def _skipped(probes: frozenset[str], reason: str) -> list[dict[str, str]]:
     return [
-        r | {"status": "skipped", "reason": "no peer cell"}
-        if r["probe"] == nightly.PEER_CELL_PROBE
-        else r
+        r | {"status": "skipped", "reason": reason} if r["probe"] in probes else r
         for r in _results()
     ]
+
+
+def _peer_cell_skipped() -> list[dict[str, str]]:
+    return _skipped(nightly.PEER_CELL_PROBES, "no peer cell")
 
 
 async def test_no_peer_cell_is_a_skip_not_a_failure(driver: CloudRunDriver, clock: Clock) -> None:
@@ -210,6 +235,7 @@ async def test_no_peer_cell_is_a_skip_not_a_failure(driver: CloudRunDriver, cloc
     assert report.failures == []
     assert json.loads(script.calls[0].content) == {}
     assert "| cannot_reach_peer_cell | skipped | no peer cell |" in report.markdown()
+    assert "| deny_peer_cell | skipped | no peer cell |" in report.markdown()
 
 
 async def test_a_named_peer_cell_reaches_the_job_and_must_pass(
@@ -220,7 +246,10 @@ async def test_a_named_peer_cell_reaches_the_job_and_must_pass(
     report = await nightly.nightly(
         driver, _job(script, clock), DIGEST, peer_cell=peer, sleep=clock.sleep, clock=clock
     )
-    assert report.failures == ["cannot_reach_peer_cell: no peer cell"]
+    assert report.failures == [
+        "cannot_reach_peer_cell: no peer cell",
+        "deny_peer_cell: no peer cell",
+    ]
     assert json.loads(script.calls[0].content) == {
         "overrides": {
             "containerOverrides": [
@@ -235,11 +264,55 @@ async def test_a_named_peer_cell_reaches_the_job_and_must_pass(
     }
 
 
-def test_only_the_peer_cell_probe_may_skip() -> None:
+async def test_a_data_gateway_reaches_the_job_and_must_pass(
+    driver: CloudRunDriver, clock: Clock
+) -> None:
+    waiting = _skipped(frozenset({"datagw_read_only"}), "waits for the data gateway")
+    script = ScriptedJob(waiting)
+    report = await nightly.nightly(
+        driver,
+        _job(script, clock),
+        DIGEST,
+        sleep=clock.sleep,
+        clock=clock,
+        datagw_url="https://datagw.run.app",
+        datagw_connection=CONNECTION,
+    )
+    assert report.failures == ["datagw_read_only: waits for the data gateway"]
+    env = json.loads(script.calls[0].content)["overrides"]["containerOverrides"][0]["env"]
+    assert {e["name"]: e["value"] for e in env} == {
+        "PROBE_DATAGW_URL": "https://datagw.run.app",
+        "PROBE_DATAGW_CONNECTION": CONNECTION,
+    }
+
+
+async def test_without_a_data_gateway_its_probe_may_wait(
+    driver: CloudRunDriver, clock: Clock
+) -> None:
+    waiting = _skipped(frozenset({"datagw_read_only"}), "waits for the data gateway")
+    report = await nightly.nightly(
+        driver, _job(ScriptedJob(waiting), clock), DIGEST, sleep=clock.sleep, clock=clock
+    )
+    assert report.failures == []
+    assert "| datagw_read_only | skipped | waits for the data gateway |" in report.markdown()
+
+
+def test_only_the_named_probes_may_skip_and_only_for_their_own_reason() -> None:
     skipped = [r | {"status": "skipped", "reason": "no peer cell"} for r in _results()]
     failures = nightly.verdict(skipped)
-    assert len(failures) == len(PROBES) - 1
-    assert not any(f.startswith(nightly.PEER_CELL_PROBE) for f in failures)
+    assert len(failures) == len(PROBES) - len(nightly.PEER_CELL_PROBES)
+    assert not any(f.startswith(tuple(nightly.PEER_CELL_PROBES)) for f in failures)
+    assert "datagw_read_only: no peer cell" in failures
+    waiting = _skipped(nightly.PEER_CELL_PROBES, "waits for the data gateway")
+    assert "deny_peer_cell: waits for the data gateway" in nightly.verdict(waiting)
+    datagw = _skipped(frozenset({"datagw_read_only"}), "waits for the data gateway")
+    assert nightly.verdict(datagw) == []
+    assert nightly.verdict(datagw, datagw=True) == ["datagw_read_only: waits for the data gateway"]
+    peer = _peer_cell_skipped()
+    assert nightly.verdict(peer, peer_cell=True) == [
+        "cannot_reach_peer_cell: no peer cell",
+        "deny_peer_cell: no peer cell",
+    ]
 
 
 def test_verdict_refuses_duplicates_and_strangers() -> None:
@@ -417,3 +490,74 @@ async def test_the_days_left_come_from_the_certificate_the_host_serves(tmp_path:
     finally:
         server.close()
         await server.wait_closed()
+
+
+async def test_the_run_leaves_evidence_for_the_one_page_result(
+    driver: CloudRunDriver, clock: Clock
+) -> None:
+    script = ScriptedJob(_skipped(nightly.PEER_CELL_PROBES, "no peer cell"))
+    report = await nightly.nightly(
+        driver,
+        _job(script, clock),
+        DIGEST,
+        sleep=clock.sleep,
+        clock=clock,
+        tls_host="x.cell.example",
+        days_left=days(60.0),
+    )
+    found = report.as_evidence(PROJECT, peer=False)
+    assert (found.cell, found.peer) == (PROJECT, False)
+    by_proof = {r.proof: r for r in found.results}
+    assert [r.proof for r in found.results[: len(PROBES)]] == list(PROBES)
+    assert by_proof["deny_peer_cell"] == evidence.Result(
+        "deny_peer_cell", "skipped", "no peer cell"
+    )
+    assert by_proof["sse_passthrough"].status == "pass"
+    assert by_proof["drift"].status == "pass"
+    assert by_proof["certificate"].status == "pass"
+
+
+async def test_the_evidence_says_what_failed_and_what_was_not_checked(
+    driver: CloudRunDriver, clock: Clock
+) -> None:
+    script = ScriptedJob(_results())
+    report = await nightly.nightly(
+        driver, _job(script, clock), DIGEST, sleep=clock.sleep, clock=clock
+    )
+    by_proof = {r.proof: r for r in report.as_evidence(PROJECT, peer=False).results}
+    assert by_proof["certificate"] == evidence.Result(
+        "certificate", "skipped", "SSC_PROBE_TLS_HOST not set"
+    )
+    stuck = nightly.Report(_results(), None, ["drift: x"], (evidence.Result("drift", "fail", "x"),))
+    assert stuck.as_evidence(PROJECT, peer=True).results[-1] == evidence.Result(
+        "drift", "fail", "x"
+    )
+
+
+def test_main_async_adds_its_results_to_the_evidence_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = nightly.Report(_results(), 15.0, [], (evidence.Result("drift", "pass", "ok"),))
+
+    async def fake(*_args: object, **_kwargs: object) -> nightly.Report:
+        return report
+
+    class Closable:
+        def __init__(self, *_args: object) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(nightly, "nightly", fake)
+    monkeypatch.setattr(nightly, "CellAgentDriver", Closable)
+    monkeypatch.setattr(nightly, "ProbeJob", Closable)
+    path = tmp_path / "e.json"
+    environ = {name: "x" for name in nightly.ENV.values()} | {"SSC_EVIDENCE_FILE": str(path)}
+    assert asyncio.run(nightly.main_async(environ)) is report
+    written = evidence.read_file(path)
+    assert (written.cell, written.peer) == ("x", False)
+    assert {r.proof for r in written.results} >= {"drift", "datagw_read_only"}
+    path.unlink()
+    asyncio.run(nightly.main_async({k: v for k, v in environ.items() if k != "SSC_EVIDENCE_FILE"}))
+    assert not path.exists()

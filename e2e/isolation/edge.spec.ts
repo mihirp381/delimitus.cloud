@@ -4,18 +4,17 @@ import {
   A,
   B,
   canLogin,
-  canSeal,
   control,
   fast,
   holdCode,
   host,
   mark,
   NO_LOGIN,
-  NO_SESSIONS,
+  NO_PEER_CELL,
   otherBrowser,
   putSession,
   reached,
-  seal,
+  SESSION,
   sentToLogin,
   target,
   url,
@@ -85,20 +84,23 @@ test.describe('fail closed', () => {
 
 test.describe('two cells', () => {
   test.skip(fast, 'The rig is one cell; this needs two deployed cells, so it runs nightly.');
-  test.skip(target.cell2 === null, 'SSC_ISO_CELL2_BASE is not set.');
+  test.skip(target.peer === null, NO_PEER_CELL);
 
   test('a cell-1 session cookie opens nothing in cell 2', async ({ page, context }) => {
-    test.skip(!canSeal, NO_SESSIONS);
-    const there = host('alpha', target.cell2!);
-    for (const value of [await seal(A, target.user), await seal(there, target.user)]) {
-      await putSession(context, there, value);
+    test.skip(!canLogin, NO_LOGIN);
+    const there = host('alpha', target.peer!);
+    await useSession(context, A, target.user);
+    await useSession(context, B, target.user);
+    for (const name of [A, B]) {
+      const mine = (await context.cookies(url(name, '/'))).find((c) => c.name === SESSION);
+      await putSession(context, there, mine!.value);
       await sentToLogin(page, url(there, '/'));
     }
   });
 
   test('a login code issued for a cell-1 host is refused by cell 2', async ({ page, browser }) => {
     test.skip(!canLogin, NO_LOGIN);
-    const there = host('alpha', target.cell2!);
+    const there = host('alpha', target.peer!);
     const held = new URL(await holdCode(page, A));
     const other = await otherBrowser(browser);
     await sentToLogin(other, url(there, '/'));

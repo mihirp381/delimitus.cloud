@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
 
-import { A, canSeal, mark, NO_SESSIONS, target, url, useSession, WAKE } from './support';
+import { A, canLogin, mark, NO_LOGIN, target, url, useSession, WAKE } from './support';
 
 test.describe('a sleeping app wakes', () => {
-  test.skip(!canSeal, NO_SESSIONS);
+  test.skip(!canLogin, NO_LOGIN);
 
   test.beforeEach(async ({ context }) => {
     await useSession(context, A, target.user);

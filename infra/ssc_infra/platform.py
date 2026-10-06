@@ -30,6 +30,13 @@ JIT_ROLE = "roles/writer"
 JIT_MAX = "3600s"
 PAM_AGENT = f"serviceAccount:service-org-{n.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
 PAM_AGENT_ROLE = "roles/privilegedaccessmanager.folderServiceAgent"
+# What the nightly least-privilege and organisation-policy checks (SSC-056) read on the cells
+# folder: who holds roles there, which deny policies apply, and the effective org policies.
+NIGHTLY_FOLDER_ROLES = {
+    "cells-nightly-security-reviewer": "roles/iam.securityReviewer",
+    "cells-nightly-deny-reviewer": "roles/iam.denyReviewer",
+    "cells-nightly-policy-viewer": "roles/orgpolicy.policyViewer",
+}
 ZONE_RECORD_PERMISSIONS = (
     "dns.changes.create",
     "dns.changes.get",
@@ -526,6 +533,8 @@ def build() -> None:
     pam_agent = gcp.folder.IAMMember(
         "cells-pam-agent", folder=cells.name, role=PAM_AGENT_ROLE, member=PAM_AGENT, opts=opts
     )
+    for name, role in NIGHTLY_FOLDER_ROLES.items():
+        gcp.folder.IAMMember(name, folder=cells.name, role=role, member=nightly.member, opts=opts)
     gcp.privilegedaccessmanager.Entitlement(
         "cells-jit",
         entitlement_id="ssc-cells-jit",

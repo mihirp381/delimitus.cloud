@@ -1,0 +1,77 @@
+{
+  "compute.restrictSharedVpcHostProjects": {
+    "mode": "deny_all",
+    "parameters": {},
+    "tag_exception": false,
+    "values": []
+  },
+  "compute.restrictVpcPeering": {
+    "mode": "allow",
+    "parameters": {},
+    "tag_exception": false,
+    "values": [
+      "under:organizations/433637338589"
+    ]
+  },
+  "compute.vmExternalIpAccess": {
+    "mode": "deny_all",
+    "parameters": {},
+    "tag_exception": false,
+    "values": []
+  },
+  "gcp.resourceLocations": {
+    "mode": "allow",
+    "parameters": {},
+    "tag_exception": false,
+    "values": [
+      "global",
+      "in:us-central1-locations"
+    ]
+  },
+  "iam.automaticIamGrantsForDefaultServiceAccounts": {
+    "mode": "enforce",
+    "parameters": {},
+    "tag_exception": false,
+    "values": []
+  },
+  "iam.disableServiceAccountKeyCreation": {
+    "mode": "enforce",
+    "parameters": {},
+    "tag_exception": false,
+    "values": []
+  },
+  "iam.managed.allowedPolicyMembers": {
+    "mode": "enforce",
+    "parameters": {
+      "allowedMemberSubjects": [
+        "<operator>"
+      ],
+      "allowedPrincipalSets": [
+        "//cloudresourcemanager.googleapis.com/organizations/878392300952"
+      ]
+    },
+    "tag_exception": true,
+    "values": []
+  },
+  "run.allowedIngress": {
+    "mode": "allow",
+    "parameters": {},
+    "tag_exception": false,
+    "values": [
+      "is:internal",
+      "is:internal-and-cloud-load-balancing"
+    ]
+  },
+  "sql.restrictPublicIp": {
+    "mode": "enforce",
+    "parameters": {},
+    "tag_exception": false,
+    "values": []
+  },
+  "storage.publicAccessPrevention": {
+    "mode": "enforce",
+    "parameters": {},
+    "tag_exception": false,
+    "values": []
+  }
+}

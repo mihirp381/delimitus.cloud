@@ -246,6 +246,25 @@ def test_the_pam_service_agent_manages_the_cells_folder(declared: list[Declared]
     assert grant["folder"] == _folders(declared)["ssc-cells"].outputs["name"]
 
 
+def test_the_nightly_account_reads_the_cells_folders_policies_and_roles(
+    declared: list[Declared],
+) -> None:
+    nightly = one(declared, "gcp:serviceaccount/account:Account", "nightly-sa").outputs["member"]
+    folder = _folders(declared)["ssc-cells"].outputs["name"]
+    grants = [
+        d.inputs
+        for d in declared
+        if d.type == "gcp:folder/iAMMember:IAMMember" and d.inputs["member"] == nightly
+    ]
+    assert {g["role"] for g in grants} == {
+        "roles/iam.securityReviewer",
+        "roles/iam.denyReviewer",
+        "roles/orgpolicy.policyViewer",
+    }
+    assert len(grants) == 3
+    assert {g["folder"] for g in grants} == {folder}
+
+
 def test_only_the_nightly_and_drill_workflows_on_main_become_the_nightly_account(
     declared: list[Declared],
 ) -> None:

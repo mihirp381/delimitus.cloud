@@ -20,12 +20,17 @@ with ``POST /v1/apps/{id}/enable`` between runs:
 Pass: front-door denial under 10 s and everything under 60 s, in both states. Prints each state's
 median and maximum, the longest an open stream survived, the verdict and a markdown table.
 
-Configuration, all required: ``SSC_DRILL_API_URL`` and ``SSC_DRILL_TOKEN`` (an admin's access
-token), ``SSC_DRILL_APP_ID``, ``SSC_DRILL_ENV_ID`` (the environment the drill app serves),
-``SSC_DRILL_HOST`` (its public host), ``SSC_DRILL_PROJECT`` (the cell project, whose bucket is
-``<project>-cell``) and ``SSC_DRILL_ORG_ID``. The front door needs a session of a person granted
-on the app: ``SSC_DRILL_SESSION_COOKIE`` (a cookie value), or ``SSC_DRILL_KEYRING`` (the cell's
-keyring JSON) with ``SSC_DRILL_USER`` (a ``usr_`` id) to seal one. Optional: ``SSC_DRILL_RUNS``.
+Configuration, all required: ``SSC_DRILL_API_URL``, ``SSC_DRILL_APP_ID``, ``SSC_DRILL_ENV_ID``
+(the environment the drill app serves), ``SSC_DRILL_HOST`` (its public host),
+``SSC_DRILL_PROJECT`` (the cell project, whose bucket is ``<project>-cell``) and
+``SSC_DRILL_ORG_ID``. The admin's access token and the front door's session of a person granted
+on the app come from ``SSC_DRILL_CREDENTIALS_FILE``, the JSON the night's sign-in writes
+(``e2e/isolation/night-login.ts``): the drill refreshes the token a minute before it ends, since
+a drill outlasts one, and keeps the rotated refresh token in memory. For a hand run,
+``SSC_DRILL_TOKEN`` (an admin's access token) and ``SSC_DRILL_SESSION_COOKIE`` (a cookie value)
+instead; the file wins when both are set. Optional: ``SSC_DRILL_RUNS``, and ``SSC_EVIDENCE_FILE``,
+the file this run adds its ``drill`` line to for the one-page result (``ssc_conformance.matrix``);
+the cell is ``SSC_DRILL_PROJECT``.
 Google calls use ``SSC_ACCESS_TOKEN``, else the credential file ``GOOGLE_APPLICATION_CREDENTIALS``
 names (refreshed as it nears expiry, since a drill outlasts one token), else ``gcloud``; the
 caller needs log read on the cell project and read on its bucket. Exits 1 when the verdict is not
@@ -33,6 +38,7 @@ a pass.
 """
 
 import asyncio
+import json
 import logging
 import os
 import secrets
@@ -53,17 +59,17 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 from websockets.typing import Origin
 
+from ssc_conformance import evidence as ev
+from ssc_conformance import matrix
 from ssc_conformance.nightly import LOGGING_API, Clock, Json, Sleep, gcloud_access_tokens
 from ssc_control.runtime.cell_agent import AccessTokens
-from ssc_edge.keys import parse_keyring
-from ssc_edge.session import COOKIE_NAME, MAX_SESSION_SECONDS, Session, SessionCodec, new_sid
+from ssc_edge.session import COOKIE_NAME
 from ssc_shared.runtime import service_name
 
 log = logging.getLogger("ssc_conformance.kill_drill")
 
 ENV: Final = {
     "api_url": "SSC_DRILL_API_URL",
-    "token": "SSC_DRILL_TOKEN",
     "app_id": "SSC_DRILL_APP_ID",
     "env_id": "SSC_DRILL_ENV_ID",
     "host": "SSC_DRILL_HOST",
@@ -74,9 +80,10 @@ ACCESS_ENV: Final = "SSC_ACCESS_TOKEN"
 CREDENTIALS_ENV: Final = "GOOGLE_APPLICATION_CREDENTIALS"
 CLOUD_SCOPE: Final = "https://www.googleapis.com/auth/cloud-platform"
 REFRESH_MARGIN_SECONDS: Final = 300.0
+TOKEN_ENV: Final = "SSC_DRILL_TOKEN"  # noqa: S105
 COOKIE_ENV: Final = "SSC_DRILL_SESSION_COOKIE"
-KEYRING_ENV: Final = "SSC_DRILL_KEYRING"
-USER_ENV: Final = "SSC_DRILL_USER"
+CREDENTIALS_FILE_ENV: Final = "SSC_DRILL_CREDENTIALS_FILE"
+SIGN_IN_MARGIN_SECONDS: Final = 60.0
 RUNS_ENV: Final = "SSC_DRILL_RUNS"
 DEFAULT_RUNS: Final = 10
 STATES: Final = ("awake", "asleep")
@@ -115,15 +122,14 @@ class DrillError(Exception):
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DrillConfig:
     api_url: str
-    token: str
     app_id: str
     env_id: str
     host: str
     project: str
     org_id: str
+    credentials_file: str | None
+    token: str | None
     cookie: str | None
-    keyring: str | None
-    user: str | None
     runs: int
 
 
@@ -132,11 +138,11 @@ def config_from_env(environ: Mapping[str, str]) -> DrillConfig:
     missing = [name for name in ENV.values() if not environ.get(name)]
     if missing:
         raise DrillError(f"missing {', '.join(missing)}")
-    cookie, keyring, user = (environ.get(n) or None for n in (COOKIE_ENV, KEYRING_ENV, USER_ENV))
-    if (cookie is None) == (keyring is None):
-        raise DrillError(f"set {COOKIE_ENV}, or {KEYRING_ENV} with {USER_ENV}")
-    if keyring is not None and user is None:
-        raise DrillError(f"{KEYRING_ENV} needs {USER_ENV}")
+    file, token, cookie = (
+        environ.get(n) or None for n in (CREDENTIALS_FILE_ENV, TOKEN_ENV, COOKIE_ENV)
+    )
+    if file is None and (token is None or cookie is None):
+        raise DrillError(f"set {CREDENTIALS_FILE_ENV}, or {TOKEN_ENV} with {COOKIE_ENV}")
     try:
         runs = int(environ.get(RUNS_ENV) or DEFAULT_RUNS)
     except ValueError:
@@ -145,35 +151,84 @@ def config_from_env(environ: Mapping[str, str]) -> DrillConfig:
         raise DrillError(f"{RUNS_ENV} must be at least 1")
     return DrillConfig(
         **{field_: environ[name] for field_, name in ENV.items()},
+        credentials_file=file,
+        token=token,
         cookie=cookie,
-        keyring=keyring,
-        user=user,
         runs=runs,
     )
 
 
-def seal_cookie(cfg: DrillConfig) -> str:
-    """The session cookie value for the drill's host: the given one, or one sealed with the cell's
-    keyring for ``cfg.user``. Held in memory only."""
-    if cfg.cookie is not None:
-        return cfg.cookie
-    if cfg.keyring is None or cfg.user is None:
-        raise DrillError("no session")
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Credentials:
+    """The night's sign-in as the admin: what ``night-login.ts`` writes."""
+
+    auth_url: str
+    access_token: str
+    refresh_token: str
+    expires_at: float
+    cookie: str
+
+
+def load_credentials(path: Path) -> Credentials:
     try:
-        keys = parse_keyring(cfg.keyring.encode())
-    except Exception:
-        raise DrillError(f"{KEYRING_ENV} is not a valid keyring") from None
-    now = int(time.time())
-    session = Session(
-        sid=new_sid(),
-        sub=cfg.user,
-        org=cfg.org_id,
-        name="Kill drill",
-        email="",
-        iat=now - 60,
-        exp=now - 60 + MAX_SESSION_SECONDS,
-    )
-    return SessionCodec(keys.session, active=keys.session_kid).seal(session, cfg.host.lower())
+        body = json.loads(path.read_text(encoding="utf-8"))
+        return Credentials(
+            auth_url=str(body["auth_url"]).rstrip("/"),
+            access_token=str(body["access_token"]),
+            refresh_token=str(body["refresh_token"]),
+            expires_at=float(body["expires_at"]),
+            cookie=str(body["cookie"]),
+        )
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise DrillError(
+            f"{CREDENTIALS_FILE_ENV}: not a sign-in file ({type(exc).__name__})"
+        ) from None
+
+
+class SignIn:
+    """The admin's access token, refreshed at the auth host a minute before it ends. The refresh
+    token rotates on every use; the newest is kept in memory and never written back."""
+
+    def __init__(
+        self,
+        credentials: Credentials,
+        *,
+        client: httpx2.AsyncClient | None = None,
+        wall: Callable[[], float] = time.time,
+    ) -> None:
+        self._auth_url = credentials.auth_url
+        self._access = credentials.access_token
+        self._refresh = credentials.refresh_token
+        self._expires_at = credentials.expires_at
+        self._client = client or httpx2.AsyncClient(timeout=CALL_TIMEOUT_SECONDS)
+        self._wall = wall
+        self._lock = asyncio.Lock()
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def __call__(self) -> str:
+        async with self._lock:
+            if self._expires_at - self._wall() < SIGN_IN_MARGIN_SECONDS:
+                await self._renew()
+            return self._access
+
+    async def _renew(self) -> None:
+        form = {"grant_type": "refresh_token", "refresh_token": self._refresh}
+        try:
+            response = await self._client.post(f"{self._auth_url}/token", data=form)
+        except httpx2.HTTPError as exc:
+            raise DrillError(f"refreshing the admin's sign-in: {type(exc).__name__}") from None
+        body = _obj(response.json()) if response.content else {}
+        if response.status_code != OK:
+            code = str(body.get("error") or response.status_code)
+            raise DrillError(f"the admin's sign-in could not be refreshed ({code})")
+        try:
+            self._access = str(body["access_token"])
+            self._refresh = str(body["refresh_token"])
+            self._expires_at = self._wall() + float(body["expires_in"])
+        except KeyError, TypeError, ValueError:
+            raise DrillError("the auth host's refresh answer was not understood") from None
 
 
 def _default_credentials() -> Any:
@@ -228,6 +283,13 @@ def google_access_tokens(
     return token
 
 
+def _fixed(value: str) -> AccessTokens:
+    async def given() -> str:
+        return value
+
+    return given
+
+
 def _obj(value: object) -> Json:
     return cast(Json, value) if isinstance(value, dict) else {}
 
@@ -264,10 +326,10 @@ class ControlPlane:
     """The control plane API, as the console calls it. The token is never logged or echoed."""
 
     def __init__(
-        self, base_url: str, token: str, *, client: httpx2.AsyncClient | None = None
+        self, base_url: str, token: str | AccessTokens, *, client: httpx2.AsyncClient | None = None
     ) -> None:
         self._base = base_url.rstrip("/")
-        self._token = token
+        self._token = _fixed(token) if isinstance(token, str) else token
         self._client = client or httpx2.AsyncClient(timeout=CALL_TIMEOUT_SECONDS)
 
     async def aclose(self) -> None:
@@ -316,7 +378,7 @@ class ControlPlane:
         *,
         ok_codes: Sequence[str] = (),
     ) -> Json:
-        headers = {"Authorization": f"Bearer {self._token}"}
+        headers = {"Authorization": f"Bearer {await self._token()}"}
         if method == "POST":
             headers["Idempotency-Key"] = str(uuid.uuid4())
         try:
@@ -625,6 +687,17 @@ class Report:
             )
         return out
 
+    def result(self) -> ev.Result:
+        """The drill's line on the nightly page: pass, or fail with the first problem."""
+        if self.failures:
+            more = len(self.failures) - 1
+            first = self.failures[0] + (f" (and {more} more)" if more else "")
+            return ev.Result(matrix.DRILL, ev.FAIL, first)
+        runs = len(self.of("awake"))
+        longest = self.longest_stream
+        stream = "no stream open" if longest is None else f"longest stream {longest:.1f} s"
+        return ev.Result(matrix.DRILL, ev.OK, f"{runs} runs per state, {stream}")
+
     def markdown(self) -> str:
         """The results table: a row per state, ``median / max`` seconds in each cell."""
         lines = [
@@ -887,15 +960,30 @@ def _since(leg: Json | None, wall0: float) -> float | None:
 
 async def main_async(environ: Mapping[str, str]) -> Report:
     cfg = config_from_env(environ)
-    api = ControlPlane(cfg.api_url, cfg.token)
+    sign_in = None
+    if cfg.credentials_file:
+        credentials = load_credentials(Path(cfg.credentials_file))
+        sign_in, token, cookie = SignIn(credentials), None, credentials.cookie
+    else:
+        token, cookie = cfg.token, cfg.cookie
+    api = ControlPlane(cfg.api_url, sign_in or str(token))
     cloud = CloudApi(cfg.project, google_access_tokens(environ))
-    front = FrontDoor(f"https://{cfg.host}", seal_cookie(cfg))
+    front = FrontDoor(f"https://{cfg.host}", str(cookie))
     try:
         return await Drill(cfg=cfg, api=api, cloud=cloud, front=front).execute()
     finally:
         await api.aclose()
         await cloud.aclose()
         await front.aclose()
+        if sign_in is not None:
+            await sign_in.aclose()
+
+
+def write_evidence(environ: Mapping[str, str], result: ev.Result) -> None:
+    """Adds the drill's line to ``SSC_EVIDENCE_FILE`` for the cell ``SSC_DRILL_PROJECT`` names."""
+    path, project = environ.get(ev.EVIDENCE_ENV), environ.get(ENV["project"])
+    if path and project:
+        ev.write(Path(path), ev.Evidence(project, peer=False, results=(result,)))
 
 
 def main() -> int:
@@ -904,7 +992,9 @@ def main() -> int:
         report = asyncio.run(main_async(os.environ))
     except DrillError as exc:
         sys.stderr.write(f"kill_drill: {exc}\n")
+        write_evidence(os.environ, ev.Result(matrix.DRILL, ev.FAIL, str(exc)))
         return 1
+    write_evidence(os.environ, report.result())
     text = report.markdown()
     sys.stdout.write(text)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):

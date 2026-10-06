@@ -7,8 +7,10 @@ import itertools
 import json
 import re
 import time
+import urllib.parse
 from collections.abc import Coroutine
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx2
@@ -16,9 +18,9 @@ import pytest
 from google.auth.exceptions import RefreshError
 from websockets.asyncio.server import serve
 
+from ssc_conformance import evidence as ev
 from ssc_conformance import kill_drill as kd
-from ssc_edge.keys import new_keyring, parse_keyring
-from ssc_edge.session import COOKIE_NAME, SessionCodec
+from ssc_edge.session import COOKIE_NAME
 
 BASE = 1_790_000_000.0
 APP = "app_" + "a" * 20
@@ -197,7 +199,9 @@ class World:
                 "tunnel", self.tunnel_end
             )
         elif 'resource.type="gce_instance"' in flt:
-            since = kd.epoch_of(re.search(r'timestamp>="([^"]+)"', flt).group(1))
+            stamp = re.search(r'timestamp>="([^"]+)"', flt)
+            assert stamp is not None
+            since = kd.epoch_of(stamp.group(1))
             seen = (
                 self.proxy_line_at is not None and since is not None and since <= self.proxy_line_at
             )
@@ -226,7 +230,7 @@ def drill(world: World, clock: Clock, runs: int = 1) -> kd.Drill:
         cfg=cfg,
         api=kd.ControlPlane(
             cfg.api_url,
-            cfg.token,
+            str(cfg.token),
             client=httpx2.AsyncClient(transport=httpx2.MockTransport(world.control)),
         ),
         cloud=kd.CloudApi(
@@ -256,46 +260,161 @@ def test_config_needs_every_variable_and_one_way_in() -> None:
     for name in kd.ENV.values():
         with pytest.raises(kd.DrillError, match=name):
             kd.config_from_env({k: v for k, v in ENVIRON.items() if k != name})
-    plain = {k: v for k, v in ENVIRON.items() if k != kd.COOKIE_ENV}
-    with pytest.raises(kd.DrillError, match=kd.COOKIE_ENV):
-        kd.config_from_env(plain)
-    with pytest.raises(kd.DrillError, match=kd.COOKIE_ENV):
-        kd.config_from_env(ENVIRON | {kd.KEYRING_ENV: "{}", kd.USER_ENV: USER})
-    with pytest.raises(kd.DrillError, match=kd.USER_ENV):
-        kd.config_from_env(plain | {kd.KEYRING_ENV: "{}"})
-    assert kd.config_from_env(plain | {kd.KEYRING_ENV: "{}", kd.USER_ENV: USER}).user == USER
+    for left_out in (kd.TOKEN_ENV, kd.COOKIE_ENV):
+        with pytest.raises(kd.DrillError, match=kd.CREDENTIALS_FILE_ENV):
+            kd.config_from_env({k: v for k, v in ENVIRON.items() if k != left_out})
+    filed = {k: v for k, v in ENVIRON.items() if k not in (kd.TOKEN_ENV, kd.COOKIE_ENV)}
+    cfg = kd.config_from_env(filed | {kd.CREDENTIALS_FILE_ENV: "/run/sign-in.json"})
+    assert (cfg.credentials_file, cfg.token, cfg.cookie) == ("/run/sign-in.json", None, None)
     for bad in ("x", "0"):
         with pytest.raises(kd.DrillError, match=kd.RUNS_ENV):
             kd.config_from_env(ENVIRON | {kd.RUNS_ENV: bad})
 
 
-def test_the_cookie_is_given_or_sealed_for_the_host() -> None:
-    given = kd.config_from_env(ENVIRON)
-    assert kd.seal_cookie(given) == "v1.s1.cookie"
-    ring = new_keyring().decode()
-    sealed = kd.config_from_env(
-        {k: v for k, v in ENVIRON.items() if k != kd.COOKIE_ENV}
-        | {kd.KEYRING_ENV: ring, kd.USER_ENV: USER}
-    )
-    value = kd.seal_cookie(sealed)
-    keys = parse_keyring(ring.encode())
-    codec = SessionCodec(keys.session, active=keys.session_kid)
-    session = codec.open(value, HOST, now=int(time.time()))
-    assert session is not None
-    assert (session.sub, session.org) == (USER, ORG)
-    assert codec.open(value, "other." + HOST, now=int(time.time())) is None
+def sign_in_file(tmp_path: Path, **changes: object) -> Path:
+    body = {
+        "auth_url": "https://auth.test/",
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "expires_at": BASE + 900,
+        "cookie": "v1.s1.filed-cookie",
+    } | changes
+    path = tmp_path / "sign-in.json"
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
 
 
-def test_a_bad_keyring_is_never_echoed() -> None:
-    secret = "keyring-secret-value"
-    cfg = kd.config_from_env(
-        {k: v for k, v in ENVIRON.items() if k != kd.COOKIE_ENV}
-        | {kd.KEYRING_ENV: secret, kd.USER_ENV: USER}
+def test_the_sign_in_file_is_read_and_a_bad_one_is_never_echoed(tmp_path: Path) -> None:
+    creds = kd.load_credentials(sign_in_file(tmp_path))
+    assert (creds.auth_url, creds.access_token, creds.cookie) == (
+        "https://auth.test",
+        "access-1",
+        "v1.s1.filed-cookie",
     )
+    with pytest.raises(kd.DrillError, match="not a sign-in file"):
+        kd.load_credentials(tmp_path / "missing.json")
+    broken = sign_in_file(tmp_path, expires_at="secret-looking-value")
     with pytest.raises(kd.DrillError) as refused:
-        kd.seal_cookie(cfg)
-    assert secret not in str(refused.value)
-    assert refused.value.__cause__ is None
+        kd.load_credentials(broken)
+    assert "secret-looking-value" not in str(refused.value)
+    broken.write_text('{"auth_url": "x"}', encoding="utf-8")
+    with pytest.raises(kd.DrillError, match="KeyError"):
+        kd.load_credentials(broken)
+
+
+class AuthHost:
+    """The auth host's ``/token``: each refresh token works once and brings the next."""
+
+    def __init__(self) -> None:
+        self.valid = "refresh-1"
+        self.issued = 0
+        self.asked: list[dict[str, str]] = []
+        self.refuse = False
+
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
+        form = {k: v[0] for k, v in urllib.parse.parse_qs(request.content.decode()).items()}
+        self.asked.append(form)
+        assert str(request.url) == "https://auth.test/token"
+        if self.refuse or form.get("refresh_token") != self.valid:
+            return httpx2.Response(400, json={"error": "invalid_grant"})
+        self.issued += 1
+        self.valid = f"refresh-{self.issued + 1}"
+        return httpx2.Response(
+            200,
+            json={
+                "access_token": f"access-{self.issued + 1}",
+                "token_type": "Bearer",
+                "expires_in": 900,
+                "refresh_token": self.valid,
+            },
+        )
+
+
+def signer(host: AuthHost, tmp_path: Path, clock: Clock) -> kd.SignIn:
+    return kd.SignIn(
+        kd.load_credentials(sign_in_file(tmp_path)),
+        client=httpx2.AsyncClient(transport=httpx2.MockTransport(host.handle)),
+        wall=clock.wall,
+    )
+
+
+async def test_the_admins_token_is_refreshed_a_minute_before_it_ends(
+    tmp_path: Path, clock: Clock
+) -> None:
+    host = AuthHost()
+    token = signer(host, tmp_path, clock)
+    assert await token() == "access-1"
+    clock.now = 839  # 61 s before the first token ends
+    assert await token() == "access-1"
+    assert host.asked == []
+    clock.now = 841
+    assert await token() == "access-2"
+    assert host.asked == [{"grant_type": "refresh_token", "refresh_token": "refresh-1"}]
+    assert await token() == "access-2"
+    clock.now = 841 + 900 - 59
+    assert await token() == "access-3"
+    assert host.asked[-1]["refresh_token"] == "refresh-2"
+    await token.aclose()
+
+
+async def test_an_ended_sign_in_stops_the_drill_without_echoing_the_token(
+    tmp_path: Path, clock: Clock
+) -> None:
+    host = AuthHost()
+    host.refuse = True
+    token = signer(host, tmp_path, clock)
+    clock.now = 900
+    with pytest.raises(kd.DrillError) as refused:
+        await token()
+    assert "invalid_grant" in str(refused.value)
+    assert "refresh-1" not in str(refused.value)
+    await token.aclose()
+
+
+async def test_the_control_plane_asks_the_token_source_for_every_call() -> None:
+    seen: list[str] = []
+    counter = iter(range(100))
+
+    async def source() -> str:
+        return f"token-{next(counter)}"
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers["Authorization"])
+        return httpx2.Response(200, json={})
+
+    api = kd.ControlPlane(
+        "https://api.test",
+        source,
+        client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    await api.enable(APP)
+    await api.enable(APP)
+    assert seen == ["Bearer token-0", "Bearer token-1"]
+
+
+async def test_the_credentials_file_wins_over_a_hand_run_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources: list[object] = []
+
+    class StoppedError(Exception):
+        pass
+
+    def stop(_base: str, token: object) -> None:
+        sources.append(token)
+        raise StoppedError
+
+    monkeypatch.setattr(kd, "ControlPlane", stop)
+    path = sign_in_file(tmp_path, expires_at=time.time() + 3600)
+    with pytest.raises(StoppedError):
+        await kd.main_async(ENVIRON | {kd.CREDENTIALS_FILE_ENV: str(path)})
+    with pytest.raises(StoppedError):
+        await kd.main_async(ENVIRON)
+    filed, by_hand = sources
+    assert isinstance(filed, kd.SignIn)
+    assert await filed() == "access-1"
+    await filed.aclose()
+    assert by_hand == "admin-token-value"
 
 
 async def test_the_control_plane_calls_and_never_shows_the_token() -> None:
@@ -519,6 +638,29 @@ def test_the_table_says_missing_rather_than_guess() -> None:
     assert "Longest an open stream survived: not seen" in text
     assert "Verdict: FAIL" in text
     assert "stream cut not seen" in text
+
+
+async def test_the_drills_line_for_the_nightly_page(world: World, clock: Clock) -> None:
+    world.denial = 1.8
+    report = await clock.run(drill(world, clock, runs=2).execute())
+    assert report.result() == ev.Result("drill", ev.OK, "2 runs per state, longest stream 2.5 s")
+    failed = kd.Report([]).result()
+    assert (failed.status, failed.reason) == (ev.FAIL, "awake: no runs (and 1 more)")
+
+
+def test_main_adds_the_drills_line_to_the_evidence_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "evidence.json"
+    for name in kd.ENV.values():
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SSC_DRILL_PROJECT", "ssc-c-one")
+    monkeypatch.setenv(ev.EVIDENCE_ENV, str(path))
+    assert kd.main() == 1
+    written = ev.read_file(path)
+    assert written.cell == "ssc-c-one"
+    assert [(r.proof, r.status) for r in written.results] == [("drill", ev.FAIL)]
+    assert "SSC_DRILL_API_URL" in written.results[0].reason
 
 
 def test_step_outcomes_other_than_done_fail() -> None:

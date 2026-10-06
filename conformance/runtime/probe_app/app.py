@@ -17,6 +17,11 @@ an app that ignores ``PORT`` is the failure this probes). Routes:
   ``/health``) and gateway (on its own ``/.ssc/logout``), keeping the headers and body start that
   show who answered, and direct connections into that cell's address range unless the range
   holds this app's own address.
+- ``/probe/deny-peer?project=&secret=&bucket=``: with this app's own identity, ask Secret Manager
+  for the latest version of a secret and Cloud Storage for one object name in a bucket of another
+  cell's project. Each answer's status and Google's reason, never a secret or an object.
+- ``/probe/datagw?url=&connection=``: each statement of ``DATAGW_MATRIX`` posted to the data
+  gateway at ``url`` as this app: the status and error code of each answer, never a row.
 - ``/probe/headers``: the request's headers, as received.
 - ``/probe/sse``: three server-sent events a second apart.
 """
@@ -55,6 +60,19 @@ PEER_CELL_HEADERS = (
     "via",
 )
 PEER_CELL_BODY = 256
+DENY_READ = 10.0
+DATAGW_TIMEOUT = 30.0
+# The statements of packages/ssc_datagw/tests/test_postgres.py MATRIX: none may reach the database.
+DATAGW_MATRIX = {
+    "set transaction read write": "SET TRANSACTION READ WRITE",
+    "temp table": "CREATE TEMP TABLE t AS SELECT 1 AS x",
+    "multi-statement": "SELECT 1; DELETE FROM reporting.orders",
+    "query_to_xml": (
+        "SELECT query_to_xml('DELETE FROM reporting.orders RETURNING 1', true, false, '')"
+    ),
+    "notify": "NOTIFY ssc",
+    "pg_terminate_backend": "SELECT pg_terminate_backend(pg_backend_pid())",
+}
 VIP_READ = 4096
 SENSITIVE = (
     "iam.serviceAccounts.actAs",
@@ -157,10 +175,11 @@ def _exchange(
     method: str = "GET",
     headers: dict[str, str] | None = None,
     body: bytes | None = None,
+    timeout: float = TIMEOUT,
 ) -> tuple[int, dict[str, str], bytes]:
     request = urllib.request.Request(url, data=body, method=method, headers=headers or {})  # noqa: S310
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             return response.status, _lower(response.headers.items()), response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, _lower(exc.headers.items() if exc.headers else []), exc.read()
@@ -176,8 +195,9 @@ def _http(
     method: str = "GET",
     headers: dict[str, str] | None = None,
     body: bytes | None = None,
+    timeout: float = TIMEOUT,
 ) -> tuple[int, bytes]:
-    status, _, data = _exchange(url, method=method, headers=headers, body=body)
+    status, _, data = _exchange(url, method=method, headers=headers, body=body, timeout=timeout)
     return status, data
 
 
@@ -320,6 +340,66 @@ def peer_cell(app_url: str, gateway_url: str, cidr: str) -> dict[str, object]:
     return {"range": cidr, "own": own, "own_in_range": own_in_range, "attempts": attempts}
 
 
+def _error_of(data: bytes) -> dict[str, object]:
+    """The ``error`` member of a JSON answer: Google's (``status``, ``message``) or the data
+    gateway's (``code``). Empty when there is none."""
+    try:
+        error = json.loads(data).get("error")
+    except ValueError, AttributeError:
+        return {}
+    return error if isinstance(error, dict) else {}
+
+
+def _ask(url: str, token: str) -> dict[str, object]:
+    """One call's status and Google's reason; the body of a call that succeeds is dropped."""
+    try:
+        status, data = _http(url, headers={"Authorization": f"Bearer {token}"}, timeout=DENY_READ)
+    except OSError as exc:
+        return {"status": None, "error": type(exc).__name__}
+    error = _error_of(data)
+    reason = f"{error.get('status', '')} {str(error.get('message', ''))[:200]}".strip()
+    return {"status": status, "reason": reason or ("allowed" if status == 200 else "")}  # noqa: PLR2004
+
+
+def deny_peer(project: str, secret: str, bucket: str) -> dict[str, object]:
+    try:
+        token = json.loads(_metadata("instance/service-accounts/default/token"))["access_token"]
+    except (OSError, ValueError, KeyError) as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    name = urllib.parse.quote(f"projects/{project}/secrets/{secret}/versions/latest", safe="/")
+    objects = f"https://storage.googleapis.com/storage/v1/b/{urllib.parse.quote(bucket, safe='')}/o"
+    return {
+        "secret": _ask(f"https://secretmanager.googleapis.com/v1/{name}:access", token),
+        "bucket": _ask(f"{objects}?maxResults=1&fields=items/name", token),
+    }
+
+
+def datagw(url: str, connection: str) -> dict[str, object]:
+    if not urllib.parse.urlsplit(url).hostname:
+        return {"error": "no url"}
+    try:
+        token = _metadata(f"instance/service-accounts/default/identity?audience={url}&format=full")
+    except OSError as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    endpoint = urllib.parse.urljoin(url, f"/v1/connections/{urllib.parse.quote(connection)}/query")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    attempts: dict[str, object] = {}
+    for name, sql in DATAGW_MATRIX.items():
+        try:
+            status, data = _http(
+                endpoint,
+                method="POST",
+                headers=headers,
+                body=json.dumps({"sql": sql}).encode(),
+                timeout=DATAGW_TIMEOUT,
+            )
+        except OSError as exc:
+            attempts[name] = {"status": None, "error": type(exc).__name__}
+            continue
+        attempts[name] = {"status": status, "code": _error_of(data).get("code")}
+    return {"attempts": attempts}
+
+
 def mounts() -> dict[str, object]:
     found: list[list[str]] = []
     try:
@@ -349,6 +429,14 @@ def probe(path: str, query: dict[str, list[str]], headers: dict[str, str]) -> ob
         "/probe/peer": lambda: peer(query.get("url", [""])[0]),
         "/probe/peer-cell": lambda: peer_cell(
             query.get("app", [""])[0], query.get("gateway", [""])[0], query.get("range", [""])[0]
+        ),
+        "/probe/deny-peer": lambda: deny_peer(
+            query.get("project", [""])[0],
+            query.get("secret", [""])[0],
+            query.get("bucket", [""])[0],
+        ),
+        "/probe/datagw": lambda: datagw(
+            query.get("url", [""])[0], query.get("connection", [""])[0]
         ),
         "/probe/headers": lambda: headers,
     }
