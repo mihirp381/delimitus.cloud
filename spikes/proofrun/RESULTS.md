@@ -16,11 +16,11 @@ The staging proof run for the architecture of 2026-10-03 (architecture document,
 | T3 | The 14 runtime probes through the new path, gateway at min 0 | All pass; nightly schedule restored against cell 1; the app's `run.app` URL accepted as the ID-token audience | `t3 nightly`, `t3 public` | **PASS** 2026-10-05: nightly on cell 2 14/14 (snapshot drift 23 s), on cell 1 14/14 (22 s), public path 14/14, gateway minimum 0. Fixes a40f6c3, e97ef49 (the peer-cell probe waits 240 s); the schedule is back on against cell 1 (2874dab). |
 | T4 | `cannot_reach_peer_cell` from cell 1 against cell 2 | Network refusal before any IAM refusal on the app; the gateway answers only through its load balancer | `t4` | **PASS** 2026-10-05: app and gateway each refused twice by the network and once by ingress (404 on the Google VIP); 4 TCP attempts to cell 2's addresses blocked. Name lookups of `run.app` hosts inside a cell take about 22 s to fail. |
 | T5 | `db-f1-micro`, ten app databases, cross-connect, restore | Instance under 15 minutes; each database under 1 minute; cross-connect refused; restore written up | `t5 ops`, `t5 cross` | **PASS** 2026-10-05: instance 8.0 min; ten databases, slowest 0.5 s; cross-connect refused 9/9 (`42501 permission denied for database`). First cross run failed 0/9 on the certificate name, not on isolation (fixed d89ea6b). Finding: every app role can connect to the `postgres` maintenance database (Postgres's default CONNECT for PUBLIC); to be revoked in SSC-040. |
-| T6 | NAT for the data gateway's position; Envoy CONNECT proxy on the `e2-micro` | Outbound calls leave from the reserved IP; unlisted hosts refused | `t6 nat`, `t6 proxy` || Pass 2. |
+| T6 | NAT for the data gateway's position; Envoy CONNECT proxy on the `e2-micro` | Outbound calls leave from the reserved IP; unlisted hosts refused | `t6 nat`, `t6 proxy`, `t6 egress` | Proxy **PASS** 2026-10-06 12:46 UTC on the real proxy (`pegress`): the listed host answered 200 and left from 35.222.140.145, an unlisted host got 403, no credential got 407. NAT leg **FAIL** (12:52, third try): the stand-in's call to 1.1.1.1 timed out. The NAT log shows the flow given the reserved IP, so the call left; no answer came back. The gateway service works through the same NAT. Change: below. |
 | T7 | Cold start, ten samples a series, 26-minute gap: static, API, Streamlit; gateway cold and warm | Medians reported; none worse than the bake-off (4.5 s, 8 s, 22 s) plus the gateway's start; Direct VPC egress delay measured | `t7 run`, `t7 report` | **FAIL** 2026-10-06 on static cold only. Gateway start median 8.56 s (10). Cold, gateway and app both asleep: static 15.40 s against 13.06, API 16.28 s against 16.56, Streamlit 20.47 s against 30.56. Warm gateway, app asleep: static 6.24 s, API 6.05 s, Streamlit 11.98 s, all under their limits. All 60 requests answered 200. Direct VPC egress delay median 0.02 s (20). Run 2026-10-05 20:56 to 2026-10-06 05:45 UTC. Change: below. |
 | T8 | Kill drill against an open WebSocket | Under 10 s end to end | `t8` | **FAIL** 2026-10-06 06:05 UTC on `papi`, cell 1 cold: end to end 12.61 s. The front door refused after 2.55 s and the WebSocket was cut after 3.19 s; the overrun is the run's last steps (`gateway_deny` done 5.56 s, `scale_to_zero` done 12.49 s, `pause_timers` 12.61 s); every step `done`, first attempt. A second drill 48 s later, from the same operator login, passed at 9.45 s (`gateway_deny` 2.42 s, `scale_to_zero` 9.32 s). No query or tunnel leg (no data gateway, SSC-054). Undone with `ssc enable papi`. See written changes. |
-| T9 | Streamlit open 24 hours, instance-billed and request-billed; the bill | Each within 20 % of $0.0684 and $0.0909 an hour; the 60-minute drop and the reload documented | `t9 hold`, `t9 report`, `t9 bill` || Pass 2. |
-| T10 | Gateway on gen1 at 0.5 vCPU, same probes | Pass or fail recorded; decides the gateway's cost per session hour | `t10` || Pass 2. |
+| T9 | Streamlit open 24 hours, instance-billed and request-billed; the bill | Each within 20 % of $0.0684 and $0.0909 an hour; the 60-minute drop and the reload documented | `t9 hold`, `t9 report`, `t9 bill` | **Blocked** 2026-10-06. Streamlit refuses its own stream behind the gateway (403, "disallowed Origin or Host header"), so no session can be held. Every page load works; the live app never connects. Change: below. Not started. |
+| T10 | Gateway on gen1 at 0.5 vCPU, same probes | Pass or fail recorded; decides the gateway's cost per session hour | `t10` | **PASS** 2026-10-06 06:15 UTC: 14/14 probes (peer cell skipped, as on one cell), SSE 1.99 s, WebSocket 5/5 ticks, gateway gen1 0.5 vCPU at concurrency 1. Busy hour $0.0477 against gen2 1 vCPU $0.0909 (48 % less), but at concurrency 1 each open session holds its own gateway instance. Gateway put back from the stack after. |
 | T11 | Deny probe from a cell 1 app against cell 2's secret and bucket | Refused by IAM, not only by the network | `t11` | **PASS** 2026-10-05: the secret read refused (403 `secretmanager.versions.access`), the bucket listing refused (403 `storage.objects.list`). Operator half: the deny probe refused and all ten policy commands refused for the founder. |
 | T12 | Delete cell 2 and watch the billing slot | Linked count back to 4 the same day; recorded here and in SSC-089 | `t12` || Pass 2. |
 
@@ -113,6 +113,28 @@ A failed row goes back to the architecture as a change with its cost. The founde
 - **Recommended:** 1, then three drills on the new control image. The arithmetic gives about 2.5 + 0.7 + 6.1 + 0.1 = 9.4 s, which is the second drill's figure, so the margin stays under 1 s. If a drill still goes over, 3 or 4 go to the founder with the figures.
 - **Chosen 2026-10-06 (lead, under the founder's approval of all actions the same day):** option 1, then three drills. The result goes in pass 2.
 
+## Written changes (pass 2)
+
+### T9: Streamlit refuses its stream behind the gateway
+
+- **Seen.** Every `/_stcore/stream` open got 403 from Streamlit itself, not from the gateway. Its log says "Rejecting WebSocket connection with disallowed Origin or Host header": Origin is the app's public host, Host is its `run.app` host. That is decision 023 working as written, since Cloud Run routes by Host and the public host goes in `X-Forwarded-Host`. Page loads and `/_stcore/health` answer 200 with the same cookie.
+- **Reproduced locally** with Streamlit 1.64.0 and the same two headers: refused by default, accepted with `STREAMLIT_SERVER_CORS_ALLOWED_ORIGINS=https://<app host>`, accepted with `STREAMLIT_SERVER_ENABLE_CORS=false`.
+- **What it affects:** every Streamlit app on the platform. The page shows, then hangs on "Connecting". T7's Streamlit figures stay valid, since they time the first page load. Other WebSocket apps pass (T10). Any other framework that checks Origin against Host will fail the same way.
+- **Options.**
+  1. **The agent sets `STREAMLIT_SERVER_CORS_ALLOWED_ORIGINS` to the environment's public host on every service (recommended).** The host is known at deploy, so this is one variable in the agent. Streamlit keeps its own check, and other apps ignore the variable. Cost: $0.
+  2. Set `STREAMLIT_SERVER_ENABLE_CORS=false`. Simpler, but it turns the check off for any origin.
+  3. The gateway forwards the public host as Host. Not possible: Cloud Run would not route it.
+- **Then:** apply 1 on cell 1, open pstream in a browser, run the `instance_count` hold (20 min), then T9.
+
+### T6: NAT for the data gateway's position
+
+- **Seen.** Three runs of the stand-in job timed out calling 1.1.1.1:443 after 10 s. With NAT logging on, the flow 10.20.4.18 → 1.1.1.1:443 was given the reserved IP, so it left the cell. The gateway service (10.20.4.16 → the auth host) and the proxy VM work through the same NAT. Settings: NAT on the gateway subnet only, manual IP, firewall `egress-data` open to all for the `ssc-data` tag. The stand-in's target is fixed to 1.1.1.1, so a second target was not tried.
+- **What it affects:** only the data gateway (SSC-050), which is not built yet. The proxy path that apps use passed.
+- **Options.**
+  1. **Give the stand-in a target flag and run it against two other hosts (recommended).** If they answer, the fault is 1.1.1.1's answer to this source, not the cell. About 1 hour, almost no cost.
+  2. Leave it to SSC-050's own live check, since the gateway service already shows the NAT works for this subnet.
+- **State:** NAT logging turned off again, the stand-in job deleted.
+
 ## Restore drill (T5)
 
 - **Clone:** `ssc-cell` cloned with `t5 ops --restore-instance`; 28.5 min (17:43 to 18:11 UTC on 2026-10-05).
@@ -139,13 +161,13 @@ These are the checks earlier tickets left to this run, one line each with where 
 | Agent: max 1 instance, concurrency 200, timeout 300 s | App logs, check 6 | |
 | Usage: `sscCellAgentUsage` alone is enough, no `roles/monitoring.*` | `infra/README.md`, App usage, check 1 | |
 | Usage: data within 15 minutes; delay seen | App usage, check 2; kit `instances --metric billable_instance_time` | |
-| Usage: `instance_count` stays `active` during an idle WebSocket | App usage, check 3; kit `t9 hold --hours 0.34`, then `instances` | |
+| Usage: `instance_count` stays `active` during an idle WebSocket | App usage, check 3; kit `t9 hold --hours 0.34`, then `instances` | Blocked by the Streamlit refusal (T9 change). First try had an expired cookie |
 | Worker pool on `launch_stage="BETA"` applies and runs | `docs/runbooks/ssc-064-control-plane.md` steps 4 and 9, then 11a; `infra/ssc_infra/control.py` `worker_pool` | |
-| Gateway reaches the auth host from zero, through the bypass rule and NAT | SSC-064 runbook, 11d | |
-| Relay TLS to `run.app` with the image's CA bundle; WebSockets and SSE through the relay | `infra/README.md`, Gateway, Removing access, check 6; kit `t10`'s WebSocket leg | |
+| Gateway reaches the auth host from zero, through the bypass rule and NAT | SSC-064 runbook, 11d | NAT: PASS, the NAT log shows 10.20.4.16 → the auth host on the reserved IP. Bypass rule not read |
+| Relay TLS to `run.app` with the image's CA bundle; WebSockets and SSE through the relay | `infra/README.md`, Gateway, Removing access, check 6; kit `t10`'s WebSocket leg | PASS (T10): SSE 1.99 s, WebSocket 5/5. Streamlit's stream refused by Streamlit (T9 change) |
 | Removing access: grant, open stream, group, gateway at zero | Gateway, Removing access, checks 1, 3, 4, 5 | |
-| Compile time, grant change or command to `latest.json` | Removing access, check 2; Kill switch, check 3; kit `t8` (`latest.json changed`) | |
-| Kill drill: cold gateway, awake gateway, full stop under 60 s, enable | `infra/README.md`, Kill switch, checks 1 to 5; kit `t8`, `instances` | |
+| Compile time, grant change or command to `latest.json` | Removing access, check 2; Kill switch, check 3; kit `t8` (`latest.json changed`) | Command to `latest.json`: 3.37 s (T8 second drill). Grant change not timed |
+| Kill drill: cold gateway, awake gateway, full stop under 60 s, enable | `infra/README.md`, Kill switch, checks 1 to 5; kit `t8`, `instances` | Partly: cold 12.61 s, awake 9.45 s (instances 0 at 9.32 s), `ssc enable` worked. Three drills on the new control image to come |
 | Anchors written to the cell bucket, verified, reanchored | `infra/README.md`, Audit anchors, checks 1, 2, 4 | |
 | Only the worker writes anchors; no default account holds `roles/editor` | Audit anchors, check 3 | |
 | Cell agent ingress under `run.allowedIngress` | `infra/README.md`, Organisation policies, and "Policies, live (SSC-086 T11)"; `t3 nightly` reaching the agent through its host | |
