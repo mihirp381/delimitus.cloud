@@ -7,7 +7,8 @@ FROM envoyproxy/envoy:v1.39.0@sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c368
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=envoy /usr/local/bin/envoy /usr/local/bin/envoy
-ENV UV_LINK_MODE=copy \
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     PATH=/app/.venv/bin:$PATH
