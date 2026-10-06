@@ -239,7 +239,15 @@ A secret version added later reaches a service only with a new revision. To roll
 ## 10. WorkOS and the two orgs **[real]**
 
 1. In the WorkOS production dashboard, add `https://auth.delimitus.com/callback` as a redirect URI.
-2. With the proxy still running, create each org as `ssc_app`, with the founder keyed under the directory. Then record its connection. Run this once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`):
+2. With the proxy still running, create each org as `ssc_app`, with the founder keyed under the directory. Then record its connection. Run this once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`).
+
+   First take the founder's `idp_id` from WorkOS itself, not from the identity provider's console. If it does not match, the first directory sync deactivates the founder and the org has no admin:
+
+   ```sh
+   read -rs WORKOS_KEY; curl -s -H "Authorization: Bearer $WORKOS_KEY" \
+     "https://api.workos.com/directory_users?directory=<directory_01…>&limit=100" \
+     | jq -r '.data[] | [.idp_id, .email] | @tsv'; unset WORKOS_KEY
+   ```
 
    ```sh
    export SSC_DATABASE_DSN="postgresql://ssc_app:$APP_PW@127.0.0.1:5433/ssc"
