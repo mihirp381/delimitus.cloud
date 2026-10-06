@@ -1,0 +1,18 @@
+{
+  "cell": [
+    "ssc-build",
+    "ssc-cell-agent",
+    "ssc-deny-probe",
+    "ssc-gateway",
+    "ssc-proxy",
+    "ssc-secret-intake"
+  ],
+  "cell_data": "ssc-data",
+  "folder": [
+    "ssc-auth",
+    "ssc-control",
+    "ssc-control-migrate",
+    "ssc-control-worker"
+  ],
+  "permission": "secretmanager.googleapis.com/versions.access"
+}

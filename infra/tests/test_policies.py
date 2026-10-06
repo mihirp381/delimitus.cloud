@@ -3,11 +3,12 @@ apply; these plant one violation per policy in a full cell and show the same tab
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from mockcloud import FOLDERS, PUBLIC_TAG, Declared, as_export, run
+from mockcloud import FOLDERS, PUBLIC_TAG, Declared, as_export, one, run
 from ssc_infra import cell_diff, naming, policies
 from ssc_infra.run import CommandError
 
@@ -21,6 +22,8 @@ FULL = {
     "warm": "true",
     "gateway_min": "1",
 }
+PLATFORM_FOLDER = "333333333333"
+EXPECTED = Path(__file__).resolve().parents[2] / "conformance" / "ssc_conformance"
 A, B = "testcell11", "testcell12"
 OTHER_CELL = naming.cell_project(B)
 PLATFORM = {"stage_folder_ids": FOLDERS, "cell_policies": policies.summaries(RULES)}
@@ -372,3 +375,79 @@ def test_a_cell_outside_the_stage_folders_or_with_its_own_policy_is_an_override(
         "the platform stack exports no cell policies",
         "project in folder 222222222222, not a stage folder",
     ]
+
+
+@pytest.fixture(scope="module")
+def platform() -> list[Declared]:
+    return run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER})
+
+
+def _account(principal: str) -> str:
+    return principal.rsplit("/", 1)[-1].split("@")[0]
+
+
+def declared_deny(cell: list[Declared], platform: list[Declared]) -> dict[str, Any]:
+    """What the stacks deny, in the shape the nightly expects (SSC-056): the permission, the
+    cell's accounts, the data account and the control-plane accounts, by account id."""
+    first, second = (
+        r["denyRule"] for r in one(cell, "gcp:iam/denyPolicy:DenyPolicy").inputs["rules"]
+    )
+    folder = one(platform, "gcp:iam/denyPolicy:DenyPolicy").inputs["rules"][0]["denyRule"]
+    permissions = {*first["deniedPermissions"], *second["deniedPermissions"]}
+    permissions |= set(folder["deniedPermissions"])
+    (permission,) = permissions
+    (data,) = second["deniedPrincipals"]
+    return {
+        "cell": sorted(_account(p) for p in first["deniedPrincipals"]),
+        "cell_data": _account(data),
+        "folder": sorted({_account(p) for p in folder["deniedPrincipals"]}),
+        "permission": permission,
+    }
+
+
+def test_the_expected_deny_is_what_the_stacks_declare(
+    full: list[Declared], platform: list[Declared]
+) -> None:
+    """The nightly checks each cell's deny policies against this file (SSC-056), so the file is
+    the stacks' own declaration and a change to either shows here first."""
+    expected = json.loads((EXPECTED / "expected_deny.json").read_text())
+    assert expected == declared_deny(full, platform)
+
+
+def _spec(rules: list[dict[str, Any]]) -> dict[str, Any]:
+    """One constraint's declared rules as the nightly's expected form: the mode, its values,
+    its parameters and whether the public-invoker tag turns it off."""
+    main, *exception = rules
+    tagged = bool(exception)
+    assert exception == [] or (exception[0]["enforce"] == "FALSE" and "condition" in exception[0])
+    parameters = {
+        name: sorted(values) for name, values in json.loads(main.get("parameters") or "{}").items()
+    }
+    if main.get("denyAll") == "TRUE":
+        mode, values = "deny_all", []
+    elif "values" in main:
+        mode, values = "allow", sorted(main["values"]["allowedValues"])
+    else:
+        assert main["enforce"] == "TRUE"
+        mode, values = "enforce", []
+    return {"mode": mode, "values": values, "parameters": parameters, "tag_exception": tagged}
+
+
+def declared_org_policies(platform: list[Declared]) -> dict[str, Any]:
+    cells = one(platform, "gcp:organizations/folder:Folder", "ssc-cells").outputs["folderId"]
+    found = {
+        d.inputs["name"].rsplit("/", 1)[-1]: _spec(d.inputs["spec"]["rules"])
+        for d in platform
+        if d.type == "gcp:orgpolicy/policy:Policy" and d.inputs["parent"] == f"folders/{cells}"
+    }
+    return json.loads(json.dumps(found).replace(naming.OPERATOR, "<operator>"))
+
+
+def test_the_expected_org_policies_are_what_the_platform_stack_declares(
+    platform: list[Declared],
+) -> None:
+    """The nightly lists the folder's policies and compares them with this file (SSC-056); the
+    file is the platform stack's own declaration, with the operator as ``<operator>``."""
+    expected = json.loads((EXPECTED / "expected_org_policies.json").read_text())
+    assert expected == declared_org_policies(platform)
+    assert sorted(expected) == sorted(rule.constraint for rule in RULES)
