@@ -40,7 +40,10 @@ def seen_address(body: bytes) -> str | None:
 
 
 def ask(text: str, timeout: float = TIMEOUT, port: int = 443) -> dict[str, object]:
-    host, ip, path = target(text)
+    try:
+        host, ip, path = target(text)
+    except ValueError as exc:
+        return {"stage": "target", "error": str(exc)[:200]}
     report: dict[str, object] = {"stage": "connect"}
     started = time.monotonic()
     try:

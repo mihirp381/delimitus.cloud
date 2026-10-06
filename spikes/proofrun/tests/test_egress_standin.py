@@ -34,6 +34,10 @@ def test_target_parts() -> None:
             probe.target(bad)
 
 
+def test_a_bad_target_is_reported_not_raised() -> None:
+    assert probe.ask("no-address")["stage"] == "target"
+
+
 def test_seen_address_reads_cloudflare_trace_and_bare_answers() -> None:
     assert probe.seen_address(b"fl=1\nh=1.1.1.1\nip=34.1.2.3\nts=1\n") == "34.1.2.3"
     assert probe.seen_address(b"34.1.2.3\n") == "34.1.2.3"
