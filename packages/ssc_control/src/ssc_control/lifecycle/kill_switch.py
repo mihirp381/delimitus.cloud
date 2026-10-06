@@ -11,8 +11,9 @@ transaction locks the run's row and checks ``steps`` is still what it read. The 
 1. ``gateway_deny`` asks for the next snapshot version, which carries the new status. It is
    ``done`` once the org's cell has that version (``SnapshotPort.confirmed``: its
    ``latest.json`` names it, which an awake gateway, or one starting from zero, reads before
-   it decides) and ``unconfirmed`` after ``confirm_within``; the job re-defers its own poll
-   instead of holding a worker.
+   it decides) and ``unconfirmed`` after ``confirm_within``. The job polls within itself, every
+   ``confirm_every``, holding one worker slot but no transaction while it waits: a job
+   scheduled for later waits for the queue's next poll, which is far slower than the deny.
 2. ``datagw_suspend`` is the same version: the data gateway (SSC-050) reads it on demand, so it
    refuses each of the app's connections with ``APP_NOT_ACTIVE`` and its kill watch ends the
    queries already running; the version confirms it.
@@ -32,9 +33,10 @@ and the time since the command: the last step's is the drill's.
 down), so no run stays ``running`` for ever and blocks ``enable``.
 """
 
+import asyncio
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -90,10 +92,12 @@ STEP_ERROR: Final = "STEP_ERROR"
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Timings:
     confirm_within: timedelta = timedelta(seconds=10)
-    confirm_every: timedelta = timedelta(seconds=1)
+    confirm_every: timedelta = timedelta(milliseconds=250)
     backoff: timedelta = timedelta(seconds=2)
     """Before the second try; doubled for each try after it."""
     max_attempts: int = 5
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    """Seconds to wait between two checks of the gateway's version; tests replace it."""
 
 
 TIMINGS: Final = Timings()
@@ -369,7 +373,7 @@ class _Job:
     def tx(self) -> AbstractAsyncContextManager[AsyncConnection]:
         return bound_org(self.ports.engine, self.org_id)
 
-    async def defer(self, run: _Run, *, env_id: str | None, at: datetime | None = None) -> None:
+    async def defer(self, run: _Run, *, env_id: str | None) -> None:
         async with self.tx() as conn:
             await _lock(conn, self.org_id, run)
             await defer_kill_switch(
@@ -378,7 +382,6 @@ class _Job:
                 app_id=run.app_id,
                 run_id=run.id,
                 env_id=env_id,
-                schedule_at=at,
             )
 
 
@@ -468,18 +471,22 @@ async def _work(job: _Job, run: _Run, step: Step) -> str | None:
 
 async def _confirm(job: _Job, run: _Run, step: Step) -> str | None:
     """Done once the org's cell has the step's snapshot version. Only the gateway waits for it,
-    polling until ``confirm_by``; the steps after it take the answer as it is."""
+    checking every ``confirm_every`` until ``confirm_by`` within this job, outside any
+    transaction; the steps after it take the answer as it is."""
     version = step.snapshot_version
-    confirmed = version is not None and await job.ports.snapshot.confirmed(job.org_id, version)
+    while True:
+        confirmed = version is not None and await job.ports.snapshot.confirmed(job.org_id, version)
+        if confirmed or step.confirm_by is None:
+            break
+        async with job.tx() as conn:  # the database's clock, which set ``confirm_by``; no lock
+            left = (step.confirm_by - await _now(conn)).total_seconds()
+        if left <= 0:
+            break
+        await job.timings.sleep(min(job.timings.confirm_every.total_seconds(), left))
     async with job.tx() as conn:
         await _lock(conn, job.org_id, run)
-        now = await _now(conn)
-        deadline = step.confirm_by or now
-        if confirmed or now >= deadline:
-            done = step.finish(now, "done" if confirmed else "unconfirmed")
-            return await _record(conn, job.org_id, run, done)
-    await job.defer(run, env_id=job.held_env, at=min(now + job.timings.confirm_every, deadline))
-    return RUNNING
+        done = step.finish(await _now(conn), "done" if confirmed else "unconfirmed")
+        return await _record(conn, job.org_id, run, done)
 
 
 async def _scale(job: _Job, run: _Run, step: Step) -> str | None:
