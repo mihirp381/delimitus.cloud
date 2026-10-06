@@ -47,6 +47,7 @@ A failed row goes back to the architecture as a change with its cost. The founde
   2. Start the certificate first in a new cell's apply, so it runs alongside the 78-minute DNS sinkhole. Cost: $0, a reorder in `cell.py` for new cells only. Worth doing with option 1 until SSC-091 shortens the sinkhole.
   3. A certificate shared across cells: refused by rule 1.
 - **Third figure:** the next new cell (SSC-091's measurement).
+- **Chosen 2026-10-06 (founder):** options 1 and 2. The certificate is reported beside onboarding, a cell is handed over only once it is active (up to 120 minutes), and a new cell's apply starts the certificate first (SSC-091).
 
 ### T7: cold start through the gateway
 
@@ -96,6 +97,7 @@ A failed row goes back to the architecture as a change with its cost. The founde
   - 3 only if the gateway still takes over 6 s.
   - 4 and 6 only if the new figures still fail.
   - 5 stays the customer's paid choice.
+- **Chosen 2026-10-06 (founder):** options 1 and 2, then one cold series on cell 1. The result goes in pass 2.
 
 ## Restore drill (T5)
 
