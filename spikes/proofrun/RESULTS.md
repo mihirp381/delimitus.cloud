@@ -135,6 +135,30 @@ A failed row goes back to the architecture as a change with its cost. The founde
   2. Leave it to SSC-050's own live check, since the gateway service already shows the NAT works for this subnet.
 - **State:** NAT logging turned off again, the stand-in job deleted.
 
+## Cost reconciliation (SSC-096), first run, part 1
+
+Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. The October bill can only be exported after 5 November (runbook step 1), and T9 has not run. So this part checks the model's own sums and nothing else.
+
+- **The model doesn't add up to its own stated figures (section 7):**
+
+  | Line | Stated | Parts give |
+  |---|---|---|
+  | Empty cell | $23.00 | $24.25 |
+  | Cell with a database | $36.00 | $37.25 |
+  | Full cell | $43.00 | $44.25 |
+  | Ten customers, cells fixed (low) | $367 | $402 |
+  | Ten customers, session apps (low / high) | $160 / $320 | $120.38 / $240.77 |
+  | Ten customers, rare apps (high) | $42 | $68.93 |
+  | Platform prod | $75 | $68.67 |
+
+  - The cell lines are each $1.25 off. The stated sums imply a $17 load balancer, and the model has $18.25.
+  - The empty cell is $0.75 under A7's $25 on the model.
+- **Not changed.** No stated figure is changed to make section 7 clean (runbook step 5). They change when a bill shows the right figure.
+- **Waits for:**
+  - The October bill for `ssc-c-proofcell01`, `ssc-c-proofcell02` and `ssc-control-prod`. Re-run with `cells.csv` from the stacks, and add cell 1's `database` and `egress` rows.
+  - T1 cost: two whole billing days of cell 2.
+  - T9's `t9 bill`, which checks $0.0684 and $0.0909 an hour. T9 is blocked by the Streamlit change above.
+
 ## Restore drill (T5)
 
 - **Clone:** `ssc-cell` cloned with `t5 ops --restore-instance`; 28.5 min (17:43 to 18:11 UTC on 2026-10-05).
