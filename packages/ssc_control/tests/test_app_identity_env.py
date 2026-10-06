@@ -106,6 +106,7 @@ def test_a_note_the_gateway_signs_verifies_with_the_env_desired_for_gives(env: s
     spec = spec_of(env, app_identity_from_env(SETTINGS))
     plain = dict(spec.env)
     assert plain[app_env.APP_ORIGIN] == f"https://{HOSTS[env]}"
+    assert plain[app_env.STREAMLIT_ALLOWED_ORIGINS] == plain[app_env.APP_ORIGIN]
     assert plain[app_env.IDENTITY_KEYS_URL].startswith("data:application/json;base64,")
     assert not IDENTITY_NAMES & set(spec.secrets)
     verifier = IdentityVerifier(
@@ -139,6 +140,7 @@ def test_an_absent_setting_leaves_its_value_out(settings: dict[str, str], names:
     assert (identity is None) == (not settings)
     plain = dict(spec_of("prod", identity).env)
     assert IDENTITY_NAMES & set(plain) == names
+    assert (app_env.STREAMLIT_ALLOWED_ORIGINS in plain) == (app_env.APP_ORIGIN in names)
     assert {app_env.PORT, app_env.HOME} <= set(plain)
 
 

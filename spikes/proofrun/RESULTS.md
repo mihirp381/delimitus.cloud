@@ -125,6 +125,7 @@ A failed row goes back to the architecture as a change with its cost. The founde
   2. Set `STREAMLIT_SERVER_ENABLE_CORS=false`. Simpler, but it turns the check off for any origin.
   3. The gateway forwards the public host as Host. Not possible: Cloud Run would not route it.
 - **Then:** apply 1 on cell 1, open pstream in a browser, run the `instance_count` hold (20 min), then T9.
+- **Chosen 2026-10-06 (founder):** option 1. The value goes in the control plane's spec, beside `SSC_APP_ORIGIN` (`identity_env`), and the agent sets it on the service as usual. Added by the agent alone, it would differ from the spec's fingerprint and redeploy on every pass. Every environment gets one new revision when the new control image rolls out, which waits for the T7 re-run to end.
 
 ### T6: NAT for the data gateway's position
 

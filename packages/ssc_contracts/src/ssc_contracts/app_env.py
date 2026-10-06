@@ -38,6 +38,11 @@ DATABASE_CA_PATH: Final = "/etc/ssc/db-ca.crt"
 APP_ORIGIN: Final = "SSC_APP_ORIGIN"
 """The app's exact origin, ``https://<host>`` with no path: the identity note's audience."""
 
+STREAMLIT_ALLOWED_ORIGINS: Final = "STREAMLIT_SERVER_CORS_ALLOWED_ORIGINS"
+"""Set to ``APP_ORIGIN`` for every app. Behind the gateway an app sees its ``run.app`` host as
+``Host``, so Streamlit, which checks a WebSocket's ``Origin`` against ``Host``, refuses its own
+stream unless the origin is listed (SSC-086 T9). Other apps ignore it."""
+
 IDENTITY_KEYS_URL: Final = "SSC_IDENTITY_KEYS_URL"
 """The cell's JWKS that verifies identity notes, inline as a ``data:`` URL (no internet needed)."""
 

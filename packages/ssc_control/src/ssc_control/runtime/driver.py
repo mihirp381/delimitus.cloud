@@ -84,14 +84,17 @@ class AppIdentity:
 
 def identity_env(identity: AppIdentity | None, slug: str | None, env: EnvName) -> dict[str, str]:
     """``SSC_IDENTITY_KEYS_URL`` and ``SSC_APP_ORIGIN``, the identity note's keys and audience.
-    No origin for a slug stored before the host rule refused it."""
+    The origin is also Streamlit's allowed origin (``app_env.STREAMLIT_ALLOWED_ORIGINS``). No
+    origin for a slug stored before the host rule refused it."""
     if identity is None:
         return {}
     plain: dict[str, str] = {}
     if identity.keys_url:
         plain[app_env.IDENTITY_KEYS_URL] = identity.keys_url
     if identity.cell_label and slug and slug_problem(slug) is None:
-        plain[app_env.APP_ORIGIN] = app_origin(slug, env, identity.cell_label, identity.apps_domain)
+        origin = app_origin(slug, env, identity.cell_label, identity.apps_domain)
+        plain[app_env.APP_ORIGIN] = origin
+        plain[app_env.STREAMLIT_ALLOWED_ORIGINS] = origin
     return plain
 
 
