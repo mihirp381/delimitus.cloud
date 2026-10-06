@@ -167,6 +167,11 @@ def subject_problem(idp_id: str) -> str | None:
     return None
 
 
+def is_member(person: DirectoryPerson) -> bool:
+    """Not a guest, and an ``idp_id`` that can key a person: who sync keeps as an org member."""
+    return not person.guest and subject_problem(person.idp_id) is None
+
+
 def check_key_claim(claim: str) -> str:
     """``claim`` if it may key a person; :class:`ValueError` for an addressing claim."""
     if claim.strip().lower() in FORBIDDEN_SUBJECT_CLAIMS:

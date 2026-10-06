@@ -5,6 +5,12 @@ first-admin check: an active admin must already be linked under the directory's 
 is created with ``issuer = workos:<directory id>`` and the founder's directory ``idp_id``), so
 the first sync finds the founder instead of creating a second account. ``dsync.deleted`` freezes the
 connection (no mass deprovisioning); an operator unfreezes by connecting again.
+
+:func:`check_founder` is the same check made against WorkOS itself, before sync starts: sync keys
+people by the directory's ``idp_id`` under both join rules and deactivates a linked person it
+cannot find, so a founder keyed any other way leaves the org with no active admin at the first
+full sync. ``connect`` stays a database transaction (the dev stack and tests use it), so the
+operator commands call ``check_founder`` first.
 """
 
 from collections.abc import Sequence
@@ -17,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor, NewEvent, append_event
-from ssc_control.identity.rules import JoinRule
+from ssc_control.identity.rules import DirectoryPerson, JoinRule, ProfileError, is_member
+from ssc_control.identity.workos import WorkOSClient
 
 ISSUER_PREFIX: Final = "workos:"
 FrozenReason = Literal["directory_deleted", "operator"]
@@ -81,10 +88,34 @@ _FOUNDER_LINKED = text(
     "on u.org_id = l.org_id and u.id = l.user_id "
     "where l.org_id = :org and l.issuer = :issuer and u.role = 'admin' and u.status = 'active'"
 )
+_FOUNDERS = text(
+    "select u.id, l.subject, u.email from ssc.identity_link l join ssc.user_account u "
+    "on u.org_id = l.org_id and u.id = l.user_id "
+    "where l.org_id = :org and l.issuer = :issuer and u.role = 'admin' and u.status = 'active' "
+    "order by u.id"
+)
 
 
 class ConnectError(ValueError):
     """The connection cannot be made as asked."""
+
+
+@dataclass(frozen=True, slots=True)
+class FounderResult:
+    """One linked admin against the directory: ``problem`` is None when sync will keep them."""
+
+    user_id: str
+    subject: str
+    problem: str | None
+
+    @property
+    def ok(self) -> bool:
+        return self.problem is None
+
+    @property
+    def line(self) -> str:
+        verdict = "ok" if self.problem is None else f"REFUSED: {self.problem}"
+        return f"admin {self.user_id} (subject {self.subject}): {verdict}"
 
 
 def _row(row: Sequence[object]) -> DirectoryConnection:
@@ -108,6 +139,80 @@ async def load(
     stmt = _LOAD_FOR_UPDATE if for_update else _LOAD
     row = (await conn.execute(stmt, {"org": org_id})).one_or_none()
     return None if row is None else _row(tuple(row))
+
+
+def _founder_problem(
+    subject: str, email: str, people: Sequence[DirectoryPerson], join_rule: JoinRule
+) -> str | None:
+    """Why sync would not keep the admin keyed ``subject``, or None. Sync joins by ``idp_id``
+    under both rules; ``email`` also needs the address to name exactly one active member."""
+    members = [p for p in people if p.active and is_member(p)]
+    by_subject = next((p for p in members if p.idp_id == subject), None)
+    if join_rule == "email":
+        holders = [p for p in members if p.email == email.lower()]
+        if len(holders) > 1:
+            problem = f"{len(holders)} active directory users have this admin's email"
+        elif holders and holders[0].idp_id != subject:
+            problem = (
+                f"email matches directory user {holders[0].id} whose idp_id is "
+                f"{holders[0].idp_id}, not the linked subject {subject}"
+            )
+        elif not holders:
+            problem = "no active directory user has this admin's email"
+        else:
+            return None
+    elif by_subject is not None:
+        return None
+    else:
+        problem = f"no active directory user has idp_id {subject}"
+    named = [p for p in people if p.email == email.lower()]
+    if not named:
+        return f"{problem}; no directory user has this admin's email"
+    listed = ", ".join(
+        f"{p.id} (idp_id {p.idp_id}, {'active' if p.active else 'not active'})" for p in named
+    )
+    return f"{problem}; directory users with this admin's email: {listed}"
+
+
+async def check_founder(
+    conn: AsyncConnection,
+    client: WorkOSClient,
+    org_id: str,
+    *,
+    workos_directory_id: str,
+    join_rule: JoinRule,
+) -> list[FounderResult]:
+    """Every active admin linked under the directory's issuer, each checked against the
+    directory's users in WorkOS. Raises :class:`ConnectError` (listing every result) unless at
+    least one passes, so the first sync keeps an admin. Reads the database and WorkOS; writes
+    nothing."""
+    rows = (
+        await conn.execute(
+            _FOUNDERS, {"org": org_id, "issuer": directory_issuer(workos_directory_id)}
+        )
+    ).all()
+    if not rows:
+        raise ConnectError("no active admin is linked under this directory's issuer")
+    people: list[DirectoryPerson] = []
+    for raw in await client.directory_users(workos_directory_id):
+        try:
+            people.append(DirectoryPerson.from_wire(raw))
+        except ProfileError:
+            continue
+    results = [
+        FounderResult(
+            str(user_id),
+            str(subject),
+            _founder_problem(str(subject), str(email), people, join_rule),
+        )
+        for user_id, subject, email in rows
+    ]
+    if not any(r.ok for r in results):
+        raise ConnectError(
+            "no linked admin is an active user of the directory in WorkOS, so the first sync "
+            "would leave the org with no admin\n" + "\n".join(r.line for r in results)
+        )
+    return results
 
 
 async def connect(  # noqa: PLR0913  (keyword-only)

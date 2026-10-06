@@ -31,7 +31,7 @@ from ssc_control.audit.chain import Actor
 from ssc_control.db import SqlState, bound_org
 from ssc_control.identity import connections, sessions
 from ssc_control.identity.connections import DirectoryConnection
-from ssc_control.identity.rules import DirectoryPerson, ProfileError, subject_problem
+from ssc_control.identity.rules import DirectoryPerson, ProfileError, is_member
 from ssc_control.identity.workos import WorkOSClient, WorkOSError
 
 log = logging.getLogger(__name__)
@@ -109,10 +109,6 @@ def _person(raw: Mapping[str, object]) -> DirectoryPerson | None:
 
 def _people(raws: list[Json]) -> list[DirectoryPerson]:
     return [p for p in map(_person, raws) if p is not None]
-
-
-def is_member(person: DirectoryPerson) -> bool:
-    return not person.guest and subject_problem(person.idp_id) is None
 
 
 def _nested(data: Mapping[str, object], key: str) -> Json:

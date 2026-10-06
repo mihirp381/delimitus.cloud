@@ -12,14 +12,22 @@ from dataclasses import dataclass
 from typing import Final
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import GENESIS_HASH, Actor, NewEvent, append_event
 from ssc_control.db.bind import bound_org
 
-__all__ = ["GENESIS_HASH", "SYSTEM_ACTOR", "CreatedOrg", "NewOrg", "all_org_ids", "create_org"]
+__all__ = [
+    "GENESIS_HASH",
+    "SYSTEM_ACTOR",
+    "CreatedOrg",
+    "NewOrg",
+    "all_org_ids",
+    "create_org",
+    "create_org_in",
+]
 
 SYSTEM_ACTOR: Final = Actor(kind=ActorKind.OPERATOR, id="system:create_org")
 
@@ -59,41 +67,46 @@ async def create_org(
     engine: AsyncEngine, spec: NewOrg, *, actor: Actor | None = None
 ) -> CreatedOrg:
     """Create the org, its first admin and audit chain; ``actor`` defaults to the system."""
-    org_id, admin_id, link_id = new_id("org"), new_id("usr"), new_id("idl")
+    org_id = new_id("org")
     async with bound_org(engine, org_id) as conn:
-        label = (await conn.execute(_INSERT_ORG, {"id": org_id, "name": spec.name})).scalar_one()
-        await conn.execute(
-            _INSERT_ADMIN,
-            {
-                "id": admin_id,
-                "org": org_id,
-                "name": spec.admin_display_name,
-                "email": spec.admin_email,
-            },
-        )
-        await conn.execute(
-            _INSERT_LINK,
-            {
-                "id": link_id,
-                "org": org_id,
-                "user": admin_id,
-                "issuer": spec.admin_issuer,
-                "subject": spec.admin_subject,
-            },
-        )
-        await conn.execute(_INSERT_HEAD, {"org": org_id, "hash": GENESIS_HASH})
-        await conn.execute(_INSERT_INDEX, {"org": org_id})
-        await append_event(
-            conn,
-            NewEvent(
-                org_id=org_id,
-                action=AuditAction.ORG_CREATED,
-                actor=actor or SYSTEM_ACTOR,
-                target_kind="org",
-                target_id=org_id,
-                after={"name": spec.name},
-            ),
-        )
+        return await create_org_in(conn, org_id, spec, actor=actor)
+
+
+async def create_org_in(
+    conn: AsyncConnection, org_id: str, spec: NewOrg, *, actor: Actor | None = None
+) -> CreatedOrg:
+    """:func:`create_org` inside the caller's transaction, which must be bound to ``org_id``
+    (``new_id("org")``). A caller that adds more work to the same transaction, such as the
+    operator's ``create-org``, gets all of it or none of it."""
+    admin_id, link_id = new_id("usr"), new_id("idl")
+    label = (await conn.execute(_INSERT_ORG, {"id": org_id, "name": spec.name})).scalar_one()
+    await conn.execute(
+        _INSERT_ADMIN,
+        {"id": admin_id, "org": org_id, "name": spec.admin_display_name, "email": spec.admin_email},
+    )
+    await conn.execute(
+        _INSERT_LINK,
+        {
+            "id": link_id,
+            "org": org_id,
+            "user": admin_id,
+            "issuer": spec.admin_issuer,
+            "subject": spec.admin_subject,
+        },
+    )
+    await conn.execute(_INSERT_HEAD, {"org": org_id, "hash": GENESIS_HASH})
+    await conn.execute(_INSERT_INDEX, {"org": org_id})
+    await append_event(
+        conn,
+        NewEvent(
+            org_id=org_id,
+            action=AuditAction.ORG_CREATED,
+            actor=actor or SYSTEM_ACTOR,
+            target_kind="org",
+            target_id=org_id,
+            after={"name": spec.name},
+        ),
+    )
     return CreatedOrg(
         org_id=org_id, admin_user_id=admin_id, identity_link_id=link_id, cell_label=str(label)
     )
