@@ -198,7 +198,9 @@ class World:
                 "tunnel", self.tunnel_end
             )
         elif 'resource.type="gce_instance"' in flt:
-            since = kd.epoch_of(re.search(r'timestamp>="([^"]+)"', flt).group(1))
+            stamp = re.search(r'timestamp>="([^"]+)"', flt)
+            assert stamp is not None
+            since = kd.epoch_of(stamp.group(1))
             seen = (
                 self.proxy_line_at is not None and since is not None and since <= self.proxy_line_at
             )

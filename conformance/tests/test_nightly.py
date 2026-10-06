@@ -145,12 +145,23 @@ def test_config_takes_a_peer_cell_whole_or_not_at_all() -> None:
         nightly.config_from_env(full | peer | {"SSC_PROBE_PEER_PROJECT": ""})
 
 
+CONNECTION = "con_" + "a1b2c3d4e5f6g7h8i9j0"
+DATAGW = {
+    "SSC_PROBE_DATAGW_URL": "https://datagw.run.app",
+    "SSC_PROBE_DATAGW_CONNECTION": CONNECTION,
+}
+
+
 def test_config_takes_an_optional_data_gateway() -> None:
     full = {name: "x" for name in nightly.ENV.values()}
     assert nightly.config_from_env(full).datagw_url is None
     assert nightly.config_from_env(full | {"SSC_PROBE_DATAGW_URL": ""}).datagw_url is None
-    named = nightly.config_from_env(full | {"SSC_PROBE_DATAGW_URL": "https://datagw.run.app"})
-    assert named.datagw_url == "https://datagw.run.app"
+    named = nightly.config_from_env(full | DATAGW)
+    assert (named.datagw_url, named.datagw_connection) == ("https://datagw.run.app", CONNECTION)
+    with pytest.raises(nightly.NightlyError, match="both"):
+        nightly.config_from_env(full | {"SSC_PROBE_DATAGW_URL": "https://datagw.run.app"})
+    with pytest.raises(nightly.NightlyError, match="both"):
+        nightly.config_from_env(full | {"SSC_PROBE_DATAGW_CONNECTION": CONNECTION})
 
 
 def test_probe_apps_are_the_cell_runner_targets() -> None:
@@ -265,10 +276,14 @@ async def test_a_data_gateway_reaches_the_job_and_must_pass(
         sleep=clock.sleep,
         clock=clock,
         datagw_url="https://datagw.run.app",
+        datagw_connection=CONNECTION,
     )
     assert report.failures == ["datagw_read_only: waits for the data gateway"]
     env = json.loads(script.calls[0].content)["overrides"]["containerOverrides"][0]["env"]
-    assert env == [{"name": "PROBE_DATAGW_URL", "value": "https://datagw.run.app"}]
+    assert {e["name"]: e["value"] for e in env} == {
+        "PROBE_DATAGW_URL": "https://datagw.run.app",
+        "PROBE_DATAGW_CONNECTION": CONNECTION,
+    }
 
 
 async def test_without_a_data_gateway_its_probe_may_wait(

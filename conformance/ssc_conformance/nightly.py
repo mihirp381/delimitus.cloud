@@ -21,8 +21,9 @@ none. Set, they reach the job as overrides (which needs ``run.jobs.runWithOverri
 ``ssc-nightly`` on the probe job only) and both probes must pass. Unset, the job reports them
 skipped (``no peer cell``), which is not a failure of this run: ``ssc_conformance.matrix`` decides
 whether a night may go without a peer.
-``datagw_read_only`` needs the cell's data gateway: ``SSC_PROBE_DATAGW_URL``, which reaches the
-job the same way. Unset, the probe is skipped (``waits for the data gateway``), also not a failure.
+``datagw_read_only`` needs the cell's data gateway: ``SSC_PROBE_DATAGW_URL`` and
+``SSC_PROBE_DATAGW_CONNECTION`` (a ``con_<20>`` connection id), both or none, which reach the job
+the same way. Unset, the probe is skipped (``waits for the data gateway``), also not a failure.
 Optionally ``SSC_PROBE_TLS_HOST`` (SSC-062): a host under the cell's apps domain. The run opens a
 verified TLS connection to it and fails when the cell's wildcard certificate does not verify or
 has under ``CERT_MIN_DAYS`` days left. A certificate that fails to renew keeps serving until it
@@ -74,6 +75,7 @@ PEER_CELL_ENV: Final = {
     "SSC_PROBE_PEER_PROJECT": "PROBE_PEER_CELL_PROJECT",
 }
 DATAGW_URL_ENV: Final = ("SSC_PROBE_DATAGW_URL", "PROBE_DATAGW_URL")
+DATAGW_CONNECTION_ENV: Final = ("SSC_PROBE_DATAGW_CONNECTION", "PROBE_DATAGW_CONNECTION")
 PEER_CELL_PROBES: Final = frozenset({"cannot_reach_peer_cell", "deny_peer_cell"})
 DATAGW_PROBE: Final = "datagw_read_only"
 PROBE_ENVS: Final = ("env_probe00000000000000a", "env_probe00000000000000b")
@@ -109,6 +111,7 @@ class NightlyConfig:
     peer_cell: Mapping[str, str] | None
     tls_host: str | None = None
     datagw_url: str | None = None
+    datagw_connection: str | None = None
 
 
 def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
@@ -118,12 +121,18 @@ def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
     peer = {job: environ[name] for name, job in PEER_CELL_ENV.items() if environ.get(name)}
     if peer and len(peer) != len(PEER_CELL_ENV):
         raise NightlyError(f"set all of {', '.join(PEER_CELL_ENV)} or none")
+    datagw = environ.get(DATAGW_URL_ENV[0]) or None, environ.get(DATAGW_CONNECTION_ENV[0]) or None
+    if (datagw[0] is None) != (datagw[1] is None):
+        raise NightlyError(
+            f"set both {DATAGW_URL_ENV[0]} and {DATAGW_CONNECTION_ENV[0]} or neither"
+        )
     return NightlyConfig(
         **{field: environ[name] for field, name in ENV.items()},
         control_sa=environ.get(CONTROL_SA_ENV) or None,
         peer_cell=peer or None,
         tls_host=environ.get(TLS_HOST_ENV) or None,
-        datagw_url=environ.get(DATAGW_URL_ENV[0]) or None,
+        datagw_url=datagw[0],
+        datagw_connection=datagw[1],
     )
 
 
@@ -395,6 +404,7 @@ async def nightly(  # noqa: PLR0913  (keyword-only)
     tls_host: str | None = None,
     days_left: DaysLeft = certificate_days_left,
     datagw_url: str | None = None,
+    datagw_connection: str | None = None,
 ) -> Report:
     specs = [probe_spec(env_id, digest) for env_id in PROBE_ENVS]
     for spec in specs:
@@ -402,9 +412,17 @@ async def nightly(  # noqa: PLR0913  (keyword-only)
             driver, spec, every=POLL_SECONDS, limit=DEPLOY_LIMIT_SECONDS, sleep=sleep, clock=clock
         )
         log.info("probe app ready", extra={"service": spec.service})
-    overrides = {**(peer_cell or {}), **({DATAGW_URL_ENV[1]: datagw_url} if datagw_url else {})}
+    datagw = bool(datagw_url and datagw_connection)
+    overrides = {
+        **(peer_cell or {}),
+        **(
+            {DATAGW_URL_ENV[1]: datagw_url, DATAGW_CONNECTION_ENV[1]: datagw_connection}
+            if datagw
+            else {}
+        ),
+    }
     results = await job.run(overrides or None)
-    failures = verdict(results, peer_cell=peer_cell is not None, datagw=datagw_url is not None)
+    failures = verdict(results, peer_cell=peer_cell is not None, datagw=datagw)
     checks: list[evidence.Result] = []
     drift_seconds: float | None = None
     try:
@@ -469,6 +487,7 @@ async def main_async(environ: Mapping[str, str]) -> Report:
             peer_cell=cfg.peer_cell,
             tls_host=cfg.tls_host,
             datagw_url=cfg.datagw_url,
+            datagw_connection=cfg.datagw_connection,
         )
         if path := environ.get(evidence.EVIDENCE_ENV):
             evidence.write(

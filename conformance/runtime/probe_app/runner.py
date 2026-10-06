@@ -9,8 +9,10 @@ not reach), ``PROBE_HEALTH_PATH`` (default ``/health``). For ``cannot_reach_peer
 ``deny_peer_cell``, all of ``PROBE_PEER_CELL_APP_URL``, ``PROBE_PEER_CELL_GATEWAY_URL`` (another
 cell's app and gateway ``run.app`` URLs), ``PROBE_PEER_CELL_RANGE`` (that cell's address range) and
 ``PROBE_PEER_CELL_PROJECT`` (its project); without them both probes are skipped (``no peer
-cell``), never passed. ``PROBE_DATAGW_URL`` (this cell's data gateway) is for
-``datagw_read_only``; without it the probe is skipped (``waits for the data gateway``).
+cell``), never passed. ``PROBE_DATAGW_URL`` (this cell's data gateway) and
+``PROBE_DATAGW_CONNECTION`` (a ``con_<20>`` connection id) are for ``datagw_read_only``; without
+either the probe is skipped (``waits for the data gateway``), and a connection that is not a
+``con_<20>`` id fails it.
 ``PROBE_EGRESS_HOSTS`` (comma-separated) names hosts that resolve in the cell but must not answer
 an app; ``no_direct_egress`` dials each too. Prints one JSON line per probe and a summary line,
 and exits 1 when any probe fails.
@@ -18,6 +20,7 @@ and exits 1 when any probe fails.
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -41,7 +44,8 @@ PEER_CELL_ENV = (
 )
 EGRESS_HOSTS_ENV = "PROBE_EGRESS_HOSTS"
 DATAGW_URL_ENV = "PROBE_DATAGW_URL"
-DATAGW_CONNECTION = "probe"
+DATAGW_CONNECTION_ENV = "PROBE_DATAGW_CONNECTION"
+CONNECTION_ID = re.compile(r"con_[a-z0-9]{20}")
 type PeerCell = tuple[str, str, str, str]
 
 
@@ -131,10 +135,14 @@ def _deny_peer_cell(app: Probe, peer_cell: PeerCell | None) -> str:
     return checks.deny_peer_cell(app.body(f"/probe/deny-peer?{query}"))
 
 
-def _datagw_read_only(app: Probe, datagw_url: str) -> str:
-    if not datagw_url:
+def _datagw_read_only(app: Probe, datagw_url: str, datagw_connection: str) -> str:
+    if not datagw_url or not datagw_connection:
         raise ProbeSkippedError(WAITS_FOR_DATAGW)
-    query = urllib.parse.urlencode({"url": datagw_url, "connection": DATAGW_CONNECTION})
+    if CONNECTION_ID.fullmatch(datagw_connection) is None:
+        raise checks.ProbeFailedError(
+            f"{DATAGW_CONNECTION_ENV} is not a con_<20> connection id: {datagw_connection!r}"
+        )
+    query = urllib.parse.urlencode({"url": datagw_url, "connection": datagw_connection})
     return checks.datagw_read_only(app.body(f"/probe/datagw?{query}", DATAGW_TIMEOUT))
 
 
@@ -146,6 +154,7 @@ def plan(  # noqa: PLR0913  (keyword-only)
     *,
     egress_hosts: Sequence[str] = (),
     datagw_url: str = "",
+    datagw_connection: str = "",
 ) -> dict[str, Callable[[], str]]:
     peer = urllib.parse.urlencode({"url": peer_url})
     egress = urllib.parse.urlencode([("host", h) for h in egress_hosts])
@@ -180,7 +189,7 @@ def plan(  # noqa: PLR0913  (keyword-only)
             app.body("/probe/env")
         ),
         "sse_passthrough": lambda: checks.sse_passthrough(app.sse("/probe/sse")),
-        "datagw_read_only": lambda: _datagw_read_only(app, datagw_url),
+        "datagw_read_only": lambda: _datagw_read_only(app, datagw_url, datagw_connection),
     }
 
 
@@ -192,9 +201,16 @@ def run(  # noqa: PLR0913  (keyword-only)
     *,
     egress_hosts: Sequence[str] = (),
     datagw_url: str = "",
+    datagw_connection: str = "",
 ) -> list[dict[str, str]]:
     steps = plan(
-        app, peer_url, health_path, peer_cell, egress_hosts=egress_hosts, datagw_url=datagw_url
+        app,
+        peer_url,
+        health_path,
+        peer_cell,
+        egress_hosts=egress_hosts,
+        datagw_url=datagw_url,
+        datagw_connection=datagw_connection,
     )
     results: list[dict[str, str]] = []
     for name in checks.PROBES:
@@ -217,6 +233,7 @@ def main() -> int:
         peer_cell_from(os.environ),
         egress_hosts=egress_hosts_from(os.environ),
         datagw_url=os.environ.get(DATAGW_URL_ENV, ""),
+        datagw_connection=os.environ.get(DATAGW_CONNECTION_ENV, ""),
     )
     for result in results:
         print(json.dumps({"ssc_probe": result}), flush=True)  # noqa: T201

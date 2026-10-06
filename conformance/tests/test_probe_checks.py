@@ -396,6 +396,7 @@ def test_deny_peer_cell_needs_iam_to_refuse_both_legs() -> None:
         checks.deny_peer_cell({"bucket": REFUSED})
 
 
+CONNECTION = "con_" + "a1b2c3d4e5f6g7h8i9j0"
 QUERY_REFUSED = {"status": 422, "code": "QUERY_REFUSED"}
 
 
@@ -445,9 +446,34 @@ def test_runner_sends_the_data_gateway_url_and_skips_without_one(
     probe = runner.Probe(local_app, "t")
     with pytest.raises(runner.ProbeSkippedError, match="waits for the data gateway"):
         runner.plan(probe, local_app + "/", "/health")["datagw_read_only"]()
-    plan = runner.plan(probe, local_app + "/", "/health", datagw_url="https://datagw.run.app")
+    url = "https://datagw.run.app"
+    only_url = runner.plan(probe, local_app + "/", "/health", datagw_url=url)
+    with pytest.raises(runner.ProbeSkippedError, match="waits for the data gateway"):
+        only_url["datagw_read_only"]()
+    only_connection = runner.plan(probe, local_app + "/", "/health", datagw_connection=CONNECTION)
+    with pytest.raises(runner.ProbeSkippedError, match="waits for the data gateway"):
+        only_connection["datagw_read_only"]()
+    plan = runner.plan(
+        probe, local_app + "/", "/health", datagw_url=url, datagw_connection=CONNECTION
+    )
     assert plan["datagw_read_only"]().startswith("1 write-shaped")
-    assert asked == [("https://datagw.run.app", "probe")]
+    assert asked == [(url, CONNECTION)]
+
+
+@pytest.mark.parametrize("connection", ["probe", "con_short", "CON_" + "a" * 20, "con_" + "A" * 20])
+def test_runner_fails_a_connection_that_is_not_a_connection_id(
+    local_app: str, monkeypatch: pytest.MonkeyPatch, connection: str
+) -> None:
+    monkeypatch.setattr(app, "datagw", lambda url, connection: pytest.fail("must not call"))
+    plan = runner.plan(
+        runner.Probe(local_app, "t"),
+        local_app + "/",
+        "/health",
+        datagw_url="https://datagw.run.app",
+        datagw_connection=connection,
+    )
+    with pytest.raises(checks.ProbeFailedError, match="not a con_<20> connection id"):
+        plan["datagw_read_only"]()
 
 
 def test_deny_peer_keeps_the_status_and_reason_and_drops_what_it_read(
