@@ -8,12 +8,21 @@ summarises it.
 
     python3 run.py --dry-run                  # the commands, nothing run
     python3 run.py --parallel 1,8,32          # 100 rules each; writes results.json
+    python3 run.py --parallel 1 --backend gs --pad-mb 7   # state in the bucket, 7 MB checkpoint
+    python3 run.py --parallel 1 --backend gs --pad-mb 7 --skip-checkpoints
 
 Standard library only. Only project ``ssc-platform-0``, a policy and rules named ``ssc-exp091p*``,
 no network attached. State is a local file backend in a fresh temporary folder for each value of P,
 with an empty passphrase: nothing goes to Pulumi Cloud or the repo's stacks. The destroy runs in
 ``finally``; if it fails the folder is kept and named, and ``python3 ../sinkhole.py
 --cleanup-only`` deletes every ``ssc-exp091*`` policy and rule.
+
+``--backend gs`` keeps the state in ``gs://ssc-platform-0-pulumi/exp091p/<P>-<UTC timestamp>``
+instead, a fresh prefix for each P, as the cell's own state is (the runner refuses any other
+bucket). After a clean destroy ``pulumi stack rm --yes --force`` removes the stack's files there;
+after a failed destroy they are kept and the prefix is printed. ``--pad-mb N`` (0 to 10) pads the
+checkpoint with N MB, and ``--skip-checkpoints`` sets ``PULUMI_SKIP_CHECKPOINTS=true`` for the up
+and the destroy.
 """
 
 import argparse
@@ -43,6 +52,9 @@ MAX_COUNT: Final = 1500
 LOCK: Final = HERE / "uv.lock"
 RESULTS: Final = HERE / "results.json"
 LOG: Final = HERE / "logs" / "p8.log"
+BUCKET: Final = "ssc-platform-0-pulumi"
+BUCKET_PREFIX: Final = "exp091p"
+MAX_PAD_MB: Final = 10
 
 
 class ProbeError(Exception):
@@ -67,11 +79,24 @@ class Shell(Protocol):
     ) -> Done: ...
 
 
+def check_backend(url: str) -> str:
+    """A file backend (the temporary folder) or a fresh prefix under this probe's own folder of
+    the platform's state bucket; no other bucket, and no way up out of the folder."""
+    own = f"gs://{BUCKET}/{BUCKET_PREFIX}/"
+    if url.startswith("file://") or (
+        url.startswith(own) and len(url) > len(own) and ".." not in url.split("/")
+    ):
+        return url
+    raise ProbeError(f"refusing backend {url!r}: only a file backend or {own}<run>")
+
+
 def guard(argv: Sequence[str], env: Mapping[str, str]) -> None:
     if any(FORBIDDEN_PROJECT in a for a in argv) or any(
         FORBIDDEN_PROJECT in v for v in env.values()
     ):
         raise ProbeError(f"refusing to touch {FORBIDDEN_PROJECT}")
+    if "PULUMI_BACKEND_URL" in env:
+        check_backend(env["PULUMI_BACKEND_URL"])
 
 
 def check_project(project: str) -> str:
@@ -124,14 +149,24 @@ def without_pulumi(base: Mapping[str, str]) -> dict[str, str]:
     return {k: v for k, v in base.items() if not k.startswith("PULUMI_") or k == "PULUMI_HOME"}
 
 
+def backend_url(parallel: int, at: datetime) -> str:
+    """A fresh prefix in the bucket for each P."""
+    return f"gs://{BUCKET}/{BUCKET_PREFIX}/{parallel}-{at.strftime('%Y%m%dT%H%M%SZ')}"
+
+
 def environment(
-    base: Mapping[str, str], backend: Path, token: str | None, *, debug: bool
+    base: Mapping[str, str],
+    backend: Path | str,
+    token: str | None,
+    *,
+    debug: bool,
+    skip_checkpoints: bool = False,
 ) -> dict[str, str]:
-    """A file backend with an empty passphrase, the access token, and for the logged run Terraform's
-    debug log (which the provider's stderr carries into Pulumi's)."""
+    """A backend (a folder, or a ``gs://`` URL) with an empty passphrase, the access token, and for
+    the logged run Terraform's debug log (which the provider's stderr carries into Pulumi's)."""
     env = without_pulumi(base)
     env |= {
-        "PULUMI_BACKEND_URL": f"file://{backend}",
+        "PULUMI_BACKEND_URL": backend if isinstance(backend, str) else f"file://{backend}",
         "PULUMI_CONFIG_PASSPHRASE": "",
         "PULUMI_SKIP_UPDATE_CHECK": "true",
     }
@@ -139,6 +174,8 @@ def environment(
         env["GOOGLE_OAUTH_ACCESS_TOKEN"] = token
     if debug:
         env["TF_LOG"] = "DEBUG"
+    if skip_checkpoints:
+        env["PULUMI_SKIP_CHECKPOINTS"] = "true"
     return env
 
 
@@ -148,6 +185,10 @@ def init_args() -> list[str]:
 
 def config_args(key: str, value: str) -> list[str]:
     return ["pulumi", "config", "set", key, value, "--stack", STACK, "--non-interactive"]
+
+
+def remove_args() -> list[str]:
+    return ["pulumi", "stack", "rm", "--yes", "--force", "--stack", STACK, "--non-interactive"]
 
 
 def up_args(parallel: int, *, debug: bool) -> list[str]:
@@ -180,12 +221,26 @@ def destroy_args(parallel: int, *, debug: bool) -> list[str]:
     return [*args, "--logflow", "-v=9", "--logtostderr"] if debug else args
 
 
-def plan(parallel: Sequence[int], count: int) -> list[str]:
+def plan(
+    parallel: Sequence[int],
+    count: int,
+    *,
+    backend: str = "file",
+    pad_mb: int = 0,
+    skip_checkpoints: bool = False,
+) -> list[str]:
+    where = (
+        f"gs://{BUCKET}/{BUCKET_PREFIX}/<P>-<UTC timestamp>"
+        if backend == "gs"
+        else "file://<new temporary folder>"
+    )
     lines = [
         f"project {PROJECT}; {count} rules + 1 sinkhole rule + 1 policy, named ssc-exp091p*; "
         "nothing is run",
-        "environment: PULUMI_BACKEND_URL=file://<new temporary folder>  PULUMI_CONFIG_PASSPHRASE=''  "
-        "PULUMI_SKIP_UPDATE_CHECK=true  GOOGLE_OAUTH_ACCESS_TOKEN=<gcloud auth print-access-token>",
+        f"environment: PULUMI_BACKEND_URL={where}  PULUMI_CONFIG_PASSPHRASE=''  "
+        "PULUMI_SKIP_UPDATE_CHECK=true  GOOGLE_OAUTH_ACCESS_TOKEN=<gcloud auth print-access-token>"
+        + ("  PULUMI_SKIP_CHECKPOINTS=true (up and destroy)" if skip_checkpoints else ""),
+        f"state padded with {pad_mb} MB" if pad_mb else "no state padding",
         "before: pulumi version; pulumi plugin ls; pulumi and pulumi-gcp versions from uv.lock",
     ]
     for p in parallel:
@@ -197,8 +252,10 @@ def plan(parallel: Sequence[int], count: int) -> list[str]:
             init_args(),
             config_args("project", PROJECT),
             config_args("count", str(count)),
+            config_args("pad_mb", str(pad_mb)),
             up_args(p, debug=debug),
             destroy_args(p, debug=debug),
+            *([remove_args()] if backend == "gs" else []),
         ):
             lines.append("  $ " + " ".join(argv))
     return lines
@@ -242,7 +299,7 @@ def tail(path: Path) -> str:
         return ""
 
 
-def one_run(
+def one_run(  # noqa: PLR0912, PLR0915
     sh: Shell,
     *,
     parallel: int,
@@ -253,13 +310,29 @@ def one_run(
     say: Callable[[str], None],
     log: Path,
     make_dir: Callable[[], Path],
+    where: str = "file",
+    pad_mb: int = 0,
+    skip_checkpoints: bool = False,
+    utcnow: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> dict[str, Any]:
     """One value of P on a fresh backend. The destroy runs in ``finally``."""
     debug = parallel == LOG_PARALLEL
-    backend = make_dir()
-    env = environment(base_env, backend, token, debug=debug)
+    backend: Path | str = (
+        check_backend(backend_url(parallel, utcnow())) if where == "gs" else make_dir()
+    )
+    env = environment(base_env, backend, token, debug=debug, skip_checkpoints=skip_checkpoints)
     plain_env = environment(base_env, backend, token, debug=False)
-    result: dict[str, Any] = {"parallel": parallel, "count": count, "rules": count + 1}
+    result: dict[str, Any] = {
+        "parallel": parallel,
+        "count": count,
+        "rules": count + 1,
+        "backend": where,
+        "pad_mb": pad_mb,
+        "skip_checkpoints": skip_checkpoints,
+    }
+    if isinstance(backend, str):
+        result["backend_url"] = backend
+        say(f"P={parallel}: state in {backend}")
     created = False
     kept = False
     try:
@@ -267,6 +340,7 @@ def one_run(
             init_args(),
             config_args("project", PROJECT),
             config_args("count", str(count)),
+            config_args("pad_mb", str(pad_mb)),
         ):
             done = sh(argv, env=plain_env, cwd=HERE)
             if done.code:
@@ -321,7 +395,17 @@ def one_run(
                     f"{backend}; run python3 ../sinkhole.py --cleanup-only"
                 )
                 say(f"P={parallel}: DESTROY FAILED. State kept in {backend}. {result['error']}")
-        if not kept:
+        if not kept and isinstance(backend, str):
+            if created:
+                done = sh(remove_args(), env=plain_env, cwd=HERE)
+                result["stack_removed"] = done.code == 0
+                if done.code:
+                    result["error"] = (result.get("error", "") + " ").lstrip() + (
+                        f"pulumi stack rm exited {done.code}: {done.err.strip()[-300:]}; "
+                        f"state kept in {backend}"
+                    )
+                    say(f"P={parallel}: STACK RM FAILED. State kept in {backend}.")
+        elif not kept:
             shutil.rmtree(backend, ignore_errors=True)
     return result
 
@@ -338,19 +422,33 @@ def main(
     log: Path = LOG,
     lock: Path = LOCK,
     make_dir: Callable[[], Path] = lambda: Path(tempfile.mkdtemp(prefix="ssc-exp091p-")),
+    utcnow: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n", maxsplit=1)[0])
     parser.add_argument("--parallel", default="1,8,32", help="comma separated, default 1,8,32")
     parser.add_argument("--count", type=int, default=100)
+    parser.add_argument("--pad-mb", type=int, default=0, help=f"0 to {MAX_PAD_MB}, default 0")
+    parser.add_argument(
+        "--backend", choices=("file", "gs"), default="file", help=f"gs is gs://{BUCKET}/..."
+    )
+    parser.add_argument("--skip-checkpoints", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
         values = parallel_values(args.parallel)
         if not 1 <= args.count <= MAX_COUNT:
             raise ProbeError(f"--count is 1 to {MAX_COUNT}")
+        if not 0 <= args.pad_mb <= MAX_PAD_MB:
+            raise ProbeError(f"--pad-mb is 0 to {MAX_PAD_MB}")
         check_project(PROJECT)
         if args.dry_run:
-            for line in plan(values, args.count):
+            for line in plan(
+                values,
+                args.count,
+                backend=args.backend,
+                pad_mb=args.pad_mb,
+                skip_checkpoints=args.skip_checkpoints,
+            ):
                 say(line)
             return 0
         if not lock.exists():
@@ -375,7 +473,8 @@ def main(
         for p in values:
             run = one_run(
                 sh, parallel=p, count=args.count, token=token, base_env=env_base, clock=clock,
-                say=say, log=log, make_dir=make_dir,
+                say=say, log=log, make_dir=make_dir, where=args.backend, pad_mb=args.pad_mb,
+                skip_checkpoints=args.skip_checkpoints, utcnow=utcnow,
             )  # fmt: skip
             report["runs"].append(run)
             failed = failed or "error" in run

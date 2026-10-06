@@ -7,8 +7,14 @@ What is the same as the cell: the rule's arguments (policy name taken from the p
 billing to ``ssc-platform-0``, as ``platform.provider`` does) and each rule depending on the
 sinkhole rule. What is not: the project is a plain string (the cell's is an output), the rules
 depend on no API-enabling resources (the cell's depend on about 20), and no VPC is attached.
+
+``pad_mb`` makes the state big, as the cell's is (7.1 MB), to time a bucket backend that rewrites
+the whole checkpoint after each step. The padding is the outputs of a component resource made
+first, so it is in every checkpoint from the first rule on; a stack output would join the
+checkpoint only when the program ends.
 """
 
+import random
 from typing import Final
 
 import pulumi
@@ -22,6 +28,8 @@ SINKHOLE: Final = "192.0.2.1"  # copied from cell.SINKHOLE
 SINKHOLE_V6: Final = "100::1"  # copied from cell.SINKHOLE_V6
 SINKHOLE_NAME: Final = "sinkhole.ssc-cell."  # copied from cell.SINKHOLE_NAME
 DEFAULT_COUNT: Final = 100
+MAX_PAD_MB: Final = 10
+PAD_SEED: Final = 91
 
 
 def check_project(project: str) -> str:
@@ -34,10 +42,18 @@ def rule_name(i: int) -> str:
     return f"{POLICY}-{i}"
 
 
-def build(project: str, count: int) -> None:
+def pad_text(pad_mb: int) -> str:
+    """``pad_mb`` MiB of characters that do not compress much: the hex of seeded random bytes, the
+    same every run."""
+    return random.Random(PAD_SEED).randbytes(pad_mb * 1024 * 1024 // 2).hex()  # noqa: S311  seeded on purpose
+
+
+def build(project: str, count: int, pad_mb: int = 0) -> None:
     check_project(project)
     if count < 1:
         raise ValueError("count must be at least 1")
+    if not 0 <= pad_mb <= MAX_PAD_MB:
+        raise ValueError(f"pad_mb is 0 to {MAX_PAD_MB}")
     provider = gcp.Provider(
         "gcp",
         project=project,
@@ -47,12 +63,17 @@ def build(project: str, count: int) -> None:
         default_labels={"ssc-managed": "pulumi"},
     )
     opts = pulumi.ResourceOptions(provider=provider)
+    first = opts
+    if pad_mb:
+        pad = pulumi.ComponentResource("ssc:probe:Pad", "pad")
+        pad.register_outputs({"pad": pad_text(pad_mb)})
+        first = pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=[pad]))
     policy = gcp.dns.ResponsePolicy(
         "policy",
         project=project,
         response_policy_name=POLICY,
         description="SSC-091 probe: a throwaway policy with no network.",
-        opts=opts,
+        opts=first,
     )
     sink = gcp.dns.ResponsePolicyRule(
         f"{POLICY}-sink",
@@ -88,3 +109,4 @@ def build(project: str, count: int) -> None:
             opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(depends_on=[sink])),
         )
     pulumi.export("rules", count)
+    pulumi.export("pad_mb", pad_mb)

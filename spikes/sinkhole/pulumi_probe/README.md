@@ -40,6 +40,19 @@ Same P is used for the destroy as for the up. `--count` is 1 to 1500. Stop it wi
 still destroys. It prints the Pulumi CLI, pulumi-gcp and the installed provider plugin versions
 first, and writes `results.json` after each P.
 
+### State size and backend
+
+- `--pad-mb N` (0 to 10, default 0) makes the checkpoint about N MB. The padding is the output of
+  a component resource created first (hex of `random.Random(91).randbytes`, so it does not
+  compress), because a stack output only joins the checkpoint when the program ends and would not
+  pad `up`. The program exports only a small `pad_mb` marker.
+- `--backend gs` keeps the state in `gs://ssc-platform-0-pulumi/exp091p/<P>-<UTC timestamp>`, a
+  fresh prefix per P, and prints it. After a clean destroy it runs `pulumi stack rm --yes --force`
+  to remove the files. After a failed destroy it does not, and the prefix stays for you to
+  clean up. Any other bucket or prefix is refused. The default is `--backend file`.
+- `--skip-checkpoints` sets `PULUMI_SKIP_CHECKPOINTS=true` for up and destroy.
+- `results.json` records `backend`, `pad_mb` and `skip_checkpoints` for each run.
+
 ## Read it
 
 `results.json`, per P: `up_seconds`, `up_rules_per_minute` (rules include the sinkhole rule),

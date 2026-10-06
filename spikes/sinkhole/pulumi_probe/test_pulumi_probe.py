@@ -7,7 +7,9 @@ cd infra && uv run pytest ../spikes/sinkhole -p no:cacheprovider
 import asyncio
 import json
 import sys
+import zlib
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -197,6 +199,140 @@ def test_the_dry_run_prints_every_command_and_runs_none(world: dict[str, Any]) -
     assert text.count("$ pulumi destroy") == 3
     assert "P=8" in text and "TF_LOG=DEBUG" in text
     assert TOKEN not in text
+
+
+# The bucket backend, the padding and skipped checkpoints.
+
+BUCKET_STAMP = datetime(2026, 10, 6, 14, 30, 5, tzinfo=UTC)
+PREFIX = "gs://ssc-platform-0-pulumi/exp091p/"
+
+
+def run_gs(
+    world: dict[str, Any], sh: FakeShell, *argv: str
+) -> tuple[int, list[str], dict[str, Any] | None]:
+    said: list[str] = []
+    lock = world["tmp"] / "uv.lock"
+    lock.write_text('[[package]]\nname = "pulumi"\nversion = "3.263.0"\n')
+    results = world["tmp"] / "results.json"
+    code = probe.main(
+        list(argv), sh=sh, clock=lambda: sh.now, token_source=lambda: TOKEN, say=said.append,
+        base_env={"PATH": "/usr/bin"}, results=results, log=world["tmp"] / "logs" / "p8.log",
+        lock=lock, make_dir=world["make_dir"], utcnow=lambda: BUCKET_STAMP,
+    )  # fmt: skip
+    return code, said, json.loads(results.read_text()) if results.exists() else None
+
+
+def test_the_gs_backend_is_a_fresh_prefix_in_the_platform_bucket_for_each_p(
+    world: dict[str, Any],
+) -> None:
+    sh = FakeShell()
+    code, said, results = run_gs(world, sh, "--parallel", "1,32", "--backend", "gs")
+    assert code == 0
+    assert results is not None
+    urls = {c[1]["PULUMI_BACKEND_URL"] for c in sh.calls if c[0][1:2] == ["up"]}
+    assert urls == {f"{PREFIX}1-20261006T143005Z", f"{PREFIX}32-20261006T143005Z"}
+    assert world["made"] == []  # no temporary folder
+    assert {r["backend_url"] for r in results["runs"]} == urls
+    assert f"P=1: state in {PREFIX}1-20261006T143005Z" in said  # printed, for leftovers
+
+
+def test_the_stack_is_removed_after_a_clean_destroy_on_the_bucket_only(
+    world: dict[str, Any],
+) -> None:
+    sh = FakeShell()
+    run_gs(world, sh, "--parallel", "1", "--backend", "gs")
+    commands = sh.commands()
+    rm = "pulumi stack rm --yes --force --stack probe --non-interactive"
+    assert commands[-1] == rm
+    assert commands.index(rm) > next(i for i, c in enumerate(commands) if " destroy " in c)
+    assert sh.calls[-1][1]["PULUMI_BACKEND_URL"].startswith(PREFIX)
+    assert "PULUMI_SKIP_CHECKPOINTS" not in sh.calls[-1][1]
+    file_sh = FakeShell()
+    run_gs(world, file_sh, "--parallel", "1")
+    assert not any(" rm " in c for c in file_sh.commands())  # the temporary folder is removed
+
+
+def test_a_failed_destroy_keeps_the_bucket_state_and_prints_its_prefix(
+    world: dict[str, Any],
+) -> None:
+    sh = FakeShell({"destroy": 1})
+    code, said, results = run_gs(world, sh, "--parallel", "1", "--backend", "gs")
+    assert code == 1
+    assert results is not None
+    assert not any(" rm " in c for c in sh.commands())  # --force would orphan the resources
+    assert f"{PREFIX}1-20261006T143005Z" in results["runs"][0]["error"]
+    assert any("DESTROY FAILED" in line and PREFIX in line for line in said)
+
+
+def test_any_other_bucket_is_refused_before_a_command_runs() -> None:
+    for url in (
+        "gs://ristretto-state/exp091p/1-x",
+        "gs://ssc-platform-0-pulumi/",
+        "gs://ssc-platform-0-pulumi/exp091p/",
+        "gs://ssc-platform-0-pulumi/other/1-x",
+        "gs://ssc-platform-0-pulumi/exp091p/../prod",
+        "gs://ssc-platform-0-pulumi-2/exp091p/1-x",
+        "s3://ssc-platform-0-pulumi/exp091p/1-x",
+    ):
+        with pytest.raises(probe.ProbeError, match="refusing backend"):
+            probe.check_backend(url)
+        with pytest.raises(probe.ProbeError, match="refusing backend"):
+            probe.guard(["pulumi", "up"], {"PULUMI_BACKEND_URL": url})
+    assert probe.check_backend(f"{PREFIX}8-20261006T143005Z")
+    assert probe.check_backend("file:///tmp/x")
+    assert probe.backend_url(8, BUCKET_STAMP) == f"{PREFIX}8-20261006T143005Z"
+
+
+def test_skip_checkpoints_is_set_for_the_up_and_the_destroy_only(world: dict[str, Any]) -> None:
+    sh = FakeShell()
+    run_gs(world, sh, "--parallel", "1", "--skip-checkpoints")
+    skipping = {c[0][1]: c[1].get("PULUMI_SKIP_CHECKPOINTS") for c in sh.calls if len(c[0]) > 1}
+    assert skipping["up"] == skipping["destroy"] == "true"
+    assert skipping["config"] is None and skipping["stack"] is None
+    plain = FakeShell()
+    run_gs(world, plain, "--parallel", "1")
+    assert not any("PULUMI_SKIP_CHECKPOINTS" in c[1] for c in plain.calls)
+
+
+def test_the_padding_is_set_as_config_for_every_run_and_recorded(world: dict[str, Any]) -> None:
+    sh = FakeShell()
+    code, said, results = run_gs(
+        world, sh, "--parallel", "1", "--pad-mb", "7", "--backend", "gs", "--skip-checkpoints"
+    )
+    assert code == 0
+    assert results is not None
+    assert "pulumi config set pad_mb 7 --stack probe --non-interactive" in sh.commands()
+    run = results["runs"][0]
+    assert (run["backend"], run["pad_mb"], run["skip_checkpoints"]) == ("gs", 7, True)
+    plain = FakeShell()
+    _, _, results = run_gs(world, plain, "--parallel", "1")
+    assert results is not None
+    assert "pulumi config set pad_mb 0 --stack probe --non-interactive" in plain.commands()
+    run = results["runs"][0]
+    assert (run["backend"], run["pad_mb"], run["skip_checkpoints"]) == ("file", 0, False)
+
+
+def test_a_pad_outside_zero_to_ten_is_refused_before_anything_runs(world: dict[str, Any]) -> None:
+    for pad in ("-1", "11"):
+        sh = FakeShell()
+        code, said, results = run_gs(world, sh, "--pad-mb", pad)
+        assert (code, sh.calls, results) == (2, [], None)
+        assert "--pad-mb is 0 to 10" in said[0]
+
+
+def test_the_dry_run_shows_the_bucket_prefix_the_padding_and_the_stack_rm(
+    world: dict[str, Any],
+) -> None:
+    sh = FakeShell()
+    code, said, _ = run_gs(
+        world, sh, "--dry-run", "--backend", "gs", "--pad-mb", "3", "--skip-checkpoints"
+    )
+    text = "\n".join(said)
+    assert code == 0 and sh.calls == []
+    assert "PULUMI_BACKEND_URL=gs://ssc-platform-0-pulumi/exp091p/<P>-<UTC timestamp>" in text
+    assert "PULUMI_SKIP_CHECKPOINTS=true" in text and "padded with 3 MB" in text
+    assert "$ pulumi config set pad_mb 3" in text
+    assert "$ pulumi stack rm --yes --force" in text
 
 
 # The runs, the destroy in finally, and the results.
@@ -399,14 +535,16 @@ def test_the_clock_going_past_midnight_keeps_counting() -> None:
 # The program.
 
 
-def declare(count: int, project: str = program.PROJECT) -> list[mockcloud.Declared]:
+def declare(
+    count: int, project: str = program.PROJECT, pad_mb: int = 0
+) -> list[mockcloud.Declared]:
     recorder = mockcloud.Recorder()
     asyncio.set_event_loop(asyncio.new_event_loop())
     pulumi.runtime.set_mocks(recorder, project="ssc-exp091p", stack="probe", preview=False)
 
     @pulumi.runtime.test
     def build() -> None:
-        program.build(project, count)
+        program.build(project, count, pad_mb)
 
     build()
     return recorder.declared
@@ -466,3 +604,39 @@ def test_a_rule_has_exactly_the_inputs_the_cell_gives_one_sinkhole_rule() -> Non
         k: v for k, v in sink.items() if k != "ruleName"
     }
     assert program.SINKHOLE_NAME in json.dumps(mine)
+
+
+def test_the_padding_is_one_incompressible_component_output_of_that_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = program.pad_text(2)
+    assert len(text) == 2 * 1024 * 1024
+    assert text == program.pad_text(2)  # the same every run
+    assert len(zlib.compress(text.encode())) > len(text) * 0.45  # hex: about half at best
+    seen: list[dict[str, Any]] = []
+    register = pulumi.ComponentResource.register_outputs
+
+    def spy(self: pulumi.ComponentResource, outputs: Any = None) -> None:
+        seen.append(dict(outputs))
+        register(self, outputs)
+
+    monkeypatch.setattr(pulumi.ComponentResource, "register_outputs", spy)
+    declared = declare(2, pad_mb=2)
+    assert [len(o["pad"]) for o in seen] == [2 * 1024 * 1024]
+    assert [d.name for d in declared if d.type == "ssc:probe:Pad"] == ["pad"]
+    plain = declare(2)
+    assert not [d for d in plain if d.type == "ssc:probe:Pad"]  # no padding by default
+    assert len([d for d in declared if d.type == RULE]) == len([d for d in plain if d.type == RULE])
+
+
+def test_the_padding_is_in_the_state_before_the_first_resource_it_slows() -> None:
+    policy = next(
+        d for d in declare(1, pad_mb=1) if d.type == "gcp:dns/responsePolicy:ResponsePolicy"
+    )
+    assert policy.name == "policy"
+
+
+def test_the_program_refuses_a_pad_outside_zero_to_ten() -> None:
+    for pad in (-1, 11):
+        with pytest.raises(ValueError, match="pad_mb is 0 to 10"):
+            program.build(program.PROJECT, 1, pad)
