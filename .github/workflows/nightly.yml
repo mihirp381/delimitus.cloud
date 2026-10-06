@@ -1,13 +1,22 @@
 name: nightly
 
-# SSC-017: the runtime probes and the drift repair, in the staging probe cell. GitHub's OIDC token
-# becomes ssc-nightly (decision 022) only for this file on main; it may mint the control plane's
-# ID tokens for the cell agent, run the probe job, and read that job's logs.
-
-# The probe cell is c-proofcell01 (SSC-086, 2026-10-05). The repository variables SSC_NIGHTLY_WIF_PROVIDER,
-# SSC_PROBE_PROJECT, SSC_PROBE_AGENT_URL and SSC_PROBE_DIGEST name it. With one cell, cannot_reach_peer_cell
-# reports skipped (no peer cell), which does not fail the run. SSC_PROBE_TLS_HOST (optional, a host
-# under the cell's apps domain) adds the certificate check of SSC-062: under 21 days left fails.
+# SSC-056: the one nightly job, and the only schedule. It runs the probes, the least-privilege and
+# organisation-policy checks and the browser suite for each cell, then the kill switch drill for
+# each cell, and ends with the one-page isolation matrix (ssc_conformance.matrix) in the run's
+# summary. The job is red when any row of the page fails.
+#
+# SSC-017: GitHub's OIDC token becomes ssc-nightly (decision 022) only for this file on main; it
+# may mint the control plane's ID tokens for the cell agent, run the probe job, read that job's
+# logs and, from the ssc-cells folder, read the policies the least-privilege check lists. The
+# called workflows (isolation-nightly.yml, kill-drill.yml) run under this file's identity.
+#
+# The cells are the repository variable SSC_NIGHT_CELLS, a JSON array with one object per cell
+# (e2e/isolation/README.md); with one cell every cross-cell line says "skipped, no peer cell",
+# and setting the variable SSC_NIGHT_NEED_PEER makes that a failure. Also variables
+# SSC_NIGHTLY_WIF_PROVIDER, SSC_PROBE_DIGEST, SSC_NIGHT_FOLDER_ID and the drill's
+# SSC_DRILL_WIF_PROVIDER and SSC_DRILL_SERVICE_ACCOUNT; secrets SSC_NIGHT_CELL1_PASSWORD and
+# SSC_NIGHT_CELL2_PASSWORD, the test admin's password in the first and second cell.
+# The job is inert until SSC_NIGHT_CELLS is set.
 on:
   schedule: [{ cron: "17 6 * * *" }]
   workflow_dispatch:
@@ -23,13 +32,14 @@ env:
   UV_FROZEN: "1"
 
 jobs:
-  runtime-probes:
-    if: github.ref == 'refs/heads/main'
+  plan:
+    if: github.ref == 'refs/heads/main' && vars.SSC_NIGHT_CELLS != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      id-token: write
+    timeout-minutes: 10
+    outputs:
+      projects: ${{ steps.cells.outputs.projects }}
+      positions: ${{ steps.cells.outputs.positions }}
+      peer: ${{ steps.cells.outputs.peer }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,6 +49,41 @@ jobs:
           version: "0.12.19"
           enable-cache: false
       - run: uv sync --all-packages --locked
+      - id: cells
+        name: The cells
+        env:
+          SSC_NIGHT_CELLS: ${{ vars.SSC_NIGHT_CELLS }}
+        run: uv run python -m ssc_conformance.cells plan >> "$GITHUB_OUTPUT"
+
+  probes:
+    needs: plan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        position: ${{ fromJSON(needs.plan.outputs.positions) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+          enable-cache: false
+      - run: uv sync --all-packages --locked
+      - name: This cell's settings
+        env:
+          SSC_NIGHT_CELLS: ${{ vars.SSC_NIGHT_CELLS }}
+          POSITION: ${{ matrix.position }}
+        run: |
+          uv run python -m ssc_conformance.cells probes --position "$POSITION" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          echo "SSC_EVIDENCE_FILE=$RUNNER_TEMP/evidence/probes.json" >> "$GITHUB_ENV"
       - id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
@@ -51,9 +96,95 @@ jobs:
       - name: Probes and drift repair
         env:
           SSC_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-          SSC_PROBE_PROJECT: ${{ vars.SSC_PROBE_PROJECT }}
-          SSC_PROBE_AGENT_URL: ${{ vars.SSC_PROBE_AGENT_URL }}
           SSC_PROBE_DIGEST: ${{ vars.SSC_PROBE_DIGEST }}
           SSC_CONTROL_SA: ssc-control@ssc-control-staging.iam.gserviceaccount.com
-          SSC_PROBE_TLS_HOST: ${{ vars.SSC_PROBE_TLS_HOST }}
         run: uv run python -m ssc_conformance.nightly
+      - name: Least privilege
+        if: ${{ !cancelled() }}
+        env:
+          SSC_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SSC_NIGHT_FOLDER_ID: ${{ vars.SSC_NIGHT_FOLDER_ID }}
+        run: uv run python -m ssc_conformance.least_privilege
+      - name: Organisation policies
+        if: ${{ !cancelled() }}
+        env:
+          SSC_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SSC_NIGHT_FOLDER_ID: ${{ vars.SSC_NIGHT_FOLDER_ID }}
+        run: uv run python -m ssc_conformance.org_policies
+      - name: Evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: evidence-probes-${{ matrix.position }}
+          path: ${{ runner.temp }}/evidence/probes.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser:
+    needs: plan
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        position: ${{ fromJSON(needs.plan.outputs.positions) }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/isolation-nightly.yml
+    with:
+      position: ${{ matrix.position }}
+    secrets:
+      SSC_NIGHT_CELL1_PASSWORD: ${{ secrets.SSC_NIGHT_CELL1_PASSWORD }}
+      SSC_NIGHT_CELL2_PASSWORD: ${{ secrets.SSC_NIGHT_CELL2_PASSWORD }}
+
+  drill:
+    needs: [plan, probes, browser]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.plan.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        position: ${{ fromJSON(needs.plan.outputs.positions) }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/kill-drill.yml
+    with:
+      position: ${{ matrix.position }}
+      runs: 1
+    secrets:
+      SSC_NIGHT_CELL1_PASSWORD: ${{ secrets.SSC_NIGHT_CELL1_PASSWORD }}
+      SSC_NIGHT_CELL2_PASSWORD: ${{ secrets.SSC_NIGHT_CELL2_PASSWORD }}
+
+  page:
+    needs: [plan, probes, browser, drill]
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+          enable-cache: false
+      - run: uv sync --all-packages --locked
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: evidence-*
+          path: ${{ runner.temp }}/evidence
+      - name: The isolation matrix
+        env:
+          PROJECTS: ${{ needs.plan.outputs.projects }}
+          NEED_PEER: ${{ vars.SSC_NIGHT_NEED_PEER }}
+        run: |
+          args=(--evidence "$RUNNER_TEMP/evidence" --cells "$PROJECTS" --out "$RUNNER_TEMP/page.md")
+          if [ -n "$NEED_PEER" ]; then args+=(--need-peer); fi
+          uv run python -m ssc_conformance.matrix "${args[@]}"
+      - name: The page
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: isolation-matrix
+          path: ${{ runner.temp }}/page.md
+          if-no-files-found: warn
+          retention-days: 90

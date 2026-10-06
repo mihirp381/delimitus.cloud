@@ -60,7 +60,7 @@ user`, which the nightly page lists as such; the fast run still runs them.
 | `SSC_ISO_CELL1_BASE` | variable, required | the cell's app base host, e.g. `<label>.<apps domain>`; apps are `alpha.<base>`, `bravo.<base>`, `bravo--preview.<base>` |
 | `SSC_ISO_AUTH_URL` | variable, required | the auth host's origin, `https://...` |
 | `SSC_ISO_AUTH_STATE` | path, required for the cases that need a person | the file `night-login.ts` writes: a Playwright storage state of the auth host's cookies, and the user id the tokens name. It is a secret: never uploaded, deleted when the job ends |
-| `SSC_ISO_USER` | variable, optional | the test admin's user id; the suite reads it from `SSC_ISO_AUTH_STATE` when unset |
+| `SSC_ISO_USER` | optional | the test admin's user id; the suite reads it from `SSC_ISO_AUTH_STATE` when unset, and the workflow does not pass it |
 | `SSC_ISO_PEER_BASE` | variable, optional | the other cell's app base host; the two-cell cases skip with `no peer cell` without it |
 | `SSC_ISO_GATEWAY_RUN_APP` | variable, optional | the cell's gateway service `run.app` host; its case skips without it |
 | `SSC_ISO_LIMIT_SECONDS` | variable, optional | bravo preview's request limit; default 3600 |
@@ -92,8 +92,85 @@ The admin is one Okta test user per cell org, with no MFA; its password is a rep
 It is tested offline against the rig (`signin.spec.ts`); the identity provider's pages are
 the one part only a night proves, which is why `SSC_NIGHT_OKTA` exists.
 
-The nightly job is inert until `SSC_NIGHT_CELLS` is set as a repository variable, and runs only on
-`main`. It uses no cloud credentials.
+### The nightly job: `.github/workflows/nightly.yml` (SSC-056)
+
+`nightly.yml` is the only schedule (06:17 UTC). For every cell it runs the runtime probes, the
+least-privilege and organisation-policy checks and this suite (`isolation-nightly.yml`), then the
+kill switch drill (`kill-drill.yml`, one run per state), and ends with the one-page isolation
+matrix (`ssc_conformance.matrix`) in the run's summary, one line per row of all 17 rows with tonight's
+result. The run is red when any line fails, a required proof did not report or a skip is not allowed.
+`isolation-nightly.yml` and `kill-drill.yml` can still be run by hand (`workflow_dispatch`, with
+`position`, and `runs` for the drill). Every job runs only on `main`, and the whole night is inert
+until `SSC_NIGHT_CELLS` is set. The browser job uses no cloud credentials.
+
+All the settings of a cell are read by `python -m ssc_conformance.cells`, in one place, from the
+repository variable `SSC_NIGHT_CELLS`: a JSON array with one object per cell, at most two. A missing
+or unknown key fails the night's first job with a message naming the cell and the key. Example, with
+fake values:
+
+```json
+[
+  {
+    "project": "ssc-c-example1",
+    "label": "staging cell 1",
+    "agent_url": "https://ssc--agent.example1.apps.example.test",
+    "app_url": "https://ssc-probe-a-xxxxxxxxxx-uc.a.run.app",
+    "gateway_url": "https://ssc-gateway-xxxxxxxxxx-uc.a.run.app",
+    "range": "10.20.0.0/22",
+    "org": "org_01EXAMPLEEXAMPLEEXAMPLE",
+    "base": "example1.apps.example.test",
+    "auth_url": "https://auth.example.test",
+    "username": "night-admin-1@example.test",
+    "datagw_url": "https://ssc-datagw-xxxxxxxxxx-uc.a.run.app",
+    "datagw_connection": "con_abcdefghij0123456789",
+    "drill": {
+      "api_url": "https://api.example.test",
+      "app_id": "app_01EXAMPLEEXAMPLEEXAMPLE",
+      "env_id": "env_01EXAMPLEEXAMPLEEXAMPLE",
+      "host": "drill.example1.apps.example.test"
+    }
+  }
+]
+```
+
+| Key | What |
+| --- | --- |
+| `project` | the cell's project id; it also names the cell on the page |
+| `label` | the cell's name in messages |
+| `agent_url` | the cell agent's URL, the audience of the control plane's ID token |
+| `app_url`, `gateway_url`, `range` | the probe app's and the gateway's `run.app` URLs and the cell's address range; the other cell's three are the peer settings of the cross-cell probe |
+| `org` | the org the cell serves, `org_...` |
+| `base` | the apps base host: apps are `alpha.<base>`, `bravo.<base>`; the certificate check opens `alpha.<base>` |
+| `auth_url` | the auth host's origin, `https://...` |
+| `username` | the cell's Okta test admin |
+| `datagw_url`, `datagw_connection` | optional, both or neither: the live data gateway and a read-only connection (`con_` and 20 characters) for the read-only matrix; without them that line says `waits for the data gateway` in the also-checked block |
+| `drill` | optional, but without it the drill line is `did not report` and the night fails: `api_url`, `app_id`, `env_id` and `host` of the drill app (`docs/kill-switch-drill.md`) |
+
+With two cells, each is the other's peer. With one, every cross-cell line says `skipped, no peer
+cell`, never a pass.
+
+| Variable or secret | Kind | What |
+| --- | --- | --- |
+| `SSC_NIGHT_CELLS` | variable | the array above |
+| `SSC_NIGHT_FOLDER_ID` | variable | the `ssc-cells` folder's numeric id, for the least-privilege and organisation-policy checks |
+| `SSC_NIGHT_NEED_PEER` | variable, optional | any value: with it the page fails on `no peer cell` instead of accepting it (set it once two cells exist) |
+| `SSC_NIGHT_CELL1_PASSWORD`, `SSC_NIGHT_CELL2_PASSWORD` | secrets | the test admin's Okta password for the first and the second cell of `SSC_NIGHT_CELLS`; used by `night-login.ts` only, at step level |
+| `SSC_NIGHT_OKTA` | variable, optional | `classic` for Okta's classic sign-in page |
+| `SSC_NIGHTLY_WIF_PROVIDER`, `SSC_PROBE_DIGEST` | variables | as before: the nightly identity and the probe image digest |
+| `SSC_DRILL_WIF_PROVIDER`, `SSC_DRILL_SERVICE_ACCOUNT` | variables | as before: the drill's Google identity |
+| `SSC_ISO_LIMIT_SECONDS` | variable, optional | bravo preview's request limit; default 3600 |
+
+The sign-in files (`SSC_ISO_AUTH_STATE`, `SSC_DRILL_CREDENTIALS_FILE`) are written to the runner's
+temporary folder, never uploaded as artifacts, and deleted by a step that runs even when the job
+fails. The only artifacts are the evidence files and the page.
+
+No longer read, to delete from the repository's settings once the first night has gone green:
+variables `SSC_ISO_CELL1_BASE`, `SSC_ISO_AUTH_URL`, `SSC_ISO_CELL1_ORG`, `SSC_ISO_CELL2_BASE`,
+`SSC_ISO_USER`, `SSC_ISO_OTHER_USER`, `SSC_ISO_OUTSIDER`, `SSC_ISO_GATEWAY_RUN_APP`,
+`SSC_PROBE_PROJECT`, `SSC_PROBE_AGENT_URL`, `SSC_PROBE_TLS_HOST`, `SSC_DRILL_API_URL`,
+`SSC_DRILL_APP_ID`, `SSC_DRILL_ENV_ID`, `SSC_DRILL_HOST`, `SSC_DRILL_PROJECT`, `SSC_DRILL_ORG_ID`,
+`SSC_DRILL_USER`, `SSC_DRILL_RUNS`; secrets `SSC_ISO_CELL1_KEYRING`, `SSC_ISO_AUTH_STATE`,
+`SSC_DRILL_TOKEN` and `SSC_DRILL_KEYRING`.
 
 In the staging cell, before the first run:
 

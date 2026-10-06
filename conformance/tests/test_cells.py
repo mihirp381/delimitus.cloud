@@ -124,7 +124,7 @@ def test_plan_names_the_cells_and_whether_there_is_a_peer() -> None:
     assert both == {
         "count": "2",
         "projects": "ssc-c-one,ssc-c-two",
-        "indexes": "[0, 1]",
+        "positions": "[1, 2]",
         "peer": "true",
     }
     assert cells.section(cells.parse(text(CELL_ONE)), "plan")["peer"] == "false"
@@ -165,6 +165,8 @@ def test_browser_and_drill_settings() -> None:
         == "alpha.bcdfghjklmnp.apps.example.test,bravo.bcdfghjklmnp.apps.example.test"
     )
     assert browser["SSC_NIGHT_USERNAME"] == "night-one@example.test"
+    assert (browser["SSC_NIGHT_PROJECT"], browser["SSC_NIGHT_PEER"]) == ("ssc-c-one", "true")
+    assert cells.section(cells.parse(text(CELL_ONE)), "browser")["SSC_NIGHT_PEER"] == "false"
     drill = cells.section(both, "drill", 0)
     assert drill["SSC_DRILL_PROJECT"] == "ssc-c-one"
     assert drill["SSC_DRILL_ORG_ID"] == "org_" + "a" * 20
@@ -178,8 +180,8 @@ def test_a_cell_without_a_drill_cannot_run_one() -> None:
         cells.section(both, "drill", 0)
 
 
-def test_an_index_outside_the_cells_is_refused() -> None:
-    with pytest.raises(cells.CellsError, match="--index 2"):
+def test_a_position_outside_the_cells_is_refused() -> None:
+    with pytest.raises(cells.CellsError, match="--position 3"):
         cells.section(cells.parse(text(CELL_ONE)), "probes", 2)
 
 
@@ -187,7 +189,7 @@ def test_main_prints_lines_and_exits_one_on_a_mistake(capsys: pytest.CaptureFixt
     ok = {cells.ENV: text(CELL_ONE, CELL_TWO)}
     assert cells.main(["plan"], ok) == 0
     assert "peer=true\n" in capsys.readouterr().out
-    assert cells.main(["probes", "--index", "1"], ok) == 0
+    assert cells.main(["probes", "--position", "2"], ok) == 0
     assert "SSC_PROBE_PEER_PROJECT=ssc-c-one\n" in capsys.readouterr().out
     assert cells.main(["plan"], {cells.ENV: broken(org=None)}) == 1
     captured = capsys.readouterr()

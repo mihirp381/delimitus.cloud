@@ -1,23 +1,37 @@
 name: isolation-nightly
 
-# SSC-029: the browser isolation suite against a staging cell (e2e/isolation, README), with the
-# cases the Docker run skips: the gateway's run.app host, two cells and the 60-minute limit.
-# Inert until its settings exist: the job runs only on main and only once the repository
-# variable SSC_ISO_CELL1_BASE is set. Variables: SSC_ISO_CELL1_BASE, SSC_ISO_AUTH_URL,
-# SSC_ISO_CELL1_ORG, SSC_ISO_USER, SSC_ISO_OTHER_USER, SSC_ISO_OUTSIDER, and optionally
-# SSC_ISO_CELL2_BASE, SSC_ISO_GATEWAY_RUN_APP and SSC_ISO_LIMIT_SECONDS. Secrets:
-# SSC_ISO_CELL1_KEYRING (the cell's session keyring JSON, to seal sessions while the auth host is
-# not deployed) and optionally SSC_ISO_AUTH_STATE (a Playwright storage state signed in to the
-# auth host as SSC_ISO_USER). No cloud credentials: the suite only browses the cell.
+# SSC-029, SSC-056: the browser isolation suite against one staging cell (e2e/isolation, README),
+# with the cases the Docker run skips: the gateway's run.app host, two cells and the 60-minute
+# limit. nightly.yml calls it once per cell and has the only schedule; run by hand it does one
+# cell. `position` counts the cells of the repository variable SSC_NIGHT_CELLS from 1, and
+# selects that cell's password: SSC_NIGHT_CELL1_PASSWORD or SSC_NIGHT_CELL2_PASSWORD.
+# The job signs in through the real auth host first (night-login.ts), reports each group of the
+# suite as evidence for the nightly page, and deletes the sign-in files when it ends. They are
+# never uploaded. Optional variable: SSC_ISO_LIMIT_SECONDS. No cloud credentials.
 on:
-  schedule: [{ cron: "41 3 * * *" }]
+  workflow_call:
+    inputs:
+      position:
+        description: "Which cell of SSC_NIGHT_CELLS, counted from 1"
+        type: number
+        default: 1
+    secrets:
+      SSC_NIGHT_CELL1_PASSWORD:
+        required: false
+      SSC_NIGHT_CELL2_PASSWORD:
+        required: false
   workflow_dispatch:
+    inputs:
+      position:
+        description: "Which cell of SSC_NIGHT_CELLS, counted from 1"
+        type: number
+        default: 1
 
 permissions:
   contents: read
 
 concurrency:
-  group: isolation-nightly
+  group: isolation-nightly-${{ inputs.position }}
   cancel-in-progress: false
 
 env:
@@ -25,7 +39,7 @@ env:
 
 jobs:
   live:
-    if: github.ref == 'refs/heads/main' && vars.SSC_ISO_CELL1_BASE != ''
+    if: github.ref == 'refs/heads/main' && vars.SSC_NIGHT_CELLS != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     defaults:
@@ -42,34 +56,51 @@ jobs:
           version: "0.12.19"
           enable-cache: false
       - run: uv sync --all-packages --locked
+        working-directory: .
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "24"
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
-      - name: Recorded auth host session
+      - name: This cell's settings
         env:
-          AUTH_STATE: ${{ secrets.SSC_ISO_AUTH_STATE }}
+          SSC_NIGHT_CELLS: ${{ vars.SSC_NIGHT_CELLS }}
+          POSITION: ${{ inputs.position }}
+        working-directory: .
         run: |
-          if [ -n "$AUTH_STATE" ]; then
-            umask 077
-            printf '%s' "$AUTH_STATE" > "$RUNNER_TEMP/auth-state.json"
-            echo "SSC_ISO_AUTH_STATE=$RUNNER_TEMP/auth-state.json" >> "$GITHUB_ENV"
-          fi
-      - name: The suite against the staging cell
+          uv run python -m ssc_conformance.cells browser --position "$POSITION" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            echo "SSC_EVIDENCE_FILE=$RUNNER_TEMP/evidence/browser-$POSITION.json"
+            echo "SSC_ISO_AUTH_STATE=$RUNNER_TEMP/auth-state.json"
+            echo "PLAYWRIGHT_JSON_OUTPUT_NAME=$RUNNER_TEMP/browser-report.json"
+          } >> "$GITHUB_ENV"
+      - name: Sign in through the auth host
         env:
-          SSC_ISO_CELL1_BASE: ${{ vars.SSC_ISO_CELL1_BASE }}
-          SSC_ISO_CELL2_BASE: ${{ vars.SSC_ISO_CELL2_BASE }}
-          SSC_ISO_AUTH_URL: ${{ vars.SSC_ISO_AUTH_URL }}
-          SSC_ISO_CELL1_ORG: ${{ vars.SSC_ISO_CELL1_ORG }}
-          SSC_ISO_USER: ${{ vars.SSC_ISO_USER }}
-          SSC_ISO_OTHER_USER: ${{ vars.SSC_ISO_OTHER_USER }}
-          SSC_ISO_OUTSIDER: ${{ vars.SSC_ISO_OUTSIDER }}
-          SSC_ISO_GATEWAY_RUN_APP: ${{ vars.SSC_ISO_GATEWAY_RUN_APP }}
+          SSC_NIGHT_PASSWORD: ${{ inputs.position == 2 && secrets.SSC_NIGHT_CELL2_PASSWORD || secrets.SSC_NIGHT_CELL1_PASSWORD }}
+          SSC_NIGHT_OKTA: ${{ vars.SSC_NIGHT_OKTA }}
+        run: node night-login.ts
+      - name: The suite against the staging cell
+        if: ${{ !cancelled() }}
+        env:
           SSC_ISO_LIMIT_SECONDS: ${{ vars.SSC_ISO_LIMIT_SECONDS }}
-          SSC_ISO_CELL1_KEYRING: ${{ secrets.SSC_ISO_CELL1_KEYRING }}
           SSC_ISO_NIGHTLY: "1"
         run: npm run live
-      - name: Clear the recorded session
+      - name: Evidence
+        if: ${{ !cancelled() }}
+        working-directory: .
+        run: |
+          args=(--report "$PLAYWRIGHT_JSON_OUTPUT_NAME" --cell "$SSC_NIGHT_PROJECT")
+          if [ "$SSC_NIGHT_PEER" = true ]; then args+=(--peer); fi
+          uv run python -m ssc_conformance.browser "${args[@]}"
+      - name: Evidence file
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: evidence-browser-${{ inputs.position }}
+          path: ${{ runner.temp }}/evidence/browser-${{ inputs.position }}.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Clear the sign-in files
         if: always()
         run: rm -f "$RUNNER_TEMP/auth-state.json"

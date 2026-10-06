@@ -62,7 +62,7 @@ The cell's budget (`cell-monthly`, $50) mails the on-call address at 50, 90 and 
 
 The nightly run reads the cell's wildcard certificate over TLS at its public host and fails when under 21 days remain, or when the certificate does not verify. A Certificate Manager certificate that fails to renew keeps serving until it expires, so a failed renewal shows as a falling expiry and is caught here 14 or more days ahead. No Certificate Manager metric is used: none is documented.
 
-The check runs when the nightly job has `SSC_PROBE_TLS_HOST` set to a host under the cell's apps domain. It shows as a failed nightly run, which the on-call person owns.
+The check runs each night for every cell in `SSC_NIGHT_CELLS`, at `alpha.<base>` under the cell's apps domain. It shows as a failed nightly run, which the on-call person owns.
 
 1. In the cell project, open the certificate in Certificate Manager and read its state and any failure reason.
 2. The usual cause is the DNS authorisation record missing from the apps zone: restore it (`cert-dns-auth`, `dns-cert-auth` in the cell stack) and re-apply the cell stack.

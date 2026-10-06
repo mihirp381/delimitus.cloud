@@ -1,6 +1,6 @@
 # Kill switch drill (SSC-054)
 
-How fast the kill switch cuts an app off, measured in a staging cell and published as a table. The drill is `python -m ssc_conformance.kill_drill`; the app it kills is `conformance/kill_drill_app`. The workflow is `.github/workflows/kill-drill.yml`: run by hand only for now, and off until its settings exist.
+How fast the kill switch cuts an app off, measured in a staging cell and published as a table. The drill is `python -m ssc_conformance.kill_drill`; the app it kills is `conformance/kill_drill_app`. The workflow is `.github/workflows/kill-drill.yml`: `nightly.yml` calls it for each cell (one run per state, SSC-056) and it can be run by hand with ten.
 
 ## What is measured
 
@@ -36,7 +36,7 @@ All steps are by a person, once, in a staging cell with the `connections` and `e
 3. Put `api.github.com` on the org's egress allowlist (a `*.github.com` entry will do).
 4. Share the app with the person whose session the drill uses (`ssc share`).
 5. Note the ids: `app_...`, its environment `env_...`, the org `org_...`, the person `usr_...`, the cell project, and the app's public host.
-6. An admin's access token for the control plane, and the person's session: either the cell's session keyring JSON with the person's `usr_` id, which the drill uses to seal a cookie in memory, or a cookie value.
+6. An admin's access token for the control plane, and the person's session cookie for the drill host. The nightly gets both by signing in as the cell's test admin through the real auth host (`node night-login.ts`, `e2e/isolation/README.md`), which writes them to the file `SSC_DRILL_CREDENTIALS_FILE` names (mode 0600, deleted when the job ends). By hand, either use that file or set `SSC_DRILL_TOKEN` (an admin's access token) and `SSC_DRILL_SESSION_COOKIE` (a cookie value); the file wins when both are set.
 7. Google credentials for the caller: log read on the cell project and read on its bucket. The drill takes `SSC_ACCESS_TOKEN` if set (one token, about an hour, so for a test run only), else the credential file `GOOGLE_APPLICATION_CREDENTIALS` names, which it refreshes as the token nears expiry, else `gcloud auth login`.
 
 Run it by hand:
@@ -45,15 +45,16 @@ Run it by hand:
 export SSC_DRILL_API_URL=https://<control plane>
 export SSC_DRILL_APP_ID=app_... SSC_DRILL_ENV_ID=env_... SSC_DRILL_ORG_ID=org_...
 export SSC_DRILL_HOST=<the app's public host> SSC_DRILL_PROJECT=<cell project>
-export SSC_DRILL_USER=usr_...
 read -rs SSC_DRILL_TOKEN; export SSC_DRILL_TOKEN
-read -rs SSC_DRILL_KEYRING; export SSC_DRILL_KEYRING
+read -rs SSC_DRILL_SESSION_COOKIE; export SSC_DRILL_SESSION_COOKIE
 SSC_DRILL_RUNS=1 uv run python -m ssc_conformance.kill_drill
 ```
 
-Start with one run in each state. The drill never prints the token, the keyring or the cookie.
+Start with one run in each state. The drill never prints the token or the cookie.
 
-The workflow runs by hand only (`workflow_dispatch`). Set the variables and secrets named at the top of `.github/workflows/kill-drill.yml`, let the Google identity in `SSC_DRILL_SERVICE_ACCOUNT` trust that file, and run it from the Actions tab. `SSC_DRILL_TOKEN` must outlive the run, about 5 hours. There is no long-lived control plane credential yet, so the weekly schedule stays commented out until a machine credential exists for the drill.
+The workflow takes its cell from the repository variable `SSC_NIGHT_CELLS` (the `drill` object of each cell's entry, shape in `e2e/isolation/README.md`) and its sign-in from the secrets `SSC_NIGHT_CELL1_PASSWORD` and `SSC_NIGHT_CELL2_PASSWORD`. Each night `nightly.yml` calls it for every cell, in parallel, after the probes and the browser suite, with `SSC_DRILL_RUNS=1` (one run per state), and the result is the page's `drill` line. By hand (`workflow_dispatch`, Actions tab) it takes `position` (which cell, from 1) and `runs` (default ten, the ticket's number). The Google identity in `SSC_DRILL_SERVICE_ACCOUNT` (variables `SSC_DRILL_WIF_PROVIDER` and `SSC_DRILL_SERVICE_ACCOUNT`) must trust `nightly.yml` and `kill-drill.yml` on main: a called workflow's OIDC token names the caller's file. The weekly schedule in `kill-drill.yml` stays commented out: `nightly.yml` is the only schedule.
+
+These repository variables and secrets are no longer read and can be deleted: `SSC_DRILL_API_URL`, `SSC_DRILL_APP_ID`, `SSC_DRILL_ENV_ID`, `SSC_DRILL_HOST`, `SSC_DRILL_PROJECT`, `SSC_DRILL_ORG_ID`, `SSC_DRILL_USER`, `SSC_DRILL_RUNS` (now `SSC_NIGHT_CELLS` and the `runs` input) and the secrets `SSC_DRILL_TOKEN` and `SSC_DRILL_KEYRING`.
 
 ## Results
 

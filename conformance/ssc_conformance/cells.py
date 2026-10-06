@@ -1,4 +1,4 @@
-"""The cells of a nightly run (SSC-056): ``python -m ssc_conformance.cells <section> [--index N]``.
+"""The cells of a nightly run (SSC-056): ``python -m ssc_conformance.cells <section>``.
 
 ``SSC_NIGHT_CELLS`` is a repository variable holding a JSON array, one object per cell, and this is
 the one place it is read. Every nightly workflow gets its settings from here, as ``NAME=value``
@@ -14,9 +14,10 @@ range), ``org``, ``base`` (the apps base host), ``auth_url``, ``username`` (its 
 kill switch drill app. The test admin's password is a secret chosen by the cell's position:
 ``SSC_NIGHT_CELL1_PASSWORD`` for the first, ``SSC_NIGHT_CELL2_PASSWORD`` for the second.
 
-Sections: ``plan`` (``count``, ``projects``, ``indexes`` and ``peer``, for the job that fans out),
-``probes``, ``browser`` and ``drill`` (the environment of that job for cell ``--index``). With two
-cells each is the other's peer.
+Sections: ``plan`` (``count``, ``projects``, ``positions`` and ``peer``, for the job that fans
+out), ``probes``, ``browser`` and ``drill`` (the environment of that job for the cell at
+``--position N``, counted from 1 as the password secrets are). With two cells each is the other's
+peer.
 """
 
 import argparse
@@ -177,11 +178,11 @@ def section(cells: Sequence[Cell], name: str, index: int = 0) -> dict[str, str]:
         return {
             "count": str(len(cells)),
             "projects": ",".join(c.project for c in cells),
-            "indexes": json.dumps(list(range(len(cells)))),
+            "positions": json.dumps(list(range(1, len(cells) + 1))),
             "peer": "true" if len(cells) > 1 else "false",
         }
     if not 0 <= index < len(cells):
-        raise CellsError(f"--index {index} is not one of the {len(cells)} cells")
+        raise CellsError(f"--position {index + 1} is not one of the {len(cells)} cells")
     cell, peer = cells[index], peer_of(cells, index)
     if name == "probes":
         out = {
@@ -208,6 +209,8 @@ def section(cells: Sequence[Cell], name: str, index: int = 0) -> dict[str, str]:
             "SSC_ISO_AUTH_URL": cell.auth_url,
             "SSC_ISO_GATEWAY_RUN_APP": urlsplit(cell.gateway_url).netloc,
             "SSC_NIGHT_HOSTS": ",".join(cell.hosts),
+            "SSC_NIGHT_PROJECT": cell.project,
+            "SSC_NIGHT_PEER": "true" if peer is not None else "false",
             **_auth(cell),
         }
         if peer is not None:
@@ -233,11 +236,11 @@ def section(cells: Sequence[Cell], name: str, index: int = 0) -> dict[str, str]:
 def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("section", choices=SECTIONS)
-    parser.add_argument("--index", type=int, default=0)
+    parser.add_argument("--position", type=int, default=1)
     args = parser.parse_args(argv)
     try:
         cells = parse((environ if environ is not None else os.environ).get(ENV))
-        lines = section(cells, args.section, args.index)
+        lines = section(cells, args.section, args.position - 1)
     except CellsError as exc:
         sys.stderr.write(f"cells: {exc}\n")
         return 1
