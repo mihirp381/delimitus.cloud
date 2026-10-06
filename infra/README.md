@@ -77,7 +77,7 @@ for flag in database egress connections; do
 done
 ```
 
-Each `diff` prints nothing, and `no_direct_egress` passes every time. The sinkhole's first creation takes about 78 minutes (SSC-091).
+Each `diff` prints nothing, and `no_direct_egress` passes every time. The sinkhole's first creation took about 78 minutes with its state in the bucket; onboarding now keeps the state in a local folder until its last step (SSC-091, below).
 
 ## The cell deployer
 
@@ -523,16 +523,27 @@ uv run python -m ssc_infra.onboard <label> ... --from-step 5  # start at step 5 
 
 `settings.json` is a JSON object of stack settings (or give single ones with `--set key=value`). `gateway_image` and `org_id` are required. `stage` and `probe` are set for you, and the sealed keyring, its JWKS and `probe_digest` are made by the command: they are refused in the settings. Run it from the repository root with `gcloud`, `pulumi` and `docker` signed in (the last to the cell's Artifact Registry: `gcloud auth configure-docker us-central1-docker.pkg.dev`).
 
-The steps print as `[n/8]` with each step's time and the running total, and a line every 30 seconds while `pulumi up` runs (resources done, resources in flight).
+The steps print as `[n/9]` with each step's time and the running total, and a line every 30 seconds while `pulumi up` runs (resources done, resources in flight).
 
-1. Stack and settings: the stack with the KMS secrets provider and the settings the first apply can take. An existing stack is refused unless `--resume` is given.
-2. DNS sinkhole rules: `skipped (SSC-091 phase 2)`. Today the first `pulumi up` creates them.
-3. `pulumi up`: project, network, registry and the gateway's key.
+1. Stack and settings: the stack, in the local state folder (below), with the KMS secrets provider and the settings the first apply can take. An existing stack is refused unless `--resume` is given. A stack that already exists in the state bucket is refused before this step.
+2. DNS sinkhole rules: `not needed: the rules go in the first apply on local state (SSC-091)`. The step stays so the numbers do not move.
+3. `pulumi up` (with `--parallel 32`): project, network, registry and the gateway's key, and the sinkhole's rules.
 4. The gateway keyring: made and sealed with the stack's key in memory (never written to disk or printed), then set with the gateway's settings and the images that need the org.
 5. The probe image copied into the cell's `ssc-apps` registry by digest (`docker buildx imagetools create`, as the proof run does), and `probe_digest` set.
-6. `pulumi up`: gateway, agent and probe-runner.
+6. `pulumi up` (with `--parallel 32`): gateway, agent and probe-runner.
 7. The certificate: waits for `ssc-cell-wildcard` to be `ACTIVE`, 120 minutes at most.
 8. The floor probes: `ssc_conformance.nightly` with the cell's project, agent URL and probe digest.
+9. Move the state to the bucket (below). It counts in the total and the 15 minutes, and prints its own line, `state move: mm:ss`.
+
+**Where the state lives while it runs.** Pulumi rewrites the whole checkpoint after every resource, and in the bucket with a 7 MB state that made 8.8 sinkhole rules a minute (274 on a local file; `spikes/sinkhole/pulumi_probe/README.md`). So steps 1 to 8 run every `pulumi` call, both applies included, with `PULUMI_BACKEND_URL=file://~/.ssc/onboard/<label>`, a folder made with mode 0700 and never under a temporary folder. The secrets provider is still the KMS key, and `Pulumi.<stack>.yaml` stays in `infra/`. Step 9 then:
+
+1. exports the local stack (`pulumi stack export`, secrets stay sealed) and saves a copy of `Pulumi.<stack>.yaml` as `Pulumi.<stack>.yaml.before-init` in the folder;
+2. creates the stack in `gs://ssc-platform-0-pulumi` with the same secrets provider, and stops if `secretsprovider` or `encryptedkey` in the yaml changed (it names the line, never the key, and does not restore the copy);
+3. imports the export, and exports the bucket's stack to check it holds the same resources;
+4. runs `pulumi preview --expect-no-changes --parallel 32` against the bucket;
+5. renames the folder to `~/.ssc/onboard/<label>.moved-<UTC>`. It is kept, with `export.json` in it, and never deleted by the command: remove it by hand when the cell is settled.
+
+**If a run crashes.** The state is in the folder, so run the same command with `--resume` (or `--from-step N`). If pulumi says the stack is locked, run `PULUMI_BACKEND_URL=file://$HOME/.ssc/onboard/<label> pulumi cancel --stack <stack>` in `infra/` first. If step 9 stops halfway (the stack is created in the bucket but not imported, or imported but not previewed), a plain run is refused, with the folder and the bucket's stack named; run it with `--from-step 9`. That carries on from what it finds in the bucket: an empty stack is imported into, a stack holding the same resources is only previewed, and a stack holding different resources is never overwritten (the command stops and says so). If it stops on `encryptedkey changed`, put `Pulumi.<stack>.yaml.before-init` back as `infra/Pulumi.<stack>.yaml` by hand before running it again. A stack onboarded before this change lives only in the bucket and is refused: this command does not resume it. A run whose state was moved is refused as already onboarded.
 
 The certificate comes before the floor probes because the cell agent is reachable only through the cell's load balancer, which needs it. Its wait is not part of the 15 minutes (founder decision D6); the probe image and probe runner are. The last line is the verdict:
 
@@ -542,7 +553,9 @@ onboarding 12:41 to floor probes (budget 15:00, PASS); certificate 38:07
 
 The certificate figure runs from the end of step 3 (when its DNS record exists) to `ACTIVE`. A resumed run counts only its own time and says so. A failed step prints its number, its time and `resume with: ...`, then exits 1. Each step is idempotent, and with `--resume` a step whose work is visibly done (an output, a setting, the image in the registry) is skipped. The labels `proofcell01` and `proofcell02` are always refused.
 
-**The 78-minute line stands.** Step 3 still creates all the sinkhole's rules one at a time, about 78 minutes, until phase 2 of SSC-091 changes how they are created; the verdict will read OVER until then. The rules' names and inputs are pinned by a test (`test_the_sinkhole_s_rules_keep_the_names_and_inputs_the_live_cells_were_built_with`), so a change cannot make the next `pulumi up` on a live cell replace them.
+**Not yet timed on this path.** Step 3 creates the sinkhole's rules on local state, where the probe made 274 rules a minute with a 7 MB state; the first full run on this path has not been timed yet, and its verdict is the first figure that counts. The rules' names and inputs are pinned by a test (`test_the_sinkhole_s_rules_keep_the_names_and_inputs_the_live_cells_were_built_with`), so a change cannot make the next `pulumi up` on a live cell replace them.
+
+**Open item (SSC-091).** The cell deployer is unchanged: its flag runs (`pulumi up` on a live cell) still use the bucket as their backend, so they are as slow as the sinkhole creation was whenever a cell's state is that large. Moving them to a faster path is not part of this change.
 
 A staging cell can be destroyed with `pulumi destroy --stack c-<label>`. A prod cell's project, database and services are protected. A deleted project ID stays reserved for 30 days.
 

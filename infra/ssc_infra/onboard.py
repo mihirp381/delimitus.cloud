@@ -15,11 +15,18 @@ is visibly done; ``--from-step N`` starts at step N (and implies ``--resume``). 
 prints its time and the command to resume. ``--dry-run`` prints the plan with the exact commands
 and runs none. The labels of the live proof run's cells are always refused.
 
+State lives in a local file backend, ``~/.ssc/onboard/<label>/`` (mode 0700), until the last step:
+Pulumi rewrites the whole checkpoint after every resource, and in the bucket that took 78 minutes
+for the sinkhole's rules (8.8 rules a minute against 274 on a local file). Step 9 exports the
+state, creates the stack in the state bucket with the same secrets provider, imports it, checks
+that a preview has no changes, and renames the folder to ``<label>.moved-<UTC>``, which is kept.
+A run that stops before step 9 leaves the state in the folder: ``--resume`` continues it.
+
 The certificate is Google's, issued only after the first apply creates its DNS record, and the
 cell agent is reachable only through the cell's load balancer with that certificate: the floor
 probes cannot run before it is ACTIVE. So step 7 waits for it, and its wait is not counted in the
-15-minute budget (decision D6); the verdict line shows the counted time and, beside it, how long
-the certificate took after the first apply.
+15-minute budget (decision D6); the verdict line shows the counted time (step 9 included, and
+shown on its own line too) and, beside it, how long the certificate took after the first apply.
 """
 
 import argparse
@@ -28,20 +35,22 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess  # noqa: S404
 import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
 from ssc_infra import naming as n
 from ssc_infra.cell import APP_IMAGE, CUSTOMER_ORG
 from ssc_infra.control import PINNED_IMAGE
-from ssc_infra.run import FORBIDDEN_PROJECT, CommandError, pulumi, pulumi_env
-from ssc_infra.stack_config import INFRA_DIR, Pulumi
+from ssc_infra.run import FORBIDDEN_PROJECT, CommandError, pulumi
+from ssc_infra.stack_config import INFRA_DIR
 from ssc_shared.hosts import check_cell_label
 
 BUDGET_SECONDS: Final = 15 * 60
@@ -63,11 +72,21 @@ STEP_NAMES: Final = (
     "pulumi up: gateway, agent, probe-runner",
     "certificate issuance (not counted in the budget)",
     "floor probes",
+    "move the state to the bucket",
 )
 SEED_STEP: Final = 2
 FIRST_APPLY_STEP: Final = 3
 CERTIFICATE_STEP: Final = 7
 PROBES_STEP: Final = 8
+MOVE_STEP: Final = 9
+APPLY_PARALLEL: Final = 32
+"""Resources Pulumi works on at once in both applies; the sinkhole's rules are the bulk."""
+STATE_ROOT: Final = Path.home() / ".ssc" / "onboard"
+"""Where a run keeps its state until step 9. Never a temporary folder: a crashed run is resumed
+from it, possibly days later."""
+KEY_LINES: Final = ("secretsprovider", "encryptedkey", "encryptionsalt")
+"""What ``stack init`` must leave alone in ``Pulumi.<stack>.yaml``: the key the existing secrets
+are sealed with."""
 
 SETTINGS: Final = frozenset(
     {
@@ -184,9 +203,18 @@ def count_events(lines: Iterable[str]) -> Counts:
     return Counts(started, finished, failed)
 
 
+class PulumiRun(Protocol):
+    def __call__(
+        self, *args: str, cwd: str | None = None, env: Mapping[str, str] | None = None
+    ) -> str:
+        """``env`` replaces the whole environment, ``PULUMI_BACKEND_URL`` included."""
+        ...
+
+
 class Apply(Protocol):
-    def __call__(self, stack: str, beat: Callable[[Counts], None]) -> None:
-        """Runs ``pulumi up`` on ``stack``, calling ``beat`` with the counts while it runs."""
+    def __call__(self, stack: str, beat: Callable[[Counts], None], env: Mapping[str, str]) -> None:
+        """Runs ``pulumi up`` on ``stack`` in ``env``, calling ``beat`` with the counts while it
+        runs."""
         ...
 
 
@@ -201,6 +229,8 @@ def up_args(stack: str, event_log: str) -> tuple[str, ...]:
         "--non-interactive",
         "--event-log",
         event_log,
+        "--parallel",
+        str(APPLY_PARALLEL),
     )
 
 
@@ -214,7 +244,7 @@ class RealApply:
     ) -> None:
         self.clock, self.sleep, self.every = clock, sleep, every
 
-    def __call__(self, stack: str, beat: Callable[[Counts], None]) -> None:
+    def __call__(self, stack: str, beat: Callable[[Counts], None], env: Mapping[str, str]) -> None:
         folder = Path(tempfile.mkdtemp(prefix="ssc-onboard-"))
         events, log = folder / "events.json", folder / "up.log"
         argv = ["pulumi", *up_args(stack, str(events))]
@@ -224,7 +254,7 @@ class RealApply:
             proc = subprocess.Popen(  # noqa: S603
                 argv,
                 cwd=INFRA_DIR,
-                env=dict(pulumi_env()),
+                env=dict(env),
                 stdout=out,
                 stderr=subprocess.STDOUT,
             )
@@ -335,6 +365,58 @@ def stack_names(listing: str) -> set[str]:
     return names
 
 
+def stack_resource_count(listing: str, stack: str) -> int | None:
+    """``resourceCount`` of ``stack`` in ``pulumi stack ls --json``: None when the stack is not
+    there, 0 when it is there and holds nothing (Pulumi leaves the count out then)."""
+    try:
+        found: Any = json.loads(listing)
+    except ValueError:
+        return None
+    if not isinstance(found, list):
+        return None
+    for item in cast("list[object]", found):
+        if isinstance(item, dict):
+            entry = cast("dict[str, object]", item)
+            if entry.get("name") == stack:
+                count = entry.get("resourceCount")
+                return count if isinstance(count, int) else 0
+    return None
+
+
+def state_urns(export: Path) -> list[str]:
+    """The sorted resource URNs in a ``pulumi stack export`` file. Two exports of one state differ
+    in their ciphertext (each import re-encrypts the secrets), so states are compared by this."""
+    try:
+        found: Any = json.loads(export.read_text())
+        resources = cast("list[dict[str, object]]", found["deployment"].get("resources") or [])
+        return sorted(str(r["urn"]) for r in resources)
+    except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
+        raise OnboardError(f"cannot read the resources in {export}: {type(exc).__name__}") from exc
+
+
+def key_lines(text: str) -> dict[str, str]:
+    """The ``KEY_LINES`` of a stack file, by name; their values are key material, never shown."""
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        name, sep, value = line.partition(":")
+        if sep and name in KEY_LINES:
+            found[name] = value.strip()
+    return found
+
+
+def export_args(stack: str, file: Path) -> tuple[str, ...]:
+    """Without ``--show-secrets``: the file holds the secrets sealed, as the state does."""
+    return ("stack", "export", "--stack", stack, "--file", str(file))
+
+
+def import_args(stack: str, file: Path) -> tuple[str, ...]:
+    return ("stack", "import", "--stack", stack, "--file", str(file))
+
+
+def preview_args(stack: str) -> tuple[str, ...]:
+    return ("preview", "--stack", stack, "--expect-no-changes", "--parallel", str(APPLY_PARALLEL))
+
+
 def pulumi_line(args: Sequence[str]) -> str:
     return "pulumi " + shlex.join([*args, "--non-interactive"])
 
@@ -439,7 +521,7 @@ def probe_env(opts: Options, base: Mapping[str, str]) -> dict[str, str]:
 
 @dataclass(slots=True)
 class Tools:
-    pulumi: Pulumi = pulumi
+    pulumi: PulumiRun = pulumi
     shell: Shell = shell
     apply: Apply = field(default_factory=RealApply)
     clock: Callable[[], float] = time.monotonic
@@ -449,6 +531,10 @@ class Tools:
     env: Mapping[str, str] = field(default_factory=lambda: dict(os.environ))
     infra_dir: str = INFRA_DIR
     repo_root: Path = REPO_ROOT
+    state_root: Path = STATE_ROOT
+    bucket_url: str = f"gs://{n.STATE_BUCKET}"
+    secrets_provider: str = n.SECRETS_PROVIDER
+    now: Callable[[], datetime] = lambda: datetime.now(UTC)
 
 
 class Onboarding:
@@ -461,31 +547,42 @@ class Onboarding:
         self.certificate_wait = 0.0
         self.certificate_already_active = False
         self.detected_skips = False
+        self.move_seconds: float | None = None
+        self.folder = tools.state_root / opts.label
+
+    @property
+    def local_env(self) -> dict[str, str]:
+        """Every pulumi call before step 9: the state is in ``self.folder``."""
+        return {**self.t.env, "PULUMI_BACKEND_URL": f"file://{self.folder}"}
+
+    @property
+    def bucket_env(self) -> dict[str, str]:
+        return {**self.t.env, "PULUMI_BACKEND_URL": self.t.bucket_url}
+
+    def _pulumi(self, *args: str, bucket: bool = False) -> str:
+        env = self.bucket_env if bucket else self.local_env
+        return self.t.pulumi(*args, cwd=self.t.infra_dir, env=env)
 
     # The steps, in order. Each raises Skip when its work is already done.
 
     def stack_and_settings(self) -> None:
         opts = self.opts
-        stacks = self.t.pulumi("stack", "ls", "--json", cwd=self.t.infra_dir)
+        stacks = self._pulumi("stack", "ls", "--json")
         exists = opts.stack in stack_names(stacks)
         if exists and not opts.resumed:
             raise OnboardError(f"stack {opts.stack} already exists: pass --resume to continue it")
         if not exists:
-            self.t.pulumi(
-                "stack",
-                "init",
-                opts.stack,
-                f"--secrets-provider={n.SECRETS_PROVIDER}",
-                cwd=self.t.infra_dir,
+            self._pulumi(
+                "stack", "init", opts.stack, f"--secrets-provider={self.t.secrets_provider}"
             )
         else:
             stack_file = Path(self.t.infra_dir) / f"Pulumi.{opts.stack}.yaml"
             if not stack_file.exists():
-                stack_file.write_text(f"secretsprovider: {n.SECRETS_PROVIDER}\n")
-        self.t.pulumi(*set_all_args(opts.stack, early_settings(opts)), cwd=self.t.infra_dir)
+                stack_file.write_text(f"secretsprovider: {self.t.secrets_provider}\n")
+        self._pulumi(*set_all_args(opts.stack, early_settings(opts)))
 
     def seed_dns(self) -> None:
-        raise Skip("skipped (SSC-091 phase 2)")
+        raise Skip("not needed: the rules go in the first apply on local state (SSC-091)")
 
     def first_apply(self) -> None:
         if self.detected(self._has_output("gateway_kms_key")):
@@ -497,16 +594,14 @@ class Onboarding:
         opts = self.opts
         if self.detected(self._has_config("gateway_keyring")):
             raise Skip("skipped (gateway_keyring is already set)")
-        key = self.t.pulumi(
-            "stack", "output", "--stack", opts.stack, "gateway_kms_key", cwd=self.t.infra_dir
-        ).strip()
+        key = self._pulumi("stack", "output", "--stack", opts.stack, "gateway_kms_key").strip()
         root = self.t.repo_root
         keyring = self._sh(keys_new(), cwd=root).out
         jwks = self._sh(keys_jwks(), cwd=root, input=keyring).out.decode().strip()
         sealed = base64.b64encode(self._sh(seal(key), input=keyring).out).decode("ascii")
         del keyring
         settings = late_settings(opts, sealed, jwks)
-        self.t.pulumi(*set_all_args(opts.stack, settings), cwd=self.t.infra_dir)
+        self._pulumi(*set_all_args(opts.stack, settings))
 
     def probe_image(self) -> None:
         opts = self.opts
@@ -518,15 +613,7 @@ class Onboarding:
             raise Skip("skipped (the image is in the registry and probe_digest is set)")
         if not copied:
             self._sh(copy_image(opts))
-        self.t.pulumi(
-            "config",
-            "set",
-            "--stack",
-            opts.stack,
-            "probe_digest",
-            opts.probe_digest,
-            cwd=self.t.infra_dir,
-        )
+        self._pulumi("config", "set", "--stack", opts.stack, "probe_digest", opts.probe_digest)
 
     def second_apply(self) -> None:
         done = self._config_output()
@@ -573,7 +660,70 @@ class Onboarding:
                 f"the floor probes did not all pass (exit {done.code})\n{done.err.strip()[-1500:]}"
             )
 
+    def move_state(self) -> None:
+        """Local file backend to the bucket. Each retry converges: what a stopped run left in the
+        bucket (nothing, an empty stack, the whole state) is recognised and carried on from."""
+        opts, folder = self.opts, self.folder
+        began = self.t.clock()
+        stack_file = Path(self.t.infra_dir) / f"Pulumi.{opts.stack}.yaml"
+        if not stack_file.exists():
+            raise OnboardError(
+                f"{stack_file} is missing: a stack init without it would make a new key, and the "
+                "secrets in the state could not be read with it"
+            )
+        local_export = folder / "export.json"
+        self._export(local_export)
+        local = state_urns(local_export)
+        if not local:
+            raise OnboardError("the local stack holds no resources: there is nothing to move")
+        saved = folder / f"{stack_file.name}.before-init"
+        if not saved.exists():
+            shutil.copy2(stack_file, saved)
+        listing = self._pulumi("stack", "ls", "--json", bucket=True)
+        in_bucket = stack_resource_count(listing, opts.stack)
+        if in_bucket is None:
+            self._pulumi(
+                "stack",
+                "init",
+                opts.stack,
+                f"--secrets-provider={self.t.secrets_provider}",
+                bucket=True,
+            )
+        self._keys_unchanged(stack_file, saved)
+        if not in_bucket:
+            self._pulumi(*import_args(opts.stack, local_export), bucket=True)
+        bucket_export = folder / "bucket-export.json"
+        self._export(bucket_export, bucket=True)
+        found = state_urns(bucket_export)
+        if found != local:
+            raise OnboardError(
+                f"the stack in the bucket holds {len(found)} resources and the local state "
+                f"{len(local)}, and they are not the same: nothing was overwritten. Compare "
+                f"{bucket_export} with {local_export}"
+            )
+        self._pulumi(*preview_args(opts.stack), bucket=True)
+        moved = self.t.state_root / f"{opts.label}.moved-{self.t.now():%Y%m%dT%H%M%SZ}"
+        folder.rename(moved)
+        self.move_seconds = self.t.clock() - began
+        self.t.out(f"      state is in {self.t.bucket_url}; the local copy is kept at {moved}")
+
     # Helpers.
+
+    def _export(self, file: Path, *, bucket: bool = False) -> None:
+        self._pulumi(*export_args(self.opts.stack, file), bucket=bucket)
+        file.chmod(0o600)
+
+    def _keys_unchanged(self, stack_file: Path, saved: Path) -> None:
+        """``stack init`` reuses the key in ``Pulumi.<stack>.yaml``. Whether it rewrote it can only
+        be seen here: it is not undone, and nothing is imported until it is put right."""
+        before, after = key_lines(saved.read_text()), key_lines(stack_file.read_text())
+        changed = [name for name in KEY_LINES if before.get(name) != after.get(name)]
+        if changed:
+            raise OnboardError(
+                f"{', '.join(f'{name} changed' for name in changed)} in {stack_file.name} when the "
+                f"stack was created in the bucket. The saved copy is at {saved}. Nothing was "
+                "imported and nothing was restored."
+            )
 
     def detected(self, done: bool) -> bool:  # noqa: FBT001
         """Whether a ``--resume`` finds this step's work done. A fresh run never asks."""
@@ -600,22 +750,14 @@ class Onboarding:
 
     def _has_output(self, name: str) -> bool:
         try:
-            self.t.pulumi("stack", "output", "--stack", self.opts.stack, name, cwd=self.t.infra_dir)
+            self._pulumi("stack", "output", "--stack", self.opts.stack, name)
         except CommandError:
             return False
         return True
 
     def _config_output(self) -> dict[str, Any] | None:
         try:
-            raw = self.t.pulumi(
-                "stack",
-                "output",
-                "--stack",
-                self.opts.stack,
-                "--json",
-                "config",
-                cwd=self.t.infra_dir,
-            )
+            raw = self._pulumi("stack", "output", "--stack", self.opts.stack, "--json", "config")
             found: Any = json.loads(raw)
         except CommandError, ValueError:
             return None
@@ -623,9 +765,7 @@ class Onboarding:
 
     def _config_value(self, key: str) -> str | None:
         try:
-            return self.t.pulumi(
-                "config", "get", "--stack", self.opts.stack, key, cwd=self.t.infra_dir
-            ).strip()
+            return self._pulumi("config", "get", "--stack", self.opts.stack, key).strip()
         except CommandError:
             return None
 
@@ -645,7 +785,7 @@ class Onboarding:
                 f"{mmss(self.t.clock() - began)}"
             )
 
-        self.t.apply(self.opts.stack, beat)
+        self.t.apply(self.opts.stack, beat, self.local_env)
 
     # The run.
 
@@ -659,6 +799,7 @@ class Onboarding:
             self.second_apply,
             self.certificate,
             self.probes,
+            self.move_state,
         ]
 
     def resume_command(self, step: int) -> str:
@@ -667,10 +808,55 @@ class Onboarding:
             + ["--from-step", str(step)]
         )
 
+    def preflight(self) -> None:
+        """Where the state is, before anything runs. Two copies, or one in the bucket that this
+        command did not make, are never touched."""
+        opts, folder, bucket = self.opts, self.folder, self.t.bucket_url
+        local = folder.exists()
+        moved = sorted(self.t.state_root.glob(f"{opts.label}.moved-*"))
+        in_bucket = opts.stack in stack_names(self._pulumi("stack", "ls", "--json", bucket=True))
+        if opts.from_step == MOVE_STEP:
+            if local:
+                return
+            if not (in_bucket and moved):
+                raise OnboardError(f"there is no local state at {folder} to move to {bucket}")
+        if not in_bucket:
+            return
+        if local:
+            raise OnboardError(
+                f"local state at {folder} and the stack {opts.stack} in {bucket} both exist: a "
+                f"move to the bucket may have stopped halfway. To finish it, run "
+                f"{self.resume_command(MOVE_STEP)}. Otherwise remove one of the two by hand."
+            )
+        if moved:
+            raise OnboardError(
+                f"{opts.stack} is already onboarded: its state was moved to {bucket} and the "
+                f"local copy is kept at {moved[-1]}"
+            )
+        raise OnboardError(
+            f"stack {opts.stack} already exists in {bucket}: onboarding creates a stack and does "
+            "not touch one that is there. A stack onboarded before SSC-091 phase 2b lives only in "
+            "the bucket; this command does not resume it"
+        )
+
+    def _state_folder(self) -> None:
+        """Mode 0700 whatever the umask: the state holds the stack's sealed secrets."""
+        self.t.state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.folder.mkdir(mode=0o700, exist_ok=True)
+        self.folder.chmod(0o700)
+
     def run(self) -> int:
         opts, t, total = self.opts, self.t, len(STEP_NAMES)
         self.started = t.clock()
         t.out(f"onboarding {opts.stack} (project {opts.project}), {total} steps")
+        t.out(f"state: {self.folder} (a local file backend until step {MOVE_STEP})")
+        try:
+            self.preflight()
+            if opts.from_step < MOVE_STEP:
+                self._state_folder()
+        except (CommandError, OnboardError) as exc:
+            t.err(str(exc))
+            return 1
         for number, (name, step) in enumerate(zip(STEP_NAMES, self.steps(), strict=True), 1):
             tag = f"[{number}/{total}]"
             if number < opts.from_step:
@@ -692,6 +878,8 @@ class Onboarding:
                 return 1
             now = t.clock()
             t.out(f"{tag} done in {mmss(now - began)}, total {mmss(now - self.started)}")
+        if self.move_seconds is not None:
+            t.out(f"state move: {mmss(self.move_seconds)} (counted in the total)")
         t.out(self.verdict_line())
         return 0
 
@@ -719,6 +907,10 @@ def plan(opts: Options) -> list[str]:
     early = early_settings(opts)
     late = late_settings(opts, "<sealed keyring>", "<identity JWKS>")
     log = "<event log in a temporary folder>"
+    folder = STATE_ROOT / opts.label
+    local_url, bucket_url = f"file://{folder}", f"gs://{n.STATE_BUCKET}"
+    stack_file = f"infra/Pulumi.{opts.stack}.yaml"
+    saved = f"{folder}/{Path(stack_file).name}.before-init"
     reference = f"{opts.cell_repo}@{opts.probe_digest}"
     steps: list[list[str]] = [
         [
@@ -727,7 +919,7 @@ def plan(opts: Options) -> list[str]:
             + "  (when the stack is new)",
             pulumi_line(set_all_args(opts.stack, early)),
         ],
-        ["nothing yet: skipped (SSC-091 phase 2)"],
+        ["nothing: the rules go in the first apply on local state (SSC-091)"],
         ["pulumi " + shlex.join(up_args(opts.stack, log))],
         [
             pulumi_line(("stack", "output", "--stack", opts.stack, "gateway_kms_key")),
@@ -755,12 +947,30 @@ def plan(opts: Options) -> list[str]:
             + shlex.join(floor_probes())
             + f"  (in {REPO_ROOT})"
         ],
+        [
+            pulumi_line(export_args(opts.stack, folder / "export.json")) + f"  [{local_url}]",
+            f"cp {stack_file} {saved}  (the key lines are compared after the init)",
+            pulumi_line(("stack", "ls", "--json")) + f"  [{bucket_url}]",
+            pulumi_line(("stack", "init", opts.stack, f"--secrets-provider={n.SECRETS_PROVIDER}"))
+            + f"  [{bucket_url}] (when the bucket has no such stack)",
+            pulumi_line(import_args(opts.stack, folder / "export.json"))
+            + f"  [{bucket_url}] (when the bucket's stack is empty)",
+            pulumi_line(export_args(opts.stack, folder / "bucket-export.json"))
+            + f"  [{bucket_url}] (the resources must equal the local ones)",
+            pulumi_line(preview_args(opts.stack)) + f"  [{bucket_url}]",
+            f"mv {folder} {STATE_ROOT / opts.label}.moved-<UTC>  (kept, never deleted here)",
+        ],
     ]
-    lines = [f"plan for {opts.stack} (project {opts.project}); nothing is run"]
+    lines = [
+        f"plan for {opts.stack} (project {opts.project}); nothing is run",
+        f"state: {folder} (mode 0700); every step before {MOVE_STEP} runs on {local_url}",
+    ]
     for number, (name, commands) in enumerate(zip(STEP_NAMES, steps, strict=True), 1):
         lines.append(f"[{number}/{len(STEP_NAMES)}] {name}")
+        if number < MOVE_STEP:
+            lines.append(f"      backend: {local_url}")
         lines += [f"      $ {c}" for c in commands]
-    lines.append(f"counted: steps 1 to 6 and 8; the budget is {mmss(BUDGET_SECONDS)}")
+    lines.append(f"counted: steps 1 to 6, 8 and 9; the budget is {mmss(BUDGET_SECONDS)}")
     return lines
 
 
