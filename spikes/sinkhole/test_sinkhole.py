@@ -190,3 +190,31 @@ def test_dry_run_sends_nothing(capsys) -> None:
     api = sh.Api(lambda: "x", never, dry_run=True)
     assert sh.run(sh.parse(["--dry-run", "--steps", "E1,E2,E5"]), api) == 0
     assert "DRY RUN POST" in capsys.readouterr().out
+
+
+def test_the_real_run_of_2026_10_06_reads_as_neither_serialised_nor_throttled() -> None:
+    """Ten creates at once took 1.48 s of wall time against 0.206 s for one, but the latencies
+    inside it do not climb: the wall time is thread and TLS set-up."""
+    results = {
+        "E2": {"median": 0.206, "max": 0.331},
+        "E3": {
+            "median": 0.19,
+            "max": 0.205,
+            "wall": 1.48,
+            "statuses": {"200": 10},
+            "seconds_sorted": [0.156, 0.174, 0.176, 0.183, 0.185, 0.195, 0.197, 0.2, 0.205, 0.205],
+        },
+        "E4": {"waves": [{"statuses": {"200": 8}}], "rules_per_minute": 595.9},
+    }
+    (line,) = sh.reading(results)
+    assert line.startswith("PARALLEL")
+    assert "neither serialised nor throttled" in line
+    assert "SERIALISED" not in line
+
+
+def test_queued_latencies_are_serialised_whatever_the_wall_time() -> None:
+    queued = [round(0.2 * i, 3) for i in range(1, 11)]
+    assert sh.climbs(queued, 0.2)
+    assert not sh.climbs([0.2] * 10, 0.2)  # same wall time as a fast run, no climb
+    assert not sh.climbs([0.2] * 9 + [1.5], 0.2)  # one slow outlier is not a queue
+    assert not sh.climbs([], 0.2)

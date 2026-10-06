@@ -1,0 +1,70 @@
+{
+  "started": "2026-10-06T05:49:34+00:00",
+  "project": "ssc-platform-0",
+  "policy": "ssc-exp091",
+  "dry_run": false,
+  "E0": {
+    "quota_status": 403,
+    "quota_error": {
+      "code": 403,
+      "message": "Cloud Quotas API has not been used in project ssc-platform-0 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/cloudquotas.googleapis.com/overview?project=ssc-platform-0 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.",
+      "status": "PERMISSION_DENIED",
+      "details": [
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          "reason": "SERVICE_DISABLED",
+          "domain": "googleapis.com",
+          "metadata": {
+            "service": "cloudquotas.googleapis.com",
+            "serviceTitle": "Cloud Quotas API",
+            "activationUrl": "https://console.developers.google.com/apis/api/cloudquotas.googleapis.com/overview?project=ssc-platform-0",
+            "containerInfo": "ssc-platform-0",
+            "consumer": "projects/ssc-platform-0"
+          }
+        },
+        {
+          "@type": "type.googleapis.com/google.rpc.LocalizedMessage",
+          "locale": "en-US",
+          "message": "Cloud Quotas API has not been used in project ssc-platform-0 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/cloudquotas.googleapis.com/overview?project=ssc-platform-0 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry."
+        },
+        {
+          "@type": "type.googleapis.com/google.rpc.Help",
+          "links": [
+            {
+              "description": "Google developers console API activation",
+              "url": "https://console.developers.google.com/apis/api/cloudquotas.googleapis.com/overview?project=ssc-platform-0"
+            }
+          ]
+        }
+      ]
+    },
+    "quota_infos_total": 0,
+    "quota_infos_response_policy": [],
+    "policies": [],
+    "leftover": []
+  },
+  "calls": [
+    {
+      "step": "E0",
+      "method": "GET",
+      "path": "cloudquotas.googleapis.com/v1/projects/ssc-platform-0/locations/global/services/dns.googleapis.com/quotaInfos?pageSize=200",
+      "at": 0.0,
+      "seconds": 0.361,
+      "status": 403,
+      "retry_after": null
+    },
+    {
+      "step": "E0",
+      "method": "GET",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies",
+      "at": 0.985,
+      "seconds": 0.133,
+      "status": 200,
+      "retry_after": null
+    }
+  ],
+  "reading": [
+    "No reading: run E2 and E3 (and E4)."
+  ],
+  "rule_creations_sent": 0
+}

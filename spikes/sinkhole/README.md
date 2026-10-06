@@ -43,15 +43,16 @@ confirm; `results.json` has `E6.clean`.
 
 `reading` holds a hint; check it against the numbers (`E2.median`, `E3.wall`, `E3.seconds_sorted`, `E4`).
 
-1. **Cloud DNS serialises per policy.** `E3.wall` is about ten times `E2.median`, the ten
-   latencies in `E3.seconds_sorted` climb in steps of about one `E2.median`, and no 429. No
-   client-side concurrency helps; the 78 minutes is Cloud DNS's.
+1. **Cloud DNS serialises per policy.** The ten latencies in `E3.seconds_sorted` climb: the
+   slowest is at least 5 times `E2.median` and the steps between them are about one `E2.median`,
+   and no 429. No client-side concurrency helps; the 78 minutes is Cloud DNS's. `E3.wall` alone
+   never decides: it includes the client's thread and TLS set-up.
 2. **A per-minute write quota.** E3 is fast, then `E4` stops on a 429. `E4.waves[-1].first_error`
    names the quota and `retry_after` the wait; `E4.rules_per_minute` is the rate reached. The
    provider retries 429 silently, which is why Pulumi only looked slow. The first fix is a higher
    quota (E0 says whether it is adjustable and at what level).
-3. **Neither.** `E2.median` itself is several seconds (each create is slow), or E3 and E4 run
-   without a 429 at a rate well above 18 a minute. Then the cause is elsewhere (the provider's
+3. **Neither.** `E2.median` itself is several seconds (each create is slow), or E3's latencies do not climb and E4
+   runs without a 429 at a rate well above 18 a minute. Then the cause is elsewhere (the provider's
    read after each create, the engine) and phase 2 starts from there.
 
 `E5.status` of 200 with 5 rules created means a batch endpoint exists (compare `E5.seconds` with
@@ -64,3 +65,20 @@ status and latency under `calls`.
 
 The script is tested against a fake Cloud DNS (serialised, quota-limited and fast), with no
 network: `cd infra && uv run pytest ../spikes/sinkhole -p no:cacheprovider`.
+
+## Result 2026-10-06
+
+Run in `ssc-platform-0`: E0, then E1 to E6; 200 creates sent; cleanup clean. The raw numbers are in
+`results-2026-10-06.json` (E0 alone, which was refused, in `results-E0.json`).
+
+- E0: the Cloud Quotas API is disabled (403); not enabled, not needed.
+- E2, one at a time: median 0.206 s, max 0.331 s.
+- E3, 10 at once: each 0.156 to 0.205 s (no climb), wall 1.48 s.
+- E4, waves of 8, 16, 32, 32, 32, 32 and 23: 195 rules in 17.6 s, about 660 a minute, no 429.
+- E5: the batch endpoint answered 200 with 5 created.
+
+Reading: neither (outcome 3). Cloud DNS neither serialises nor throttles at this rate, so the 78
+minutes (3.3 s a rule, about 18 a minute) is in the provider or the Pulumi engine; see
+`pulumi_probe/`. The `reading` line inside `results-2026-10-06.json` says SERIALISED: that was the
+first heuristic, which compared E3's wall time with E2's median. It now looks at whether E3's
+latencies climb (`climbs()` in `sinkhole.py`), and the same numbers read as neither.

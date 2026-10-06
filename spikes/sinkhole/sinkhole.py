@@ -409,6 +409,22 @@ def e6(api: Api, results: dict[str, Any]) -> None:
     )  # noqa: T201
 
 
+SERIAL_FACTOR = 5
+"""Serialised creates make the slowest of ten wait for nine: at least this many times one."""
+
+
+def climbs(sorted_seconds: list[float], one: float) -> bool:
+    """Whether ten creates released together queue up behind each other. The slowest takes at
+    least ``SERIAL_FACTOR`` times one create alone, and the steps between neighbours are about one
+    create (between half and double). Wall time never decides: it holds the client's thread and TLS
+    set-up."""
+    if len(sorted_seconds) < 2 or not one:  # noqa: PLR2004
+        return False
+    steps = sorted(b - a for a, b in zip(sorted_seconds, sorted_seconds[1:], strict=False))
+    typical = steps[len(steps) // 2]
+    return sorted_seconds[-1] >= SERIAL_FACTOR * one and 0.5 * one <= typical <= 2 * one
+
+
 def reading(results: dict[str, Any]) -> list[str]:
     """A hint at which of the three causes the numbers point to. Read the numbers too."""
     out: list[str] = []
@@ -426,18 +442,21 @@ def reading(results: dict[str, Any]) -> list[str]:
             f"rules per minute before it: {e4r.get('rules_per_minute') if e4r else 'n/a'}."
         )
     if e2r and e3r and e2r["median"]:
-        ratio = e3r["wall"] / e2r["median"]
-        if not rate_limited and ratio >= 6:
+        one = e2r["median"]
+        wall = f"10 at once took {e3r['wall']}s (wall time includes thread and TLS set-up)"
+        if not rate_limited and climbs(e3r["seconds_sorted"], one):
             out.append(
-                f"SERIALISED per policy: 10 at once took {e3r['wall']}s, {ratio:.1f}x one create "
-                f"({e2r['median']}s). No client concurrency will help."
+                f"SERIALISED per policy: {wall}, and the latencies climb from "
+                f"{e3r['seconds_sorted'][0]}s to {e3r['seconds_sorted'][-1]}s in steps of about "
+                f"one create ({one}s). No client concurrency will help."
             )
-        elif not rate_limited and e2r["median"] > 10:
-            out.append(f"SLOW per call: one create takes {e2r['median']}s by itself.")
+        elif not rate_limited and one > 10:
+            out.append(f"SLOW per call: one create takes {one}s by itself.")
         elif not rate_limited:
             out.append(
-                f"PARALLEL is fine: 10 at once took {e3r['wall']}s ({ratio:.1f}x one create, "
-                f"{e2r['median']}s). Look elsewhere (the provider's Read after create, the engine)."
+                f"PARALLEL is fine, neither serialised nor throttled: {wall}; the slowest create "
+                f"was {e3r['max']}s against {one}s for one alone, with no climb. Look elsewhere "
+                "(the provider's Read after create, the engine)."
             )
     if not out:
         out.append("No reading: run E2 and E3 (and E4).")
