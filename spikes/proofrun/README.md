@@ -39,7 +39,7 @@ gcloud kms decrypt --key "$(cd infra && pulumi stack output --stack c-$L1 gatewa
   | uv run python spikes/proofrun/seal_cookie.py --host <slug>.$L1.delimitusapps.com --org <org_id> --sub <usr_...> --keyring -
 ```
 
-Results taken with a sealed cookie say the real login was not exercised. One cookie is kept per host, valid for at most 12 hours, so refresh it during T9.
+Results taken with a sealed cookie say the real login was not exercised. One cookie is kept per host, valid for at most 12 hours, so refresh it during T9. The 12 hours run from the browser's login at `auth.delimitus.com`, not from when the cookie was copied: a cookie taken later in the same browser session ends with that session. So sign in again in a fresh private window before each refresh.
 
 ## Probe apps
 
@@ -301,7 +301,7 @@ gcloud run services update <ssc-a-...> --project=$P1 --region=us-central1 --no-c
 cd infra && pulumi config set --stack platform worker_instances 1 && pulumi up --stack platform
 ```
 
-`hold` refuses to start if the service is billed the other way. Each hold keeps `/_stcore/stream` open as a browser tab does. When the stream drops, the hold records why and reconnects at once, reading the cookie again. A refused reconnect, such as an expired cookie, is retried every 30 s. Refresh the cookie before its 12 hours are up. A stopped hold resumes with the same command.
+`hold` refuses to start if the service is billed the other way. Each hold keeps `/_stcore/stream` open as a browser tab does. When the stream drops, the hold records why and reconnects at once, reading the cookie again. A refused reconnect, such as an expired cookie, is retried every 30 s. Refresh the cookie, after a fresh login, before the login's 12 hours are up. A stopped hold resumes with the same command.
 
 The next day, read the service's usage amounts for the hold's day. Use Billing, Reports, filtered to the project and Cloud Run, grouped by SKU, with credits unticked. Then run:
 
