@@ -17,7 +17,7 @@ The staging proof run for the architecture of 2026-10-03 (architecture document,
 | T4 | `cannot_reach_peer_cell` from cell 1 against cell 2 | Network refusal before any IAM refusal on the app; the gateway answers only through its load balancer | `t4` | **PASS** 2026-10-05: app and gateway each refused twice by the network and once by ingress (404 on the Google VIP); 4 TCP attempts to cell 2's addresses blocked. Name lookups of `run.app` hosts inside a cell take about 22 s to fail. |
 | T5 | `db-f1-micro`, ten app databases, cross-connect, restore | Instance under 15 minutes; each database under 1 minute; cross-connect refused; restore written up | `t5 ops`, `t5 cross` | **PASS** 2026-10-05: instance 8.0 min; ten databases, slowest 0.5 s; cross-connect refused 9/9 (`42501 permission denied for database`). First cross run failed 0/9 on the certificate name, not on isolation (fixed d89ea6b). Finding: every app role can connect to the `postgres` maintenance database (Postgres's default CONNECT for PUBLIC); to be revoked in SSC-040. |
 | T6 | NAT for the data gateway's position; Envoy CONNECT proxy on the `e2-micro` | Outbound calls leave from the reserved IP; unlisted hosts refused | `t6 nat`, `t6 proxy`, `t6 egress` | Proxy **PASS** 2026-10-06 12:46 UTC on the real proxy (`pegress`): the listed host answered 200 and left from 35.222.140.145, an unlisted host got 403, no credential got 407. NAT leg **FAIL** (12:52, third try): the stand-in's call to 1.1.1.1 timed out. The NAT log shows the flow given the reserved IP, so the call left; no answer came back. The gateway service works through the same NAT. Change: below. |
-| T7 | Cold start, ten samples a series, 26-minute gap: static, API, Streamlit; gateway cold and warm | Medians reported; none worse than the bake-off (4.5 s, 8 s, 22 s) plus the gateway's start; Direct VPC egress delay measured | `t7 run`, `t7 report` | **FAIL** 2026-10-06 on static cold only. Gateway start median 8.56 s (10). Cold, gateway and app both asleep: static 15.40 s against 13.06, API 16.28 s against 16.56, Streamlit 20.47 s against 30.56. Warm gateway, app asleep: static 6.24 s, API 6.05 s, Streamlit 11.98 s, all under their limits. All 60 requests answered 200. Direct VPC egress delay median 0.02 s (20). Run 2026-10-05 20:56 to 2026-10-06 05:45 UTC. Change: below. |
+| T7 | Cold start, ten samples a series, 26-minute gap: static, API, Streamlit; gateway cold and warm | Medians reported; none worse than the bake-off (4.5 s, 8 s, 22 s) plus the gateway's start; Direct VPC egress delay measured | `t7 run`, `t7 report` | **PASS** 2026-10-06 on the re-measure after options 1 and 2 (below). Gateway start median 9.85 s (10). Cold, gateway and app both asleep: static 11.60 s against 14.35, API 15.13 s against 17.85, Streamlit 19.01 s against 31.85. Warm gateway, app asleep: static 2.92 s, API 5.34 s, Streamlit 13.59 s. All 60 requests answered 200. Direct VPC egress delay median 0.02 s (20). Run 2026-10-06 13:53 to 22:15 UTC. First run (2026-10-05 20:56 to 2026-10-06 05:45 UTC): **FAIL** on static cold only, 15.40 s against 13.06. |
 | T8 | Kill drill against an open WebSocket | Under 10 s end to end | `t8` | **FAIL** 2026-10-06 06:05 UTC on `papi`, cell 1 cold: end to end 12.61 s. The front door refused after 2.55 s and the WebSocket was cut after 3.19 s; the overrun is the run's last steps (`gateway_deny` done 5.56 s, `scale_to_zero` done 12.49 s, `pause_timers` 12.61 s); every step `done`, first attempt. A second drill 48 s later, from the same operator login, passed at 9.45 s (`gateway_deny` 2.42 s, `scale_to_zero` 9.32 s). No query or tunnel leg (no data gateway, SSC-054). Undone with `ssc enable papi`. See written changes. |
 | T9 | Streamlit open 24 hours, instance-billed and request-billed; the bill | Each within 20 % of $0.0684 and $0.0909 an hour; the 60-minute drop and the reload documented | `t9 hold`, `t9 report`, `t9 bill` | **Blocked** 2026-10-06. Streamlit refuses its own stream behind the gateway (403, "disallowed Origin or Host header"), so no session can be held. Every page load works; the live app never connects. Change: below. Not started. |
 | T10 | Gateway on gen1 at 0.5 vCPU, same probes | Pass or fail recorded; decides the gateway's cost per session hour | `t10` | **PASS** 2026-10-06 06:15 UTC: 14/14 probes (peer cell skipped, as on one cell), SSE 1.99 s, WebSocket 5/5 ticks, gateway gen1 0.5 vCPU at concurrency 1. Busy hour $0.0477 against gen2 1 vCPU $0.0909 (48 % less), but at concurrency 1 each open session holds its own gateway instance. Gateway put back from the stack after. |
@@ -98,6 +98,41 @@ A failed row goes back to the architecture as a change with its cost. The founde
   - 4 and 6 only if the new figures still fail.
   - 5 stays the customer's paid choice.
 - **Chosen 2026-10-06 (founder):** options 1 and 2, then one cold series on cell 1. The result goes in pass 2.
+
+#### Re-measure after options 1 and 2 (pass 2)
+
+- **Changed:** apps' startup probe every 1 s (failure threshold 120, timeout 1); the gateway image compiles bytecode and the gateway has startup CPU boost. Gateway revision `ssc-gateway-00008-g9k`; static, API and Streamlit redeployed so they carry the new probe.
+- **Run:** cell 1, 2026-10-06 13:53 to 22:15 UTC, 20 samples (cold and warm alternating), 26-minute gap. `results/t7-r2.state.json`.
+- **Result: PASS.** Every median is under its limit, and static and API cold are also under the first run's lower limits (13.06 s and 16.56 s).
+
+  | Series | App | First run median | Re-measure median | 9th of 10 | Slowest | Limit |
+  |---|---|---|---|---|---|---|
+  | Cold | Static | 15.40 s | 11.60 s | 16.3 s | 17.9 s | 14.35 s |
+  | Cold | API | 16.28 s | 15.13 s | 19.3 s | 26.9 s | 17.85 s |
+  | Cold | Streamlit | 20.47 s | 19.01 s | 23.8 s | 26.5 s | 31.85 s |
+  | Warm | Static | 6.24 s | 2.92 s | 3.8 s | 64.2 s | 14.35 s |
+  | Warm | API | 6.05 s | 5.34 s | 7.6 s | 75.2 s | 17.85 s |
+  | Warm | Streamlit | 11.98 s | 13.59 s | 16.0 s | 21.5 s | 31.85 s |
+
+  - The probe change did what was expected. With the gateway running, static's own start fell from 6.2 s to 2.9 s.
+  - The cold tail is shorter: static's slowest went from 25.2 s to 17.9 s, Streamlit's from 52.5 s to 26.5 s.
+  - SSC-092's "5 to 20 seconds" now holds for the medians and for most of the tail. The slowest cold API sample (26.9 s) and the one slow warm sample (below) do not.
+- **The gateway did not get faster:** its start median is 9.85 s, against 8.56 s in the first run, so the limits rose with it. Cell 1's logs for the 20 gateway starts in this run (from "Starting new instance"):
+
+  | Part | Median | Range |
+  |---|---|---|
+  | Instance boot, image and Python imports, until uvicorn's first line | 5.8 s | 3.0 to 7.9 s |
+  | Authz startup: metadata token, KMS decrypt, snapshot | 0.7 s | 0.5 to 5.6 s |
+  | Port 8080 open to the default TCP startup probe passing | 1.6 s | 0.0 to 5.0 s |
+
+  - Boot is split in two. Six starts were ready in 3.0 to 3.6 s, and the other 14 took 5.2 to 7.9 s. The first run's starts were 5.4 to 7.5 s. Bytecode and boost may explain the fast group; the logs do not show what makes a start slow.
+  - The gateway has no startup probe of its own, so Cloud Run uses its default TCP probe. It passed up to 5 s after the port opened. An explicit probe every 1 s, as the apps now have, might remove most of that. That is not measured.
+  - The first run's recommendation said to do option 3 (gateway start overlap) "only if the gateway still takes over 6 s". It takes 9.85 s from the client, and 7.5 s to its port. T7 passes without it, so it is the founder's choice.
+- **One slow warm sample (20:30 UTC, sample 15):** static took 64.2 s and API 75.2 s; Streamlit took 16.0 s.
+  - The gateway was not the cause. It started in 12.4 s and answered its own host at 20:29:09.
+  - Both apps got a new instance at 20:29:10. Their containers' first output came 63 s (static) and 74 s (API) later, against about 1.5 s in every other sample. Both passed their startup probe within 1 to 6 s of that output, and the gateway's two requests ended when they did.
+  - So the time went before the container ran, on Cloud Run's side. The logs show nothing else. It happened once in 60 app requests in this run and never in the first.
+  - **What it affects:** a user could wait over a minute for an app that has been idle. The 120 s probe allowance and the gateway's timeouts held, and the request answered 200.
 
 ### T8: kill drill
 
