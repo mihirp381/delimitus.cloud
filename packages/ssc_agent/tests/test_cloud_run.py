@@ -11,6 +11,7 @@ from ssc_agent.cloud_run import (
     CloudRunDriver,
     _ApiError,  # pyright: ignore[reportPrivateUsage]
 )
+from ssc_shared.runtime import ServiceSpec
 
 PROJECT = "ssc-c-test"
 CELL = CellRuntime(
@@ -104,3 +105,31 @@ async def test_each_service_gets_its_own_post() -> None:
     await driver.ensure_identity("ssc-a-one")
     await driver.ensure_identity("ssc-a-two")
     assert [post["accountId"] for post in iam.posts] == ["ssc-a-one", "ssc-a-two"]
+
+
+async def test_the_startup_probe_checks_every_second_for_two_minutes() -> None:
+    spec = ServiceSpec(
+        service="ssc-a-one",
+        image_digest="sha256:" + "a" * 64,
+        port=8080,
+        health_path="/healthz",
+        resource_class="small",
+        env={"PORT": "8080"},
+        billing="request",
+        timeout_seconds=300,
+        concurrency=80,
+        min_instances=0,
+        max_instances=1,
+        labels={},
+    )
+    template = Iam([200]).driver()._template(spec, "rev-1")  # pyright: ignore[reportPrivateUsage]
+    (container,) = template["containers"]
+    probe = container["startupProbe"]
+    assert probe["httpGet"] == {"path": "/healthz", "port": 8080}
+    assert (probe["periodSeconds"], probe["timeoutSeconds"], probe["failureThreshold"]) == (
+        1,
+        1,
+        120,
+    )
+    assert probe["periodSeconds"] * probe["failureThreshold"] == 120
+    assert probe["timeoutSeconds"] <= probe["periodSeconds"]

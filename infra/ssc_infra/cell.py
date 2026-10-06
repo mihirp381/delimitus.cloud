@@ -543,6 +543,9 @@ class Cell:
     def build(self) -> None:
         cfg = self.cfg
         self.project()
+        # The certificate goes first so it starts issuing before the slow sinkhole rules (T2,
+        # decision 026); it needs only the project and its APIs.
+        self.certificate = self._certificate()
         self.oncall()
         self.budget()
         self.identities()
@@ -1421,11 +1424,13 @@ class Cell:
         concurrency: int | None = None,
         audiences: Sequence[str] | None = None,
         invoker_iam: bool = True,
+        startup_boost: bool = False,
         after: Sequence[pulumi.Resource] = (),
     ) -> gcp.cloudrunv2.Service:
         """A request-billed service: CPU only while a request is open. ``invoker_iam=False``
-        leaves the caller check to the service itself. ``secret_env`` maps a variable to a cell
-        secret and its pinned version, which Cloud Run reads as the service's identity."""
+        leaves the caller check to the service itself. ``startup_boost`` gives a starting
+        instance extra CPU until it is ready. ``secret_env`` maps a variable to a cell secret and
+        its pinned version, which Cloud Run reads as the service's identity."""
         min_instances, max_instances = instances
         run = gcp.cloudrunv2
         envs = {
@@ -1465,6 +1470,7 @@ class Cell:
                         resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
                             cpu_idle=True,
                             limits={"cpu": "1", "memory": "512Mi"},
+                            startup_cpu_boost=True if startup_boost else None,
                         ),
                     )
                 ],
@@ -1503,6 +1509,7 @@ class Cell:
             env=self._gateway_env(),
             timeout=GATEWAY_TIMEOUT,
             concurrency=GATEWAY_CONCURRENCY,
+            startup_boost=True,
             after=[self.gateway_key_grant],
         )
         self._public("gateway", self.gateway_)
@@ -1592,7 +1599,6 @@ class Cell:
             ],
             opts=self._o(),
         )
-        self.certificate = self._certificate()
         tls = gcp.compute.SSLPolicy(
             "entry-tls",
             project=self.pid,
