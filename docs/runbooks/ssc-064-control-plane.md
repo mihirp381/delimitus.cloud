@@ -238,43 +238,35 @@ A secret version added later reaches a service only with a new revision. To roll
 
 ## 10. WorkOS and the two orgs **[real]**
 
+The founder check now runs inside `create-org` and `connect`: they read the directory's users from WorkOS and refuse unless a linked admin is an active user of that directory under the same `idp_id`. An org is never created, and no audit event written, for a founder the first sync would deactivate.
+
 1. In the WorkOS production dashboard, add `https://auth.delimitus.com/callback` as a redirect URI.
-2. With the proxy still running, create each org as `ssc_app`, with the founder keyed under the directory. Then record its connection. Run this once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`).
-
-   First take the founder's `idp_id` from WorkOS itself, not from the identity provider's console. If it does not match, the first directory sync deactivates the founder and the org has no admin:
-
-   ```sh
-   read -rs WORKOS_KEY; curl -s -H "Authorization: Bearer $WORKOS_KEY" \
-     "https://api.workos.com/directory_users?directory=<directory_01…>&limit=100" \
-     | jq -r '.data[] | [.idp_id, .email] | @tsv'; unset WORKOS_KEY
-   ```
+2. With the proxy still running, give the shell the settings the commands read, and take the founder's `idp_id` from WorkOS itself, not from the identity provider's console. If it does not match, `create-org` refuses and lists the directory users that have the founder's email, with their `idp_id`.
 
    ```sh
    export SSC_DATABASE_DSN="postgresql://ssc_app:$APP_PW@127.0.0.1:5433/ssc"
-   uv run python -c '
-   import asyncio, os, sys
-   from ssc_control.db import NewOrg, create_org, make_engine
-   from ssc_control.identity.connections import directory_issuer
-   name, founder, email, directory, subject = sys.argv[1:]
-   async def main():
-       engine = make_engine(os.environ["SSC_DATABASE_DSN"])
-       spec = NewOrg(name, founder, email, directory_issuer(directory), subject)
-       print((await create_org(engine, spec)).org_id)
-       await engine.dispose()
-   asyncio.run(main())
-   ' "<org name>" "<founder name>" "<founder email>" <directory_01…> <founder idp_id>
-   uv run python -m ssc_control.identity connect --org <org_…> --operator op_<your name> \
-     --workos-org <org_01…> --directory <directory_01…> --sso <conn_01…> --join-rule $JOIN
+   read -rs SSC_WORKOS_API_KEY; export SSC_WORKOS_API_KEY
+   read -r SSC_WORKOS_CLIENT_ID; export SSC_WORKOS_CLIENT_ID
+   curl -s -H "Authorization: Bearer $SSC_WORKOS_API_KEY" \
+     "https://api.workos.com/directory_users?directory=<directory_01…>&limit=100" \
+     | jq -r '.data[] | [.idp_id, .email] | @tsv'
    ```
 
-3. Choose the org whose users test the gateway in step 11c. The label is unique, so only one org can have it. Point that org at the cell. The auth host redeems a login code only for the gateway in the org's cell project, `ssc-c-<cell label>`, so a wrong label refuses every sign-in with "caller project mismatch":
+3. Create each org as `ssc_app`, once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`). One command makes the org with the founder keyed under the directory, checks the founder in WorkOS, records the connection and sets the org's cell label, in one transaction, and audits `org.created`, `directory.connected` and `org.updated`:
 
    ```sh
-   psql "$SSC_DATABASE_DSN" -v ON_ERROR_STOP=1 \
-     -c "begin; select set_config('ssc.org', '<org_…>', true); update ssc.org set cell_label = '$LABEL' where id = '<org_…>'; commit;"
+   ORG=$(uv run python -m ssc_control.identity create-org --name "<org name>" \
+     --founder-name "<founder name>" --founder-email "<founder email>" --founder-idp-id "<founder idp_id>" \
+     --operator op_<your name> --workos-org <org_01…> --directory <directory_01…> --sso <conn_01…> \
+     --join-rule $JOIN --cell-label $CELL_LABEL)
+   echo $ORG
    ```
 
-4. Set the cell's gateway to that org, then re-apply the cell:
+   The org whose users test the gateway in step 11c (the Google org) takes `CELL_LABEL=$LABEL`. The label is unique, so only one org can have it, and the auth host redeems a login code only for the gateway in the org's cell project, `ssc-c-<cell label>`, so a wrong label refuses every sign-in with "caller project mismatch". The other org has no cell yet: give it a label of its own, `CELL_LABEL=l$(openssl rand -hex 6)`.
+
+   Pass: the command prints the org id and, on the error stream, `ok` for the founder. A refusal prints why, writes nothing, and can be run again once the founder's `idp_id` or the connection is right.
+
+4. Set the cell's gateway to the org that took `$LABEL`, then re-apply the cell:
 
    ```sh
    pulumi config set --stack c-$LABEL org_id <org_…>
@@ -284,10 +276,12 @@ A secret version added later reaches a service only with a new revision. To roll
 5. Finish up:
 
    ```sh
-   unset APP_PW SSC_DATABASE_DSN
+   unset APP_PW SSC_DATABASE_DSN SSC_WORKOS_API_KEY SSC_WORKOS_CLIENT_ID
    ```
 
    Stop the proxy.
+
+If a first sync still leaves an org with no active admin, follow `docs/runbooks/ssc-097-restore-admin.md`.
 
 ## 11. Done-when checks
 
@@ -309,7 +303,7 @@ uv run ssc whoami
 
 Pass: the browser signs in through the IdP, the code is approved, and `whoami` names a `usr_` id in that org. A refusal shows in `ssc-auth`'s log as `login refused …`.
 
-**c. The Google part of `docs/runbooks/ssc-019-login.md`.** Run its steps 2 and 3, and the email-change check of step 4, for the Google org. Use the command lines above in place of `--api http://127.0.0.1:8000 … --auth-url …`, and the `psql` of step 10 (through the proxy, as `ssc_app`, bound with `set_config('ssc.org', …)`) in place of the rig's superuser. In detail:
+**c. The Google part of `docs/runbooks/ssc-019-login.md`.** Run its steps 2 and 3, and the email-change check of step 4, for the Google org. Use the command lines above in place of `--api http://127.0.0.1:8000 … --auth-url …`, and `psql` through the proxy as `ssc_app` (inside a transaction, after `select set_config('ssc.org', '<org_…>', true)`) in place of the rig's superuser. In detail:
 - **Login.** Done in b.
 - **Suspension.** Suspend the user in Google. `whoami` must fail within 5 minutes of the WorkOS event.
 - **Rename.** Change the user's primary email in Google, then log in again once the directory has caught up. The `usr_` id and the people count must be unchanged.
