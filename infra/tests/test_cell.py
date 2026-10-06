@@ -500,7 +500,11 @@ def test_the_gateway_is_request_billed_from_zero_with_an_hour_per_request(
     assert gw["template"]["timeout"] == "3600s"
     assert gw["template"]["maxInstanceRequestConcurrency"] == 1000
     (container,) = gw["template"]["containers"]
-    assert container["resources"] == {"cpuIdle": True, "limits": {"cpu": "1", "memory": "512Mi"}}
+    assert container["resources"] == {
+        "cpuIdle": True,
+        "limits": {"cpu": "1", "memory": "512Mi"},
+        "startupCpuBoost": True,
+    }
     assert gw["template"]["vpcAccess"]["egress"] == "ALL_TRAFFIC"
     (nic,) = gw["template"]["vpcAccess"]["networkInterfaces"]
     assert (nic["subnetwork"], nic["tags"]) == ("subnet-gateway-id", ["ssc-gateway"])
