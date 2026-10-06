@@ -508,6 +508,39 @@ uv run python -m ssc_infra.bootstrap cell testcell01 --probe
 pulumi up --stack c-testcell01
 ```
 
+### Onboarding in one command (SSC-091)
+
+```
+uv run python -m ssc_infra.onboard <label> --settings settings.json \
+    --probe-image us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/<probe>@sha256:<digest>
+uv run python -m ssc_infra.onboard <label> ... --dry-run      # the plan and the exact commands; runs nothing
+uv run python -m ssc_infra.onboard <label> ... --resume       # continue a stack that exists
+uv run python -m ssc_infra.onboard <label> ... --from-step 5  # start at step 5 (implies --resume)
+```
+
+`settings.json` is a JSON object of stack settings (or give single ones with `--set key=value`). `gateway_image` and `org_id` are required. `stage` and `probe` are set for you, and the sealed keyring, its JWKS and `probe_digest` are made by the command: they are refused in the settings. Run it from the repository root with `gcloud`, `pulumi` and `docker` signed in (the last to the cell's Artifact Registry: `gcloud auth configure-docker us-central1-docker.pkg.dev`).
+
+The steps print as `[n/8]` with each step's time and the running total, and a line every 30 seconds while `pulumi up` runs (resources done, resources in flight).
+
+1. Stack and settings: the stack with the KMS secrets provider and the settings the first apply can take. An existing stack is refused unless `--resume` is given.
+2. DNS sinkhole rules: `skipped (SSC-091 phase 2)`. Today the first `pulumi up` creates them.
+3. `pulumi up`: project, network, registry and the gateway's key.
+4. The gateway keyring: made and sealed with the stack's key in memory (never written to disk or printed), then set with the gateway's settings and the images that need the org.
+5. The probe image copied into the cell's `ssc-apps` registry by digest (`docker buildx imagetools create`, as the proof run does), and `probe_digest` set.
+6. `pulumi up`: gateway, agent and probe-runner.
+7. The certificate: waits for `ssc-cell-wildcard` to be `ACTIVE`, 120 minutes at most.
+8. The floor probes: `ssc_conformance.nightly` with the cell's project, agent URL and probe digest.
+
+The certificate comes before the floor probes because the cell agent is reachable only through the cell's load balancer, which needs it. Its wait is not part of the 15 minutes (founder decision D6); the probe image and probe runner are. The last line is the verdict:
+
+```
+onboarding 12:41 to floor probes (budget 15:00, PASS); certificate 38:07
+```
+
+The certificate figure runs from the end of step 3 (when its DNS record exists) to `ACTIVE`. A resumed run counts only its own time and says so. A failed step prints its number, its time and `resume with: ...`, then exits 1. Each step is idempotent, and with `--resume` a step whose work is visibly done (an output, a setting, the image in the registry) is skipped. The labels `proofcell01` and `proofcell02` are always refused.
+
+**The 78-minute line stands.** Step 3 still creates all the sinkhole's rules one at a time, about 78 minutes, until phase 2 of SSC-091 changes how they are created; the verdict will read OVER until then. The rules' names and inputs are pinned by a test (`test_the_sinkhole_s_rules_keep_the_names_and_inputs_the_live_cells_were_built_with`), so a change cannot make the next `pulumi up` on a live cell replace them.
+
 A staging cell can be destroyed with `pulumi destroy --stack c-<label>`. A prod cell's project, database and services are protected. A deleted project ID stays reserved for 30 days.
 
 ## Done-when checks
