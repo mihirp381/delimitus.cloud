@@ -32,6 +32,7 @@ jobs:
       - run: uv run python tools/lock_age_check.py
       - run: uv run python tools/npm_lock_age_check.py console/package-lock.json
       - run: uv run python tools/npm_lock_age_check.py e2e/isolation/package-lock.json
+      - run: uv run python tools/npm_lock_age_check.py landing/e2e/package-lock.json
       - run: uv run python tools/openapi_check.py
       - name: OpenAPI breaking changes
         env:
@@ -195,6 +196,29 @@ jobs:
       - run: npm run typecheck
       - run: npx playwright install --with-deps chromium webkit
       - run: npm test
+
+  landing:
+    runs-on: ubuntu-24.04
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - run: uv sync --all-packages --locked
+      - run: node --test landing/calculator.test.mjs
+      - run: npm ci
+        working-directory: landing/e2e
+      - run: npx playwright install --with-deps chromium webkit
+        working-directory: landing/e2e
+      - run: npm run e2e
+        working-directory: landing/e2e
 
   action:
     runs-on: ubuntu-24.04

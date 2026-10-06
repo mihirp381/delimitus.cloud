@@ -1,0 +1,11 @@
+{
+  "name": "ssc-landing-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "playwright test -c playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

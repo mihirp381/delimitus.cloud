@@ -1,0 +1,90 @@
+{
+  "source": "landing/index.html, the block between /* calc:start */ and /* calc:end */",
+  "vectors": [
+    {
+      "name": "default inputs, shown in the no-script table",
+      "in": {
+        "apps": 10,
+        "rate": 68,
+        "setup": 80,
+        "perApp": 12,
+        "upkeep": 2
+      },
+      "out": {
+        "cloud": 2738,
+        "setup": 5440,
+        "build": 8160,
+        "upkeep": 16320,
+        "total": 32658
+      }
+    },
+    {
+      "name": "one app",
+      "in": {
+        "apps": 1,
+        "rate": 68,
+        "setup": 80,
+        "perApp": 12,
+        "upkeep": 2
+      },
+      "out": {
+        "cloud": 1673,
+        "setup": 5440,
+        "build": 816,
+        "upkeep": 1632,
+        "total": 9561
+      }
+    },
+    {
+      "name": "fifty apps at a higher rate",
+      "in": {
+        "apps": 50,
+        "rate": 90,
+        "setup": 120,
+        "perApp": 16,
+        "upkeep": 3
+      },
+      "out": {
+        "cloud": 7470,
+        "setup": 10800,
+        "build": 72000,
+        "upkeep": 162000,
+        "total": 252270
+      }
+    },
+    {
+      "name": "half-hour upkeep steps",
+      "in": {
+        "apps": 3,
+        "rate": 55,
+        "setup": 40,
+        "perApp": 8,
+        "upkeep": 0.5
+      },
+      "out": {
+        "cloud": 1909,
+        "setup": 2200,
+        "build": 1320,
+        "upkeep": 990,
+        "total": 6419
+      }
+    },
+    {
+      "name": "no IT time",
+      "in": {
+        "apps": 500,
+        "rate": 0,
+        "setup": 0,
+        "perApp": 0,
+        "upkeep": 0
+      },
+      "out": {
+        "cloud": 60714,
+        "setup": 0,
+        "build": 0,
+        "upkeep": 0,
+        "total": 60714
+      }
+    }
+  ]
+}

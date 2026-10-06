@@ -1,0 +1,15 @@
+# Build context is the repository root; send only what the landing image needs.
+*
+!pyproject.toml
+!uv.lock
+!packages/
+!conformance/pyproject.toml
+!landing/index.html
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.hypothesis
+**/node_modules
+**/.DS_Store
+**/tests

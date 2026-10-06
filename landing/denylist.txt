@@ -1,0 +1,42 @@
+# SSC-065: words that never appear on the landing page (the moat rule, banned names, prices).
+# One term a line, matched ignoring case as a whole word against index.html with its <style>
+# blocks and image data removed. `packages/ssc_landing/tests/test_page.py` fails on any match.
+
+# Our internal words
+cell
+cells
+snapshot
+snapshots
+gateway
+identity note
+cell agent
+egress proxy
+data gateway
+
+# The components we build on (suppliers are in the trust pack, SSC-058)
+envoy
+railpack
+procrastinate
+workos
+gitleaks
+pulumi
+buildkit
+
+# Names the page never uses
+small software
+ristretto
+app builder
+
+# Our price: none is on the page (founder, 2026-10-01)
+$50
+free trial
+trial
+per seat
+per tool
+partner
+certified
+
+# Ticket numbers and repository names
+SSC-
+delimitus.cloud
+ristretto-host
