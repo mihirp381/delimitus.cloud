@@ -1,0 +1,17 @@
+[project]
+name = "ssc-exp091p"
+version = "0.0.1"
+description = "SSC-091 probe program; the versions are infra's own (infra/pyproject.toml)."
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "pulumi==3.263.0",
+  "pulumi-gcp==9.37.0",
+]
+
+[tool.uv]
+package = false
+exclude-newer = "2026-09-21T00:00:00Z"
+
+# Its own workspace root: the repository's uv workspace must not adopt this folder.
+[tool.uv.workspace]
+members = []

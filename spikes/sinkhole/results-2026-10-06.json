@@ -1,0 +1,3972 @@
+{
+  "started": "2026-10-06T05:49:56+00:00",
+  "project": "ssc-platform-0",
+  "policy": "ssc-exp091",
+  "dry_run": false,
+  "E1": {
+    "status": 200,
+    "error": null
+  },
+  "calls": [
+    {
+      "step": "E1",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies",
+      "at": 0.0,
+      "seconds": 0.302,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 0.919,
+      "seconds": 0.331,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 1.632,
+      "seconds": 0.167,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 2.204,
+      "seconds": 0.222,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 2.814,
+      "seconds": 0.199,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 3.398,
+      "seconds": 0.273,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 4.07,
+      "seconds": 0.279,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 4.729,
+      "seconds": 0.19,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 5.315,
+      "seconds": 0.16,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 5.851,
+      "seconds": 0.202,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E2",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 6.45,
+      "seconds": 0.21,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.218,
+      "seconds": 0.205,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.223,
+      "seconds": 0.2,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.229,
+      "seconds": 0.176,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.22,
+      "seconds": 0.174,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.234,
+      "seconds": 0.156,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.225,
+      "seconds": 0.183,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.227,
+      "seconds": 0.195,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.217,
+      "seconds": 0.205,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.235,
+      "seconds": 0.185,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E3",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 7.237,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 8.698,
+      "seconds": 0.198,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 8.7,
+      "seconds": 0.205,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 8.709,
+      "seconds": 0.189,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 8.699,
+      "seconds": 0.205,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 8.698,
+      "seconds": 0.192,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 8.7,
+      "seconds": 0.181,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 8.705,
+      "seconds": 0.201,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 8.7,
+      "seconds": 0.178,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.718,
+      "seconds": 0.169,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.718,
+      "seconds": 0.259,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.714,
+      "seconds": 0.175,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.714,
+      "seconds": 0.207,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.711,
+      "seconds": 0.246,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.757,
+      "seconds": 0.222,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.75,
+      "seconds": 0.262,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.712,
+      "seconds": 0.261,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.711,
+      "seconds": 0.269,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.727,
+      "seconds": 0.268,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.725,
+      "seconds": 0.255,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.721,
+      "seconds": 0.268,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.747,
+      "seconds": 0.244,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.738,
+      "seconds": 0.272,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.715,
+      "seconds": 0.275,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 9.731,
+      "seconds": 0.267,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.621,
+      "seconds": 0.178,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.618,
+      "seconds": 0.213,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.6,
+      "seconds": 0.288,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.607,
+      "seconds": 0.175,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.605,
+      "seconds": 0.176,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.606,
+      "seconds": 0.214,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.602,
+      "seconds": 0.218,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.661,
+      "seconds": 0.229,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.665,
+      "seconds": 0.259,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.657,
+      "seconds": 0.26,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.63,
+      "seconds": 0.278,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.698,
+      "seconds": 0.26,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.727,
+      "seconds": 0.253,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.614,
+      "seconds": 0.297,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.71,
+      "seconds": 0.297,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.612,
+      "seconds": 0.273,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.602,
+      "seconds": 0.211,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.756,
+      "seconds": 0.208,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.616,
+      "seconds": 0.298,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.639,
+      "seconds": 0.205,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.677,
+      "seconds": 0.287,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.6,
+      "seconds": 0.212,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.748,
+      "seconds": 0.288,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.657,
+      "seconds": 0.242,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.626,
+      "seconds": 0.238,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.671,
+      "seconds": 0.225,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.69,
+      "seconds": 0.269,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.722,
+      "seconds": 0.238,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.649,
+      "seconds": 0.238,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.632,
+      "seconds": 0.217,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.685,
+      "seconds": 0.253,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 11.6,
+      "seconds": 0.259,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.797,
+      "seconds": 0.171,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.791,
+      "seconds": 0.23,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.803,
+      "seconds": 0.216,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.79,
+      "seconds": 0.243,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.79,
+      "seconds": 0.229,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.811,
+      "seconds": 0.228,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.809,
+      "seconds": 0.207,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.831,
+      "seconds": 0.228,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.821,
+      "seconds": 0.191,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.79,
+      "seconds": 0.205,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.827,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.868,
+      "seconds": 0.227,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.789,
+      "seconds": 0.204,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.883,
+      "seconds": 0.171,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.8,
+      "seconds": 0.185,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.795,
+      "seconds": 0.195,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.859,
+      "seconds": 0.204,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.886,
+      "seconds": 0.216,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.88,
+      "seconds": 0.207,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.84,
+      "seconds": 0.207,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.851,
+      "seconds": 0.241,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.796,
+      "seconds": 0.285,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.909,
+      "seconds": 0.283,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.806,
+      "seconds": 0.255,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.889,
+      "seconds": 0.245,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.859,
+      "seconds": 0.262,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.873,
+      "seconds": 0.264,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.848,
+      "seconds": 0.286,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.812,
+      "seconds": 0.27,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.791,
+      "seconds": 0.251,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.795,
+      "seconds": 0.263,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 14.79,
+      "seconds": 0.256,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.715,
+      "seconds": 0.265,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.79,
+      "seconds": 0.219,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.771,
+      "seconds": 0.278,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.775,
+      "seconds": 0.182,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.723,
+      "seconds": 0.189,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.704,
+      "seconds": 0.179,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.704,
+      "seconds": 0.185,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.718,
+      "seconds": 0.191,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.705,
+      "seconds": 0.198,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.796,
+      "seconds": 0.192,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.752,
+      "seconds": 0.194,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.707,
+      "seconds": 0.185,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.774,
+      "seconds": 0.188,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.726,
+      "seconds": 0.199,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.71,
+      "seconds": 0.19,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.712,
+      "seconds": 0.185,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.799,
+      "seconds": 0.184,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.704,
+      "seconds": 0.184,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.788,
+      "seconds": 0.18,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.719,
+      "seconds": 0.187,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.782,
+      "seconds": 0.18,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.772,
+      "seconds": 0.169,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.802,
+      "seconds": 0.174,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.827,
+      "seconds": 0.179,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.737,
+      "seconds": 0.173,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.729,
+      "seconds": 0.169,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.731,
+      "seconds": 0.185,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.704,
+      "seconds": 0.181,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.812,
+      "seconds": 0.192,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.824,
+      "seconds": 0.193,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.768,
+      "seconds": 0.17,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 17.857,
+      "seconds": 0.192,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.747,
+      "seconds": 0.314,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.733,
+      "seconds": 0.252,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.738,
+      "seconds": 0.281,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.746,
+      "seconds": 0.229,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.734,
+      "seconds": 0.284,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.745,
+      "seconds": 0.199,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.739,
+      "seconds": 0.208,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.741,
+      "seconds": 0.196,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.757,
+      "seconds": 0.223,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.766,
+      "seconds": 0.203,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.772,
+      "seconds": 0.202,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.733,
+      "seconds": 0.204,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.733,
+      "seconds": 0.204,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.858,
+      "seconds": 0.209,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.733,
+      "seconds": 0.204,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.733,
+      "seconds": 0.191,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.798,
+      "seconds": 0.204,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.824,
+      "seconds": 0.19,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.78,
+      "seconds": 0.199,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.742,
+      "seconds": 0.19,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.801,
+      "seconds": 0.193,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.741,
+      "seconds": 0.198,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.741,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.866,
+      "seconds": 0.207,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.786,
+      "seconds": 0.187,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.737,
+      "seconds": 0.209,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.812,
+      "seconds": 0.19,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.747,
+      "seconds": 0.203,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.804,
+      "seconds": 0.216,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.733,
+      "seconds": 0.211,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.733,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 20.841,
+      "seconds": 0.281,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.022,
+      "seconds": 0.199,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.004,
+      "seconds": 0.271,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.016,
+      "seconds": 0.243,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.006,
+      "seconds": 0.2,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.002,
+      "seconds": 0.3,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.03,
+      "seconds": 0.289,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 23.999,
+      "seconds": 0.282,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.019,
+      "seconds": 0.259,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.039,
+      "seconds": 0.241,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.07,
+      "seconds": 0.214,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.008,
+      "seconds": 0.249,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 23.997,
+      "seconds": 0.235,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.0,
+      "seconds": 0.263,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.044,
+      "seconds": 0.181,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.002,
+      "seconds": 0.256,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.028,
+      "seconds": 0.212,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 23.996,
+      "seconds": 0.276,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.054,
+      "seconds": 0.236,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 23.999,
+      "seconds": 0.216,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.007,
+      "seconds": 0.209,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.034,
+      "seconds": 0.201,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.009,
+      "seconds": 0.32,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E4",
+      "method": "POST",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 24.007,
+      "seconds": 0.258,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E5",
+      "method": "POST",
+      "path": "dns.googleapis.com/batch",
+      "at": 26.319,
+      "seconds": 0.183,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "GET",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies",
+      "at": 26.911,
+      "seconds": 0.15,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "GET",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules",
+      "at": 27.449,
+      "seconds": 0.259,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-3",
+      "at": 28.085,
+      "seconds": 0.206,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-6",
+      "at": 28.103,
+      "seconds": 0.182,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-7",
+      "at": 28.108,
+      "seconds": 0.188,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-1",
+      "at": 28.079,
+      "seconds": 0.216,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-5",
+      "at": 28.094,
+      "seconds": 0.222,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-0",
+      "at": 28.078,
+      "seconds": 0.21,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-2",
+      "at": 28.079,
+      "seconds": 0.225,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-4",
+      "at": 28.088,
+      "seconds": 0.209,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-9",
+      "at": 29.034,
+      "seconds": 0.292,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e2-8",
+      "at": 29.032,
+      "seconds": 0.238,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-2",
+      "at": 29.083,
+      "seconds": 0.157,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-3",
+      "at": 29.086,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-5",
+      "at": 29.112,
+      "seconds": 0.181,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-4",
+      "at": 29.092,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-0",
+      "at": 29.069,
+      "seconds": 0.214,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-1",
+      "at": 29.081,
+      "seconds": 0.199,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-6",
+      "at": 29.923,
+      "seconds": 0.19,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-7",
+      "at": 29.946,
+      "seconds": 0.221,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-1",
+      "at": 30.001,
+      "seconds": 0.316,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-8",
+      "at": 29.975,
+      "seconds": 0.245,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-100",
+      "at": 30.02,
+      "seconds": 0.247,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e3-9",
+      "at": 29.992,
+      "seconds": 0.291,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-0",
+      "at": 29.996,
+      "seconds": 0.255,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-10",
+      "at": 30.005,
+      "seconds": 0.282,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-101",
+      "at": 30.69,
+      "seconds": 0.189,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-102",
+      "at": 30.807,
+      "seconds": 0.184,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-106",
+      "at": 31.011,
+      "seconds": 0.257,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-107",
+      "at": 31.015,
+      "seconds": 0.262,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-105",
+      "at": 31.007,
+      "seconds": 0.258,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-108",
+      "at": 31.018,
+      "seconds": 0.277,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-104",
+      "at": 31.003,
+      "seconds": 0.281,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-109",
+      "at": 31.33,
+      "seconds": 0.207,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-103",
+      "at": 30.991,
+      "seconds": 0.297,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-11",
+      "at": 31.635,
+      "seconds": 0.2,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-111",
+      "at": 31.972,
+      "seconds": 0.264,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-110",
+      "at": 31.969,
+      "seconds": 0.257,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-113",
+      "at": 32.045,
+      "seconds": 0.274,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-112",
+      "at": 32.009,
+      "seconds": 0.203,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-115",
+      "at": 32.055,
+      "seconds": 0.21,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-114",
+      "at": 32.05,
+      "seconds": 0.238,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-116",
+      "at": 32.066,
+      "seconds": 0.257,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-117",
+      "at": 32.378,
+      "seconds": 0.178,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-119",
+      "at": 33.029,
+      "seconds": 0.171,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-118",
+      "at": 33.027,
+      "seconds": 0.24,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-12",
+      "at": 33.086,
+      "seconds": 0.272,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-122",
+      "at": 33.102,
+      "seconds": 0.267,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-120",
+      "at": 33.091,
+      "seconds": 0.289,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-121",
+      "at": 33.097,
+      "seconds": 0.269,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-123",
+      "at": 33.108,
+      "seconds": 0.295,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-124",
+      "at": 33.151,
+      "seconds": 0.278,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-125",
+      "at": 33.81,
+      "seconds": 0.236,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-126",
+      "at": 33.953,
+      "seconds": 0.206,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-127",
+      "at": 34.073,
+      "seconds": 0.222,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-128",
+      "at": 34.12,
+      "seconds": 0.234,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-129",
+      "at": 34.124,
+      "seconds": 0.266,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-130",
+      "at": 34.157,
+      "seconds": 0.292,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-13",
+      "at": 34.125,
+      "seconds": 0.305,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-131",
+      "at": 34.16,
+      "seconds": 0.306,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-132",
+      "at": 34.476,
+      "seconds": 0.202,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-133",
+      "at": 34.679,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-135",
+      "at": 35.0,
+      "seconds": 0.193,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-134",
+      "at": 35.0,
+      "seconds": 0.196,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-136",
+      "at": 35.109,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-139",
+      "at": 35.146,
+      "seconds": 0.28,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-138",
+      "at": 35.144,
+      "seconds": 0.268,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-137",
+      "at": 35.123,
+      "seconds": 0.287,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-140",
+      "at": 35.419,
+      "seconds": 0.235,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-14",
+      "at": 35.257,
+      "seconds": 0.254,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-141",
+      "at": 35.841,
+      "seconds": 0.244,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-142",
+      "at": 35.859,
+      "seconds": 0.219,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-143",
+      "at": 36.064,
+      "seconds": 0.186,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-144",
+      "at": 36.211,
+      "seconds": 0.191,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-147",
+      "at": 36.247,
+      "seconds": 0.28,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-148",
+      "at": 36.26,
+      "seconds": 0.267,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-145",
+      "at": 36.214,
+      "seconds": 0.287,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-146",
+      "at": 36.217,
+      "seconds": 0.295,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-149",
+      "at": 36.575,
+      "seconds": 0.203,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-15",
+      "at": 36.588,
+      "seconds": 0.211,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-150",
+      "at": 36.865,
+      "seconds": 0.199,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-151",
+      "at": 37.115,
+      "seconds": 0.261,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-154",
+      "at": 37.29,
+      "seconds": 0.28,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-152",
+      "at": 37.261,
+      "seconds": 0.261,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-153",
+      "at": 37.274,
+      "seconds": 0.249,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-157",
+      "at": 37.402,
+      "seconds": 0.227,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-155",
+      "at": 37.3,
+      "seconds": 0.282,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-156",
+      "at": 37.394,
+      "seconds": 0.281,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-158",
+      "at": 37.795,
+      "seconds": 0.174,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-159",
+      "at": 38.147,
+      "seconds": 0.168,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-160",
+      "at": 38.309,
+      "seconds": 0.196,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-162",
+      "at": 38.351,
+      "seconds": 0.179,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-16",
+      "at": 38.274,
+      "seconds": 0.2,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-161",
+      "at": 38.322,
+      "seconds": 0.186,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-164",
+      "at": 38.366,
+      "seconds": 0.261,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-163",
+      "at": 38.36,
+      "seconds": 0.288,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-165",
+      "at": 38.511,
+      "seconds": 0.28,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-166",
+      "at": 38.929,
+      "seconds": 0.236,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-167",
+      "at": 39.194,
+      "seconds": 0.204,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-169",
+      "at": 39.2,
+      "seconds": 0.185,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-168",
+      "at": 39.197,
+      "seconds": 0.205,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-17",
+      "at": 39.204,
+      "seconds": 0.239,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-172",
+      "at": 39.397,
+      "seconds": 0.216,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-171",
+      "at": 39.389,
+      "seconds": 0.285,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-170",
+      "at": 39.357,
+      "seconds": 0.283,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-173",
+      "at": 39.719,
+      "seconds": 0.201,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-174",
+      "at": 40.071,
+      "seconds": 0.231,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-18",
+      "at": 40.108,
+      "seconds": 0.182,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-19",
+      "at": 40.112,
+      "seconds": 0.182,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-2",
+      "at": 40.249,
+      "seconds": 0.189,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-21",
+      "at": 40.349,
+      "seconds": 0.166,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-20",
+      "at": 40.261,
+      "seconds": 0.158,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-22",
+      "at": 40.356,
+      "seconds": 0.256,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-23",
+      "at": 40.523,
+      "seconds": 0.207,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-24",
+      "at": 40.876,
+      "seconds": 0.23,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-25",
+      "at": 40.95,
+      "seconds": 0.257,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-26",
+      "at": 40.969,
+      "seconds": 0.21,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-27",
+      "at": 41.086,
+      "seconds": 0.232,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-29",
+      "at": 41.12,
+      "seconds": 0.241,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-28",
+      "at": 41.108,
+      "seconds": 0.245,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-30",
+      "at": 41.296,
+      "seconds": 0.194,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-3",
+      "at": 41.294,
+      "seconds": 0.194,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-33",
+      "at": 41.835,
+      "seconds": 0.17,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-32",
+      "at": 41.823,
+      "seconds": 0.192,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-31",
+      "at": 41.823,
+      "seconds": 0.176,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-34",
+      "at": 41.986,
+      "seconds": 0.199,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-35",
+      "at": 41.992,
+      "seconds": 0.19,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-36",
+      "at": 41.996,
+      "seconds": 0.27,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-37",
+      "at": 42.035,
+      "seconds": 0.271,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-38",
+      "at": 42.066,
+      "seconds": 0.254,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-39",
+      "at": 42.555,
+      "seconds": 0.266,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-4",
+      "at": 42.636,
+      "seconds": 0.276,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-40",
+      "at": 42.705,
+      "seconds": 0.256,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-42",
+      "at": 42.881,
+      "seconds": 0.183,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-41",
+      "at": 42.877,
+      "seconds": 0.186,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-43",
+      "at": 42.983,
+      "seconds": 0.181,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-44",
+      "at": 43.01,
+      "seconds": 0.179,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-45",
+      "at": 43.043,
+      "seconds": 0.29,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-46",
+      "at": 43.511,
+      "seconds": 0.169,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-47",
+      "at": 43.522,
+      "seconds": 0.188,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-48",
+      "at": 43.571,
+      "seconds": 0.295,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-49",
+      "at": 43.677,
+      "seconds": 0.251,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-50",
+      "at": 43.754,
+      "seconds": 0.197,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-5",
+      "at": 43.71,
+      "seconds": 0.249,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-51",
+      "at": 43.776,
+      "seconds": 0.194,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-52",
+      "at": 43.913,
+      "seconds": 0.193,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-53",
+      "at": 44.282,
+      "seconds": 0.272,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-54",
+      "at": 44.437,
+      "seconds": 0.189,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-55",
+      "at": 44.557,
+      "seconds": 0.17,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-6",
+      "at": 44.698,
+      "seconds": 0.242,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-58",
+      "at": 44.612,
+      "seconds": 0.265,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-56",
+      "at": 44.584,
+      "seconds": 0.263,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-57",
+      "at": 44.608,
+      "seconds": 0.278,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-59",
+      "at": 44.617,
+      "seconds": 0.28,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-60",
+      "at": 45.164,
+      "seconds": 0.166,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-61",
+      "at": 45.245,
+      "seconds": 0.252,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-62",
+      "at": 45.506,
+      "seconds": 0.183,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-67",
+      "at": 45.631,
+      "seconds": 0.189,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-63",
+      "at": 45.608,
+      "seconds": 0.219,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-66",
+      "at": 45.622,
+      "seconds": 0.202,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-65",
+      "at": 45.617,
+      "seconds": 0.194,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-64",
+      "at": 45.613,
+      "seconds": 0.213,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-68",
+      "at": 45.837,
+      "seconds": 0.289,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-69",
+      "at": 46.012,
+      "seconds": 0.2,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-7",
+      "at": 46.334,
+      "seconds": 0.27,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-74",
+      "at": 46.557,
+      "seconds": 0.179,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-73",
+      "at": 46.552,
+      "seconds": 0.239,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-71",
+      "at": 46.539,
+      "seconds": 0.21,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-72",
+      "at": 46.547,
+      "seconds": 0.235,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-70",
+      "at": 46.536,
+      "seconds": 0.19,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-75",
+      "at": 46.71,
+      "seconds": 0.26,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-76",
+      "at": 46.786,
+      "seconds": 0.3,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-77",
+      "at": 47.169,
+      "seconds": 0.196,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-78",
+      "at": 47.582,
+      "seconds": 0.172,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-79",
+      "at": 47.589,
+      "seconds": 0.27,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-8",
+      "at": 47.593,
+      "seconds": 0.222,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-81",
+      "at": 47.621,
+      "seconds": 0.215,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-83",
+      "at": 47.775,
+      "seconds": 0.173,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-80",
+      "at": 47.598,
+      "seconds": 0.2,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-82",
+      "at": 47.715,
+      "seconds": 0.24,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-84",
+      "at": 47.912,
+      "seconds": 0.3,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-85",
+      "at": 48.483,
+      "seconds": 0.208,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-89",
+      "at": 48.645,
+      "seconds": 0.194,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-86",
+      "at": 48.632,
+      "seconds": 0.182,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-88",
+      "at": 48.636,
+      "seconds": 0.209,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-87",
+      "at": 48.633,
+      "seconds": 0.202,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-9",
+      "at": 48.661,
+      "seconds": 0.184,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-90",
+      "at": 48.751,
+      "seconds": 0.253,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-91",
+      "at": 48.84,
+      "seconds": 0.204,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-92",
+      "at": 49.154,
+      "seconds": 0.22,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-93",
+      "at": 49.535,
+      "seconds": 0.18,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-94",
+      "at": 49.562,
+      "seconds": 0.186,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-95",
+      "at": 49.57,
+      "seconds": 0.177,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-97",
+      "at": 49.578,
+      "seconds": 0.191,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-98",
+      "at": 49.685,
+      "seconds": 0.164,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-96",
+      "at": 49.571,
+      "seconds": 0.198,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e4-99",
+      "at": 49.691,
+      "seconds": 0.205,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e5-0",
+      "at": 49.88,
+      "seconds": 0.275,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e5-1",
+      "at": 50.392,
+      "seconds": 0.185,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e5-3",
+      "at": 50.49,
+      "seconds": 0.275,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e5-2",
+      "at": 50.488,
+      "seconds": 0.29,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091/rules/ssc-exp091-e5-4",
+      "at": 50.536,
+      "seconds": 0.336,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "DELETE",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies/ssc-exp091",
+      "at": 51.372,
+      "seconds": 0.218,
+      "status": 200,
+      "retry_after": null
+    },
+    {
+      "step": "E6",
+      "method": "GET",
+      "path": "dns.googleapis.com/dns/v1/projects/ssc-platform-0/responsePolicies",
+      "at": 51.969,
+      "seconds": 0.123,
+      "status": 200,
+      "retry_after": null
+    }
+  ],
+  "E2": {
+    "count": 10,
+    "statuses": {
+      "200": 10
+    },
+    "seconds_sorted": [
+      0.16,
+      0.167,
+      0.19,
+      0.199,
+      0.202,
+      0.21,
+      0.222,
+      0.273,
+      0.279,
+      0.331
+    ],
+    "median": 0.206,
+    "max": 0.331,
+    "first_error": null
+  },
+  "E3": {
+    "count": 10,
+    "statuses": {
+      "200": 10
+    },
+    "seconds_sorted": [
+      0.156,
+      0.174,
+      0.176,
+      0.183,
+      0.185,
+      0.195,
+      0.197,
+      0.2,
+      0.205,
+      0.205
+    ],
+    "median": 0.19,
+    "max": 0.205,
+    "wall": 1.48,
+    "first_error": null
+  },
+  "E4": {
+    "waves": [
+      {
+        "count": 8,
+        "statuses": {
+          "200": 8
+        },
+        "seconds_sorted": [
+          0.178,
+          0.181,
+          0.189,
+          0.192,
+          0.198,
+          0.201,
+          0.205,
+          0.205
+        ],
+        "median": 0.195,
+        "max": 0.205,
+        "size": 8,
+        "wall": 1.012,
+        "elapsed": 1.012,
+        "first_error": null,
+        "retry_after": null
+      },
+      {
+        "count": 16,
+        "statuses": {
+          "200": 16
+        },
+        "seconds_sorted": [
+          0.169,
+          0.175,
+          0.207,
+          0.222,
+          0.244,
+          0.246,
+          0.255,
+          0.259,
+          0.261,
+          0.262,
+          0.267,
+          0.268,
+          0.268,
+          0.269,
+          0.272,
+          0.275
+        ],
+        "median": 0.26,
+        "max": 0.275,
+        "size": 16,
+        "wall": 1.889,
+        "elapsed": 2.901,
+        "first_error": null,
+        "retry_after": null
+      },
+      {
+        "count": 32,
+        "statuses": {
+          "200": 32
+        },
+        "seconds_sorted": [
+          0.175,
+          0.176,
+          0.178,
+          0.205,
+          0.208,
+          0.211,
+          0.212,
+          0.213,
+          0.214,
+          0.217,
+          0.218,
+          0.225,
+          0.229,
+          0.238,
+          0.238,
+          0.238,
+          0.242,
+          0.253,
+          0.253,
+          0.259,
+          0.259,
+          0.26,
+          0.26,
+          0.269,
+          0.273,
+          0.278,
+          0.287,
+          0.288,
+          0.288,
+          0.297,
+          0.297,
+          0.298
+        ],
+        "median": 0.24,
+        "max": 0.298,
+        "size": 32,
+        "wall": 3.189,
+        "elapsed": 6.09,
+        "first_error": null,
+        "retry_after": null
+      },
+      {
+        "count": 32,
+        "statuses": {
+          "200": 32
+        },
+        "seconds_sorted": [
+          0.171,
+          0.171,
+          0.185,
+          0.191,
+          0.195,
+          0.197,
+          0.204,
+          0.204,
+          0.205,
+          0.207,
+          0.207,
+          0.207,
+          0.216,
+          0.216,
+          0.227,
+          0.228,
+          0.228,
+          0.229,
+          0.23,
+          0.241,
+          0.243,
+          0.245,
+          0.251,
+          0.255,
+          0.256,
+          0.262,
+          0.263,
+          0.264,
+          0.27,
+          0.283,
+          0.285,
+          0.286
+        ],
+        "median": 0.228,
+        "max": 0.286,
+        "size": 32,
+        "wall": 2.914,
+        "elapsed": 9.005,
+        "first_error": null,
+        "retry_after": null
+      },
+      {
+        "count": 32,
+        "statuses": {
+          "200": 32
+        },
+        "seconds_sorted": [
+          0.169,
+          0.169,
+          0.17,
+          0.173,
+          0.174,
+          0.179,
+          0.179,
+          0.18,
+          0.18,
+          0.181,
+          0.182,
+          0.184,
+          0.184,
+          0.185,
+          0.185,
+          0.185,
+          0.185,
+          0.187,
+          0.188,
+          0.189,
+          0.19,
+          0.191,
+          0.192,
+          0.192,
+          0.192,
+          0.193,
+          0.194,
+          0.198,
+          0.199,
+          0.219,
+          0.265,
+          0.278
+        ],
+        "median": 0.185,
+        "max": 0.278,
+        "size": 32,
+        "wall": 3.029,
+        "elapsed": 12.034,
+        "first_error": null,
+        "retry_after": null
+      },
+      {
+        "count": 32,
+        "statuses": {
+          "200": 32
+        },
+        "seconds_sorted": [
+          0.187,
+          0.19,
+          0.19,
+          0.19,
+          0.191,
+          0.193,
+          0.196,
+          0.197,
+          0.197,
+          0.198,
+          0.199,
+          0.199,
+          0.202,
+          0.203,
+          0.203,
+          0.204,
+          0.204,
+          0.204,
+          0.204,
+          0.207,
+          0.208,
+          0.209,
+          0.209,
+          0.211,
+          0.216,
+          0.223,
+          0.229,
+          0.252,
+          0.281,
+          0.281,
+          0.284,
+          0.314
+        ],
+        "median": 0.204,
+        "max": 0.314,
+        "size": 32,
+        "wall": 3.262,
+        "elapsed": 15.296,
+        "first_error": null,
+        "retry_after": null
+      },
+      {
+        "count": 23,
+        "statuses": {
+          "200": 23
+        },
+        "seconds_sorted": [
+          0.181,
+          0.199,
+          0.2,
+          0.201,
+          0.209,
+          0.212,
+          0.214,
+          0.216,
+          0.235,
+          0.236,
+          0.241,
+          0.243,
+          0.249,
+          0.256,
+          0.258,
+          0.259,
+          0.263,
+          0.271,
+          0.276,
+          0.282,
+          0.289,
+          0.3,
+          0.32
+        ],
+        "median": 0.243,
+        "max": 0.32,
+        "size": 23,
+        "wall": 2.324,
+        "elapsed": 17.62,
+        "first_error": null,
+        "retry_after": null
+      }
+    ],
+    "created": 175,
+    "elapsed": 17.62,
+    "rules_per_minute": 595.9,
+    "stopped": "cap of 195 rules sent (the rest is E5's)"
+  },
+  "E5": {
+    "status": 200,
+    "seconds": 0.183,
+    "body": {
+      "raw": "\r\n--batch_s5NE2LWgLy3dH9zOIBOHS5qBuoNxR_gb\r\nContent-Type: application/http\r\nContent-ID: <response-item0>\r\n\r\nHTTP/1.1 200 OK\r\nETag: 72eb68cc2e9a7be2ssc-exp091-e5-0000001a10fc35b20\r\nContent-Type: application/json; charset=UTF-8\r\nVary: Origin\r\nVary: X-Origin\r\nVary: Referer\r\n\r\n{\n  \"localData\": {\n    \"localDatas\": [\n      {\n        \"name\": \"*.ssc-exp091-e5-0.\",\n        \"type\": \"CNAME\",\n        \"ttl\": 300,\n        \"rrdatas\": [\n          \"sinkhole.ssc-exp091.\"\n        ],\n        \"signatureRrdatas\": [],\n        \"kind\": \"dns#resourceRecordSet\"\n      }\n    ]\n  },\n  \"ruleName\": \"ssc-exp091-e5-0\",\n  \"kind\": \"dns#responsePolicyRule\",\n  \"dnsName\": \"*.ssc-exp091-e5-0.\"\n}\n\r\n--batch_s5NE2LWgLy3dH9zOIBOHS5qBuoNxR_gb\r\nContent-Type: application/http\r\nContent-ID: <response-item1>\r\n\r\nHTTP/1.1 200 OK\r\nETag: 72eb68cc2e9a7be2ssc-exp091-e5-1000001a10fc35b20\r\nContent-Type: application/json; charset=UTF-8\r\nVary: Origin\r\nVary: X-Origin\r\nVary: Referer\r\n\r\n{\n  \"localData\": {\n    \"localDatas\": [\n      {\n        \"name\": \"*.ssc-exp091-e5-1.\",\n        \"type\": \"CNAME\",\n        \"ttl\": 300,\n        \"rrdatas\": [\n          \"sinkhole.ssc-exp091.\"\n        ],\n        \"signatureRrdatas\": [],\n        \"kind\": \"dns#resourceRecordSet\"\n      }\n    ]\n  },\n  \"ruleName\": \"ssc-exp091-e5-1\",\n  \"kind\": \"dns#responsePolicyRule\",\n  \"dnsName\": \"*.ssc-exp091-e5-1.\"\n}\n\r\n--batch_s5NE2LWgLy3dH9zOIBOHS5qBuoNxR_gb\r\nContent-Type: application/http\r\nContent-ID: <response-item2>\r\n\r\nHTTP/1.1 200 OK\r\nETag: 72eb68cc2e9a7be2ssc-exp091-e5-2000001a10fc35b20\r\nContent-Type: application/json; charset=UTF-8\r\nVary: Origin\r\nVary: X-Origin\r\nVary: Referer\r\n\r\n{\n  \"localData\": {\n    \"localDatas\": [\n      {\n        \"name\": \"*.ssc-exp091-e5-2.\",\n        \"type\": \"CNAME\",\n        \"ttl\": 300,\n        \"rrdatas\": [\n          \"sinkhole.ssc-exp091.\"\n        ],\n        \"signatureRrdatas\": [],\n        \"kind\": \"dns#resourceRecordSet\"\n      }\n    ]\n  },\n  \"ruleName\": \"ssc-exp091-e5-2\",\n  \"kind\": \"dns#responsePolicyRule\",\n  \"dnsName\": \"*.ssc-exp091-e5-2.\"\n}\n\r\n--batch_s5NE2LWgLy3dH9zOIBOHS5qBuoNxR_gb\r\nContent-Type: application/http\r\nContent-ID: <response-item3>\r\n\r\nHTTP/1.1 200 OK\r\nETag: 72eb68cc2e9a7be2ssc-exp091-e5-3000001a10fc35b20\r\nContent-Type: application/json; charset=UTF-8\r\nVary: Origin\r\nVary: X-Origin\r\nVary: Referer\r\n\r\n{\n  \"localData\": {\n    \"localDatas\": [\n      {\n        \"name\": \"*.ssc-exp091-e5-3.\",\n        \"type\": \"CNAME\",\n        \"ttl\": 300,\n        \"rrdatas\": [\n          \"sinkhole.ssc-exp091.\"\n        ],\n        \"signatureRrdatas\": [],\n        \"kind\": \"dns#resourceRecordSet\"\n      }\n    ]\n  },\n  \"ruleName\": \"ssc-exp091-e5-3\",\n  \"kind\": \"dns#responsePolicyRule\",\n  \"dnsName\": \"*.ssc-exp091-e5-3.\"\n}\n\r\n--batch_s5NE2LWgLy3dH9zOIBOHS5qBuoNxR_gb\r\nContent-Type: application/http\r\nContent-ID: <response-item4>\r\n\r\nHTTP/1.1 200 OK\r\nETag: 72eb68cc2e9a7be2ssc-exp091-e5-4000001a10fc35b20\r\nContent-Type: application/json; charset=UTF-8\r\nVary: Origin\r\nVary: X-Origin\r\nVary: Referer\r\n\r\n{\n  \"localData\": {\n    \"localDatas\": [\n      {\n        \"name\": \"*.ssc-exp091-e5-4.\",\n        \"type\": \"CNAME\",\n        \"ttl\": 300,\n        \"rrdatas\": [\n          \"sinkhole.ssc-exp091.\"\n        ],\n        \"signatureRrdatas\": [],\n        \"kind\": \"dns#resourceRecordSet\"\n      }\n    ]\n  },\n  \"ruleName\": \"ssc-exp091-e5-4\",\n  \"kind\": \"dns#responsePolicyRule\",\n  \"dnsName\": \"*.ssc-exp091-e5-4.\"\n}\n\r\n--batch_s5NE2LWgLy3dH9zOIBOHS5qBuoNxR_gb--\r\n"
+    }
+  },
+  "E6": {
+    "policies_found": [
+      "ssc-exp091"
+    ],
+    "rules_deleted": 200,
+    "failed": [],
+    "left_after": [],
+    "clean": true
+  },
+  "reading": [
+    "SERIALISED per policy: 10 at once took 1.48s, 7.2x one create (0.206s). No client concurrency will help."
+  ],
+  "rule_creations_sent": 200
+}

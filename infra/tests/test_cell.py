@@ -1,6 +1,7 @@
 """The cell program, run against mocks: same shape for every label, and the rules SSC-013 names."""
 
 import base64
+import hashlib
 import json
 from ipaddress import ip_address, ip_network
 from typing import Any, cast
@@ -987,6 +988,48 @@ def test_only_google_names_and_the_gateway_s_platform_hosts_resolve_in_the_cell(
     assert set(rules) == set(cell.GOOGLE_DNS_PASSTHRU) | platform | {cell.SQL_DNS_NAMES}
     assert {r["behavior"] for r in rules.values()} == {"bypassResponsePolicy"}
     assert not any("*" in name or "localData" in rules[name] for name in platform)
+
+
+RULE = "gcp:dns/responsePolicyRule:ResponsePolicyRule"
+RULES_AT_ONBOARDING_OF_PROOFCELLS = (
+    "77600e36d24030b78ff40a1e1755995fb3ef429b4ecabe226d80da194fafe919"
+)
+
+
+def _rule_digest(declared: list[Declared]) -> str:
+    """SHA-256 over every rule's resource name and inputs, sorted by name."""
+    rules = sorted((d.name, d.inputs) for d in declared if d.type == RULE)
+    blob = json.dumps(rules, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def test_the_sinkhole_s_rules_keep_the_names_and_inputs_the_live_cells_were_built_with(
+    cell_a: list[Declared],
+) -> None:
+    """A rule renamed or regrouped gets a new URN, and the next ``pulumi up`` on a live cell would
+    delete and recreate all of them (78 minutes, the sinkhole partly missing). The digest was taken
+    from the program at c1567b9, which built proofcell01 and proofcell02 (SSC-091). A change that
+    moves it must say why nothing is replaced, and carry aliases or a migration that proves it."""
+    rules = [d for d in cell_a if d.type == RULE]
+    names = [d.name for d in rules]
+    assert len(names) == len(set(names))
+    assert {name for name in names if name.startswith("dns-tld-")} == {
+        f"dns-tld-{tld}" for tld in cell.tlds()
+    }
+    assert len(names) == len(cell.tlds()) + 1 + len(cell.GOOGLE_DNS_PASSTHRU) + 1 + len(
+        naming.GATEWAY_PLATFORM_HOSTS
+    )
+    assert _rule_digest(cell_a) == RULES_AT_ONBOARDING_OF_PROOFCELLS
+
+
+def test_every_tld_in_the_list_gets_one_rule_and_the_list_has_no_repeats() -> None:
+    tlds = cell.tlds()
+    assert len(tlds) == len(set(tlds))
+    assert len(tlds) == sum(
+        1
+        for line in cell.TLDS_FILE.read_text(encoding="ascii").splitlines()
+        if line and not line.startswith("#")
+    )
 
 
 def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
