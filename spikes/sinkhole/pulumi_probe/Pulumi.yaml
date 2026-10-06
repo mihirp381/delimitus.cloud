@@ -3,7 +3,6 @@ description: SSC-091 probe. N DNS response policy rules shaped like the cell's s
 runtime:
   name: python
   options:
-    toolchain: pip
-    # The infra project's own environment: the same pulumi and pulumi-gcp as infra/uv.lock, with
-    # no second lock file. Create it first with: cd infra && uv sync
-    virtualenv: ../../../infra/.venv
+    # Pulumi's uv toolchain creates .venv here from pyproject.toml and uv.lock (the same pulumi and
+    # pulumi-gcp as infra/uv.lock). The pip toolchain needs pip in the venv, which uv's has not.
+    toolchain: uv

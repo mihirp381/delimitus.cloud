@@ -37,6 +37,7 @@ class FakeShell:
         self.calls: list[tuple[list[str], dict[str, str], Path | None]] = []
         self.now = 0.0
         self.seconds = {"up": 50.0, "destroy": 20.0}
+        self.up_output = "+ gcp:dns:ResponsePolicy policy creating (0s)\n"
 
     def __call__(
         self,
@@ -52,8 +53,6 @@ class FakeShell:
         self.now += self.seconds.get(word, 0.0)
         if argv[:2] == ["pulumi", "version"]:
             return probe.Done(0, "v3.263.0\n", "")
-        if argv[1:2] == ["-c"]:
-            return probe.Done(0, "3.263.0 9.37.0\n", "")
         if argv[:3] == ["pulumi", "plugin", "ls"]:
             return probe.Done(0, "NAME  KIND  VERSION\ngcp   resource  9.37.0  1 MB\n", "")
         outcome = self.fail.get(word, 0)
@@ -69,7 +68,9 @@ class FakeShell:
                 "ssc-exp091p::gcp:dns/responsePolicyRule:ResponsePolicyRule::ssc-exp091p-0) "
                 "success; #outs=9\n"
             )
-        return probe.Done(outcome, "", "boom" if outcome else "")
+        out = self.up_output if word == "up" else ""
+        err = "boom" if outcome and stderr_to is None else ""  # stderr is in the log file
+        return probe.Done(outcome, out, err)
 
     def commands(self) -> list[str]:
         return [" ".join(c[0]) for c in self.calls]
@@ -92,8 +93,11 @@ def run_main(
     world: dict[str, Any], sh: FakeShell, *argv: str, env: Mapping[str, str] | None = None
 ) -> tuple[int, list[str], dict[str, Any] | None]:
     said: list[str] = []
-    venv = world["tmp"] / "python"
-    venv.write_text("")
+    lock = world["tmp"] / "uv.lock"
+    lock.write_text(
+        '[[package]]\nname = "pulumi"\nversion = "3.263.0"\n\n'
+        '[[package]]\nname = "pulumi-gcp"\nversion = "9.37.0"\n'
+    )
     results = world["tmp"] / "results.json"
     code = probe.main(
         list(argv),
@@ -104,7 +108,7 @@ def run_main(
         base_env=env if env is not None else {"PATH": "/usr/bin", "PULUMI_ACCESS_TOKEN": "pat"},
         results=results,
         log=world["tmp"] / "logs" / "p8.log",
-        venv_python=venv,
+        lock=lock,
         make_dir=world["make_dir"],
     )
     return code, said, json.loads(results.read_text()) if results.exists() else None
@@ -253,8 +257,32 @@ def test_the_destroy_runs_when_the_up_fails(world: dict[str, Any]) -> None:
     assert "pulumi up exited 1" in run["error"]
     assert run["destroy_ok"] is True
     destroys = [c for c in sh.commands() if " destroy " in c]
-    assert len(destroys) == 2  # and the next P still ran
+    assert len(destroys) == 2  # it had begun creating, so the next P still ran
     assert [r["parallel"] for r in results["runs"]] == [1, 8]
+    assert "up_rules_per_minute" not in run  # a failed up has no rate
+    assert "startup_failure" not in run
+
+
+def test_a_startup_failure_stops_after_the_first_p(world: dict[str, Any]) -> None:
+    """The first run failed in the language host before any resource: the same error three times."""
+    sh = FakeShell({"up": 1})
+    sh.up_output = ""  # no "creating" line: pulumi never got to a resource
+    code, said, results = run_main(world, sh, "--parallel", "1,8,32")
+    assert code == 1
+    assert results is not None
+    assert [r["parallel"] for r in results["runs"]] == [1]
+    assert results["runs"][0]["startup_failure"] is True
+    assert sum(" up " in c for c in sh.commands()) == 1
+    assert sum(" destroy " in c for c in sh.commands()) == 1  # the empty stack is still destroyed
+    assert any("stopping after P=1" in line for line in said)
+
+
+def test_the_error_of_a_logged_run_is_read_from_its_log(world: dict[str, Any]) -> None:
+    sh = FakeShell({"up": 1})
+    sh.up_output = ""
+    code, said, results = run_main(world, sh, "--parallel", "8")
+    assert results is not None
+    assert "Create(urn:pulumi" in results["runs"][0]["error"]  # the fake wrote the log, not stderr
 
 
 def test_the_destroy_runs_when_the_run_is_interrupted(world: dict[str, Any]) -> None:
@@ -289,15 +317,15 @@ def test_a_destroy_that_fails_keeps_the_state_and_says_how_to_clean_up(
     assert any("DESTROY FAILED" in line for line in said)
 
 
-def test_the_runner_refuses_a_missing_infra_environment(world: dict[str, Any]) -> None:
+def test_the_runner_refuses_a_missing_lock_file(world: dict[str, Any]) -> None:
     said: list[str] = []
     sh = FakeShell()
     code = probe.main(
-        ["--parallel", "1"], sh=sh, say=said.append, venv_python=world["tmp"] / "missing",
+        ["--parallel", "1"], sh=sh, say=said.append, lock=world["tmp"] / "missing",
         base_env={}, results=world["tmp"] / "r.json",
     )  # fmt: skip
     assert code == 2
-    assert "uv sync" in said[0]
+    assert "uv.lock" in said[0] or "missing" in said[0]
     assert sh.calls == []
 
 

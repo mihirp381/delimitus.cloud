@@ -21,10 +21,13 @@ rules depend on about 20 API-enabling resources, and its `project` is an output.
 
 ## Run
 
-Needs `cd infra && uv sync` once (the program runs in that environment, so it has the same
-pulumi and pulumi-gcp as `infra/uv.lock`), `pulumi` on the path, and `gcloud` signed in (the token
-comes from `GOOGLE_OAUTH_ACCESS_TOKEN` if set, else `gcloud auth print-access-token`). No other
-Pulumi or gcloud command is run.
+Needs `uv` and `pulumi` on the path and `gcloud` signed in (the token comes from
+`GOOGLE_OAUTH_ACCESS_TOKEN` if set, else `gcloud auth print-access-token`). Pulumi's uv toolchain
+makes `.venv` in this folder on the first run from `pyproject.toml` and `uv.lock`, which pin the
+same pulumi 3.263.0 and pulumi-gcp 9.37.0 as infra; that needs the network once. It is not
+`infra/.venv`: the pip toolchain wants pip in the venv (uv's has none), and the uv toolchain may run
+`uv sync` on the venv it is given, which would strip infra's (not tested). No other Pulumi or gcloud command
+is run.
 
 ```
 cd spikes/sinkhole/pulumi_probe

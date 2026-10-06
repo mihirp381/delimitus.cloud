@@ -19,6 +19,7 @@ with an empty passphrase: nothing goes to Pulumi Cloud or the repo's stacks. The
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,7 +40,7 @@ STACK: Final = "probe"
 LOG_PARALLEL: Final = 8
 """Only this run keeps the debug log."""
 MAX_COUNT: Final = 1500
-VENV_PYTHON: Final = HERE.parent.parent.parent / "infra" / ".venv" / "bin" / "python"
+LOCK: Final = HERE / "uv.lock"
 RESULTS: Final = HERE / "results.json"
 LOG: Final = HERE / "logs" / "p8.log"
 
@@ -185,7 +186,7 @@ def plan(parallel: Sequence[int], count: int) -> list[str]:
         "nothing is run",
         "environment: PULUMI_BACKEND_URL=file://<new temporary folder>  PULUMI_CONFIG_PASSPHRASE=''  "
         "PULUMI_SKIP_UPDATE_CHECK=true  GOOGLE_OAUTH_ACCESS_TOKEN=<gcloud auth print-access-token>",
-        "before: pulumi version; pulumi plugin ls; <infra venv python> -c 'pulumi-gcp version'",
+        "before: pulumi version; pulumi plugin ls; pulumi and pulumi-gcp versions from uv.lock",
     ]
     for p in parallel:
         debug = p == LOG_PARALLEL
@@ -203,31 +204,42 @@ def plan(parallel: Sequence[int], count: int) -> list[str]:
     return lines
 
 
-def versions(sh: Shell, env: Mapping[str, str], venv_python: Path) -> dict[str, str]:
+def locked_version(lock: str, package: str) -> str:
+    """The version ``uv.lock`` pins, which Pulumi's uv toolchain installs into the probe's own
+    ``.venv``."""
+    found = re.search(rf'\[\[package\]\]\nname = "{re.escape(package)}"\nversion = "([^"]+)"', lock)
+    return found.group(1) if found else "unknown"
+
+
+def versions(sh: Shell, env: Mapping[str, str], lock: Path) -> dict[str, str]:
     found: dict[str, str] = {}
     cli = sh(["pulumi", "version"], env=env, cwd=HERE)
     found["pulumi_cli"] = (
         cli.out.strip() if cli.code == 0 else f"unknown ({cli.err.strip()[-200:]})"
     )
-    pkg = sh(
-        [
-            str(venv_python),
-            "-c",
-            "import importlib.metadata as m; print(m.version('pulumi'), m.version('pulumi-gcp'))",
-        ],
-        env=env,
-        cwd=HERE,
-    )
-    if pkg.code == 0 and len(pkg.out.split()) == 2:  # noqa: PLR2004
-        found["pulumi_sdk"], found["pulumi_gcp"] = pkg.out.split()
-    else:
-        found["pulumi_gcp"] = f"unknown ({pkg.err.strip()[-200:]})"
+    text = lock.read_text()
+    found["pulumi_sdk"] = locked_version(text, "pulumi")
+    found["pulumi_gcp"] = locked_version(text, "pulumi-gcp")
     plugins = sh(["pulumi", "plugin", "ls"], env=env, cwd=HERE)
     found["gcp_plugin"] = next(
         (" ".join(line.split()[:3]) for line in plugins.out.splitlines() if " gcp " in f" {line} "),
         "not listed",
     )
     return found
+
+
+def started_creating(done: Done) -> bool:
+    """Whether ``pulumi up`` got as far as creating a resource. Its progress lines say
+    ``creating``; an error before that (the language host, the program, the credentials) is a
+    startup failure, and another P would fail the same way."""
+    return "creating" in done.out
+
+
+def tail(path: Path) -> str:
+    try:
+        return path.read_text(errors="replace").strip()[-1500:]
+    except OSError:
+        return ""
 
 
 def one_run(
@@ -267,10 +279,19 @@ def one_run(
         )
         result["up_seconds"] = round(clock() - began, 2)
         result["up_ok"] = done.code == 0
-        result["up_rules_per_minute"] = round((count + 1) / result["up_seconds"] * 60, 1)
-        say(f"P={parallel}: up {result['up_seconds']} s, {result['up_rules_per_minute']} a minute")
-        if done.code:
-            result["error"] = f"pulumi up exited {done.code}: {done.err.strip()[-500:]}"
+        if done.code == 0:
+            result["up_rules_per_minute"] = round((count + 1) / result["up_seconds"] * 60, 1)
+            say(
+                f"P={parallel}: up {result['up_seconds']} s, "
+                f"{result['up_rules_per_minute']} a minute"
+            )
+        else:
+            # With the debug log, stderr is in the file: the error is at its end.
+            said = done.err.strip() or tail(log) if debug else done.err.strip()
+            result["error"] = f"pulumi up exited {done.code}: {said[-500:]}"
+            if not started_creating(done):
+                result["startup_failure"] = True
+            say(f"P={parallel}: up FAILED after {result['up_seconds']} s: {said[-300:]}")
         if debug and log.exists():
             result["log"] = str(log)
             for line in logsummary.report(
@@ -315,7 +336,7 @@ def main(
     base_env: Mapping[str, str] | None = None,
     results: Path = RESULTS,
     log: Path = LOG,
-    venv_python: Path = VENV_PYTHON,
+    lock: Path = LOCK,
     make_dir: Callable[[], Path] = lambda: Path(tempfile.mkdtemp(prefix="ssc-exp091p-")),
 ) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n", maxsplit=1)[0])
@@ -332,8 +353,8 @@ def main(
             for line in plan(values, args.count):
                 say(line)
             return 0
-        if not venv_python.exists():
-            raise ProbeError(f"{venv_python} is missing: run `cd infra && uv sync` first")
+        if not lock.exists():
+            raise ProbeError(f"{lock} is missing: the probe's pinned versions (uv lock)")
         env_base = dict(os.environ if base_env is None else base_env)
         token = env_base.get("GOOGLE_OAUTH_ACCESS_TOKEN") or token_source()
     except (ProbeError, subprocess.CalledProcessError, OSError) as exc:
@@ -347,7 +368,7 @@ def main(
     }
     failed = False
     try:
-        report |= versions(sh, without_pulumi(env_base), venv_python)
+        report |= versions(sh, without_pulumi(env_base), lock)
         say(
             f"pulumi {report['pulumi_cli']}; pulumi-gcp {report['pulumi_gcp']}; plugin {report['gcp_plugin']}"
         )
@@ -359,6 +380,12 @@ def main(
             report["runs"].append(run)
             failed = failed or "error" in run
             results.write_text(json.dumps(report, indent=2) + "\n")
+            if run.get("startup_failure"):
+                say(
+                    f"stopping after P={p}: pulumi up failed before creating anything, so the "
+                    "other values would fail the same way. Fix it and run again."
+                )
+                break
     except ProbeError as exc:
         say(str(exc))
         failed = True
