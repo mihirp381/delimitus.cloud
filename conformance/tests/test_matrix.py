@@ -88,6 +88,15 @@ def test_with_one_cell_a_failure_across_cells_still_fails() -> None:
     assert page.failures() == ["deny_peer_cell (cell1): got 200"]
 
 
+def test_a_file_without_a_cross_cell_proof_does_not_say_whether_the_night_had_a_peer() -> None:
+    """The drill's file is written by a job that never knew: its peer flag must not count."""
+    drill = Evidence("cell1", False, (Result(matrix.DRILL, ev.OK),))
+    rest = Evidence("cell1", True, tuple(r for r in passing("cell1").results if r.proof != "drill"))
+    page = matrix.judge([rest, drill, passing("cell2", peer=True)], CELLS)
+    assert page.proofs["cannot_reach_peer_cell"].by_cell["cell1"].status == ev.OK
+    assert page.peer
+
+
 def test_needing_a_peer_turns_the_skip_into_a_failure() -> None:
     page = matrix.judge([passing("cell1", peer=False)], ["cell1"], need_peer=True)
     assert any("a skip that is not allowed" in f for f in page.failures())

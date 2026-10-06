@@ -18,6 +18,7 @@ import pytest
 from google.auth.exceptions import RefreshError
 from websockets.asyncio.server import serve
 
+from ssc_conformance import evidence as ev
 from ssc_conformance import kill_drill as kd
 from ssc_edge.session import COOKIE_NAME
 
@@ -637,6 +638,29 @@ def test_the_table_says_missing_rather_than_guess() -> None:
     assert "Longest an open stream survived: not seen" in text
     assert "Verdict: FAIL" in text
     assert "stream cut not seen" in text
+
+
+async def test_the_drills_line_for_the_nightly_page(world: World, clock: Clock) -> None:
+    world.denial = 1.8
+    report = await clock.run(drill(world, clock, runs=2).execute())
+    assert report.result() == ev.Result("drill", ev.OK, "2 runs per state, longest stream 2.5 s")
+    failed = kd.Report([]).result()
+    assert (failed.status, failed.reason) == (ev.FAIL, "awake: no runs (and 1 more)")
+
+
+def test_main_adds_the_drills_line_to_the_evidence_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "evidence.json"
+    for name in kd.ENV.values():
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SSC_DRILL_PROJECT", "ssc-c-one")
+    monkeypatch.setenv(ev.EVIDENCE_ENV, str(path))
+    assert kd.main() == 1
+    written = ev.read_file(path)
+    assert written.cell == "ssc-c-one"
+    assert [(r.proof, r.status) for r in written.results] == [("drill", ev.FAIL)]
+    assert "SSC_DRILL_API_URL" in written.results[0].reason
 
 
 def test_step_outcomes_other_than_done_fail() -> None:

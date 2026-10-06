@@ -141,6 +141,12 @@ def _allowed(proof: str, reason: str, *, need_peer: bool) -> bool:
     return proof in ALSO and reason.startswith(ev.WAITS_FOR_DATAGW)
 
 
+def _crosses(evidence: Evidence) -> bool:
+    """Whether a file reports a proof that crosses cells: only those say if the run had a peer, a
+    file of the drill or the read-only checks does not know."""
+    return any(r.proof in CROSS_CELL for r in evidence.results)
+
+
 def judge_one(proof: str, cell: str, files: Sequence[Evidence], *, need_peer: bool) -> Result:
     """The result of ``proof`` in ``cell`` once the page's rules are applied."""
     found = [r for e in files if e.cell == cell for r in e.results if r.proof == proof]
@@ -149,7 +155,7 @@ def judge_one(proof: str, cell: str, files: Sequence[Evidence], *, need_peer: bo
     if len(found) > 1:
         return Result(proof, ev.FAIL, f"reported {len(found)} times")
     result = found[0]
-    if proof in CROSS_CELL and not all(e.peer for e in files if e.cell == cell):
+    if proof in CROSS_CELL and not all(e.peer for e in files if e.cell == cell and _crosses(e)):
         if result.status == ev.FAIL:
             return result
         result = Result(proof, ev.SKIPPED, ev.NO_PEER)
@@ -192,7 +198,7 @@ def judge(files: Sequence[Evidence], cells: Sequence[str], *, need_peer: bool = 
         proof: Judged(proof, {c: judge_one(proof, c, files, need_peer=need_peer) for c in cells})
         for proof in wanted
     }
-    peer = len(cells) > 1 and all(e.peer for e in files)
+    peer = len(cells) > 1 and all(e.peer for e in files if _crosses(e))
     return Page(tuple(cells), peer, proofs)
 
 

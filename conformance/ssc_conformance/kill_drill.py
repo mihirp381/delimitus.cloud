@@ -28,7 +28,9 @@ on the app come from ``SSC_DRILL_CREDENTIALS_FILE``, the JSON the night's sign-i
 (``e2e/isolation/night-login.ts``): the drill refreshes the token a minute before it ends, since
 a drill outlasts one, and keeps the rotated refresh token in memory. For a hand run,
 ``SSC_DRILL_TOKEN`` (an admin's access token) and ``SSC_DRILL_SESSION_COOKIE`` (a cookie value)
-instead; the file wins when both are set. Optional: ``SSC_DRILL_RUNS``.
+instead; the file wins when both are set. Optional: ``SSC_DRILL_RUNS``, and ``SSC_EVIDENCE_FILE``,
+the file this run adds its ``drill`` line to for the one-page result (``ssc_conformance.matrix``);
+the cell is ``SSC_DRILL_PROJECT``.
 Google calls use ``SSC_ACCESS_TOKEN``, else the credential file ``GOOGLE_APPLICATION_CREDENTIALS``
 names (refreshed as it nears expiry, since a drill outlasts one token), else ``gcloud``; the
 caller needs log read on the cell project and read on its bucket. Exits 1 when the verdict is not
@@ -57,6 +59,8 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 from websockets.typing import Origin
 
+from ssc_conformance import evidence as ev
+from ssc_conformance import matrix
 from ssc_conformance.nightly import LOGGING_API, Clock, Json, Sleep, gcloud_access_tokens
 from ssc_control.runtime.cell_agent import AccessTokens
 from ssc_edge.session import COOKIE_NAME
@@ -683,6 +687,17 @@ class Report:
             )
         return out
 
+    def result(self) -> ev.Result:
+        """The drill's line on the nightly page: pass, or fail with the first problem."""
+        if self.failures:
+            more = len(self.failures) - 1
+            first = self.failures[0] + (f" (and {more} more)" if more else "")
+            return ev.Result(matrix.DRILL, ev.FAIL, first)
+        runs = len(self.of("awake"))
+        longest = self.longest_stream
+        stream = "no stream open" if longest is None else f"longest stream {longest:.1f} s"
+        return ev.Result(matrix.DRILL, ev.OK, f"{runs} runs per state, {stream}")
+
     def markdown(self) -> str:
         """The results table: a row per state, ``median / max`` seconds in each cell."""
         lines = [
@@ -964,13 +979,22 @@ async def main_async(environ: Mapping[str, str]) -> Report:
             await sign_in.aclose()
 
 
+def write_evidence(environ: Mapping[str, str], result: ev.Result) -> None:
+    """Adds the drill's line to ``SSC_EVIDENCE_FILE`` for the cell ``SSC_DRILL_PROJECT`` names."""
+    path, project = environ.get(ev.EVIDENCE_ENV), environ.get(ENV["project"])
+    if path and project:
+        ev.write(Path(path), ev.Evidence(project, peer=False, results=(result,)))
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         report = asyncio.run(main_async(os.environ))
     except DrillError as exc:
         sys.stderr.write(f"kill_drill: {exc}\n")
+        write_evidence(os.environ, ev.Result(matrix.DRILL, ev.FAIL, str(exc)))
         return 1
+    write_evidence(os.environ, report.result())
     text = report.markdown()
     sys.stdout.write(text)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
