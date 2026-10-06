@@ -5,12 +5,15 @@ the probe app the way the gateway calls an app: ``X-Serverless-Authorization`` c
 gateway's ID token, and ``Authorization`` carries the app's own credential.
 
 Configuration: ``PROBE_URL`` (the probe app), ``PROBE_PEER_URL`` (a second app the first must
-not reach), ``PROBE_HEALTH_PATH`` (default ``/health``). For ``cannot_reach_peer_cell``, all of
-``PROBE_PEER_CELL_APP_URL``, ``PROBE_PEER_CELL_GATEWAY_URL`` (another cell's app and gateway
-``run.app`` URLs) and ``PROBE_PEER_CELL_RANGE`` (that cell's address range); without them the
-probe is skipped (``no peer cell``), never passed. ``PROBE_EGRESS_HOSTS`` (comma-separated)
-names hosts that resolve in the cell but must not answer an app; ``no_direct_egress`` dials each
-too. Prints one JSON line per probe and a summary line, and exits 1 when any probe fails.
+not reach), ``PROBE_HEALTH_PATH`` (default ``/health``). For ``cannot_reach_peer_cell`` and
+``deny_peer_cell``, all of ``PROBE_PEER_CELL_APP_URL``, ``PROBE_PEER_CELL_GATEWAY_URL`` (another
+cell's app and gateway ``run.app`` URLs), ``PROBE_PEER_CELL_RANGE`` (that cell's address range) and
+``PROBE_PEER_CELL_PROJECT`` (its project); without them both probes are skipped (``no peer
+cell``), never passed. ``PROBE_DATAGW_URL`` (this cell's data gateway) is for
+``datagw_read_only``; without it the probe is skipped (``waits for the data gateway``).
+``PROBE_EGRESS_HOSTS`` (comma-separated) names hosts that resolve in the cell but must not answer
+an app; ``no_direct_egress`` dials each too. Prints one JSON line per probe and a summary line,
+and exits 1 when any probe fails.
 """
 
 import json
@@ -27,9 +30,19 @@ import checks
 METADATA = "http://metadata.google.internal/computeMetadata/v1"
 TIMEOUT = 60.0
 PEER_CELL_TIMEOUT = 240.0
+DATAGW_TIMEOUT = 240.0
 NO_PEER_CELL = "no peer cell"
-PEER_CELL_ENV = ("PROBE_PEER_CELL_APP_URL", "PROBE_PEER_CELL_GATEWAY_URL", "PROBE_PEER_CELL_RANGE")
+WAITS_FOR_DATAGW = "waits for the data gateway"
+PEER_CELL_ENV = (
+    "PROBE_PEER_CELL_APP_URL",
+    "PROBE_PEER_CELL_GATEWAY_URL",
+    "PROBE_PEER_CELL_RANGE",
+    "PROBE_PEER_CELL_PROJECT",
+)
 EGRESS_HOSTS_ENV = "PROBE_EGRESS_HOSTS"
+DATAGW_URL_ENV = "PROBE_DATAGW_URL"
+DATAGW_CONNECTION = "probe"
+type PeerCell = tuple[str, str, str, str]
 
 
 class ProbeSkippedError(Exception):
@@ -84,10 +97,12 @@ def id_token(audience: str) -> str:
         return response.read().decode()
 
 
-def peer_cell_from(environ: Mapping[str, str]) -> tuple[str, str, str] | None:
-    """The peer cell's app URL, gateway URL and range, or None unless all three are set."""
-    app_url, gateway_url, cidr = (environ.get(name, "") for name in PEER_CELL_ENV)
-    return (app_url, gateway_url, cidr) if app_url and gateway_url and cidr else None
+def peer_cell_from(environ: Mapping[str, str]) -> PeerCell | None:
+    """The peer cell's app URL, gateway URL, range and project, or None unless all are set."""
+    app_url, gateway_url, cidr, project = (environ.get(name, "") for name in PEER_CELL_ENV)
+    if app_url and gateway_url and cidr and project:
+        return (app_url, gateway_url, cidr, project)
+    return None
 
 
 def egress_hosts_from(environ: Mapping[str, str]) -> tuple[str, ...]:
@@ -95,19 +110,42 @@ def egress_hosts_from(environ: Mapping[str, str]) -> tuple[str, ...]:
     return tuple(h for h in (p.strip() for p in environ.get(EGRESS_HOSTS_ENV, "").split(",")) if h)
 
 
-def _peer_cell(app: Probe, peer_cell: tuple[str, str, str] | None) -> str:
+def _peer_cell(app: Probe, peer_cell: PeerCell | None) -> str:
     if peer_cell is None:
         raise ProbeSkippedError(NO_PEER_CELL)
-    query = urllib.parse.urlencode(dict(zip(("app", "gateway", "range"), peer_cell, strict=True)))
+    query = urllib.parse.urlencode(
+        dict(zip(("app", "gateway", "range"), peer_cell[:3], strict=True))
+    )
     return checks.cannot_reach_peer_cell(app.body(f"/probe/peer-cell?{query}", PEER_CELL_TIMEOUT))
 
 
-def plan(
+def _deny_peer_cell(app: Probe, peer_cell: PeerCell | None) -> str:
+    """The peer cell's secret and bucket, by the names every cell has (``ssc-a-probe``, and the
+    cell bucket ``<project>-cell``)."""
+    if peer_cell is None:
+        raise ProbeSkippedError(NO_PEER_CELL)
+    project = peer_cell[3]
+    query = urllib.parse.urlencode(
+        {"project": project, "secret": checks.DENY_SECRET, "bucket": f"{project}-cell"}
+    )
+    return checks.deny_peer_cell(app.body(f"/probe/deny-peer?{query}"))
+
+
+def _datagw_read_only(app: Probe, datagw_url: str) -> str:
+    if not datagw_url:
+        raise ProbeSkippedError(WAITS_FOR_DATAGW)
+    query = urllib.parse.urlencode({"url": datagw_url, "connection": DATAGW_CONNECTION})
+    return checks.datagw_read_only(app.body(f"/probe/datagw?{query}", DATAGW_TIMEOUT))
+
+
+def plan(  # noqa: PLR0913  (keyword-only)
     app: Probe,
     peer_url: str,
     health_path: str,
-    peer_cell: tuple[str, str, str] | None = None,
+    peer_cell: PeerCell | None = None,
+    *,
     egress_hosts: Sequence[str] = (),
+    datagw_url: str = "",
 ) -> dict[str, Callable[[], str]]:
     peer = urllib.parse.urlencode({"url": peer_url})
     egress = urllib.parse.urlencode([("host", h) for h in egress_hosts])
@@ -130,6 +168,7 @@ def plan(
             app.body(f"/probe/peer?{peer}")
         ),
         "cannot_reach_peer_cell": lambda: _peer_cell(app, peer_cell),
+        "deny_peer_cell": lambda: _deny_peer_cell(app, peer_cell),
         "header_echo_no_google_jwt": lambda: checks.header_echo_no_google_jwt(
             app.body("/probe/headers")
         ),
@@ -141,17 +180,22 @@ def plan(
             app.body("/probe/env")
         ),
         "sse_passthrough": lambda: checks.sse_passthrough(app.sse("/probe/sse")),
+        "datagw_read_only": lambda: _datagw_read_only(app, datagw_url),
     }
 
 
-def run(
+def run(  # noqa: PLR0913  (keyword-only)
     app: Probe,
     peer_url: str,
     health_path: str,
-    peer_cell: tuple[str, str, str] | None = None,
+    peer_cell: PeerCell | None = None,
+    *,
     egress_hosts: Sequence[str] = (),
+    datagw_url: str = "",
 ) -> list[dict[str, str]]:
-    steps = plan(app, peer_url, health_path, peer_cell, egress_hosts)
+    steps = plan(
+        app, peer_url, health_path, peer_cell, egress_hosts=egress_hosts, datagw_url=datagw_url
+    )
     results: list[dict[str, str]] = []
     for name in checks.PROBES:
         try:
@@ -171,7 +215,8 @@ def main() -> int:
         peer_url,
         health_path,
         peer_cell_from(os.environ),
-        egress_hosts_from(os.environ),
+        egress_hosts=egress_hosts_from(os.environ),
+        datagw_url=os.environ.get(DATAGW_URL_ENV, ""),
     )
     for result in results:
         print(json.dumps({"ssc_probe": result}), flush=True)  # noqa: T201

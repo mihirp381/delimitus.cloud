@@ -9,6 +9,7 @@ from ssc_conformance import evidence as ev
 from ssc_conformance import matrix
 from ssc_conformance.evidence import Evidence, Result
 from ssc_conformance.matrix import ALSO, ROWS
+from ssc_conformance.runtime_probes import PROBES
 
 CELLS = ["cell1", "cell2"]
 
@@ -177,3 +178,23 @@ def test_the_page_lists_every_row_and_the_also_checked_block() -> None:
     for title in matrix.ALSO_TITLES.values():
         assert title in text
     assert "not automated: cell diff" in text
+
+
+def test_every_probe_the_page_names_exists_in_the_probe_list() -> None:
+    not_probes = {
+        matrix.BROWSER_ENTRY,
+        matrix.BROWSER_LOGIN,
+        matrix.BROWSER_CROSS_CELL,
+        matrix.BROWSER_SECOND_USER,
+        matrix.BUILD_BUNDLE,
+        matrix.STAFF,
+        matrix.DENY_READ,
+        matrix.VERSIONS_ONLY,
+        matrix.ORG_POLICIES,
+        matrix.CERTIFICATE,
+        matrix.DRIFT,
+        matrix.DRILL,
+    }
+    named = {p for r in ROWS for p in r.proofs} | set(ALSO)
+    assert sorted(named - not_probes - set(PROBES)) == []
+    assert matrix.CROSS_CELL - {matrix.BROWSER_CROSS_CELL} <= set(PROBES)

@@ -114,10 +114,10 @@ def by_name(results: list[ProbeResult]) -> dict[str, ProbeResult]:
     return {r.name: r for r in results}
 
 
-def test_probe_list_is_fifteen_with_four_local() -> None:
-    assert len(PROBES) == len(set(PROBES)) == 15
-    assert len(LOCAL_PROBES) == 4 and len(CELL_PROBES) == 11
-    assert "cannot_reach_peer_cell" in CELL_PROBES
+def test_probe_list_is_seventeen_with_four_local() -> None:
+    assert len(PROBES) == len(set(PROBES)) == 17
+    assert len(LOCAL_PROBES) == 4 and len(CELL_PROBES) == 13
+    assert {"cannot_reach_peer_cell", "deny_peer_cell", "datagw_read_only"} <= set(CELL_PROBES)
 
 
 def test_probe_image_passes_the_local_probes(probe_image: str) -> None:

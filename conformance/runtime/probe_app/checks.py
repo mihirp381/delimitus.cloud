@@ -1,4 +1,4 @@
-"""The fifteen runtime probes as pure checks over what the probe app reports (SSC-017).
+"""The seventeen runtime probes as pure checks over what the probe app reports (SSC-017).
 
 Each check takes the decoded body of one probe-app route (or what the runner measured) and
 returns the reason it passed, or raises ``ProbeFailed``. Standard library only: the runner job
@@ -27,11 +27,13 @@ CELL_PROBES: Final = (
     "metadata_identity_is_own",
     "cannot_reach_peer_app",
     "cannot_reach_peer_cell",
+    "deny_peer_cell",
     "header_echo_no_google_jwt",
     "authorization_passthrough",
     "cannot_read_secrets",
     "no_platform_credentials_in_env",
     "sse_passthrough",
+    "datagw_read_only",
 )
 PROBES: Final = LOCAL_PROBES + CELL_PROBES
 # Filesystems that keep data past the instance or leave it: none may be mounted in an app.
@@ -48,6 +50,10 @@ _CREDENTIAL_NAME = re.compile(
     r"|CREDENTIAL|SECRET|TOKEN|PASSWORD|PRIVATE_KEY|API_KEY"
 )
 SSE_SPREAD_SECONDS: Final = 1.5
+HTTP_OK: Final = 200
+IAM_REFUSED: Final = 403
+DENY_SECRET: Final = "ssc-a-probe"  # noqa: S105  (a secret's name, not a value)
+DATAGW_REFUSED: Final = (422, "QUERY_REFUSED")
 INGRESS_REFUSED: Final = 404
 SAME_RANGE: Final = "range leg not applicable: same range, separate networks"
 PROBE_APP_BODIES: Final = frozenset({'"ok"', "null"})
@@ -188,6 +194,33 @@ def cannot_reach_peer_cell(body: Body) -> str:
     return "; ".join([*legs, SAME_RANGE] if overlap else legs)
 
 
+def deny_peer_cell(body: Body) -> str:
+    """With its own identity this app asks another cell's Secret Manager for a secret and Cloud
+    Storage for a bucket's objects. Google's IAM must refuse both (403). A 200 is a breach; no
+    answer, a 404 or any other status proves nothing about IAM, so it fails too."""
+    if body.get("error"):
+        raise ProbeFailedError(str(body["error"]))
+    legs = {leg: _map(body.get(leg), leg) for leg in ("secret", "bucket")}
+    breached = [name for name, leg in legs.items() if leg.get("status") == HTTP_OK]
+    if breached:
+        raise ProbeFailedError(f"BREACH: the peer cell's {', '.join(breached)} answered 200")
+    wrong = [
+        f"{name}: {_answer_of(leg, 'reason')}"
+        for name, leg in legs.items()
+        if leg.get("status") != IAM_REFUSED
+    ]
+    if wrong:
+        raise ProbeFailedError(f"IAM did not refuse: {', '.join(wrong)}")
+    return "; ".join(f"{name}: {_answer_of(leg, 'reason')}" for name, leg in legs.items())
+
+
+def _answer_of(answer: Body, detail: str) -> str:
+    """The status and ``detail`` of one call, or why it got no answer."""
+    if answer.get("status") is None:
+        return f"no answer ({answer.get('error')})"
+    return f"HTTP {answer.get('status')} {answer.get(detail) or ''}".strip()
+
+
 def _let_through(name: str, attempt: Body) -> str | None:
     if "status" not in attempt:
         refused = attempt.get("blocked") is True or bool(attempt.get("error"))
@@ -261,6 +294,28 @@ def no_platform_credentials_in_env(body: Body) -> str:
     if found:
         raise ProbeFailedError(f"credential-like variables: {', '.join(found)}")
     return f"{len(names)} variables, none a credential"
+
+
+def datagw_read_only(body: Body) -> str:
+    """Every write-shaped statement sent to the cell's data gateway is refused by its classifier
+    (422 ``QUERY_REFUSED``). An answer of any other kind, a refusal for another reason included,
+    proves nothing about the read-only guarantee."""
+    if body.get("error"):
+        raise ProbeFailedError(str(body["error"]))
+    attempts = {
+        name: _map(attempt, name)
+        for name, attempt in _map(body.get("attempts"), "/probe/datagw attempts").items()
+    }
+    if not attempts:
+        raise ProbeFailedError("no statements were sent")
+    wrong = [
+        f"{name}: {_answer_of(attempt, 'code')}"
+        for name, attempt in attempts.items()
+        if (attempt.get("status"), attempt.get("code")) != DATAGW_REFUSED
+    ]
+    if wrong:
+        raise ProbeFailedError(f"not refused as QUERY_REFUSED: {', '.join(wrong)}")
+    return f"{len(attempts)} write-shaped statements refused (QUERY_REFUSED)"
 
 
 def sse_passthrough(arrivals: list[float]) -> str:

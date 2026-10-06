@@ -40,7 +40,7 @@ def _jwt(claims: dict[str, object], signature: str) -> str:
 def test_probe_lists_agree() -> None:
     assert checks.LOCAL_PROBES == runtime_probes.LOCAL_PROBES
     assert checks.CELL_PROBES == runtime_probes.CELL_PROBES
-    assert len(checks.PROBES) == len(set(checks.PROBES)) == 15
+    assert len(checks.PROBES) == len(set(checks.PROBES)) == 17
 
 
 def test_egress_and_dns() -> None:
@@ -260,16 +260,19 @@ def test_runner_reports_every_probe_and_never_passes_off_cell(
         assert by_name[name]["status"] == "passed", by_name[name]
     for name in ("metadata_token_no_roles", "metadata_identity_is_own", "cannot_reach_peer_app"):
         assert by_name[name]["status"] == "failed", by_name[name]
-    assert by_name["cannot_reach_peer_cell"] == {
-        "probe": "cannot_reach_peer_cell",
+    for name in ("cannot_reach_peer_cell", "deny_peer_cell"):
+        assert by_name[name] == {"probe": name, "status": "skipped", "reason": "no peer cell"}
+    assert by_name["datagw_read_only"] == {
+        "probe": "datagw_read_only",
         "status": "skipped",
-        "reason": "no peer cell",
+        "reason": "waits for the data gateway",
     }
 
 
-def test_the_peer_cell_comes_from_three_variables() -> None:
-    full = dict(zip(runner.PEER_CELL_ENV, ("https://a", "https://g", "10.30.0.0/22"), strict=True))
-    assert runner.peer_cell_from(full) == ("https://a", "https://g", "10.30.0.0/22")
+def test_the_peer_cell_comes_from_four_variables() -> None:
+    values = ("https://a", "https://g", "10.30.0.0/22", "ssc-c-peer")
+    full = dict(zip(runner.PEER_CELL_ENV, values, strict=True))
+    assert runner.peer_cell_from(full) == values
     assert runner.peer_cell_from({}) is None
     for name in runner.PEER_CELL_ENV:
         assert runner.peer_cell_from(full | {name: ""}) is None
@@ -285,7 +288,7 @@ def test_the_peer_cell_probe_waits_longer_than_the_others() -> None:
             return {"error": "stop"}
 
     with pytest.raises(checks.ProbeFailedError):
-        runner._peer_cell(Recording(), ("https://a", "https://g", "10.30.0.0/22"))
+        runner._peer_cell(Recording(), ("https://a", "https://g", "10.30.0.0/22", "ssc-c-peer"))
     assert seen[0][0].startswith("/probe/peer-cell?")
     assert seen[0][1] == runner.PEER_CELL_TIMEOUT > 108
 
@@ -310,7 +313,9 @@ def test_no_direct_egress_also_dials_each_host_that_resolves(
     probe = runner.Probe(local_app, "t")
     hosts = ("auth.delimitus.com", "keys.delimitus.com")
     with pytest.raises(checks.ProbeFailedError, match=r"internet: tcp keys\.delimitus\.com:443$"):
-        runner.plan(probe, local_app + "/", "/health", None, hosts)["no_direct_egress"]()
+        runner.plan(probe, local_app + "/", "/health", None, egress_hosts=hosts)[
+            "no_direct_egress"
+        ]()
     assert dialled[-2:] == ["auth.delimitus.com:443", "keys.delimitus.com:443"]
     dialled.clear()
     assert runner.plan(probe, local_app + "/", "/health")["no_direct_egress"]() == (
@@ -348,7 +353,12 @@ def test_runner_drives_the_peer_cell_probe_through_the_app(  # noqa: PLR0913  (f
     monkeypatch.setattr(app, "peer", peer)
     monkeypatch.setattr(app, "_tcp", connect)
     monkeypatch.setattr(app, "_own_address", lambda toward: own)
-    peer_cell = ("https://ssc-a-x.run.app", "https://ssc-gateway-x.run.app", "10.30.0.0/22")
+    peer_cell = (
+        "https://ssc-a-x.run.app",
+        "https://ssc-gateway-x.run.app",
+        "10.30.0.0/22",
+        "ssc-c-peer",
+    )
     results = runner.run(runner.Probe(local_app, "t"), local_app + "/", "/health", peer_cell)
     (result,) = [r for r in results if r["probe"] == "cannot_reach_peer_cell"]
     assert result["status"] == status, result
@@ -359,3 +369,136 @@ def test_runner_drives_the_peer_cell_probe_through_the_app(  # noqa: PLR0913  (f
     assert bool(tcp) is (own != "10.30.1.7")
     for leg in ("app by name", "gateway by name", *legs) if status == "passed" else ():
         assert leg in result["reason"]
+
+
+REFUSED = {"status": 403, "reason": "PERMISSION_DENIED Permission denied"}
+
+
+def test_deny_peer_cell_needs_iam_to_refuse_both_legs() -> None:
+    assert checks.deny_peer_cell({"secret": REFUSED, "bucket": REFUSED}).startswith(
+        "secret: HTTP 403"
+    )
+    with pytest.raises(checks.ProbeFailedError, match="BREACH: the peer cell's secret"):
+        checks.deny_peer_cell({"secret": {"status": 200}, "bucket": REFUSED})
+    with pytest.raises(checks.ProbeFailedError, match="BREACH: the peer cell's secret, bucket"):
+        checks.deny_peer_cell({"secret": {"status": 200}, "bucket": {"status": 200}})
+    with pytest.raises(checks.ProbeFailedError, match=r"bucket: no answer \(TimeoutError\)"):
+        checks.deny_peer_cell(
+            {"secret": REFUSED, "bucket": {"status": None, "error": "TimeoutError"}}
+        )
+    with pytest.raises(checks.ProbeFailedError, match="secret: HTTP 404"):
+        checks.deny_peer_cell({"secret": {"status": 404, "reason": "NOT_FOUND"}, "bucket": REFUSED})
+    with pytest.raises(checks.ProbeFailedError, match="HTTP 401"):
+        checks.deny_peer_cell({"secret": REFUSED, "bucket": {"status": 401}})
+    with pytest.raises(checks.ProbeFailedError, match="no metadata"):
+        checks.deny_peer_cell({"error": "no metadata"})
+    with pytest.raises(checks.ProbeFailedError, match="unexpected secret"):
+        checks.deny_peer_cell({"bucket": REFUSED})
+
+
+QUERY_REFUSED = {"status": 422, "code": "QUERY_REFUSED"}
+
+
+def test_datagw_read_only_needs_every_statement_refused_by_the_classifier() -> None:
+    attempts = {"notify": QUERY_REFUSED, "temp table": QUERY_REFUSED}
+    assert "2 write-shaped statements refused" in checks.datagw_read_only({"attempts": attempts})
+    for answer, shown in (
+        ({"status": 200, "code": None}, "notify: HTTP 200"),
+        ({"status": 422, "code": "QUERY_FAILED"}, "notify: HTTP 422 QUERY_FAILED"),
+        ({"status": 403, "code": "CONNECTION_NOT_GRANTED"}, "HTTP 403 CONNECTION_NOT_GRANTED"),
+        ({"status": None, "error": "TimeoutError"}, r"notify: no answer \(TimeoutError\)"),
+    ):
+        with pytest.raises(checks.ProbeFailedError, match=shown):
+            checks.datagw_read_only({"attempts": {**attempts, "notify": answer}})
+    with pytest.raises(checks.ProbeFailedError, match="no statements"):
+        checks.datagw_read_only({"attempts": {}})
+    with pytest.raises(checks.ProbeFailedError, match="no url"):
+        checks.datagw_read_only({"error": "no url"})
+
+
+def test_runner_asks_the_app_to_deny_the_peer_cell_by_the_names_every_cell_has(
+    local_app: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[tuple[str, str, str]] = []
+
+    def deny(project: str, secret: str, bucket: str) -> dict[str, object]:
+        asked.append((project, secret, bucket))
+        return {"secret": REFUSED, "bucket": REFUSED}
+
+    monkeypatch.setattr(app, "deny_peer", deny)
+    peer_cell = ("https://a", "https://g", "10.30.0.0/22", "ssc-c-peer")
+    steps = runner.plan(runner.Probe(local_app, "t"), local_app + "/", "/health", peer_cell)
+    assert steps["deny_peer_cell"]().startswith("secret: HTTP 403")
+    assert asked == [("ssc-c-peer", "ssc-a-probe", "ssc-c-peer-cell")]
+
+
+def test_runner_sends_the_data_gateway_url_and_skips_without_one(
+    local_app: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[tuple[str, str]] = []
+
+    def datagw(url: str, connection: str) -> dict[str, object]:
+        asked.append((url, connection))
+        return {"attempts": {"notify": QUERY_REFUSED}}
+
+    monkeypatch.setattr(app, "datagw", datagw)
+    probe = runner.Probe(local_app, "t")
+    with pytest.raises(runner.ProbeSkippedError, match="waits for the data gateway"):
+        runner.plan(probe, local_app + "/", "/health")["datagw_read_only"]()
+    plan = runner.plan(probe, local_app + "/", "/health", datagw_url="https://datagw.run.app")
+    assert plan["datagw_read_only"]().startswith("1 write-shaped")
+    assert asked == [("https://datagw.run.app", "probe")]
+
+
+def test_deny_peer_keeps_the_status_and_reason_and_drops_what_it_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+    answers = iter(
+        [
+            (200, b'{"payload": {"data": "c2VjcmV0"}}'),
+            (403, b'{"error": {"status": "PERMISSION_DENIED", "message": "no"}}'),
+        ]
+    )
+
+    def http(url: str, **kwargs: Any) -> tuple[int, bytes]:
+        seen.append(url)
+        return next(answers)
+
+    monkeypatch.setattr(app, "_metadata", lambda path: json.dumps({"access_token": "tok"}))
+    monkeypatch.setattr(app, "_http", http)
+    got = app.deny_peer("ssc-c-peer", "ssc-a-probe", "ssc-c-peer-cell")
+    assert got == {
+        "secret": {"status": 200, "reason": "allowed"},
+        "bucket": {"status": 403, "reason": "PERMISSION_DENIED no"},
+    }
+    assert "c2VjcmV0" not in json.dumps(got)
+    assert seen[0] == (
+        "https://secretmanager.googleapis.com/v1/projects/ssc-c-peer/secrets/ssc-a-probe"
+        "/versions/latest:access"
+    )
+    assert seen[1].startswith("https://storage.googleapis.com/storage/v1/b/ssc-c-peer-cell/o?")
+
+
+def test_datagw_route_posts_each_statement_with_the_apps_id_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted: list[dict[str, Any]] = []
+
+    def http(url: str, **kwargs: Any) -> tuple[int, bytes]:
+        posted.append({"url": url, **kwargs})
+        refused = len(posted) != 2
+        body = b'{"error": {"code": "QUERY_REFUSED"}}' if refused else b'{"rows": [[1]]}'
+        return (422 if refused else 200), body
+
+    monkeypatch.setattr(app, "_metadata", lambda path: f"id-token for {path}")
+    monkeypatch.setattr(app, "_http", http)
+    got = app.datagw("https://datagw-x.run.app", "probe")
+    assert list(got["attempts"]) == list(app.DATAGW_MATRIX)
+    assert got["attempts"]["temp table"] == {"status": 200, "code": None}
+    assert got["attempts"]["notify"] == {"status": 422, "code": "QUERY_REFUSED"}
+    assert posted[0]["url"] == "https://datagw-x.run.app/v1/connections/probe/query"
+    assert posted[0]["headers"]["Authorization"].startswith("Bearer id-token for ")
+    assert "format=full" in posted[0]["headers"]["Authorization"]
+    assert json.loads(posted[0]["body"]) == {"sql": "SET TRANSACTION READ WRITE"}
+    assert app.datagw("", "probe") == {"error": "no url"}

@@ -3,7 +3,7 @@
 1. Deploys the two probe apps through the cell agent, as the control plane does: the reconciler
    (``reconcile_once``) drives ``CellAgentDriver`` until each has converged.
 2. Runs the cell's ``ssc-probe-runner`` job, which calls probe app ``a`` from where the gateway
-   stands, and reads its fifteen results from Cloud Logging.
+   stands, and reads its seventeen results from Cloud Logging.
 3. Drifts probe app ``a`` (a revision with an extra variable takes all traffic) and runs the
    reconciler at its tick until the service is back on the desired revision. The ticket allows
    one minute, counted from the drift to the converged observation.
@@ -15,18 +15,21 @@ it, an operator calls the agent as themselves. The caller's access token comes f
 ``SSC_ACCESS_TOKEN`` (the nightly workflow's federated token) or else ``gcloud``; it needs the
 probe job, read access to its logs, and ``getOpenIdToken`` on the control SA when one is named.
 
-``cannot_reach_peer_cell`` needs a second cell: ``SSC_PROBE_PEER_APP_URL``,
-``SSC_PROBE_PEER_GATEWAY_URL`` and ``SSC_PROBE_PEER_RANGE``, all or none. Set, they reach the job
-as overrides (which needs ``run.jobs.runWithOverrides``) and the probe must pass. Unset, the job
-reports it skipped (``no peer cell``), which is not a failure.
-``ssc-nightly`` keeps its role without that permission: ordinary nights have no peer cell, and
-an operator makes the peer runs in the proof run.
+``cannot_reach_peer_cell`` and ``deny_peer_cell`` need a second cell: ``SSC_PROBE_PEER_APP_URL``,
+``SSC_PROBE_PEER_GATEWAY_URL``, ``SSC_PROBE_PEER_RANGE`` and ``SSC_PROBE_PEER_PROJECT``, all or
+none. Set, they reach the job as overrides (which needs ``run.jobs.runWithOverrides``, held by
+``ssc-nightly`` on the probe job only) and both probes must pass. Unset, the job reports them
+skipped (``no peer cell``), which is not a failure of this run: ``ssc_conformance.matrix`` decides
+whether a night may go without a peer.
+``datagw_read_only`` needs the cell's data gateway: ``SSC_PROBE_DATAGW_URL``, which reaches the
+job the same way. Unset, the probe is skipped (``waits for the data gateway``), also not a failure.
 Optionally ``SSC_PROBE_TLS_HOST`` (SSC-062): a host under the cell's apps domain. The run opens a
 verified TLS connection to it and fails when the cell's wildcard certificate does not verify or
 has under ``CERT_MIN_DAYS`` days left. A certificate that fails to renew keeps serving until it
 expires, so this catches a failed renewal at least 14 days ahead. Unset, the check is skipped.
 Exits 1 when a probe fails or is missing, or when the drift outlives the minute, or when that
-check fails.
+check fails. ``SSC_EVIDENCE_FILE`` names the file this run adds its results to for the one-page
+result (``ssc_conformance.evidence``); the cell is named by its project.
 """
 
 import asyncio
@@ -44,6 +47,7 @@ from typing import Any, Final, cast
 
 import httpx2
 
+from ssc_conformance import evidence
 from ssc_conformance.runtime_probes import PROBES
 from ssc_contracts import app_env
 from ssc_control.runtime.cell_agent import AccessTokens, CellAgentDriver, ImpersonatedIdTokens
@@ -67,8 +71,11 @@ PEER_CELL_ENV: Final = {
     "SSC_PROBE_PEER_APP_URL": "PROBE_PEER_CELL_APP_URL",
     "SSC_PROBE_PEER_GATEWAY_URL": "PROBE_PEER_CELL_GATEWAY_URL",
     "SSC_PROBE_PEER_RANGE": "PROBE_PEER_CELL_RANGE",
+    "SSC_PROBE_PEER_PROJECT": "PROBE_PEER_CELL_PROJECT",
 }
-PEER_CELL_PROBE: Final = "cannot_reach_peer_cell"
+DATAGW_URL_ENV: Final = ("SSC_PROBE_DATAGW_URL", "PROBE_DATAGW_URL")
+PEER_CELL_PROBES: Final = frozenset({"cannot_reach_peer_cell", "deny_peer_cell"})
+DATAGW_PROBE: Final = "datagw_read_only"
 PROBE_ENVS: Final = ("env_probe00000000000000a", "env_probe00000000000000b")
 PROBE_JOB: Final = "ssc-probe-runner"
 REGION: Final = "us-central1"
@@ -101,6 +108,7 @@ class NightlyConfig:
     control_sa: str | None
     peer_cell: Mapping[str, str] | None
     tls_host: str | None = None
+    datagw_url: str | None = None
 
 
 def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
@@ -115,6 +123,7 @@ def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
         control_sa=environ.get(CONTROL_SA_ENV) or None,
         peer_cell=peer or None,
         tls_host=environ.get(TLS_HOST_ENV) or None,
+        datagw_url=environ.get(DATAGW_URL_ENV[0]) or None,
     )
 
 
@@ -281,9 +290,11 @@ class ProbeJob:
         return _obj(response.json())
 
 
-def verdict(results: list[Json], *, peer_cell: bool = False) -> list[str]:
-    """Every probe must report, exactly once, and pass; without a peer cell the peer-cell probe
-    may report skipped instead. Returns the failures."""
+def verdict(results: list[Json], *, peer_cell: bool = False, datagw: bool = False) -> list[str]:
+    """Every probe must report, exactly once, and pass. Without a peer cell the two peer-cell
+    probes may report skipped (``no peer cell``) instead, and without a data gateway
+    ``datagw_read_only`` may (``waits for the data gateway``); no other skip is accepted.
+    Returns the failures."""
     by_name: dict[str, list[Json]] = {}
     for result in results:
         by_name.setdefault(str(result.get("probe")), []).append(result)
@@ -295,9 +306,17 @@ def verdict(results: list[Json], *, peer_cell: bool = False) -> list[str]:
         for name, r in by_name.items()
         if name in PROBES
         and r[0].get("status") != "passed"
-        and not (name == PEER_CELL_PROBE and not peer_cell and r[0].get("status") == "skipped")
+        and not _allowed_skip(name, r[0], peer_cell=peer_cell, datagw=datagw)
     ]
     return failures
+
+
+def _allowed_skip(name: str, result: Json, *, peer_cell: bool, datagw: bool) -> bool:
+    if result.get("status") != "skipped":
+        return False
+    if name in PEER_CELL_PROBES:
+        return not peer_cell and result.get("reason") == evidence.NO_PEER
+    return name == DATAGW_PROBE and not datagw and result.get("reason") == evidence.WAITS_FOR_DATAGW
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +324,12 @@ class Report:
     results: list[Json]
     drift_seconds: float | None
     failures: list[str]
+    checks: tuple[evidence.Result, ...] = ()
+
+    def as_evidence(self, cell: str, *, peer: bool) -> evidence.Evidence:
+        """The probes and the checks of this run, as the one-page result reads them."""
+        found = (*evidence.probe_results(self.results), *self.checks)
+        return evidence.Evidence(cell, peer, found)
 
     def markdown(self) -> str:
         lines = ["| probe | status | reason |", "| --- | --- | --- |"]
@@ -369,6 +394,7 @@ async def nightly(  # noqa: PLR0913  (keyword-only)
     clock: Clock = time.monotonic,
     tls_host: str | None = None,
     days_left: DaysLeft = certificate_days_left,
+    datagw_url: str | None = None,
 ) -> Report:
     specs = [probe_spec(env_id, digest) for env_id in PROBE_ENVS]
     for spec in specs:
@@ -376,16 +402,27 @@ async def nightly(  # noqa: PLR0913  (keyword-only)
             driver, spec, every=POLL_SECONDS, limit=DEPLOY_LIMIT_SECONDS, sleep=sleep, clock=clock
         )
         log.info("probe app ready", extra={"service": spec.service})
-    results = await job.run(peer_cell)
-    failures = verdict(results, peer_cell=peer_cell is not None)
+    overrides = {**(peer_cell or {}), **({DATAGW_URL_ENV[1]: datagw_url} if datagw_url else {})}
+    results = await job.run(overrides or None)
+    failures = verdict(results, peer_cell=peer_cell is not None, datagw=datagw_url is not None)
+    checks: list[evidence.Result] = []
     drift_seconds: float | None = None
     try:
         drift_seconds = await drift(driver, specs[0], sleep=sleep, clock=clock)
+        checks.append(evidence.Result("drift", evidence.OK, f"repaired in {drift_seconds:.0f} s"))
     except (NightlyError, RuntimeDriverError) as exc:
         failures.append(f"drift: {exc}")
-    if tls_host and (problem := await certificate_failure(tls_host, days_left)):
+        checks.append(evidence.Result("drift", evidence.FAIL, str(exc)))
+    if not tls_host:
+        checks.append(evidence.Result("certificate", evidence.SKIPPED, f"{TLS_HOST_ENV} not set"))
+    elif problem := await certificate_failure(tls_host, days_left):
         failures.append(problem)
-    return Report(results, drift_seconds, failures)
+        checks.append(evidence.Result("certificate", evidence.FAIL, problem))
+    else:
+        checks.append(
+            evidence.Result("certificate", evidence.OK, f"{CERT_MIN_DAYS:.0f}+ days left")
+        )
+    return Report(results, drift_seconds, failures, tuple(checks))
 
 
 async def _gcloud(*args: str) -> str:
@@ -425,9 +462,19 @@ async def main_async(environ: Mapping[str, str]) -> Report:
     driver = CellAgentDriver(cfg.agent_url, id_tokens)
     job = ProbeJob(cfg.project, access)
     try:
-        return await nightly(
-            driver, job, cfg.probe_digest, peer_cell=cfg.peer_cell, tls_host=cfg.tls_host
+        report = await nightly(
+            driver,
+            job,
+            cfg.probe_digest,
+            peer_cell=cfg.peer_cell,
+            tls_host=cfg.tls_host,
+            datagw_url=cfg.datagw_url,
         )
+        if path := environ.get(evidence.EVIDENCE_ENV):
+            evidence.write(
+                Path(path), report.as_evidence(cfg.project, peer=cfg.peer_cell is not None)
+            )
+        return report
     finally:
         await driver.aclose()
         await job.aclose()
