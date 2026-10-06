@@ -4,7 +4,7 @@
 founder, the check of the founder against WorkOS (``connections.check_founder``), the directory
 connection and the org's cell label, all in ONE org-bound transaction. A refusal or a failure at
 any step rolls back all of it: no org, no ``org_index`` row, no audit event. Events, in order:
-``org.created``, ``directory.connected``, ``org.updated``.
+``org.created``, ``directory.connected``, and ``org.updated`` when a cell label is given.
 
 ``restore-admin`` is for an org the directory left with no active admin (decision 024 allows
 that: sync deactivates a founder it cannot find, and an operator restores an admin). In one
@@ -117,11 +117,12 @@ async def create_org_with_directory(  # noqa: PLR0913  (keyword-only)
     sso_connection_ids: list[str],
     join_rule: JoinRule,
     admin_group_ref: str | None,
-    cell_label: str,
+    cell_label: str | None,
     actor: Actor,
 ) -> OrgSetUp:
     """Create the org keyed under the directory, check the founder in WorkOS, connect the
-    directory and set the cell label: all of it or none. :class:`ConnectError` says why not."""
+    directory and set the cell label, if one is given (else the org keeps the generated one): all
+    of it or none. :class:`ConnectError` says why not."""
     org_id = new_id("org")
     spec = NewOrg(
         name,
@@ -150,19 +151,20 @@ async def create_org_with_directory(  # noqa: PLR0913  (keyword-only)
                 admin_group_ref=admin_group_ref,
                 actor=actor,
             )
-            await conn.execute(_SET_CELL_LABEL, {"label": cell_label, "org": org_id})
-            await append_event(
-                conn,
-                NewEvent(
-                    org_id=org_id,
-                    action=AuditAction.ORG_UPDATED,
-                    actor=actor,
-                    target_kind="org",
-                    target_id=org_id,
-                    before={"cell_label": created.cell_label},
-                    after={"cell_label": cell_label},
-                ),
-            )
+            if cell_label is not None:
+                await conn.execute(_SET_CELL_LABEL, {"label": cell_label, "org": org_id})
+                await append_event(
+                    conn,
+                    NewEvent(
+                        org_id=org_id,
+                        action=AuditAction.ORG_UPDATED,
+                        actor=actor,
+                        target_kind="org",
+                        target_id=org_id,
+                        before={"cell_label": created.cell_label},
+                        after={"cell_label": cell_label},
+                    ),
+                )
     except DBAPIError as e:
         if getattr(e.orig, "sqlstate", None) != UNIQUE_VIOLATION:
             raise

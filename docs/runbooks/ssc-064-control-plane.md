@@ -252,17 +252,17 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
      | jq -r '.data[] | [.idp_id, .email] | @tsv'
    ```
 
-3. Create each org as `ssc_app`, once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`). One command makes the org with the founder keyed under the directory, checks the founder in WorkOS, records the connection and sets the org's cell label, in one transaction, and audits `org.created`, `directory.connected` and `org.updated`:
+3. Create each org as `ssc_app`, once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`). One command makes the org with the founder keyed under the directory, checks the founder in WorkOS, records the connection and sets the org's cell label when one is given, in one transaction, and audits `org.created`, `directory.connected` and, with a label, `org.updated`:
 
    ```sh
    ORG=$(uv run python -m ssc_control.identity create-org --name "<org name>" \
      --founder-name "<founder name>" --founder-email "<founder email>" --founder-idp-id "<founder idp_id>" \
      --operator op_<your name> --workos-org <org_01…> --directory <directory_01…> --sso <conn_01…> \
-     --join-rule $JOIN --cell-label $CELL_LABEL)
+     --join-rule $JOIN)
    echo $ORG
    ```
 
-   The org whose users test the gateway in step 11c (the Google org) takes `CELL_LABEL=$LABEL`. The label is unique, so only one org can have it, and the auth host redeems a login code only for the gateway in the org's cell project, `ssc-c-<cell label>`, so a wrong label refuses every sign-in with "caller project mismatch". The other org has no cell yet: give it a label of its own, `CELL_LABEL=l$(openssl rand -hex 6)`.
+   The org whose users test the gateway in step 11c (the Google org) also takes `--cell-label $LABEL`: add it as a last argument, after `--join-rule $JOIN`. The label is unique, so only one org can have it, and the auth host redeems a login code only for the gateway in the org's cell project, `ssc-c-<cell label>`, so a wrong label refuses every sign-in with "caller project mismatch". The Okta org has no cell yet: it omits `--cell-label` and keeps the label the database generated for it (no `org.updated` is written for it).
 
    Pass: the command prints the org id and, on the error stream, `ok` for the founder. A refusal prints why, writes nothing, and can be run again once the founder's `idp_id` or the connection is right.
 

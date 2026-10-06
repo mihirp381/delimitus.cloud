@@ -9,8 +9,9 @@
   checking in WorkOS that a linked admin is an active user of the directory (SSC-097).
 * ``create-org --name N --founder-name N --founder-email E --founder-idp-id ID --operator op_x
   --workos-org ID --directory ID --sso ID [--sso ID] --join-rule idp_id|email
-  [--admin-group ID] --cell-label L``: the org, the founder check, the connection and the cell
-  label in one transaction (``identity.operator``). Prints the org id.
+  [--admin-group ID] [--cell-label L]``: the org, the founder check, the connection and the cell
+  label (when given; else the generated one stays) in one transaction (``identity.operator``).
+  Prints the org id.
 * ``restore-admin --org ID --user ID --operator op_x --reason TEXT [--outside-admin-group]
   [--already-applied-at TIME]``: make a person an active admin again, audited
   (``identity.operator``).
@@ -191,7 +192,7 @@ def _parser() -> argparse.ArgumentParser:
     p_make.add_argument("--sso", action="append", required=True)
     p_make.add_argument("--join-rule", choices=["idp_id", "email"], required=True)
     p_make.add_argument("--admin-group")
-    p_make.add_argument("--cell-label", type=operator.check_cell_label, required=True)
+    p_make.add_argument("--cell-label", type=operator.check_cell_label)
     p_restore = sub.add_parser("restore-admin")
     p_restore.add_argument("--org", type=check_org_id, required=True)
     p_restore.add_argument("--user", required=True)

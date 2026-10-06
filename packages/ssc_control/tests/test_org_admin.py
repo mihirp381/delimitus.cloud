@@ -61,7 +61,7 @@ async def create(
     *,
     idp_id: str = FOUNDER_IDP,
     join_rule: JoinRule = "idp_id",
-    label: str = LABEL,
+    label: str | None = LABEL,
     name: str = "Acme",
     admin_group_ref: str | None = None,
 ) -> operator.OrgSetUp:
@@ -188,6 +188,19 @@ async def test_create_org_with_the_right_founder_writes_three_events(
             )
         ).one()
     assert tuple(status) == ("active", "admin")
+
+
+async def test_create_org_without_a_cell_label_keeps_the_generated_one(
+    dsns: Dsns, engine: AsyncEngine
+) -> None:
+    wo = directory_with_founder()
+    made = await create(engine, wo, label=None, name="Acme-nolabel")
+    rows = await events_of(engine, made.org.org_id)
+    assert [r[1] for r in rows] == ["org.created", "directory.connected"]
+    async with bound_org(engine, made.org.org_id) as conn:
+        (label,) = (await conn.execute(text("select cell_label from ssc.org"))).one()
+    assert label == made.org.cell_label
+    assert await chain_ok(engine, made.org.org_id) == 2
 
 
 async def test_the_founder_check_under_the_email_rule(dsns: Dsns, engine: AsyncEngine) -> None:
@@ -528,10 +541,11 @@ def test_the_commands_validate_their_arguments(capsys: pytest.CaptureFixture[str
         with pytest.raises(SystemExit):
             parser.parse_args(_create_argv(label))
     assert parser.parse_args(_create_argv(LABEL)).cell_label == LABEL
+    assert parser.parse_args(_create_argv(None)).cell_label is None
     capsys.readouterr()
 
 
-def _create_argv(label: str) -> list[str]:
+def _create_argv(label: str | None) -> list[str]:
     return [
         "create-org",
         "--name",
@@ -552,8 +566,7 @@ def _create_argv(label: str) -> list[str]:
         "conn_01X",
         "--join-rule",
         "idp_id",
-        "--cell-label",
-        label,
+        *([] if label is None else ["--cell-label", label]),
     ]
 
 
