@@ -1,0 +1,28 @@
+{
+  "started": "2026-10-06T12:56:46+00:00",
+  "project": "ssc-platform-0",
+  "count": 100,
+  "runs": [
+    {
+      "parallel": 8,
+      "count": 100,
+      "rules": 101,
+      "backend": "gs",
+      "pad_mb": 7,
+      "skip_checkpoints": false,
+      "backend_url": "gs://ssc-platform-0-pulumi/exp091p/8-20261006T125646Z",
+      "up_seconds": 685.5,
+      "up_ok": true,
+      "up_rules_per_minute": 8.8,
+      "log": "/Users/mihir/Documents/Internal_App_Platform/ssc-worktrees/ssc091/spikes/sinkhole/pulumi_probe/logs/p8.log",
+      "destroy_seconds": 673.79,
+      "destroy_ok": true,
+      "destroy_rules_per_minute": 9.0,
+      "stack_removed": true
+    }
+  ],
+  "pulumi_cli": "v3.266.0",
+  "pulumi_sdk": "3.263.0",
+  "pulumi_gcp": "9.37.0",
+  "gcp_plugin": "gcp resource 9.37.0"
+}

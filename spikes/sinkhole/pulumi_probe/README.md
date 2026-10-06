@@ -86,3 +86,16 @@ no creates, `logs/p8.log` is still the data. The provider is expected to redact 
 header; check before sharing the file, and keep it local.
 
 Tests (no Pulumi, gcloud or network): `cd infra && uv run pytest ../spikes/sinkhole -p no:cacheprovider`.
+
+## Results (2026-10-06)
+
+101 rules each, the same program, in `results/`. The cell's own state is 7.1 MB, so the padded runs carry 7 MB.
+
+| Run | Backend | Padding | Checkpoints | Up | Rules a minute | Destroy |
+|---|---|---|---|---|---|---|
+| `file-pad0` P=1 / 8 / 32 | local file | none | on | 29.9 / 8.6 / 4.5 s | 203 / 701 / 1,344 | 15.0 / 4.4 / – s |
+| `gs-pad7` P=8 | `gs://ssc-platform-0-pulumi/exp091p/…` | 7 MB | on | 685.5 s | **8.8** | 673.8 s |
+| `gs-pad7-skip` P=8 | the same bucket | 7 MB | `PULUMI_SKIP_CHECKPOINTS` | 25.5 s | 238 | 10.2 s |
+| `file-pad7` P=8 | local file | 7 MB | on | 22.1 s | 274 | 21.4 s |
+
+No 429 in any run, and Cloud DNS answers each create in about 0.3 s. The slowness is Pulumi rewriting the whole checkpoint in the bucket after each step, one write at a time: about 3.4 s per write with a 7 MB state, two writes per resource. The cell's 18 a minute fits a state that grows from nothing to 7 MB during onboarding. A local file backend with the same state is 31 times faster and still writes every checkpoint. Chosen (SSC-091 phase 2b): onboarding keeps its state in a local file backend and moves it to the bucket once, at the end.
