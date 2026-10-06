@@ -1,6 +1,6 @@
 # delimitus.com
 
-The landing page (SSC-065, decision 025). One self-contained HTML file with no build step. It is
+The landing page (SSC-065, decision 028). One self-contained HTML file with no build step. It is
 served by `packages/ssc_landing` (`python -m ssc_landing`), which also takes the pilot request
 form.
 
@@ -21,6 +21,16 @@ SSC_LANDING_ENV=dev SSC_LANDING_PAGE=landing/index.html SSC_LANDING_ORIGIN=http:
 
 In dev, pilot requests stay in memory. The Python tests (`packages/ssc_landing/tests`) check the
 denylist, the claims ids, the content security policy, the page weight and the no-script table.
+
+## Hosting
+
+The page is served from the control plane's entry load balancer (`ssc-control-entry`), as two more
+hosts, `delimitus.com` and `www.delimitus.com`, on its URL map, with a second managed certificate
+that names just those two. The service, its account and the request bucket are in the public
+stage's control project (`infra/ssc_infra/landing.py`, wired in `control.py`). Control setting
+`landing: true` makes the account, bucket and founder alert; `landing_image` (a digest of
+`ssc-landing` in the platform registry) makes the service and puts it on the entry. `www` is
+redirected to the apex by the service.
 
 ## Rules the page follows
 

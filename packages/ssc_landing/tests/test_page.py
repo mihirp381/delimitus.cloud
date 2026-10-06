@@ -114,6 +114,9 @@ def test_the_calculator_constants_match_the_sources_shown() -> None:
     assert "var CLOUD_FIXED_CENTS = 12953;" in HTML
     assert "var CLOUD_PER_APP_CENTS = 986;" in HTML
     assert "A month costs $129.53 plus $9.86 for each app" in HTML
+    assert "one instance kept warm so the first visit is not slow (minimum instances 1" in HTML
+    assert "$6.57 for CPU and $3.29 for memory" in HTML
+    assert round(6.57 + 3.29, 2) == 9.86
     parts = [18.25, 102.02, 4.67, 2.50, 1.23, 0.36, 0.50]
     assert round(sum(parts), 2) == 129.53
 

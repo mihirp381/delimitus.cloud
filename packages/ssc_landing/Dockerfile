@@ -1,6 +1,9 @@
-# delimitus.com (SSC-065, decision 025): the landing page and the pilot request form,
-# `python -m ssc_landing` on Cloud Run in the platform project. Built from the repository root:
-# `docker build -f packages/ssc_landing/Dockerfile .`; Dockerfile.dockerignore limits what is sent.
+# delimitus.com (SSC-065, decision 028): the landing page and the pilot request form,
+# `python -m ssc_landing` on Cloud Run in the control project, behind the control entry. Built
+# from the repository root: `docker build -f packages/ssc_landing/Dockerfile .`;
+# Dockerfile.dockerignore limits what is sent. Pushed to the platform registry as
+# `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-landing`, whose digest is the
+# control setting `landing_image`.
 FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
 
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d

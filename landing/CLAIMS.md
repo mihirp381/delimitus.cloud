@@ -44,7 +44,7 @@ Update a row's status when its ticket closes; reword the page if a ticket is cut
 | `no-domains` | No custom domains | Assumption A1, tickets section 8 | Decided |
 | `no-webhooks` | No inbound webhooks | Tickets question 7, SSC-085 | Decided |
 | `retention` | Form details kept 12 months, used for nothing else, deletion on request | SSC-065: bucket lifecycle rule (`infra/ssc_infra/landing.py`) | **Blocker:** `privacy@delimitus.com` must receive mail |
-| `econ-cloud` | Do-it-yourself cloud bill, $129.53 a month plus $9.86 an app | See below | **Blocker:** prices fetched 2026-09-29 to be fetched again and dated at publish |
+| `econ-cloud` | Do-it-yourself cloud bill, $129.53 a month plus $9.86 an app; the app line assumes one instance kept warm (minimum instances 1) so the first visit is not slow, a choice the company makes, not ours | See below | **Blocker:** prices fetched 2026-09-29 to be fetched again and dated at publish |
 | `econ-labour` | IT rate $68 an hour; hours are our estimate | See below | Hours are labelled "our estimate" |
 
 ## Economics sources
@@ -61,7 +61,7 @@ Google Cloud list prices, us-central1, USD, 730 hours a month, no free tier, no 
 | Cloud Build, 60 minutes | $0.36 | `spikes/bakeoff/COST_SHEET.md` | 2026-09-29 |
 | Artifact Registry, 5 GB | $0.50 | `spikes/bakeoff/COST_SHEET.md` | 2026-09-29 |
 | **Fixed** | **$129.53** | | |
-| Each app: Cloud Run, 1 vCPU and 512 MiB, one instance always on at the idle rate | $9.86 | cloud.google.com/run/pricing; `spikes/bakeoff/RESULTS.md` | 2026-10-01 |
+| Each app: Cloud Run, 1 vCPU and 512 MiB, one instance kept warm (minimum instances 1) at the idle rate: $6.57 for CPU and $3.29 for memory over 730 hours | $9.86 | cloud.google.com/run/pricing; `spikes/bakeoff/RESULTS.md` | 2026-10-01 |
 
 Not on the page, by the moat rule: the cost sheet's gateway and egress-proxy lines, our own cost
 of a customer's cloud account, and our margin.
@@ -86,4 +86,4 @@ The calculator's formula and its test vectors are in `calculator_vectors.json`.
 2. Fetch the 2026-09-29 prices again and update the dates on the page and above (`econ-cloud`).
 3. Make `privacy@delimitus.com` receive mail (`retention`).
 4. Founder sign-off on the copy and the calculator's default inputs.
-5. Apply the hosting from `main`, after the SSC-014 platform apply.
+5. Apply the hosting from `main`, after `round-2` is merged: `landing: true` makes the account, bucket and alert; `landing_image` (a digest in the platform registry) puts the page on the control entry (decision 028).

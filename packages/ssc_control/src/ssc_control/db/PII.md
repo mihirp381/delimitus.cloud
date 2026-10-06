@@ -39,13 +39,13 @@ Also personal data, but not stored here:
     per-org keys later.
   - Rotation: never without a dual-write window. A new key changes every pseudonym, so counts of
     distinct users across the change would double.
-- Pilot requests from delimitus.com (SSC-065, decision 025): first name, last name, work email,
+- Pilot requests from delimitus.com (SSC-065, decision 028): first name, last name, work email,
   company and the free-text tools field, one JSON object each in the bucket
-  `ssc-site-0-pilot-requests`, not in this database.
+  `ssc-control-<stage>-pilot-requests` (the public stage's control project), not in this database.
   - Retention: a 365-day delete rule on the bucket; no versions or soft-deleted copies are kept.
   - Access: the site's service account can create objects only; reading is for the founder.
   - Erasure: on request to `privacy@delimitus.com`, find the person's object by email and delete it.
-  - The service keeps no access log, and its log lines name the event only.
+  - The service writes no access log, and its log lines name the event only; Cloud Run's platform request log is kept at the project's default retention.
 
 Not personal data: `approval_request.recorded_by_operator` and an operator's `actor_id` (the operator credential's subject, an opaque staff id; operator credentials must not carry an email as subject), `idempotency_claim.key` (a client-chosen retry key; the API rejects keys longer than 200 characters and stores no request body, only its hash), `actor_id` (a `usr_…` id, opaque), `directory_ref` (a provider group id),
 `org.name` (a company name).

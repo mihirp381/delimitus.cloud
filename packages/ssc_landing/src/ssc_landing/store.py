@@ -1,4 +1,4 @@
-"""Where pilot requests go: one JSON object each, in a private bucket of the platform project.
+"""Where pilot requests go: one JSON object each, in a private bucket of the control project.
 
 Not the control database: every control table belongs to an org, and a pilot request has none.
 The service account that writes may create objects and nothing else
