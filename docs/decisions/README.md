@@ -4,10 +4,10 @@ One short file per decision: the choice, the reason, and what would make us reve
 
 | # | Decision | Source | Status |
 |---|---|---|---|
-| 001 | Cloud and runtime: GCP, Cloud Run gen2 in a project per customer cell, Direct VPC egress into a deny-all VPC, regional internal Application LB, kill switch by traffic to a tombstone revision, prod apps kept warm | SSC-001 (`spikes/bakeoff/RESULTS.md`, `spikes/bakeoff/COST_SHEET.md`) | decided 2026-09-29 |
+| 001 | Cloud and runtime: GCP, Cloud Run gen2 in a project per customer cell, Direct VPC egress into a deny-all VPC, regional internal Application LB, kill switch by traffic to a tombstone revision, prod apps kept warm | SSC-001 (`spikes/bakeoff/RESULTS.md`, `spikes/bakeoff/COST_SHEET.md`) | decided 2026-09-29; amended 2026-10-06 from SSC-086 pass 1 (T7 and certificate changes pending the founder's choice) |
 | 002 | Login vendor and directory join key: WorkOS SSO and Directory Sync (amended: no AuthKit; SSC runs its own device flow and sessions, decision 024); users keyed on the directory user, joined by SSO `idp_id` where it equals the directory `idp_id` (Okta), by email plus an admin link where it does not (Google); SSC revokes sessions and CLI tokens itself on directory deactivation or removal | SSC-002 (`spikes/loginproof/RESULTS.md`, `spikes/loginproof/NOTES.md` h) | decided 2026-09-30; amended 2026-10-01 (SSC-019); Entra untested (founder skip); WorkOS data residency Unknown |
 | 003 | App database connection string form: one `postgresql://` URL with `sslmode=verify-full` and an absolute `sslrootcert`, plus `PG*` parts; databases created by `databases.insert`, roles and grants by `executeSql` | SSC-005 (`spikes/appdb/RESULTS.md`) | decided 2026-09-30 |
-| 004 | Domains: `delimitus.com` platform hosts; apps on `delimitusapps.com` with opaque org labels; host rule `<slug>.<cell label>.<apps domain>` and `<slug>--preview.<cell label>.<apps domain>` | tickets §2 SSC-006; host rule SSC-042 (`ssc_shared/hosts.py`) | decided 2026-09-28; host rule and apps domain 2026-09-29 |
+| 004 | Domains: `delimitus.com` platform hosts; apps on `delimitusapps.com` with opaque org labels; host rule `<slug>.<cell label>.<apps domain>` and `<slug>--preview.<cell label>.<apps domain>` | tickets §2 SSC-006; host rule SSC-042 (`ssc_shared/hosts.py`) | decided 2026-09-28; host rule and apps domain 2026-09-29; amended 2026-10-06 from SSC-086 pass 1 (T7 and certificate changes pending the founder's choice) |
 | 005 | The seven decide-once rules | build path | decided 2026-09-28 |
 | 006 | Assumptions A1 to A7 | tickets §1 | decided 2026-09-28 |
 | 007 | Toolchain pins and the 7-day rule | SSC-007 | decided 2026-09-28 |
@@ -26,15 +26,35 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 020 | Timers: schedules from the manifest upserted by name at deploy, cron read in the schedule's IANA zone from pinned `tzdata`, one Procrastinate job per armed instant with no `lock`, missed instants coalesced into one late run, no overlap by partial unique index, a dispatch at most once, prod only with preview stored paused, paused when the owner or the declaring builder loses authority, paused and resumed by the kill switch | SSC-041 (`packages/ssc_control/src/ssc_control/timers/`) | decided 2026-09-29 |
 | 021 | Cell layout and log location on GCP: folders `ssc-platform`, `ssc-cells/{prod,staging}` and `ssc-sandbox` under the existing organisation; one project per customer cell named from its cell label; everything in `us-central1`, logs included, set on the folder before any project exists | SSC-006 on decision 001; built by SSC-013 | decided 2026-09-30 |
 | 022 | Cell bootstrap: Pulumi stacks `platform` and `c-<cell label>` with state in `ssc-platform-0`; secret reads denied on the folder for the control plane and on each cell for its own identities; the cell agent limited to `ssc-a-` names except on create; a $250 monthly budget over every SSC folder; just-in-time `writer` on `ssc-cells` for at most 1 h; cells fetch snapshots from their bucket every 2 s | SSC-013 (`infra/`, `ssc_shared/snapshot_feed.py`, `ssc_shared/blobstore_gcs.py`) | decided 2026-09-30; live checks passed 2026-09-30; agent runtime role, TLD DNS sinkhole, probe cell and nightly identity 2026-10-01 (SSC-017); zonal shared-core database and one NAT 2026-10-01 (cost) |
-| 023 | Gateway: Envoy 1.39 with an HTTP `ext_authz` service on loopback (`ssc_edge`), config rendered from Python and validated; fixed check order; a forbidden app answered byte for byte like an address with no app; host-only `__Host-ssc-session` sealed per host with AES-GCM; Fetch-Metadata and WebSocket `Origin` rules; platform cookies stripped both ways; apps reached at their `run.app` host with the gateway's ID token; fail closed on a stopped authoriser, no snapshot, or a snapshot unconfirmed for 5 minutes | SSC-018 (`packages/ssc_edge/`) | decided 2026-10-01; cell wiring, JWKS publication and the live check wait for SSC-017; login hand-back built 2026-10-01 (decision 024); cold start, waking page, deadline header and cell wiring built 2026-10-03, live check SSC-086 |
+| 023 | Gateway: Envoy 1.39 with an HTTP `ext_authz` service on loopback (`ssc_edge`), config rendered from Python and validated; fixed check order; a forbidden app answered byte for byte like an address with no app; host-only `__Host-ssc-session` sealed per host with AES-GCM; Fetch-Metadata and WebSocket `Origin` rules; platform cookies stripped both ways; apps reached at their `run.app` host with the gateway's ID token; fail closed on a stopped authoriser, no snapshot, or a snapshot unconfirmed for 5 minutes | SSC-018 (`packages/ssc_edge/`) | decided 2026-10-01; cell wiring, JWKS publication and the live check wait for SSC-017; login hand-back built 2026-10-01 (decision 024); cold start, waking page, deadline header and cell wiring built 2026-10-03, live check SSC-086; amended 2026-10-06 from SSC-086 pass 1 (T7 and certificate changes pending the founder's choice) |
 | 024 | Login and directory sync: the auth host `auth.delimitus.com` with WorkOS SSO (SAML) only, a profile accepted only from the org's WorkOS organisation and SSO connections, consumer connection types refused; people keyed by `(workos:<directory id>, idp_id)`, joined by `idp_id` (Okta) or by the one active directory person with the email (Google SAML), unmatched logins listed for an admin; 12-hour sessions never extended; one-time 60 s codes bound to the app host and the gateway's login nonce; RFC 8628 device flow with rotated refresh tokens for the command line; directory events as triggers, a full reconcile every 6 h; deactivation revokes sessions and sets `sessions_not_before` for the gateway | SSC-019 (`packages/ssc_control/src/ssc_control/identity/`, `ssc_edge/redeemer.py`, `ssc_cli/login.py`) | decided 2026-10-01; Okta live check passed 2026-10-01, Google moved to SSC-064 (`docs/runbooks/ssc-019-login.md`); deploy waits for SSC-064 |
 | 025 | Architecture review of 2026-10-03: isolation first, cost second; project, VPC, gateway, database and outbound IP per customer kept; one external load balancer per cell; everything at minimum 0; database, proxy and NAT created on first use; no warm instances by default. Amendments to 001, 004, 006, 014, 021, 022 and 023 are pending the staging proof run (SSC-086) | `Cloud_for_small_soft/SSC_Final_Architecture_2026-10-03.md`; tickets SSC-086 to SSC-096 | direction agreed by the founder 2026-10-03; amendments pending SSC-086; usage source amended 2026-10-03 (SSC-028; Cloud Monitoring through the cell agent, local tests, awaits a live run) |
-| 026 | Billing slots: no raise requested; the Delimitus project paused (billing unlinked, project kept); account one holds the platform, both control projects and the staging cells; customer cells go on a second billing account opened before the first paid pilot; a $0 trial is a real cell on the second account for 30 days and ten tools | SSC-089; facts from SSC-086 T12 | draft 2026-10-03, awaits founder sign-off; T12 and the new account's project limit still open |
+| 026 | Billing slots: no raise requested; the Delimitus project paused (billing unlinked, project kept); account one holds the platform, both control projects and the staging cells; customer cells go on a second billing account opened before the first paid pilot; a $0 trial is a real cell on the second account for 30 days and ten tools | SSC-089; facts from SSC-086 T12 | decided 2026-10-06 (founder signed, after reading SSC-086 results pass 1); T12 and the new account's project limit still open |
 | 027 | GitHub App: no SDK (`httpx2` and PyJWT); installation tokens minted per repository and per kind of call (`contents: read`, `checks: write`, `checks: read` with `actions: read`, `metadata: read`); installations bound to an org by an SSC operator; webhooks checked by HMAC before parsing, only `push` builds; each push stored, built and deployed to preview by a job that never touches prod, reported as the `SSC / preview` check run; promote gated on required checks bound to a workflow file and the connected branch, failing closed | SSC-047 (`packages/ssc_control/src/ssc_control/github/`, `api/routes/v1/github.py`) | decided 2026-10-03; local tests, awaits a live GitHub App |
 
 ## 001 Cloud and runtime
 
-**Amendment pending (decision 025, 2026-10-03).** The choice of GCP and Cloud Run gen2 stands. Pending: no warm prod instances, no internal load balancer, one external Application Load Balancer per cell (SSC-088). The $199.37 and $9.86 figures below price the retired design. Nothing below is rewritten until SSC-086 reports.
+**Amendment 2026-10-06 (decision 025; SSC-086 results pass 1, `spikes/proofrun/RESULTS.md`).** The choice of GCP and Cloud Run gen2 stands.
+- **Load balancer.** No internal load balancer: one global external Application Load Balancer per cell (SSC-088), with a serverless NEG to the gateway at minimum 0.
+  - T2: a browser reached a probe app on its public host (200).
+  - T3: all 14 runtime probes passed on the new path, on both cells.
+  - T4: the gateway answers only through its load balancer.
+- **No warm production instances by default.** Everything is at minimum 0; warm is the paid option (SSC-092).
+- **Cold start, measured (T7).**
+  - The gateway starts in 8.56 s (median).
+  - First load with gateway and app both asleep: static 15.40 s, API 16.28 s, Streamlit 20.47 s.
+  - With the gateway running: 6.24 s, 6.05 s and 11.98 s.
+  - T7 failed on static cold (limit 13.06 s). The change recommended in `RESULTS.md` is:
+    - the apps' startup probe every 1 s instead of 5;
+    - bytecode compiled in the gateway image;
+    - startup CPU boost on the gateway;
+    - then one cold series measured again.
+  - That change is recorded here once chosen and measured.
+- **Direct VPC egress** adds 0.02 s (median, T7).
+- **Still pending:**
+  - The $199.37 and $9.86 figures below price the retired design. They are replaced by the measured cell costs after pass 2 (T1 cost, T9 bill).
+  - The 60-minute connection limit and session billing wait for T9.
+  - The gateway on gen1 waits for T10.
 
 Choice: Google Cloud. Each customer cell is its own project, with apps on Cloud Run gen2 in `us-central1`.
 - Apps attach to a custom VPC with Direct VPC egress (`--vpc-egress all-traffic`). The VPC denies all egress except to the cell's egress proxy. A private Cloud DNS zone answers NXDOMAIN for the canary zone. Cloud NAT holds the cell's one fixed outbound IP.
@@ -85,7 +105,15 @@ Reverse if: a pilot framework can use neither the URL nor the `PG*` parts. Also 
 
 ## 004 Domains and app hosts
 
-**Amendment pending (decision 025, 2026-10-03).** The host rule stands. Pending: the wildcard certificate is a Certificate Manager certificate with DNS authorisation, one per cell (SSC-088). Nothing below is rewritten until SSC-086 reports.
+**Amendment 2026-10-06 (decision 025; SSC-086 results pass 1).** The host rule stands. The wildcard certificate is a Certificate Manager certificate with DNS authorisation, one per cell (SSC-088).
+- T2: hosts under `<cell label>.delimitusapps.com` were served by it on both cells.
+- Issuance took 87.9 min (cell 1) and 21.7 min (cell 2) from the DNS authorisation record, against the 30 min expected. The two were written 9 s apart in one zone.
+- The change recommended in `RESULTS.md` is:
+  - the certificate is reported beside onboarding, not inside it;
+  - a cell is not handed over until its certificate is active;
+  - onboarding waits up to 120 minutes (SSC-091, D6);
+  - a new cell's apply starts the certificate first.
+- A third figure comes from the next new cell.
 
 Choice: `delimitus.com` carries the platform hosts (`api.`, `auth.`, `keys.`, `console.`). Apps are served on `delimitusapps.com`, already registered and used for nothing else; `delimitus.app` is not used. The API reads it from `SSC_APPS_DOMAIN` (default `delimitusapps.com`; tests use `apps.test`) and refuses to start on a value that is not a lower-case DNS name of at most 186 characters. Every app environment has one host (`ssc_shared/hosts.py`):
 
@@ -606,7 +634,19 @@ Reverse if: IAM deny gains a principal set for "SSC's service accounts only" (th
 
 ## 023 Gateway
 
-**Amendment pending (decision 025, 2026-10-03).** Pending: one Cloud Run service per cell at minimum 0, request-billed, behind the cell's external load balancer with an `allUsers` invoker and ingress `internal-and-cloud-load-balancing`; a "waking up" page; the 60-minute connection limit. Nothing below is rewritten until SSC-086 reports. Built for it by SSC-018 (2026-10-03), measured in Docker only: no background poll, the snapshot is read before the first request (waited for up to 10 s; none readable: `503` for everything until a read succeeds) and again by a signed-in request that finds no read confirmed for 2 s, which waits for that read up to 0.3 s when one was confirmed in the last 30 s and up to 4 s otherwise, so the first request after idle sees the new snapshot; a browser page load (`GET`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, `Accept` with `text/html`, no `Upgrade`) without `__Host-ssc-wake` is marked `X-SSC-Wake` and gets that cookie (120 s), and an app that has not started answering it in 2 s is replaced by a `503` waking-up page that reloads itself, whose reload waits for the app; every forwarded request carries `X-SSC-Request-Deadline`, the Unix second Cloud Run ends it (now plus the lower of 3600 and the environment's own timeout from the snapshot, 300 unless it is a session app; SSC-090); cell wiring as in `infra/README.md` (`gateway_image`, `gateway_keyring`, `gateway_jwks`, `org_id`; the cell's `gateway` KMS key); apps get the identity JWKS inline (`docs/contracts/identity-note.md`).
+**Amendment 2026-10-06 (decision 025; SSC-086 results pass 1).** One Cloud Run service per cell at minimum 0, request-billed, behind the cell's external load balancer, with an `allUsers` invoker and ingress `internal-and-cloud-load-balancing`.
+- T2: the gateway's own `run.app` host answers 404.
+- T3: the 14 runtime probes passed through it at minimum 0.
+- T4: from inside a cell, the other cell's gateway was refused by the network and by ingress, never reached.
+- The real login worked through it on cell 1.
+- Its start is 8.56 s (median of 10, T7):
+  - about 6 s of instance boot and Python imports;
+  - 0.8 s of authz start-up;
+  - up to 2.5 s for Envoy and the port probe.
+  - The change in decision 001's amendment applies to it.
+- The "waking up" page and the 60-minute connection limit are confirmed in pass 2 (T8, T9).
+
+Earlier note (2026-10-03), kept for what SSC-018 built: pending: one Cloud Run service per cell at minimum 0, request-billed, behind the cell's external load balancer with an `allUsers` invoker and ingress `internal-and-cloud-load-balancing`; a "waking up" page; the 60-minute connection limit. Nothing below is rewritten until SSC-086 reports. Built for it by SSC-018 (2026-10-03), measured in Docker only: no background poll, the snapshot is read before the first request (waited for up to 10 s; none readable: `503` for everything until a read succeeds) and again by a signed-in request that finds no read confirmed for 2 s, which waits for that read up to 0.3 s when one was confirmed in the last 30 s and up to 4 s otherwise, so the first request after idle sees the new snapshot; a browser page load (`GET`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, `Accept` with `text/html`, no `Upgrade`) without `__Host-ssc-wake` is marked `X-SSC-Wake` and gets that cookie (120 s), and an app that has not started answering it in 2 s is replaced by a `503` waking-up page that reloads itself, whose reload waits for the app; every forwarded request carries `X-SSC-Request-Deadline`, the Unix second Cloud Run ends it (now plus the lower of 3600 and the environment's own timeout from the snapshot, 300 unless it is a session app; SSC-090); cell wiring as in `infra/README.md` (`gateway_image`, `gateway_keyring`, `gateway_jwks`, `org_id`; the cell's `gateway` KMS key); apps get the identity JWKS inline (`docs/contracts/identity-note.md`).
 
 **Amendment (SSC-021, 2026-10-03).** Built and tested in Docker, not yet run live; it changes the paragraph above and "Check order" (8).
 - Fresher reads: `SETTLED_SECONDS` is 3 s (was 30), and a read confirms the view as of the moment it asked for `latest.json` (`SnapshotFeed.last_ok_at`), not when it finished. While the bucket answers within 4 s, no check decides on a view older than 3.3 s. Before, a read slower than 0.3 s after 2 to 30 s of quiet let one request through on a view up to 30 s old.
@@ -671,7 +711,7 @@ Choice: the architecture in `Cloud_for_small_soft/SSC_Final_Architecture_2026-10
 
 Considered and rejected: a Shared VPC host project (proposed 2026-10-02, withdrawn), a shared public edge, public `run.app` hosts, an always-on `db-g1-small`, warm production instances by default, dropping the project per customer. A VM pool (GKE Sandbox) is kept as a lever that opens above 500 apps or $300 a month of Cloud Run compute (SSC-094).
 
-Order: the staging proof run (SSC-086, tests T1 to T12) runs first. Decisions 001, 004, 006, 014, 021, 022 and 023 carry an "amendment pending" line until it reports; each is then amended from the results, not from the model. Points where the code and the architecture document disagree are listed in the tickets (section 9, "Open") and are settled in the tickets named there.
+Order: the staging proof run (SSC-086, tests T1 to T12) runs first. Decisions 001, 004, 006, 014, 021, 022 and 023 carry an "amendment pending" line until it reports; each is then amended from the results, not from the model. 001, 004 and 023 were amended on 2026-10-06 from pass 1 (D1, decision by decision); 006, 014, 021 and 022 wait for pass 2. Points where the code and the architecture document disagree are listed in the tickets (section 9, "Open") and are settled in the tickets named there.
 
 Reverse if: a proof-run test fails with no fallback (SSC-086 names one per test); the first reconciled bills (SSC-096) put a cell more than 20 % over the model with no fixable cause; or the billing-slot limit cannot be solved without sharing a project between customers.
 
@@ -688,6 +728,8 @@ Reverse if: a proof-run test fails with no fallback (SSC-086 names one per test)
 Reverse the source if SSC-086 shows the active instance count does not stay above zero for an open WebSocket, or that startup latency is far from the wait a user sees. Then session hours and cold starts move to the gateway.
 
 ## 026 Billing slots
+
+Signed by the founder on 2026-10-06, after reading the proof run's first results (`spikes/proofrun/RESULTS.md`, pass 1). The two open facts below do not hold the decision; each is added here when measured.
 
 Choice: customer cells go on a second billing account. The first account keeps the platform and staging. No project is ever shared between two customers to save a slot.
 - Facts: a billing account links at most five projects. Unlinked projects do not count; deleting a project does not free a slot faster than unlinking it. No raise is requested, because the wait for Google's review is not acceptable (founder, 2026-10-03).
