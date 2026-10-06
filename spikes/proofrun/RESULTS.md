@@ -18,7 +18,7 @@ The staging proof run for the architecture of 2026-10-03 (architecture document,
 | T5 | `db-f1-micro`, ten app databases, cross-connect, restore | Instance under 15 minutes; each database under 1 minute; cross-connect refused; restore written up | `t5 ops`, `t5 cross` | **PASS** 2026-10-05: instance 8.0 min; ten databases, slowest 0.5 s; cross-connect refused 9/9 (`42501 permission denied for database`). First cross run failed 0/9 on the certificate name, not on isolation (fixed d89ea6b). Finding: every app role can connect to the `postgres` maintenance database (Postgres's default CONNECT for PUBLIC); to be revoked in SSC-040. |
 | T6 | NAT for the data gateway's position; Envoy CONNECT proxy on the `e2-micro` | Outbound calls leave from the reserved IP; unlisted hosts refused | `t6 nat`, `t6 proxy` || Pass 2. |
 | T7 | Cold start, ten samples a series, 26-minute gap: static, API, Streamlit; gateway cold and warm | Medians reported; none worse than the bake-off (4.5 s, 8 s, 22 s) plus the gateway's start; Direct VPC egress delay measured | `t7 run`, `t7 report` | **FAIL** 2026-10-06 on static cold only. Gateway start median 8.56 s (10). Cold, gateway and app both asleep: static 15.40 s against 13.06, API 16.28 s against 16.56, Streamlit 20.47 s against 30.56. Warm gateway, app asleep: static 6.24 s, API 6.05 s, Streamlit 11.98 s, all under their limits. All 60 requests answered 200. Direct VPC egress delay median 0.02 s (20). Run 2026-10-05 20:56 to 2026-10-06 05:45 UTC. Change: below. |
-| T8 | Kill drill against an open WebSocket | Under 10 s end to end | `t8` || Pass 2. |
+| T8 | Kill drill against an open WebSocket | Under 10 s end to end | `t8` | **FAIL** 2026-10-06 06:05 UTC on `papi`, cell 1 cold: end to end 12.61 s. The front door refused after 2.55 s and the WebSocket was cut after 3.19 s; the overrun is the run's last steps (`gateway_deny` done 5.56 s, `scale_to_zero` done 12.49 s, `pause_timers` 12.61 s); every step `done`, first attempt. A second drill 48 s later, from the same operator login, passed at 9.45 s (`gateway_deny` 2.42 s, `scale_to_zero` 9.32 s). No query or tunnel leg (no data gateway, SSC-054). Undone with `ssc enable papi`. See written changes. |
 | T9 | Streamlit open 24 hours, instance-billed and request-billed; the bill | Each within 20 % of $0.0684 and $0.0909 an hour; the 60-minute drop and the reload documented | `t9 hold`, `t9 report`, `t9 bill` || Pass 2. |
 | T10 | Gateway on gen1 at 0.5 vCPU, same probes | Pass or fail recorded; decides the gateway's cost per session hour | `t10` || Pass 2. |
 | T11 | Deny probe from a cell 1 app against cell 2's secret and bucket | Refused by IAM, not only by the network | `t11` | **PASS** 2026-10-05: the secret read refused (403 `secretmanager.versions.access`), the bucket listing refused (403 `storage.objects.list`). Operator half: the deny probe refused and all ten policy commands refused for the founder. |
@@ -98,6 +98,20 @@ A failed row goes back to the architecture as a change with its cost. The founde
   - 4 and 6 only if the new figures still fail.
   - 5 stays the customer's paid choice.
 - **Chosen 2026-10-06 (founder):** options 1 and 2, then one cold series on cell 1. The result goes in pass 2.
+
+### T8: kill drill
+
+- **Seen.** The two drills differ by about 3 s, all of it in `gateway_deny`: 5.56 s against 2.42 s since the command. `scale_to_zero` took 6.0 s and 6.2 s. Refusal (2.55 s, 2.64 s) and stream cut (3.19 s, 3.15 s) are the same in both.
+- **Where the time goes.**
+  - `gateway_deny` is done once the cell's `latest.json` names the new snapshot version. When the first check finds the old version, the job re-defers itself for one second later (`kill_switch._confirm`). The worker wakes on NOTIFY only for a job due now. A job scheduled for later waits for the worker's next poll, every 5 s (`WorkerSettings.polling_seconds`). So the confirmation lands up to 5 s after the cell already had the version. The front door had refused at 2.55 s, 3 s before the step was done.
+  - `scale_to_zero` is Cloud Run's own update: manual scaling to 0, then the agent polls every second until `observedGeneration` catches up. About 6 s, the same in both runs.
+- **Options.**
+  1. Confirm inside the job. `_confirm` checks every 0.25 s within the same job up to `confirm_by` (10 s at most), instead of re-deferring. It holds one of the worker's 4 slots for up to 10 s during a drill. The deny is then done when the cell has it, about 2.5 s. No cost.
+  2. Poll the queue every 1 s instead of 5 s. That cuts every scheduled job's lag, at 5 times the idle queries on the control database. Almost no cost, but it touches every job.
+  3. Start `scale_to_zero` alongside the deny instead of after it. That saves about 3 s more, but it changes SSC-025's fixed order.
+  4. Count the drill to the refusal and the stream cut (3.2 s), and report `scale_to_zero` beside it. Changes the pass line.
+- **Recommended:** 1, then three drills on the new control image. The arithmetic gives about 2.5 + 0.7 + 6.1 + 0.1 = 9.4 s, which is the second drill's figure, so the margin stays under 1 s. If a drill still goes over, 3 or 4 go to the founder with the figures.
+- **Chosen 2026-10-06 (lead, under the founder's approval of all actions the same day):** option 1, then three drills. The result goes in pass 2.
 
 ## Restore drill (T5)
 
