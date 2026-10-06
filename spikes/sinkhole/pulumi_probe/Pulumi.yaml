@@ -1,0 +1,9 @@
+name: ssc-exp091p
+description: SSC-091 probe. N DNS response policy rules shaped like the cell's sinkhole rules, to find where Pulumi spends the time. Run by spikes/sinkhole/pulumi_probe/run.py only.
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    # The infra project's own environment: the same pulumi and pulumi-gcp as infra/uv.lock, with
+    # no second lock file. Create it first with: cd infra && uv sync
+    virtualenv: ../../../infra/.venv
