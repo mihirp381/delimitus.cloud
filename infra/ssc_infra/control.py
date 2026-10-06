@@ -18,6 +18,7 @@ from typing import Final, cast
 import pulumi
 import pulumi_gcp as gcp
 
+from ssc_infra import landing
 from ssc_infra import naming as n
 from ssc_shared.hosts import check_cell_label
 
@@ -90,6 +91,10 @@ AUTH_MAX: Final = 2
 LIMITS: Final = {"cpu": "1", "memory": "512Mi"}
 MIGRATE_TIMEOUT: Final = "600s"
 ENTRY: Final = "ssc-control-entry"
+LANDING_CERT: Final = f"{ENTRY}-landing"
+"""The second certificate, for the apex and ``www`` only: adding them to ``ENTRY``'s would
+reprovision the live control hosts."""
+LANDING_MATCHER: Final = "landing"
 LB_SCHEME: Final = "EXTERNAL_MANAGED"
 TLS_MIN: Final = "TLS_1_2"
 TLS_PROFILE: Final = "MODERN"
@@ -123,7 +128,9 @@ class ControlConfig:
     """``control_stages`` run the control plane; ``public_stage`` holds the public hosts.
     ``control_image``, ``auth_jwks`` and ``auth_signing_kid`` are the release, all or none;
     ``cell_label`` and ``cell_jwks`` the one cell, both or none. ``timer_key_id`` names the
-    worker's timer key, whose PEM is the ``SSC_TIMER_SIGNING_KEY`` secret (SSC-041)."""
+    worker's timer key, whose PEM is the ``SSC_TIMER_SIGNING_KEY`` secret (SSC-041).
+    ``landing`` builds delimitus.com's account, bucket and alert in the public stage's project
+    (SSC-065); ``landing_image`` then puts the page behind the entry load balancer."""
 
     stages: tuple[n.Stage, ...] = ()
     public: n.Stage | None = None
@@ -135,6 +142,9 @@ class ControlConfig:
     worker_instances: int = 1
     deployer: bool = False
     timer_key_id: str | None = None
+    landing: bool = False
+    landing_image: str | None = None
+    landing_notify_email: str = n.OPERATOR.removeprefix("user:")
 
     @property
     def released(self) -> bool:
@@ -201,6 +211,14 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
     instances = config.get_int("worker_instances")
     if instances is not None and instances < 0:
         raise ValueError("worker_instances must be 0 or more")
+    landing_image = config.get("landing_image") or None
+    on = bool(config.get_bool("landing"))
+    if landing_image is not None and not on:
+        raise ValueError("landing_image needs landing: true")
+    if on and public is None:
+        raise ValueError("landing needs a control stage (control_stages)")
+    if landing_image is not None and not PINNED_IMAGE.fullmatch(landing_image):
+        raise ValueError(f"landing_image must be {n.platform_registry()}/<image>@sha256:<digest>")
     return ControlConfig(
         stages=stages,
         public=public,
@@ -212,6 +230,9 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         worker_instances=1 if instances is None else instances,
         deployer=deployer,
         timer_key_id=timer_key_id,
+        landing=on,
+        landing_image=landing_image,
+        landing_notify_email=config.get("landing_notify_email") or n.OPERATOR.removeprefix("user:"),
     )
 
 
@@ -376,6 +397,7 @@ class ControlPlane:
         self.stage: n.Stage = cp.stage
         self.pid = cp.project.project_id
         self.public = cfg.public == cp.stage
+        self.site: landing.Landing | None = None
         self.opts = opts
         self.apis = [
             gcp.projects.Service(
@@ -405,6 +427,14 @@ class ControlPlane:
         self.services()
         self.migrate_job()
         if self.public:
+            if self.cfg.landing:
+                self.site = landing.build(
+                    self.pid,
+                    self.stage,
+                    landing.LandingSettings(self.cfg.landing_image, self.cfg.landing_notify_email),
+                    self._name,
+                    self._o(),
+                )
             self.entry()
 
     def registry(self) -> None:
@@ -761,7 +791,10 @@ class ControlPlane:
         Balancer on one address with TLS 1.2 or later and HTTP redirected. ``api`` goes to the
         API, ``auth`` to the auth host and ``keys`` to a public bucket holding
         ``<cell label>/jwks.json``. One Google-managed certificate names the three hosts; it
-        issues once their A records, written here into the ``delimitus`` zone, resolve."""
+        issues once their A records, written here into the ``delimitus`` zone, resolve. With the
+        landing page's image set (SSC-065), ``delimitus.com`` and ``www.delimitus.com`` are two
+        more hosts on the same map, to one more path matcher whose default service is the
+        landing backend; a second certificate names just those two, and both go on the proxy."""
         self.entry_ip = gcp.compute.GlobalAddress(
             self._name("entry-ip"),
             project=self.pid,
@@ -773,6 +806,7 @@ class ControlPlane:
         api = self._backend("api", API_SERVICE, self.api_)
         auth = self._backend("auth", AUTH_SERVICE, self.auth_)
         keys = self._keys()
+        site = self.site.backend if self.site is not None else None
         url_map = gcp.compute.URLMap(
             self._name("entry-map"),
             project=self.pid,
@@ -781,12 +815,21 @@ class ControlPlane:
             host_rules=[
                 gcp.compute.URLMapHostRuleArgs(hosts=[host], path_matcher=matcher)
                 for host, matcher in ((n.API_HOST, API), (n.AUTH_HOST, AUTH), (n.KEYS_HOST, "keys"))
+            ]
+            + [
+                gcp.compute.URLMapHostRuleArgs(hosts=[host], path_matcher=LANDING_MATCHER)
+                for host in (n.LANDING_HOSTS if site is not None else ())
             ],
             path_matchers=[
                 gcp.compute.URLMapPathMatcherArgs(name=API, default_service=api.id),
                 gcp.compute.URLMapPathMatcherArgs(name=AUTH, default_service=auth.id),
                 gcp.compute.URLMapPathMatcherArgs(name="keys", default_service=keys.id),
-            ],
+            ]
+            + (
+                [gcp.compute.URLMapPathMatcherArgs(name=LANDING_MATCHER, default_service=site.id)]
+                if site is not None
+                else []
+            ),
             opts=self._o(),
         )
         certificate = gcp.compute.ManagedSslCertificate(
@@ -796,6 +839,19 @@ class ControlPlane:
             managed=gcp.compute.ManagedSslCertificateManagedArgs(domains=list(n.CONTROL_HOSTS)),
             opts=self._o(),
         )
+        certificates = [certificate]
+        if site is not None:
+            certificates.append(
+                gcp.compute.ManagedSslCertificate(
+                    self._name("landing-cert"),
+                    project=self.pid,
+                    name=LANDING_CERT,
+                    managed=gcp.compute.ManagedSslCertificateManagedArgs(
+                        domains=list(n.LANDING_HOSTS)
+                    ),
+                    opts=self._o(),
+                )
+            )
         tls = gcp.compute.SSLPolicy(
             self._name("entry-tls"),
             project=self.pid,
@@ -810,7 +866,7 @@ class ControlPlane:
             name=ENTRY,
             url_map=url_map.id,
             ssl_policy=tls.id,
-            ssl_certificates=[certificate.id],
+            ssl_certificates=[c.id for c in certificates],
             opts=self._o(),
         )
         redirect = gcp.compute.URLMap(
@@ -846,6 +902,19 @@ class ControlPlane:
         for host in n.CONTROL_HOSTS:
             gcp.dns.RecordSet(
                 self._name(f"dns-{host.split('.')[0]}"),
+                project=n.BOOTSTRAP_PROJECT,
+                managed_zone=n.PLATFORM_ZONE,
+                name=f"{host}.",
+                type="A",
+                ttl=DNS_TTL,
+                rrdatas=[self.entry_ip.address],
+                opts=self._o(),
+            )
+        for part, host in (("apex", n.LANDING_HOSTS[0]), ("www", n.LANDING_HOSTS[1])):
+            if site is None:
+                break
+            gcp.dns.RecordSet(
+                self._name(f"dns-landing-{part}"),
                 project=n.BOOTSTRAP_PROJECT,
                 managed_zone=n.PLATFORM_ZONE,
                 name=f"{host}.",

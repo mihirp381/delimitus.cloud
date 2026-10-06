@@ -1,20 +1,21 @@
-"""delimitus.com in the ``platform`` stack (SSC-065, decision 025): the landing page and the pilot
-request form, ``python -m ssc_landing``, in a project of its own under the platform folder.
+"""delimitus.com's page and pilot request form (SSC-065, decision 028): ``python -m
+ssc_landing`` on Cloud Run in the public stage's control project, behind the control plane's own
+entry load balancer (``control.py`` wires the hosts, the certificate and the records).
 
-Two steps, both off until config turns them on, so an apply from ``main`` adds nothing before
-the founder asks for it:
+Built only when the control setting ``landing`` is true, in two steps, so nothing is public
+before an image exists:
 
-- ``landing_enabled: true``: the project, its registry (push the image there), the request
-  bucket and the service's account, and the alert that tells the founder a request came in.
-- ``landing_image: <registry>/ssc-landing@sha256:...``: the Cloud Run service, the external
-  HTTPS load balancer with a Google-managed certificate for the apex and ``www``, and the A
-  records in the ``delimitus-com`` zone, which lives in the Delimitus project
-  (``landing_dns_project``) outside this program.
+- ``landing: true``: the service's account, the request bucket and its one binding, the founder
+  alert and the monitoring API it needs.
+- ``landing_image: <platform registry>/...@sha256:...`` as well: the Cloud Run service and its
+  backend service, which ``control.py`` puts on the entry's URL map.
 
 The service's account holds one role, on one bucket: create objects. It cannot read, list or
-replace a stored request, and it has nothing in the control plane or any cell.
+replace a stored request, and it has nothing on the control database, a secret or any other
+bucket.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
@@ -23,61 +24,26 @@ import pulumi_gcp as gcp
 
 from ssc_infra import naming as n
 
-PROJECT: Final = "ssc-site-0"
 SERVICE: Final = "ssc-landing"
-SA: Final = "ssc-landing"
-REPOSITORY: Final = "site"
-BUCKET: Final = f"{PROJECT}-pilot-requests"
-APEX: Final = "delimitus.com"
-WWW: Final = f"www.{APEX}"
+APEX: Final = n.LANDING_HOSTS[0]
+WWW: Final = n.LANDING_HOSTS[1]
 ORIGIN: Final = f"https://{APEX}"
-DNS_ZONE: Final = "delimitus-com"
 RETENTION_DAYS: Final = 365
 """The page says 12 months; a request is deleted on the next lifecycle pass after a year."""
 MAX_INSTANCES: Final = 3
 """The form allows 5 requests a minute per address in each instance."""
+LIMITS: Final = {"cpu": "1", "memory": "512Mi"}
 STORED_EVENT: Final = "pilot_request_stored"
 FAILED_EVENT: Final = "pilot_request_not_stored"
-APIS: Final = (
-    "artifactregistry.googleapis.com",
-    "compute.googleapis.com",
-    "iam.googleapis.com",
-    "logging.googleapis.com",
-    "monitoring.googleapis.com",
-    "run.googleapis.com",
-    "storage.googleapis.com",
-)
+MONITORING_API: Final = "monitoring.googleapis.com"
 
 
 @dataclass(frozen=True, slots=True)
-class LandingConfig:
-    enabled: bool
+class LandingSettings:
+    """``image`` is None until the first image is pushed; ``notify_email`` is the founder's."""
+
     image: str | None
-    dns_project: str | None
-    dns_zone: str
     notify_email: str
-
-
-class LandingConfigError(ValueError):
-    pass
-
-
-def landing_config(config: pulumi.Config) -> LandingConfig:
-    image = config.get("landing_image") or None
-    enabled = bool(config.get_bool("landing_enabled")) or image is not None
-    dns_project = config.get("landing_dns_project") or None
-    if image is not None:
-        if "@sha256:" not in image:
-            raise LandingConfigError("landing_image must name a digest: <image>@sha256:<hex>")
-        if dns_project is None:
-            raise LandingConfigError("landing_image needs landing_dns_project (the zone's project)")
-    return LandingConfig(
-        enabled=enabled,
-        image=image,
-        dns_project=dns_project,
-        dns_zone=config.get("landing_dns_zone") or DNS_ZONE,
-        notify_email=config.get("landing_notify_email") or n.OPERATOR.removeprefix("user:"),
-    )
 
 
 def log_filter(event: str) -> str:
@@ -89,57 +55,48 @@ def log_filter(event: str) -> str:
 
 
 class Landing:
+    """The landing resources of one control project. ``backend`` is the backend service that
+    ``control.py`` puts behind the apex and ``www``; None until the image is set."""
+
     def __init__(
-        self, cfg: LandingConfig, folder_id: pulumi.Input[str], opts: pulumi.ResourceOptions
+        self,
+        pid: pulumi.Input[str],
+        stage: n.Stage,
+        settings: LandingSettings,
+        name: Callable[[str], str],
+        opts: pulumi.ResourceOptions,
     ) -> None:
-        self.cfg = cfg
+        self.pid = pid
+        self.stage: n.Stage = stage
+        self.settings = settings
+        self.name = name
         self.opts = opts
-        self.project = gcp.organizations.Project(
-            "site",
-            project_id=PROJECT,
-            name=PROJECT,
-            folder_id=folder_id,
-            billing_account=n.BILLING_ACCOUNT,
-            auto_create_network=False,
-            deletion_policy="PREVENT",
+        self.bucket_name = n.control_bucket(stage, n.LANDING_BUCKET_PURPOSE)
+        self.backend: gcp.compute.BackendService | None = None
+        # Not ``control-<stage>-monitoring``: ``platform._alerts`` owns that name when
+        # ``oncall_email`` is set, and enabling an API twice is harmless.
+        self.monitoring = gcp.projects.Service(
+            name("landing-monitoring"),
+            project=pid,
+            service=MONITORING_API,
+            disable_on_destroy=False,
             opts=opts,
         )
-        self.pid = self.project.project_id
-        self.apis = [
-            gcp.projects.Service(
-                f"site-{api.split('.')[0]}",
-                project=self.pid,
-                service=api,
-                disable_on_destroy=False,
-                opts=opts,
-            )
-            for api in APIS
-        ]
-
-    def _o(self) -> pulumi.ResourceOptions:
-        return pulumi.ResourceOptions.merge(self.opts, pulumi.ResourceOptions(depends_on=self.apis))
-
-    def base(self) -> None:
-        self.repo = gcp.artifactregistry.Repository(
-            "site-registry",
-            project=self.pid,
-            location=n.REGION,
-            repository_id=REPOSITORY,
-            format="DOCKER",
-            description="The delimitus.com image (packages/ssc_landing/Dockerfile).",
-            opts=self._o(),
-        )
         self.sa = gcp.serviceaccount.Account(
-            "site-sa",
-            project=self.pid,
-            account_id=SA,
+            name("landing-sa"),
+            project=pid,
+            account_id=n.LANDING_SA,
             display_name="delimitus.com: creates pilot requests, reads nothing",
-            opts=self._o(),
+            opts=opts,
         )
-        self.bucket = gcp.storage.Bucket(
-            "site-requests",
+        self.bucket = self._bucket()
+        self._alerts()
+
+    def _bucket(self) -> gcp.storage.Bucket:
+        bucket = gcp.storage.Bucket(
+            self.name("landing-requests"),
             project=self.pid,
-            name=BUCKET,
+            name=self.bucket_name,
             location=n.REGION.upper(),
             uniform_bucket_level_access=True,
             public_access_prevention="enforced",
@@ -153,31 +110,35 @@ class Landing:
                 )
             ],
             force_destroy=False,
-            opts=self._o(),
+            opts=self.opts,
         )
         gcp.storage.BucketIAMMember(
-            "site-requests-create",
-            bucket=self.bucket.name,
+            self.name("landing-requests-create"),
+            bucket=bucket.name,
             role="roles/storage.objectCreator",
             member=self.sa.member,
-            opts=self._o(),
+            opts=self.opts,
         )
+        return bucket
 
-    def alerts(self) -> None:
+    def _alerts(self) -> None:
+        after = pulumi.ResourceOptions.merge(
+            self.opts, pulumi.ResourceOptions(depends_on=[self.monitoring])
+        )
         channel = gcp.monitoring.NotificationChannel(
-            "site-founder",
+            self.name("landing-founder"),
             project=self.pid,
             display_name="Founder email (pilot requests)",
             type="email",
-            labels={"email_address": self.cfg.notify_email},
-            opts=self._o(),
+            labels={"email_address": self.settings.notify_email},
+            opts=after,
         )
-        for name, event, title in (
-            ("site-request-stored", STORED_EVENT, "A pilot request came in on delimitus.com"),
-            ("site-request-failed", FAILED_EVENT, "A delimitus.com pilot request was not stored"),
+        for part, event, title in (
+            ("request-stored", STORED_EVENT, "A pilot request came in on delimitus.com"),
+            ("request-failed", FAILED_EVENT, "A delimitus.com pilot request was not stored"),
         ):
             gcp.monitoring.AlertPolicy(
-                name,
+                self.name(f"landing-{part}"),
                 project=self.pid,
                 display_name=title,
                 combiner="OR",
@@ -198,32 +159,32 @@ class Landing:
                 ),
                 documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                     content=(
-                        f"Read the request in gs://{BUCKET}/requests/ (the log line carries no "
-                        "personal data). Runbook: landing/README.md."
+                        f"Read the request in gs://{self.bucket_name}/requests/ (the log line "
+                        "carries no personal data). Runbook: landing/README.md."
                     ),
                     mime_type="text/markdown",
                 ),
                 notification_channels=[channel.name],
-                opts=self._o(),
+                opts=after,
             )
 
-    def service(self, image: str) -> gcp.cloudrunv2.Service:
+    def serve(self, image: str) -> gcp.compute.BackendService:
+        """The Cloud Run service, open to every caller at the load balancer's door, and the
+        backend service on it."""
         env = {
             "SSC_LANDING_BUCKET": self.bucket.name,
             "SSC_LANDING_ORIGIN": ORIGIN,
             "SSC_LANDING_REDIRECT_HOSTS": WWW,
             "SSC_LANDING_TRUSTED_HOPS": "2",
         }
-        return gcp.cloudrunv2.Service(
-            "site-service",
+        service = gcp.cloudrunv2.Service(
+            self.name(SERVICE),
             project=self.pid,
             name=SERVICE,
             location=n.REGION,
             # Reached only through the load balancer, never at its run.app address.
             ingress="INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
-            # A public page: no Google identity is asked of visitors, and no allUsers binding.
-            invoker_iam_disabled=True,
-            deletion_protection=True,
+            deletion_protection=self.stage == "prod",
             scaling=gcp.cloudrunv2.ServiceScalingArgs(max_instance_count=MAX_INSTANCES),
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=self.sa.email,
@@ -237,135 +198,56 @@ class Landing:
                             for k, v in sorted(env.items())
                         ],
                         resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
-                            cpu_idle=True, limits={"cpu": "1", "memory": "512Mi"}
+                            cpu_idle=True, limits=LIMITS
                         ),
                     )
                 ],
             ),
-            opts=self._o(),
+            opts=self.opts,
         )
-
-    def load_balancer(self, service: gcp.cloudrunv2.Service, dns_project: str) -> None:
-        o = self._o()
-        address = gcp.compute.GlobalAddress("site-ip", project=self.pid, name="site", opts=o)
-        neg = gcp.compute.RegionNetworkEndpointGroup(
-            "site-neg",
+        # A public page: every visitor may call it, as the control hosts' services are.
+        gcp.cloudrunv2.ServiceIamMember(
+            self.name(f"{SERVICE}-invoker"),
             project=self.pid,
-            name="site",
+            location=n.REGION,
+            name=service.name,
+            role="roles/run.invoker",
+            member="allUsers",
+            opts=self.opts,
+        )
+        neg = gcp.compute.RegionNetworkEndpointGroup(
+            self.name("landing-neg"),
+            project=self.pid,
+            name=SERVICE,
             region=n.REGION,
             network_endpoint_type="SERVERLESS",
             cloud_run=gcp.compute.RegionNetworkEndpointGroupCloudRunArgs(service=service.name),
-            opts=o,
+            opts=self.opts,
         )
-        backend = gcp.compute.BackendService(
-            "site-backend",
+        self.backend = gcp.compute.BackendService(
+            self.name("landing-backend"),
             project=self.pid,
-            name="site",
+            name=SERVICE,
             load_balancing_scheme="EXTERNAL_MANAGED",
             protocol="HTTPS",
             backends=[gcp.compute.BackendServiceBackendArgs(group=neg.id)],
             log_config=gcp.compute.BackendServiceLogConfigArgs(enable=False),
-            opts=o,
+            opts=self.opts,
         )
-        https_map = gcp.compute.URLMap(
-            "site-urlmap",
-            project=self.pid,
-            name="site",
-            default_service=backend.id,
-            host_rules=[gcp.compute.URLMapHostRuleArgs(hosts=[WWW], path_matcher="www")],
-            path_matchers=[
-                gcp.compute.URLMapPathMatcherArgs(
-                    name="www",
-                    default_url_redirect=gcp.compute.URLMapPathMatcherDefaultUrlRedirectArgs(
-                        host_redirect=APEX,
-                        https_redirect=True,
-                        redirect_response_code="MOVED_PERMANENTLY_DEFAULT",
-                        strip_query=False,
-                    ),
-                )
-            ],
-            opts=o,
-        )
-        cert = gcp.compute.ManagedSslCertificate(
-            "site-cert",
-            project=self.pid,
-            name="site",
-            managed=gcp.compute.ManagedSslCertificateManagedArgs(domains=[f"{APEX}.", f"{WWW}."]),
-            opts=o,
-        )
-        tls = gcp.compute.SSLPolicy(
-            "site-tls",
-            project=self.pid,
-            name="site",
-            profile="MODERN",
-            min_tls_version="TLS_1_2",
-            opts=o,
-        )
-        https_proxy = gcp.compute.TargetHttpsProxy(
-            "site-https",
-            project=self.pid,
-            name="site",
-            url_map=https_map.id,
-            ssl_certificates=[cert.id],
-            ssl_policy=tls.id,
-            opts=o,
-        )
-        gcp.compute.GlobalForwardingRule(
-            "site-443",
-            project=self.pid,
-            name="site-https",
-            load_balancing_scheme="EXTERNAL_MANAGED",
-            ip_address=address.address,
-            port_range="443",
-            target=https_proxy.id,
-            opts=o,
-        )
-        http_map = gcp.compute.URLMap(
-            "site-urlmap-http",
-            project=self.pid,
-            name="site-http",
-            default_url_redirect=gcp.compute.URLMapDefaultUrlRedirectArgs(
-                https_redirect=True,
-                redirect_response_code="MOVED_PERMANENTLY_DEFAULT",
-                strip_query=False,
-            ),
-            opts=o,
-        )
-        http_proxy = gcp.compute.TargetHttpProxy(
-            "site-http", project=self.pid, name="site-http", url_map=http_map.id, opts=o
-        )
-        gcp.compute.GlobalForwardingRule(
-            "site-80",
-            project=self.pid,
-            name="site-http",
-            load_balancing_scheme="EXTERNAL_MANAGED",
-            ip_address=address.address,
-            port_range="80",
-            target=http_proxy.id,
-            opts=o,
-        )
-        for name, host in (("site-a-apex", APEX), ("site-a-www", WWW)):
-            gcp.dns.RecordSet(
-                name,
-                project=dns_project,
-                managed_zone=self.cfg.dns_zone,
-                name=f"{host}.",
-                type="A",
-                ttl=300,
-                rrdatas=[address.address],
-                opts=self.opts,
-            )
-        pulumi.export("landing_ip", address.address)
+        return self.backend
 
 
-def build(folder_id: pulumi.Input[str], opts: pulumi.ResourceOptions) -> None:
-    cfg = landing_config(pulumi.Config())
-    if not cfg.enabled:
-        return
-    site = Landing(cfg, folder_id, opts)
-    site.base()
-    site.alerts()
-    pulumi.export("landing_registry", f"{n.REGION}-docker.pkg.dev/{PROJECT}/{REPOSITORY}")
-    pulumi.export("landing_bucket", BUCKET)
-    if cfg.image is not None and cfg.dns_project is not None:
-        site.load_balancer(site.service(cfg.image), cfg.dns_project)
+def build(
+    pid: pulumi.Input[str],
+    stage: n.Stage,
+    settings: LandingSettings,
+    name: Callable[[str], str],
+    opts: pulumi.ResourceOptions,
+) -> Landing:
+    """Everything of the landing page in one control project; ``control.py`` calls it for the
+    public stage and wires the returned backend into the entry load balancer."""
+    site = Landing(pid, stage, settings, name, opts)
+    if settings.image is not None:
+        site.serve(settings.image)
+    pulumi.export("landing_bucket", site.bucket.name)
+    return site
