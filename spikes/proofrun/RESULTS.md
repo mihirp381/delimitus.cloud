@@ -239,7 +239,7 @@ These are the checks earlier tickets left to this run, one line each with where 
 | Agent: max 1 instance, concurrency 200, timeout 300 s | App logs, check 6 | |
 | Usage: `sscCellAgentUsage` alone is enough, no `roles/monitoring.*` | `infra/README.md`, App usage, check 1 | |
 | Usage: data within 15 minutes; delay seen | App usage, check 2; kit `instances --metric billable_instance_time` | |
-| Usage: `instance_count` stays `active` during an idle WebSocket | App usage, check 3; kit `t9 hold --hours 0.34`, then `instances` | Blocked by the Streamlit refusal (T9 change). First try had an expired cookie |
+| Usage: `instance_count` stays `active` during an idle WebSocket | App usage, check 3; kit `t9 hold --hours 0.34`, then `instances` | **PASS** 2026-10-07: one stream held 03:54–04:14 UTC on pstream (0 reconnects); `instance_count` active 20 of 20 minutes, idle 0. Earlier tries: blocked by the Streamlit refusal (fixed in c13c52d), then an expired CLI login |
 | Worker pool on `launch_stage="BETA"` applies and runs | `docs/runbooks/ssc-064-control-plane.md` steps 4 and 9, then 11a; `infra/ssc_infra/control.py` `worker_pool` | |
 | Gateway reaches the auth host from zero, through the bypass rule and NAT | SSC-064 runbook, 11d | NAT: PASS, the NAT log shows 10.20.4.16 → the auth host on the reserved IP. Bypass rule not read |
 | Relay TLS to `run.app` with the image's CA bundle; WebSockets and SSE through the relay | `infra/README.md`, Gateway, Removing access, check 6; kit `t10`'s WebSocket leg | PASS (T10): SSE 1.99 s, WebSocket 5/5. Streamlit's stream refused by Streamlit (T9 change) |
