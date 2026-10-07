@@ -12,6 +12,8 @@ tools image, pinned by digest:
 3. ``plan``: ``railpack prepare`` with the public build values, the manifest's start command and
    the system packages from the platform package list the source needs (``system_packages``,
    SSC-093), installed in the build and in the image. A Dockerfile in the source is never used.
+   The plan reads every ``--env`` value as a BuildKit secret, so each one is also written where
+   the ``build`` step mounts secrets from; one missing fails the build (cell 1, 2026-10-07).
 4. ``build``: the Railpack frontend in a BuildKit container of its own (``BUILDKIT_IMAGE``),
    both pinned by digest. On failure the log is classified (``PRIVATE_REGISTRY``,
    ``DEPENDENCY_UNRESOLVED``).
@@ -128,8 +130,10 @@ args=(prepare /workspace/src --plan-out /workspace/.ssc/plan.json
       --info-out /workspace/.ssc/info.json --error-missing-start)
 if [ -n "${SSC_START:-}" ]; then args+=(--start-cmd "$SSC_START"); fi
 if [ -n "${SSC_APT_PACKAGES:-}" ]; then
-  args+=(--env "RAILPACK_BUILD_APT_PACKAGES=$SSC_APT_PACKAGES")
-  args+=(--env "RAILPACK_DEPLOY_APT_PACKAGES=$SSC_APT_PACKAGES")
+  for name in RAILPACK_BUILD_APT_PACKAGES RAILPACK_DEPLOY_APT_PACKAGES; do
+    args+=(--env "$name=$SSC_APT_PACKAGES")
+    printf '%s' "$SSC_APT_PACKAGES" > "/workspace/.ssc/secrets/$name"
+  done
 fi
 while IFS= read -r -d '' pair; do
   args+=(--env "$pair")

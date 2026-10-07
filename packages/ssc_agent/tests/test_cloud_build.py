@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -387,7 +388,11 @@ def test_plan_installs_the_listed_packages_in_the_build_and_the_image(tmp_path: 
     assert result.returncode == 0, result.stdout + result.stderr
     plan = (tmp_path / ".ssc" / "plan.json").read_text()
     assert plan.count("apt-get install -y fonts-dejavu-core poppler-utils") == 2
-    assert sorted(p.name for p in (tmp_path / ".ssc" / "secrets").iterdir()) == ["VITE_API"]
+    # BuildKit fails the build on a secret the plan names and the build step does not mount.
+    secrets = tmp_path / ".ssc" / "secrets"
+    assert set(json.loads(plan)["secrets"]) <= {p.name for p in secrets.iterdir()}
+    packages = (secrets / "RAILPACK_BUILD_APT_PACKAGES").read_text()
+    assert packages == "fonts-dejavu-core poppler-utils"
 
 
 def test_a_build_without_packages_asks_railpack_for_none() -> None:
