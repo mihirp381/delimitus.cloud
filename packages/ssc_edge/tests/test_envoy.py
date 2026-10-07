@@ -154,8 +154,17 @@ def free_port() -> int:
         return int(s.getsockname()[1])
 
 
+def readable(folder: Path) -> None:
+    """Let Envoy's own user (uid 101) read ``folder``: pytest makes it 0700 for the CI user, and
+    Linux Docker, unlike Docker Desktop, keeps that in the mount (`Invalid path`)."""
+    folder.chmod(0o755)
+    for f in folder.iterdir():
+        f.chmod(0o644)
+
+
 def validate(tmp: Path, cfg: EnvoyConfig) -> str:
     (tmp / "envoy.json").write_text(json.dumps(render(cfg)))
+    readable(tmp)
     out = subprocess.run(
         [
             docker(),
@@ -301,6 +310,7 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
         upstream_tls=False,
     )
     (tmp / "envoy.json").write_text(json.dumps(render(cfg)))
+    readable(tmp)
     run("network", "create", tag)
     try:
         for name, alias in ((f"{tag}-app", UPSTREAM), (f"{tag}-pay", PAY_UPSTREAM)):
