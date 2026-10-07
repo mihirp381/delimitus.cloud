@@ -93,10 +93,25 @@ def transport(
             if found in url:
                 if key in refused:
                     return httpx2.Response(403, json={"error": {"code": 403}})
+                if key.endswith("-deny"):
+                    return deny_read(state[key], url)
                 return httpx2.Response(200, json=state[key])
         return httpx2.Response(404)
 
     return httpx2.MockTransport(handle)
+
+
+def deny_read(state: Json, url: str) -> httpx2.Response:
+    """As IAM answers: the list leaves out each policy's rules, a read by id returns them."""
+    policies = cloud.objects(state.get("policies"))
+    if url.endswith("/denypolicies"):
+        listed = [{k: v for k, v in p.items() if k != "rules"} for p in policies]
+        return httpx2.Response(200, json={"policies": listed} if listed else {})
+    wanted = url.rsplit("/", 1)[-1]
+    for policy in policies:
+        if str(policy.get("name", "")).rsplit("/", 1)[-1] == wanted:
+            return httpx2.Response(200, json=policy)
+    return httpx2.Response(404)
 
 
 async def run(
@@ -140,6 +155,7 @@ async def test_the_deny_policies_are_read_with_the_attachment_encoded_twice() ->
         f"cloudresourcemanager.googleapis.com%252Fprojects%252F{PROJECT}/denypolicies"
     )
     assert wanted in seen
+    assert f"{wanted}/{lp.DENY_POLICY}" in seen
     assert any(s.startswith("POST") and s.endswith(f"folders/{FOLDER}:getIamPolicy") for s in seen)
 
 

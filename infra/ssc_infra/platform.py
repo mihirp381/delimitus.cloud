@@ -32,9 +32,11 @@ PAM_AGENT = f"serviceAccount:service-org-{n.ORG_ID}@gcp-sa-pam.iam.gserviceaccou
 PAM_AGENT_ROLE = "roles/privilegedaccessmanager.folderServiceAgent"
 # What the nightly least-privilege and organisation-policy checks (SSC-056) read on the cells
 # folder: who holds roles there, which deny policies apply, and the effective org policies.
+# `roles/iam.viewer` is for `iam.denypolicies.get`, each deny policy's rules (a list leaves them
+# out); `roles/iam.denyReviewer` can only be granted on the organisation.
 NIGHTLY_FOLDER_ROLES = {
     "cells-nightly-security-reviewer": "roles/iam.securityReviewer",
-    "cells-nightly-deny-reviewer": "roles/iam.denyReviewer",
+    "cells-nightly-iam-viewer": "roles/iam.viewer",
     "cells-nightly-policy-viewer": "roles/orgpolicy.policyViewer",
 }
 ZONE_RECORD_PERMISSIONS = (

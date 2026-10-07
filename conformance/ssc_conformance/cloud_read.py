@@ -1,8 +1,8 @@
 """Read-only calls the nightly makes to see how a cell is configured (SSC-056): IAM policies,
 deny policies and organisation policies, over REST as ``ssc-nightly``.
 
-``ssc-nightly`` reads policy metadata only: ``roles/iam.securityReviewer``,
-``roles/iam.denyReviewer`` and ``roles/orgpolicy.policyViewer`` on the ``ssc-cells`` folder. A
+``ssc-nightly`` reads policy metadata only: ``roles/iam.securityReviewer``, ``roles/iam.viewer``
+(for each deny policy's rules) and ``roles/orgpolicy.policyViewer`` on the ``ssc-cells`` folder. A
 403 means a grant is missing: ``NoReadAccessError``, which the checks report as ``skipped, no
 read access`` and which fails the night.
 """
@@ -59,12 +59,18 @@ class CloudReader:
         return await self._call("GET", f"{STORAGE}/b/{bucket}/iam?{query}")
 
     async def deny_policies(self, kind: str, resource: str) -> list[Json]:
-        """The deny policies attached to ``projects/<id>`` or ``folders/<id>``; ``kind`` is
-        ``projects`` or ``folders``. The attachment point is encoded twice in the path."""
+        """The deny policies attached to ``projects/<id>`` or ``folders/<id>``, with their rules;
+        ``kind`` is ``projects`` or ``folders``. The list returns each policy without its rules, so
+        each one is then read by its id. The attachment point is encoded twice in the path."""
         point = f"cloudresourcemanager.googleapis.com/{kind}/{resource}"
         once = urllib.parse.quote(point, safe="")
-        body = await self._call("GET", f"{IAM}/{urllib.parse.quote(once, safe='')}/denypolicies")
-        return objects(body.get("policies"))
+        listed = f"{IAM}/{urllib.parse.quote(once, safe='')}/denypolicies"
+        found: list[Json] = []
+        for policy in objects((await self._call("GET", listed)).get("policies")):
+            policy_id = str(policy.get("name") or "").rsplit("/", 1)[-1]
+            read = f"{listed}/{urllib.parse.quote(policy_id, safe='')}"
+            found.append(await self._call("GET", read))
+        return found
 
     async def org_policies(self, kind: str, resource: str) -> list[Json]:
         """The policies set on ``projects/<id>`` or ``folders/<id>`` itself, not inherited."""

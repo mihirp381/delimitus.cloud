@@ -258,7 +258,7 @@ def test_the_nightly_account_reads_the_cells_folders_policies_and_roles(
     ]
     assert {g["role"] for g in grants} == {
         "roles/iam.securityReviewer",
-        "roles/iam.denyReviewer",
+        "roles/iam.viewer",
         "roles/orgpolicy.policyViewer",
     }
     assert len(grants) == 3
