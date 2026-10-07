@@ -13,6 +13,8 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedAuditRouteImport } from './routes/_authed/audit'
+import { Route as AuthedConnectionsRouteImport } from './routes/_authed/connections'
+import { Route as AuthedEgressRouteImport } from './routes/_authed/egress'
 import { Route as AuthedEnvironmentRouteImport } from './routes/_authed/environment'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedApprovalsIndexRouteImport } from './routes/_authed/approvals.index'
@@ -36,6 +38,16 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
 const AuthedAuditRoute = AuthedAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedConnectionsRoute = AuthedConnectionsRouteImport.update({
+  id: '/connections',
+  path: '/connections',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedEgressRoute = AuthedEgressRouteImport.update({
+  id: '/egress',
+  path: '/egress',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedEnvironmentRoute = AuthedEnvironmentRouteImport.update({
@@ -69,6 +81,8 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
   '/audit': typeof AuthedAuditRoute
+  '/connections': typeof AuthedConnectionsRoute
+  '/egress': typeof AuthedEgressRoute
   '/environment': typeof AuthedEnvironmentRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
@@ -78,6 +92,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/audit': typeof AuthedAuditRoute
+  '/connections': typeof AuthedConnectionsRoute
+  '/egress': typeof AuthedEgressRoute
   '/environment': typeof AuthedEnvironmentRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/': typeof AuthedIndexRoute
@@ -90,6 +106,8 @@ export interface FileRoutesById {
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
   '/_authed/audit': typeof AuthedAuditRoute
+  '/_authed/connections': typeof AuthedConnectionsRoute
+  '/_authed/egress': typeof AuthedEgressRoute
   '/_authed/environment': typeof AuthedEnvironmentRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/_authed/': typeof AuthedIndexRoute
@@ -103,6 +121,8 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/audit'
+    | '/connections'
+    | '/egress'
     | '/environment'
     | '/auth/callback'
     | '/approvals/$approvalId'
@@ -112,6 +132,8 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/audit'
+    | '/connections'
+    | '/egress'
     | '/environment'
     | '/auth/callback'
     | '/'
@@ -123,6 +145,8 @@ export interface FileRouteTypes {
     | '/_authed'
     | '/login'
     | '/_authed/audit'
+    | '/_authed/connections'
+    | '/_authed/egress'
     | '/_authed/environment'
     | '/auth/callback'
     | '/_authed/'
@@ -167,6 +191,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAuditRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/connections': {
+      id: '/_authed/connections'
+      path: '/connections'
+      fullPath: '/connections'
+      preLoaderRoute: typeof AuthedConnectionsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/egress': {
+      id: '/_authed/egress'
+      path: '/egress'
+      fullPath: '/egress'
+      preLoaderRoute: typeof AuthedEgressRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/environment': {
       id: '/_authed/environment'
       path: '/environment'
@@ -207,6 +245,8 @@ declare module '@tanstack/react-router' {
 
 interface AuthedRouteChildren {
   AuthedAuditRoute: typeof AuthedAuditRoute
+  AuthedConnectionsRoute: typeof AuthedConnectionsRoute
+  AuthedEgressRoute: typeof AuthedEgressRoute
   AuthedEnvironmentRoute: typeof AuthedEnvironmentRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
   AuthedApprovalsApprovalIdRoute: typeof AuthedApprovalsApprovalIdRoute
@@ -216,6 +256,8 @@ interface AuthedRouteChildren {
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedAuditRoute: AuthedAuditRoute,
+  AuthedConnectionsRoute: AuthedConnectionsRoute,
+  AuthedEgressRoute: AuthedEgressRoute,
   AuthedEnvironmentRoute: AuthedEnvironmentRoute,
   AuthedIndexRoute: AuthedIndexRoute,
   AuthedApprovalsApprovalIdRoute: AuthedApprovalsApprovalIdRoute,

@@ -10,10 +10,14 @@ import {
 } from '../../api/grants';
 import type { AppOut, EnvironmentOut } from '../../api/lifecycle';
 import { AdminActions } from '../../app-detail/AdminActions';
+import { EnvConnections } from '../../app-detail/EnvConnections';
 import { ENV_TITLE } from '../../app-detail/names';
+import { Promote } from '../../app-detail/Promote';
+import { Repository } from '../../app-detail/Repository';
 import { Rollback } from '../../app-detail/Rollback';
 import { Running } from '../../app-detail/Running';
 import { ShareDialog } from '../../app-detail/ShareDialog';
+import { Timers } from '../../app-detail/Timers';
 import { StatusBadge } from '../../components/Badge';
 import { ConfirmAction } from '../../components/ConfirmAction';
 import { ProblemNotice } from '../../components/ProblemNotice';
@@ -78,6 +82,7 @@ function AppView({ app }: { readonly app: AppOut }) {
       {environments.map((env) => (
         <EnvironmentPanel key={env.id} app={app} env={env} />
       ))}
+      <Repository app={app} />
       <AdminActions app={app} />
     </>
   );
@@ -92,6 +97,7 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
   const [notice, setNotice] = useState<string | null>(null);
   const headingId = `env-${env.id}`;
   const seen = grants.data ? { grants: grants.data, etag: etagOf(grants.data) } : undefined;
+  const preview = app.environments.find((e) => e.name === 'preview');
 
   async function applied(updated: GrantsUpdate, message: string) {
     queryClient.setQueryData(queries.queryOptions('get', path, init).queryKey, updated.grants);
@@ -174,6 +180,7 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
       <div className="toolbar">
         <ShareDialog app={app} env={env} seen={seen} onDone={(u, m) => void applied(u, m)} />
         <Rollback app={app} env={env} />
+        {env.name === 'prod' && preview ? <Promote app={app} prod={env} preview={preview} /> : null}
       </div>
       <h3>Who has access</h3>
       {notice ? (
@@ -194,6 +201,8 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
           empty="Nobody has access yet."
         />
       )}
+      <EnvConnections app={app} env={env} />
+      <Timers app={app} env={env} />
     </section>
   );
 }

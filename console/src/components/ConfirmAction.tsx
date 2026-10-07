@@ -10,22 +10,29 @@ interface Props {
   readonly accessibleLabel?: string;
   readonly title: string;
   readonly children: ReactNode;
-  /** The text the user must type, normally the app slug. */
-  readonly confirmText: string;
+  /** The text the user must type, normally the app slug; without it one click confirms. */
+  readonly confirmText?: string;
   readonly confirmLabel: string;
   readonly onConfirm: () => Promise<unknown>;
   readonly disabled?: boolean;
+  /** `danger` (the default) for what removes or stops something; `secondary` otherwise. */
+  readonly variant?: 'danger' | 'secondary';
 }
 
-/** A destructive action that runs only after the user types `confirmText` exactly. */
+/**
+ * An action that runs only once confirmed in a dialog: for a destructive one, after the user
+ * types `confirmText` exactly.
+ */
 export function ConfirmAction(props: Props) {
   const { label, accessibleLabel, title, children, confirmText, confirmLabel, onConfirm, disabled } =
     props;
+  const variant = props.variant ?? 'danger';
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const inputId = useId();
+  const confirmed = confirmText === undefined || typed === confirmText;
 
   function close() {
     setOpen(false);
@@ -35,7 +42,7 @@ export function ConfirmAction(props: Props) {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (typed !== confirmText || busy) return;
+    if (!confirmed || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -51,7 +58,7 @@ export function ConfirmAction(props: Props) {
   return (
     <>
       <Button
-        variant="danger"
+        variant={variant}
         disabled={disabled}
         aria-label={accessibleLabel}
         onClick={() => setOpen(true)}
@@ -61,22 +68,28 @@ export function ConfirmAction(props: Props) {
       <Dialog open={open} title={title} onClose={close}>
         <form className="stack" onSubmit={submit}>
           <div>{children}</div>
-          <label className="field" htmlFor={inputId}>
-            <span>
-              Type <code>{confirmText}</code> to confirm
-            </span>
-            <input
-              id={inputId}
-              value={typed}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(e) => setTyped(e.target.value)}
-            />
-          </label>
+          {confirmText === undefined ? null : (
+            <label className="field" htmlFor={inputId}>
+              <span>
+                Type <code>{confirmText}</code> to confirm
+              </span>
+              <input
+                id={inputId}
+                value={typed}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => setTyped(e.target.value)}
+              />
+            </label>
+          )}
           {error ? <ProblemNotice error={error} /> : null}
           <div className="actions">
             <Button onClick={close}>Cancel</Button>
-            <Button type="submit" variant="danger" disabled={typed !== confirmText || busy}>
+            <Button
+              type="submit"
+              variant={variant === 'danger' ? 'danger' : 'primary'}
+              disabled={!confirmed || busy}
+            >
               {confirmLabel}
             </Button>
           </div>

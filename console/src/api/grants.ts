@@ -39,7 +39,8 @@ export function etagOf(grants: Grants): string {
   return `"${grants.grants_version}"`;
 }
 
-function toInput(g: Grant | GrantInput): GrantInput {
+/** A grant as the API takes it back: no id, and no subject id for the org. */
+export function toInput(g: Grant | GrantInput): GrantInput {
   return g.subject_kind === 'org'
     ? { role: g.role, subject_kind: 'org' }
     : { role: g.role, subject_kind: g.subject_kind, subject_id: g.subject_id };
