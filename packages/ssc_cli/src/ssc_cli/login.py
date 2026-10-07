@@ -3,9 +3,15 @@ refresh and RFC 7009 revocation. Form posts in, JSON out; an OAuth error is ``{"
 
 The auth address is ``--auth-url``, then ``SSC_AUTH_URL``, then the API address with its first
 label ``api`` swapped for ``auth`` (``https://api.delimitus.com`` -> ``https://auth.delimitus.com``).
+
+Every post is retried, up to three times, only where the auth host did no work: ``429`` after
+``Retry-After``, ``502``, ``503`` and ``504`` with backoff, and a connection that never opened. A
+refresh token is used once and a second use ends the login, so a ``500`` or a connection lost
+mid-request is not retried.
 """
 
 import os
+import time
 from collections.abc import Mapping
 from typing import Final, Literal, cast
 from urllib.parse import urlsplit, urlunsplit
@@ -13,12 +19,14 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ssc_cli.api import DEFAULT_TIMEOUT, USER_AGENT
+from ssc_cli.api import BACKOFF, DEFAULT_TIMEOUT, MAX_RETRY_AFTER, USER_AGENT, Sleep
 from ssc_cli.config import normalise_api_url
 from ssc_cli.errors import BAD_API_URL, BAD_RESPONSE, NETWORK_ERROR, ExitCode, local_error
 
 ENV_AUTH_URL: Final = "SSC_AUTH_URL"
 DEVICE_GRANT: Final = "urn:ietf:params:oauth:grant-type:device_code"
+RATE_LIMITED: Final = 429
+NOT_REACHED: Final = frozenset({502, 503, 504})
 
 PollError = Literal["authorization_pending", "slow_down", "access_denied", "expired_token"]
 _POLL_ERRORS: Final = frozenset(
@@ -64,8 +72,15 @@ def auth_url_for(api_url: str, override: str | None, env: Mapping[str, str] | No
 
 
 class AuthClient:
-    def __init__(self, auth_url: str, *, transport: httpx2.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        auth_url: str,
+        *,
+        transport: httpx2.BaseTransport | None = None,
+        sleep: Sleep = time.sleep,
+    ) -> None:
         self.auth_url = auth_url
+        self._sleep = sleep
         self._http = httpx2.Client(
             base_url=auth_url,
             transport=transport,
@@ -111,16 +126,29 @@ class AuthClient:
             raise self._bad(r)
 
     def _post(self, path: str, form: Mapping[str, str]) -> httpx2.Response:
-        try:
-            return self._http.post(path, data=dict(form))
-        except httpx2.TransportError as e:
-            raise local_error(
-                NETWORK_ERROR,
-                "The auth host could not be reached.",
-                f"{type(e).__name__} talking to {self.auth_url}. "
-                "Check the address and your connection, then retry.",
-                ExitCode.NETWORK,
-            ) from e
+        for wait in (*BACKOFF, None):
+            try:
+                r = self._http.post(path, data=dict(form))
+            except (httpx2.ConnectError, httpx2.ConnectTimeout) as e:
+                if wait is None:
+                    raise self._unreachable(e) from e
+                self._sleep(wait)
+                continue
+            except httpx2.TransportError as e:
+                raise self._unreachable(e) from e
+            if wait is None or (r.status_code != RATE_LIMITED and r.status_code not in NOT_REACHED):
+                return r
+            self._sleep(_retry_after(r) if r.status_code == RATE_LIMITED else wait)
+        raise AssertionError("unreachable")
+
+    def _unreachable(self, e: Exception) -> Exception:
+        return local_error(
+            NETWORK_ERROR,
+            "The auth host could not be reached.",
+            f"{type(e).__name__} talking to {self.auth_url}. "
+            "Check the address and your connection, then retry.",
+            ExitCode.NETWORK,
+        )
 
     @staticmethod
     def _error(r: httpx2.Response) -> str | None:
@@ -146,3 +174,11 @@ class AuthClient:
             "The auth host sent an answer ssc does not understand.",
             f"HTTP {r.status_code} from {self.auth_url}. Retry, or update ssc.",
         )
+
+
+def _retry_after(r: httpx2.Response) -> float:
+    try:
+        seconds = float(r.headers.get("Retry-After", "1"))
+    except ValueError:
+        seconds = 1.0
+    return min(max(seconds, 0.0), MAX_RETRY_AFTER)

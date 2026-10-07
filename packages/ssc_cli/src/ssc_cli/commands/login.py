@@ -67,7 +67,7 @@ def login(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
         _check_agent(agent)
         api_url = s.config().api_url
         auth = auth_url_for(api_url, auth_url)
-        with AuthClient(auth, transport=s.transport) as client:
+        with AuthClient(auth, transport=s.transport, sleep=s.sleep) as client:
             start = client.start(org, agent)
             if start is None:
                 raise _failed(f"{org} cannot sign in at {auth}. Check the org id.")
@@ -139,7 +139,7 @@ def logout(ctx: typer.Context, agent: AgentLogoutOpt = False, json_mode: JsonOpt
         revoked = False
         if kept is not None:
             try:
-                with AuthClient(kept.auth_url, transport=s.transport) as client:
+                with AuthClient(kept.auth_url, transport=s.transport, sleep=s.sleep) as client:
                     client.revoke(kept.refresh_token)
                 revoked = True
             except CliError as e:

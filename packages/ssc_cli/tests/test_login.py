@@ -17,7 +17,7 @@ from ssc_cli.credentials import (
     store_login,
 )
 from ssc_cli.errors import CliError, ExitCode
-from ssc_cli.login import auth_url_for
+from ssc_cli.login import AuthClient, auth_url_for
 from ssc_cli.session import Session
 from ssc_cli.shapes import ErrorResult, LoginResult, LogoutResult
 
@@ -181,7 +181,7 @@ def test_logout_forgets_even_when_the_auth_host_is_down(cli, isolated):
         raise httpx2.ConnectError("down")
 
     store_login(API, kept(1))
-    s = Session(api_override=API, transport=httpx2.MockTransport(down))
+    s = Session(api_override=API, transport=httpx2.MockTransport(down), sleep=lambda _: None)
     r = cli("logout", "--json", session=s)
     assert r.code == 0, r.stderr
     assert r.json() == {"api_url": API, "revoked": False, "cleared": True, "agent": False}
@@ -264,3 +264,50 @@ def test_the_auth_address():
         with pytest.raises(CliError) as err:
             auth_url_for(api, override, {})
         assert err.value.exit_code == ExitCode.USAGE
+
+
+def _flaky(*answers: httpx2.Response | type[Exception]):
+    sent: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request.url.path)
+        answer = answers[min(len(sent), len(answers)) - 1]
+        if isinstance(answer, type):
+            raise answer("flaky")
+        return answer
+
+    return sent, httpx2.MockTransport(handler)
+
+
+REVOKED = httpx2.Response(200, json={})
+
+
+def test_the_auth_host_is_asked_again_when_it_did_no_work():
+    slept: list[float] = []
+    sent, transport = _flaky(
+        httpx2.Response(429, headers={"Retry-After": "7"}),
+        httpx2.Response(503),
+        httpx2.ConnectError,
+        REVOKED,
+    )
+    with AuthClient(AUTH, transport=transport, sleep=slept.append) as auth:
+        auth.revoke("ssc_rt.org.secret")
+    assert sent == ["/revoke"] * 4
+    assert slept == [7.0, 1.0, 2.0]
+
+
+def test_a_refresh_is_not_sent_twice_when_the_auth_host_may_have_used_it():
+    for answer in (httpx2.Response(500), httpx2.ReadError):
+        sent, transport = _flaky(answer, REVOKED)
+        with AuthClient(AUTH, transport=transport, sleep=lambda _: None) as auth:
+            with pytest.raises(CliError):
+                auth.refresh("ssc_rt.org.secret")
+        assert sent == ["/token"]
+
+
+def test_the_auth_host_is_asked_at_most_four_times():
+    sent, transport = _flaky(httpx2.Response(502))
+    with AuthClient(AUTH, transport=transport, sleep=lambda _: None) as auth:
+        with pytest.raises(CliError):
+            auth.refresh("ssc_rt.org.secret")
+    assert len(sent) == 4
