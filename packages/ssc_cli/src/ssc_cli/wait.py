@@ -6,7 +6,10 @@ operation. Time is counted in the sleeps between polls, so a test's no-op sleep 
 :class:`Budget` is shared by every wait of a command, so ``--timeout`` bounds the whole command.
 A poll the API refuses with ``RATE_LIMITED`` (two deploys from one login, on cell 1 2026-10-07)
 is a read that did nothing: the wait sleeps the refusal's ``Retry-After`` and polls again, so
-the build or deployment it watches is not reported as failed.
+the build or deployment it watches is not reported as failed. The gap between polls starts at
+``POLL_SECONDS`` and grows by half each poll up to ``MAX_POLL_SECONDS``, so ten deploys waiting
+from one login ask about once a second in all, which the per-login limit (one a second after a
+burst of 60) allows.
 """
 
 from collections.abc import Callable
@@ -29,6 +32,8 @@ from ssc_cli.models import OperationOut
 from ssc_contracts.build import FIX_ITS
 
 POLL_SECONDS: Final = 2.0
+MAX_POLL_SECONDS: Final = 8.0
+POLL_GROWTH: Final = 1.5
 RATE_LIMITED: Final = "RATE_LIMITED"
 DEFAULT_TIMEOUT: Final = 1800
 
@@ -68,10 +73,12 @@ class Budget:
 
     seconds: float
     spent: float = 0.0
+    gap: float = POLL_SECONDS
 
     def sleep(self, sleep: Sleep) -> None:
-        sleep(POLL_SECONDS)
-        self.spent += POLL_SECONDS
+        sleep(self.gap)
+        self.spent += self.gap
+        self.gap = min(self.gap * POLL_GROWTH, MAX_POLL_SECONDS)
 
     def wait(self, sleep: Sleep, seconds: float) -> None:
         sleep(seconds)

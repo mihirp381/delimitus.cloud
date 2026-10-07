@@ -575,9 +575,20 @@ def test_waiting_gives_up_after_the_timeout(cli, api, folder):
     assert (error["code"], error["instance"]) == ("WAIT_TIMED_OUT", f"/v1/builds/{BUILD}")
     assert f"`ssc deploy --app demo --build {BUILD}`" in str(error["detail"])
     assert "ssc status" not in str(error["detail"])
-    assert slept == [2.0, 2.0]
+    assert slept == [2.0, 3.0]
     assert _calls(api).count(("GET", f"/v1/builds/{BUILD}")) == 3
     assert ("POST", PREVIEW_DEPLOYMENTS) not in _calls(api)
+
+
+def test_polls_slow_down_to_one_every_eight_seconds(cli, api, folder):
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("running")] * 7 + [_build("succeeded")]
+    slept: list[float] = []
+    session = Session(
+        api_override=API, transport=httpx2.MockTransport(api.handler), sleep=slept.append
+    )
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", "--json", session=session)
+    assert r.code == 0, (r.stdout, r.stderr)
+    assert slept[:7] == [2.0, 3.0, 4.5, 6.75, 8.0, 8.0, 8.0]
 
 
 def test_one_timeout_covers_the_build_and_the_deployment(cli, api, folder):
@@ -603,7 +614,7 @@ def test_one_timeout_covers_the_build_and_the_deployment(cli, api, folder):
     assert (error["code"], error["instance"]) == ("WAIT_TIMED_OUT", f"/v1/operations/{DEP}")
     assert "after 6 seconds" in str(error["detail"])
     assert "`ssc status demo`" in str(error["detail"])
-    assert slept == [2.0, 2.0, 2.0]
+    assert slept == [2.0, 3.0, 4.5]
     assert _calls(api).count(("GET", f"/v1/operations/{DEP}")) == 3
 
 

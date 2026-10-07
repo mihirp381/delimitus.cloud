@@ -1098,7 +1098,9 @@ def test_logs_follow_waits_out_a_rate_limit_and_keeps_going(
 ):
     monkeypatch.setattr(logs_command, "FOLLOW_POLLS", 2)
     limited = fake_problem(429, "LOGS_RATE_LIMITED", **{"Retry-After": "7"})
-    scripted.add("GET", LOGS, _page("1.1.1", "old"), limited, limited, _page("1.2.2", "new"))
+    scripted.add(
+        "GET", LOGS, _page("1.1.1", "old"), limited, limited, _page("1.2.2", "new"), _page("1.2.2")
+    )
     sleeps: list[float] = []
     session = Session(
         api_override="https://api.test",
@@ -1111,7 +1113,7 @@ def test_logs_follow_waits_out_a_rate_limit_and_keeps_going(
     assert [row.text for row in rows] == ["old", "new"]
     assert sleeps == [7.0, 7.0]
     asks = [dict(q.url.params) for q in scripted.seen if q.url.path == LOGS]
-    assert [a.get("after") for a in asks] == [None, "1.1.1", "1.1.1", "1.1.1"]
+    assert [a.get("after") for a in asks] == [None, "1.1.1", "1.1.1", "1.1.1", "1.2.2"]
     scripted.routes[("GET", LOGS)] = [_page("1.1.1", "old"), fake_problem(403, "FORBIDDEN")]
     ended = cli("logs", "demo", "--follow", session=scripted.session())
     assert ended.code == ExitCode.FAILED

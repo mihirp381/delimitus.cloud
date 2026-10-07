@@ -150,7 +150,16 @@ def test_429_waits_for_retry_after_once(fake_api, fake_problem):
     assert sleeps == [7.0]
 
 
-def test_429_twice_is_a_refusal_and_the_wait_is_capped(fake_api, fake_problem):
+def test_429_is_waited_out_until_the_rate_budget_is_spent(fake_api, fake_problem):
+    limited = fake_problem(429, "RATE_LIMITED", **{"retry-after": "1"})
+    fake_api.add("GET", "/v1/whoami", *[limited] * 9, httpx2.Response(200, json=WHOAMI))
+    sleeps: list[float] = []
+    with client(fake_api, sleeps) as c:
+        c.whoami()
+    assert sleeps == [1.0] * 9
+
+
+def test_429_past_the_rate_budget_is_a_refusal_and_each_wait_is_capped(fake_api, fake_problem):
     fake_api.add(
         "PUT",
         "/v1/apps/a/environments/e/grants",
@@ -159,8 +168,8 @@ def test_429_twice_is_a_refusal_and_the_wait_is_capped(fake_api, fake_problem):
     sleeps: list[float] = []
     with client(fake_api, sleeps) as c, pytest.raises(CliError) as err:
         c.put_grants("a", "e", [], '"1"')
-    assert sleeps == [MAX_RETRY_AFTER]
-    assert len(fake_api.seen) == 2
+    assert sleeps == [MAX_RETRY_AFTER, MAX_RETRY_AFTER]
+    assert len(fake_api.seen) == 3
     assert err.value.body.code == "RATE_LIMITED"
 
 

@@ -5,8 +5,10 @@
   can never do the work twice. A keyed POST also waits out ``IDEMPOTENCY_IN_FLIGHT``.
 * PUT is conditional (``If-Match``) and is not retried here; callers handle ``412`` themselves.
   ``PUT .../grants`` answers ``202`` with the pending approval ids when the change needs approval.
-* ``429`` is retried once after ``Retry-After``: the API refuses before doing any work. A second
-  ``429`` raises, carrying that wait (at most ``MAX_RETRY_AFTER``) as ``CliError.retry_after``.
+* ``429`` is retried after each ``Retry-After``: the API refuses before doing any work, so any
+  method may be sent again. Once one request has waited ``RATE_WAIT_SECONDS`` in all, the next
+  ``429`` raises, carrying its wait (at most ``MAX_RETRY_AFTER``) as ``CliError.retry_after``.
+  Ten deploys from one login (cell 1, 2026-10-07) each got through this way.
 * A refusal becomes a :class:`~ssc_cli.errors.CliError` carrying the API's problem members.
 * Every request names the tool in ``X-SSC-Source-Tool`` for the API's source tool mix.
 * A bundle goes to the signed upload URL the API hands out, from a separate client that sends
@@ -94,6 +96,7 @@ ETAG: Final = "ETag"
 REQUEST_ID_HEADER: Final = "X-Request-Id"
 BACKOFF: Final = (0.5, 1.0, 2.0)
 MAX_RETRY_AFTER: Final = 60.0
+RATE_WAIT_SECONDS: Final = 120.0
 DEFAULT_TIMEOUT: Final = 30.0
 UPLOAD_TIMEOUT: Final = 300.0
 UPLOAD_CHUNK: Final = 1024 * 1024
@@ -460,7 +463,7 @@ class ApiClient:
         if content is not None:
             sent["Content-Type"] = "application/json"
         retries = 0
-        waited_for_rate = False
+        rate_waited = 0.0
         while True:
             try:
                 token = self._token if isinstance(self._token, str) else self._token()
@@ -478,9 +481,10 @@ class ApiClient:
                     "Check the address and your connection, then retry.",
                     ExitCode.NETWORK,
                 ) from e
-            if r.status_code == 429 and not waited_for_rate:
-                waited_for_rate = True
-                self._sleep(_retry_after(r))
+            if r.status_code == 429 and rate_waited < RATE_WAIT_SECONDS:
+                wait = _retry_after(r)
+                rate_waited += wait
+                self._sleep(wait)
                 continue
             if retryable and retries < len(BACKOFF) and _transient(r, method):
                 self._sleep(BACKOFF[retries])
