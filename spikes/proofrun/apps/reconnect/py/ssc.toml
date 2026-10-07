@@ -1,0 +1,6 @@
+schema = "ssc/v1"
+
+[runtime]
+start = "uvicorn app:app --host 0.0.0.0 --port 8080"
+health_path = "/health"
+sessions = true

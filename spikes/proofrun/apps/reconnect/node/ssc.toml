@@ -1,0 +1,6 @@
+schema = "ssc/v1"
+
+[runtime]
+start = "node app.js"
+health_path = "/health"
+sessions = true
