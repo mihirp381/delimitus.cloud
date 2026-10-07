@@ -129,7 +129,7 @@ jobs:
         position: ${{ fromJSON(needs.plan.outputs.positions) }}
     permissions:
       contents: read
-    uses: ./.github/workflows/isolation-nightly.yml
+    uses: ./.github/workflows/isolation-nightly.yml  # zizmor: ignore[self-repository] -- the $/ form is not yet tried on our runners
     with:
       position: ${{ matrix.position }}
     secrets:
@@ -146,7 +146,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: ./.github/workflows/kill-drill.yml
+    uses: ./.github/workflows/kill-drill.yml  # zizmor: ignore[self-repository] -- the $/ form is not yet tried on our runners
     with:
       position: ${{ matrix.position }}
       runs: 1
