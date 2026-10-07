@@ -6,6 +6,9 @@ without a directory connection. One org's failure is logged and the others still
 minute tries again. One run at a time (``lock``) and at most one waiting (``queueing_lock``). With
 no WorkOS client in the ports it does nothing.
 
+``oauth_client_prune`` runs daily: it deletes the OAuth clients nobody used for 30 days
+(decision 029). They are global rows, so one statement covers every org.
+
 ``blueprint()`` builds fresh tasks on each call: ``App.add_tasks_from`` renames what it copies.
 """
 
@@ -16,7 +19,7 @@ from procrastinate import Blueprint, JobContext
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.db.orgs import all_org_ids
-from ssc_control.identity import sync
+from ssc_control.identity import oauth, sync
 from ssc_control.identity.workos import WorkOSClient
 from ssc_control.worker_ports import ports_of
 
@@ -25,6 +28,8 @@ log = logging.getLogger(__name__)
 NAMESPACE: Final = "identity"
 SYNC_TASK: Final = f"{NAMESPACE}:directory_sync"
 SYNC_CRON: Final = "* * * * *"
+PRUNE_TASK: Final = f"{NAMESPACE}:oauth_client_prune"
+PRUNE_CRON: Final = "17 3 * * *"
 
 
 async def sync_all(engine: AsyncEngine, client: WorkOSClient) -> int:
@@ -43,7 +48,7 @@ async def sync_all(engine: AsyncEngine, client: WorkOSClient) -> int:
 
 
 def blueprint(*, cron: str = SYNC_CRON) -> Blueprint:
-    """The directory sync, every minute by default."""
+    """The directory sync, every minute by default, and the daily OAuth client prune."""
     bp = Blueprint()
 
     @bp.periodic(cron=cron, periodic_id="directory_sync", queueing_lock="directory_sync")
@@ -56,4 +61,18 @@ def blueprint(*, cron: str = SYNC_CRON) -> Blueprint:
             return 0
         return await sync_all(ports.engine, ports.directory)
 
+    @bp.periodic(cron=PRUNE_CRON, periodic_id="oauth_client_prune")
+    @bp.task(name="oauth_client_prune", pass_context=True, lock="oauth_client_prune")
+    async def oauth_client_prune(context: JobContext, timestamp: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        """Delete OAuth clients unused for 30 days; returns how many."""
+        deleted = await prune_clients(ports_of(context).engine)
+        log.info("pruned %d unused OAuth clients", deleted, extra={"tick": timestamp})
+        return deleted
+
     return bp
+
+
+async def prune_clients(engine: AsyncEngine) -> int:
+    """``ssc.oauth_client`` is global (no org, no RLS), so this needs no bind."""
+    async with engine.begin() as conn:
+        return await oauth.prune_clients(conn)

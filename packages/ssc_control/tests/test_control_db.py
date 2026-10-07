@@ -1154,8 +1154,10 @@ def test_every_table_is_declared_and_org_scoped(dsns: Dsns) -> None:
     tables = {
         r[0] for r in catalog_rows(dsns, "select tablename from pg_tables where schemaname = 'ssc'")
     }
-    assert tables == catalog.TABLES | set(catalog.UNSCOPED_TABLES) | {catalog.MIGRATION_LEDGER}
-    assert catalog.TABLES.isdisjoint(catalog.UNSCOPED_TABLES)
+    unscoped = set(catalog.UNSCOPED_TABLES) | set(catalog.GLOBAL_TABLES)
+    assert tables == catalog.TABLES | unscoped | {catalog.MIGRATION_LEDGER}
+    assert catalog.TABLES.isdisjoint(unscoped)
+    assert set(catalog.UNSCOPED_TABLES).isdisjoint(catalog.GLOBAL_TABLES)
     columns = catalog_rows(
         dsns,
         "select table_name, column_name from information_schema.columns where table_schema = 'ssc'",
@@ -1165,6 +1167,8 @@ def test_every_table_is_declared_and_org_scoped(dsns: Dsns) -> None:
         by_table.setdefault(t, set()).add(c)
     for t in catalog.TABLES - {"org"}:
         assert "org_id" in by_table[t], t
+    for t in catalog.GLOBAL_TABLES:  # no org's data, so nothing that names an org
+        assert "org_id" not in by_table[t], t
     # Every table another table may point at exposes (org_id, id), so FKs are org-scoped pairs.
     constraints = catalog_rows(
         dsns,
@@ -1208,9 +1212,10 @@ def test_rls_is_enabled_and_forced_everywhere(dsns: Dsns) -> None:
         "where n.nspname = 'ssc' and c.relkind = 'r' and c.relname <> %s",
         (catalog.MIGRATION_LEDGER,),
     )
-    assert {r[0] for r in rows} == catalog.TABLES | set(catalog.UNSCOPED_TABLES)
+    unscoped = set(catalog.UNSCOPED_TABLES) | set(catalog.GLOBAL_TABLES)
+    assert {r[0] for r in rows} == catalog.TABLES | unscoped
     for name, enabled, forced, policies in rows:
-        expected = (False, False, 0) if name in catalog.UNSCOPED_TABLES else (True, True, 1)
+        expected = (False, False, 0) if name in unscoped else (True, True, 1)
         assert (enabled, forced, policies) == expected, name
     policies = catalog_rows(
         dsns,
@@ -1227,18 +1232,57 @@ def test_rls_is_enabled_and_forced_everywhere(dsns: Dsns) -> None:
 def test_plpgsql_is_exactly_the_allowed_set(dsns: Dsns) -> None:
     rows = catalog_rows(
         dsns,
-        "select p.proname, l.lanname, p.prosecdef, p.proowner::regrole::text from pg_proc p "
+        "select p.proname, l.lanname, p.prosecdef, p.proowner::regrole::text, "
+        "p.provolatile, p.proconfig, "
+        "(select array_agg(a.grantee::regrole::text) from aclexplode(p.proacl) a "
+        "where a.privilege_type = 'EXECUTE') "
+        "from pg_proc p "
         "join pg_namespace n on n.oid = p.pronamespace join pg_language l on l.oid = p.prolang "
         "where n.nspname = 'ssc'",
     )
     assert {r[0] for r in rows} == catalog.PLPGSQL_FUNCTIONS
     assert len(rows) <= catalog.PLPGSQL_LIMIT
+    assert catalog.SECURITY_DEFINER_FUNCTIONS <= catalog.PLPGSQL_FUNCTIONS
     doc = (DB_DIR / "PLPGSQL.md").read_text()
-    for name, lang, secdef, owner in rows:
+    for name, lang, secdef, owner, volatility, config, executors in rows:
         assert lang == "plpgsql", (name, lang)  # LANGUAGE sql cannot raise a chosen SQLSTATE
-        assert not secdef, name  # no privilege escalation through functions
+        # No privilege escalation through functions, except the declared set.
+        assert secdef == (name in catalog.SECURITY_DEFINER_FUNCTIONS), name
         assert owner == MIGRATE_ROLE, name
         assert f"`{name}(" in doc, f"{name} is not documented in PLPGSQL.md"
+        if secdef:
+            # Never PUBLIC (a NULL proacl means PUBLIC may execute) and a fixed search_path.
+            assert sorted(executors or ["PUBLIC"]) == sorted([APP_ROLE, MIGRATE_ROLE]), name
+            assert volatility == "s", name
+            assert config == ["search_path=pg_catalog, ssc"], (name, config)
+
+
+def test_org_for_workos_organization_finds_active_connections_only(dsns: Dsns) -> None:
+    a, b = make_org(dsns.app, "Route A"), make_org(dsns.app, "Route B")
+    connect = (
+        "insert into ssc.directory_connection (id, org_id, workos_organization_id, "
+        "workos_directory_id, sso_connection_ids, join_rule) "
+        "values (%s, %s, %s, %s, array['conn_1'], 'email') returning id"
+    )
+    tag = a.org_id[-8:]
+    run(dsns.app, a.org_id, connect, (new_id("dcn"), a.org_id, f"org_A{tag}", f"directory_A{tag}"))
+    run(dsns.app, b.org_id, connect, (new_id("dcn"), b.org_id, f"org_B{tag}", f"directory_B{tag}"))
+    find = (
+        "select ssc.org_for_workos_organization(%s), coalesce(current_setting('ssc.org', true), '')"
+    )
+    # Unbound, as the auth host calls it, and the binds made inside do not leak out.
+    assert run(dsns.app, None, find, (f"org_A{tag}",)) == [(a.org_id, "")]
+    assert run(dsns.app, None, find, (f"org_B{tag}",)) == [(b.org_id, "")]
+    assert run(dsns.app, None, find, ("org_nobody",)) == [(None, "")]
+    # A caller's own bind survives the call.
+    assert run(dsns.app, b.org_id, find, (f"org_A{tag}",)) == [(a.org_id, b.org_id)]
+    run(
+        dsns.app,
+        a.org_id,
+        "update ssc.directory_connection set state = 'frozen', frozen_reason = 'operator' "
+        "returning id",
+    )
+    assert run(dsns.app, None, find, (f"org_A{tag}",)) == [(None, "")]
 
 
 def test_app_role_privileges_match_the_declared_matrix(dsns: Dsns) -> None:
@@ -1317,7 +1361,7 @@ def test_downgrade_then_upgrade_round_trips(dsns: Dsns) -> None:
     count = (
         "select count(*) from pg_tables where schemaname = 'ssc' and tablename <> 'alembic_version'"
     )
-    tables = len(catalog.TABLES) + len(catalog.UNSCOPED_TABLES)
+    tables = len(catalog.TABLES) + len(catalog.UNSCOPED_TABLES) + len(catalog.GLOBAL_TABLES)
     queue_schema = "select count(*) from pg_namespace where nspname = %s"
     upgrade(dsn)
     assert run(dsn, None, count) == [(tables,)]
@@ -1526,6 +1570,115 @@ def test_only_a_cli_session_names_an_agent_and_the_name_is_checked(dsns: Dsns) -
     assert refused(dsns.app, org, insert, browser) == "23514"
     spaced = (new_id("ses"), org, user, "cli", "Claude Code")
     assert refused(dsns.app, org, insert, spaced) == "23514"
+
+
+# ── OAuth at the auth host (revision 0033) ──────────────────────────────────────────────────
+
+OAUTH_ACTIONS = {"auth.authorize_approved", "auth.authorize_denied", "auth.code_reused"}
+
+
+def test_oauth_revision_adds_its_tables_and_downgrade_removes_them(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database oauth owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="oauth").render_as_string(hide_password=False)
+    upgrade(dsn, "0032_notifications")
+    before = action_check(dsn)
+    upgrade(dsn, "0033_oauth")
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | OAUTH_ACTIONS
+    assert {a.value for a in AuditAction} >= old | OAUTH_ACTIONS
+    shape = (
+        "select to_regclass('ssc.oauth_client') is not null, "
+        "to_regclass('ssc.oauth_code') is not null, "
+        "(select count(*) from information_schema.columns where table_schema = 'ssc' "
+        "and table_name = 'auth_session' and column_name = 'token_audience'), "
+        "(select count(*) from pg_proc where proname = 'org_for_workos_organization')"
+    )
+    assert run(dsn, None, shape) == [(True, True, 1, 1)]
+    downgrade(dsn, "0032_notifications")
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    assert run(dsn, None, shape) == [(False, False, 0, 0)]
+    upgrade(dsn, "0033_oauth")
+    assert action_check(dsn) == after
+    assert run(dsn, None, shape) == [(True, True, 1, 1)]
+
+
+def test_a_console_session_and_a_code_reuse_revocation_are_allowed(dsns: Dsns) -> None:
+    created = make_org(dsns.app, "OAuth sessions")
+    org, user = created.org_id, created.admin_user_id
+    insert = (
+        "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, expires_at, "
+        "token_audience) values (%s, %s, %s, %s, 'conn_x', now() + interval '1 hour', %s) "
+        "returning id"
+    )
+    run(dsns.app, org, insert, (new_id("ses"), org, user, "console", None))
+    mcp = new_id("ses")
+    run(dsns.app, org, insert, (mcp, org, user, "cli", "https://api.example.com/mcp"))
+    assert refused(dsns.app, org, insert, (new_id("ses"), org, user, "kiosk", None)) == "23514"
+    revoke = (
+        "update ssc.auth_session set revoked_at = now(), revoke_reason = %s where id = %s "
+        "returning id"
+    )
+    assert run(dsns.app, org, revoke, ("code_reuse", mcp)) == [(mcp,)]
+
+
+def test_oauth_codes_are_checked_and_stay_in_their_org(dsns: Dsns) -> None:
+    a, b = make_org(dsns.app, "Codes A"), make_org(dsns.app, "Codes B")
+    session = new_id("ses")
+    run(
+        dsns.app,
+        a.org_id,
+        "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, expires_at) "
+        "values (%s, %s, %s, 'cli', 'conn_x', now() + interval '1 hour') returning id",
+        (session, a.org_id, a.admin_user_id),
+    )
+    insert = (
+        "insert into ssc.oauth_code (id, org_id, code_hash, client_id, redirect_uri, "
+        "code_challenge, resource, session_id, user_id, expires_at) values "
+        "(%s, %s, %s, 'abcdefghijklmnopqrstuv', 'http://127.0.0.1/cb', %s, "
+        "'https://api.example.com/mcp', %s, %s, now() + make_interval(secs => %s)) returning id"
+    )
+
+    def code(org: str, challenge: str = "c" * 43, secs: int = 60) -> tuple[object, ...]:
+        return (
+            new_id("oac"),
+            org,
+            hashlib.sha256(new_id("oac").encode()).digest(),
+            challenge,
+            session,
+            a.admin_user_id,
+            secs,
+        )
+
+    run(dsns.app, a.org_id, insert, code(a.org_id))
+    assert run(dsns.app, b.org_id, "select id from ssc.oauth_code") == []
+    assert refused(dsns.app, b.org_id, insert, code(a.org_id)) == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.app, a.org_id, insert, code(a.org_id, "short")) == CHECK_VIOLATION
+    assert refused(dsns.app, a.org_id, insert, code(a.org_id, secs=600)) == CHECK_VIOLATION
+
+
+def test_oauth_clients_are_global_and_checked(dsns: Dsns) -> None:
+    insert = (
+        "insert into ssc.oauth_client (client_id, client_name, redirect_uris) "
+        "values (%s, %s, %s) returning client_id"
+    )
+    client = "A" * 11 + new_id("oac")[-11:]
+    # No org is bound: the table belongs to no org.
+    assert run(dsns.app, None, insert, (client, "Claude Code", ["http://127.0.0.1/cb"])) == [
+        (client,)
+    ]
+    assert refused(dsns.app, None, insert, ("short", "x", ["https://a.example/cb"])) == (
+        CHECK_VIOLATION
+    )
+    assert refused(dsns.app, None, insert, ("B" * 22, "x" * 101, ["https://a.example/cb"])) == (
+        CHECK_VIOLATION
+    )
+    eleven = [f"https://a.example/{i}" for i in range(11)]
+    assert refused(dsns.app, None, insert, ("C" * 22, "x", eleven)) == CHECK_VIOLATION
+    assert run(
+        dsns.app, None, "delete from ssc.oauth_client where client_id = %s returning 1", (client,)
+    ) == [(1,)]
 
 
 # ── org_index: the single unscoped table (decision 009 amendment, revision 0006) ─────────────

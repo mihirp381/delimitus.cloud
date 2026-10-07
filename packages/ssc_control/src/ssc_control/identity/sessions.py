@@ -27,8 +27,8 @@ from ssc_control.snapshot.service import mark_dirty
 
 SESSION_SECONDS: Final = 12 * 3600
 CODE_SECONDS: Final = 60
-SessionKind = Literal["browser", "cli"]
-RevokeReason = Literal["logout", "user_deactivated", "refresh_reuse", "operator"]
+SessionKind = Literal["browser", "cli", "console"]
+RevokeReason = Literal["logout", "user_deactivated", "refresh_reuse", "operator", "code_reuse"]
 
 
 def digest(secret: str) -> bytes:
@@ -50,6 +50,8 @@ class LiveSession:
     expires_at: datetime
     now: datetime
     agent_client_id: str | None = None
+    token_audience: str | None = None
+    """The audience of the session's access tokens; None is the API's user audience."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,13 +65,13 @@ class Redeemed:
 
 _OPEN = text(
     "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, created_at, "
-    "expires_at, agent_client_id) values (:id, :org, :user, :kind, :conn, now(), "
-    "now() + make_interval(secs => :secs), :agent)"
+    "expires_at, agent_client_id, token_audience) values (:id, :org, :user, :kind, :conn, now(), "
+    "now() + make_interval(secs => :secs), :agent, :audience)"
 )
 # Live: not revoked, not expired, the person active and not revoked since the session began.
 _LIVE = text(
     "select s.id, s.user_id, s.kind, u.display_name, u.email, s.created_at, s.expires_at, now(), "
-    "s.agent_client_id "
+    "s.agent_client_id, s.token_audience "
     "from ssc.auth_session s join ssc.user_account u on u.org_id = s.org_id and u.id = s.user_id "
     "where s.org_id = :org and s.id = :id and s.revoked_at is null and s.expires_at > now() "
     "and u.status = 'active' "
@@ -100,6 +102,9 @@ _PRUNE = (
         "delete from ssc.login_code where org_id = :org and expires_at < now() - interval '1 day'"
     ),
     text(
+        "delete from ssc.oauth_code where org_id = :org and expires_at < now() - interval '1 day'"
+    ),
+    text(
         "delete from ssc.device_grant where org_id = :org and expires_at < now() - interval '1 day'"
     ),
     text(
@@ -119,8 +124,10 @@ async def open_session(  # noqa: PLR0913  (keyword-only)
     connection_id: str,
     actor: Actor,
     agent_client_id: str | None = None,
+    token_audience: str | None = None,
 ) -> str:
-    """A new session; a ``cli`` one may be a coding agent's (``agent_client_id``, SSC-048)."""
+    """A new session; a ``cli`` one may be a coding agent's (``agent_client_id``, SSC-048) and
+    an MCP client's, whose tokens are for ``token_audience`` (decision 029)."""
     session_id = new_id("ses")
     await conn.execute(
         _OPEN,
@@ -132,6 +139,7 @@ async def open_session(  # noqa: PLR0913  (keyword-only)
             "conn": connection_id,
             "secs": SESSION_SECONDS,
             "agent": agent_client_id,
+            "audience": token_audience,
         },
     )
     after = {"kind": kind, "user_id": user_id}
@@ -155,8 +163,8 @@ async def live_session(conn: AsyncConnection, org_id: str, session_id: str) -> L
     row = (await conn.execute(_LIVE, {"org": org_id, "id": session_id})).one_or_none()
     if row is None:
         return None
-    sid, user_id, kind, name, email, created, expires, now, agent = row
-    return LiveSession(sid, user_id, kind, name, email, created, expires, now, agent)
+    sid, user_id, kind, name, email, created, expires, now, agent, audience = row
+    return LiveSession(sid, user_id, kind, name, email, created, expires, now, agent, audience)
 
 
 async def _audit_revoked(
@@ -242,6 +250,6 @@ async def redeem_code(
 
 
 async def prune(conn: AsyncConnection, org_id: str) -> None:
-    """Drop codes, grants and refresh tokens dead for over a day."""
+    """Drop login and OAuth codes, grants and refresh tokens dead for over a day."""
     for statement in _PRUNE:
         await conn.execute(statement, {"org": org_id})

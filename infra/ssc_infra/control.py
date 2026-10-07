@@ -289,6 +289,11 @@ def auth_env(cfg: ControlConfig, stage: n.Stage) -> dict[str, pulumi.Input[str]]
         "SSC_API_USER_AUDIENCE": n.origin(n.API_HOST),
         "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
         "SSC_AUTH_SIGNING_KID": cfg.auth_kid or "",
+        # Decision 029: the one resource a remote MCP client may ask for, the console's origin,
+        # and how many proxies ahead of the auth host append to X-Forwarded-For.
+        "SSC_MCP_RESOURCE": f"{n.origin(n.API_HOST)}{n.MCP_PATH}",
+        "SSC_CONSOLE_URL": n.origin(n.CONSOLE_HOST),
+        "SSC_AUTH_TRUSTED_HOPS": "2",
     }
 
 

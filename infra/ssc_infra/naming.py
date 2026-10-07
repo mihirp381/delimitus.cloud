@@ -96,6 +96,10 @@ PLATFORM_DOMAIN: Final = "delimitus.com"
 API_HOST: Final = f"api.{PLATFORM_DOMAIN}"
 AUTH_HOST: Final = f"auth.{PLATFORM_DOMAIN}"
 KEYS_HOST: Final = f"keys.{PLATFORM_DOMAIN}"
+CONSOLE_HOST: Final = f"console.{PLATFORM_DOMAIN}"
+"""The console's origin: its OAuth client redirects there (decision 029)."""
+MCP_PATH: Final = "/mcp"
+"""The API's agent interface; ``https://<API_HOST>/mcp`` is the MCP OAuth resource."""
 CONTROL_HOSTS: Final = (API_HOST, AUTH_HOST, KEYS_HOST)
 GATEWAY_PLATFORM_HOSTS: Final = (AUTH_HOST, KEYS_HOST)
 LANDING_HOSTS: Final = (PLATFORM_DOMAIN, f"www.{PLATFORM_DOMAIN}")

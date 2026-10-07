@@ -81,12 +81,14 @@ ALLOWLIST = {
     "get_org_deployment_policy",
     "preflight",
     "list_apps",
+    "create_app",
     "get_app",
     "get_status",
     "list_releases",
     "rollback",
     "deploy",
     "request_share",
+    "list_connections",
     "request_connection",
     "get_logs",
     "set_secret",
@@ -244,10 +246,28 @@ class World:
     release: str
     human: str
     agent: str
+    """An agent's credential for the agent interface: its audience is ``<url>/mcp``."""
+    agent_v1: str
+    """The same agent's credential for ``/v1`` (``ssc login --agent``): the user audience."""
 
     def agent_token(self, **claims: Any) -> str:
-        base: dict[str, Any] = {"agent": True, "client_id": CLIENT_ID}
+        base: dict[str, Any] = {
+            "agent": True,
+            "client_id": CLIENT_ID,
+            "audience": f"{self.url}/mcp",
+        }
         return mint(self.key, org=self.org.org_id, sub=self.org.admin_user_id, **(base | claims))
+
+
+def mcp_agent(key: SigningKey, org: CreatedOrg, url: str) -> str:
+    return mint(
+        key,
+        org=org.org_id,
+        sub=org.admin_user_id,
+        agent=True,
+        client_id=CLIENT_ID,
+        audience=f"{url}/mcp",
+    )
 
 
 @pytest.fixture(scope="module")
@@ -256,7 +276,7 @@ def world(
 ) -> Iterator[World]:
     org = make_org(dsns.app, "MCP org")
     human = mint(signing_key, org=org.org_id, sub=org.admin_user_id)
-    agent = mint(
+    agent_v1 = mint(
         signing_key, org=org.org_id, sub=org.admin_user_id, agent=True, client_id=CLIENT_ID
     )
     blobs = tmp_path_factory.mktemp("blobs")
@@ -269,7 +289,8 @@ def world(
         assert r.status_code == 201, r.text
         app = r.json()
         release = add_release(dsns.app, org.org_id, app["id"])
-        yield World(dsns, signing_key, url, org, app, release, human, agent)
+        agent = mcp_agent(signing_key, org, url)
+        yield World(dsns, signing_key, url, org, app, release, human, agent, agent_v1)
 
 
 @asynccontextmanager
@@ -311,12 +332,13 @@ async def test_tool_set_is_the_allowlist(world: World) -> None:
         "get_app",
         "get_status",
         "list_releases",
+        "list_connections",
         "get_logs",
         "set_secret",
     ):
         assert tools[name].annotations is not None
         assert tools[name].annotations.read_only_hint is True
-    for name in ("rollback", "deploy", "request_share", "request_connection"):
+    for name in ("create_app", "rollback", "deploy", "request_share", "request_connection"):
         assert tools[name].annotations is not None
         assert tools[name].annotations.read_only_hint is False
     for name in ("rollback", "deploy"):
@@ -518,9 +540,9 @@ async def test_tool_error_carries_the_request_id(world: World) -> None:
 
 
 async def test_rate_limit_per_credential(dsns: Dsns, signing_key: SigningKey, world: World) -> None:
-    other = world.agent_token()
     with serving(settings(dsns, signing_key, 3, 0.001)) as url:
-        async with session(url, world.agent) as client:
+        one, other = mcp_agent(signing_key, world.org, url), mcp_agent(signing_key, world.org, url)
+        async with session(url, one) as client:
             answers = [await client.call_tool("list_apps", {}) for _ in range(4)]
         async with session(url, other) as client:
             fresh = await client.call_tool("list_apps", {})
@@ -567,23 +589,53 @@ async def test_non_agent_token_401(world: World) -> None:
     assert_refused(await post_initialize(world.url, world.human), world.url)
     assert_refused(await post_initialize(world.url, None), world.url)
     assert_refused(await post_initialize(world.url, world.agent_token(agent=False)), world.url)
-    claimed = mint(world.key, org=world.org.org_id, sub=world.org.admin_user_id, client_id="x")
+    mcp = f"{world.url}/mcp"
+    claimed = mint(
+        world.key, org=world.org.org_id, sub=world.org.admin_user_id, client_id="x", audience=mcp
+    )
     assert_refused(await post_initialize(world.url, claimed), world.url)
     for kind in ("workload", "operator"):
         assert_refused(await post_initialize(world.url, world.agent_token(kind=kind)), world.url)
 
 
 async def test_missing_client_id_401(world: World) -> None:
-    token = mint(world.key, org=world.org.org_id, sub=world.org.admin_user_id, agent=True)
+    token = mint(
+        world.key,
+        org=world.org.org_id,
+        sub=world.org.admin_user_id,
+        agent=True,
+        audience=f"{world.url}/mcp",
+    )
     assert_refused(await post_initialize(world.url, token), world.url)
 
 
 async def test_wrong_audience_401(world: World) -> None:
-    for audience in (INTERNAL_AUDIENCE, f"{world.url}/mcp"):
+    """Only the MCP audience gets in: not the internal one, and not the user audience of a
+    ``/v1`` credential, an agent's from ``ssc login --agent`` included (decision 029)."""
+    for audience in (INTERNAL_AUDIENCE, USER_AUDIENCE, f"{world.url}/mcp/other"):
         token = world.agent_token(audience=audience)
         assert_refused(await post_initialize(world.url, token), world.url)
+    assert_refused(await post_initialize(world.url, world.agent_v1), world.url)
     expired = world.agent_token(expires_in=-60)
     assert_refused(await post_initialize(world.url, expired), world.url)
+
+
+async def test_v1_refuses_an_mcp_credential_from_outside(world: World) -> None:
+    """The MCP audience reaches ``/v1`` only through the interface's own in-process calls; the
+    same credential sent to ``/v1`` directly is refused, header tricks or not."""
+    for headers in ({}, {"X-SSC-MCP-Call": "1", "ssc.mcp_call": "true"}):
+        r = httpx2.get(
+            f"{world.url}/v1/apps", headers={"Authorization": f"Bearer {world.agent}", **headers}
+        )
+        assert r.status_code == 401, r.text
+        assert r.json()["code"] == "UNAUTHENTICATED"
+    assert httpx2.get(
+        f"{world.url}/v1/apps", headers={"Authorization": f"Bearer {world.agent_v1}"}
+    ).is_success
+    async with session(world.url, world.agent) as client:
+        listed = await client.call_tool("list_apps", {})
+    assert not listed.is_error
+    assert "mcp-app" in {a["slug"] for a in listed.structured_content["apps"]}
 
 
 async def test_protected_resource_metadata(world: World) -> None:
@@ -627,7 +679,7 @@ async def test_no_approve_path(world: World) -> None:
 
     asked = post(
         "/v1/approvals",
-        world.agent,
+        world.agent_v1,
         {
             "environment_id": env_id(world.app, "prod"),
             "kind": "connect_data_source",
@@ -647,7 +699,7 @@ async def test_no_approve_path(world: World) -> None:
         world.key, org=world.org.org_id, sub="op_staff", kind="operator", agent=True
     )
     operator = mint(world.key, org=world.org.org_id, sub="op_staff", kind="operator")
-    assert post(path, world.agent, decision).json()["code"] == "FORBIDDEN"
+    assert post(path, world.agent_v1, decision).json()["code"] == "FORBIDDEN"
     assert post(path, agent_operator, decision).json()["code"] == "AGENT_SESSION_REFUSED"
     assert post(path, operator, decision).json()["code"] == "SELF_APPROVAL_REFUSED"
     state = rows(
@@ -829,6 +881,42 @@ async def test_request_connection(world: World) -> None:
     assert bad.is_error
     assert bad.structured_content["error"]["code"] == "VALIDATION_FAILED"
     assert bad.structured_content["error"]["status"] is not None
+
+
+async def test_create_app_once_per_key_and_audited_as_agent(world: World) -> None:
+    async with session(world.url, world.agent) as client:
+        made = await client.call_tool("create_app", {"slug": "mcp-made", "idempotency_key": "k-1"})
+        again = await client.call_tool("create_app", {"slug": "mcp-made", "idempotency_key": "k-1"})
+        taken = await client.call_tool("create_app", {"slug": "mcp-made"})
+        bad = await client.call_tool("create_app", {"slug": "Not A Slug"})
+    assert not made.is_error, made.content
+    app = made.structured_content["app"]
+    assert (app["slug"], app["owner_user_id"]) == ("mcp-made", world.org.admin_user_id)
+    assert {e["name"] for e in app["environments"]} == {"prod", "preview"}
+    assert made.structured_content["idempotency_key"] == "k-1"
+    assert again.structured_content["app"]["id"] == app["id"]
+    assert taken.is_error
+    assert taken.structured_content["error"]["code"] == "ALREADY_EXISTS"
+    assert bad.is_error
+    events = httpx2.get(
+        f"{world.url}/v1/audit?target_id={app['id']}",
+        headers={"Authorization": f"Bearer {world.human}"},
+    ).json()["events"]
+    created = [e for e in events if e["action"] == AuditAction.APP_CREATED]
+    assert [(e["actor"]["via_agent"], e["actor"]["client_id"]) for e in created] == [
+        (True, CLIENT_ID)
+    ]
+
+
+async def test_list_connections_shows_what_the_route_shows(world: World) -> None:
+    async with session(world.url, world.agent) as client:
+        listed = await client.call_tool("list_connections", {})
+    assert not listed.is_error, listed.content
+    direct = httpx2.get(
+        f"{world.url}/v1/connections", headers={"Authorization": f"Bearer {world.agent_v1}"}
+    )
+    assert listed.structured_content == direct.json()
+    assert set(listed.structured_content) == {"connections"}
 
 
 # ── releases and deploy ──────────────────────────────────────────────────────
@@ -1014,10 +1102,10 @@ async def test_an_admin_switches_agent_logs_off(world: World) -> None:
     member = mint(
         world.key, org=world.org.org_id, sub=add_account(world.dsns.app, world.org.org_id, "member")
     )
-    assert httpx2.get(policy, headers={"Authorization": f"Bearer {world.agent}"}).json() == {
+    assert httpx2.get(policy, headers={"Authorization": f"Bearer {world.agent_v1}"}).json() == {
         "logs": True
     }
-    assert put(world.agent, False).json()["code"] == "AGENT_SESSION_REFUSED"
+    assert put(world.agent_v1, False).json()["code"] == "AGENT_SESSION_REFUSED"
     assert put(member, False).json()["code"] == "FORBIDDEN"
     off = put(world.human, False)
     assert (off.status_code, off.json()) == (200, {"logs": False})
@@ -1085,7 +1173,7 @@ async def test_no_tool_sets_the_warm_or_a_resource_flag(world: World) -> None:
     assert not [n for n in names | arguments for word in flags if word in n]
     enable = httpx2.post(
         f"{world.url}/v1/cell/resources/database/enable",
-        headers={"Authorization": f"Bearer {world.agent}", "Idempotency-Key": new_key()},
+        headers={"Authorization": f"Bearer {world.agent_v1}", "Idempotency-Key": new_key()},
     )
     assert enable.json()["code"] == "AGENT_SESSION_REFUSED"
 
@@ -1182,3 +1270,6 @@ def test_public_url_setting() -> None:
     assert Settings.from_env(env).public_url == USER_AUDIENCE
     env["SSC_API_PUBLIC_URL"] = "https://api.example.test"
     assert Settings.from_env(env).public_url == "https://api.example.test"
+    assert Settings.from_env(env).mcp_audience == "https://api.example.test/mcp"
+    env["SSC_MCP_RESOURCE"] = "https://api.delimitus.com/mcp"
+    assert Settings.from_env(env).mcp_audience == "https://api.delimitus.com/mcp"

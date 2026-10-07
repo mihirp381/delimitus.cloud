@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedAuditRouteImport } from './routes/_authed/audit'
 import { Route as AuthedEnvironmentRouteImport } from './routes/_authed/environment'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedApprovalsIndexRouteImport } from './routes/_authed/approvals.index'
 import { Route as AuthedApprovalsApprovalIdRouteImport } from './routes/_authed/approvals.$approvalId'
 import { Route as AuthedAppsAppIdRouteImport } from './routes/_authed/apps.$appId'
@@ -42,6 +43,11 @@ const AuthedEnvironmentRoute = AuthedEnvironmentRouteImport.update({
   path: '/environment',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthedApprovalsIndexRoute = AuthedApprovalsIndexRouteImport.update({
   id: '/approvals/',
   path: '/approvals/',
@@ -64,6 +70,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/audit': typeof AuthedAuditRoute
   '/environment': typeof AuthedEnvironmentRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
   '/approvals/': typeof AuthedApprovalsIndexRoute
@@ -72,6 +79,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/audit': typeof AuthedAuditRoute
   '/environment': typeof AuthedEnvironmentRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/': typeof AuthedIndexRoute
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
@@ -83,6 +91,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_authed/audit': typeof AuthedAuditRoute
   '/_authed/environment': typeof AuthedEnvironmentRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/_authed/apps/$appId': typeof AuthedAppsAppIdRoute
@@ -95,6 +104,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/audit'
     | '/environment'
+    | '/auth/callback'
     | '/approvals/$approvalId'
     | '/apps/$appId'
     | '/approvals/'
@@ -103,6 +113,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/audit'
     | '/environment'
+    | '/auth/callback'
     | '/'
     | '/approvals/$approvalId'
     | '/apps/$appId'
@@ -113,6 +124,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_authed/audit'
     | '/_authed/environment'
+    | '/auth/callback'
     | '/_authed/'
     | '/_authed/approvals/$approvalId'
     | '/_authed/apps/$appId'
@@ -122,6 +134,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -160,6 +173,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/environment'
       preLoaderRoute: typeof AuthedEnvironmentRouteImport
       parentRoute: typeof AuthedRoute
+    }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authed/approvals/': {
       id: '/_authed/approvals/'
@@ -209,6 +229,7 @@ const AuthedRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

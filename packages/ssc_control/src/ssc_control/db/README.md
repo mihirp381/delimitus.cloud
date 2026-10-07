@@ -46,7 +46,7 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     or `TRUNCATE`. `orgs.create_org` inserts the row in the org's creating transaction.
     Workers call `orgs.all_org_ids`, then do each org's work inside `bound_org`, under normal
     RLS. No `BYPASSRLS` role and no `SECURITY DEFINER` function exist for this. A second
-    unscoped table needs its own decision.
+    unscoped table needs its own decision (029 made one for `oauth_client`: rule 17).
 15. **Advisory locks are named by class.** Class `21` is the org's access snapshot lock, taken
     as `(21, hashtext(org_id))`: shared by every transaction that changes what the gateway decides (`snapshot.service.mark_dirty`), exclusive by the compile
     (`snapshot.compiler.publish`), both transaction-scoped (decision 019). Class `12` is the
@@ -61,6 +61,15 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
 
     2026-10-05: `cell_project` is no longer read; the project is `ssc-c-<cell_label>`
     (`ssc_shared.hosts.cell_project`). To be dropped in a later migration.
+17. **Global tables hold no org's data** (decision 029). `ssc.oauth_client`, the OAuth clients
+    that registered themselves at the auth host, is the only one, listed in
+    `catalog.GLOBAL_TABLES` and never in `catalog.TABLES`: a client registers before anyone
+    signs in, so it belongs to no org. It has no `org_id` and no RLS, and holds a random client
+    id, the name the client gave, its redirect URIs and two times, nothing about a person or an
+    org. Everything a client obtains (codes, sessions, tokens) is org-scoped as usual. The one
+    `SECURITY DEFINER` function, `ssc.org_for_workos_organization` (`PLPGSQL.md`), is how the
+    auth host finds an org from a WorkOS organisation before any org is bound; it is listed in
+    `catalog.SECURITY_DEFINER_FUNCTIONS` and only the app role may execute it.
 
 ## Migrations
 
@@ -98,6 +107,7 @@ after that code is out. Revisions so far, all pure expand:
 | `0030_warm` | SSC-092 | `warm` on `ssc.environment` (default false; `environment_warm_prod_check`: only a `prod` environment): kept at one instance by the runtime driver. `ssc.warm_gateway`, one row per org once an admin first sets the warm option: `wanted`, whether the cell's gateway should be kept at one instance; `applied`, what the last successful cell deployer run set the stack's `warm` flag to (false until one did); `execution` and `execution_wants`, the run in flight and what it sets (both or neither); `attempts`, `failure_code` and `last_error` for runs that failed. RLS on `org_id`, refuses `TRUNCATE`, no `DELETE` for the app role. Downgrade drops the table and the column (development databases only) |
 | `0031_connections` | SSC-052 | `ssc.connection` gains an owner (`owner_user_id`, null on older rows), `setup_status` (`pending` until an admin sets `ready`), `status` (`active` or `suspended`), `allowed_schemas`, `limits` and `ceiling` (`{"audience": "org"}` or a listed set of groups and users). `ssc.connection_grant` (`cgr_` id): one environment's use of one connection, with `over_ceiling_since` while the audience is beyond the ceiling. The `exceed_ceiling` approval kind and the five `connection.*` audit actions. Downgrade drops the table and the columns. |
 | `0032_notifications` | SSC-049 | `ssc.notification_outbox` (`ntf_` id): one row per mail still to send or sent, naming the recipient user, the template (`arrival`, `reminder`, `digest`, `decided`), the approval and a unique `dedupe_key` per org; no address and no text. `approval_request.reminded_at`, the `cli` decision channel and the `approval.cancelled` audit action. Downgrade drops the table and the column. |
+| `0033_oauth` | SSC gap 7, gap 1 | `ssc.oauth_client` (rule 17, global): self-registered public OAuth clients, a random 22-character `client_id`, `client_name` (1 to 100 characters), one to ten `redirect_uris`, `created_at` and `last_used_at`; the app role deletes those unused for 30 days. `ssc.oauth_code` (`oac_` id): the SHA-256 of a one-minute authorization code with the client, redirect URI, PKCE S256 challenge, resource, session and person it was issued for. `auth_session` gains `token_audience` (NULL: the API's user audience), the `console` kind and the `code_reuse` revoke reason. `ssc.org_for_workos_organization(text)` (`SECURITY DEFINER`, `PLPGSQL.md`). The `auth.authorize_approved`, `auth.authorize_denied` and `auth.code_reused` audit actions. Downgrade drops the function, the tables and the column and restores the vocabularies `NOT VALID`. |
 
 There is no `alembic.ini`. Run migrations from Python:
 

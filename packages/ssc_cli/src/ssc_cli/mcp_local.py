@@ -11,8 +11,9 @@ one call. When the deployment waits on a one-time creation it answers at once, s
 ``get_logs`` frames the lines as untrusted (:mod:`ssc_shared.fence`) after redacting them once
 more; ``set_secret`` takes no value and answers with the ``ssc secret set`` command for the person.
 A refusal is a tool error whose structured content is ``{"error": {...}}``, the members
-``ssc --json`` prints. Absent on purpose, as on the server: approving, promote, connection
-listing, the warm flag and the cell resource flags.
+``ssc --json`` prints. Absent on purpose, as on the server: approving, promote, the warm flag and
+the cell resource flags. ``create_app`` sends what ``ssc apps create`` sends; ``list_connections``
+reads ``/v1/connections``, which shows an agent only what its person's approved requests name.
 
 ``get_platform_requirements`` answers from ``ssc_shared.requirements`` without a call, the same
 source ``ssc doctor`` reads; ``get_org_deployment_policy`` reads ``/v1/org/deployment-policy``.
@@ -63,12 +64,14 @@ TOOLS: Final = (
     "get_org_deployment_policy",
     "preflight",
     "list_apps",
+    "create_app",
     "get_app",
     "get_status",
     "list_releases",
     "rollback",
     "deploy",
     "request_share",
+    "list_connections",
     "request_connection",
     "get_logs",
     "set_secret",
@@ -135,6 +138,14 @@ ConnectionName = Annotated[
         min_length=1,
         max_length=300,
         description="The data connection's name, as the app's `ssc.toml` names it.",
+    ),
+]
+NewSlug = Annotated[
+    str,
+    Field(
+        pattern=r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$",
+        description="The new app's slug, its host label: 3 to 40 characters, lower-case, no "
+        "leading digit, no `--`.",
     ),
 ]
 LogSource = Literal["app", "build", "deploy"]
@@ -632,9 +643,46 @@ def _deployability(open_client: Opener) -> MCPServer:
     return server
 
 
+def new_app(c: ApiClient, slug: str, key: str) -> Body:
+    """``POST /v1/apps``, as ``ssc apps create`` sends it: the new app, with the key that
+    replays it."""
+    r = c.post_json("/v1/apps", {"slug": slug}, key)
+    return {
+        "app": _json(r),
+        "idempotency_key": key,
+        "next": f"The app exists with nothing deployed. Deploy a folder to its preview with "
+        f"deploy(app={slug!r}).",
+    }
+
+
+def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
+    """Creating an app, and the data connections an app may ask for (as on the server)."""
+    read = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    ask = ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    )
+
+    def create_app(slug: NewSlug, idempotency_key: IdempotencyKey | None = None) -> CallToolResult:
+        """Create an app owned by you, with its `prod` and `preview` environments, as `ssc apps
+        create` does. Nothing runs until you deploy. To retry after an error, send the same
+        idempotency_key: the same app comes back and nothing is created twice."""
+        key = idempotency_key or fresh_key()
+        return run(open_client, lambda c: new_app(c, slug, key))
+
+    def list_connections() -> CallToolResult:
+        """The org's data connections you may see, by name and classification: all of them for
+        an org admin, otherwise those named by your own approved requests. Never an address.
+        Ask for one with request_connection."""
+        return run(open_client, lambda c: c.get_json("/v1/connections"))
+
+    server.add_tool(create_app, annotations=ask)
+    server.add_tool(list_connections, annotations=read)
+    return server
+
+
 def build_server(open_client: Opener, sleep: Sleep, wait: float = WAIT_SECONDS) -> MCPServer:
-    """The stdio server with the thirteen tools, each opening its own client."""
-    server = _deployability(open_client)
+    """The stdio server with the fifteen tools, each opening its own client."""
+    server = _org_tools(_deployability(open_client), open_client)
     read = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     ask = ToolAnnotations(
         read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False

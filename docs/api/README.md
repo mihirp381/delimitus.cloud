@@ -311,19 +311,24 @@ REPEATABLE READ transaction opened inside the body generator.
 `/mcp` is an MCP server (Python SDK `mcp` 2.2.0) on the same application: streamable HTTP,
 stateless, JSON replies. Code: `api/mcp/`.
 
-- **Who.** Only a user credential that an agent holds: the user audience, `kind: user`,
-  `agent: true` and a `client_id`. Any other bearer, or none, gets the SDK's `401` with
+- **Who.** Only a user credential that an agent holds, issued for this endpoint: the audience
+  is the MCP resource (`SSC_MCP_RESOURCE`, default `<public URL>/mcp`), `kind: user`,
+  `agent: true` and a `client_id` (decision 029). Any other bearer, or none, gets the SDK's
+  `401` with
   `WWW-Authenticate: Bearer ... resource_metadata="<public URL>/.well-known/oauth-protected-resource/mcp"`
-  (RFC 6750 and RFC 9728, not a problem body). That metadata names the API's token issuer as
-  the authorization server. A person makes one with `ssc login --org <org> --agent <name>`
-  (SSC-048): the device flow at our auth host with an `agent` form field (lowercase,
-  `[a-z0-9][a-z0-9._-]{0,63}`, else `invalid_request`); the consent page names the agent before
-  single sign-on, the `cli` session records it (`auth_session.agent_client_id`, also in
-  `login.succeeded` and `token.issued`), and every access token of the session, refreshed ones
-  included, carries `agent: true` and that `client_id`. `ssc mcp` uses that login, kept in its
-  own keychain entry. Remote clients' OAuth at `/mcp` itself is not built yet; in development
-  `tools/dev_stack.py token --agent --client-id X` still makes one. A request gets `421` unless
-  its `Host` is the public host or a loopback address (DNS rebinding).
+  (RFC 6750 and RFC 9728, not a problem body). That metadata names the API's token issuer, the
+  auth host, as the authorization server. A remote client gets its credential there with OAuth:
+  it registers itself (RFC 7591), the person signs in with their work account and approves the
+  client, and the `cli` session records the client's name as its agent
+  (`docs/runbooks/remote-mcp.md`). A `/v1` credential is refused here, `ssc login --agent`'s
+  included: that login (SSC-048, the device flow with an `agent` form field, lowercase
+  `[a-z0-9][a-z0-9._-]{0,63}`, the agent recorded in `auth_session.agent_client_id`,
+  `login.succeeded` and `token.issued`, every token carrying `agent: true` and that
+  `client_id`) is for local `ssc mcp`, which calls `/v1`. In development, `mint` in
+  `tools/dev_stack.py` with `audience="<public URL>/mcp"` makes one. The
+  MCP audience reaches `/v1` only through the tools' in-process calls (an ASGI scope key a
+  client cannot set); sent to `/v1` directly it is `401`. A request gets `421` unless its
+  `Host` is the public host or a loopback address (DNS rebinding).
 - **One code path.** Each tool calls `/v1` in process (`httpx2.ASGITransport` on this
   application) with the caller's own bearer, so authorisation, row-level security,
   `Idempotency-Key`, the per-credential rate limit, `If-Match` and audit are the route handlers'
@@ -381,6 +386,11 @@ stateless, JSON replies. Code: `api/mcp/`.
     data-connected.
   - `request_connection(app, connection)`: a `connect_data_source` request on prod; the server
     validates the name.
+  - `list_connections()`: `GET /v1/connections` as is: every connection for an org admin,
+    otherwise those the caller may see; names and classifications, never an address
+    (decision 029).
+  - `create_app(slug, idempotency_key?)`: `POST /v1/apps` with the body `ssc apps create`
+    sends; the caller owns the app. Audited `app.created` with `via_agent` (decision 029).
   - Asking opens a pending request only; another active admin of the org approves (decision
     016, founder default D2) and SSC staff record it. The change is applied afterwards by
     `ssc share` or `PUT .../grants` at the recorded `grants_version`.
@@ -397,15 +407,16 @@ stateless, JSON replies. Code: `api/mcp/`.
   or `VALIDATION_FAILED` with `status: null` for one found before calling the API (the same
   shape as `ssc --json`).
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
-  step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052,
-  left out for now; `get_org_deployment_policy` shows only those), the warm flag (SSC-092) and
+  step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052;
+  `list_connections` is the route's own view), the warm flag (SSC-092) and
   the cell resource flags (SSC-087): no tool sets them, and the cell enable and warm routes
   refuse an agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself, and
   `preflight` checks one.
 - **Wiring.** The SDK's routes are added to the FastAPI router rather than mounted (no
   trailing-slash redirect, metadata at the root); they are not in `openapi.json`. The session
   manager runs in the application's lifespan. `SSC_API_PUBLIC_URL` (default
-  `https://api.delimitus.com`) sets the resource URL and the allowed host.
+  `https://api.delimitus.com`) sets the allowed host and, unless `SSC_MCP_RESOURCE` is set, the
+  resource URL (`<public URL>/mcp`), which the SDK also checks each token's resource against.
 
 ## Adding an endpoint
 

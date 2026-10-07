@@ -49,6 +49,11 @@ Revision 0031 adds ``connection_grant`` (SSC-052), keyed by a ``cgr_`` id, and c
 address stays out of every read, and no credential is stored here.
 Revision 0032 adds ``notification_outbox`` (SSC-049), keyed by an ``ntf_`` id: a recipient, a
 template and a state, never an address or a message.
+Revision 0033 adds ``oauth_code`` (OAuth for remote MCP and the console), keyed by an ``oac_``
+id: digests of authorization codes, never a code. It also adds ``oauth_client``, the single table
+in ``GLOBAL_TABLES``: self-registered OAuth clients, which belong to no org (a client registers
+before anyone signs in), so it has no ``org_id`` and no RLS and holds nothing of any org. And it
+adds ``org_for_workos_organization``, the single function in ``SECURITY_DEFINER_FUNCTIONS``.
 """
 
 from collections.abc import Mapping
@@ -102,12 +107,17 @@ TABLES: Final[frozenset[str]] = frozenset(
         "warm_gateway",
         "connection_grant",  # SSC-052, revision 0031
         "notification_outbox",  # SSC-049, revision 0032
+        "oauth_code",  # SSC gap 7, revision 0033
     }
 )
 
 # The one exception to "org_id plus forced RLS": org ids only, readable by the app role across
 # orgs, insert-only (create_org). Decision 009 amendment; db/README.md rule 14.
 UNSCOPED_TABLES: Final[tuple[str, ...]] = ("org_index",)
+
+# Tables that hold no org's data at all, so they have no org_id and no RLS: self-registered OAuth
+# clients (revision 0033, decision 029; db/README.md rule 17). Kept out of TABLES like org_index.
+GLOBAL_TABLES: Final[tuple[str, ...]] = ("oauth_client",)
 
 # Tables keyed by something other than a type-prefixed id; they have no (org_id, id) pair.
 UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
@@ -142,8 +152,12 @@ PLPGSQL_FUNCTIONS: Final[frozenset[str]] = frozenset(
         "refuse_row_change",
         "refuse_truncate",
         "schedule_terminal_state",
+        "org_for_workos_organization",
     }
 )
+# The PL/pgSQL functions that run as their owner. Each binds orgs its caller did not name, so each
+# is listed here, executable by the app role only (never PUBLIC) and explained in PLPGSQL.md.
+SECURITY_DEFINER_FUNCTIONS: Final[frozenset[str]] = frozenset({"org_for_workos_organization"})
 
 # Privileges of the application role, per table. Nothing on the migration ledger.
 APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
@@ -190,6 +204,8 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "warm_gateway": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "connection_grant": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
     "notification_outbox": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # sent ones pruned
+    "oauth_code": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
+    "oauth_client": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # unused ones pruned
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
 }
 

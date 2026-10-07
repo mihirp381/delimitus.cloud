@@ -4,7 +4,8 @@ Access tokens: ES256 ``ssc-api+jwt`` the API verifies, five minutes, with ``sid`
 session; ``jti`` is the session id, so rate limits and idempotency keys follow the session. A
 session approved for a coding agent (SSC-048) adds ``agent: true`` and ``client_id``, so the API
 records every call as the agent's.
-Refresh tokens (command line only): ``ssc_rt.<org id>.<secret>``, used once; presenting a used one
+Refresh tokens (the command line, MCP clients and the console, never a browser session):
+``ssc_rt.<org id>.<secret>``, used once; presenting a used one
 revokes the session (``refresh_reuse``). Device grants (RFC 8628): the device code is
 ``<org id>.<secret>``, the user code eight consonants. Only SHA-256 digests are stored.
 """
@@ -137,6 +138,7 @@ class Refreshed:
     session_id: str
     refresh_token: str
     agent_client_id: str | None = None
+    token_audience: str | None = None
 
 
 async def rotate_refresh(
@@ -155,10 +157,10 @@ async def rotate_refresh(
             await revoke_session(conn, org_id, str(reused), "refresh_reuse", actor=actor)
         return None
     live = await live_session(conn, org_id, str(session_id))
-    if live is None or live.kind != "cli":
+    if live is None or live.kind not in {"cli", "console"}:
         return None
     refresh = await issue_refresh(conn, org_id, live.id)
-    return Refreshed(live.user_id, live.id, refresh, live.agent_client_id)
+    return Refreshed(live.user_id, live.id, refresh, live.agent_client_id, live.token_audience)
 
 
 # ── device grants (RFC 8628) ─────────────────────────────────────────────────

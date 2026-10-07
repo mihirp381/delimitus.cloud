@@ -10,8 +10,13 @@ rate limits and idempotency keys are scoped to), ``org`` (an ``org_…`` id) and
 (``preview``: the credential never touches production, enforced in ``uow``; any other value is
 refused) and ``sid`` (the auth-host session the credential was issued from, SSC-019: ``uow``
 refuses it once that session is revoked or its person deactivated).
+
+The audience is the API's user audience. A credential issued to a remote MCP client is for the
+agent interface (``Settings.mcp_audience``, decision 029): ``/v1`` takes it only from that
+interface's own in-process calls, which carry :data:`MCP_CALL_SCOPE_KEY` in the ASGI scope.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Any, Final
@@ -28,6 +33,8 @@ from ssc_control.db.bind import check_org_id
 API_TOKEN_TYP: Final = "ssc-api+jwt"  # noqa: S105  (a JOSE typ, not a secret)
 ALGORITHM: Final = "ES256"
 REQUIRED_CLAIMS: Final = ("iss", "aud", "sub", "iat", "exp", "jti", "org", "kind")
+MCP_CALL_SCOPE_KEY: Final = "ssc.mcp_call"
+"""Set (to True) only by the agent interface's in-process transport; no client can set it."""
 
 
 class PrincipalKind(StrEnum):
@@ -59,7 +66,8 @@ class Verifier:
         self._keys: PyJWKSet | None = PyJWKSet.from_dict(jwks) if jwks.get("keys") else None
         self._issuer = issuer
 
-    def verify(self, token: str, audience: str) -> Principal:
+    def verify(self, token: str, audience: str | Sequence[str]) -> Principal:
+        """``audience``: one, or several of which the credential's ``aud`` must name one."""
         try:
             header = jwt.get_unverified_header(token)
         except jwt.PyJWTError as e:
@@ -132,8 +140,11 @@ def _verifier(request: Request) -> tuple[Verifier, str, str]:
 
 
 def user_principal(request: Request) -> Principal:
-    verifier, audience, _ = _verifier(request)
-    return verifier.verify(bearer_token(request), audience)
+    rt = runtime_of(request)
+    audiences = [rt.settings.user_audience]
+    if request.scope.get(MCP_CALL_SCOPE_KEY) is True:
+        audiences.append(rt.settings.mcp_audience)
+    return rt.verifier.verify(bearer_token(request), audiences)
 
 
 def internal_principal(request: Request) -> Principal:
