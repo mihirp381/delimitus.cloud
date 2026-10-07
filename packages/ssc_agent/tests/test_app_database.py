@@ -53,9 +53,16 @@ from ssc_agent.app_database import (
 from ssc_agent.cloud_sql import SQL_API, CloudSqlAdmin
 from ssc_contracts import app_database
 from ssc_contracts.app_env import DATABASE_CA, DATABASE_CA_PATH, DATABASE_URL, PGPASSWORD
-from ssc_shared.runtime import ServiceObservation, ServiceSpec, database_name, secret_id
+from ssc_shared.runtime import (
+    ORG_HEADER,
+    ServiceObservation,
+    ServiceSpec,
+    database_name,
+    secret_id,
+)
 
 PROJECT = "cell-project-test"
+ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 
 
 def service(i: int) -> str:
@@ -438,9 +445,9 @@ def test_the_url_quotes_the_password_and_the_verifier_is_postgres_form() -> None
 
 @pytest.fixture
 async def agent(dbs: CellAppDatabases) -> AsyncIterator[httpx2.AsyncClient]:
-    app = create_app(driver=None, databases=dbs)  # type: ignore[arg-type]
+    app = create_app(driver=None, databases=dbs, org_id=ORG)  # type: ignore[arg-type]
     async with httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=app), base_url="http://agent"
+        transport=httpx2.ASGITransport(app=app), base_url="http://agent", headers={ORG_HEADER: ORG}
     ) as client:
         yield client
 
@@ -510,9 +517,9 @@ async def test_the_agent_drops_only_a_database_whose_service_is_gone_or_stopped(
     dbs: CellAppDatabases, vault: MemoryVault, instance: CloudSqlLike
 ) -> None:
     runtime = Runtime()
-    app = create_app(driver=runtime, databases=dbs)
+    app = create_app(driver=runtime, databases=dbs, org_id=ORG)
     async with httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=app), base_url="http://agent"
+        transport=httpx2.ASGITransport(app=app), base_url="http://agent", headers={ORG_HEADER: ORG}
     ) as agent:
         live, stopped, gone = service(0), service(1), service(2)
         for svc in (live, stopped, gone):
@@ -535,9 +542,9 @@ async def test_the_agent_drops_only_a_database_whose_service_is_gone_or_stopped(
 
 
 async def test_an_agent_without_an_instance_makes_no_database() -> None:
-    app = create_app(driver=None)  # type: ignore[arg-type]
+    app = create_app(driver=None, org_id=ORG)  # type: ignore[arg-type]
     async with httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=app), base_url="http://agent"
+        transport=httpx2.ASGITransport(app=app), base_url="http://agent", headers={ORG_HEADER: ORG}
     ) as client:
         r = await client.post("/v1/databases/ensure", json={"service": service(0)})
     assert (r.status_code, r.json()["code"]) == (503, "DATABASES_NOT_CONFIGURED")

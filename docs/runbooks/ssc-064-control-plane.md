@@ -9,7 +9,7 @@ Never write a secret value to a file, a shell history or a ticket. Each value go
 ## Before you start
 
 - A free billing slot for `ssc-control-prod` (SSC-089).
-- The staging cell from SSC-086 (`<label>` below), applied with `agent_image` and the four gateway settings. Its gateway answers on `*.<label>.delimitusapps.com`.
+- The staging cell from SSC-086 (`<label>` below), applied with `agent_image`, `org_id` and the four gateway settings. Its gateway answers on `*.<label>.delimitusapps.com`.
 - The WorkOS **production** environment's API key and client ID. For each tenant, Okta and Google, you also need:
   - the WorkOS organisation id (`org_01…`), with a verified domain matching the users' emails;
   - the directory id (`directory_01…`) and the SSO connection id (`conn_01…`);
@@ -65,9 +65,11 @@ These are local stack settings; nothing changes until step 4.
 cd infra
 pulumi config set --stack platform control_stages '["prod"]'
 pulumi config set --stack platform public_stage prod
-pulumi config set --stack platform cell_label $LABEL
-pulumi config set --stack platform cell_jwks "$(pulumi stack output --stack c-$LABEL identity_jwks)"
+pulumi config set --stack platform cells "$(jq -cn --arg label $LABEL \
+  --arg jwks "$(pulumi stack output --stack c-$LABEL identity_jwks)" '[{label: $label, jwks: $jwks}]')"
 ```
+
+`cells` lists every cell this control plane serves (decision 029); add one `{label, jwks}` per cell. A stack that still has `cell_label` and `cell_jwks` works as one cell, but remove them before setting `cells`: both at once are refused.
 
 Leave `control_image`, `auth_jwks` and `auth_signing_kid` unset for now. Without them, every service runs the placeholder with no settings, the worker pool runs no instance and there is no migration job.
 
@@ -272,6 +274,8 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
    pulumi config set --stack c-$LABEL org_id <org_…>
    pulumi up --stack c-$LABEL
    ```
+
+   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 029) and refuses any other `WRONG_CELL`. The Okta org has no configured cell, so its deploys fail `CELL_UNAVAILABLE` until it gets one.
 
 5. Finish up:
 

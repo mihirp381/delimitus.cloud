@@ -130,7 +130,12 @@ def test_each_lazy_flag_is_accepted() -> None:
 def test_the_runner_sets_exactly_its_flag_and_nothing_else(
     flag: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    applied = {"probe": "true", "gateway_min": "1", "agent_image": "img@sha256:1"}
+    applied = {
+        "probe": "true",
+        "gateway_min": "1",
+        "agent_image": "img@sha256:1",
+        "org_id": "org_" + "d" * 20,  # the agent serves one org (decision 029)
+    }
     outputs = {"config": _exported(applied, monkeypatch)["config"]}
     fake = FakePulumi(outputs)
     assert deployer.main([LABEL, flag], RUN_ENV, _deployer(fake, tmp_path)) == 0

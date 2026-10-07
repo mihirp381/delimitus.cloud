@@ -24,16 +24,12 @@ from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
 from ssc_control.github.client import GitHubApp
 from ssc_control.metrics import metrics_port
-from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases
 from ssc_control.runtime.cell_agent import MetadataIdTokens
-from ssc_control.runtime.cell_egress import AgentCellEgress, CellEgress
-from ssc_control.runtime.cell_logs import AgentCellLogs
-from ssc_control.runtime.secret_grants import CellSecretGrants, SecretGrants
+from ssc_control.runtime.cells import CellPorts, CellRouter
 from ssc_control.timers.service import Timers
 from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_fs import FsBlobStore
-from ssc_shared.logs import CellLogs
 
 _log = logging.getLogger(__name__)
 
@@ -60,21 +56,22 @@ async def _on_replay(request: Request, exc: Exception) -> Response:
     )
 
 
-def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
+def create_app(
     settings: Settings,
     engine: AsyncEngine | None = None,
     blob_store: BlobStore | None = None,
-    secret_grants: SecretGrants | None = None,
-    app_databases: AppDatabases | None = None,
     *,
-    cell_logs: CellLogs | None = None,
+    cells: CellPorts | None = None,
     github: GitHubApp | None = None,
-    cell_egress: CellEgress | None = None,
 ) -> FastAPI:
+    """The API. ``cells`` None reaches each org's cell through ``settings.cells`` (none when
+    that is empty); tests pass their own."""
     store = blob_store if blob_store is not None else blob_store_for(settings)
     check_fs_allowed(store, settings)
     redaction.install()
     owned_github = github_for(settings) if github is None else None
+    db = engine if engine is not None else make_engine(settings.database_dsn)
+    owned_cells = cells_for(settings, db) if cells is None else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -85,6 +82,8 @@ def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
         rt = app.state.runtime
         if owned_github is not None:
             await owned_github.aclose()
+        if owned_cells is not None:
+            await owned_cells.aclose()
         if isinstance(rt, Runtime) and rt.owns_engine:
             await rt.engine.dispose()
 
@@ -108,18 +107,15 @@ def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
     )
     app.state.runtime = rt = Runtime(
         settings=settings,
-        engine=engine if engine is not None else make_engine(settings.database_dsn),
+        engine=db,
         verifier=Verifier(dict(settings.jwks), settings.issuer),
         limiter=RateLimiter(settings.rate_capacity, settings.rate_refill_per_second),
         owns_engine=engine is None,
         metrics=metrics_port(settings.metrics_key),
         blob_store=store,
         timers=Timers(),
-        secret_grants=secret_grants if secret_grants is not None else secret_grants_for(settings),
-        app_databases=app_databases if app_databases is not None else app_databases_for(settings),
-        cell_logs=cell_logs if cell_logs is not None else cell_logs_for(settings),
+        cells=cells if cells is not None else owned_cells,
         github=github if github is not None else owned_github,
-        cell_egress=cell_egress if cell_egress is not None else cell_egress_for(settings),
     )
     app.add_middleware(RequestIdMiddleware)
     problems.install(app)
@@ -138,30 +134,18 @@ def create_app(  # noqa: PLR0913  (the cell's ports, each optional)
     return app
 
 
-def secret_grants_for(settings: Settings) -> SecretGrants | None:
-    """The cell's grants when both its agent and its intake are configured, else ``None``."""
-    if not (settings.cell_agent_url and settings.secret_intake_url):
+def cells_for(settings: Settings, engine: AsyncEngine) -> CellRouter | None:
+    """Each org's cell among ``settings.cells`` (``SSC_CELLS``), through its agent with this
+    instance's ID tokens; ``None`` when there are none. No I/O."""
+    if not settings.cells:
         return None
-    return CellSecretGrants(
-        agent_url=settings.cell_agent_url,
-        intake_origin=settings.secret_intake_url,
-        agent_tokens=MetadataIdTokens(),
+    return CellRouter(
+        engine,
+        settings.cells,
+        apps_domain=settings.apps_domain,
+        id_tokens=MetadataIdTokens(),
         grant_tokens=MetadataIdTokens(cache=False),
     )
-
-
-def app_databases_for(settings: Settings) -> AppDatabases | None:
-    """The cell's app databases through its agent when it is configured, else ``None``."""
-    if not settings.cell_agent_url:
-        return None
-    return CellAppDatabases(settings.cell_agent_url, MetadataIdTokens())
-
-
-def cell_logs_for(settings: Settings) -> CellLogs | None:
-    """The cell's logs through its agent when it is configured, else ``None``."""
-    if not settings.cell_agent_url:
-        return None
-    return AgentCellLogs(settings.cell_agent_url, MetadataIdTokens())
 
 
 def github_for(settings: Settings) -> GitHubApp | None:
@@ -173,13 +157,6 @@ def github_for(settings: Settings) -> GitHubApp | None:
         private_key=settings.github_private_key,
         base=settings.github_api_base,
     )
-
-
-def cell_egress_for(settings: Settings) -> CellEgress | None:
-    """The cell's egress proxy through its agent when it is configured, else ``None``."""
-    if not settings.cell_agent_url:
-        return None
-    return AgentCellEgress(settings.cell_agent_url, MetadataIdTokens())
 
 
 def _install_openapi(app: FastAPI) -> None:

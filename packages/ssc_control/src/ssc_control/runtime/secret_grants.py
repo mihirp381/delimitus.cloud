@@ -19,6 +19,7 @@ import httpx2
 
 from ssc_control.runtime.cell_agent import IdTokens
 from ssc_shared.redaction import redact
+from ssc_shared.runtime import ORG_HEADER, check_org
 from ssc_shared.secret_grants import GRANT_SECONDS, upload_url
 
 CALL_TIMEOUT_SECONDS: Final = 60.0
@@ -53,6 +54,7 @@ class CellSecretGrants(SecretGrants):
         self,
         *,
         agent_url: str,
+        org_id: str,
         intake_origin: str,
         agent_tokens: IdTokens,
         grant_tokens: IdTokens,
@@ -60,6 +62,7 @@ class CellSecretGrants(SecretGrants):
         wall: Callable[[], float] = time.time,
     ) -> None:
         self._agent = agent_url.rstrip("/")
+        self._org = check_org(org_id)
         self._origin = intake_origin.rstrip("/")
         self._agent_tokens = agent_tokens
         self._grant_tokens = grant_tokens
@@ -80,7 +83,7 @@ class CellSecretGrants(SecretGrants):
             response = await self._client.post(
                 f"{self._agent}/v1/secrets/ensure",
                 json={"secret": secret},
-                headers={"Authorization": f"Bearer {token}"},
+                headers={"Authorization": f"Bearer {token}", ORG_HEADER: self._org},
             )
         except httpx2.HTTPError as exc:
             raise SecretGrantError(f"cell agent ensure: {type(exc).__name__}") from None

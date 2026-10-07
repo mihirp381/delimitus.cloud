@@ -32,7 +32,16 @@ import httpx2
 import pytest
 import test_deploy
 from fastapi import FastAPI
-from ssc_testkit import MemoryVault, SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import (
+    MemoryVault,
+    SigningKey,
+    assert_problem,
+    auth,
+    mint,
+    new_key,
+    with_api_cell,
+    with_cell,
+)
 from test_app_hosts import logged_evidence
 from test_cell_resources import approve, done, jobs
 from test_deploy import (
@@ -65,16 +74,18 @@ from ssc_control.runtime.cell_egress import (
     IssuedCredential,
     record_credential,
 )
+from ssc_control.runtime.cells import StaticCells
 from ssc_control.snapshot.compiler import compile_document
 from ssc_control.snapshot.service import compile_lock
-from ssc_control.worker import CompositionError, cell_egress_from_env
-from ssc_shared.runtime import secret_id, service_name
+from ssc_control.worker import CompositionError, cells_of
+from ssc_shared.runtime import ORG_HEADER, secret_id, service_name
 
 world = test_deploy.world
 tokens = test_deploy.tokens
 b = test_deploy.b
 
 HOSTS = {"hosts": ["api.stripe.com"]}
+ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 PROXY = "10.20.4.10"
 OUTBOUND = "192.0.2.10"
 
@@ -128,8 +139,10 @@ class Agent:
 def agent(*, proxy_address: str | None = PROXY) -> Agent:
     vault = MemoryVault()
     credentials = ProxyCredentials(vault, vault, proxy_address=proxy_address, outbound_ip=OUTBOUND)
-    app = create_agent(cast("Any", None), egress=credentials)
-    client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://agent")
+    app = create_agent(cast("Any", None), egress=credentials, org_id=ORG)
+    client = httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://agent", headers={ORG_HEADER: ORG}
+    )
     return Agent(client, vault)
 
 
@@ -175,12 +188,13 @@ async def test_the_agent_client_checks_what_comes_back() -> None:
         return answers.pop(0)
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    cell = AgentCellEgress("https://agent.example/", tokens_for, client=client)
+    cell = AgentCellEgress("https://agent.example/", tokens_for, org_id=ORG, client=client)
     good = {"credential_id": "abcdefghij01", "sha1": "B" * 27 + "=", "version": "4"}
     answers.append(httpx2.Response(200, json=good))
     assert await cell.issue("env_x") == IssuedCredential(**good)
     assert str(seen[-1].url) == "https://agent.example/v1/egress/issue"
     assert seen[-1].headers["authorization"] == "Bearer id-token-for-https://agent.example"
+    assert seen[-1].headers[ORG_HEADER] == ORG
     for wrong in ({**good, "sha1": "nope"}, {**good, "credential_id": "UPPER"}, {}):
         answers.append(httpx2.Response(200, json=wrong))
         with pytest.raises(CellEgressError):
@@ -195,14 +209,14 @@ async def test_the_agent_client_checks_what_comes_back() -> None:
 
 
 def test_the_worker_composes_cell_egress() -> None:
-    assert cell_egress_from_env({}) is None
-    assert isinstance(cell_egress_from_env({"SSC_RUNTIME_DRIVER": "fake"}), FakeCellEgress)
+    engine = cast("Any", None)
+    assert cells_of({}, engine) is None
+    fake = cells_of({"SSC_RUNTIME_DRIVER": "fake"}, engine)
+    assert isinstance(fake, StaticCells)
+    assert fake.cell is not None
+    assert isinstance(fake.cell.egress, FakeCellEgress)
     with pytest.raises(CompositionError):
-        cell_egress_from_env({"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": "http://a"})
-    made = cell_egress_from_env(
-        {"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": "https://agent.example"}
-    )
-    assert isinstance(made, AgentCellEgress)
+        cells_of({"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": "http://a"}, engine)
 
 
 async def test_an_admin_lists_a_host_and_it_turns_on_egress(b: Bench) -> None:
@@ -326,7 +340,7 @@ async def test_the_console_shows_the_fixed_outbound_address(b: Bench) -> None:
     before = get(b, "/v1/egress", b.t.member).json()
     assert (before["outbound_ip"], before["proxy_address"]) == (None, None)
     app = cast("FastAPI", b.client.app)
-    app.state.runtime = replace(app.state.runtime, cell_egress=FakeCellEgress())
+    with_api_cell(app, egress=FakeCellEgress())
     after = get(b, "/v1/egress", b.t.member).json()
     assert (after["outbound_ip"], after["proxy_address"]) == (OUTBOUND, PROXY)
 
@@ -334,7 +348,7 @@ async def test_the_console_shows_the_fixed_outbound_address(b: Bench) -> None:
         async def info(self) -> Any:
             raise CellEgressError("the agent is down")
 
-    app.state.runtime = replace(app.state.runtime, cell_egress=Down())
+    with_api_cell(app, egress=Down())
     down = get(b, "/v1/egress", b.t.member)
     assert down.status_code == 200
     assert down.json()["outbound_ip"] is None
@@ -419,7 +433,7 @@ async def test_a_deploy_with_outbound_hosts_gets_its_credential_and_waits_for_th
     assert put_host(b, "api.stripe.com", b.t.admin).status_code == 200
     fake = FakeCellEgress()
     cell = test_deploy.Cell(b, b.w.preview)
-    ports = replace(b.ports, cell_egress=fake, snapshot=cell)
+    ports = replace(with_cell(b.ports, egress=fake), snapshot=cell)
     release = await build_release(b, b.w.preview, manifest_of(egress=HOSTS))
     op = start_deploy(b, b.w.preview, release).json()["operation_id"]
     assert await run(b, op, ports) == "healthy"
@@ -456,7 +470,7 @@ async def test_when_the_cell_cannot_make_a_credential_the_deploy_fails(b: Bench)
             raise CellEgressError("the agent has no proxy address")
 
     assert put_host(b, "api.stripe.com", b.t.admin).status_code == 200
-    ports = replace(b.ports, cell_egress=Broken(), snapshot=test_deploy.Cell(b, b.w.preview))
+    ports = replace(with_cell(b.ports, egress=Broken()), snapshot=test_deploy.Cell(b, b.w.preview))
     release = await build_release(b, b.w.preview, manifest_of(egress=HOSTS))
     op = start_deploy(b, b.w.preview, release).json()["operation_id"]
     assert await run(b, op, ports) == "failed"

@@ -23,6 +23,7 @@ from ssc_control.deploy.build_driver import (
 from ssc_control.runtime.cell_agent import IdTokens
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.build import CellBuild, build_to_wire, status_from_wire
+from ssc_shared.runtime import ORG_HEADER, check_org
 
 URL_LIFETIME: Final = timedelta(minutes=10)
 CALL_TIMEOUT_SECONDS: Final = 60.0
@@ -36,10 +37,12 @@ class CellAgentBuildDriver(BuildDriver):
         id_tokens: IdTokens,
         blob_store: BlobStore,
         *,
+        org_id: str,
         client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._url = agent_url.rstrip("/")
         self._id_tokens = id_tokens
+        self._org = check_org(org_id)
         self._store = blob_store
         self._client = client or httpx2.AsyncClient(timeout=CALL_TIMEOUT_SECONDS)
 
@@ -77,7 +80,7 @@ class CellAgentBuildDriver(BuildDriver):
             response = await self._client.post(
                 f"{self._url}/v1/build/{method}",
                 json=body,
-                headers={"Authorization": f"Bearer {token}"},
+                headers={"Authorization": f"Bearer {token}", ORG_HEADER: self._org},
             )
         except httpx2.HTTPError as exc:
             raise BuildDriverError(f"cell agent build {method}: {type(exc).__name__}") from None

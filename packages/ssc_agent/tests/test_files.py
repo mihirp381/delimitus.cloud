@@ -9,9 +9,10 @@ import pytest
 
 from ssc_agent.app import create_app
 from ssc_agent.files import STORAGE_API, CellFiles, environment_files
-from ssc_shared.runtime import ServiceObservation, ServiceSpec
+from ssc_shared.runtime import ORG_HEADER, ServiceObservation, ServiceSpec
 
 BUCKET = "ssc-c-bcdfghjklmnp-cell"
+ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 LIVE, STOPPED, GONE = ("ssc-a-" + c * 20 for c in "lsg")
 
 
@@ -88,8 +89,11 @@ def files_of(storage: Storage) -> CellFiles:
 
 
 def agent(storage: Storage | None, services: dict[str, bool]) -> httpx2.AsyncClient:
-    app = create_app(driver=Runtime(services), files=None if storage is None else files_of(storage))
-    return httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://agent")
+    files = None if storage is None else files_of(storage)
+    app = create_app(driver=Runtime(services), files=files, org_id=ORG)
+    return httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://agent", headers={ORG_HEADER: ORG}
+    )
 
 
 def test_the_prefix_is_the_environment_s() -> None:

@@ -38,7 +38,7 @@ import psycopg
 import pytest
 import test_deploy
 from fastapi.routing import APIRoute
-from ssc_testkit import SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import SigningKey, assert_problem, auth, mint, new_key, with_cell
 from test_deploy import (
     Bench,
     SpyGate,
@@ -108,7 +108,9 @@ def cell(b: Bench) -> Cell:
     fake = FakeCellDeployer()
     set_prod_gate(b, SpyGate("clear"))
     ports = replace(
-        b.ports, cell_deployer=fake, prod_gate=SpyGate("clear"), app_databases=FakeAppDatabases()
+        with_cell(b.ports, app_databases=FakeAppDatabases()),
+        cell_deployer=fake,
+        prod_gate=SpyGate("clear"),
     )
     (row,) = rows_of(b.dsn, b.w.org, "select cell_label from ssc.org")
     return Cell(b, fake, ports, str(row["cell_label"]))
@@ -648,7 +650,7 @@ async def test_the_cell_view_says_who_asked_for_each_resource_and_what_the_datab
         "bigger_tier_monthly_usd": 26,
     }
 
-    ports = replace(cell.ports, app_databases=FakeAppDatabases(ceiling=1))
+    ports = with_cell(cell.ports, app_databases=FakeAppDatabases(ceiling=1))
     cell = replace(cell, ports=ports)
     op = await stateful_deploy(cell, b.w.preview)
     assert await run(b, op, ports) == "running"

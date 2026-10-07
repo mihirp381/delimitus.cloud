@@ -29,7 +29,7 @@ from ssc_contracts.ids import new_id
 from ssc_control.audit import Actor, NewEvent, append_event
 from ssc_control.runtime.cell_agent import IdTokens
 from ssc_shared.redaction import redact
-from ssc_shared.runtime import SECRET_VERSION
+from ssc_shared.runtime import ORG_HEADER, SECRET_VERSION, check_org
 
 CALL_TIMEOUT_SECONDS: Final = 60.0
 
@@ -72,10 +72,16 @@ class AgentCellEgress(CellEgress):
     """``CellEgress`` through one cell's agent, with an ID token for its URL on every call."""
 
     def __init__(
-        self, agent_url: str, id_tokens: IdTokens, *, client: httpx2.AsyncClient | None = None
+        self,
+        agent_url: str,
+        id_tokens: IdTokens,
+        *,
+        org_id: str,
+        client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._url = agent_url.rstrip("/")
         self._id_tokens = id_tokens
+        self._org = check_org(org_id)
         self._client = client or httpx2.AsyncClient(timeout=CALL_TIMEOUT_SECONDS)
 
     async def issue(self, environment_id: str) -> IssuedCredential:
@@ -95,7 +101,7 @@ class AgentCellEgress(CellEgress):
             response = await self._client.post(
                 f"{self._url}/v1/egress/{method}",
                 json=dict(payload),
-                headers={"Authorization": f"Bearer {token}"},
+                headers={"Authorization": f"Bearer {token}", ORG_HEADER: self._org},
             )
         except httpx2.HTTPError as exc:
             raise CellEgressError(f"cell agent egress {method}: {type(exc).__name__}") from None

@@ -31,7 +31,7 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.routes.v1.deployments import start_deployment
-from ssc_control.api.runtime import runtime_of
+from ssc_control.api.runtime import cell_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.runtime.app_databases import (
     AppDatabaseError,
@@ -108,8 +108,14 @@ async def _environment(
     return env
 
 
-async def _usage(request: Request, environment_id: str) -> DatabaseUsage | None:
-    databases = runtime_of(request).app_databases
+async def _usage(request: Request, org_id: str, environment_id: str) -> DatabaseUsage | None:
+    """What the cell says of the database; None when it cannot say, or the org's cell is not
+    configured here."""
+    try:
+        cell = await cell_of(request, org_id)
+    except Refusal:
+        return None
+    databases = None if cell is None else cell.app_databases
     if databases is None:
         return None
     try:
@@ -131,7 +137,7 @@ async def get_database(
     """The environment's database as far as it is known: never a password or a URL."""
     await _environment(uow, app_id, environment_id)
     row = await database_record(uow.conn, org_id=uow.org_id, environment_id=environment_id)
-    usage = await _usage(request, environment_id) if row is not None else None
+    usage = await _usage(request, uow.org_id, environment_id) if row is not None else None
     return DatabaseOut(
         environment_id=environment_id,
         present=row is not None,
@@ -166,6 +172,7 @@ async def get_database(
             ErrorCode.AGENT_SESSION_REFUSED,
             ErrorCode.DEPLOYMENT_IN_FLIGHT,
             ErrorCode.DATABASE_UNAVAILABLE,
+            ErrorCode.CELL_UNAVAILABLE,
         ),
     },
 )
@@ -186,7 +193,8 @@ async def rotate_database(
     in_flight = (await uow.conn.execute(_IN_FLIGHT, params)).scalar()
     if in_flight is not None:
         raise Refusal(ErrorCode.DEPLOYMENT_IN_FLIGHT, evidence={"operation_id": in_flight})
-    databases = runtime_of(request).app_databases
+    cell = await cell_of(request, uow.org_id)
+    databases = None if cell is None else cell.app_databases
     if databases is None:
         raise Refusal(ErrorCode.DATABASE_UNAVAILABLE, evidence={"reason": "not_configured"})
     try:

@@ -23,7 +23,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
@@ -44,6 +44,8 @@ from ssc_testkit import (
     find_secret_in,
     mint,
     new_key,
+    with_api_cell,
+    with_cell,
 )
 from test_deploy import (
     AGENT,
@@ -160,11 +162,16 @@ async def cell(b: Bench, instance: CloudSqlLike) -> AsyncIterator[Cell]:
     writer = CellSecretWriter(PROJECT, access_token, client=mock())
     sql, passwords = LocalAdminSql(instance), Passwords()
     agent = agent_databases.CellAppDatabases(sql, custody, writer, passwords=passwords)
-    spy = Spy(httpx2.ASGITransport(app=create_agent(cloud_run, None, custody, agent)))
-    runtime = CellAgentDriver(AGENT, agent_token, client=httpx2.AsyncClient(transport=spy))
-    databases = CellAppDatabases(AGENT, agent_token, client=httpx2.AsyncClient(transport=spy))
-    app = cast("FastAPI", b.client.app)
-    app.state.runtime = replace(app.state.runtime, app_databases=databases)
+    spy = Spy(
+        httpx2.ASGITransport(app=create_agent(cloud_run, None, custody, agent, org_id=b.w.org))
+    )
+    runtime = CellAgentDriver(
+        AGENT, agent_token, org_id=b.w.org, client=httpx2.AsyncClient(transport=spy)
+    )
+    databases = CellAppDatabases(
+        AGENT, agent_token, org_id=b.w.org, client=httpx2.AsyncClient(transport=spy)
+    )
+    with_api_cell(cast("FastAPI", b.client.app), app_databases=databases)
     yield Cell(run, sm, clock, sql, passwords, agent, spy, runtime, databases)
     await runtime.aclose()
     await databases.aclose()
@@ -188,7 +195,7 @@ def database_ready(dsns: Dsns, org: str) -> None:
 
 
 async def run_through_the_cell(b: Bench, cell: Cell, op: str) -> str:
-    ports = replace(b.ports, runtime_driver=cell.runtime, app_databases=cell.databases)
+    ports = with_cell(b.ports, runtime=cell.runtime, app_databases=cell.databases)
     health = HealthWait(within=5.0, every=HEALTH_POLL_SECONDS, sleep=cell.clock.health_sleep)
     return await run_deployment(ports, org_id=b.w.org, deployment_id=op, health=health)
 
@@ -358,7 +365,7 @@ async def test_a_stateful_deploy_with_no_agent_for_databases_fails_unavailable(
 async def test_a_fake_database_is_recorded_and_pinned_once(b: Bench, dsns: Dsns) -> None:
     database_ready(dsns, b.w.org)
     fake = FakeAppDatabases()
-    ports = replace(b.ports, app_databases=fake)
+    ports = with_cell(b.ports, app_databases=fake)
     release = await build_release(b, b.w.preview, manifest_of(**STATEFUL))
     for _ in range(2):
         op = start_deploy(b, b.w.preview, release).json()["operation_id"]
@@ -386,8 +393,7 @@ async def test_rotation_needs_a_person_who_may_change_the_environment_and_a_data
     busy = start_deploy(b, b.w.preview, release).json()["operation_id"]
     assert_problem(post(b, path, {}, None), ErrorCode.DEPLOYMENT_IN_FLIGHT)
     assert await run_through_the_cell(b, cell, busy) == "healthy"
-    app = cast("FastAPI", b.client.app)
-    app.state.runtime = replace(app.state.runtime, app_databases=None)
+    with_api_cell(cast("FastAPI", b.client.app), app_databases=None)
     assert_problem(post(b, path, {}, None), ErrorCode.DATABASE_UNAVAILABLE)
     shown = get(b, database_path(b, b.w.preview)).json()
     assert (shown["present"], shown["size_bytes"], shown["places_total"]) == (True, None, None)

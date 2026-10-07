@@ -43,7 +43,17 @@ from fastapi import FastAPI
 from httpx import Response
 from jwt.algorithms import RSAAlgorithm
 from sqlalchemy.engine import make_url
-from ssc_testkit import Dsns, SigningKey, assert_problem, auth, find_secret_in, mint, new_key
+from ssc_testkit import (
+    Dsns,
+    SigningKey,
+    assert_problem,
+    auth,
+    find_secret_in,
+    mint,
+    new_key,
+    with_api_cell,
+    with_cell,
+)
 from test_deploy import (
     AGENT,
     CELL_RUNTIME,
@@ -87,6 +97,7 @@ from ssc_control.runtime.reconciler import load_desired, reconcile_env
 from ssc_control.runtime.secret_grants import CellSecretGrants, SecretGrants
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_shared.runtime import (
+    ORG_HEADER,
     ServiceSpec,
     connection_secret_id,
     secret_id,
@@ -100,6 +111,7 @@ tokens = test_deploy.tokens
 b = test_deploy.b
 
 INTAKE = "https://ssc--secrets.cell.test"
+ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 CONTROL_SA = f"ssc-control@{PROJECT}.iam.gserviceaccount.com"
 VALUE = "fake-secret-value-for-tests-0001"
 ROTATED = "fake-secret-value-for-tests-0002"
@@ -237,7 +249,7 @@ class Cell:
         return self.run.handler(request)
 
 
-def make_agent(cell_handler: Any, run: CloudRunEmulator, sleep: Any) -> FastAPI:
+def make_agent(cell_handler: Any, run: CloudRunEmulator, sleep: Any, org_id: str) -> FastAPI:
     def mock() -> httpx2.AsyncClient:
         return httpx2.AsyncClient(transport=httpx2.MockTransport(cell_handler))
 
@@ -245,7 +257,7 @@ def make_agent(cell_handler: Any, run: CloudRunEmulator, sleep: Any) -> FastAPI:
     custody = CellSecretCustody(
         CELL_RUNTIME, access_token, cloud_run.ensure_identity, client=mock(), sleep=sleep
     )
-    return create_agent(cloud_run, None, custody)
+    return create_agent(cloud_run, None, custody, org_id=org_id)
 
 
 @pytest.fixture
@@ -259,16 +271,19 @@ async def cell(b: Bench, google: Google) -> AsyncIterator[Cell]:
             return sm.handler(request)
         return run.handler(request)
 
-    api_agent = Spy(httpx2.ASGITransport(app=make_agent(handler, run, clock.driver_sleep)))
+    api_agent = Spy(httpx2.ASGITransport(app=make_agent(handler, run, clock.driver_sleep, b.w.org)))
     grants = CellSecretGrants(
         agent_url=AGENT,
+        org_id=b.w.org,
         intake_origin=INTAKE,
         agent_tokens=agent_token,
         grant_tokens=google.mint,
         client=httpx2.AsyncClient(transport=api_agent),
     )
-    worker_agent = httpx2.ASGITransport(app=make_agent(handler, run, clock.driver_sleep))
-    runtime = CellAgentDriver(AGENT, agent_token, client=httpx2.AsyncClient(transport=worker_agent))
+    worker_agent = httpx2.ASGITransport(app=make_agent(handler, run, clock.driver_sleep, b.w.org))
+    runtime = CellAgentDriver(
+        AGENT, agent_token, org_id=b.w.org, client=httpx2.AsyncClient(transport=worker_agent)
+    )
     writer = CellSecretWriter(
         PROJECT, access_token, client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     )
@@ -276,8 +291,7 @@ async def cell(b: Bench, google: Google) -> AsyncIterator[Cell]:
     intake = httpx2.AsyncClient(
         transport=httpx2.ASGITransport(app=create_intake(writer, checks, INTAKE))
     )
-    app = cast("FastAPI", b.client.app)
-    app.state.runtime = replace(app.state.runtime, secret_grants=grants)
+    with_api_cell(cast("FastAPI", b.client.app), secret_grants=grants)
     yield Cell(run, sm, clock, intake, api_agent, grants, runtime)
     await intake.aclose()
     await grants.aclose()
@@ -324,7 +338,7 @@ async def set_secret(
 
 
 async def run_through_the_cell(b: Bench, cell: Cell, op: str) -> str:
-    ports = replace(b.ports, runtime_driver=cell.runtime)
+    ports = with_cell(b.ports, runtime=cell.runtime)
     health = HealthWait(within=5.0, every=HEALTH_POLL_SECONDS, sleep=cell.clock.health_sleep)
     return await run_deployment(ports, org_id=b.w.org, deployment_id=op, health=health)
 
@@ -590,13 +604,13 @@ async def test_a_failing_agent_grants_nothing(b: Bench, google: Google) -> None:
 
     grants = CellSecretGrants(
         agent_url=AGENT,
+        org_id=b.w.org,
         intake_origin=INTAKE,
         agent_tokens=agent_token,
         grant_tokens=google.mint,
         client=httpx2.AsyncClient(transport=httpx2.MockTransport(down)),
     )
-    app = cast("FastAPI", b.client.app)
-    app.state.runtime = replace(app.state.runtime, secret_grants=grants)
+    with_api_cell(cast("FastAPI", b.client.app), secret_grants=grants)
     assert_problem(grant(b, b.w.preview), ErrorCode.SECRETS_UNAVAILABLE)
     await grants.aclose()
 
@@ -684,18 +698,18 @@ def test_the_intake_needs_its_whole_configuration() -> None:
 
 
 async def test_the_agent_has_one_secret_method(cell: Cell) -> None:
-    app = make_agent(cell.handler, cell.run, cell.clock.driver_sleep)
+    app = make_agent(cell.handler, cell.run, cell.clock.driver_sleep, ORG)
     async with httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=app), base_url=AGENT
+        transport=httpx2.ASGITransport(app=app), base_url=AGENT, headers={ORG_HEADER: ORG}
     ) as client:
         for method in ("access", "get", "read", "versions", "addVersion", "remove", "delete"):
             assert (await client.post(f"/v1/secrets/{method}", json={})).status_code == 404
         r = await client.post("/v1/secrets/ensure", json={"secret": "projects-x"})
         assert r.status_code == 400
         assert (await client.get("/v1/secrets/ensure")).status_code == 405
-    bare = create_agent(CloudRunDriver(CELL_RUNTIME, access_token), None, None)
+    bare = create_agent(CloudRunDriver(CELL_RUNTIME, access_token), None, None, org_id=ORG)
     async with httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=bare), base_url=AGENT
+        transport=httpx2.ASGITransport(app=bare), base_url=AGENT, headers={ORG_HEADER: ORG}
     ) as client:
         r = await client.post("/v1/secrets/ensure", json={"secret": "x"})
         assert (r.status_code, r.json()["code"]) == (503, "SECRETS_NOT_CONFIGURED")

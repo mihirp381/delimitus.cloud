@@ -2,6 +2,7 @@
 
 from typing import Final, Literal
 
+from ssc_shared import hosts
 from ssc_shared.hosts import cell_project as shared_cell_project
 from ssc_shared.hosts import check_cell_label
 
@@ -104,8 +105,8 @@ LANDING_SA: Final = "ssc-landing"
 LANDING_BUCKET_PURPOSE: Final = "pilot-requests"
 APPS_ZONE: Final = "delimitusapps"
 PLATFORM_ZONE: Final = "delimitus"
-AGENT_HOST_LABEL: Final = "ssc--agent"
-INTAKE_HOST_LABEL: Final = "ssc--secrets"
+AGENT_HOST_LABEL: Final = hosts.AGENT_HOST_LABEL
+INTAKE_HOST_LABEL: Final = hosts.INTAKE_HOST_LABEL
 
 
 def control_project(stage: Stage) -> str:
@@ -157,22 +158,23 @@ def cell_wildcard(label: str) -> str:
 
 def agent_host(label: str) -> str:
     """The cell agent's reserved host (SSC-095). A slug never holds ``--``, so no app is ever it."""
-    return f"{AGENT_HOST_LABEL}.{host_suffix(label)}"
+    return hosts.agent_host(label, APPS_DOMAIN)
 
 
 def agent_url(label: str) -> str:
-    """The cell agent's URL through the cell's load balancer, and its ID token audience."""
-    return f"https://{agent_host(label)}"
+    """The cell agent's URL through the cell's load balancer, and its ID token audience. The
+    control plane names it with the same ``ssc_shared.hosts`` rule (``SSC_CELLS``)."""
+    return hosts.agent_url(label, APPS_DOMAIN)
 
 
 def intake_host(label: str) -> str:
     """The secret intake's reserved host (SSC-026), held off app slugs as the agent's is."""
-    return f"{INTAKE_HOST_LABEL}.{host_suffix(label)}"
+    return hosts.intake_host(label, APPS_DOMAIN)
 
 
 def intake_url(label: str) -> str:
     """The secret intake's origin through the cell's load balancer, the audience of each grant."""
-    return f"https://{intake_host(label)}"
+    return hosts.intake_url(label, APPS_DOMAIN)
 
 
 def origin(host: str) -> str:
@@ -181,7 +183,7 @@ def origin(host: str) -> str:
 
 def identity_issuer(label: str) -> str:
     """The ``iss`` of a cell's app identity tokens; ``<this>/jwks.json`` serves its public keys."""
-    return f"https://{KEYS_HOST}/{check_cell_label(label)}"
+    return hosts.identity_issuer(label)
 
 
 def deployer_job() -> str:

@@ -19,6 +19,9 @@ Ticket "done when" checks:
         test_every_setting_of_the_worker_is_wired, test_every_setting_of_the_auth_host_is_wired
   * api, auth and keys hosts with certificate and records
         -> test_the_public_hosts_are_on_one_load_balancer, test_keys_serves_each_cell_jwks
+  * every cell the control plane serves, as SSC_CELLS (decision 029)
+        -> test_the_cells_are_one_compact_setting, test_the_legacy_cell_is_a_one_cell_list,
+        test_the_cells_are_validated, test_the_control_plane_names_cell_hosts_as_the_cells_do
 """
 
 import json
@@ -29,6 +32,7 @@ import pytest
 
 from mockcloud import Declared, entry_address, one, run
 from ssc_infra import control, naming
+from ssc_shared import hosts
 
 PLATFORM_FOLDER = "333333333333"
 IMAGE = f"{naming.platform_registry()}/control@sha256:{'1' * 64}"
@@ -41,27 +45,38 @@ LABEL = "testcell09"
 CELL_JWKS = json.dumps(
     {"keys": [{"kty": "EC", "crv": "P-256", "x": "CC", "y": "DD", "kid": "gw-1", "alg": "ES256"}]}
 )
+LABEL2 = "othercell7"
+CELL2_JWKS = json.dumps(
+    {"keys": [{"kty": "EC", "crv": "P-256", "x": "EE", "y": "FF", "kid": "gw-2"}]}
+)
+CELLS = [{"label": LABEL, "jwks": CELL_JWKS}, {"label": LABEL2, "jwks": CELL2_JWKS}]
+SSC_CELLS = (
+    '{"othercell7":{"identity_jwks":{"keys":[{"crv":"P-256","kid":"gw-2","kty":"EC","x":"EE",'
+    '"y":"FF"}]}},"testcell09":{"identity_jwks":{"keys":[{"alg":"ES256","crv":"P-256",'
+    '"kid":"gw-1","kty":"EC","x":"CC","y":"DD"}]}}}'
+)
 RELEASE = {
     "platform_folder_id": PLATFORM_FOLDER,
     "control_stages": json.dumps(["staging", "prod"]),
     "control_image": IMAGE,
     "auth_jwks": AUTH_JWKS,
     "auth_signing_kid": KID,
-    "cell_label": LABEL,
-    "cell_jwks": CELL_JWKS,
+    "cells": json.dumps(CELLS),
     "deployer_image": DEPLOYER_IMAGE,
 }
 WORKER_CELL = {
     "SSC_RUNTIME_DRIVER": "cell_agent",
     "SSC_BUILD_DRIVER": "cell_agent",
-    "SSC_CELL_AGENT_URL": naming.agent_url(LABEL),
-    "SSC_IDENTITY_JWKS": CELL_JWKS,
-    "SSC_IDENTITY_ISSUER": f"https://keys.delimitus.com/{LABEL}",
+    "SSC_CELLS": SSC_CELLS,
 }
-API_CELL = {
-    "SSC_CELL_AGENT_URL": naming.agent_url(LABEL),
-    "SSC_SECRET_INTAKE_URL": naming.intake_url(LABEL),
-}
+API_CELL = {"SSC_CELLS": SSC_CELLS}
+RETIRED = (
+    "SSC_CELL_AGENT_URL",
+    "SSC_SECRET_INTAKE_URL",
+    "SSC_IDENTITY_JWKS",
+    "SSC_IDENTITY_ISSUER",
+)
+"""The one cell's settings before ``SSC_CELLS`` (decision 029), set on no process now."""
 TIMER_KID = "timer-202610"
 SERVICE = "gcp:cloudrunv2/service:Service"
 POOL = "gcp:cloudrunv2/workerPool:WorkerPool"
@@ -354,31 +369,87 @@ def test_the_timer_key_id_is_a_plain_name(kid: str) -> None:
 
 
 def test_with_no_public_stage_each_stage_is_given_the_cell() -> None:
-    cfg = control.ControlConfig(
-        stages=naming.STAGES, cell_label=LABEL, cell_jwks=CELL_JWKS, public=None
-    )
+    cells = control.cell_settings(CELLS, None, None)
+    cfg = control.ControlConfig(stages=naming.STAGES, cells=cells, public=None)
     for stage in naming.STAGES:
         assert API_CELL.items() <= control.api_env(cfg, stage, "signer").items()
         assert WORKER_CELL.items() <= control.worker_env(cfg, stage, "signer").items()
 
 
 def test_without_a_cell_or_the_deployer_the_worker_runs_none_of_them() -> None:
-    config = {k: v for k, v in RELEASE.items() if k not in control.CELL_SETTINGS}
+    config = {k: v for k, v in RELEASE.items() if k != control.CELLS}
     del config["deployer_image"]
     declared = run(naming.PLATFORM_STACK, config)
     plain, _ = _env(_workload(declared, POOL, "prod", "ssc-worker"))
-    for unset in (
-        "SSC_CELL_DEPLOYER",
-        "SSC_RUNTIME_DRIVER",
-        "SSC_BUILD_DRIVER",
-        "SSC_CELL_AGENT_URL",
-        "SSC_IDENTITY_JWKS",
-        "SSC_IDENTITY_ISSUER",
-    ):
+    for unset in ("SSC_CELL_DEPLOYER", "SSC_RUNTIME_DRIVER", "SSC_BUILD_DRIVER", "SSC_CELLS"):
         assert unset not in plain
     api, _ = _env(_workload(declared, SERVICE, "prod", "ssc-api"))
-    assert "SSC_CELL_AGENT_URL" not in api
-    assert "SSC_SECRET_INTAKE_URL" not in api
+    assert "SSC_CELLS" not in api
+
+
+def test_the_cells_are_one_compact_setting(released: list[Declared]) -> None:
+    """Each cell's label and identity JWKS, and nothing the label alone names: the control
+    plane derives the agent, intake and issuer from it (``ssc_shared.hosts``)."""
+    for name, type_ in (("ssc-api", SERVICE), ("ssc-worker", POOL)):
+        plain, _ = _env(_workload(released, type_, "prod", name))
+        assert plain["SSC_CELLS"] == SSC_CELLS
+        assert json.loads(SSC_CELLS) == {
+            LABEL: {"identity_jwks": json.loads(CELL_JWKS)},
+            LABEL2: {"identity_jwks": json.loads(CELL2_JWKS)},
+        }
+        assert not set(RETIRED) & set(plain)
+    reordered = run(naming.PLATFORM_STACK, RELEASE | {"cells": json.dumps(CELLS[::-1])})
+    plain, _ = _env(_workload(reordered, POOL, "prod", "ssc-worker"))
+    assert plain["SSC_CELLS"] == SSC_CELLS
+
+
+def test_the_legacy_cell_is_a_one_cell_list() -> None:
+    legacy = {k: v for k, v in RELEASE.items() if k != control.CELLS}
+    declared = run(naming.PLATFORM_STACK, legacy | {"cell_label": LABEL, "cell_jwks": CELL_JWKS})
+    plain, _ = _env(_workload(declared, POOL, "prod", "ssc-worker"))
+    one = control.cells_env([control.Cell(label=LABEL, jwks=CELL_JWKS)])
+    assert plain["SSC_CELLS"] == one
+    assert json.loads(one) == {LABEL: {"identity_jwks": json.loads(CELL_JWKS)}}
+    assert not set(RETIRED) & set(plain)
+    (obj,) = [d for d in declared if d.type == "gcp:storage/bucketObject:BucketObject"]
+    assert obj.name == f"control-prod-keys-{LABEL}"
+
+
+@pytest.mark.parametrize(
+    ("cells", "message"),
+    [
+        (json.dumps({"label": LABEL, "jwks": CELL_JWKS}), "must be a list"),
+        (json.dumps([{"label": LABEL}]), "label, jwks"),
+        (json.dumps([{"label": LABEL, "jwks": CELL_JWKS, "url": "x"}]), "label, jwks"),
+        (json.dumps([{"label": LABEL, "jwks": json.loads(CELL_JWKS)}]), "identity_jwks output"),
+        (json.dumps([{"label": "Not A Label", "jwks": CELL_JWKS}]), "label"),
+        (json.dumps([{"label": LABEL, "jwks": json.dumps({"keys": [{"d": "x"}]})}]), "public"),
+        (json.dumps([CELLS[0], CELLS[0]]), "each label once"),
+    ],
+)
+def test_the_cells_are_validated(cells: str, message: str) -> None:
+    with pytest.raises(Exception, match=message):
+        run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER, "cells": cells})
+
+
+def test_the_cells_replace_the_legacy_cell() -> None:
+    with pytest.raises(Exception, match="not both"):
+        run(naming.PLATFORM_STACK, RELEASE | {"cell_label": LABEL, "cell_jwks": CELL_JWKS})
+
+
+@pytest.mark.parametrize("label", [LABEL, LABEL2, "a1234567", "z" * 16])
+def test_the_control_plane_names_cell_hosts_as_the_cells_do(label: str) -> None:
+    """The control plane reads only a label from ``SSC_CELLS`` and names the agent, the intake
+    and the issuer with ``ssc_shared.hosts``; the cell stack names them with ``naming``."""
+    assert naming.agent_url(label) == hosts.agent_url(label, naming.APPS_DOMAIN)
+    assert naming.agent_host(label) == hosts.agent_host(label, naming.APPS_DOMAIN)
+    assert naming.intake_url(label) == hosts.intake_url(label, naming.APPS_DOMAIN)
+    assert naming.intake_host(label) == hosts.intake_host(label, naming.APPS_DOMAIN)
+    assert naming.identity_issuer(label) == hosts.identity_issuer(label)
+    assert hosts.label_of_issuer(naming.identity_issuer(label)) == label
+    assert naming.agent_host(label) == f"ssc--agent.{naming.host_suffix(label)}"
+    assert naming.intake_host(label) == f"ssc--secrets.{naming.host_suffix(label)}"
+    assert naming.identity_issuer(label) == f"https://{naming.KEYS_HOST}/{label}"
 
 
 def test_the_placeholder_runs_until_the_release_is_set(bare: list[Declared]) -> None:
@@ -447,6 +518,7 @@ def test_every_process_runs_the_pinned_image(released: list[Declared]) -> None:
             "auth_signing_kid",
         ),
         ({"cell_label": LABEL}, "set both"),
+        ({"cell_jwks": CELL_JWKS}, "set both"),
         ({"cell_label": "Not A Label", "cell_jwks": CELL_JWKS}, "label"),
         ({"cell_label": LABEL, "cell_jwks": json.dumps({"keys": [{"d": "x"}]})}, "cell_jwks"),
         ({"control_stages": json.dumps(["dev"])}, "control_stages"),
@@ -558,11 +630,16 @@ def test_the_public_hosts_are_on_one_load_balancer(released: list[Declared]) -> 
 
 
 def test_keys_serves_each_cell_jwks(released: list[Declared]) -> None:
-    (obj,) = [d for d in released if d.type == "gcp:storage/bucketObject:BucketObject"]
-    assert obj.inputs["bucket"] == "ssc-control-prod-keys"
-    assert obj.inputs["name"] == f"{LABEL}/jwks.json"
-    assert obj.inputs["content"]["value"] == CELL_JWKS
-    assert obj.inputs["contentType"] == "application/json"
+    objects = {
+        d.name: d.inputs for d in released if d.type == "gcp:storage/bucketObject:BucketObject"
+    }
+    assert set(objects) == {f"control-prod-keys-{LABEL}", f"control-prod-keys-{LABEL2}"}
+    for label, jwks in ((LABEL, CELL_JWKS), (LABEL2, CELL2_JWKS)):
+        obj = objects[f"control-prod-keys-{label}"]
+        assert obj["bucket"] == "ssc-control-prod-keys"
+        assert obj["name"] == f"{label}/jwks.json"
+        assert obj["content"]["value"] == jwks
+        assert obj["contentType"] == "application/json"
     (backend,) = _of(released, "gcp:compute/backendBucket:BackendBucket", "prod")
     assert backend.inputs["bucketName"] == "ssc-control-prod-keys"
     buckets = {

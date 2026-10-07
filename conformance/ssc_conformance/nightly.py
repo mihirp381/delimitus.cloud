@@ -9,7 +9,9 @@
    one minute, counted from the drift to the converged observation.
 
 Configuration, all required: ``SSC_PROBE_PROJECT`` (the cell project), ``SSC_PROBE_AGENT_URL``,
-and ``SSC_PROBE_DIGEST`` (the probe image in the cell's ``ssc-apps/apps`` repository).
+``SSC_PROBE_ORG_ID`` (the org the cell serves: the agent takes calls and specs for it alone,
+decision 029) and ``SSC_PROBE_DIGEST`` (the probe image in the cell's ``ssc-apps/apps``
+repository).
 ``SSC_CONTROL_SA`` names the identity the agent accepts; the run mints its ID tokens. Without
 it, an operator calls the agent as themselves. The caller's access token comes from
 ``SSC_ACCESS_TOKEN`` (the nightly workflow's federated token) or else ``gcloud``; it needs the
@@ -55,13 +57,21 @@ from ssc_control.runtime.cell_agent import AccessTokens, CellAgentDriver, Impers
 from ssc_control.runtime.driver import REQUEST_CONCURRENCY, REQUEST_TIMEOUT_SECONDS
 from ssc_control.runtime.jobs import TICK_CRON
 from ssc_control.runtime.reconciler import Outcome, plan_one_change, reconcile_once
-from ssc_shared.runtime import RuntimeDriver, RuntimeDriverError, ServiceSpec, service_name
+from ssc_shared.runtime import (
+    ORG_LABEL,
+    RuntimeDriver,
+    RuntimeDriverError,
+    ServiceSpec,
+    check_org,
+    service_name,
+)
 
 log = logging.getLogger("ssc_conformance.nightly")
 
 ENV: Final = {
     "project": "SSC_PROBE_PROJECT",
     "agent_url": "SSC_PROBE_AGENT_URL",
+    "org_id": "SSC_PROBE_ORG_ID",
     "probe_digest": "SSC_PROBE_DIGEST",
 }
 CONTROL_SA_ENV: Final = "SSC_CONTROL_SA"
@@ -106,6 +116,7 @@ class NightlyError(Exception):
 class NightlyConfig:
     project: str
     agent_url: str
+    org_id: str
     probe_digest: str
     control_sa: str | None
     peer_cell: Mapping[str, str] | None
@@ -118,6 +129,10 @@ def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
     missing = [name for name in ENV.values() if not environ.get(name)]
     if missing:
         raise NightlyError(f"missing {', '.join(missing)}")
+    try:
+        check_org(environ[ENV["org_id"]])
+    except ValueError:
+        raise NightlyError(f"{ENV['org_id']} is not an org id") from None
     peer = {job: environ[name] for name, job in PEER_CELL_ENV.items() if environ.get(name)}
     if peer and len(peer) != len(PEER_CELL_ENV):
         raise NightlyError(f"set all of {', '.join(PEER_CELL_ENV)} or none")
@@ -136,7 +151,7 @@ def config_from_env(environ: Mapping[str, str]) -> NightlyConfig:
     )
 
 
-def probe_spec(env_id: str, digest: str) -> ServiceSpec:
+def probe_spec(env_id: str, digest: str, org_id: str) -> ServiceSpec:
     return ServiceSpec(
         service=service_name(env_id),
         image_digest=digest,
@@ -149,7 +164,7 @@ def probe_spec(env_id: str, digest: str) -> ServiceSpec:
         concurrency=REQUEST_CONCURRENCY,
         min_instances=0,
         max_instances=1,
-        labels={"ssc-env": env_id, "ssc-probe": "true"},
+        labels={ORG_LABEL: org_id, "ssc-env": env_id, "ssc-probe": "true"},
     )
 
 
@@ -398,6 +413,7 @@ async def nightly(  # noqa: PLR0913  (keyword-only)
     job: ProbeJob,
     digest: str,
     *,
+    org_id: str,
     peer_cell: Mapping[str, str] | None = None,
     sleep: Sleep = asyncio.sleep,
     clock: Clock = time.monotonic,
@@ -406,7 +422,7 @@ async def nightly(  # noqa: PLR0913  (keyword-only)
     datagw_url: str | None = None,
     datagw_connection: str | None = None,
 ) -> Report:
-    specs = [probe_spec(env_id, digest) for env_id in PROBE_ENVS]
+    specs = [probe_spec(env_id, digest, org_id) for env_id in PROBE_ENVS]
     for spec in specs:
         await converge(
             driver, spec, every=POLL_SECONDS, limit=DEPLOY_LIMIT_SECONDS, sleep=sleep, clock=clock
@@ -477,13 +493,14 @@ async def main_async(environ: Mapping[str, str]) -> Report:
     id_tokens = (
         ImpersonatedIdTokens(cfg.control_sa, access) if cfg.control_sa else operator_id_token
     )
-    driver = CellAgentDriver(cfg.agent_url, id_tokens)
+    driver = CellAgentDriver(cfg.agent_url, id_tokens, org_id=cfg.org_id)
     job = ProbeJob(cfg.project, access)
     try:
         report = await nightly(
             driver,
             job,
             cfg.probe_digest,
+            org_id=cfg.org_id,
             peer_cell=cfg.peer_cell,
             tls_host=cfg.tls_host,
             datagw_url=cfg.datagw_url,

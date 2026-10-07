@@ -16,7 +16,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
@@ -25,7 +25,7 @@ import psycopg
 import pytest
 import test_deploy
 from fastapi import FastAPI
-from ssc_testkit import SigningKey, assert_problem, mint, new_key
+from ssc_testkit import SigningKey, assert_problem, mint, new_key, with_api_cell
 from test_deploy import (
     AGENT,
     CELL_RUNTIME,
@@ -81,8 +81,10 @@ async def cell(b: Bench) -> AsyncIterator[Cell]:
 
     driver = CloudRunDriver(CELL_RUNTIME, access_token, client=mock())
     hub = CellLogHub(CloudLoggingEntries((VIEW,), access_token, client=mock()), driver)
-    transport = httpx2.ASGITransport(app=create_agent(driver, logs=hub))
-    logs = AgentCellLogs(AGENT, agent_token, client=httpx2.AsyncClient(transport=transport))
+    transport = httpx2.ASGITransport(app=create_agent(driver, logs=hub, org_id=b.w.org))
+    logs = AgentCellLogs(
+        AGENT, agent_token, org_id=b.w.org, client=httpx2.AsyncClient(transport=transport)
+    )
     _use(b, logs)
     yield Cell(logging, run, driver, logs)
     await logs.aclose()
@@ -90,8 +92,7 @@ async def cell(b: Bench) -> AsyncIterator[Cell]:
 
 
 def _use(b: Bench, logs: object) -> None:
-    app = cast("FastAPI", b.client.app)
-    app.state.runtime = replace(app.state.runtime, cell_logs=logs)
+    with_api_cell(cast("FastAPI", b.client.app), logs=logs)
 
 
 def logs_path(b: Bench, env: str, query: str = "") -> str:

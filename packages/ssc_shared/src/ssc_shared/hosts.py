@@ -10,6 +10,11 @@ two (slug, environment) pairs share a host. A slug has at least 3 characters, so
 has ``--`` in positions 3-4 (reserved by IDNA2008) except through ``--preview``. Reserved words
 are never slugs.
 
+Each cell also has two reserved hosts on its suffix, which no slug can be since a slug never
+holds ``--``: ``ssc--agent`` (the cell agent, SSC-095) and ``ssc--secrets`` (the secret intake,
+SSC-026). Its app identity tokens are issued as ``https://keys.delimitus.com/<cell label>``.
+The infrastructure (``ssc_infra.naming``) and the control plane both name them from here.
+
 Pure and strict: nothing here accepts what the rule does not produce. :func:`parse_app_host`
 takes the host after the caller has lower-cased it and dropped any port.
 """
@@ -29,6 +34,10 @@ RESERVED_SLUGS: Final = frozenset(
     {"www", "api", "auth", "login", "console", "admin", "status", "static", "keys", "ssc", "mail"}
 )
 PREVIEW_SUFFIX: Final = "--preview"
+AGENT_HOST_LABEL: Final = "ssc--agent"
+INTAKE_HOST_LABEL: Final = "ssc--secrets"
+ISSUER_PREFIX: Final = "https://keys.delimitus.com/"
+"""Each cell's identity issuer is this and its label; ``<issuer>/jwks.json`` serves its keys."""
 MAX_APPS_DOMAIN: Final = 186
 """The longest apps domain whose hosts all fit in 253 characters: the longest first label
 (40 + 9), the longest cell label (16) and two dots take the other 67."""
@@ -116,6 +125,38 @@ def app_host(slug: str, environment: Environment, cell_label: str, apps_domain: 
 def app_origin(slug: str, environment: Environment, cell_label: str, apps_domain: str) -> str:
     """``https://`` plus :func:`app_host`: the environment's URL and the identity note audience."""
     return "https://" + app_host(slug, environment, cell_label, apps_domain)
+
+
+def agent_host(cell_label: str, apps_domain: str) -> str:
+    """The cell agent's reserved host (SSC-095)."""
+    return f"{AGENT_HOST_LABEL}.{check_cell_label(cell_label)}.{check_apps_domain(apps_domain)}"
+
+
+def agent_url(cell_label: str, apps_domain: str) -> str:
+    """The cell agent's URL through the cell's load balancer, and its ID token audience."""
+    return "https://" + agent_host(cell_label, apps_domain)
+
+
+def intake_host(cell_label: str, apps_domain: str) -> str:
+    """The secret intake's reserved host (SSC-026)."""
+    return f"{INTAKE_HOST_LABEL}.{check_cell_label(cell_label)}.{check_apps_domain(apps_domain)}"
+
+
+def intake_url(cell_label: str, apps_domain: str) -> str:
+    """The secret intake's origin, the audience of each write grant's upload URL."""
+    return "https://" + intake_host(cell_label, apps_domain)
+
+
+def identity_issuer(cell_label: str) -> str:
+    """The ``iss`` of the cell's app identity tokens."""
+    return ISSUER_PREFIX + check_cell_label(cell_label)
+
+
+def label_of_issuer(issuer: str) -> str:
+    """The cell label :func:`identity_issuer` made ``issuer`` from; ``ValueError`` otherwise."""
+    if not issuer.startswith(ISSUER_PREFIX):
+        raise ValueError(f"an identity issuer is {ISSUER_PREFIX}<cell label>")
+    return check_cell_label(issuer.removeprefix(ISSUER_PREFIX))
 
 
 def parse_app_host(host: str, apps_domain: str) -> AppHost | None:

@@ -87,6 +87,7 @@ from ssc_control.lifecycle import kill_switch
 from ssc_control.lifecycle import tasks as lifecycle_tasks
 from ssc_control.lifecycle.kill_switch import Timings
 from ssc_control.metrics import metrics_port
+from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.timers import jobs as timers_jobs
 from ssc_control.timers import runner, service, tasks
@@ -1062,7 +1063,7 @@ async def pull(b: Bench, mode: str) -> str:
     assert r.status_code == 202, r.text
     ports = Ports(
         engine=b.engine,
-        runtime_driver=FakeRuntimeDriver(),
+        cells=StaticCells(OrgCell(label=STATIC_LABEL, runtime=FakeRuntimeDriver())),
         snapshot=Confirming(),
         timers=b.timers,
     )

@@ -8,8 +8,11 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    In the same transaction: the app must be active, the release must have a manifest, and a
    ``prod`` deployment must clear the production gate. Any refusal fails the deployment with a
    reason code and commits, keeping the approval requests the gate opened. The driver is never
-   called before the gate clears. A manifest that needs a lazy cell resource not yet ready
-   (SSC-087) leaves the deployment ``running`` and waiting; the resource's job re-defers it.
+   called before the gate clears. Every cell call goes to the org's own cell (``runtime.cells``),
+   found before the claim; an org whose cell is not configured fails with ``CELL_UNAVAILABLE``
+   where one with no runtime fails with ``RUNTIME_UNAVAILABLE``. A manifest that needs a lazy
+   cell resource not yet ready (SSC-087) leaves the deployment ``running`` and waiting; the
+   resource's job re-defers it.
    A manifest with ``[state] postgres = true`` whose environment has no database yet ends the
    transaction there: the cell agent makes the database outside it (SSC-040), the database and
    its secret versions are recorded, and the claim runs again. A full instance fails the
@@ -69,11 +72,18 @@ from ssc_control.deploy.ledgers import record_seen
 from ssc_control.ports import MetricKind
 from ssc_control.runtime.app_databases import (
     AppDatabaseError,
+    AppDatabases,
     RecoveryPoint,
     database_of,
     record_database,
 )
-from ssc_control.runtime.cell_egress import CellEgressError, has_credential, record_credential
+from ssc_control.runtime.cell_egress import (
+    CellEgress,
+    CellEgressError,
+    has_credential,
+    record_credential,
+)
+from ssc_control.runtime.cells import CELL_UNAVAILABLE, CellUnavailableError, OrgCell
 from ssc_control.runtime.driver import (
     EnvironmentRow,
     ReleaseRow,
@@ -184,6 +194,8 @@ _RESTORE_TIMEOUT = text(
 )
 
 type Sleep = Callable[[float], Awaitable[None]]
+type _Cell = OrgCell | CellUnavailableError | None
+"""The org's cell; the reason it has none it can reach; or None when no cell is configured."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -215,6 +227,7 @@ class _Ready:
     desired: ServiceSpec
     spec: ReleaseSpec
     driver: RuntimeDriver
+    cell: OrgCell
     lowered: _Lowered | None = None
     recovery_point: bool = False
     """A ``prod`` deployment of an environment with a database, with no recovery point yet."""
@@ -267,28 +280,31 @@ class _Refused:
 class _NeedsDatabase:
     deployment: _Deployment
     policy_decision_id: str | None
+    databases: AppDatabases
 
 
 @dataclass(frozen=True, slots=True)
 class _NeedsCredential:
     deployment: _Deployment
     policy_decision_id: str | None
+    egress: CellEgress
 
 
 async def run_deployment(
     ports: Ports, *, org_id: str, deployment_id: str, health: HealthWait | None = None
 ) -> str:
     """The deployment job; returns the deployment's state when it stops (or ``missing``)."""
-    ready = await _claim(ports, org_id, deployment_id)
+    cell = await _cell_of(ports, org_id)
+    ready = await _claim(ports, cell, org_id, deployment_id)
     if isinstance(ready, _NeedsDatabase):
-        ready = await _make_database(ports, org_id, deployment_id, ready)
+        ready = await _make_database(ports, cell, org_id, deployment_id, ready)
     if isinstance(ready, _NeedsCredential):
-        ready = await _make_credential(ports, org_id, deployment_id, ready)
+        ready = await _make_credential(ports, cell, org_id, deployment_id, ready)
     if isinstance(ready, str):
         return ready
     dep, health = ready.deployment, health or HealthWait()
     if ready.recovery_point:
-        await _record_recovery_point(ports, org_id, dep)
+        await _record_recovery_point(ports, ready.cell, org_id, dep)
     try:
         revision = await ready.driver.apply(ready.desired)
         verdict = await _wait_healthy(ports, org_id, ready, revision, health)
@@ -309,8 +325,18 @@ async def run_deployment(
     return state
 
 
+async def _cell_of(ports: Ports, org_id: str) -> _Cell:
+    if ports.cells is None:
+        return None
+    try:
+        return await ports.cells.for_org(org_id)
+    except CellUnavailableError as exc:
+        log.warning("the org's cell is not configured", extra={"cell_label": exc.label})
+        return exc
+
+
 async def _claim(
-    ports: Ports, org_id: str, deployment_id: str
+    ports: Ports, cell: _Cell, org_id: str, deployment_id: str
 ) -> _Ready | _NeedsDatabase | _NeedsCredential | str:
     """Step 1 in one transaction: the ready deployment, or the state it stopped in."""
     async with bound_org(ports.engine, org_id) as conn:
@@ -323,7 +349,7 @@ async def _claim(
             return str(row.state)
         await conn.execute(_CLAIM, params)
         dep = _deployment(deployment_id, row)
-        prepared = await _prepare(conn, ports, org_id, dep, row)
+        prepared = await _prepare(conn, ports, org_id, dep, row, cell=cell)
         if isinstance(prepared, _Refused):
             return await _fail(
                 conn, org_id, dep, prepared.code, policy_decision_id=prepared.policy_decision_id
@@ -332,15 +358,13 @@ async def _claim(
 
 
 async def _make_database(
-    ports: Ports, org_id: str, deployment_id: str, need: _NeedsDatabase
+    ports: Ports, cell: _Cell, org_id: str, deployment_id: str, need: _NeedsDatabase
 ) -> _Ready | _NeedsCredential | str:
     """Outside any transaction: the cell agent makes the environment's database; its secret
     versions are recorded and the deployment is claimed again, so it pins them."""
     dep = need.deployment
-    if ports.app_databases is None:
-        raise AssertionError("_prepare refuses a deployment with no app databases")
     try:
-        made = await ports.app_databases.ensure(service_name(dep.environment_id))
+        made = await need.databases.ensure(service_name(dep.environment_id))
     except AppDatabaseError as exc:
         log.warning("app database failed", extra={"deployment_id": dep.id, "error": str(exc)})
         code = DB_TIER_FULL if exc.code == DB_TIER_FULL else DATABASE_UNAVAILABLE
@@ -350,23 +374,21 @@ async def _make_database(
         await record_database(
             conn, org_id=org_id, environment_id=dep.environment_id, made=made, actor=dep.actor
         )
-    ready = await _claim(ports, org_id, deployment_id)
+    ready = await _claim(ports, cell, org_id, deployment_id)
     if isinstance(ready, _NeedsDatabase):
         raise AssertionError("the app database was just recorded")
     return ready
 
 
 async def _make_credential(
-    ports: Ports, org_id: str, deployment_id: str, need: _NeedsCredential
+    ports: Ports, cell: _Cell, org_id: str, deployment_id: str, need: _NeedsCredential
 ) -> _Ready | str:
     """Outside any transaction: the cell agent makes the environment's proxy credential; it and
     its secret version are recorded, the snapshot carrying it is asked for, and the deployment is
     claimed again, so it pins the version and waits for that snapshot before traffic moves."""
     dep = need.deployment
-    if ports.cell_egress is None:
-        raise AssertionError("_prepare asks for a credential only with cell egress")
     try:
-        issued = await ports.cell_egress.issue(dep.environment_id)
+        issued = await need.egress.issue(dep.environment_id)
     except CellEgressError as exc:
         log.warning("proxy credential failed", extra={"deployment_id": dep.id, "error": str(exc)})
         async with bound_org(ports.engine, org_id) as conn:
@@ -378,19 +400,21 @@ async def _make_credential(
             conn, org_id=org_id, environment_id=dep.environment_id, issued=issued, actor=dep.actor
         )
         version = await ports.snapshot.request(conn, org_id)
-    ready = await _claim(ports, org_id, deployment_id)
+    ready = await _claim(ports, cell, org_id, deployment_id)
     if isinstance(ready, _NeedsDatabase | _NeedsCredential):
         raise AssertionError("the proxy credential was just recorded")
     return ready if isinstance(ready, str) else replace(ready, credential_version=version)
 
 
-async def _record_recovery_point(ports: Ports, org_id: str, dep: _Deployment) -> None:
+async def _record_recovery_point(
+    ports: Ports, cell: OrgCell, org_id: str, dep: _Deployment
+) -> None:
     """Outside any transaction, before the runtime is called: where the instance is now, from
     the cell agent; the control plane's time alone when it cannot say."""
     point: RecoveryPoint | None = None
-    if ports.app_databases is not None:
+    if cell.app_databases is not None:
         try:
-            point = await ports.app_databases.recovery_point(service_name(dep.environment_id))
+            point = await cell.app_databases.recovery_point(service_name(dep.environment_id))
         except AppDatabaseError as exc:
             log.warning("recovery point failed", extra={"deployment_id": dep.id, "error": str(exc)})
     params = {
@@ -403,8 +427,8 @@ async def _record_recovery_point(ports: Ports, org_id: str, dep: _Deployment) ->
         await conn.execute(_SET_RECOVERY, params)
 
 
-async def _prepare(  # noqa: PLR0911  (one return per refusal)
-    conn: AsyncConnection, ports: Ports, org_id: str, dep: _Deployment, row: Any
+async def _prepare(  # noqa: PLR0911, PLR0913  (one return per refusal; the cell by keyword)
+    conn: AsyncConnection, ports: Ports, org_id: str, dep: _Deployment, row: Any, *, cell: _Cell
 ) -> _Ready | _NeedsDatabase | _NeedsCredential | _Refused | Literal["running"]:
     """The checks before any runtime call: an active app, a manifest, the production gate for
     ``prod``, a driver, the cell resources the manifest needs, the app database, the proxy
@@ -430,7 +454,9 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         if gate.outcome != "clear":
             return _Refused(APPROVAL_REQUIRED, gate.policy_decision_id)
         decision = gate.policy_decision_id
-    if ports.runtime_driver is None:
+    if isinstance(cell, CellUnavailableError):
+        return _Refused(CELL_UNAVAILABLE, decision)
+    if cell is None or cell.runtime is None:
         return _Refused(RUNTIME_UNAVAILABLE, decision)
     held = await hold_deployment(
         conn, org_id=org_id, deployment_id=dep.id, manifest=spec.manifest, actor=dep.actor
@@ -439,15 +465,15 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         return "running" if held.failure_code is None else _Refused(held.failure_code, decision)
     database = await database_of(conn, org_id=org_id, environment_id=dep.environment_id)
     if spec.manifest.state.postgres and database is None:
-        if ports.app_databases is None:
+        if cell.app_databases is None:
             return _Refused(DATABASE_UNAVAILABLE, decision)
-        return _NeedsDatabase(dep, decision)
+        return _NeedsDatabase(dep, decision, cell.app_databases)
     if (
         spec.manifest.egress.hosts
-        and ports.cell_egress is not None
+        and cell.egress is not None
         and not await has_credential(conn, org_id=org_id, environment_id=dep.environment_id)
     ):
-        return _NeedsCredential(dep, decision)
+        return _NeedsCredential(dep, decision, cell.egress)
     if database is not None:
         await record_seen(
             conn,
@@ -469,7 +495,7 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         secrets=secrets,
         database=database,
         slug=row.app_slug,
-        identity=ports.app_identity,
+        identity=cell.identity,
         warm=bool(row.env_warm),
     )
     if not isinstance(desired, ServiceSpec):
@@ -479,7 +505,8 @@ async def _prepare(  # noqa: PLR0911  (one return per refusal)
         deployment=dep,
         desired=desired,
         spec=spec,
-        driver=ports.runtime_driver,
+        driver=cell.runtime,
+        cell=cell,
         lowered=lowered,
         recovery_point=dep.env_name == "prod" and database is not None and row.recovery_at is None,
     )

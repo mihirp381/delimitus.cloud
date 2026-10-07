@@ -1,9 +1,9 @@
 """Turn the cell's usage counts into usage events, one whole hour at a time (SSC-028).
 
-For each org (one org is one cell) the collector reads from its cursor, ``usage_collection``,
-up to the last whole hour that ended ``LAG`` ago (Cloud Monitoring can take a few minutes to make
-a point readable), at most ``MAX_WINDOW_HOURS`` per run, with one call to the cell agent.
-Then, in one transaction, it writes:
+For each org, through its own cell (``runtime.cells``), the collector reads from its
+cursor, ``usage_collection``, up to the last whole hour that ended ``LAG`` ago (Cloud Monitoring
+can take a few minutes to make a point readable), at most ``MAX_WINDOW_HOURS`` per run, with one
+call to the cell agent. Then, in one transaction, it writes:
 
 - ``usage_hour``: per environment and hour, ``instance_seconds``, and ``session_seconds`` for an
   environment whose current release is instance-billed (a session app), else 0;
@@ -11,7 +11,8 @@ Then, in one transaction, it writes:
 
 and moves the cursor to the end of the window. Each event's ``dedup_key`` is its environment and
 window start, so a run repeated, or overlapping another, writes nothing twice. Without a usage
-source, or when the cell may not read Cloud Monitoring, it writes nothing and says so in the log.
+source, or when the cell may not read Cloud Monitoring, it writes nothing for that cell's orgs
+and says so in the log; an org whose cell is not configured is skipped and the others still run.
 These numbers are for metrics and the cost view only. Nothing bills from them (A6).
 """
 
@@ -27,6 +28,7 @@ from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
 from ssc_control.metrics.events import record_once
 from ssc_control.ports import MetricKind
+from ssc_control.runtime.cells import CellPorts, CellUnavailableError
 from ssc_control.runtime.specs import release_spec
 from ssc_shared.runtime import Billing, billing_for, service_name
 from ssc_shared.usage import (
@@ -124,19 +126,37 @@ async def collect_org(
     return Collected(window, written)
 
 
-async def collect_all(engine: AsyncEngine, usage: CellUsage, now: datetime) -> int:
-    """One run for every org; returns how many events were written. One org's failure is
-    logged and the others still run."""
-    cache: dict[UsageWindow, UsageReport] = {}
+async def collect_all(engine: AsyncEngine, cells: CellPorts, now: datetime) -> int:
+    """One run for every org, each through its own cell; returns how many events were written.
+    One org's failure is logged and the others still run. A cell with no usage source is not
+    asked again in this run."""
+    caches: dict[str, dict[UsageWindow, UsageReport]] = {}
+    skipped: set[str] = set()
     written = 0
     for org_id in await all_org_ids(engine):
         try:
-            done = await collect_org(engine, usage, org_id, now, cache)
+            cell = await cells.for_org(org_id)
+        except CellUnavailableError as exc:
+            log.warning(
+                "usage events of %s skipped: its cell is not configured",
+                org_id,
+                extra={"cell_label": exc.label},
+            )
+            continue
+        if cell.label in skipped:
+            continue
+        if cell.usage is None:
+            log.warning("usage events of cell %s skipped: no cell usage source", cell.label)
+            skipped.add(cell.label)
+            continue
+        try:
+            cache = caches.setdefault(cell.label, {})
+            done = await collect_org(engine, cell.usage, org_id, now, cache)
         except Exception:
             log.exception("usage collection of %s raised", org_id)
             continue
         if done.skipped == "not_configured":
-            return written
+            skipped.add(cell.label)
         written += done.written
     return written
 

@@ -28,6 +28,7 @@ from procrastinate.exceptions import ConnectorException, UniqueViolation
 from procrastinate.jobs import Status
 from procrastinate.manager import QUEUEING_LOCK_CONSTRAINT
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.audit import jobs as audit_jobs
 from ssc_control.cell import jobs as cell_jobs
@@ -35,8 +36,7 @@ from ssc_control.cell.deployer import CellDeployer, FakeCellDeployer, cell_deplo
 from ssc_control.db.catalog import QUEUE_SCHEMA
 from ssc_control.db.engine import make_engine
 from ssc_control.deploy import jobs as deploy_jobs
-from ssc_control.deploy.build_driver import BuildDriver, FakeBuildDriver
-from ssc_control.deploy.cell_build import CellAgentBuildDriver
+from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.github import jobs as github_jobs
 from ssc_control.github.client import DEFAULT_BASE as GITHUB_BASE
@@ -50,11 +50,19 @@ from ssc_control.notifications import jobs as notify_jobs
 from ssc_control.notifications.mailer import LogMailer, Mailer, Security, SmtpConfig, SmtpMailer
 from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
-from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases, FakeAppDatabases
-from ssc_control.runtime.cell_agent import CellAgentDriver, MetadataIdTokens
-from ssc_control.runtime.cell_egress import AgentCellEgress, CellEgress, FakeCellEgress
-from ssc_control.runtime.cell_usage import AgentCellUsage
-from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
+from ssc_control.runtime.app_databases import FakeAppDatabases
+from ssc_control.runtime.cell_agent import MetadataIdTokens
+from ssc_control.runtime.cell_egress import FakeCellEgress
+from ssc_control.runtime.cells import (
+    CELLS_ENV,
+    STATIC_LABEL,
+    CellPorts,
+    CellRouter,
+    OrgCell,
+    StaticCells,
+    cells_from_env,
+)
+from ssc_control.runtime.driver import AppIdentity
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.snapshot import jobs as snapshot_jobs
@@ -72,15 +80,13 @@ from ssc_control.timers.service import Timers
 from ssc_control.worker_ports import APPS_DOMAIN, PORTS_KEY, Ports, PortsMissingError, ports_of
 from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
-from ssc_shared.hosts import check_apps_domain, check_cell_label
-from ssc_shared.usage import CellUsage
+from ssc_shared.hosts import ISSUER_PREFIX, check_apps_domain, label_of_issuer
 
 log = logging.getLogger(__name__)
 
 DSN_ENV: Final = "SSC_DATABASE_DSN"
 ENV_ENV: Final = "SSC_ENV"
 RUNTIME_DRIVER_ENV: Final = "SSC_RUNTIME_DRIVER"
-CELL_AGENT_URL_ENV: Final = "SSC_CELL_AGENT_URL"
 BUILD_DRIVER_ENV: Final = "SSC_BUILD_DRIVER"
 METRICS_KEY_ENV: Final = "SSC_METRICS_KEY"
 TIMER_DISPATCHER_ENV: Final = "SSC_TIMER_DISPATCHER"
@@ -89,7 +95,6 @@ TIMER_KEY_ID_ENV: Final = "SSC_TIMER_KEY_ID"
 IDENTITY_JWKS_ENV: Final = "SSC_IDENTITY_JWKS"
 IDENTITY_ISSUER_ENV: Final = "SSC_IDENTITY_ISSUER"
 APPS_DOMAIN_ENV: Final = "SSC_APPS_DOMAIN"
-ISSUER_PREFIX: Final = "https://keys.delimitus.com/"
 WORKOS_KEY_ENV: Final = "SSC_WORKOS_API_KEY"
 WORKOS_CLIENT_ENV: Final = "SSC_WORKOS_CLIENT_ID"
 WORKOS_BASE_ENV: Final = "SSC_WORKOS_BASE"
@@ -107,6 +112,8 @@ CONSOLE_URL_ENV: Final = "SSC_CONSOLE_URL"
 DEV_CONSOLE_URL: Final = "http://localhost:5173"
 SMTP_PORTS: Final[dict[str, int]] = {"starttls": 587, "tls": 465}
 FAKE_ENVIRONMENTS: Final = frozenset({"dev", "test"})
+CELL_AGENT: Final = "cell_agent"
+DRIVERS: Final = frozenset({"", "fake", CELL_AGENT})
 SWEEP_CRON: Final = "* * * * * */30"
 """Every 30 seconds."""
 
@@ -204,86 +211,57 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     return app
 
 
-def runtime_driver_from_env(env: Mapping[str, str]) -> RuntimeDriver | None:
-    """``SSC_RUNTIME_DRIVER``: unset means none (the reconciler defers nothing), ``fake`` the
-    in-memory driver, ``cell_agent`` the cell agent at ``SSC_CELL_AGENT_URL`` with this
-    instance's ID token. One cell until placement (which cell holds an org) has its ticket."""
-    match env.get(RUNTIME_DRIVER_ENV, ""):
-        case "":
-            return None
-        case "fake":
-            return FakeRuntimeDriver()
-        case "cell_agent":
-            url = env.get(CELL_AGENT_URL_ENV, "")
-            if not url.startswith("https://"):
-                raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
-            return CellAgentDriver(url, MetadataIdTokens())
-        case other:
-            raise CompositionError(f"unknown {RUNTIME_DRIVER_ENV} {other!r}")
-
-
-def app_databases_from_env(env: Mapping[str, str]) -> AppDatabases | None:
-    """App databases (SSC-040) go with ``SSC_RUNTIME_DRIVER``: none without a runtime, in
-    memory with ``fake``, and through the same cell agent with ``cell_agent``."""
-    match env.get(RUNTIME_DRIVER_ENV, ""):
-        case "fake":
-            return FakeAppDatabases()
-        case "cell_agent":
-            url = env.get(CELL_AGENT_URL_ENV, "")
-            if not url.startswith("https://"):
-                raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
-            return CellAppDatabases(url, MetadataIdTokens())
-        case _:
-            return None
-
-
-def cell_egress_from_env(env: Mapping[str, str]) -> CellEgress | None:
-    """Proxy credentials (SSC-053) go with ``SSC_RUNTIME_DRIVER`` like app databases: none
-    without a runtime, in memory with ``fake``, and through the cell agent with ``cell_agent``."""
-    match env.get(RUNTIME_DRIVER_ENV, ""):
-        case "fake":
-            return FakeCellEgress()
-        case "cell_agent":
-            url = env.get(CELL_AGENT_URL_ENV, "")
-            if not url.startswith("https://"):
-                raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
-            return AgentCellEgress(url, MetadataIdTokens())
-        case _:
-            return None
-
-
-def cell_usage_from_env(env: Mapping[str, str]) -> CellUsage | None:
-    """Usage reads (SSC-028) go through the cell agent with ``SSC_RUNTIME_DRIVER=cell_agent``;
-    otherwise there is no cell to read and the usage collection does nothing."""
-    if env.get(RUNTIME_DRIVER_ENV, "") != "cell_agent":
+def cells_of(
+    env: Mapping[str, str], engine: AsyncEngine, blob_store: BlobStore | None = None
+) -> CellPorts | None:
+    """``SSC_RUNTIME_DRIVER`` and ``SSC_BUILD_DRIVER``. Both unset: no cell (the reconciler
+    defers nothing, deployments fail with ``RUNTIME_UNAVAILABLE``, builds with
+    ``BUILD_DRIVER_UNAVAILABLE``). ``fake``: one in-memory cell for every org, its runtime with
+    in-memory app databases and egress, and the identity of ``SSC_IDENTITY_*``. ``cell_agent``:
+    each org's own cell (``runtime.cells``), from ``SSC_CELLS``, through its agent with this
+    instance's ID token; a ``cell_agent`` build also needs the blob store, which it signs the
+    bundle's URL from and the build job analyses the bundle from (SSC-015)."""
+    runtime, build = env.get(RUNTIME_DRIVER_ENV, ""), env.get(BUILD_DRIVER_ENV, "")
+    for name, value in ((RUNTIME_DRIVER_ENV, runtime), (BUILD_DRIVER_ENV, build)):
+        if value not in DRIVERS:
+            raise CompositionError(f"unknown {name} {value!r}")
+    if CELL_AGENT in (runtime, build):
+        if runtime != CELL_AGENT or build == "fake":
+            raise CompositionError(
+                f"{BUILD_DRIVER_ENV}=cell_agent needs {RUNTIME_DRIVER_ENV}=cell_agent, and "
+                "the reverse allows no fake builder"
+            )
+        if build == CELL_AGENT and blob_store is None:
+            raise CompositionError(f"{BUILD_DRIVER_ENV}=cell_agent needs SSC_BLOB_* set")
+        domain = apps_domain_from_env(env)
+        try:
+            cells = cells_from_env(env, domain)
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from None
+        if not cells:
+            raise CompositionError(f"{RUNTIME_DRIVER_ENV}=cell_agent needs {CELLS_ENV}")
+        store = blob_store
+        return CellRouter(
+            engine,
+            cells,
+            apps_domain=domain,
+            id_tokens=MetadataIdTokens(),
+            grant_tokens=MetadataIdTokens(cache=False),
+            build_store=(lambda _label: store) if store is not None and build else None,
+        )
+    if not (runtime or build):
         return None
-    url = env.get(CELL_AGENT_URL_ENV, "")
-    if not url.startswith("https://"):
-        raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
-    return AgentCellUsage(url, MetadataIdTokens())
-
-
-def build_driver_from_env(
-    env: Mapping[str, str], blob_store: BlobStore | None = None
-) -> BuildDriver | None:
-    """``SSC_BUILD_DRIVER``: unset means none (builds fail with ``BUILD_DRIVER_UNAVAILABLE``),
-    ``fake`` the in-memory builder, ``cell_agent`` Cloud Build in the cell through its agent at
-    ``SSC_CELL_AGENT_URL`` (SSC-015). The real builder needs the blob store: it signs the
-    bundle's URL there, and the build job analyses the bundle from it."""
-    match env.get(BUILD_DRIVER_ENV, ""):
-        case "":
-            return None
-        case "fake":
-            return FakeBuildDriver()
-        case "cell_agent":
-            url = env.get(CELL_AGENT_URL_ENV, "")
-            if not url.startswith("https://"):
-                raise CompositionError(f"{CELL_AGENT_URL_ENV} must be an https URL")
-            if blob_store is None:
-                raise CompositionError(f"{BUILD_DRIVER_ENV}=cell_agent needs SSC_BLOB_* set")
-            return CellAgentBuildDriver(url, MetadataIdTokens(), blob_store)
-        case other:
-            raise CompositionError(f"unknown {BUILD_DRIVER_ENV} {other!r}")
+    fake = runtime == "fake"
+    return StaticCells(
+        OrgCell(
+            label=STATIC_LABEL,
+            runtime=FakeRuntimeDriver() if fake else None,
+            build=FakeBuildDriver() if build == "fake" else None,
+            app_databases=FakeAppDatabases() if fake else None,
+            egress=FakeCellEgress() if fake else None,
+            identity=app_identity_from_env(env),
+        )
+    )
 
 
 def timer_dispatcher_from_env(env: Mapping[str, str]) -> ScheduleDispatcher | None:
@@ -353,9 +331,10 @@ def _cell_deployer(env: Mapping[str, str]) -> CellDeployer | None:
 
 def app_identity_from_env(env: Mapping[str, str]) -> AppIdentity | None:
     """``SSC_IDENTITY_JWKS``, the cell's public JWKS (stack output ``identity_jwks``), and
-    ``SSC_IDENTITY_ISSUER``, ``https://keys.delimitus.com/<cell label>``: one cell, as for
-    ``SSC_CELL_AGENT_URL``. Either may be unset; None when both are. The JWKS is re-serialised
-    compactly, so its whitespace never changes an app's spec."""
+    ``SSC_IDENTITY_ISSUER``, ``https://keys.delimitus.com/<cell label>``: the identity of the
+    ``fake`` cell. Either may be unset; None when both are. The JWKS is re-serialised
+    compactly, so its whitespace never changes an app's spec; ``runtime.cells.CellConfig`` makes
+    the same ``data:`` URL for each cell of ``SSC_CELLS``."""
     jwks, issuer = env.get(IDENTITY_JWKS_ENV, ""), env.get(IDENTITY_ISSUER_ENV, "")
     if not jwks and not issuer:
         return None
@@ -372,7 +351,7 @@ def app_identity_from_env(env: Mapping[str, str]) -> AppIdentity | None:
     label = None
     if issuer:
         try:
-            label = check_cell_label(issuer.removeprefix(ISSUER_PREFIX))
+            label = label_of_issuer(issuer)
         except ValueError:
             raise CompositionError(
                 f"{IDENTITY_ISSUER_ENV} must be {ISSUER_PREFIX}<label>"
@@ -473,15 +452,13 @@ def apps_domain_from_env(env: Mapping[str, str]) -> str:
 
 def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
     """Refuse any fake port unless ``SSC_ENV`` is ``dev`` or ``test``."""
+    in_cells = ports.cells.ports() if isinstance(ports.cells, StaticCells) else []
     fakes = [
         name
         for name, value in (
-            ("runtime_driver", ports.runtime_driver),
-            ("build_driver", ports.build_driver),
+            *((f"cells.{type(port).__name__}", port) for port in in_cells),
             ("timer_dispatcher", ports.timer_dispatcher),
             ("cell_deployer", ports.cell_deployer),
-            ("app_databases", ports.app_databases),
-            ("cell_egress", ports.cell_egress),
             ("mailer", ports.mailer),
         )
         if isinstance(
@@ -508,24 +485,19 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
     console_url = console_url_from_env(env)
     ports = Ports(
         engine=engine,
-        runtime_driver=runtime_driver_from_env(env),
+        cells=cells_of(env, engine, blob_store),
         release_specs=BundleReleaseSpecs(),
         blob_store=blob_store,
         cell_stores=cell_stores,
         snapshot=Snapshots(engine, blob_store=blob_store, cell_stores=cell_stores),
         prod_gate=approvals_prod_gate(),
-        build_driver=build_driver_from_env(env, blob_store),
         metrics=metrics_from_env(env),
         timers=Timers(),
         timer_dispatcher=timer_dispatcher_from_env(env),
         cell_deployer=_cell_deployer(env),
-        app_databases=app_databases_from_env(env),
-        app_identity=app_identity_from_env(env),
         directory=directory_from_env(env),
-        cell_usage=cell_usage_from_env(env),
         github=github_from_env(env),
         apps_domain=apps_domain_from_env(env),
-        cell_egress=cell_egress_from_env(env),
         mailer=mailer_from_env(env, console_url),
         console_url=console_url,
     )
@@ -569,6 +541,8 @@ async def run(env: Mapping[str, str] | None = None) -> None:
             await ports.directory.aclose()
         if ports.github is not None:
             await ports.github.aclose()
+        if isinstance(ports.cells, CellRouter):
+            await ports.cells.aclose()
         if isinstance(ports.timer_dispatcher, HttpsScheduleDispatcher):
             await ports.timer_dispatcher.aclose()
         await ports.engine.dispose()
@@ -591,12 +565,11 @@ __all__ = [
     "Ports",
     "PortsMissingError",
     "WorkerSettings",
-    "app_databases_from_env",
+    "app_identity_from_env",
     "blob_store_of",
     "cell_stores_of",
     "build_app",
-    "build_driver_from_env",
-    "cell_usage_from_env",
+    "cells_of",
     "compose_ports",
     "console_url_from_env",
     "core_blueprint",
@@ -609,7 +582,6 @@ __all__ = [
     "retry_stalled",
     "run",
     "run_worker",
-    "runtime_driver_from_env",
     "timer_dispatcher_from_env",
 ]
 

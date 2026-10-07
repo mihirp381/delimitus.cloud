@@ -26,7 +26,7 @@ from ssc_conformance.cloud_monitoring_emulator import CloudMonitoringEmulator
 from ssc_conformance.cloud_run_emulator import PROJECT, REGION, CloudRunEmulator
 from ssc_contracts.ids import new_id
 from ssc_control.runtime.cell_usage import AgentCellUsage
-from ssc_shared.runtime import service_name
+from ssc_shared.runtime import ORG_HEADER, service_name
 from ssc_shared.usage import (
     UsageError,
     UsageNotConfiguredError,
@@ -39,6 +39,7 @@ from ssc_shared.usage import (
 )
 
 AGENT = "https://ssc-cell-agent.test"
+ORG = "org_mmmmmmmmmmmmmmmmmmmm"
 CELL = CellRuntime(
     project=PROJECT,
     region=REGION,
@@ -97,10 +98,9 @@ async def agent(cell: Cell) -> AsyncIterator[AgentCellUsage]:
             transport=httpx2.MockTransport(CloudRunEmulator(auto_settle=True).handler)
         ),
     )
-    app = create_app(driver, usage=cell.reader())
-    usage = AgentCellUsage(
-        AGENT, _id_token, client=httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
-    )
+    app = create_app(driver, usage=cell.reader(), org_id=ORG)
+    client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+    usage = AgentCellUsage(AGENT, _id_token, org_id=ORG, client=client)
     yield usage
     await usage.aclose()
     await driver.aclose()
@@ -226,10 +226,9 @@ def test_odd_answers_are_skipped_not_trusted() -> None:
 
 
 async def test_without_a_source_the_agent_says_usage_is_not_configured(cell: Cell) -> None:
-    app = create_app(_NoDriver(), usage=None)  # pyright: ignore[reportArgumentType]
-    usage = AgentCellUsage(
-        AGENT, _id_token, client=httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
-    )
+    app = create_app(_NoDriver(), usage=None, org_id=ORG)  # pyright: ignore[reportArgumentType]
+    client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+    usage = AgentCellUsage(AGENT, _id_token, org_id=ORG, client=client)
     with pytest.raises(UsageNotConfiguredError):
         await usage.read(window(10, 11))
     await usage.aclose()
@@ -250,9 +249,11 @@ async def test_a_403_is_not_configured_and_other_failures_are_errors(
 
 
 async def test_the_agent_refuses_a_malformed_window() -> None:
-    app = create_app(_NoDriver(), usage=CellUsageReader(None))  # pyright: ignore[reportArgumentType]
+    reader = CellUsageReader(None)
+    app = create_app(_NoDriver(), usage=reader, org_id=ORG)  # pyright: ignore[reportArgumentType]
     transport = httpx2.ASGITransport(app=app)
-    async with httpx2.AsyncClient(transport=transport, base_url=AGENT) as client:
+    headers = {ORG_HEADER: ORG}
+    async with httpx2.AsyncClient(transport=transport, base_url=AGENT, headers=headers) as client:
         bad = {"start": at(10, 30).isoformat(), "end": at(11).isoformat()}
         for body in ({"window": bad}, {"window": {"start": "x"}}, ["no"], {}):
             r = await client.post("/v1/usage/read", json=body)

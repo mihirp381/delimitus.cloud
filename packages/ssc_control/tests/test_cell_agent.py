@@ -11,6 +11,7 @@ from ssc_control.runtime.cell_agent import (
     MetadataIdTokens,
 )
 from ssc_shared.runtime import (
+    ORG_HEADER,
     RevisionNotFoundError,
     RevisionObservation,
     RuntimeDriverError,
@@ -23,6 +24,7 @@ from ssc_shared.runtime import (
 )
 
 AGENT = "https://ssc-cell-agent-123.us-central1.run.app"
+ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 SERVICE = "ssc-a-0123456789abcdefghijkl"
 SPEC = ServiceSpec(
     service=SERVICE,
@@ -45,7 +47,9 @@ async def _id_token(audience: str) -> str:
 
 
 def _driver(handler: httpx2.MockTransport) -> CellAgentDriver:
-    return CellAgentDriver(AGENT + "/", _id_token, client=httpx2.AsyncClient(transport=handler))
+    return CellAgentDriver(
+        AGENT + "/", _id_token, org_id=ORG, client=httpx2.AsyncClient(transport=handler)
+    )
 
 
 async def test_each_call_is_one_post_with_an_id_token_for_the_agent() -> None:
@@ -89,6 +93,7 @@ async def test_each_call_is_one_post_with_an_id_token_for_the_agent() -> None:
     ]
     assert all(r.method == "POST" for r in seen)
     assert {r.headers["Authorization"] for r in seen} == {f"Bearer id-token-for-{AGENT}"}
+    assert {r.headers[ORG_HEADER] for r in seen} == {ORG}
     assert spec_from_wire(json.loads(seen[0].content)["spec"]) == SPEC
     assert json.loads(seen[1].content) == {
         "service": SERVICE,

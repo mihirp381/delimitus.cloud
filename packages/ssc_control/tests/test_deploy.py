@@ -76,9 +76,11 @@ from ssc_testkit import (
     audit_head_is_free,
     auth,
     backend_pid,
+    cells_with,
     mint,
     new_key,
     wait_for_a_lock_wait,
+    with_cell,
 )
 
 import ssc_control.api
@@ -148,6 +150,7 @@ from ssc_control.ports import (
     NullTimersPort,
 )
 from ssc_control.runtime.cell_agent import CellAgentDriver
+from ssc_control.runtime.cells import STATIC_LABEL, CellRouter, OrgCell, StaticCells
 from ssc_control.runtime.driver import service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
@@ -265,6 +268,10 @@ class Bench:
     timers: SpyTimers
     ports: Ports
 
+    def cells_with(self, **changes: Any) -> StaticCells:
+        """The bench's one cell with ``changes`` (``identity=``, ``build=`` and so on)."""
+        return cells_with(self.ports, **changes)
+
 
 def add_account(conn: psycopg.Connection[Any], org: str, role: str) -> str:
     uid = new_id("usr")
@@ -338,11 +345,10 @@ async def b(
     runtime, builds = FakeRuntimeDriver(sleep=hold), FakeBuildDriver()
     ports = Ports(
         engine=engine,
-        runtime_driver=runtime,
+        cells=StaticCells(OrgCell(label=STATIC_LABEL, runtime=runtime, build=builds)),
         release_specs=BundleReleaseSpecs(),
         timers=timers,
         prod_gate=approvals_prod_gate(),
-        build_driver=builds,
         metrics=metrics_port(MASTER),
     )
     with TestClient(create_app(settings)) as client:
@@ -747,7 +753,7 @@ async def test_a_framework_must_be_a_short_lowercase_name(b: Bench) -> None:
 
 
 async def test_a_build_polls_later_then_times_out(b: Bench) -> None:
-    slow = replace(b.ports, build_driver=FakeBuildDriver(polls=5))
+    slow = with_cell(b.ports, build=FakeBuildDriver(polls=5))
     bundle, _ = seed_bundle(b)
     build = start_build(b, b.w.preview, bundle).json()["build_id"]
     take_job(b.dsn, f"bld:{build}")
@@ -768,7 +774,7 @@ async def test_a_build_polls_later_then_times_out(b: Bench) -> None:
     # With no builder configured a build fails at once.
     other, _ = seed_bundle(b)
     build = start_build(b, b.w.preview, other).json()["build_id"]
-    none = replace(b.ports, build_driver=None)
+    none = with_cell(b.ports, build=None)
     assert await run_build(none, org_id=b.w.org, build_id=build) == "failed"
     assert get(b, f"/v1/builds/{build}").json()["failure_code"] == BUILD_DRIVER_UNAVAILABLE
 
@@ -785,7 +791,7 @@ class CountingBuilds(FakeBuildDriver):
 
 async def test_a_build_of_a_stopped_app_fails_when_claimed(b: Bench) -> None:
     builds = CountingBuilds(polls=5)
-    ports = replace(b.ports, build_driver=builds)
+    ports = with_cell(b.ports, build=builds)
     bundle, _ = seed_bundle(b)
     queued = start_build(b, b.w.preview, bundle).json()["build_id"]
     other, _ = seed_bundle(b)
@@ -901,6 +907,33 @@ async def test_a_revision_that_never_starts_times_out(b: Bench) -> None:
     assert pointer(b, b.w.preview) is None
     # Nothing was live before, so the service is left scaled to zero.
     assert b.runtime.services[service_name(b.w.preview)].stopped is True
+
+
+def elsewhere(b: Bench) -> Ports:
+    """The bench's ports with its one cell serving another org alone: the bench's org has no
+    cell this worker can reach (decision 029)."""
+    cell = OrgCell(label=STATIC_LABEL, runtime=b.runtime, build=b.builds)
+    return replace(b.ports, cells=StaticCells(orgs={new_id("org"): cell}))
+
+
+async def test_a_deployment_for_an_org_whose_cell_is_not_configured_fails(b: Bench) -> None:
+    release = await build_release(b, b.w.preview)
+    b.runtime.reset_calls()
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    assert await run(b, op, elsewhere(b)) == "failed"
+    assert operation(b, op)["failure_code"] == "CELL_UNAVAILABLE"
+    assert pointer(b, b.w.preview) is None
+    assert b.runtime.calls == []
+
+
+async def test_a_build_for_an_org_whose_cell_is_not_configured_fails(b: Bench) -> None:
+    bundle, _ = seed_bundle(b)
+    r = start_build(b, b.w.preview, bundle)
+    assert r.status_code == 202, r.text
+    build = r.json()["build_id"]
+    assert await run_build(elsewhere(b), org_id=b.w.org, build_id=build) == "failed"
+    out = get(b, f"/v1/builds/{build}").json()
+    assert (out["state"], out["failure_code"]) == ("failed", "CELL_UNAVAILABLE")
 
 
 async def test_one_deployment_in_flight_per_environment(b: Bench) -> None:
@@ -1505,12 +1538,18 @@ async def test_rollback_through_the_cell_agent_is_quick_and_never_rebuilds(
         access_token,
         client=httpx2.AsyncClient(transport=httpx2.MockTransport(build_emulator.handler)),
     )
-    agent = httpx2.ASGITransport(app=create_agent(cloud_run, cloud_build))
-    runtime = CellAgentDriver(AGENT, agent_token, client=httpx2.AsyncClient(transport=agent))
-    builder = CellAgentBuildDriver(
-        AGENT, agent_token, ports.blob_store, client=httpx2.AsyncClient(transport=agent)
+    agent = httpx2.ASGITransport(app=create_agent(cloud_run, cloud_build, org_id=b.w.org))
+    runtime = CellAgentDriver(
+        AGENT, agent_token, org_id=b.w.org, client=httpx2.AsyncClient(transport=agent)
     )
-    ports = replace(ports, runtime_driver=runtime, build_driver=builder)
+    builder = CellAgentBuildDriver(
+        AGENT,
+        agent_token,
+        ports.blob_store,
+        org_id=b.w.org,
+        client=httpx2.AsyncClient(transport=agent),
+    )
+    ports = with_cell(ports, runtime=runtime, build=builder)
     health = HealthWait(within=5.0, every=HEALTH_POLL_SECONDS, sleep=clock.health_sleep)
 
     async def deploy_through_the_cell(release: str, kind: str = "deploy") -> tuple[str, str]:
@@ -1603,22 +1642,37 @@ def test_the_worker_registers_the_deploy_tasks_and_ports() -> None:
     base = {"SSC_DATABASE_DSN": "postgresql://ssc_app@localhost/ssc"}
     ports = compose_ports(base)
     assert isinstance(ports.prod_gate, ApprovalsProdGate)
-    assert ports.build_driver is None
+    assert ports.cells is None
     assert isinstance(ports.metrics, NullMetricsPort)
-    with pytest.raises(CompositionError, match="fake build_driver"):
+    with pytest.raises(CompositionError, match="fake cells.FakeBuildDriver"):
         compose_ports({**base, "SSC_BUILD_DRIVER": "fake"})
     fake = compose_ports({**base, "SSC_BUILD_DRIVER": "fake", "SSC_ENV": "test"})
-    assert isinstance(fake.build_driver, FakeBuildDriver)
+    assert isinstance(fake.cells, StaticCells)
+    assert fake.cells.cell is not None
+    assert isinstance(fake.cells.cell.build, FakeBuildDriver)
+    assert fake.cells.cell.runtime is None
+    engine = fake.engine
     with pytest.raises(CompositionError, match="unknown"):
-        worker.build_driver_from_env({"SSC_BUILD_DRIVER": "cloudbuild"})
-    agent = {"SSC_BUILD_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": "https://agent.test"}
+        worker.cells_of({"SSC_BUILD_DRIVER": "cloudbuild"}, engine)
+    jwks = {"keys": [{"kid": "k1", "kty": "EC", "crv": "P-256", "x": "AA", "y": "AA"}]}
+    agent = {
+        "SSC_RUNTIME_DRIVER": "cell_agent",
+        "SSC_BUILD_DRIVER": "cell_agent",
+        "SSC_CELLS": json.dumps({"cellabcd01": {"identity_jwks": jwks}}),
+    }
     with pytest.raises(CompositionError, match="SSC_BLOB_"):
-        worker.build_driver_from_env(agent)
-    with pytest.raises(CompositionError, match="https"):
-        worker.build_driver_from_env({**agent, "SSC_CELL_AGENT_URL": "http://agent.test"})
+        worker.cells_of(agent, engine)
     signer = UrlSigner({"k1": MASTER}, active="k1", clock=SystemClock())
     store = FsBlobStore(Path("/nonexistent"), signer=signer, base_url="https://blobs.test")
-    assert isinstance(worker.build_driver_from_env(agent, store), CellAgentBuildDriver)
+    with pytest.raises(CompositionError, match="SSC_RUNTIME_DRIVER=cell_agent"):
+        worker.cells_of({**agent, "SSC_RUNTIME_DRIVER": ""}, engine, store)
+    with pytest.raises(CompositionError, match="SSC_CELLS"):
+        worker.cells_of({**agent, "SSC_CELLS": ""}, engine, store)
+    with pytest.raises(CompositionError, match="SSC_CELLS"):
+        worker.cells_of({**agent, "SSC_CELLS": '{"Bad": {}}'}, engine, store)
+    router = worker.cells_of(agent, engine, store)
+    assert isinstance(router, CellRouter)
+    assert router.labels == {"cellabcd01"}
     key = base64.b64encode(MASTER).decode()
     assert not isinstance(compose_ports({**base, "SSC_METRICS_KEY": key}).metrics, NullMetricsPort)
     with pytest.raises(CompositionError, match="base64"):

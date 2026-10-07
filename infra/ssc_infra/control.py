@@ -101,7 +101,10 @@ TLS_PROFILE: Final = "MODERN"
 DNS_TTL: Final = 300
 KEYS_CACHE: Final = "public, max-age=300"
 RELEASE_SETTINGS: Final = ("control_image", "auth_jwks", "auth_signing_kid")
-CELL_SETTINGS: Final = ("cell_label", "cell_jwks")
+CELLS: Final = "cells"
+LEGACY_CELL_SETTINGS: Final = ("cell_label", "cell_jwks")
+"""The one cell before ``cells`` (decision 029): read as a one-cell ``cells`` when that is
+unset."""
 
 
 def public_jwks_kids(jwks: str) -> set[str] | None:
@@ -124,10 +127,19 @@ def public_jwks_kids(jwks: str) -> set[str] | None:
 
 
 @dataclass(frozen=True, slots=True)
+class Cell:
+    """A cell the control plane serves: its label and its public identity JWKS, verbatim as the
+    cell stack's ``identity_jwks`` output."""
+
+    label: str
+    jwks: str
+
+
+@dataclass(frozen=True, slots=True)
 class ControlConfig:
     """``control_stages`` run the control plane; ``public_stage`` holds the public hosts.
     ``control_image``, ``auth_jwks`` and ``auth_signing_kid`` are the release, all or none;
-    ``cell_label`` and ``cell_jwks`` the one cell, both or none. ``timer_key_id`` names the
+    ``cells`` every cell the control plane serves (decision 029). ``timer_key_id`` names the
     worker's timer key, whose PEM is the ``SSC_TIMER_SIGNING_KEY`` secret (SSC-041).
     ``landing`` builds delimitus.com's account, bucket and alert in the public stage's project
     (SSC-065); ``landing_image`` then puts the page behind the entry load balancer."""
@@ -137,8 +149,7 @@ class ControlConfig:
     image: str | None = None
     auth_jwks: str | None = None
     auth_kid: str | None = None
-    cell_label: str | None = None
-    cell_jwks: str | None = None
+    cells: tuple[Cell, ...] = ()
     worker_instances: int = 1
     deployer: bool = False
     timer_key_id: str | None = None
@@ -175,17 +186,47 @@ def release_settings(
     return image, jwks, kid
 
 
-def cell_settings(label: str | None, jwks: str | None) -> tuple[str | None, str | None]:
-    """The one cell until placement: its label and its public identity JWKS (the cell stack's
-    ``identity_jwks`` output)."""
-    if not (label or jwks):
-        return None, None
-    if not (label and jwks):
-        raise ValueError(f"set both of {', '.join(CELL_SETTINGS)} or neither")
+def cell_settings(cells: object, label: str | None, jwks: str | None) -> tuple[Cell, ...]:
+    """``cells``, a list of ``{label, jwks}``: each cell's label and its public identity JWKS
+    (the cell stack's ``identity_jwks`` output), each label once. Unset, the legacy
+    ``cell_label`` and ``cell_jwks`` are one cell, both or neither."""
+    if cells is None:
+        if not (label or jwks):
+            return ()
+        if not (label and jwks):
+            raise ValueError(f"set both of {', '.join(LEGACY_CELL_SETTINGS)} or neither")
+        return (_cell(label, jwks, "cell_jwks"),)
+    if label or jwks:
+        raise ValueError(f"set {CELLS} or {', '.join(LEGACY_CELL_SETTINGS)}, not both")
+    if not isinstance(cells, list):
+        raise ValueError(f"{CELLS} must be a list of {{label, jwks}}")
+    out: list[Cell] = []
+    for entry in cast(list[object], cells):
+        members = cast(dict[str, object], entry) if isinstance(entry, dict) else {}
+        label_of, jwks_of = members.get("label"), members.get("jwks")
+        if set(members) != {"label", "jwks"} or not isinstance(label_of, str):
+            raise ValueError(f"each of {CELLS} must be {{label, jwks}}")
+        if not isinstance(jwks_of, str):
+            raise ValueError(f"{CELLS} {label_of}: jwks must be the identity_jwks output string")
+        out.append(_cell(label_of, jwks_of, f"{CELLS} {label_of}: jwks"))
+    labels = [c.label for c in out]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"{CELLS} must name each label once")
+    return tuple(out)
+
+
+def _cell(label: str, jwks: str, what: str) -> Cell:
     check_cell_label(label)
     if public_jwks_kids(jwks) is None:
-        raise ValueError("cell_jwks must be the cell's public JWKS (its identity_jwks output)")
-    return label, jwks
+        raise ValueError(f"{what} must be the cell's public JWKS (its identity_jwks output)")
+    return Cell(label=label, jwks=jwks)
+
+
+def cells_env(cells: Sequence[Cell]) -> str:
+    """``SSC_CELLS`` (``ssc_control.runtime.cells.parse_cells``): each label's identity JWKS,
+    compact with sorted keys so the same cells always make the same value."""
+    doc = {c.label: {"identity_jwks": json.loads(c.jwks)} for c in cells}
+    return json.dumps(doc, separators=(",", ":"), sort_keys=True)
 
 
 def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
@@ -204,7 +245,9 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
     image, auth_jwks, auth_kid = release_settings(
         config.get("control_image"), config.get("auth_jwks"), config.get("auth_signing_kid")
     )
-    label, cell_jwks = cell_settings(config.get("cell_label"), config.get("cell_jwks"))
+    cells = cell_settings(
+        config.get_object(CELLS), config.get("cell_label"), config.get("cell_jwks")
+    )
     timer_key_id = config.get("timer_key_id") or None
     if timer_key_id is not None and not TIMER_KEY_ID.fullmatch(timer_key_id):
         raise ValueError("timer_key_id must be 1 to 64 letters, digits, '.', '_' or '-'")
@@ -225,8 +268,7 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         image=image,
         auth_jwks=auth_jwks,
         auth_kid=auth_kid,
-        cell_label=label,
-        cell_jwks=cell_jwks,
+        cells=cells,
         worker_instances=1 if instances is None else instances,
         deployer=deployer,
         timer_key_id=timer_key_id,
@@ -249,9 +291,8 @@ def api_env(
         "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
         **_blob_env(stage, signer),
     }
-    if cfg.cell_label and cfg.serves_cells(stage):
-        env["SSC_CELL_AGENT_URL"] = n.agent_url(cfg.cell_label)
-        env["SSC_SECRET_INTAKE_URL"] = n.intake_url(cfg.cell_label)
+    if cfg.cells and cfg.serves_cells(stage):
+        env["SSC_CELLS"] = cells_env(cfg.cells)
     return env
 
 
@@ -269,12 +310,10 @@ def worker_env(
     if cfg.deployer:
         env["SSC_CELL_DEPLOYER"] = "cloud_run"
         env["SSC_CELL_DEPLOYER_JOB"] = n.deployer_job()
-    if cfg.cell_label and cfg.cell_jwks and cfg.serves_cells(stage):
+    if cfg.cells and cfg.serves_cells(stage):
         env["SSC_RUNTIME_DRIVER"] = "cell_agent"
         env["SSC_BUILD_DRIVER"] = "cell_agent"
-        env["SSC_CELL_AGENT_URL"] = n.agent_url(cfg.cell_label)
-        env["SSC_IDENTITY_JWKS"] = cfg.cell_jwks
-        env["SSC_IDENTITY_ISSUER"] = n.identity_issuer(cfg.cell_label)
+        env["SSC_CELLS"] = cells_env(cfg.cells)
     if cfg.timer_key_id:
         env["SSC_TIMER_DISPATCHER"] = "https"
         env["SSC_TIMER_KEY_ID"] = cfg.timer_key_id
@@ -966,13 +1005,12 @@ class ControlPlane:
             member="allUsers",
             opts=self._o(),
         )
-        label, jwks = self.cfg.cell_label, self.cfg.cell_jwks
-        if label and jwks:
+        for cell in self.cfg.cells:
             gcp.storage.BucketObject(
-                self._name(f"keys-{label}"),
+                self._name(f"keys-{cell.label}"),
                 bucket=bucket.name,
-                name=f"{label}/jwks.json",
-                content=jwks,
+                name=f"{cell.label}/jwks.json",
+                content=cell.jwks,
                 content_type="application/json",
                 cache_control=KEYS_CACHE,
                 opts=self._o(),

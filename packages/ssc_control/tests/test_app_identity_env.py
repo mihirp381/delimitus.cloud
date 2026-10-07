@@ -181,7 +181,7 @@ def test_a_bad_identity_setting_stops_the_worker_starting(settings: dict[str, st
 async def test_a_deployment_runs_with_the_identity_env(b: Bench) -> None:
     identity = app_identity_from_env(SETTINGS)
     assert identity is not None
-    ports = replace(b.ports, app_identity=identity)
+    ports = replace(b.ports, cells=b.cells_with(identity=identity))
     release = await build_release(b, b.w.preview)
     r = start_deploy(b, b.w.preview, release)
     assert r.status_code == 202, r.text

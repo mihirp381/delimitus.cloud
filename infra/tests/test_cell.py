@@ -83,6 +83,7 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_PROXY_ADDRESS",
     "SSC_OUTBOUND_IP",
     "SSC_CELL_BUCKET",
+    "SSC_ORG_ID",
 }
 TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
@@ -90,6 +91,9 @@ BUILD = {"build_tools_image": TOOLS_IMAGE, "build_frontend_image": FRONTEND_IMAG
 BUILD_ENV = {"SSC_BUILD_SA", "SSC_BUILD_TOOLS_IMAGE", "SSC_BUILD_FRONTEND_IMAGE"}
 GATEWAY_IMAGE = f"{naming.platform_registry()}/ssc-gateway@sha256:" + "f" * 64
 AGENT_IMAGE = "us-central1-docker.pkg.dev/ssc-c-testcell05/ssc-platform/agent@sha256:" + "a" * 64
+AGENT_ORG = "org_" + "b" * 20
+AGENT = {"agent_image": AGENT_IMAGE, "org_id": AGENT_ORG}
+"""The agent and the one org it serves (decision 029), without the gateway."""
 INTAKE_ENV = {"SSC_CELL_PROJECT", "SSC_INTAKE_ORIGIN", "SSC_CONTROL_SA"}
 CONTROL_MEMBER = f"serviceAccount:{mockcloud.CONTROL['staging']}"
 POINT = "A" * 43
@@ -919,7 +923,7 @@ def test_the_agent_reads_logs_through_two_views_on_the_default_bucket(
     }
     assert {v["bucket"] for v in views.values()} == {bucket}
     assert not any(" OR " in v["filter"] for v in views.values())
-    declared = run(naming.cell_stack(A), {"agent_image": AGENT_IMAGE})
+    declared = run(naming.cell_stack(A), AGENT)
     agent = one(declared, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
     assert env["SSC_LOG_VIEW"].split(",") == [
@@ -952,7 +956,7 @@ def test_the_agent_reads_usage_from_the_cell_s_monitoring_on_google_s_own_path()
     """``ssc_agent.cloud_monitoring`` calls ``monitoring.googleapis.com`` (SSC-028). The agent
     has no VPC egress, like its Logging and Cloud Run calls, so the cell's DNS policy and
     Private Google Access never stand in its way."""
-    declared = run(naming.cell_stack(A), {"agent_image": AGENT_IMAGE})
+    declared = run(naming.cell_stack(A), AGENT)
     assert "monitoring.googleapis.com" in cell.APIS
     services = {d.inputs["service"] for d in declared if d.type == "gcp:projects/service:Service"}
     assert "monitoring.googleapis.com" in services
@@ -1033,7 +1037,7 @@ def test_every_tld_in_the_list_gets_one_rule_and_the_list_has_no_repeats() -> No
 
 
 def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
-    declared = run(naming.cell_stack("testcell05"), {"agent_image": AGENT_IMAGE})
+    declared = run(naming.cell_stack("testcell05"), AGENT)
     agent = one(declared, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     (container,) = agent["template"]["containers"]
     assert container["image"] == AGENT_IMAGE
@@ -1046,13 +1050,32 @@ def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
     assert env["SSC_GATEWAY_SA"] == naming.sa_email("ssc-gateway", "ssc-c-testcell05")
     assert env["SSC_PROXY_ADDRESS"] == "10.20.4.10"
     assert env["SSC_OUTBOUND_IP"] == mockcloud.nat_address("ssc-c-testcell05")
+    assert env["SSC_ORG_ID"] == AGENT_ORG
     assert set(env) == AGENT_ENV
     subnet = one(declared, "gcp:compute/subnetworkIAMMember:SubnetworkIAMMember").inputs
     assert (subnet["subnetwork"], subnet["role"]) == ("apps", "roles/compute.networkUser")
 
 
+def test_the_agent_serves_one_org_set_without_the_gateway() -> None:
+    """Decision 029: the agent refuses every call for another org, so it needs ``org_id``,
+    which may be set before the gateway's other three."""
+    with pytest.raises(ValueError, match="agent_image needs org_id"):
+        run(naming.cell_stack("testcell05"), {"agent_image": AGENT_IMAGE})
+    with pytest.raises(ValueError, match="org_id must be"):
+        run(naming.cell_stack("testcell05"), AGENT | {"org_id": "org_short"})
+    declared = run(naming.cell_stack("testcell05"), AGENT)
+    gw = one(declared, "gcp:cloudrunv2/service:Service", "ssc-gateway").inputs
+    (container,) = gw["template"]["containers"]
+    assert container["image"] == cell.PLACEHOLDER_IMAGE
+    assert cell.gateway_settings(None, None, None, AGENT_ORG) == (None, None, None, AGENT_ORG)
+    for image in ("datagw_image", "proxy_image"):
+        other = f"{naming.platform_registry()}/{image}@sha256:" + "c" * 64
+        with pytest.raises(ValueError, match="needs the gateway settings"):
+            run(naming.cell_stack("testcell05"), AGENT | {image: other})
+
+
 def test_the_agent_runs_builds_as_ssc_build_once_both_images_are_set() -> None:
-    declared = run(naming.cell_stack("testcell05"), {"agent_image": AGENT_IMAGE} | BUILD)
+    declared = run(naming.cell_stack("testcell05"), AGENT | BUILD)
     agent = one(declared, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
     assert set(env) == AGENT_ENV | BUILD_ENV
@@ -1087,14 +1110,14 @@ def test_without_build_images_the_agent_sets_none_of_the_build_variables() -> No
 
 
 def test_the_agent_names_the_sql_instance_only_with_the_database_flag() -> None:
-    database = run(naming.cell_stack("testcell05"), {"agent_image": AGENT_IMAGE, **LAZY})
+    database = run(naming.cell_stack("testcell05"), AGENT | LAZY)
     agent = one(database, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
     assert set(env) == AGENT_ENV | {naming.SQL_INSTANCE_ENV}
     assert env["SSC_SQL_INSTANCE"] == cell.SQL_INSTANCE
     instance = one(database, "gcp:sql/databaseInstance:DatabaseInstance").inputs
     assert instance["name"] == env["SSC_SQL_INSTANCE"]
-    rest = {"agent_image": AGENT_IMAGE, "egress": "true", "connections": "true"}
+    rest = AGENT | {"egress": "true", "connections": "true"}
     without = run(naming.cell_stack("testcell05"), rest)
     agent = one(without, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
@@ -1102,8 +1125,8 @@ def test_the_agent_names_the_sql_instance_only_with_the_database_flag() -> None:
 
 
 def test_the_database_flag_on_a_running_agent_differs_only_in_what_it_names() -> None:
-    before = run(naming.cell_stack("testcell05"), {"agent_image": AGENT_IMAGE})
-    after = run(naming.cell_stack("testcell05"), {"agent_image": AGENT_IMAGE, "database": "true"})
+    before = run(naming.cell_stack("testcell05"), AGENT)
+    after = run(naming.cell_stack("testcell05"), AGENT | {"database": "true"})
     flags = EMPTY_FLAGS | {"database": True}
     first = cell_diff.normalise(as_export(before, "testcell05", EMPTY_FLAGS), "testcell05")
     second = cell_diff.normalise(as_export(after, "testcell05", flags), "testcell05")
@@ -1532,7 +1555,7 @@ def test_ssc_data_holds_no_secret_role_anywhere_in_the_stack(cell_a: list[Declar
 
 
 def test_the_agent_tags_connection_secrets_and_grants_them_to_ssc_data() -> None:
-    declared = run(naming.cell_stack(A), {"agent_image": AGENT_IMAGE})
+    declared = run(naming.cell_stack(A), AGENT)
     agent = one(declared, "gcp:cloudrunv2/service:Service", naming.CELL_AGENT).inputs
     env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
     key = one(declared, "gcp:tags/tagKey:TagKey").outputs["name"]
@@ -2118,7 +2141,7 @@ def test_the_agent_and_intake_hosts_are_each_routed_to_their_service_alone(
 def test_the_intake_runs_the_agent_image_s_intake_with_its_origin_and_the_control_plane(
     bare: list[Declared],
 ) -> None:
-    declared = run(naming.cell_stack("testcell05"), {"agent_image": AGENT_IMAGE})
+    declared = run(naming.cell_stack("testcell05"), AGENT)
     intake = one(declared, "gcp:cloudrunv2/service:Service", naming.SECRET_INTAKE).inputs
     (container,) = intake["template"]["containers"]
     assert container["image"] == AGENT_IMAGE

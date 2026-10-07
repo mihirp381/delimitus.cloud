@@ -14,6 +14,7 @@ from typing import Any, Final, Literal, Protocol, cast, get_args
 
 from ssc_contracts import app_database, egress
 from ssc_contracts.app_env import secret_name_problem
+from ssc_contracts.ids import prefix_of
 from ssc_contracts.manifest import (
     RESOURCE_CLASSES,
     ResourceClass,
@@ -41,6 +42,10 @@ CONNECTION_SECRET_PREFIX: Final = "ssc-conn-"  # noqa: S105
 CONNECTION_SECRET_ID: Final = re.compile(re.escape(CONNECTION_SECRET_PREFIX) + r"[a-z0-9]{20}")
 CONNECTION_ENV_PREFIX: Final = "SSC_CONNECTION_"
 CONNECTION_ID: Final = re.compile(r"con_([a-z0-9]{20})")
+ORG_HEADER: Final = "X-SSC-Org"
+"""Every call to a cell agent names the org the cell serves; the agent refuses any other."""
+ORG_LABEL: Final = "ssc-org"
+"""The label on every app's spec naming its org; an agent applies only its own org's."""
 
 
 def billing_for(runtime: Runtime, framework: str | None = None) -> Billing:
@@ -55,6 +60,16 @@ def timeout_for(runtime: Runtime, framework: str | None = None) -> int:
     return (
         SESSION_TIMEOUT_SECONDS if is_session_app(runtime, framework) else REQUEST_TIMEOUT_SECONDS
     )
+
+
+def check_org(org_id: str) -> str:
+    """``org_id`` unchanged when it is an org id (``org_<20>``), else ``ValueError``."""
+    try:
+        if prefix_of(org_id) == "org":
+            return org_id
+    except ValueError:
+        pass
+    raise ValueError("not an org id")
 
 
 def service_name(environment_id: str) -> str:

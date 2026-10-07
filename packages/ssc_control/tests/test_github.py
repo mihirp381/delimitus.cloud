@@ -91,6 +91,7 @@ from ssc_control.github.source import unpack
 from ssc_control.github.tasks import RUN_PUSH, push_lock
 from ssc_control.github.webhook import MAX_BODY_BYTES
 from ssc_control.metrics import metrics_port
+from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.worker import Ports
@@ -142,11 +143,10 @@ async def g(
     runtime, builds = FakeRuntimeDriver(sleep=hold), FakeBuildDriver()
     ports = Ports(
         engine=engine,
-        runtime_driver=runtime,
+        cells=StaticCells(OrgCell(label=STATIC_LABEL, runtime=runtime, build=builds)),
         release_specs=BundleReleaseSpecs(),
         timers=timers,
         prod_gate=approvals_prod_gate(),
-        build_driver=builds,
         metrics=metrics_port(MASTER),
     )
     signer = UrlSigner({"k1": MASTER}, active="k1", clock=SystemClock())
