@@ -1,7 +1,7 @@
 """What the data gateway reads from its environment (SSC-050). Infra sets each of these on the
 ``ssc-datagw`` service (``infra/ssc_infra/cell.py``, ``_datagw_env``), except the connections:
-one ``SSC_CONNECTION_<CON_ID>`` per connection, its id in upper case, holding the
-:class:`ssc_datagw.postgres.PostgresTarget` as JSON, password included (SSC-051)."""
+one ``SSC_CONNECTION_<CON_ID>`` per connection, its id in upper case, holding the target of its
+kind as JSON, credential included (SSC-051; the kinds, :mod:`ssc_datagw.kinds`, GA-5)."""
 
 import json
 import re
@@ -9,9 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, cast
 
-from pydantic import ValidationError
-
-from ssc_datagw.postgres import PostgresTarget
+from ssc_datagw.kinds import Target, TargetError, parse_target
 from ssc_shared.hosts import check_apps_domain, check_cell_label
 
 MAX_STALE_SECONDS: Final = 120.0
@@ -43,9 +41,7 @@ class Settings:
     issuer: str
     apps_domain: str
     max_stale: float = MAX_STALE_SECONDS
-    connections: Mapping[str, PostgresTarget] = field(
-        default_factory=dict[str, PostgresTarget], repr=False
-    )
+    connections: Mapping[str, Target] = field(default_factory=dict[str, Target], repr=False)
 
     @property
     def signer(self) -> str:
@@ -74,10 +70,10 @@ def _jwks(raw: str) -> Mapping[str, Any]:
     return cast("dict[str, Any]", doc)
 
 
-def _connections(env: Mapping[str, str]) -> dict[str, PostgresTarget]:
+def _connections(env: Mapping[str, str]) -> dict[str, Target]:
     """Each ``SSC_CONNECTION_*`` variable. An error names the variable and the fields at fault,
-    never the value, which holds a password."""
-    found: dict[str, PostgresTarget] = {}
+    never the value, which holds a credential."""
+    found: dict[str, Target] = {}
     for name in sorted(env):
         if not name.startswith(CONNECTION_PREFIX):
             continue
@@ -85,10 +81,9 @@ def _connections(env: Mapping[str, str]) -> dict[str, PostgresTarget]:
         if _CONNECTION.fullmatch(suffix) is None:
             raise SettingsError(f"{name} does not name a connection: SSC_CONNECTION_CON_<20>")
         try:
-            found[suffix.lower()] = PostgresTarget.model_validate_json(env[name])
-        except ValidationError as exc:
-            fields = sorted({".".join(map(str, e["loc"])) or "(the JSON)" for e in exc.errors()})
-            raise SettingsError(f"{name} is not a connection: {', '.join(fields)}") from None
+            found[suffix.lower()] = parse_target(env[name])
+        except TargetError as exc:
+            raise SettingsError(f"{name} is not a connection: {exc}") from None
     return found
 
 

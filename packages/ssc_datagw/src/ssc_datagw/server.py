@@ -80,6 +80,7 @@ from ssc_datagw.files import (
     FilesUnavailableError,
     Link,
 )
+from ssc_datagw.kinds import connector_for
 from ssc_datagw.limits import (
     BudgetSpentError,
     DailyBudget,
@@ -89,7 +90,6 @@ from ssc_datagw.limits import (
     compose,
 )
 from ssc_datagw.note import NoteRefusedError, verify_note
-from ssc_datagw.postgres import PostgresConnector
 from ssc_datagw.settings import Settings, settings_from_env
 from ssc_datagw.workload import (
     GoogleWorkloads,
@@ -697,7 +697,8 @@ def production_app(
 ) -> FastAPI:
     """``store`` replaces the cell bucket, ``workloads`` Google's keys and ``files`` the file
     broker (tests); with ``store`` and no ``files`` there is no broker. Each ``SSC_CONNECTION_*``
-    variable becomes a :class:`PostgresConnector`; ``connectors`` adds to or replaces them
+    variable becomes the connector of its kind (:mod:`ssc_datagw.kinds`); ``connectors`` adds to
+    or replaces them
     (tests). A granted connection with neither answers ``CONNECTION_UNAVAILABLE``. The broker
     on the cell bucket signs as the gateway's own account, ``Settings.signer``, through IAM
     ``signBlob``."""
@@ -715,7 +716,7 @@ def production_app(
         workloads=workloads or google,
         snapshot=snapshot,
         connectors={
-            **{cid: PostgresConnector(t) for cid, t in settings.connections.items()},
+            **{cid: connector_for(t) for cid, t in settings.connections.items()},
             **(connectors or {}),
         },
         files=files,

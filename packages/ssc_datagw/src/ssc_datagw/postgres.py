@@ -38,7 +38,7 @@ from dataclasses import dataclass, fields
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from time import monotonic
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 from uuid import UUID
 
 import asyncpg  # pyright: ignore[reportMissingTypeStubs]
@@ -126,6 +126,7 @@ class PostgresTarget(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    kind: Literal["postgres"] = "postgres"
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=5432, ge=1, le=65535)
     database: str = Field(min_length=1, max_length=NAME_BYTES)

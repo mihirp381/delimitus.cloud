@@ -54,6 +54,10 @@ BAD = {
         CONNECTION_VAR: json.dumps({**TARGET, "sslmode": "disable"})
     },
     "a connection with a bad port": {CONNECTION_VAR: json.dumps({**TARGET, "port": 0})},
+    "a connection of a kind this build lacks": {
+        CONNECTION_VAR: json.dumps({**TARGET, "kind": "mysql"})
+    },
+    "a connection of no kind at all": {CONNECTION_VAR: json.dumps({**TARGET, "kind": "oracle"})},
     "a connection with a bad id": {"SSC_CONNECTION_SALES": json.dumps(TARGET)},
 }
 
@@ -69,6 +73,7 @@ def test_a_bad_environment_is_refused(case: str) -> None:
 def test_each_connection_variable_is_a_target_and_its_password_is_never_shown() -> None:
     got = settings_from_env({**ENV, CONNECTION_VAR: json.dumps({**TARGET, "port": 6432})})
     assert got.connections == {SALES: PostgresTarget.model_validate({**TARGET, "port": 6432})}
+    assert got.connections[SALES].kind == "postgres"
     assert got.connections[SALES].password.get_secret_value() == PASSWORD
     assert PASSWORD not in repr(got)
     assert settings_from_env(ENV).connections == {}
