@@ -144,7 +144,10 @@ class ConnectionPatch(Strict):
     allowed_schemas: list[Schema] | None = Field(default=None, min_length=1, max_length=50)
     limits: SnapshotLimits | None = None
     setup_status: Literal["pending", "ready"] | None = Field(
-        default=None, description="`ready` once the runbook's first read worked."
+        default=None,
+        description="`ready` puts the connection in the snapshot, so the data gateway serves it "
+        "to the environments granted it; a `pending` connection answers CONNECTION_NOT_GRANTED. "
+        "Set it before the first read (runbook ssc-052, step 3); `pending` takes it out again.",
     )
     status: Literal["active", "suspended"] | None = Field(
         default=None, description="`suspended` stops every query on it at the next snapshot."

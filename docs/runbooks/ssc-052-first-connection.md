@@ -25,24 +25,22 @@ curl -sS -X POST "$API/v1/connections" \
 
 `kind` is one of `ssc_contracts.connections.KINDS` and `address` the kind's non-secret address (the API's `ConnectionIn.address` lists each kind's members; `port` defaults to the engine's). A kind without a connector yet is refused with `CONNECTOR_UNAVAILABLE`; the console offers only the available ones. For the SQL kinds, `host`, `port` and `database` at the top level still work in place of `address`.
 
-Pass: `201` and `setup_status` is `pending`. The answer, `GET /v1/connections` and the audit row `connection.created` show the kind and never the address. A `pending` connection can be granted to an environment but the data gateway does not serve it.
+Pass: `201` and `setup_status` is `pending`. The answer, `GET /v1/connections` and the audit row `connection.created` show the kind and never the address. A `pending` connection can be granted to an environment but the data gateway does not serve it (step 3).
 
 ## 2. Give the data gateway its credentials
 
 Follow `infra/README.md`, "Data gateway", steps for a connection secret: the cell agent ensures `ssc-conn-<20>` (the connection's `con_` id, 20 characters), the customer's `{host, port, database, user, password, ca}` goes in through the secret intake, and the operator sets `datagw_connections` to `con_<20>:<version>` and applies the cell stack. This is a live step on the customer's cell; nothing in this ticket does it.
 
-## 3. First read, then ready
+## 3. Ready, then grant, then the first read
 
-From an app environment that will be granted it (step 4), or with a throwaway app, run one real query with `ssc_app.data.query("finance", "select 1")`. Pass: a row comes back; `CONNECTION_UNAVAILABLE` means the credentials or the network are wrong (`infra/README.md`, "Data gateway" checks 6 and 9).
-
-Then make it ready:
+The data gateway serves only `ready` connections: the snapshot leaves a `pending` one out, so a query on it is refused `CONNECTION_NOT_GRANTED`, which says nothing about the credentials. `ready` is therefore set before the first read, not after it (GA-5.1); until an environment is granted the connection in step 4, no app can reach it, so the order is safe.
 
 ```sh
 curl -sS -X PATCH "$API/v1/connections/finance" -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{"setup_status": "ready"}'
 ```
 
-Pass: the next snapshot version carries the connection (`connections` in `docs/contracts/access-snapshot.md`). `{"status": "suspended"}` stops every query on it at the next snapshot and `"active"` restores it.
+Pass: the next snapshot version carries the connection (`connections` in `docs/contracts/access-snapshot.md`). `{"status": "suspended"}` stops every query on it at the next snapshot and `"active"` restores it; if the first read goes wrong, `pending` takes it out of the snapshot again.
 
 ## 4. Grant an environment
 
@@ -51,9 +49,26 @@ curl -sS -X PUT "$API/v1/apps/<app>/environments/<env>/connections/finance" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"limits": {"max_rows": 1000}}'
 ```
 
-Pass: `200` listing the connection; `ssc connections <app>` shows it and its `over ceiling` state. When the environment's audience is already wider than the ceiling the answer is `APPROVAL_REQUIRED`: ask `POST /v1/approvals` with `kind: exceed_ceiling`, `payload: {"connection": "finance", "grants": [<the environment's current grants>]}`; the owner or another admin decides it through the operator; then repeat the `PUT`. Approving `connect_data_source` for the name does not grant anything.
+Pass: `200` listing the connection; `ssc connections <app>` shows it and its `over ceiling` state. When the environment's audience is already wider than the ceiling the answer is `APPROVAL_REQUIRED`: ask `POST /v1/approvals` with `kind: exceed_ceiling`, `payload: {"connection": "finance", "grants": [<the environment's current grants>]}`; the owner or another admin decides it through the operator; then repeat the `PUT`. Approving `connect_data_source` for the name does not grant anything. For the first read a throwaway app's environment, shared with nobody but you, is the right grantee.
 
-## 5. Check the ceiling
+## 5. The first read
+
+From the granted environment, run one real query with `ssc_app.data.query("finance", "select 1")`, then one on the customer's data, `select * from reporting.<a table> limit 5`. Pass: rows come back (a read is logged by the data gateway in the cell, never in the org's audit chain, which records the grant and the approvals). If not, the code says who acts; none of the first four is a credential problem:
+
+| Answer | Means | Do |
+|---|---|---|
+| `CONNECTION_NOT_GRANTED` | the connection is `pending`, the grant is missing, or the snapshot is not there yet (under a minute after the change) | step 3, step 4, wait once |
+| `CONNECTION_SUSPENDED` | `status` is `suspended` | `PATCH {"status": "active"}` |
+| `APP_NOT_ACTIVE` | the app is disabled or quarantined | `ssc enable <app>` |
+| `DATA_SNAPSHOT_STALE` | the data gateway has not read a snapshot for 120 s | platform: `infra/README.md`, "Data gateway", snapshot |
+| `CONNECTION_UNAVAILABLE` | the credentials, the CA, the address or the network are wrong, or a pooler sits between (`a pooler is between` in the gateway log) | `infra/README.md`, "Data gateway" checks 6, 7 and 9; re-enter the secret (step 2) |
+| `QUERY_FAILED` 42501 | the role may not read that schema or table | the customer runs `postgres_setup.sql` again with the schema named |
+| `QUERY_FAILED` 42P01 | no such table | the query |
+| `QUERY_REFUSED` | the text is not one plain read | the query; `docs/contracts/data-gateway.md`, "The Postgres connector", step 1 |
+
+A failure here never reaches a user: only the throwaway environment is granted. Set `{"setup_status": "pending"}` while you fix it and `ready` again after.
+
+## 6. Check the ceiling
 
 1. Share an environment that uses the connection with a person outside the ceiling (or the whole org). Pass: `APPROVAL_REQUIRED` until an `exceed_ceiling` request for that connection and that audience is approved by the owner or an admin (never the requester).
 2. Lower the ceiling (`PATCH` with a shorter list). Pass: every environment now over it shows `over_ceiling_since` in `ssc connections`, with one `connection.flagged` audit row each. No approval is opened and the data gateway is not told; the flag clears when the audience is narrowed inside the ceiling.
