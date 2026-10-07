@@ -220,6 +220,33 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
 - **Checked on the clone:** private IP only, all 11 databases present. The clone was deleted the same evening.
 - **What a customer restore needs, not built:** a command that clones to a point in time, points the cell's database name at the clone (or copies one app's database back), and rotates the affected apps' passwords. Budget about 30 minutes of downtime per restore at `db-f1-micro`. Belongs to SSC-059's runbooks.
 
+## Live checks, 2026-10-07 (cell 1)
+
+- **Build fixtures (SSC-015), app pfix.** 19 run one at a time. The expected code for every
+  must-fail fixture but the three below; the must-succeed ones build and go healthy. Fixed:
+  cs-express-hello and cs-vite-app had placeholder lockfiles (de5ef25); listed-native-library
+  failed because Railpack mounts each `--env` value as a BuildKit secret and the apt package
+  values had none (3bd41c0). The build account holds only `roles/logging.logWriter` and no role
+  on the cell bucket.
+- **False healthy (SSC-016).** cf-startup-hang, cf-exits-nonzero and cf-no-port-bound went live
+  as healthy. Watching the v2 API every 0.5 s on app phang: a new revision of an existing service
+  shows `Ready` succeeded for about a second, with no `ContainerHealthy` yet, then goes back to
+  reconciling and fails two minutes later. Ready now needs `ContainerHealthy` succeeded and the
+  revision not reconciling (ac996e1). Every ready revision on cell 1 has both. Not live until the
+  agent rollout after T9.
+- **Rate limit.** 60 requests then 1 a second per login. Two `--wait` deploys at once failed on
+  a poll while their builds ran on; the wait now sleeps `Retry-After` and polls again (a994ae5).
+- **Drivers (SSC-040).** node-pg 8.23, Prisma 7.10 and Django 5.2 connect with `DATABASE_URL` as
+  given. `pg_stat_ssl` shows app roles nothing; `sslmode=verify-full` is what proves TLS.
+- **Admin connection (SSC-040).** A preview with no requests sleeps about 3 minutes after it
+  starts, so ten slow deploys never overlap. All ten hold apps were woken by `ssc database
+  rotate` (a redeploy, no build); a further rotation at 06:45:04 took 3 s while every role was at
+  its limit of 2 (each new instance refused with `too many connections for role`). The same
+  refusal shows why the fix-it pool size is 1: with 2 held, a new instance cannot connect until
+  the old one stops.
+- **T9 instance hold.** Besides the 60-minute drop, one at 37 minutes (05:59:22): Cloud Run
+  replaced pstream's instance on the same revision, with no deploy. The hold reconnected at once.
+
 ## Settled here
 
 - **Subnet layout:** pass 2 (README T1, last line, not yet run).
