@@ -60,6 +60,8 @@ INVOKER_ROLE: Final = "roles/run.invoker"
 INGRESS: Final = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 REVISION_TRAFFIC: Final = "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
 LATEST_TRAFFIC: Final = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+SUCCEEDED: Final = "CONDITION_SUCCEEDED"
+FAILED: Final = "CONDITION_FAILED"
 STARTUP_PERIOD_SECONDS: Final = 1
 STARTUP_TIMEOUT_SECONDS: Final = 1
 STARTUP_FAILURES: Final = 120  # two minutes to start
@@ -668,17 +670,21 @@ def _route_all(svc: Json, revisions: Sequence[Json], service: str, revision: str
 
 
 def _readiness(revision: Json) -> tuple[bool | None, bool]:
-    """(ready, failed) from the revision's ``Ready`` condition; None while it is starting."""
-    for condition in _objs(revision.get("conditions")):
-        if condition.get("type") != "Ready":
-            continue
-        match condition.get("state"):
-            case "CONDITION_SUCCEEDED":
-                return True, False
-            case "CONDITION_FAILED":
-                return False, True
-            case _:
-                return None, False
+    """(ready, failed) from the revision's ``Ready`` and ``ContainerHealthy`` conditions; None
+    while it is starting. Cloud Run reports ``Ready`` succeeded for about a second on a new
+    revision of an existing service, before its startup probe has run (seen on cell 1,
+    2026-10-07), so ready also needs the probe passed and the revision no longer reconciling."""
+    states = {
+        c.get("type"): c.get("state") for c in _objs(revision.get("conditions")) if c.get("type")
+    }
+    if FAILED in (states.get("Ready"), states.get("ContainerHealthy")):
+        return False, True
+    if (
+        states.get("Ready") == SUCCEEDED
+        and states.get("ContainerHealthy") == SUCCEEDED
+        and not revision.get("reconciling")
+    ):
+        return True, False
     return None, False
 
 

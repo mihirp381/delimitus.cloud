@@ -212,7 +212,10 @@ class CloudRunEmulator:
             container["image"] = f"{repository}@{self._indexes[digest]}"
         failed = digest in self._unhealthy
         state = "CONDITION_FAILED" if failed else "CONDITION_SUCCEEDED"
-        revision["conditions"] = [{"type": "Ready", "state": state}]
+        revision["conditions"] = [
+            {"type": "Ready", "state": state},
+            {"type": "ContainerHealthy", "state": state},
+        ]
         return revision
 
     def _settle(self, svc: _Service) -> None:

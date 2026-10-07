@@ -114,13 +114,43 @@ def test_latest_traffic_resolves_to_a_revision() -> None:
     assert _traffic(svc) == {"s-00002-abc": 90, "s-1": 10}
 
 
+def _conditions(**states: str) -> list[dict[str, str]]:
+    return [{"type": k, "state": f"CONDITION_{v}"} for k, v in states.items()]
+
+
 @pytest.mark.parametrize(
-    ("state", "seen"),
+    ("revision", "seen"),
     [
-        ("CONDITION_SUCCEEDED", (True, False)),
-        ("CONDITION_FAILED", (False, True)),
-        ("CONDITION_RECONCILING", (None, False)),
+        (
+            {"conditions": _conditions(Ready="SUCCEEDED", ContainerHealthy="SUCCEEDED")},
+            (True, False),
+        ),
+        ({"conditions": _conditions(Ready="FAILED", ContainerHealthy="FAILED")}, (False, True)),
+        (
+            {"conditions": _conditions(Ready="RECONCILING", ContainerHealthy="FAILED")},
+            (False, True),
+        ),
+        (
+            {"conditions": _conditions(Ready="RECONCILING", ContainerHealthy="RECONCILING")},
+            (None, False),
+        ),
+        # Cell 1, 2026-10-07: a revision that never listens, a second after it was made.
+        (
+            {
+                "conditions": _conditions(
+                    Ready="SUCCEEDED", Retry="SUCCEEDED", ContainerReady="SUCCEEDED"
+                )
+            },
+            (None, False),
+        ),
+        (
+            {
+                "reconciling": True,
+                "conditions": _conditions(Ready="SUCCEEDED", ContainerHealthy="SUCCEEDED"),
+            },
+            (None, False),
+        ),
     ],
 )
-def test_readiness(state: str, seen: tuple[bool | None, bool]) -> None:
-    assert _readiness({"conditions": [{"type": "Ready", "state": state}]}) == seen
+def test_readiness(revision: dict[str, object], seen: tuple[bool | None, bool]) -> None:
+    assert _readiness(revision) == seen
