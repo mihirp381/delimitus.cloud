@@ -288,7 +288,7 @@ Pass: all of them within 10 s, with every step `done`. There is no query or tunn
 Instance-billed is the session app's normal setting:
 
 ```sh
-uv run python -m proofrun t9 hold --state results/t9-instance.json --app pstream --project $P1 --mode instance
+uv run python -m proofrun t9 hold --state results/t9-instance.state.json --app pstream --project $P1 --mode instance
 ```
 
 Request-billed needs an override. Pause the worker so nothing re-applies the service while it holds:
@@ -296,7 +296,7 @@ Request-billed needs an override. Pause the worker so nothing re-applies the ser
 ```sh
 cd infra && pulumi config set --stack platform worker_instances 0 && pulumi up --stack platform
 gcloud run services update <ssc-a-...> --project=$P1 --region=us-central1 --cpu-throttling
-uv run python -m proofrun t9 hold --state results/t9-request.json --app pstream --project $P1 --mode request
+uv run python -m proofrun t9 hold --state results/t9-request.state.json --app pstream --project $P1 --mode request
 gcloud run services update <ssc-a-...> --project=$P1 --region=us-central1 --no-cpu-throttling
 cd infra && pulumi config set --stack platform worker_instances 1 && pulumi up --stack platform
 ```
@@ -306,8 +306,8 @@ cd infra && pulumi config set --stack platform worker_instances 1 && pulumi up -
 The next day, read the service's usage amounts for the hold's day. Use Billing, Reports, filtered to the project and Cloud Run, grouped by SKU, with credits unticked. Then run:
 
 ```sh
-uv run python -m proofrun t9 report --state results/t9-instance.json
-uv run python -m proofrun t9 bill --state results/t9-instance.json --vcpu-seconds <n> --gib-seconds <n>
+uv run python -m proofrun t9 report --state results/t9-instance.state.json
+uv run python -m proofrun t9 bill --state results/t9-instance.state.json --vcpu-seconds <n> --gib-seconds <n>
 ```
 
 Pass: within 20 % of the hours held times $0.0684 (instance) or $0.0909 (request). Use usage amounts, not dollars, because the free tier hides the first vCPU-seconds of the month. `report` lists every drop and the length of the stream before it; the 60-minute drop is Cloud Run's request timeout.

@@ -1,7 +1,7 @@
 """T9: a Streamlit app held open 24 hours, once instance-billed and once request-billed, then the
 bill read against the model.
 
-- ``t9 hold --state results/t9-instance.json --app <streamlit app> --project <cell 1>
+- ``t9 hold --state results/t9-instance.state.json --app <streamlit app> --project <cell 1>
   --mode instance`` checks the service is billed the way ``--mode`` says (``cpu-throttling``
   false for instance, true for request; README T9 for the request-billed override), then holds
   ``wss://<host>/_stcore/stream`` open, as a browser tab does, for ``--hours`` (24). When the
