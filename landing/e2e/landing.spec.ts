@@ -47,8 +47,16 @@ test('has no sideways scroll', async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
+test('the security cards stack to one column on a phone', async ({ page }) => {
+  await page.goto('/');
+  const columns = await page.evaluate(() => getComputedStyle(document.querySelector('.sec')!).gridTemplateColumns.split(' ').length);
+  expect(columns).toBe((page.viewportSize()?.width ?? 0) <= 640 ? 1 : 3);
+});
+
 test('the calculator follows its inputs', async ({ page }) => {
   await page.goto('/');
+  await expect(page.locator('#calc')).toBeHidden();
+  await page.locator('#model > summary').click();
   await expect(page.locator('[data-out="total"]')).toHaveText('$32,658');
   await page.locator('[data-in="apps"]').fill('1');
   await expect(page.locator('[data-out="total"]')).toHaveText('$9,561');
@@ -65,13 +73,57 @@ test('the operations tabs and the viewers switch', async ({ page }) => {
   await expect(page.locator('[data-bind="who"]')).toHaveText('Sam Whitaker');
 });
 
+test('the agent conversation plays once it is in view, and a step can be picked', async ({ page }) => {
+  await page.goto('/');
+  const url = page.locator('#term .chat__url');
+  await expect(url).toBeHidden();
+  await page.locator('#term').scrollIntoViewIfNeeded();
+  await expect(url).toBeVisible({ timeout: 8000 });
+  await expect(page.locator('#how [data-step="3"]')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#how [data-step="1"]').click();
+  await expect(url).toBeHidden();
+  await expect(page.locator('#term .chat__me')).toBeVisible();
+});
+
+test('the list bursts out of the prompt and settles in place', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#burst')).toHaveClass(/is-armed/);
+  await page.locator('#burst').scrollIntoViewIfNeeded();
+  await expect(page.locator('#burst')).toHaveClass(/is-in/);
+  const last = page.locator('#burst .burst__chips li').last();
+  await expect(last).toHaveCSS('opacity', '1', { timeout: 4000 });
+  await expect(page.locator('#burst .burst__url')).toHaveCSS('opacity', '1', { timeout: 4000 });
+});
+
+test('the hero zooms into the app where there is room, and holds still where there is not', async ({ page }) => {
+  await page.goto('/');
+  const room = await page.evaluate(() => matchMedia('(min-width: 1100px) and (min-height: 640px)').matches);
+  await page.evaluate(() => window.scrollTo(0, window.innerHeight * 0.6));
+  await page.waitForTimeout(200);
+  const transform = await page.locator('#scene').evaluate((el) => (el as HTMLElement).style.transform);
+  if (room) {
+    expect(transform).toContain('scale(');
+    await page.evaluate(() => window.scrollTo(0, window.innerHeight * 2.05));
+    await expect(page.locator('#into')).toBeVisible();
+    await expect(page.locator('#into')).not.toHaveCSS('opacity', '0');
+  } else {
+    expect(transform).toBe('');
+    await expect(page.locator('#into')).toBeHidden();
+  }
+});
+
 test.describe('reduced motion', () => {
   test.use({ reducedMotion: 'reduce' });
+  test('shows the whole conversation and the list at rest', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#term .chat__url')).toBeVisible();
+    await expect(page.locator('#burst')).not.toHaveClass(/is-armed/);
+  });
   test('keeps the hero still', async ({ page }) => {
     await page.goto('/');
     await page.mouse.wheel(0, 900);
     await page.waitForTimeout(200);
-    expect(await page.locator('#art').evaluate((el) => (el as HTMLElement).style.getPropertyValue('--k'))).toBe('');
+    expect(await page.locator('#scene').evaluate((el) => (el as HTMLElement).style.transform)).toBe('');
   });
 });
 
@@ -80,8 +132,11 @@ test.describe('without JavaScript', () => {
   test('shows the default table', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#calcIn')).toBeHidden();
+    await page.locator('#model > summary').click();
     await expect(page.locator('[data-out="total"]')).toHaveText('$32,658');
     await expect(page.locator('[data-out="cloud"]')).toHaveText('$2,738');
+    await expect(page.locator('#term .chat__url')).toBeVisible();
+    await expect(page.locator('#burst .burst__chips li').first()).toBeVisible();
   });
 });
 

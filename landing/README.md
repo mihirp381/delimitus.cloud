@@ -6,8 +6,8 @@ form.
 
 | File | What it is |
 |---|---|
-| `index.html` | The page: inline CSS and JS, two PNG data URIs, no other file |
-| `art/` | The dithered pixel workstation and the horizon mask; `cd landing/art && python3 embed.py` rebuilds both and re-embeds them (needs Pillow and numpy, not part of the workspace) |
+| `index.html` | The page: inline CSS, JS and SVG, one PNG data URI (the horizon), no other file |
+| `art/` | The horizon mask; `cd landing/art && python3 embed.py` rebuilds it and re-embeds it (needs Pillow and numpy, not part of the workspace) |
 | `CLAIMS.md` | Every claim on the page, its ticket and status, or its public source; the blockers before publishing |
 | `denylist.txt` | Words that never appear on the page |
 | `calculator_vectors.json`, `calculator.test.mjs` | The cost calculator's test vectors; `node --test landing/calculator.test.mjs` |
@@ -50,6 +50,10 @@ redirected to the apex by the service.
 - **Copy.** Every claim carries `data-claim` and a row in `CLAIMS.md`. Features are worded as
   part of the private pilot offer until their tickets are Done. No price for Delimitus.
 - **Weight.** Under 400 KB, bitmaps included.
+- **Motion.** The hero's zoom runs only where the stage fits the screen (at least 1100 × 640),
+  motion is allowed and scripts run (`scripting: enabled`); everywhere else the hero is a static
+  block. Its flows' moving dots are SMIL, which ignores the reduced-motion CSS, so that CSS
+  hides them.
 
 ## Adding "Sign in" later
 

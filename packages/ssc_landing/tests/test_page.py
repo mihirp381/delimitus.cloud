@@ -1,5 +1,6 @@
 """SSC-065: the page in ``landing/`` keeps the moat rule, its claims, its policy and its weight."""
 
+import base64
 import json
 import re
 from pathlib import Path
@@ -81,11 +82,10 @@ def test_nothing_is_loaded_from_another_origin() -> None:
     assert "fonts.googleapis" not in HTML
 
 
-def test_the_two_bitmaps_are_embedded_hero_first() -> None:
-    uris = re.findall(r"data:image/png;base64,", HTML)
-    assert len(uris) == 2
-    hero = (LANDING / "art" / "hero.png").read_bytes()
-    assert len(hero) > 1000
+def test_the_horizon_is_the_only_bitmap() -> None:
+    uris = re.findall(r"data:image/png;base64,([A-Za-z0-9+/=]+)", HTML)
+    horizon = (LANDING / "art" / "fade.png").read_bytes()
+    assert [base64.b64decode(u) for u in uris] == [horizon]
 
 
 def test_claim_ids_on_the_page_match_the_register() -> None:
@@ -108,6 +108,22 @@ def test_the_no_script_table_shows_the_default_vector() -> None:
         cell = re.search(rf'data-out="{key}">\$([\d,]+)<', HTML)
         assert cell is not None, key
         assert int(cell[1].replace(",", "")) == dollars
+
+
+def test_the_cost_card_shows_the_default_total() -> None:
+    vectors = json.loads((LANDING / "calculator_vectors.json").read_text(encoding="utf-8"))
+    total = vectors["vectors"][0]["out"]["total"]
+    card = re.search(r'id="trioDiy">\$([\d,]+)<', HTML)
+    assert card is not None
+    assert int(card[1].replace(",", "")) == total
+
+
+def test_the_agent_is_never_shown_approving() -> None:
+    """An agent asks; another admin approves (SSC-045, SSC-048). The copy must not say otherwise."""
+    text = _text_without_styles()
+    assert "waiting for IT" in text
+    assert "an agent can never approve a request" in text
+    assert not re.search(r"(?i)agent[^.<]{0,40}\bapproved\b", text)
 
 
 def test_the_calculator_constants_match_the_sources_shown() -> None:
@@ -174,7 +190,7 @@ def _pairs() -> list[tuple[str, str]]:
         ("#FFFFFF", t["t-orange"]),
     ]
     # The terminal, on its own ground and under a highlighted line (8% white over #1D1D1F).
-    for fg in ("#FFFFFF", "#C7C7CC", "#7EE2A0", "#8CC4FF", "#AEAEB2"):
+    for fg in ("#FFFFFF", "#C7C7CC", "#7EE2A0", "#8CC4FF", "#AEAEB2", "#FFD479"):
         pairs += [(fg, "#1D1D1F"), (fg, "#2B2B2D")]
     pairs.append(("#C7C7CC", "#2C2C2E"))
     return pairs

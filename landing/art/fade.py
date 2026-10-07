@@ -1,4 +1,4 @@
-# The horizon: the walk-in's scanline, remembered as a dithered band of light.
+# The horizon: the hero's scanline, remembered as a dithered band of light.
 # 1-bit and transparent — the page uses it as a MASK over the spectrum
 # gradient, so the colour lives in CSS and can drift; this file only decides
 # where the dots are.  Dense at the centre row, thinning out both ways.

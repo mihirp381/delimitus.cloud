@@ -1,7 +1,8 @@
 # Claims on delimitus.com
 
-Every factual claim on `index.html`, with the ticket behind it and its status on 2026-10-01, or
-its public source. An element that makes a claim carries `data-claim="<id> ..."`, and
+Every factual claim on `index.html`, with the ticket behind it and its status, or its public source.
+Rows the agent-first copy (2026-10-07) leans on were re-checked against the tickets that day;
+the others still read as of 2026-10-01. An element that makes a claim carries `data-claim="<id> ..."`, and
 `packages/ssc_landing/tests/test_page.py` fails when the ids on the page and the ids in the table
 below differ.
 
@@ -9,17 +10,17 @@ No feature ticket is Done for a customer yet, so the page words every feature as
 private pilot offer ("All of this is part of the private pilot offer.") and never as live today.
 Update a row's status when its ticket closes; reword the page if a ticket is cut.
 
-| Id | Claim on the page | Ticket or source | Status 2026-10-01 |
+| Id | Claim on the page | Ticket or source | Status |
 |---|---|---|---|
 | `pilot` | Private pilot, not generally available | Founder, 2026-10-01 (SSC-065) | True today |
 | `price` | Pricing is agreed with each pilot; no price shown | Founder, 2026-10-01; tickets section 9 | True today |
 | `login` | Company login on every request to every app | SSC-018, SSC-019 | Code on main, not deployed (SSC-064) |
-| `share` | Share with a person, a directory group or the whole company; nobody else gets in | SSC-021 | Partly done, control-plane half |
-| `deploy` | Deploy from a folder (`ssc deploy`) or a GitHub push | SSC-014, SSC-015, SSC-016, SSC-022, SSC-023, SSC-047 | Partly done; SSC-015 and SSC-047 not started |
-| `agent` | A coding agent can run the deploy | SSC-048 | Partly done, control-plane half |
+| `share` | Share with a person, a directory group or the whole company; nobody else gets in | SSC-021 | 2026-10-07: code on `round-2`; gateway rollout on cell 1 after T9 |
+| `deploy` | Deploy from a folder (`ssc deploy`) or a GitHub push; Lovable and Replit apps come in through GitHub, each push to preview | SSC-014, SSC-015, SSC-016, SSC-022, SSC-023, SSC-047 | 2026-10-07: SSC-015 live on cell 1 (19 fixtures); SSC-047 code on `round-2`, not deployed |
+| `agent` | A coding agent deploys from the editor, to preview, and can ask for a share or a data connection; the hero's chat (create, request Snowflake access, ask to share, deploy), its first step and the agent column | SSC-048, SSC-093 | 2026-10-07: control-plane half done (deploy to preview, request share, request connection); agent login, `get_logs` and `set_secret` on `round-2`, not deployed |
 | `langs` | Python and Node apps | SSC-003 (20 apps run), SSC-015 | SSC-003 done; SSC-015 not started |
-| `tools` | Claude Code, Codex, Cursor, Lovable, Replit | SSC-003 corpus: Cursor, Lovable, Replit | Not yet recorded for Claude Code and Codex; published by the founder's choice (2026-10-06), runs in backlog SSC-099 |
-| `preview` | Preview, then production, each at its own address | SSC-042, decision 004 | Partly done, control-plane half |
+| `tools` | Claude Code, Codex and Cursor deploy directly; Lovable and Replit through GitHub | SSC-003 corpus: Cursor, Lovable, Replit; SSC-048 for the direct path, SSC-047 for GitHub | Not yet recorded for Claude Code and Codex, and no agent-driven deploy recorded for any of the three; runs in backlog SSC-099. Published by the founder's choice (2026-10-06) |
+| `preview` | Preview, then production, each at its own address; a person promotes | SSC-042, decision 004 | 2026-10-07: code on `round-2` |
 | `cloud` | Runs on Google Cloud | Decision 001 (SSC-001) | Decided |
 | `account` | In the US, each company in a cloud account of its own | Decisions 001 and 021, assumption A2 (SSC-013) | Done for the cell layout; region us-central1 |
 | `idp` | Sign in with Google Workspace or Okta | Decision 002 (SSC-002), SSC-019 live check on Okta | Proven; Entra is not named |
@@ -28,18 +29,21 @@ Update a row's status when its ticket closes; reword the page if a ticket is cut
 | `timers` | Timers for scheduled jobs | SSC-041 | Partly done, control-plane half |
 | `files` | File storage | SSC-046 | Not started |
 | `approvals` | Approvals before production | SSC-045, SSC-049 | SSC-045 done (operator-recorded); SSC-049 not started |
-| `data` | Read-only access to company databases; never writes | SSC-050, SSC-051, SSC-052 | Not started |
-| `egress` | Internet access only to the hosts IT allowed | SSC-027, SSC-053 | Not started |
-| `secrets` | Secrets kept out of the code, never shown again to people or agents | SSC-026 | Not started |
+| `data` | Read-only access to company databases; never writes; IT approves each connection | SSC-050, SSC-051, SSC-052 | 2026-10-07: code on `round-2` (Postgres only), not deployed; T6 used a stand-in |
+| `egress` | Internet access only to the hosts IT allowed | SSC-027, SSC-053 | 2026-10-07: SSC-053 code on `round-2`, not deployed |
+| `secrets` | Secrets kept out of the code, never shown again to people or agents; the agent never needs the value | SSC-026, SSC-048 (`set_secret` takes no value) | 2026-10-07: code on `round-2`, live checks on cell 1 under way |
 | `owner` | When the owner moves on, IT hands the app to someone else | SSC-025 (owner transfer) | Partly done, control-plane half |
-| `logs` | Logs, including why something was held | SSC-024 | Not started |
+| `logs` | Logs, including why something was held | SSC-024 | 2026-10-07: code on `round-2`; live on cell 1, follow fix 00ea845 not yet deployed |
 | `rollback` | Roll back to an earlier release with one command | SSC-016, SSC-022, SSC-043 | Partly done, control-plane half |
 | `inventory` | A list of every app and its owner | SSC-025, SSC-057 | Partly done, control-plane half |
 | `kill` | One switch that turns an app off; no time is printed | SSC-025, SSC-054 | Partly done; no time until SSC-054 publishes one |
 | `audit` | An audit log of every change | SSC-012 | Partly done, control-plane half |
-| `agents` | Coding agents held to the same rules as people | SSC-045 (agent approval refused), SSC-048 | Partly done |
+| `agents` | Coding agents held to the same rules as people; an agent can ask but never approve, and another admin approves its share and connection requests | SSC-045 (agent approval refused), SSC-048 (`request_share`, `request_connection`) | 2026-10-07: SSC-045 done; SSC-048 partly done |
 | `isolation` | An app can't reach other apps | SSC-017 (internal ingress), SSC-027, SSC-029 | SSC-017 done; SSC-027 and SSC-029 not started |
-| `leaks` | Every build is checked for leaked keys before it goes live | SSC-015 | Not started |
+| `leaks` | Every build is checked for leaked keys before it goes live | SSC-015 | 2026-10-07: live on cell 1 |
+| `snowflake` | Snowflake named as a company data source in the hero's chat (the agent requests access) and in the example conversation: read-only, waiting for IT's approval | SSC-078 (Snowflake connection, SQL API v2) | 2026-10-07: not built; SSC-078 is in the backlog, built when a pilot needs it. Only Postgres is built (SSC-051, `round-2`). Kept on the page by the founder's choice (2026-10-07) |
+| `https` | Every app address is HTTPS | SSC-064 (the cell's wildcard certificate) | 2026-10-07: live on cell 1 (wildcard certificate active 2026-10-04) |
+| `minutes` | The hero: a secure, shareable app "in minutes, not weeks" and "ready for your team in minutes" | SSC-003 corpus (`spikes/corpus20/RESULTS.md`): Cloud Run made a ready revision in 8 to 49 s, median about 17 s; "not weeks" is the cost model's own estimate of 80 hours to set up the do-it-yourself path (`econ-labour`) | 2026-10-07: build plus deploy end to end not yet timed on a cell; the 19 SSC-015 fixtures on cell 1 recorded outcomes, not durations. Wording from the founder's hero design (2026-10-07) |
 | `no-public` | No public apps; every request needs a company login | Tickets section 8, SSC-085 out of MVP | Decided |
 | `no-domains` | No custom domains | Assumption A1, tickets section 8 | Decided |
 | `no-webhooks` | No inbound webhooks | Tickets question 7, SSC-085 | Decided |
