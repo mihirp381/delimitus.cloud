@@ -247,6 +247,17 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
 - **T9 instance hold.** Besides the 60-minute drop, one at 37 minutes (05:59:22): Cloud Run
   replaced pstream's instance on the same revision, with no deploy. The hold reconnected at once.
 
+## Release, 2026-10-07 (GA-0)
+
+| What | Value |
+| --- | --- |
+| Live code | a71d35f (mvp-merge before the merge below) |
+| Images live | control `sha256:4bb31309…`, agent `sha256:daa5da5e…`, console `sha256:a2bc2739…`, auth `sha256:c6ad923c…` (old; the new auth image waits for T9 to end) |
+| Migration head | 0033 |
+| Merged, not yet deployed | cbb821f (decision 032), 3e8d07a (approval mail, decision 033), f5b3937, b32c084, f5b53bd, 784ba71, c0aeb18. These are the pilot-blockers fixes |
+| Left out of pilot-blockers | c4cdb36 and 7e3bdd9 duplicate routing and console sign-in already on mvp-merge. 04521a0 (revoke `CONNECT` on `postgres` from `PUBLIC`) goes against the SSC-040 acceptance |
+| Local gates on c0aeb18 | All lint-job gates, `gates/run_gates.py`, root, infra and proofrun pytest, node helpers, console typecheck, test and build pass. Playwright suites not run locally |
+
 ## Settled here
 
 - **Subnet layout:** pass 2 (README T1, last line, not yet run).
