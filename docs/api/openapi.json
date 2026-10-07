@@ -3219,6 +3219,7 @@
           "GITHUB_UNAVAILABLE",
           "CEILING_REQUIRED",
           "CELL_UNAVAILABLE",
+          "TRANSIENT_CONFLICT",
           "INTERNAL"
         ],
         "title": "ErrorCode",

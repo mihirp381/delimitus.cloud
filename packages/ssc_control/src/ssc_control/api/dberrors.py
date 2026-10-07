@@ -3,6 +3,9 @@
 The SQLSTATE and constraint name are evidence: they go to the log under the request id. The
 client sees the fixed text for the code. Anything not listed is ``INTERNAL``: ``SC001`` (no org
 bound) and ``42501`` (a row-level security refusal) mean a bug in this service, not a bad request.
+A serialization failure or a deadlock rolled the whole transaction back, the idempotency claim
+with it, so it is ``TRANSIENT_CONFLICT`` (503, ``Retry-After``) and the same request may be sent
+again.
 """
 
 from collections.abc import Mapping
@@ -14,13 +17,16 @@ from sqlalchemy.exc import DBAPIError
 from ssc_contracts.errors import ErrorCode
 from ssc_control.db.errors import (
     CHECK_VIOLATION,
+    DEADLOCK_DETECTED,
     FOREIGN_KEY_VIOLATION,
     NOT_NULL_VIOLATION,
+    SERIALIZATION_FAILURE,
     UNIQUE_VIOLATION,
     SqlState,
 )
 
 ONE_IN_FLIGHT_INDEX: Final = "deployment_one_in_flight"
+RETRY_AFTER_SECONDS: Final = 1
 
 # Constraints whose refusal has its own code, whatever the SQLSTATE class says.
 _BY_CONSTRAINT: Final[Mapping[str, ErrorCode]] = {
@@ -37,6 +43,8 @@ _BY_SQLSTATE: Final[Mapping[str, ErrorCode]] = {
     FOREIGN_KEY_VIOLATION: ErrorCode.REFERENCE_NOT_FOUND,
     NOT_NULL_VIOLATION: ErrorCode.VALIDATION_FAILED,
     CHECK_VIOLATION: ErrorCode.VALIDATION_FAILED,
+    SERIALIZATION_FAILURE: ErrorCode.TRANSIENT_CONFLICT,
+    DEADLOCK_DETECTED: ErrorCode.TRANSIENT_CONFLICT,
     SqlState.LAST_ORG_ADMIN.value: ErrorCode.LAST_ORG_ADMIN,
     SqlState.OWNER_NOT_ACTIVE.value: ErrorCode.OWNER_NOT_ACTIVE,
     SqlState.RELEASE_IMMUTABLE.value: ErrorCode.RECORD_IMMUTABLE,

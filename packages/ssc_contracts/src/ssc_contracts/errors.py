@@ -100,6 +100,7 @@ class ErrorCode(StrEnum):
     # placement
     CELL_UNAVAILABLE = "CELL_UNAVAILABLE"
     # ours
+    TRANSIENT_CONFLICT = "TRANSIENT_CONFLICT"
     INTERNAL = "INTERNAL"
 
 
@@ -427,6 +428,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "Your organization's cell cannot be reached right now.",
         "The cell that runs this organization's apps is not configured here, so nothing was "
         "changed. Retry later.",
+    ),
+    ErrorCode.TRANSIENT_CONFLICT: CatalogueEntry(
+        503,
+        "Another change to the same records ran at the same moment.",
+        "The database stopped this request so that neither change is lost. Nothing was changed. "
+        "Retry the same request; a POST keeps its Idempotency-Key.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

@@ -190,7 +190,12 @@ async def _on_validation(request: Request, exc: Exception) -> Response:
 async def _on_dbapi(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, DBAPIError)
     code, evidence = dberrors.classify(exc)
-    return render(request, code, evidence=evidence)
+    headers = (
+        {"Retry-After": str(dberrors.RETRY_AFTER_SECONDS)}
+        if code is ErrorCode.TRANSIENT_CONFLICT
+        else None
+    )
+    return render(request, code, evidence=evidence, headers=headers)
 
 
 async def _on_unexpected(request: Request, exc: Exception) -> Response:
