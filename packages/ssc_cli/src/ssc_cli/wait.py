@@ -4,6 +4,9 @@ A build or deployment that ends badly becomes a :class:`CliError` whose code is 
 ``failure_code``, with ``status: null`` (nothing was refused) and ``instance`` naming the build or
 operation. Time is counted in the sleeps between polls, so a test's no-op sleep still ends. One
 :class:`Budget` is shared by every wait of a command, so ``--timeout`` bounds the whole command.
+A poll the API refuses with ``RATE_LIMITED`` (two deploys from one login, on cell 1 2026-10-07)
+is a read that did nothing: the wait sleeps the refusal's ``Retry-After`` and polls again, so
+the build or deployment it watches is not reported as failed.
 """
 
 from collections.abc import Callable
@@ -26,6 +29,7 @@ from ssc_cli.models import OperationOut
 from ssc_contracts.build import FIX_ITS
 
 POLL_SECONDS: Final = 2.0
+RATE_LIMITED: Final = "RATE_LIMITED"
 DEFAULT_TIMEOUT: Final = 1800
 
 # The next step for failure codes whose cause is known. Codes come from the API (decision 014).
@@ -66,9 +70,24 @@ class Budget:
         sleep(POLL_SECONDS)
         self.spent += POLL_SECONDS
 
+    def wait(self, sleep: Sleep, seconds: float) -> None:
+        sleep(seconds)
+        self.spent += seconds
+
     @property
     def used_up(self) -> bool:
         return self.spent >= self.seconds
+
+
+def _polled[T](fetch: Callable[[], T], *, sleep: Sleep, budget: Budget) -> T:
+    """``fetch()``, again after each ``RATE_LIMITED`` refusal while the budget lasts."""
+    while True:
+        try:
+            return fetch()
+        except CliError as e:
+            if e.body.code != RATE_LIMITED or budget.used_up:
+                raise
+            budget.wait(sleep, max(e.retry_after or POLL_SECONDS, POLL_SECONDS))
 
 
 def ended_badly(what: str, code: str, detail: str, instance: str) -> CliError:
@@ -96,7 +115,7 @@ def wait_for_build(
     """The id and number of the release the build made."""
     instance = f"/v1/builds/{build_id}"
     while True:
-        build = client.get_build(build_id)
+        build = _polled(lambda: client.get_build(build_id), sleep=sleep, budget=budget)
         if build.state == "succeeded":
             if build.release_id is None or build.release_number is None:
                 raise local_error(
@@ -127,7 +146,7 @@ def wait_for_operation(  # noqa: PLR0913  (keyword-only)
     company's database, SSC-087) goes to ``note`` once; ``told`` is one already given."""
     instance = f"/v1/operations/{operation_id}"
     while True:
-        op = client.get_operation(operation_id)
+        op = _polled(lambda: client.get_operation(operation_id), sleep=sleep, budget=budget)
         if note is not None and op.notice is not None and op.notice != told:
             note(op.notice)
             told = op.notice

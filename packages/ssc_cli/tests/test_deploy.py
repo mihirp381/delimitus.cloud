@@ -270,6 +270,17 @@ def test_deploy_never_touches_prod(cli, api, folder):
     assert not any(PROD in q.url.path for q in api.seen)
 
 
+def test_a_rate_limited_poll_waits_and_polls_again(cli, api, folder, fake_problem):
+    limited = fake_problem(429, "RATE_LIMITED", **{"retry-after": "5"})
+    build, op = f"/v1/builds/{BUILD}", f"/v1/operations/{DEP}"
+    api.routes[("GET", build)] = [limited, limited, _build("succeeded")]
+    api.routes[("GET", op)] = [limited, limited, _operation("healthy")]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", "--json", session=api.session())
+    assert r.code == 0, (r.stdout, r.stderr)
+    assert DeployResult.model_validate(r.json()).state == "healthy"
+    assert _calls(api).count(("GET", build)) == _calls(api).count(("GET", op)) == 3
+
+
 def test_deploy_without_wait_stops_after_the_deployment_is_accepted(cli, api, folder):
     r = cli("deploy", str(folder), "--app", APP_ID, "--json", session=api.session())
     assert r.code == 0, r.stdout
