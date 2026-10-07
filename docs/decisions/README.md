@@ -35,6 +35,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 | 029 | OAuth for remote MCP and the console: the auth host is an OAuth 2.1 authorization server (RFC 8414 metadata, RFC 7591 registration of public clients only, S256 PKCE, RFC 8707 resource required, RFC 9207 `iss`); the org found from a live session or a work email's verified WorkOS domain, every miss the same page, rate limited; consent for third-party clients; single-use 60 s codes, a reused code revokes its session; MCP tokens only for `/mcp`, `/v1` takes them only from inside the API; the console a first-party client without consent; the O(orgs) org lookup fine for the pilot, a global route table its upgrade | SSC gap 7 and gap 1 (`identity/authorize.py`, `identity/oauth.py`, `api/mcp/`, revision `0033_oauth`, `docs/runbooks/remote-mcp.md`) | decided 2026-10-07; local tests, awaits deploy and a live Claude Code connection |
 | 030 | Placement: each org's cell is its `ssc.org.cell_label`; the control plane serves the cells named in `SSC_CELLS` (label to public identity JWKS) and reaches an org only through its own cell's agent, every call naming the org in `X-SSC-Org`; each agent serves one org (`SSC_ORG_ID`) and refuses any other `WRONG_CELL`; an org whose cell is not configured is refused `CELL_UNAVAILABLE` and skipped by the reconciler; app specs unchanged | SSC gap #2 (`packages/ssc_control/src/ssc_control/runtime/cells.py`, `ssc_agent/app.py`, `infra/ssc_infra/control.py`) | decided 2026-10-07; local tests, awaits a live run |
 | 031 | Console hosting: `console.delimitus.com` is `ssc-console` on Cloud Run in the public stage's control project, behind the control entry (one more host, a path matcher sending `/v1` and `/v1/*` to the API, a third certificate for that host alone, no project, address or load balancer of its own); the production build served read-only from memory, hashed assets kept a year, every other route `index.html` with `no-store`, `/v1` and `/mcp` never served by it; a CSP with no inline script or style naming only its origin and the auth host | SSC gap 1 (`packages/ssc_console_host/`, `infra/ssc_infra/console.py`, `infra/ssc_infra/control.py`) | decided 2026-10-07; local tests and a local image build, awaits a push and `pulumi up` |
+| 032 | Google APIs from a cell: keep `private.googleapis.com` until a VPC Service Controls perimeter exists; the restricted VIP alone does not stop an app sending data to another project's bucket, so the switch is made with the perimeter, dry run first | readiness review blocker 6 (`infra/ssc_infra/cell.py`, `_private_google_dns`) | decided 2026-10-07 (documented, no change); perimeter not built |
 
 ## 001 Cloud and runtime
 
@@ -878,3 +879,18 @@ Reason: the console's sign-in (decision 029) needs it at `SSC_CONSOLE_URL`. Same
 Not yet: applied (needs an image push and `pulumi up`); a CDN in front (the files are small and the instance scales to zero).
 
 Reverse if: the console needs server-side rendering or per-request data in the page, or the API moves `/v1` behind CORS for other origins.
+
+## 032 Google APIs from a cell
+
+Choice: a cell's VPC keeps answering `*.googleapis.com` with `private.googleapis.com` (`199.36.153.8/30`, `cell._private_google_dns`). It does not switch to `restricted.googleapis.com` (`199.36.153.4/30`) on its own.
+
+Reason: readiness review blocker 6. Apps run with Direct VPC egress `ALL_TRAFFIC` into a deny-all network, so Google APIs are the one way out besides the allow-listed egress proxy. Through either address an app can call Cloud Storage with credentials of its own (a key in its code) and write to a bucket in another project. The restricted address only serves APIs that VPC Service Controls supports, and only a service perimeter decides which projects a call may reach; with no perimeter, a call through it to a foreign bucket still succeeds. Switching alone would close nothing and would break apps that call Google APIs outside VPC-SC.
+
+The gap stays open until a perimeter exists. What closing it takes, in order:
+1. An access policy scoped to the cells folder (`gcp.accesscontextmanager.AccessPolicy` with `scopes`), so the org-level policy is not touched.
+2. One perimeter per cell project, restricting at least `storage`, `secretmanager`, `sqladmin`, `artifactregistry`, `logging` and `run`, in dry-run mode (`use_explicit_dry_run_spec`). Ingress rules for the control plane's accounts (worker on the cell bucket, agent and deployer calls), the build path and Google's own agents; no egress rule to other projects.
+3. A week of dry-run violation logs from a live cell, then enforce, and switch the private zone to `restricted.googleapis.com` in the same apply.
+
+Cost: $0 (VPC-SC has no charge). Risk: an enforced perimeter that misses a path stops deploys or builds in that cell, which is why the dry run comes first and why it is not built blind.
+
+Reverse if: the founder accepts the gap for pilots (then it goes in the security notes for the outside test, blocker 12), or a perimeter is built (then this becomes the switch above).
