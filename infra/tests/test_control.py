@@ -77,6 +77,15 @@ RETIRED = (
     "SSC_IDENTITY_ISSUER",
 )
 """The one cell's settings before ``SSC_CELLS`` (decision 030), set on no process now."""
+CONSOLE_IMAGE = f"{naming.platform_registry()}/ssc-console@sha256:{'2' * 64}"
+MAIL = {"host": "smtp.example.com", "user": "apikey", "from": "noreply@delimitus.com"}
+DKIM = "v=DKIM1; k=rsa; p=" + "A" * 400
+MAIL_RECORDS = [
+    {"name": "delimitus.com", "type": "TXT", "data": "v=spf1 include:_spf.example.com -all"},
+    {"name": "s1._domainkey.delimitus.com", "type": "TXT", "data": DKIM},
+    {"name": "_dmarc.delimitus.com.", "type": "TXT", "data": "v=DMARC1; p=quarantine"},
+    {"name": "em.delimitus.com", "type": "CNAME", "data": "u1.wl.example.net."},
+]
 TIMER_KID = "timer-202610"
 SERVICE = "gcp:cloudrunv2/service:Service"
 POOL = "gcp:cloudrunv2/workerPool:WorkerPool"
@@ -532,6 +541,51 @@ def test_every_process_runs_the_pinned_image(released: list[Declared]) -> None:
         ({"control_stages": json.dumps(["prod", "prod"])}, "control_stages"),
         ({"control_stages": json.dumps(["staging"]), "public_stage": "prod"}, "public_stage"),
         ({"worker_instances": "-1"}, "worker_instances"),
+        ({"mail": json.dumps(MAIL)}, "mail needs console_image"),
+        (
+            {"control_stages": json.dumps(["prod"]), "console_image": CONSOLE_IMAGE, "mail": "[]"},
+            "object",
+        ),
+        (
+            {
+                "control_stages": json.dumps(["prod"]),
+                "console_image": CONSOLE_IMAGE,
+                "mail": json.dumps(MAIL | {"from": "ops@example.com"}),
+            },
+            "mail.from",
+        ),
+        (
+            {
+                "control_stages": json.dumps(["prod"]),
+                "console_image": CONSOLE_IMAGE,
+                "mail": json.dumps(MAIL | {"tls": "none"}),
+            },
+            "mail.tls",
+        ),
+        ({"mail_records": json.dumps(MAIL_RECORDS)}, "mail_records needs"),
+        (
+            {
+                "control_stages": json.dumps(["prod"]),
+                "mail_records": json.dumps([{"name": "x.example.com", "type": "TXT", "data": "a"}]),
+            },
+            "under delimitus.com",
+        ),
+        (
+            {
+                "control_stages": json.dumps(["prod"]),
+                "mail_records": json.dumps(
+                    [{"name": "api.delimitus.com", "type": "CNAME", "data": "x.example.com."}]
+                ),
+            },
+            "CNAME",
+        ),
+        (
+            {
+                "control_stages": json.dumps(["prod"]),
+                "mail_records": json.dumps([{"name": "delimitus.com", "type": "A", "data": "1"}]),
+            },
+            "type",
+        ),
     ],
 )
 def test_the_release_is_all_or_none(settings: dict[str, str], message: str) -> None:
@@ -728,3 +782,60 @@ def test_names_for_the_control_plane() -> None:
     assert all(len(a) <= 30 for a in control.ACCOUNTS.values())
     assert control.public_jwks_kids(AUTH_JWKS) == {KID}
     assert control.public_jwks_kids("[]") is None
+
+
+def test_mail_goes_by_smtp_from_the_console_stage_only() -> None:
+    settings = RELEASE | {
+        "console_image": CONSOLE_IMAGE,
+        "mail": json.dumps(MAIL | {"tls": "tls", "port": 2465}),
+    }
+    declared = run(naming.PLATFORM_STACK, settings)
+    plain, secrets = _env(_workload(declared, POOL, "prod", "ssc-worker"))
+    assert {k: v for k, v in plain.items() if "MAIL" in k or "SMTP" in k} == {
+        "SSC_MAIL_TRANSPORT": "smtp",
+        "SSC_SMTP_HOST": "smtp.example.com",
+        "SSC_SMTP_USER": "apikey",
+        "SSC_MAIL_FROM": "noreply@delimitus.com",
+        "SSC_SMTP_TLS": "tls",
+        "SSC_SMTP_PORT": "2465",
+    }
+    assert plain["SSC_CONSOLE_URL"] == "https://console.delimitus.com"
+    assert control.MAIL_PASSWORD in secrets
+    readers = {
+        g.inputs["member"]
+        for g in _of(declared, SECRET_GRANT, "prod")
+        if g.inputs["secretId"] == control.MAIL_PASSWORD
+    }
+    assert readers == {f"serviceAccount:{email(naming.CONTROL_WORKER_SA, 'prod')}"}
+    plain, secrets = _env(_workload(declared, POOL, "staging", "ssc-worker"))
+    assert not {k for k in plain if "MAIL" in k or "SMTP" in k or k == "SSC_CONSOLE_URL"}
+    assert control.MAIL_PASSWORD not in secrets
+    assert not [
+        g
+        for g in _of(declared, SECRET_GRANT, "staging")
+        if g.inputs["secretId"] == control.MAIL_PASSWORD
+    ]
+
+
+def test_the_mail_provider_s_records_go_in_the_platform_zone() -> None:
+    declared = run(
+        naming.PLATFORM_STACK,
+        {
+            "platform_folder_id": PLATFORM_FOLDER,
+            "control_stages": json.dumps(["prod"]),
+            "mail_records": json.dumps(MAIL_RECORDS),
+        },
+    )
+    records = {
+        (d.inputs["name"], d.inputs["type"]): d.inputs["rrdatas"]
+        for d in declared
+        if d.type == "gcp:dns/recordSet:RecordSet"
+        and d.inputs["managedZone"] == "delimitus"
+        and d.inputs["type"] != "A"
+    }
+    assert records == {
+        ("delimitus.com.", "TXT"): ['"v=spf1 include:_spf.example.com -all"'],
+        ("s1._domainkey.delimitus.com.", "TXT"): [f'"{DKIM[:255]}" "{DKIM[255:]}"'],
+        ("_dmarc.delimitus.com.", "TXT"): ['"v=DMARC1; p=quarantine"'],
+        ("em.delimitus.com.", "CNAME"): ["u1.wl.example.net."],
+    }

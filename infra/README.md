@@ -397,6 +397,8 @@ The platform stack runs the control plane in `ssc-control-<stage>` for each stag
   - `landing_image`: the landing page's image, a digest in the platform registry, and only with `landing`. Set, the Cloud Run service goes behind `ssc-control-entry` as two more host rules (`delimitus.com`, `www.delimitus.com`) with a second certificate `ssc-control-entry-landing`, and their A records go in the `delimitus` zone.
   - `landing_notify_email`: where the two alerts go (a pilot request stored, a pilot request not stored); the operator by default.
   - `console_image`: the admin console's image (`packages/ssc_console_host/Dockerfile`), a digest in the platform registry. It needs a control stage and nothing else. Unset, nothing of the console is declared. Set, the public stage's control project gets the account `ssc-console` (no role), the Cloud Run service `ssc-console` (ingress internal and load balancer, min 0, max 3, invoker `allUsers`, `SSC_CONSOLE_AUTH_ORIGIN=https://auth.delimitus.com`) and its serverless NEG and backend. `ssc-control-entry` gets one more host rule, `console.delimitus.com`, whose path matcher sends `/v1` and `/v1/*` to `ssc-api` and everything else to `ssc-console` (`/mcp` on that host is the console's 404). A third certificate, `ssc-control-entry-console`, names that host alone and is added to the proxy, so the other two certificates are never reprovisioned. The A record goes in the `delimitus` zone.
+  - `mail`: the worker's SMTP relay for approval mail (decision 033), `{"host": ..., "user": ..., "from": "<name>@delimitus.com"}` with optional `tls` (`starttls`, the default, or `tls`) and `port`. It needs `console_image` and applies in the console's stage only; that worker also gets `SSC_CONSOLE_URL`, and the stack makes the secret `SSC_SMTP_PASSWORD`, read by that worker alone. Unset, mail waits in the outbox.
+  - `mail_records`: the mail provider's SPF, DKIM and DMARC records, a list of `{"name", "type", "data"}` (`TXT`, `CNAME` or `MX`, under `delimitus.com`), written into the `delimitus` zone by the public stage. A long TXT value is split into 255-character strings for you.
 - **Processes**, one account each, all from one image:
 
   | Process | Cloud Run | Account | Command |
@@ -419,6 +421,7 @@ The platform stack runs the control plane in `ssc-control-<stage>` for each stag
   | `SSC_WORKOS_API_KEY`, `SSC_WORKOS_CLIENT_ID` | worker (directory sync), auth host |
   | `SSC_AUTH_SIGNING_KEY`, `SSC_AUTH_STATE_KEY` | auth host |
   | `SSC_TIMER_SIGNING_KEY`, only with `timer_key_id` | worker |
+  | `SSC_SMTP_PASSWORD`, only with `mail`, public stage | worker |
 
   Services read `latest` at start, so a new version needs a new revision. The cell deny rule names all four accounts of every control project.
 - **Blobs.** The private bucket `ssc-control-<stage>-blobs`, with signed URLs only. The API and the worker each hold `storage.objectUser` there and sign as themselves (`iam.serviceAccountTokenCreator` on their own account). Source bundles no longer go there: both get `SSC_CELL_BUCKET_TEMPLATE`, and each org's bundles go to its cell's bucket under `bundles/` (decision 015). Bundles stored here before that move with `python -m ssc_control.deploy.bundle_move` (runbook SSC-064).

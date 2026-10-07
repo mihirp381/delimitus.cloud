@@ -56,6 +56,13 @@ APIS: Final = (
 TIMER_KEY: Final = "SSC_TIMER_SIGNING_KEY"  # noqa: S105  (a secret's name)
 """Made, and given to the worker, only once ``timer_key_id`` is set (SSC-041)."""
 TIMER_KEY_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+MAIL_PASSWORD: Final = "SSC_SMTP_PASSWORD"  # noqa: S105  (a secret's name)
+"""Made, and given to the worker, only with ``mail`` in the console's stage (decision 033)."""
+MAIL_SECURITY: Final = ("starttls", "tls")
+MAIL_RECORD_TYPES: Final = ("TXT", "CNAME", "MX")
+TXT_CHUNK: Final = 255
+MAIL_HOST: Final = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}")
+MAIL_FROM: Final = re.compile(r"[^@\s<>\"]{1,64}@" + re.escape(n.PLATFORM_DOMAIN))
 SECRET_READERS: Final[Mapping[str, tuple[str, ...]]] = {
     "SSC_DATABASE_DSN": (API, WORKER, AUTH),
     "SSC_MIGRATE_DSN": (MIGRATE,),
@@ -65,6 +72,7 @@ SECRET_READERS: Final[Mapping[str, tuple[str, ...]]] = {
     "SSC_AUTH_SIGNING_KEY": (AUTH,),
     "SSC_AUTH_STATE_KEY": (AUTH,),
     TIMER_KEY: (WORKER,),
+    MAIL_PASSWORD: (WORKER,),
 }
 SECRET_ACCESSOR: Final = "roles/secretmanager.secretAccessor"  # noqa: S105
 SQL_INSTANCE: Final = "ssc-control"
@@ -142,6 +150,90 @@ class Cell:
 
 
 @dataclass(frozen=True, slots=True)
+class MailConfig:
+    """The worker's SMTP relay (``worker.mailer_from_env``); the password is ``MAIL_PASSWORD``."""
+
+    host: str
+    user: str
+    sender: str
+    security: str = "starttls"
+    port: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MailRecord:
+    """One record set the mail provider asks for in the ``delimitus`` zone (SPF, DKIM, DMARC)."""
+
+    name: str
+    type: str
+    rrdatas: tuple[str, ...]
+
+
+def mail_settings(raw: object) -> MailConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("mail must be an object of host, user, from, and optionally tls and port")
+    doc = cast(dict[str, object], raw)
+    unknown = set(doc) - {"host", "user", "from", "tls", "port"}
+    if unknown:
+        raise ValueError(f"mail has unknown keys: {', '.join(sorted(unknown))}")
+    host, user, sender = (doc.get(k) for k in ("host", "user", "from"))
+    if not isinstance(host, str) or not MAIL_HOST.fullmatch(host):
+        raise ValueError("mail.host must be the provider's SMTP host name")
+    if not isinstance(user, str) or not user or len(user) > 256:  # noqa: PLR2004
+        raise ValueError("mail.user must be the SMTP user name")
+    if not isinstance(sender, str) or not MAIL_FROM.fullmatch(sender):
+        raise ValueError(f"mail.from must be an address at {n.PLATFORM_DOMAIN}")
+    security = doc.get("tls", "starttls")
+    if security not in MAIL_SECURITY:
+        raise ValueError("mail.tls must be starttls or tls")
+    port = doc.get("port")
+    if port is not None and (not isinstance(port, int) or not 0 < port < 65536):  # noqa: PLR2004
+        raise ValueError("mail.port must be a port number")
+    return MailConfig(host, user, sender, str(security), port)
+
+
+def txt_strings(value: str) -> str:
+    """A TXT value as Cloud DNS takes it: quoted strings of at most 255 characters (a DKIM key is
+    longer), which resolvers join back into one value."""
+    if '"' in value or "\\" in value:
+        raise ValueError("an unquoted mail_records TXT value cannot hold quotes or backslashes")
+    return " ".join(f'"{value[i : i + TXT_CHUNK]}"' for i in range(0, len(value), TXT_CHUNK))
+
+
+def mail_record_settings(raw: object) -> tuple[MailRecord, ...]:
+    """``mail_records``: a list of ``{name, type, data}``; records of one name and type become one
+    record set. Names are under ``delimitus.com``; a host the stack serves takes no CNAME."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError("mail_records must be a list of {name, type, data}")
+    sets: dict[tuple[str, str], list[str]] = {}
+    served = {*n.CONTROL_HOSTS, n.CONSOLE_HOST, *n.LANDING_HOSTS}
+    for item in cast(list[object], raw):
+        doc = cast(dict[str, object], item) if isinstance(item, dict) else {}
+        name, kind, data = doc.get("name"), doc.get("type"), doc.get("data")
+        if set(doc) != {"name", "type", "data"} or not all(
+            isinstance(v, str) and v for v in (name, kind, data)
+        ):
+            raise ValueError("each of mail_records must be {name, type, data}")
+        name, kind, data = str(name).rstrip(".").lower(), str(kind), str(data)
+        if name != n.PLATFORM_DOMAIN and not name.endswith(f".{n.PLATFORM_DOMAIN}"):
+            raise ValueError(f"mail_records name {name} must be under {n.PLATFORM_DOMAIN}")
+        if kind not in MAIL_RECORD_TYPES:
+            raise ValueError(f"mail_records type must be one of {', '.join(MAIL_RECORD_TYPES)}")
+        if kind == "CNAME" and name in served:
+            raise ValueError(f"mail_records cannot put a CNAME on {name}")
+        if kind == "TXT" and not data.startswith('"'):
+            data = txt_strings(data)
+        sets.setdefault((name, kind), []).append(data)
+    return tuple(
+        MailRecord(name, kind, tuple(rrdatas)) for (name, kind), rrdatas in sorted(sets.items())
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ControlConfig:
     """``control_stages`` run the control plane; ``public_stage`` holds the public hosts.
     ``control_image``, ``auth_jwks`` and ``auth_signing_kid`` are the release, all or none;
@@ -149,7 +241,9 @@ class ControlConfig:
     worker's timer key, whose PEM is the ``SSC_TIMER_SIGNING_KEY`` secret (SSC-041).
     ``landing`` builds delimitus.com's account, bucket and alert in the public stage's project
     (SSC-065); ``landing_image`` then puts the page behind the entry load balancer.
-    ``console_image`` puts the console host behind it at ``console.delimitus.com`` (SSC gap 1)."""
+    ``console_image`` puts the console host behind it at ``console.delimitus.com`` (SSC gap 1).
+    ``mail`` gives that stage's worker an SMTP relay, and ``mail_records`` are the provider's
+    SPF, DKIM and DMARC records in the ``delimitus`` zone (decision 033)."""
 
     stages: tuple[n.Stage, ...] = ()
     public: n.Stage | None = None
@@ -164,10 +258,19 @@ class ControlConfig:
     landing_image: str | None = None
     landing_notify_email: str = n.OPERATOR.removeprefix("user:")
     console_image: str | None = None
+    mail: MailConfig | None = None
+    mail_records: tuple[MailRecord, ...] = ()
 
     @property
     def released(self) -> bool:
         return self.image is not None
+
+    def serves_console(self, stage: n.Stage) -> bool:
+        return self.console_image is not None and self.public == stage
+
+    def sends_mail(self, stage: n.Stage) -> bool:
+        """The worker's mail goes by SMTP only where its links can name the console."""
+        return self.mail is not None and self.serves_console(stage)
 
     def serves_cells(self, stage: n.Stage) -> bool:
         """Whether ``stage``'s control plane is the one the cells trust (``cell.control_for``):
@@ -237,6 +340,19 @@ def cells_env(cells: Sequence[Cell]) -> str:
     return json.dumps(doc, separators=(",", ":"), sort_keys=True)
 
 
+def mail_config(
+    config: pulumi.Config, console_image: str | None, public: str | None
+) -> tuple[MailConfig | None, tuple[MailRecord, ...]]:
+    """``mail`` needs the console, since every mail links to it; ``mail_records`` a stage."""
+    mail = mail_settings(cast(object, config.get_object("mail")))
+    if mail is not None and console_image is None:
+        raise ValueError("mail needs console_image (its links name the console)")
+    records = mail_record_settings(cast(object, config.get_object("mail_records")))
+    if records and public is None:
+        raise ValueError("mail_records needs a control stage (control_stages)")
+    return mail, records
+
+
 def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
     raw = cast(object, config.get_object("control_stages") or [])
     if not isinstance(raw, list):
@@ -275,6 +391,7 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         raise ValueError("console_image needs a control stage (control_stages)")
     if console_image is not None and not PINNED_IMAGE.fullmatch(console_image):
         raise ValueError(f"console_image must be {n.platform_registry()}/<image>@sha256:<digest>")
+    mail, records = mail_config(config, console_image, public)
     return ControlConfig(
         stages=stages,
         public=public,
@@ -289,6 +406,8 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         landing_image=landing_image,
         landing_notify_email=config.get("landing_notify_email") or n.OPERATOR.removeprefix("user:"),
         console_image=console_image,
+        mail=mail,
+        mail_records=records,
     )
 
 
@@ -333,6 +452,16 @@ def worker_env(
     if cfg.timer_key_id:
         env["SSC_TIMER_DISPATCHER"] = "https"
         env["SSC_TIMER_KEY_ID"] = cfg.timer_key_id
+    if cfg.serves_console(stage):
+        env["SSC_CONSOLE_URL"] = n.origin(n.CONSOLE_HOST)
+    if cfg.mail is not None and cfg.sends_mail(stage):
+        env["SSC_MAIL_TRANSPORT"] = "smtp"
+        env["SSC_SMTP_HOST"] = cfg.mail.host
+        env["SSC_SMTP_USER"] = cfg.mail.user
+        env["SSC_MAIL_FROM"] = cfg.mail.sender
+        env["SSC_SMTP_TLS"] = cfg.mail.security
+        if cfg.mail.port is not None:
+            env["SSC_SMTP_PORT"] = str(cfg.mail.port)
     return env
 
 
@@ -360,17 +489,19 @@ def _blob_env(stage: n.Stage, signer: pulumi.Input[str]) -> dict[str, pulumi.Inp
     }
 
 
-def secrets_in(cfg: ControlConfig) -> dict[str, tuple[str, ...]]:
-    """``SECRET_READERS`` as this config uses it: the timer key only with ``timer_key_id``."""
+def secrets_in(cfg: ControlConfig, stage: n.Stage) -> dict[str, tuple[str, ...]]:
+    """``SECRET_READERS`` as this config uses it in ``stage``: the timer key only with
+    ``timer_key_id``, the SMTP password only where the worker sends mail."""
     return {
         secret: readers
         for secret, readers in SECRET_READERS.items()
-        if secret != TIMER_KEY or cfg.timer_key_id
+        if (secret != TIMER_KEY or cfg.timer_key_id)
+        and (secret != MAIL_PASSWORD or cfg.sends_mail(stage))
     }
 
 
-def secrets_of(role: str, cfg: ControlConfig) -> list[str]:
-    return [secret for secret, readers in secrets_in(cfg).items() if role in readers]
+def secrets_of(role: str, cfg: ControlConfig, stage: n.Stage) -> list[str]:
+    return [secret for secret, readers in secrets_in(cfg, stage).items() if role in readers]
 
 
 def _slug(secret: str) -> str:
@@ -501,6 +632,22 @@ class ControlPlane:
                     self.pid, self.stage, self.cfg.console_image, self._name, self._o()
                 )
             self.entry()
+            self.mail_dns()
+
+    def mail_dns(self) -> None:
+        """The mail provider's records (``mail_records``), beside the hosts' A records."""
+        for record in self.cfg.mail_records:
+            slug = record.name.removesuffix(n.PLATFORM_DOMAIN).strip(".").replace(".", "-")
+            gcp.dns.RecordSet(
+                self._name(f"dns-mail-{record.type.lower()}-{slug or 'apex'}"),
+                project=n.BOOTSTRAP_PROJECT,
+                managed_zone=n.PLATFORM_ZONE,
+                name=f"{record.name}.",
+                type=record.type,
+                ttl=DNS_TTL,
+                rrdatas=list(record.rrdatas),
+                opts=self._o(),
+            )
 
     def registry(self) -> None:
         """Cloud Run pulls the control image from the platform registry as this project's
@@ -576,7 +723,7 @@ class ControlPlane:
         """One secret per setting, in the region, readable only by the accounts in
         ``SECRET_READERS``: a grant on the secret, never on the project."""
         self.secret_grants: dict[str, list[pulumi.Resource]] = {role: [] for role in ACCOUNTS}
-        for secret_id, readers in secrets_in(self.cfg).items():
+        for secret_id, readers in secrets_in(self.cfg, self.stage).items():
             secret = gcp.secretmanager.Secret(
                 self._name(_slug(secret_id)),
                 project=self.pid,
@@ -695,7 +842,7 @@ class ControlPlane:
                                         )
                                     ),
                                 )
-                                for s in secrets_of(role, self.cfg)
+                                for s in secrets_of(role, self.cfg, self.stage)
                             ),
                         ]
                         if released
@@ -774,7 +921,7 @@ class ControlPlane:
                                         )
                                     ),
                                 )
-                                for s in secrets_of(WORKER, self.cfg)
+                                for s in secrets_of(WORKER, self.cfg, self.stage)
                             ),
                         ]
                         if released
@@ -834,7 +981,7 @@ class ControlPlane:
                                         )
                                     ),
                                 )
-                                for s in secrets_of(MIGRATE, self.cfg)
+                                for s in secrets_of(MIGRATE, self.cfg, self.stage)
                             ],
                             volume_mounts=[
                                 gcp.cloudrunv2.JobTemplateTemplateContainerVolumeMountArgs(
