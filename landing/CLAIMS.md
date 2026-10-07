@@ -88,4 +88,4 @@ The calculator's formula and its test vectors are in `calculator_vectors.json`.
 2. Fetch the 2026-09-29 prices again and update the dates on the page and above (`econ-cloud`). Done 2026-10-07: no price changed.
 3. Make `privacy@delimitus.com` receive mail (`retention`). Done 2026-10-07 (founder).
 4. Founder sign-off on the copy and the calculator's default inputs. Given 2026-10-06 ("publish the page").
-5. Apply the hosting from `main`, after `round-2` is merged: `landing: true` makes the account, bucket and alert; `landing_image` (a digest in the platform registry) puts the page on the control entry (decision 028).
+5. Apply the hosting from `main`, after `round-2` is merged: `landing: true` makes the account, bucket and alert; `landing_image` (a digest in the platform registry) puts the page on the control entry (decision 028). Done 2026-10-07: applied 03:20 UTC with `ssc-landing@sha256:efa08dcb…`, certificate active 03:31 UTC, founder's live check passed (page, pilot request, alert email).
