@@ -39,6 +39,7 @@ from test_approvals import (
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
+from ssc_contracts.snapshot import SnapshotDoc
 from ssc_control.db import bind_org_sync
 from ssc_control.domain.approval_rules import check_decider
 from ssc_control.domain.audience import (
@@ -768,7 +769,8 @@ def test_invalid_connections_are_refused(client: TestClient, world: World, token
         {"port": 0},
         {"port": 70000},
         {"host": "db corp"},
-        {"kind": "mysql"},
+        {"kind": "oracle"},  # not a kind; an unavailable kind is CONNECTOR_UNAVAILABLE (GA-5)
+        {"kind": "gsheets"},  # a kind whose address is not host/port/database
         {"classification": "secret"},
         {"allowed_schemas": []},
         {"ceiling": {"audience": "subjects", "subjects": []}},
@@ -833,3 +835,86 @@ def test_connections_are_seen_by_the_approvals_rule(
     assert [c["name"] for c in policy["connections"]] == ["finance"]
     audited = events_of(dsns.app, world.org, AuditAction.OPERATOR_ACCESS)
     assert len(audited) >= 1
+
+
+# GA-5: kinds and addresses.
+
+
+def test_a_connection_has_a_kind_and_only_an_available_kind_is_created(
+    client: TestClient, world: World, tokens: Tokens
+) -> None:
+    made = create_connection(client, tokens.admin, world.member)
+    assert made.status_code == 201
+    assert made.json()["kind"] == "postgres"
+    for kind, address in [
+        ("mysql", {"host": "mysql.corp.internal", "database": "shop"}),
+        ("gsheets", {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"}),
+        ("rest", {"base_url": "https://api.corp.example/v2"}),
+    ]:
+        body = {
+            "name": f"src-{kind}",
+            "kind": kind,
+            "owner_user_id": world.member,
+            "classification": "internal",
+            "address": address,
+        }
+        r = post(client, "/v1/connections", tokens.admin, body)
+        assert_problem(r, ErrorCode.CONNECTOR_UNAVAILABLE)
+    listed = client.get("/v1/connections", headers=auth(tokens.admin)).json()["connections"]
+    assert [c["name"] for c in listed] == ["finance"]
+
+
+def test_an_address_is_the_kind_s_and_is_sent_one_way(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    base = {"owner_user_id": world.member, "classification": "internal"}
+    by_address = post(
+        client,
+        "/v1/connections",
+        tokens.admin,
+        {"name": "ledger", "address": {"host": "db.corp.internal", "database": "ledger"}, **base},
+    )
+    assert by_address.status_code == 201, by_address.text
+    stored = rows(dsns.app, world, "select host, port, database_name, address from ssc.connection")
+    assert stored == [
+        (
+            "db.corp.internal",
+            5432,
+            "ledger",
+            {"host": "db.corp.internal", "port": 5432, "database": "ledger"},
+        )
+    ]
+    assert "db.corp.internal" not in by_address.text
+    bad: list[dict[str, Any]] = [
+        {
+            "name": "a",
+            "host": "db.corp.internal",
+            "database": "x",
+            "address": {"host": "h", "database": "x"},
+        },
+        {"name": "b", "address": {"host": "db.corp.internal"}},
+        {"name": "c", "address": {"host": "db.corp.internal", "database": "x", "user": "u"}},
+        {
+            "name": "d",
+            "address": {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"},
+        },
+        {"name": "e", "kind": "nosql", "address": {"host": "h", "database": "x"}},
+        {"name": "f"},
+    ]
+    for body in bad:
+        r = post(client, "/v1/connections", tokens.admin, {**base, **body})
+        assert r.status_code == 422, (body, r.text)
+        assert r.json()["code"] == ErrorCode.VALIDATION_FAILED.value
+        assert "db.corp.internal" not in r.text
+
+
+def test_the_snapshot_names_the_kind_of_every_ready_connection(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    finance(client, world, tokens, None, classification="internal")
+    ready(client, tokens)
+    assert link(client, world, world.prod, tokens.admin).status_code == 200
+    doc = compiled(dsns.app, world)
+    # postgres is the kind before GA-5, so it is left out and a document keeps its bytes.
+    assert "kind" not in doc["connections"]["finance"]
+    assert SnapshotDoc.model_validate(doc).connections["finance"].kind == "postgres"

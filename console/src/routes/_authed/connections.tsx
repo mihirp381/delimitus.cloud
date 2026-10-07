@@ -1,6 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { type FormEvent, useId, useState } from 'react';
 import {
+  ADDRESS_FIELDS,
+  addressComplete,
+  AVAILABLE_KINDS,
   type Ceiling,
   ceilingText,
   changeConnection,
@@ -9,6 +12,9 @@ import {
   type Connection,
   type ConnectionChange,
   createConnection,
+  emptyAddress,
+  type Kind,
+  KIND_TITLE,
   LIMIT_KEYS,
   LIMIT_TITLE,
   type Limits,
@@ -16,8 +22,10 @@ import {
   limitsTyped,
   needsCeiling,
   parseLimits,
+  parseAddress,
   parseSchemas,
   parseSubjects,
+  SQL_KINDS,
   subjectsText,
 } from '../../api/connections';
 import { findPeople, type Match, USER_ID_PATTERN } from '../../api/directory';
@@ -43,6 +51,7 @@ function ConnectionsPage() {
 
   const columns: Column<Connection>[] = [
     { header: 'Name', cell: (c) => <code>{c.name}</code> },
+    { header: 'Kind', cell: (c) => KIND_TITLE[c.kind] },
     { header: 'Classification', cell: (c) => c.classification },
     { header: 'Apps may be shared with', cell: (c) => ceilingText(c.ceiling) },
     { header: 'Schemas', cell: (c) => c.allowed_schemas.join(', ') },
@@ -224,11 +233,10 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
   const refresh = useRefreshList();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
+  const [kind, setKind] = useState<Kind>(AVAILABLE_KINDS[0] ?? 'postgres');
   const [classification, setClassification] = useState<Classification>('internal');
   const [owner, setOwner] = useState<Match | null>(null);
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState('5432');
-  const [database, setDatabase] = useState('');
+  const [address, setAddress] = useState<Record<string, string>>(() => emptyAddress(kind));
   const [schemas, setSchemas] = useState('public');
   const [audience, setAudience] = useState<Ceiling['audience']>('org');
   const [subjects, setSubjects] = useState('');
@@ -236,23 +244,26 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const nameId = useId();
-  const hostId = useId();
-  const portId = useId();
-  const databaseId = useId();
+  const kindId = useId();
+  const addressId = useId();
   const schemasId = useId();
+  const sql = SQL_KINDS.includes(kind);
 
-  function forgetAddress() {
-    setHost('');
-    setPort('5432');
-    setDatabase('');
+  function forgetAddress(of: Kind = kind) {
+    setAddress(emptyAddress(of));
+  }
+
+  function pickKind(next: Kind) {
+    setKind(next);
+    forgetAddress(next);
   }
 
   function close() {
     setOpen(false);
     setName('');
+    pickKind(AVAILABLE_KINDS[0] ?? 'postgres');
     setClassification('internal');
     setOwner(null);
-    forgetAddress();
     setSchemas('public');
     setAudience('org');
     setSubjects('');
@@ -260,7 +271,8 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
     setError(null);
   }
 
-  const ready = name.trim() !== '' && owner !== null && host.trim() !== '' && database.trim() !== '';
+  const ready = name.trim() !== '' && owner !== null && addressComplete(kind, address);
+  const addressEmpty = Object.entries(address).every(([k, v]) => (k === 'port' && sql) || v.trim() === '');
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -268,29 +280,29 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
     setError(null);
     let ceiling: Ceiling;
     let parsedLimits: Limits;
+    let parsedAddress: Record<string, string | number>;
     try {
       ceiling = ceilingOf(audience, subjects);
       parsedLimits = parseLimits(limits);
+      parsedAddress = parseAddress(kind, address);
     } catch (e) {
       setError(e);
       return;
     }
-    if (!/^\d+$/.test(port.trim())) {
-      setError(new Error('Port must be a whole number.'));
-      return;
-    }
     const added = name.trim();
+    // The SQL kinds send the three members the API has always taken; the others send `address`.
+    const where = sql
+      ? { host: String(parsedAddress.host), port: Number(parsedAddress.port), database: String(parsedAddress.database) }
+      : { address: parsedAddress };
     const request = createConnection(api, {
       name: added,
-      kind: 'postgres',
+      kind,
       owner_user_id: owner.id,
       classification,
       ceiling,
       allowed_schemas: parseSchemas(schemas),
       limits: parsedLimits,
-      host: host.trim(),
-      port: Number(port.trim()),
-      database: database.trim(),
+      ...where,
     });
     forgetAddress();
     setBusy(true);
@@ -322,6 +334,16 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
               onChange={(e) => setName(e.target.value)}
             />
           </label>
+          <label className="field" htmlFor={kindId}>
+            <span>Kind of source</span>
+            <select id={kindId} value={kind} onChange={(e) => pickKind(e.target.value as Kind)}>
+              {AVAILABLE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {KIND_TITLE[k]}
+                </option>
+              ))}
+            </select>
+          </label>
           <ClassificationField value={classification} onChange={setClassification} />
           <Lookup
             label="Owner: email or usr_ id"
@@ -333,47 +355,32 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
             onPick={setOwner}
           />
           <fieldset className="choices">
-            <legend>Address, stored and never shown again</legend>
-            <label className="field" htmlFor={hostId}>
-              <span>Host</span>
-              <input
-                id={hostId}
-                value={host}
-                spellCheck={false}
-                autoComplete="off"
-                onChange={(e) => setHost(e.target.value)}
-              />
-            </label>
-            <label className="field" htmlFor={portId}>
-              <span>Port</span>
-              <input
-                id={portId}
-                inputMode="numeric"
-                value={port}
-                autoComplete="off"
-                onChange={(e) => setPort(e.target.value)}
-              />
-            </label>
-            <label className="field" htmlFor={databaseId}>
-              <span>Database</span>
-              <input
-                id={databaseId}
-                value={database}
-                spellCheck={false}
-                autoComplete="off"
-                onChange={(e) => setDatabase(e.target.value)}
-              />
-            </label>
+            <legend>Address, stored and never shown again. Credentials go to your operator, never here.</legend>
+            {ADDRESS_FIELDS[kind].map((f) => (
+              <label className="field" htmlFor={`${addressId}-${f.key}`} key={f.key}>
+                <span>{f.label}</span>
+                <input
+                  id={`${addressId}-${f.key}`}
+                  inputMode={f.numeric ? 'numeric' : undefined}
+                  value={address[f.key] ?? ''}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => setAddress({ ...address, [f.key]: e.target.value })}
+                />
+              </label>
+            ))}
           </fieldset>
-          <label className="field" htmlFor={schemasId}>
-            <span>Schemas apps may read, separated by commas</span>
-            <input
-              id={schemasId}
-              value={schemas}
-              spellCheck={false}
-              onChange={(e) => setSchemas(e.target.value)}
-            />
-          </label>
+          {sql ? (
+            <label className="field" htmlFor={schemasId}>
+              <span>Schemas apps may read, separated by commas</span>
+              <input
+                id={schemasId}
+                value={schemas}
+                spellCheck={false}
+                onChange={(e) => setSchemas(e.target.value)}
+              />
+            </label>
+          ) : null}
           <CeilingFields
             audience={audience}
             subjects={subjects}
@@ -388,7 +395,7 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
           ) : null}
           <LimitFields typed={limits} onChange={setLimits} />
           {error ? <ProblemNotice error={error} /> : null}
-          {error && !host && !database ? (
+          {error && addressEmpty ? (
             <p className="muted">The address is cleared once sent; enter it again to retry.</p>
           ) : null}
           <div className="actions">

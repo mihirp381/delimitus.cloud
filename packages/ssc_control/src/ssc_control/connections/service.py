@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.audit import AuditAction
+from ssc_contracts.connections import AVAILABLE, SQL_KINDS, Address, Kind, SqlAddress, address_json
 from ssc_contracts.ids import new_id
 from ssc_control.audit import Actor, NewEvent, append_event
 from ssc_control.domain.approval_rules import GrantKey
@@ -38,7 +39,7 @@ from ssc_control.domain.audience import (
 )
 from ssc_control.snapshot.service import mark_dirty
 
-Problem = Literal["name_taken", "owner_not_active", "ceiling_required"]
+Problem = Literal["name_taken", "owner_not_active", "ceiling_required", "kind_unavailable"]
 Classification = Literal["internal", "confidential", "restricted"]
 SetupStatus = Literal["pending", "ready"]
 Status = Literal["active", "suspended"]
@@ -51,9 +52,9 @@ _COLUMNS: Final = (
 )
 _INSERT = text(
     "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
-    "database_name, owner_user_id, ceiling, allowed_schemas, limits) values (:id, :org, :name, "
-    ":kind, :class, :host, :port, :database, :owner, cast(:ceiling as jsonb), "
-    "cast(:schemas as text[]), cast(:limits as jsonb)) "
+    "database_name, address, owner_user_id, ceiling, allowed_schemas, limits) values (:id, :org, "
+    ":name, :kind, :class, :host, :port, :database, cast(:address as jsonb), :owner, "
+    "cast(:ceiling as jsonb), cast(:schemas as text[]), cast(:limits as jsonb)) "
     "on conflict (org_id, name) do nothing returning id"
 )
 _OWNER_ACTIVE = text(
@@ -135,7 +136,7 @@ class Connection:
 
     id: str
     name: str
-    kind: str
+    kind: Kind
     classification: Classification
     owner_user_id: str | None
     ceiling: Ceiling
@@ -150,6 +151,7 @@ class Connection:
         """The ``connection`` audit view."""
         return {
             "name": self.name,
+            "kind": self.kind,
             "classification": self.classification,
             "owner_user_id": self.owner_user_id,
             "ceiling": ceiling_view(self.ceiling),
@@ -175,7 +177,7 @@ def _connection(row: Mapping[str, Any]) -> Connection:
     return Connection(
         id=str(row["id"]),
         name=str(row["name"]),
-        kind=str(row["kind"]),
+        kind=cast(Kind, row["kind"]),
         classification=cast(Classification, row["classification"]),
         owner_user_id=row["owner_user_id"],
         ceiling=parse_ceiling(row["ceiling"]),
@@ -246,13 +248,18 @@ async def create(  # noqa: PLR0913  (keyword-only)
     ceiling: Ceiling | None,
     allowed_schemas: list[str],
     limits: dict[str, Any],
-    host: str,
-    port: int,
-    database: str,
+    kind: Kind,
+    address: Address,
 ) -> Connection:
     """A new ``pending`` connection. ``internal`` defaults to the whole-org ceiling; a
     ``confidential`` or ``restricted`` one needs ``ceiling`` (``ceiling_required``). The owner
-    must be an active user (``owner_not_active``); a name in use is ``name_taken``."""
+    must be an active user (``owner_not_active``); a name in use is ``name_taken``; a kind
+    without a connector is ``kind_unavailable``. ``address`` is the kind's (never a credential):
+    a SQL kind's also fills the host, port and database columns."""
+    if kind not in AVAILABLE:
+        raise ConnectionChangeError("kind_unavailable")
+    if (kind in SQL_KINDS) != isinstance(address, SqlAddress):
+        raise ValueError(f"the address does not fit {kind}")
     if ceiling is None:
         if classification != "internal":
             raise ConnectionChangeError("ceiling_required")
@@ -267,11 +274,12 @@ async def create(  # noqa: PLR0913  (keyword-only)
                 "id": con_id,
                 "org": org_id,
                 "name": name,
-                "kind": "postgres",
+                "kind": kind,
                 "class": classification,
-                "host": host,
-                "port": port,
-                "database": database,
+                "host": address.host if isinstance(address, SqlAddress) else None,
+                "port": address.port if isinstance(address, SqlAddress) else None,
+                "database": address.database if isinstance(address, SqlAddress) else None,
+                "address": _dump(address_json(address)),
                 "owner": owner_user_id,
                 "ceiling": _dump(ceiling_json(ceiling)),
                 "schemas": allowed_schemas,
@@ -323,7 +331,7 @@ async def links(conn: AsyncConnection, org_id: str, environment_id: str) -> list
             connection=Connection(
                 id=str(r[5]),
                 name=str(r[6]),
-                kind=str(r[7]),
+                kind=cast(Kind, r[7]),
                 classification=cast(Classification, r[8]),
                 owner_user_id=r[9],
                 ceiling=parse_ceiling(r[10]),

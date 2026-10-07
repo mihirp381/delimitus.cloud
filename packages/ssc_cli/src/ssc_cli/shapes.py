@@ -457,6 +457,7 @@ class ConnectionRow(Shape):
     than the ceiling."""
 
     name: str
+    kind: str
     classification: str
     ceiling: list[str]
     setup_status: str

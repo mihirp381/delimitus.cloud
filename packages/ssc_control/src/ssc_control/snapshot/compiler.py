@@ -72,7 +72,7 @@ _READ_ORG = text(
     "row_number() over (partition by k.environment_id order by k.created_at desc, "
     "k.credential_id desc) as n from ssc.egress_credential k where k.org_id = :org) c "
     "where c.n <= :keep), "
-    "(select coalesce(jsonb_agg(jsonb_build_array(k.id, k.name, k.status, k.limits, "
+    "(select coalesce(jsonb_agg(jsonb_build_array(k.id, k.name, k.kind, k.status, k.limits, "
     "(select coalesce(jsonb_agg(jsonb_build_array(g.environment_id, g.limits) "
     "order by g.environment_id), '[]') from ssc.connection_grant g "
     "where g.org_id = k.org_id and g.connection_id = k.id)) order by k.name collate \"C\"), '[]') "
@@ -111,11 +111,12 @@ def _connections(linked: list[list[Any]]) -> dict[str, Any] | None:
     return {
         name: {
             "connection_id": con_id,
+            "kind": kind,
             "status": status,
             "limits": limits or None,
             "grants": {env_id: {"limits": env_limits or None} for env_id, env_limits in grants},
         }
-        for con_id, name, status, limits, grants in linked
+        for con_id, name, kind, status, limits, grants in linked
     }
 
 

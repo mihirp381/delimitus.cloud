@@ -8,7 +8,8 @@ Breaking, in the order checked:
   * a required parameter added
   * a request property removed, or made required when it was optional
   * a response property removed
-  * a property's type changed (request or response)
+  * a property's type changed (request or response); a request property's type that only
+    widens, such as ``string`` to ``null|string``, passes: every old value still fits
   * an enum value removed (request or response)
 
 Additive changes (new paths, new optional fields, new statuses, new enum values) pass. Deprecating
@@ -62,6 +63,11 @@ def type_signature(schema: Schema, doc: Doc) -> str:
     return str(kind) if kind is not None else "any"
 
 
+def widened(old_sig: str, new_sig: str) -> bool:
+    """True when every type the old signature allowed, the new one allows too."""
+    return set(old_sig.split("|")) <= set(new_sig.split("|"))
+
+
 def properties(schema: Schema, doc: Doc) -> tuple[dict[str, Schema], set[str]]:
     schema = doc.resolve(schema)
     props = schema.get("properties", {})
@@ -78,7 +84,7 @@ def compare_schema(
     """Yield breaking changes between two schemas, descending into properties and items."""
     old_doc, new_doc = docs
     old_sig, new_sig = type_signature(old, old_doc), type_signature(new, new_doc)
-    if old_sig != new_sig:
+    if old_sig != new_sig and not (request and widened(old_sig, new_sig)):
         yield f"{where}: type changed from {old_sig} to {new_sig}"
         return
     old_r, new_r = old_doc.resolve(old), new_doc.resolve(new)

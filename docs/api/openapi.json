@@ -2009,6 +2009,19 @@
       "ConnectionIn": {
         "additionalProperties": false,
         "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the source is, by kind: `{host, port?, database}` for `postgres`, `mysql` and `sqlserver`; `{project, dataset, location?}` for `bigquery`; `{account, database, schema?, warehouse, role?}` for `snowflake`; `{spreadsheet_id, sheet?}` for `gsheets`; `{bucket, prefix?}` for `gcs`; `{bucket, prefix?, region}` for `s3`; `{base_id, table?}` for `airtable`; `{base_url}` for `rest`. Never a credential. Stored for the data gateway; never returned.",
+            "title": "Address"
+          },
           "allowed_schemas": {
             "items": {
               "pattern": "^[a-z_][a-z0-9_]{0,62}$",
@@ -2040,20 +2053,46 @@
             "type": "string"
           },
           "database": {
-            "description": "Stored; never returned.",
-            "pattern": "^[A-Za-z0-9_.-]{1,63}$",
-            "title": "Database",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_.-]{1,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With `host`. Never returned.",
+            "title": "Database"
           },
           "host": {
-            "description": "Stored for the data gateway; never returned.",
-            "pattern": "^[A-Za-z0-9.-]{1,255}$",
-            "title": "Host",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9.-]{1,255}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The SQL kinds' address, in place of `address`. Never returned.",
+            "title": "Host"
           },
           "kind": {
-            "const": "postgres",
             "default": "postgres",
+            "description": "The kind of source. A kind without a connector yet is refused with `CONNECTOR_UNAVAILABLE`.",
+            "enum": [
+              "postgres",
+              "mysql",
+              "sqlserver",
+              "bigquery",
+              "snowflake",
+              "gsheets",
+              "gcs",
+              "s3",
+              "airtable",
+              "rest"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -2079,20 +2118,24 @@
             "type": "string"
           },
           "port": {
-            "description": "Stored; never returned.",
-            "maximum": 65535.0,
-            "minimum": 1.0,
-            "title": "Port",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With `host`; the engine's default when left out.",
+            "title": "Port"
           }
         },
         "required": [
           "name",
           "owner_user_id",
-          "classification",
-          "host",
-          "port",
-          "database"
+          "classification"
         ],
         "title": "ConnectionIn",
         "type": "object"
@@ -2129,7 +2172,18 @@
             "type": "string"
           },
           "kind": {
-            "const": "postgres",
+            "enum": [
+              "postgres",
+              "mysql",
+              "sqlserver",
+              "bigquery",
+              "snowflake",
+              "gsheets",
+              "gcs",
+              "s3",
+              "airtable",
+              "rest"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -3218,6 +3272,7 @@
           "REQUIRED_CHECKS_FAILING",
           "GITHUB_UNAVAILABLE",
           "CEILING_REQUIRED",
+          "CONNECTOR_UNAVAILABLE",
           "CELL_UNAVAILABLE",
           "TRANSIENT_CONFLICT",
           "INTERNAL"
@@ -12843,7 +12898,7 @@
         ]
       },
       "post": {
-        "description": "Add a connection by hand with the customer. Active org admins only, never in an agent\nsession. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`\nconnection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;\n`ALREADY_EXISTS` for a name in use. The address is stored and never returned; the credentials\nstay a runbook step. Audited as `connection.created`.",
+        "description": "Add a connection by hand with the customer. Active org admins only, never in an agent\nsession. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`\nconnection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;\n`ALREADY_EXISTS` for a name in use; `CONNECTOR_UNAVAILABLE` for a kind the platform has no\nconnector for yet. The address is stored and never returned; the credentials stay a runbook\nstep. Audited as `connection.created`.",
         "operationId": "create_connection_v1_connections_post",
         "parameters": [
           {
@@ -12932,7 +12987,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `CONNECTOR_UNAVAILABLE`"
           },
           "429": {
             "content": {

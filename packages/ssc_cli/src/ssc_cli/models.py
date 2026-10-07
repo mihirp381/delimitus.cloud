@@ -361,6 +361,7 @@ class ConnectionOut(Wire):
     """A data connection the caller may see; never its address."""
 
     name: str
+    kind: str
     owner_user_id: str | None
     classification: str
     ceiling: CeilingDoc

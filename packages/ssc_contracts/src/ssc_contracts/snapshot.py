@@ -21,6 +21,7 @@ from pydantic import (
     model_validator,
 )
 
+from ssc_contracts.connections import Kind
 from ssc_contracts.egress import MAX_CREDENTIALS, MAX_HOSTS, host_pattern_problem
 from ssc_contracts.identity import EnvironmentName
 
@@ -122,6 +123,7 @@ class SnapshotConnection(_Frozen):
     query on it and ends the running ones; ``grants`` lists the environments that may query it."""
 
     connection_id: ConnectionId
+    kind: Kind = Field(default="postgres", exclude_if=lambda v: v == "postgres")
     status: ConnectionStatus
     limits: SnapshotLimits | None = Field(default=None, exclude_if=lambda v: v is None)
     grants: dict[EnvId, SnapshotConnectionGrant]

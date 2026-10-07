@@ -9,10 +9,115 @@ export type Ceiling = components['schemas']['CeilingDoc'];
 export type Subject = components['schemas']['SubjectDoc'];
 export type Limits = components['schemas']['SnapshotLimits'];
 export type Classification = Connection['classification'];
+export type Kind = Connection['kind'];
 export type EnvironmentConnection = components['schemas']['EnvironmentConnectionOut'];
 export type EnvironmentConnections = components['schemas']['EnvironmentConnectionsOut'];
 
 export const CLASSIFICATIONS: readonly Classification[] = ['internal', 'confidential', 'restricted'];
+
+export const KIND_TITLE: Readonly<Record<Kind, string>> = {
+  postgres: 'PostgreSQL',
+  mysql: 'MySQL',
+  sqlserver: 'SQL Server',
+  bigquery: 'BigQuery',
+  snowflake: 'Snowflake',
+  gsheets: 'Google Sheets',
+  gcs: 'Google Cloud Storage',
+  s3: 'Amazon S3',
+  airtable: 'Airtable',
+  rest: 'REST (GET)',
+};
+
+/**
+ * The kinds a connector exists for (`ssc_contracts.connections.AVAILABLE`). The API refuses any
+ * other kind with CONNECTOR_UNAVAILABLE, so the picker offers only these.
+ */
+export const AVAILABLE_KINDS: readonly Kind[] = ['postgres'];
+
+/** The kinds whose address is a host, a port and a database, sent as the three top-level members. */
+export const SQL_KINDS: readonly Kind[] = ['postgres', 'mysql', 'sqlserver'];
+
+export const DEFAULT_PORT: Readonly<Partial<Record<Kind, string>>> = { postgres: '5432', mysql: '3306', sqlserver: '1433' };
+
+export interface AddressField {
+  readonly key: string;
+  readonly label: string;
+  readonly optional?: boolean;
+  readonly numeric?: boolean;
+}
+
+const SQL_ADDRESS: readonly AddressField[] = [
+  { key: 'host', label: 'Host' },
+  { key: 'port', label: 'Port', numeric: true },
+  { key: 'database', label: 'Database' },
+];
+
+/** What an admin types for each kind: where the source is, never how to log in. */
+export const ADDRESS_FIELDS: Readonly<Record<Kind, readonly AddressField[]>> = {
+  postgres: SQL_ADDRESS,
+  mysql: SQL_ADDRESS,
+  sqlserver: SQL_ADDRESS,
+  bigquery: [
+    { key: 'project', label: 'Project id' },
+    { key: 'dataset', label: 'Dataset' },
+    { key: 'location', label: 'Location (US when left out)', optional: true },
+  ],
+  snowflake: [
+    { key: 'account', label: 'Account identifier (org-account)' },
+    { key: 'database', label: 'Database' },
+    { key: 'schema', label: 'Schema (PUBLIC when left out)', optional: true },
+    { key: 'warehouse', label: 'Warehouse' },
+    { key: 'role', label: 'Role (the user\'s default when left out)', optional: true },
+  ],
+  gsheets: [
+    { key: 'spreadsheet_id', label: 'Spreadsheet id (from its URL)' },
+    { key: 'sheet', label: 'Sheet tab (every tab when left out)', optional: true },
+  ],
+  gcs: [
+    { key: 'bucket', label: 'Bucket' },
+    { key: 'prefix', label: 'Prefix apps may read (the whole bucket when left out)', optional: true },
+  ],
+  s3: [
+    { key: 'bucket', label: 'Bucket' },
+    { key: 'region', label: 'Region (eu-west-1)' },
+    { key: 'prefix', label: 'Prefix apps may read (the whole bucket when left out)', optional: true },
+  ],
+  airtable: [
+    { key: 'base_id', label: 'Base id (app…)' },
+    { key: 'table', label: 'Table (every table when left out)', optional: true },
+  ],
+  rest: [{ key: 'base_url', label: 'Base URL (https)' }],
+};
+
+/** The default address for a kind: the engine's port for the SQL kinds, otherwise empty. */
+export function emptyAddress(kind: Kind): Record<string, string> {
+  const port = DEFAULT_PORT[kind];
+  return port === undefined ? {} : { port };
+}
+
+/** True when every required address field of the kind has a value. */
+export function addressComplete(kind: Kind, typed: Readonly<Record<string, string>>): boolean {
+  return ADDRESS_FIELDS[kind].every((f) => f.optional || (typed[f.key] ?? '').trim() !== '');
+}
+
+/**
+ * The typed address as the API takes it: numbers for numeric fields, optional fields left out
+ * when empty. Throws an Error naming a numeric field that is not a whole number.
+ */
+export function parseAddress(kind: Kind, typed: Readonly<Record<string, string>>): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const f of ADDRESS_FIELDS[kind]) {
+    const value = (typed[f.key] ?? '').trim();
+    if (value === '') continue;
+    if (f.numeric) {
+      if (!/^\d+$/.test(value)) throw new Error(`${f.label} must be a whole number.`);
+      out[f.key] = Number(value);
+    } else {
+      out[f.key] = value;
+    }
+  }
+  return out;
+}
 
 /** `confidential` and `restricted` connections need a ceiling (CEILING_REQUIRED without one). */
 export function needsCeiling(classification: Classification): boolean {

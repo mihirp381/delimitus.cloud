@@ -97,6 +97,7 @@ class ErrorCode(StrEnum):
     GITHUB_UNAVAILABLE = "GITHUB_UNAVAILABLE"
     # connections (SSC-052)
     CEILING_REQUIRED = "CEILING_REQUIRED"
+    CONNECTOR_UNAVAILABLE = "CONNECTOR_UNAVAILABLE"
     # placement
     CELL_UNAVAILABLE = "CELL_UNAVAILABLE"
     # ours
@@ -422,6 +423,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "This connection needs an audience ceiling.",
         "A confidential or restricted connection must say the widest audience an app using it may "
         "have, for example one group. Send a ceiling with it and retry.",
+    ),
+    ErrorCode.CONNECTOR_UNAVAILABLE: CatalogueEntry(
+        422,
+        "This kind of data source is not available yet.",
+        "The platform has no connector for this kind of source. Pick one of the kinds the "
+        "console offers, or ask your operator when this one arrives.",
     ),
     ErrorCode.CELL_UNAVAILABLE: CatalogueEntry(
         503,

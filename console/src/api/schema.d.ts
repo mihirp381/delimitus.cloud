@@ -1083,8 +1083,9 @@ export interface paths {
          * @description Add a connection by hand with the customer. Active org admins only, never in an agent
          *     session. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`
          *     connection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;
-         *     `ALREADY_EXISTS` for a name in use. The address is stored and never returned; the credentials
-         *     stay a runbook step. Audited as `connection.created`.
+         *     `ALREADY_EXISTS` for a name in use; `CONNECTOR_UNAVAILABLE` for a kind the platform has no
+         *     connector for yet. The address is stored and never returned; the credentials stay a runbook
+         *     step. Audited as `connection.created`.
          */
         post: operations["create_connection_v1_connections_post"];
         delete?: never;
@@ -2184,6 +2185,13 @@ export interface components {
         };
         /** ConnectionIn */
         ConnectionIn: {
+            /**
+             * Address
+             * @description Where the source is, by kind: `{host, port?, database}` for `postgres`, `mysql` and `sqlserver`; `{project, dataset, location?}` for `bigquery`; `{account, database, schema?, warehouse, role?}` for `snowflake`; `{spreadsheet_id, sheet?}` for `gsheets`; `{bucket, prefix?}` for `gcs`; `{bucket, prefix?, region}` for `s3`; `{base_id, table?}` for `airtable`; `{base_url}` for `rest`. Never a credential. Stored for the data gateway; never returned.
+             */
+            address?: {
+                [key: string]: unknown;
+            } | null;
             /** Allowed Schemas */
             allowed_schemas?: string[];
             /** @description Required for `confidential` and `restricted`; `internal` defaults to `org`. */
@@ -2195,20 +2203,21 @@ export interface components {
             classification: "internal" | "confidential" | "restricted";
             /**
              * Database
-             * @description Stored; never returned.
+             * @description With `host`. Never returned.
              */
-            database: string;
+            database?: string | null;
             /**
              * Host
-             * @description Stored for the data gateway; never returned.
+             * @description The SQL kinds' address, in place of `address`. Never returned.
              */
-            host: string;
+            host?: string | null;
             /**
              * Kind
+             * @description The kind of source. A kind without a connector yet is refused with `CONNECTOR_UNAVAILABLE`.
              * @default postgres
-             * @constant
+             * @enum {string}
              */
-            kind: "postgres";
+            kind: "postgres" | "mysql" | "sqlserver" | "bigquery" | "snowflake" | "gsheets" | "gcs" | "s3" | "airtable" | "rest";
             limits?: components["schemas"]["SnapshotLimits"] | null;
             /** Name */
             name: string;
@@ -2219,9 +2228,9 @@ export interface components {
             owner_user_id: string;
             /**
              * Port
-             * @description Stored; never returned.
+             * @description With `host`; the engine's default when left out.
              */
-            port: number;
+            port?: number | null;
         };
         /** ConnectionOut */
         ConnectionOut: {
@@ -2242,9 +2251,9 @@ export interface components {
             id: string;
             /**
              * Kind
-             * @constant
+             * @enum {string}
              */
-            kind: "postgres";
+            kind: "postgres" | "mysql" | "sqlserver" | "bigquery" | "snowflake" | "gsheets" | "gcs" | "s3" | "airtable" | "rest";
             limits: components["schemas"]["SnapshotLimits"];
             /** Name */
             name: string;
@@ -2646,7 +2655,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -8420,7 +8429,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED` */
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `CONNECTOR_UNAVAILABLE` */
             422: {
                 headers: {
                     [name: string]: unknown;

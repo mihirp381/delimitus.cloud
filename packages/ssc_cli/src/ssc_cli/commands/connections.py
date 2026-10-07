@@ -34,6 +34,7 @@ def _ceiling(c: CeilingDoc) -> list[str]:
 def _row(c: ConnectionOut, over_ceiling_since: str | None = None) -> ConnectionRow:
     return ConnectionRow(
         name=c.name,
+        kind=c.kind,
         classification=c.classification,
         ceiling=_ceiling(c.ceiling),
         setup_status=c.setup_status,
@@ -78,10 +79,11 @@ def connections(
         return
     say(
         table(
-            ("CONNECTION", "CLASSIFICATION", "CEILING", "SETUP", "STATUS", "OVER CEILING"),
+            ("CONNECTION", "KIND", "CLASSIFICATION", "CEILING", "SETUP", "STATUS", "OVER CEILING"),
             [
                 (
                     c.name,
+                    c.kind,
                     c.classification,
                     ", ".join(c.ceiling),
                     c.setup_status,

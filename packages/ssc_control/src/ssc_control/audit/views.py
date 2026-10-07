@@ -88,9 +88,10 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "repo_link": frozenset({"installation_id", "repository_id", "branch", "required_checks"}),
     "egress_host": frozenset({"host", "high_risk", "approval_request_id"}),  # SSC-053
     "connection": frozenset(
-        {"name", "classification", "ceiling", "setup_status", "status", "owner_user_id"}
+        {"name", "kind", "classification", "ceiling", "setup_status", "status", "owner_user_id"}
         | {"allowed_schemas"}
-    ),  # SSC-052: ceiling is "org" or "group:<id>" and "user:<id>" entries, never an object
+    ),  # SSC-052: ceiling is "org" or "group:<id>" and "user:<id>" entries, never an object;
+    # GA-5: kind is one of ssc_contracts.connections.KINDS, never the address
     "connection_grant": frozenset({"connection_id", "environment_id", "over_ceiling_since"}),
     "warm": frozenset({"environment_ids", "gateway", "monthly_usd_shown"}),
 }

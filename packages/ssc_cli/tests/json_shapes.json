@@ -102,6 +102,7 @@
   "ConnectionRow": {
     "ceiling": "array<string>",
     "classification": "string",
+    "kind": "string",
     "name": "string",
     "over_ceiling_since": "string|null",
     "setup_status": "string",

@@ -20,10 +20,12 @@ curl -sS -X POST "$API/v1/connections" \
   -d '{"name": "finance", "owner_user_id": "usr_...", "classification": "confidential",
        "ceiling": {"audience": "subjects", "subjects": [{"kind": "group", "id": "grp_..."}]},
        "allowed_schemas": ["reporting"], "limits": {"max_rows": 5000},
-       "host": "db.customer.internal", "port": 5432, "database": "warehouse"}'
+       "kind": "postgres", "address": {"host": "db.customer.internal", "port": 5432, "database": "warehouse"}}'
 ```
 
-Pass: `201` and `setup_status` is `pending`. The answer, `GET /v1/connections` and the audit row `connection.created` never show the host, port or database. A `pending` connection can be granted to an environment but the data gateway does not serve it.
+`kind` is one of `ssc_contracts.connections.KINDS` and `address` the kind's non-secret address (the API's `ConnectionIn.address` lists each kind's members; `port` defaults to the engine's). A kind without a connector yet is refused with `CONNECTOR_UNAVAILABLE`; the console offers only the available ones. For the SQL kinds, `host`, `port` and `database` at the top level still work in place of `address`.
+
+Pass: `201` and `setup_status` is `pending`. The answer, `GET /v1/connections` and the audit row `connection.created` show the kind and never the address. A `pending` connection can be granted to an environment but the data gateway does not serve it.
 
 ## 2. Give the data gateway its credentials
 

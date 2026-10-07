@@ -20,6 +20,7 @@ from pydantic import Field, StringConstraints, model_validator
 from sqlalchemy import text
 
 from ssc_contracts.audit import AuditAction
+from ssc_contracts.connections import SQL_KINDS, Address, AddressError, Kind, parse_address
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.snapshot import SnapshotLimits
 from ssc_control.api.auth import PrincipalKind
@@ -74,7 +75,11 @@ class CeilingDoc(Strict):
 
 class ConnectionIn(Strict):
     name: NewName
-    kind: Literal["postgres"] = "postgres"
+    kind: Kind = Field(
+        default="postgres",
+        description="The kind of source. A kind without a connector yet is refused with "
+        "`CONNECTOR_UNAVAILABLE`.",
+    )
     owner_user_id: Annotated[str, StringConstraints(pattern=r"^usr_[a-z0-9]{20}$")] = Field(
         description="The active user who decides when an app exceeds the ceiling."
     )
@@ -87,13 +92,49 @@ class ConnectionIn(Strict):
         default_factory=lambda: ["public"], min_length=1, max_length=50
     )
     limits: SnapshotLimits | None = None
-    host: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9.-]{1,255}$")] = Field(
-        description="Stored for the data gateway; never returned."
+    address: dict[str, Any] | None = Field(
+        default=None,
+        description="Where the source is, by kind: `{host, port?, database}` for `postgres`, "
+        "`mysql` and `sqlserver`; `{project, dataset, location?}` for `bigquery`; `{account, "
+        "database, schema?, warehouse, role?}` for `snowflake`; `{spreadsheet_id, sheet?}` for "
+        "`gsheets`; `{bucket, prefix?}` for `gcs`; `{bucket, prefix?, region}` for `s3`; "
+        "`{base_id, table?}` for `airtable`; `{base_url}` for `rest`. Never a credential. Stored "
+        "for the data gateway; never returned.",
     )
-    port: int = Field(ge=1, le=65535, description="Stored; never returned.")
-    database: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.-]{1,63}$")] = Field(
-        description="Stored; never returned."
+    host: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9.-]{1,255}$")] | None = Field(
+        default=None, description="The SQL kinds' address, in place of `address`. Never returned."
     )
+    port: Annotated[int, Field(ge=1, le=65535)] | None = Field(
+        default=None, description="With `host`; the engine's default when left out."
+    )
+    database: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.-]{1,63}$")] | None = Field(
+        default=None, description="With `host`. Never returned."
+    )
+
+    @model_validator(mode="after")
+    def _one_address_that_fits_the_kind(self) -> Self:
+        self.parsed_address()
+        return self
+
+    def parsed_address(self) -> Address:
+        """The address as the kind's model. The three SQL members and `address` are two ways to
+        say the same thing; sending both, or neither, is refused."""
+        typed = {
+            k: v
+            for k, v in (("host", self.host), ("port", self.port), ("database", self.database))
+            if v is not None
+        }
+        if typed and self.address is not None:
+            raise ValueError("send host, port and database, or address, not both")
+        if typed and self.kind not in SQL_KINDS:
+            raise ValueError(f"host, port and database belong to a SQL kind, not {self.kind}")
+        data = self.address if self.address is not None else typed
+        if not data:
+            raise ValueError("address is required")
+        try:
+            return parse_address(self.kind, data)
+        except AddressError as exc:
+            raise ValueError(str(exc)) from None
 
 
 class ConnectionPatch(Strict):
@@ -113,7 +154,7 @@ class ConnectionPatch(Strict):
 class ConnectionOut(Strict):
     id: str
     name: str
-    kind: Literal["postgres"]
+    kind: Kind
     owner_user_id: str | None
     classification: Classification
     ceiling: CeilingDoc
@@ -159,7 +200,7 @@ def _out(c: service.Connection) -> ConnectionOut:
     return ConnectionOut(
         id=c.id,
         name=c.name,
-        kind="postgres",
+        kind=c.kind,
         owner_user_id=c.owner_user_id,
         classification=c.classification,
         ceiling=_ceiling_doc(c.ceiling),
@@ -251,14 +292,16 @@ async def _environment_out(
         ErrorCode.ALREADY_EXISTS,
         ErrorCode.OWNER_NOT_ACTIVE,
         ErrorCode.CEILING_REQUIRED,
+        ErrorCode.CONNECTOR_UNAVAILABLE,
     ),
 )
 async def create_connection(body: ConnectionIn, uow: UserUoW) -> Any:
     """Add a connection by hand with the customer. Active org admins only, never in an agent
     session. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`
     connection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;
-    `ALREADY_EXISTS` for a name in use. The address is stored and never returned; the credentials
-    stay a runbook step. Audited as `connection.created`."""
+    `ALREADY_EXISTS` for a name in use; `CONNECTOR_UNAVAILABLE` for a kind the platform has no
+    connector for yet. The address is stored and never returned; the credentials stay a runbook
+    step. Audited as `connection.created`."""
     await _admin(uow)
     try:
         made = await service.create(
@@ -271,9 +314,8 @@ async def create_connection(body: ConnectionIn, uow: UserUoW) -> Any:
             ceiling=None if body.ceiling is None else _ceiling(body.ceiling),
             allowed_schemas=body.allowed_schemas,
             limits=_limits(body.limits),
-            host=body.host,
-            port=body.port,
-            database=body.database,
+            kind=body.kind,
+            address=body.parsed_address(),
         )
     except service.ConnectionChangeError as exc:
         raise _refusal(exc, body.name) from None
@@ -285,6 +327,7 @@ def _refusal(exc: service.ConnectionChangeError, name: str) -> Refusal:
         "name_taken": ErrorCode.ALREADY_EXISTS,
         "owner_not_active": ErrorCode.OWNER_NOT_ACTIVE,
         "ceiling_required": ErrorCode.CEILING_REQUIRED,
+        "kind_unavailable": ErrorCode.CONNECTOR_UNAVAILABLE,
     }[exc.problem]
     return Refusal(code, evidence={"connection": name})
 
