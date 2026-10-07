@@ -303,7 +303,7 @@ Reverse if: a change would refuse or re-digest a manifest v1 accepts (then `ssc/
 **Amendment 2026-10-06 (decision 025; SSC-086, `spikes/proofrun/RESULTS.md`).** The paragraph below now runs in cells, except for session billing.
 - Every environment ran at minimum 0 on both proof cells. T3 passed 14/14 on each, and T7 answered all 60 cold and warm loads.
 - The apps' startup probe runs every 1 s instead of 5 (`STARTUP_PERIOD_SECONDS`; T7 option 1, chosen by the founder on 2026-10-06). The next cold series measures it.
-- The kill switch confirms the deny inside its own job, checking every 0.25 s (T8 option 1). Three drills on the new control image measure it.
+- The kill switch confirms the deny inside its own job, checking every 0.25 s (T8 option 1). Three drills on the new control image, 2026-10-07: 4.35 s, 8.03 s and 4.66 s end to end against 10 s; the deny was done in under 1.5 s each time, and Cloud Run's own scale-to-zero (2 to 6 s) is now the largest part.
 - Still open: session billing and the 3600 s limit (T9). T9 was blocked because Streamlit refuses its stream behind the gateway.
 - Chosen by the founder on 2026-10-06: every app's spec sets `STREAMLIT_SERVER_CORS_ALLOWED_ORIGINS` to `SSC_APP_ORIGIN` (`identity_env`, `app_env.STREAMLIT_ALLOWED_ORIGINS`). It belongs in the spec, not added by the agent alone, so the live fingerprint still matches.
 
