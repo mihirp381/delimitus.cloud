@@ -38,6 +38,8 @@ class FakeWorkOS:
     profiles: dict[str, Json] = field(default_factory=dict)
     fail: int | None = None
     calls: list[str] = field(default_factory=list)
+    domains: dict[str, str] = field(default_factory=dict)
+    """This organisation's domains and their state (``verified``, ``pending``...)."""
 
     # ── arranging ─────────────────────────────────────────────────────────────
 
@@ -143,6 +145,12 @@ class FakeWorkOS:
             if "user" in q:
                 gids = [g for g in gids if q["user"][0] in self.members[g]]
             return self._page([{"id": g, "name": self.groups[g]} for g in gids], q)
+        if path == "/organizations":
+            wanted = set(q.get("domains") or [])
+            mine = [{"domain": d, "state": s} for d, s in self.domains.items()]
+            hit = any(d in wanted for d in self.domains)
+            data = [{"id": self.organization, "name": "Acme", "domains": mine}] if hit else []
+            return httpx2.Response(200, json={"data": data, "list_metadata": {"after": None}})
         if path == "/events":
             after = (q.get("after") or [""])[0]
             ids = [e["id"] for e in self.events]

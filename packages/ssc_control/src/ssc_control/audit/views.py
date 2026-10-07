@@ -75,6 +75,9 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
         {"state", "reason", "join_rule", "connection_type", "workos_directory_id"}
     ),  # SSC-019
     "identity_link": frozenset({"user_id", "source", "unlinked_login_id"}),  # SSC-019
+    # Decision 029: a remote MCP client the person approved or denied. The name is the one the
+    # client registered with; the redirect host is where its codes went.
+    "oauth_client": frozenset({"client_id", "client_name", "session_id", "redirect_host"}),
     "bundle": frozenset(
         {"app_id", "digest", "size_bytes", "file_count", "manifest_digest", "source_commit"}
     ),

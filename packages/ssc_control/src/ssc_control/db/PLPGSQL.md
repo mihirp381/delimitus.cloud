@@ -18,6 +18,10 @@ paging keys on `SC001`.
 | `refuse_row_change('SCxxx')` | `BEFORE UPDATE OR DELETE ON release` (`SC004`), `ON audit_event` (`SC005`), `ON cell_resource WHEN (OLD.state = 'ready')` (`SC008`) | argument | Privileges are the first guard (the app role has no UPDATE or DELETE on these tables). The trigger is the second, and it also binds the owner. |
 | `refuse_truncate()` | `BEFORE TRUNCATE ON release, audit_event, audit_head, cell_resource` | `SC006` | TRUNCATE is not covered by row triggers or by RLS. |
 | `schedule_terminal_state()` | `BEFORE UPDATE ON schedule` | `SC007` | A deleted schedule stays deleted. Un-deleting would resurrect timers nobody expects. |
+| `org_for_workos_organization(text)` | called by the auth host's `/authorize` (revision 0033, decision 029) | nothing | The work-email step finds the org whose active directory connection is a WorkOS organisation before any org is known. `directory_connection` is under forced RLS for every role, its owner too, so the function walks `org_index`, binds each org in turn and puts the caller's bind back before it returns (a `SET ssc.org` clause would need a superuser to create, since `ssc.org` is a placeholder setting; an error aborts the caller's transaction or savepoint, which undoes the binds too). `SECURITY DEFINER`, `STABLE`, `search_path = pg_catalog, ssc`, `EXECUTE` for the app role only. It answers one org id or NULL, never a row. O(orgs): fine for the pilot's hundreds of orgs; the upgrade is a global route table written with the connection. |
+
+`SECURITY DEFINER` is refused for every other function (`catalog.SECURITY_DEFINER_FUNCTIONS`;
+the same catalog test checks that none is executable by `PUBLIC`).
 
 Everything else is Python: snapshot version bumps, audit hashing and chaining, grants
 evaluation, idempotency claims, state machines. Privileges plus migrator ownership stay the

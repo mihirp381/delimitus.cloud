@@ -1,19 +1,23 @@
 """The auth host's own pages. Every refused sign-in gets :data:`REFUSED`, byte for byte: the
-reason is in the log and the audit, never on the page."""
+reason is in the log and the audit, never on the page. Every work email that finds no sign-in
+gets :data:`NO_SIGN_IN`, byte for byte, whatever the reason (decision 029)."""
 
 from html import escape
 from typing import Final
 
 
-def headers(workos_base: str) -> dict[str, str]:
-    """``form-action`` names WorkOS because the device form's answer redirects there."""
+def headers(workos_base: str, *, answer_to: str = "") -> dict[str, str]:
+    """``form-action`` names WorkOS because the device and work-email forms' answers redirect
+    there; a consent page also names ``answer_to``, where its answer redirects (the client's
+    redirect URI: CSP applies ``form-action`` to a form's redirects too)."""
+    targets = f"{workos_base} {answer_to}".strip()
     return {
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
         "referrer-policy": "no-referrer",
         "x-frame-options": "DENY",
         "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; "
-        f"form-action 'self' {workos_base}; frame-ancestors 'none'; base-uri 'none'",
+        f"form-action 'self' {targets}; frame-ancestors 'none'; base-uri 'none'",
     }
 
 
@@ -67,4 +71,52 @@ def agent_consent(org_id: str, user_code: str, agent: str) -> str:
         f"<input type=hidden name=user_code value='{escape(user_code)}'>"
         f"<input type=hidden name=agent value='{name}'>"
         f"<button>Let {name} act as me</button></form>",
+    )
+
+
+# ── OAuth (decision 029) ─────────────────────────────────────────────────────
+
+UNKNOWN_CLIENT: Final = page(
+    "This sign-in request is not valid",
+    "<p>The app that sent you here is not registered, or asked to send you somewhere it did not"
+    " register. Nothing was shared with it. Go back to the app and connect again.</p>",
+)
+NO_SIGN_IN: Final = page(
+    "We couldn't find a sign-in for that email",
+    "<p>Check the address and go back to try again. If it is right, ask your IT admin whether"
+    " your company signs in to Delimitus.</p>",
+)
+TOO_MANY: Final = page(
+    "Too many tries", "<p>Wait an hour, then go back to the app and connect again.</p>"
+)
+UNAVAILABLE: Final = page("Sign-in is unavailable", "<p>Try again in a few minutes.</p>")
+
+
+def work_email(pending: str) -> str:
+    """The step that finds the company's sign-in when nothing else names the org."""
+    return page(
+        "Sign in to Delimitus",
+        "<p>Enter your work email to find your company's sign-in.</p>"
+        "<form method=post action='/authorize'>"
+        f"<input type=hidden name=pending value='{escape(pending)}'>"
+        "<label>Work email <input type=email name=email autocomplete=email required></label> "
+        "<button>Continue</button></form>",
+    )
+
+
+def oauth_consent(*, client_name: str, destination: str, org_name: str, answer: str) -> str:
+    """A third-party client asks to act as the person; the page names who and where."""
+    name, place = escape(client_name), escape(destination)
+    return page(
+        f"Let {client_name} act as you",
+        f"<p><strong>{name}</strong> asks to use Delimitus as you in <strong>"
+        f"{escape(org_name)}</strong> for up to 12 hours: see your apps and their logs, create "
+        "apps, deploy to preview, roll back and ask for access. It cannot approve anything or "
+        "handle secrets, and every call it makes is recorded as made by it on your behalf.</p>"
+        f"<p>If you approve, you go back to <strong>{place}</strong>. The name is the app's "
+        "own; approve only if you just connected it yourself.</p>"
+        "<form method=post action='/authorize/consent'>"
+        f"<input type=hidden name=answer_token value='{escape(answer)}'>"
+        "<button name=answer value=approve>Approve</button> "
+        "<button name=answer value=deny>Deny</button></form>",
     )

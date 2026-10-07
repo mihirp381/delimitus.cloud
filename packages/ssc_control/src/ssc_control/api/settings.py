@@ -73,6 +73,9 @@ class Settings:
     delivery is refused."""
     github_api_base: str = "https://api.github.com"
     """``SSC_GITHUB_API_BASE``: GitHub's REST API."""
+    mcp_resource: str = ""
+    """``SSC_MCP_RESOURCE``: the agent interface's resource URL and the only audience it accepts
+    (decision 029). Unset: ``{public_url}/mcp``."""
 
     def __post_init__(self) -> None:
         check_apps_domain(self.apps_domain)
@@ -84,6 +87,11 @@ class Settings:
                 raise ValueError(f"{name} must be an https URL")
         if bool(self.github_app_id) != bool(self.github_private_key):
             raise ValueError("set both SSC_GITHUB_APP_ID and SSC_GITHUB_PRIVATE_KEY, or neither")
+
+    @property
+    def mcp_audience(self) -> str:
+        """The ``aud`` (and RFC 8707 resource) of the agent interface's credentials."""
+        return self.mcp_resource or f"{self.public_url.rstrip('/')}/mcp"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -117,6 +125,7 @@ class Settings:
             if e.get("SSC_GITHUB_WEBHOOK_SECRET")
             else None,
             github_api_base=e.get("SSC_GITHUB_API_BASE", "https://api.github.com"),
+            mcp_resource=e.get("SSC_MCP_RESOURCE", ""),
         )
 
     @classmethod

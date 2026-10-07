@@ -3,6 +3,7 @@
 SSO: ``GET /sso/authorize`` (built here, the browser goes there), ``POST /sso/token``.
 Directory Sync: ``/directory_users``, ``/directory_users/{id}``, ``/directory_groups``.
 Events: ``GET /events``, read as triggers only; the current state is always fetched again.
+Organizations: ``GET /organizations?domains=``, to find a sign-in from a work email.
 
 Every list is paged with ``after`` until WorkOS returns no cursor. Non-2xx answers raise
 :class:`WorkOSError` carrying only the status and path, never the body (it can hold PII).
@@ -19,6 +20,8 @@ from ssc_control.identity.rules import ProfileError, SsoProfile
 
 DEFAULT_BASE: Final = "https://api.workos.com"
 PAGE: Final = 100
+ORG_LOOKUP: Final = 10
+VERIFIED_DOMAIN_STATES: Final = frozenset({"verified", "legacy_verified"})
 TIMEOUT_SECONDS: Final = 20.0
 DSYNC_EVENTS: Final = (
     "dsync.activated",
@@ -149,3 +152,27 @@ class WorkOSClient:
         data = tuple(cast(list[Json], page.get("data") or []))
         last = data[-1].get("id") if data else None
         return EventPage(data, last if isinstance(last, str) else None)
+
+    async def organizations_for_domain(self, domain: str) -> list[str]:
+        """The WorkOS organisations that have verified ``domain`` (decision 029). A domain an
+        organisation only claims, not verified, never counts: anyone can claim one."""
+        page = await self._get("/organizations", {"domains": [domain], "limit": ORG_LOOKUP})
+        if page is None:
+            raise WorkOSError(404, "/organizations")
+        found: list[str] = []
+        for org in cast(list[Json], page.get("data") or []):
+            org_id = org.get("id")
+            domains = cast(list[Json], org.get("domains") or [])
+            if isinstance(org_id, str) and any(_verified(d, domain) for d in domains):
+                found.append(org_id)
+        return found
+
+
+def _verified(entry: Json, domain: str) -> bool:
+    name = entry.get("domain")
+    state = entry.get("state")
+    return (
+        isinstance(name, str)
+        and name.lower() == domain
+        and (state is None or state in VERIFIED_DOMAIN_STATES)
+    )

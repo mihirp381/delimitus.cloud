@@ -465,3 +465,29 @@ async def test_set_secret_takes_no_value(fake_api):
     assert bad.is_error
     assert bad.structured_content["error"]["code"] == "VALIDATION_FAILED"
     assert all(q.method == "GET" for q in fake_api.seen)
+
+
+async def test_create_app_sends_what_ssc_apps_create_sends(fake_api):
+    made = {"id": APP_ID, "slug": "new-app", "environments": []}
+    fake_api.add("POST", "/v1/apps", httpx2.Response(201, json=made))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("create_app", {"slug": "new-app", "idempotency_key": "k1"})
+        bad = await client.call_tool("create_app", {"slug": "New_App"})
+    assert not r.is_error
+    assert r.structured_content["app"] == made
+    assert r.structured_content["idempotency_key"] == "k1"
+    assert "deploy(app='new-app')" in r.structured_content["next"]
+    assert bad.is_error
+    (post,) = fake_api.seen
+    assert (post.method, post.url.path) == ("POST", "/v1/apps")
+    assert post.headers["Idempotency-Key"] == "k1"
+    assert json.loads(post.content) == {"slug": "new-app"}
+
+
+async def test_list_connections_reads_the_connections_route(fake_api):
+    listed = {"connections": [{"name": "warehouse", "classification": "internal"}]}
+    fake_api.add("GET", "/v1/connections", httpx2.Response(200, json=listed))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("list_connections", {})
+    assert r.structured_content == listed
+    assert [(q.method, q.url.path) for q in fake_api.seen] == [("GET", "/v1/connections")]

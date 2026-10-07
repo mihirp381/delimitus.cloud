@@ -13,6 +13,10 @@ RFC 7009 revocation (``/revoke``). Tokens: ``tokens``. A login for a coding agen
 it in ``/device/authorize`` (``agent``); the person confirms that agent by name before single
 sign-on, and every access token of the session carries ``agent: true`` and its ``client_id``.
 
+OAuth 2.1 for remote MCP clients and the console (decision 029): ``authorize``. Its sign-in
+rides the same ``/callback`` with ``flow: oauth``, and ``/token`` takes its
+``authorization_code`` grant. A refreshed access token keeps its session's audience.
+
 Every refused sign-in shows the same page (``pages.REFUSED``); the reason is logged and audited
 as ``login.failed``. Login state lives in a signed, ten-minute cookie; the WorkOS ``state`` is only
 its random check value.
@@ -41,6 +45,7 @@ from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.db import bound_org, check_org_id
 from ssc_control.identity import connections, join, pages, sessions, tokens
+from ssc_control.identity.authorize import DEVICE_GRANT, Kit, OAuthFlow
 from ssc_control.identity.cell_callers import CallerCheck
 from ssc_control.identity.rules import LoginRefusal, ProfileError, parse_return_to
 from ssc_control.identity.settings import AuthSettings
@@ -50,12 +55,11 @@ from ssc_shared.hosts import cell_project
 log = logging.getLogger("ssc.auth")
 
 LOGIN_SECONDS: Final = 600
-DEVICE_GRANT: Final = "urn:ietf:params:oauth:grant-type:device_code"
 _BINDING_LENGTH: Final = 43
 _WORKOS_ERROR: Final = re.compile(r"[a-z_]{1,64}")
 _ORG_CELL = text("select cell_label from ssc.org where id = :org")
 
-Flow = Literal["browser", "device"]
+Flow = Literal["browser", "device", "oauth"]
 
 
 def _b64(data: bytes) -> str:
@@ -205,6 +209,44 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         set_cookie(response, login_cookie, sealed, LOGIN_SECONDS)
         return response
 
+    def token_reply(  # noqa: PLR0913, PLR0917  (the token's claims)
+        org_id: str, user_id: str, sid: str, refresh: str, agent: str | None, audience: str
+    ) -> JSONResponse:
+        access = host.signer.access_token(
+            org_id=org_id,
+            user_id=user_id,
+            session_id=sid,
+            audience=audience,
+            now=tokens.utcnow(),
+            agent_client_id=agent,
+        )
+        return JSONResponse(
+            {
+                "access_token": access,
+                "token_type": "Bearer",
+                "expires_in": tokens.ACCESS_SECONDS,
+                "refresh_token": refresh,
+            },
+            headers={"cache-control": "no-store"},
+        )
+
+    oauth_flow = OAuthFlow(
+        Kit(
+            settings=s,
+            engine=host.engine,
+            workos=host.workos,
+            sealer=sealer,
+            clock=host.clock,
+            to_workos=to_workos,
+            set_cookie=set_cookie,
+            clear=clear,
+            token_reply=token_reply,
+            session_cookie=session_cookie,
+            consent_cookie="__Host-ssc-consent" if secure else "ssc-consent",
+        )
+    )
+    oauth_flow.add_routes(app)
+
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
@@ -277,6 +319,14 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                 await audit_failure(conn, connection, reason or "no_match")
                 log.info("login refused for %s: %s", org_id, reason)
                 response: Response = refused()
+            elif login.get("flow") == "oauth":
+                response = await oauth_flow.finish(
+                    conn,
+                    org_id,
+                    user_id=found.user_id,
+                    connection_id=profile.connection_id,
+                    login=login,
+                )
             else:
                 kind = "cli" if login.get("flow") == "device" else "browser"
                 agent = login.get("agent") if kind == "cli" else None
@@ -376,27 +426,6 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         login = {"flow": "device", "org": org_id, "grant": grant, "agent": agent}
         return to_workos(connection, login)
 
-    def token_reply(
-        org_id: str, user_id: str, sid: str, refresh: str, agent: str | None
-    ) -> JSONResponse:
-        access = host.signer.access_token(
-            org_id=org_id,
-            user_id=user_id,
-            session_id=sid,
-            audience=s.api_audience,
-            now=tokens.utcnow(),
-            agent_client_id=agent,
-        )
-        return JSONResponse(
-            {
-                "access_token": access,
-                "token_type": "Bearer",
-                "expires_in": tokens.ACCESS_SECONDS,
-                "refresh_token": refresh,
-            },
-            headers={"cache-control": "no-store"},
-        )
-
     async def device_token(device_code: str) -> JSONResponse:
         parsed = tokens.org_of(device_code)
         if parsed is None:
@@ -424,7 +453,9 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                 ),
             )
             refresh = await tokens.issue_refresh(conn, org_id, live.id)
-        return token_reply(org_id, live.user_id, live.id, refresh, live.agent_client_id)
+        return token_reply(
+            org_id, live.user_id, live.id, refresh, live.agent_client_id, s.api_audience
+        )
 
     async def refresh_token(raw: str) -> JSONResponse:
         parsed = tokens.org_of(raw, tokens.REFRESH_PREFIX)
@@ -438,7 +469,12 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         if done is None:
             return _oauth_error("invalid_grant")
         return token_reply(
-            org_id, done.user_id, done.session_id, done.refresh_token, done.agent_client_id
+            org_id,
+            done.user_id,
+            done.session_id,
+            done.refresh_token,
+            done.agent_client_id,
+            done.token_audience or s.api_audience,
         )
 
     @app.post("/token")
@@ -449,6 +485,8 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             return await device_token(form.get("device_code", ""))
         if grant_type == "refresh_token":
             return await refresh_token(form.get("refresh_token", ""))
+        if grant_type == "authorization_code":
+            return await oauth_flow.code_token(form)
         return _oauth_error("unsupported_grant_type")
 
     @app.post("/revoke")

@@ -13,10 +13,13 @@ from dataclasses import dataclass, field
 from typing import Final
 
 from ssc_control.api.settings import APPS_DOMAIN, USER_AUDIENCE
+from ssc_control.identity.limits import LOAD_BALANCER_HOPS
 from ssc_control.identity.workos import DEFAULT_BASE
 from ssc_shared.hosts import check_apps_domain
 
 AUTH_URL: Final = "https://auth.delimitus.com"
+CONSOLE_URL: Final = "https://console.delimitus.com"
+MCP_RESOURCE: Final = f"{USER_AUDIENCE}/mcp"
 DEV_ENVIRONMENTS: Final = frozenset({"dev", "test"})
 
 
@@ -47,6 +50,15 @@ class AuthSettings:
     environment: str = "prod"
     dev_cell_secret: str = field(default="", repr=False)
     """Dev and test only: the rig gateway's shared secret for ``/internal/redeem``."""
+    mcp_resource: str = MCP_RESOURCE
+    """``SSC_MCP_RESOURCE``: the API's MCP endpoint, the only resource (and access-token audience)
+    a third-party OAuth client may ask for (decision 029)."""
+    console_url: str = CONSOLE_URL
+    """``SSC_CONSOLE_URL``: the console's origin. Its OAuth client redirects to
+    ``<console_url>/auth/callback``."""
+    trusted_hops: int = LOAD_BALANCER_HOPS
+    """``SSC_AUTH_TRUSTED_HOPS``: proxies in front of this host that append to
+    ``X-Forwarded-For``; 0 trusts none (dev and tests)."""
 
     def __post_init__(self) -> None:
         check_apps_domain(self.apps_domain)
@@ -56,6 +68,14 @@ class AuthSettings:
             raise ValueError("SSC_AUTH_URL must be https outside dev and test")
         if self.dev_cell_secret and self.environment not in DEV_ENVIRONMENTS:
             raise ValueError("SSC_AUTH_DEV_CELL_SECRET is refused outside dev and test")
+        if self.console_url.endswith("/") or not self.console_url.startswith(
+            ("https://", "http://")
+        ):
+            raise ValueError("SSC_CONSOLE_URL is an origin: scheme and host, no trailing slash")
+        if not self.mcp_resource.startswith(("https://", "http://")):
+            raise ValueError("SSC_MCP_RESOURCE is a URL")
+        if self.trusted_hops < 0:
+            raise ValueError("SSC_AUTH_TRUSTED_HOPS is 0 or more")
 
     @property
     def secure_cookies(self) -> bool:
@@ -77,4 +97,7 @@ class AuthSettings:
             workos_base=e.get("SSC_WORKOS_BASE", DEFAULT_BASE),
             environment=e.get("SSC_ENV", "prod"),
             dev_cell_secret=e.get("SSC_AUTH_DEV_CELL_SECRET", ""),
+            mcp_resource=e.get("SSC_MCP_RESOURCE", MCP_RESOURCE),
+            console_url=e.get("SSC_CONSOLE_URL", CONSOLE_URL),
+            trusted_hops=int(e.get("SSC_AUTH_TRUSTED_HOPS", str(LOAD_BALANCER_HOPS))),
         )

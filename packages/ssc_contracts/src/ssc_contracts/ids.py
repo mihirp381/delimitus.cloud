@@ -29,6 +29,7 @@ Prefix = Literal[
     "rft",  # command-line refresh token
     "dvg",  # device authorisation grant
     "ulg",  # unlinked login
+    "oac",  # OAuth authorization code
 ]
 PREFIXES: Final[tuple[str, ...]] = get_args(Prefix)
 _ALPHABET: Final = "abcdefghijklmnopqrstuvwxyz0123456789"

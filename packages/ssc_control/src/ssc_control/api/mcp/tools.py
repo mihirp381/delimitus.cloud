@@ -23,9 +23,16 @@ what the caller could see already (SSC-093). ``preflight`` runs ``ssc doctor`` o
 runs only in the local server (``ssc mcp``); here it answers with how to run it, as ``deploy``
 does for packing.
 
-Absent on purpose: approving (decision 016 refuses agent sessions), promote, listing connections
-(SSC-052), and anything that sets the warm flag (SSC-092) or a cell resource flag (SSC-087), which
-only a person may change.
+``list_connections`` answers ``GET /v1/connections``, which shows an agent only the connections
+its person's own approved requests name (SSC-052). ``create_app`` answers ``POST /v1/apps``, as
+``ssc apps create`` sends it.
+
+The credential is the MCP audience's (decision 029), which ``/v1`` refuses from outside. The
+in-process transport marks its requests in the ASGI scope (:data:`MCP_CALL_SCOPE_KEY`), never in a
+header, so only a call made here is checked on that audience as well.
+
+Absent on purpose: approving (decision 016 refuses agent sessions), promote, and anything that
+sets the warm flag (SSC-092) or a cell resource flag (SSC-087), which only a person may change.
 """
 
 import hashlib
@@ -43,9 +50,11 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ssc_contracts.app_env import secret_name_problem
 from ssc_contracts.errors import ErrorCode
+from ssc_control.api.auth import MCP_CALL_SCOPE_KEY
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.problems import REQUEST_ID_HEADER, REQUEST_ID_SCOPE_KEY
 from ssc_control.api.settings import Settings
@@ -61,12 +70,14 @@ TOOLS: Final = (
     "get_org_deployment_policy",
     "preflight",
     "list_apps",
+    "create_app",
     "get_app",
     "get_status",
     "list_releases",
     "rollback",
     "deploy",
     "request_share",
+    "list_connections",
     "request_connection",
     "get_logs",
     "set_secret",
@@ -126,6 +137,14 @@ IdempotencyKey = Annotated[
         min_length=1,
         max_length=200,
         description="Send the same key to retry safely; a new one is made when absent.",
+    ),
+]
+NewSlug = Annotated[
+    str,
+    Field(
+        pattern=r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$",
+        description="The new app's slug, its host label: 3 to 40 characters, lower-case, no "
+        "leading digit, no `--`.",
     ),
 ]
 LogSource = Literal["app", "build", "deploy"]
@@ -218,6 +237,16 @@ def _request_id(ctx: Context) -> str | None:
     return rid if isinstance(rid, str) else None
 
 
+def marked(api: FastAPI) -> ASGIApp:
+    """``api`` with every request marked as the agent interface's own, in the ASGI scope. A
+    client cannot set a scope key; this transport is the only caller that does."""
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        await api({**scope, MCP_CALL_SCOPE_KEY: True}, receive, send)
+
+    return app
+
+
 @asynccontextmanager
 async def v1(api: FastAPI, ctx: Context) -> AsyncGenerator[V1]:
     token = get_access_token()
@@ -227,7 +256,7 @@ async def v1(api: FastAPI, ctx: Context) -> AsyncGenerator[V1]:
     rid = _request_id(ctx)
     if rid is not None:
         headers[REQUEST_ID_HEADER] = rid
-    transport = httpx2.ASGITransport(app=api, raise_app_exceptions=False)
+    transport = httpx2.ASGITransport(app=marked(api), raise_app_exceptions=False)
     async with httpx2.AsyncClient(transport=transport, base_url=BASE_URL, headers=headers) as c:
         yield V1(c)
 
@@ -584,6 +613,18 @@ async def ask_share(  # noqa: PLR0913  (keyword-only)
         }
 
 
+async def new_app(c: V1, slug: str, key: str) -> Body:
+    """``POST /v1/apps``: the new app, with the key that replays it."""
+    r = await c.post("/v1/apps", {"slug": slug}, key)
+    body: Body = r.json()
+    return {
+        "app": body,
+        "idempotency_key": key,
+        "next": f"The app exists with nothing deployed. Deploy a folder to its preview with "
+        f"deploy(app={slug!r}).",
+    }
+
+
 async def ask_connection(c: V1, *, ref: str, connection: str, key: str) -> Body:
     """Ask for the app's prod environment to use one data connection."""
     found = await resolve_app(c, ref)
@@ -681,6 +722,30 @@ def _deployability(server: MCPServer, api: FastAPI, read: ToolAnnotations) -> No
     server.add_tool(get_platform_requirements, annotations=read)
     server.add_tool(get_org_deployment_policy, annotations=read)
     server.add_tool(preflight, annotations=read)
+
+
+def _org_tools(
+    server: MCPServer, api: FastAPI, read: ToolAnnotations, ask: ToolAnnotations
+) -> None:
+    """Creating an app, and the data connections an app may ask for (decision 029)."""
+
+    async def create_app(
+        slug: NewSlug, ctx: Context, idempotency_key: IdempotencyKey | None = None
+    ) -> CallToolResult:
+        """Create an app owned by you, with its `prod` and `preview` environments, as `ssc apps
+        create` does. Nothing runs until you deploy. To retry after an error, send the same
+        idempotency_key: the same app comes back and nothing is created twice."""
+        key = idempotency_key or fresh_key()
+        return await run(api, ctx, lambda c: new_app(c, slug, key))
+
+    async def list_connections(ctx: Context) -> CallToolResult:
+        """The org's data connections you may see, by name and classification: all of them for
+        an org admin, otherwise those named by your own approved requests. Never an address.
+        Ask for one with request_connection."""
+        return await run(api, ctx, lambda c: c.get("/v1/connections"))
+
+    server.add_tool(create_app, annotations=ask)
+    server.add_tool(list_connections, annotations=read)
 
 
 def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
@@ -834,6 +899,7 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         return await run(api, ctx, lambda c: secret_handoff(c, ref=app, env=env, name=name))
 
     _deployability(server, api, read)
+    _org_tools(server, api, read, ask)
     server.add_tool(list_apps, annotations=read)
     server.add_tool(get_app, annotations=read)
     server.add_tool(get_status, annotations=read)

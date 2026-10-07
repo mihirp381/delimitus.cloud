@@ -274,7 +274,10 @@ def test_every_setting_of_the_worker_is_wired(released: list[Declared]) -> None:
 
 
 def test_every_setting_of_the_auth_host_is_wired(released: list[Declared]) -> None:
-    """The gateway's ``/internal/redeem`` token names ``SSC_AUTH_URL`` as its audience."""
+    """The gateway's ``/internal/redeem`` token names ``SSC_AUTH_URL`` as its audience. The MCP
+    resource and the console's origin are what the OAuth server checks clients against, and
+    ``SSC_AUTH_TRUSTED_HOPS`` is how it finds the address its abuse limits count (decision 029).
+    The API needs no MCP setting: its resource is ``SSC_API_PUBLIC_URL`` plus ``/mcp``."""
     for stage in naming.STAGES:
         plain, secrets = _env(_workload(released, SERVICE, stage, "ssc-auth"))
         assert plain == {
@@ -283,6 +286,9 @@ def test_every_setting_of_the_auth_host_is_wired(released: list[Declared]) -> No
             "SSC_API_USER_AUDIENCE": "https://api.delimitus.com",
             "SSC_APPS_DOMAIN": "delimitusapps.com",
             "SSC_AUTH_SIGNING_KID": KID,
+            "SSC_MCP_RESOURCE": "https://api.delimitus.com/mcp",
+            "SSC_CONSOLE_URL": "https://console.delimitus.com",
+            "SSC_AUTH_TRUSTED_HOPS": "2",
         }
         assert secrets == {
             "SSC_DATABASE_DSN",

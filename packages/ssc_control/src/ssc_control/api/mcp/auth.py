@@ -1,10 +1,13 @@
 """Who may use the agent interface: a user credential that an agent holds.
 
 The SDK asks :meth:`AgentTokenVerifier.verify_token` about every request's bearer. The API's own
-:class:`Verifier` checks it on the user audience, and the credential must also carry
-``agent: true`` and a ``client_id``. Anything else is ``None``, which the SDK answers with ``401``
-and a ``WWW-Authenticate`` naming the protected-resource metadata. Refusing every other credential
-is what makes every call through this interface recorded as an agent's, without trusting a header.
+:class:`Verifier` checks it on the agent interface's own audience (``SSC_MCP_RESOURCE``, decision
+029: what the auth host issues to a remote MCP client, never a ``/v1`` credential nor one from
+``ssc login --agent``), and the credential must also carry ``agent: true`` and a ``client_id``.
+Anything else is ``None``, which the SDK answers with ``401`` and a ``WWW-Authenticate`` naming
+the protected-resource metadata. Refusing every other credential is what makes every call through
+this interface recorded as an agent's, without trusting a header. The token's ``resource`` is that
+audience, which the SDK checks again (``validate_token_resource``).
 """
 
 import json
@@ -42,6 +45,7 @@ class AgentTokenVerifier:
             scopes=[],
             subject=principal.subject,
             claims={"org": principal.org_id, "jti": principal.credential_id},
+            resource=self._audience,
         )
 
 

@@ -30,6 +30,9 @@ class AuditAction(StrEnum):
     LOGIN_FAILED = "login.failed"
     TOKEN_ISSUED = "token.issued"  # noqa: S105  (an action name, not a secret)
     TOKEN_REVOKED = "token.revoked"  # noqa: S105  (an action name, not a secret)
+    AUTHORIZE_APPROVED = "auth.authorize_approved"
+    AUTHORIZE_DENIED = "auth.authorize_denied"
+    CODE_REUSED = "auth.code_reused"
     SECRET_BOUND = "secret.bound"  # noqa: S105  (an action name, not a secret)
     SECRET_ROTATED = "secret.rotated"  # noqa: S105  (an action name, not a secret)
     SECRET_REMOVED = "secret.removed"  # noqa: S105  (an action name, not a secret)
