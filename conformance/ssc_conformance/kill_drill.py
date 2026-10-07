@@ -5,9 +5,11 @@ console does, with ``POST /v1/apps/{id}/kill-switch`` and an admin token, and ti
 thing is cut off. Every run is made twice over, in two states, ``SSC_DRILL_RUNS`` times each (ten),
 with ``POST /v1/apps/{id}/enable`` between runs:
 
-- **awake**: the app holds an open WebSocket, a long query through the data gateway and an open
-  tunnel through the egress proxy. Timed from the command: the first refused ``/health`` through
-  the cell's public load balancer, the end of the WebSocket as the client sees it, the end of the
+- **awake**: the app holds an open WebSocket, a long plain answer (``/drip``, asked with no browser
+  headers, which the gateway must cut too: SSC-021), a long query through the data gateway and an
+  open tunnel through the egress proxy. Timed from the command: the first refused ``/health``
+  through the cell's public load balancer, the end of the WebSocket and of the plain answer as the
+  client sees them, the end of the
   query and of the tunnel as the drill app logged them (Cloud Logging), the instance stop and the
   timer pause from the audit's ``kill_switch.step`` rows (``since_command_ms``), and when
   ``snapshots/<org>/latest.json`` last moved.
@@ -47,6 +49,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -455,7 +458,7 @@ class CloudApi:
 
 
 class Stream(Protocol):
-    """An open WebSocket to the drill app."""
+    """An open WebSocket or plain answer from the drill app."""
 
     @property
     def closed(self) -> bool: ...
@@ -479,6 +482,27 @@ class Front(Protocol):
         ...
 
     async def open_stream(self, run: str) -> Stream: ...
+
+    async def open_plain(self, run: str) -> Stream:
+        """``/drip``: a plain answer that stays open, asked with no browser headers."""
+        ...
+
+
+class _Plain:
+    def __init__(self, response: httpx2.Response) -> None:
+        self._response = response
+
+    @property
+    def closed(self) -> bool:
+        return self._response.is_closed
+
+    async def drain(self) -> None:
+        with suppress(httpx2.HTTPError):
+            async for _ in self._response.aiter_raw():
+                continue
+
+    async def aclose(self) -> None:
+        await self._response.aclose()
 
 
 class _Socket:
@@ -546,6 +570,19 @@ class FrontDoor:
             raise DrillError(f"WebSocket: {type(exc).__name__}") from None
         return _Socket(ws)
 
+    async def open_plain(self, run: str) -> Stream:
+        request = self._client.build_request(
+            "GET", f"{self._base}/drip", params={"run": run}, headers=self._headers
+        )
+        try:
+            response = await self._client.send(request, stream=True)
+        except httpx2.HTTPError as exc:
+            raise DrillError(f"plain answer: {type(exc).__name__}") from None
+        if response.status_code != OK:
+            await response.aclose()
+            raise DrillError(f"plain answer: {response.status_code}")
+        return _Plain(response)
+
 
 def requests_filter(services: Iterable[str], since: float) -> str:
     """Cloud Run request log lines of ``services`` since ``since``."""
@@ -598,6 +635,7 @@ class Observed:
     door: float | None = None
     door_status: int | None = None
     stream: float | None = None
+    plain: float | None = None
     query: float | None = None
     tunnel: float | None = None
     steps: Mapping[str, StepTime] = field(default_factory=dict[str, StepTime])
@@ -626,7 +664,12 @@ def judge(run: Observed) -> list[str]:
     measures: dict[str, float | None] = {
         "front door denial": run.door,
         **(
-            {"stream cut": run.stream, "query end": run.query, "tunnel close": run.tunnel}
+            {
+                "stream cut": run.stream,
+                "plain answer cut": run.plain,
+                "query end": run.query,
+                "tunnel close": run.tunnel,
+            }
             if run.state == "awake"
             else {}
         ),
@@ -701,9 +744,9 @@ class Report:
     def markdown(self) -> str:
         """The results table: a row per state, ``median / max`` seconds in each cell."""
         lines = [
-            "| State | Runs | Front door | Stream cut | Query end | Tunnel close "
+            "| State | Runs | Front door | Stream cut | Plain cut | Query end | Tunnel close "
             "| Instance stop | Timer pause | latest.json moved |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for state in STATES:
             runs = self.of(state)
@@ -713,6 +756,7 @@ class Report:
             cells = [
                 _median_max([r.door for r in runs]),
                 _median_max([r.stream for r in runs]) if awake else "none open",
+                _median_max([r.plain for r in runs]) if awake else "none open",
                 _median_max([r.query for r in runs]) if awake else idle,
                 _median_max([r.tunnel for r in runs]) if awake else idle,
                 _median_max([r.instance_stop for r in runs]),
@@ -773,28 +817,37 @@ class Drill:
         return Report(observed)
 
     async def awake(self) -> Observed:
-        """One run with a WebSocket, a query and a tunnel open when the kill is pulled."""
+        """One run with a WebSocket, a plain answer, a query and a tunnel open when the kill is
+        pulled."""
         run = secrets.token_hex(6)
         await self._ready()
         stream = await self._front.open_stream(run)
+        plain: Stream | None = None
         watchers: list[asyncio.Task[Any]] = []
         try:
+            plain = await self._front.open_plain(run)
             if not await self._front.start(run):
                 raise DrillError("the drill app did not start its query and tunnel")
             if stream.closed:
                 raise DrillError("the WebSocket closed before the command")
+            if plain.closed:
+                raise DrillError("the plain answer closed before the command")
             wall0, t0 = self._wall(), self._clock()
             refusal = asyncio.create_task(self._refusal(t0))
             cut = asyncio.create_task(self._ended(stream))
-            watchers += [refusal, cut]
+            plain_cut = asyncio.create_task(self._ended(plain))
+            watchers += [refusal, cut, plain_cut]
             run_id = await self._api.kill(self._cfg.app_id)
             final = await self._follow(run_id)
             refused, status = await refusal
             end = await cut
+            plain_end = await plain_cut
         finally:
             for watcher in watchers:
                 watcher.cancel()
             await stream.aclose()
+            if plain is not None:
+                await plain.aclose()
         steps = await self._api.steps(run_id)
         legs, proxy_logged = await self._leg_ends(run, wall0)
         problems = [] if final.get("state") == "completed" else [f"run {final.get('state')}"]
@@ -813,6 +866,7 @@ class Drill:
             door=refused,
             door_status=status,
             stream=None if end is None else end - t0,
+            plain=None if plain_end is None else plain_end - t0,
             query=_since(legs.get("query"), wall0),
             tunnel=_since(legs.get("tunnel"), wall0),
             steps=steps,

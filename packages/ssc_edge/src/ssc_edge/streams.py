@@ -1,7 +1,8 @@
 """Open streams through the gateway, and cutting them when access goes (SSC-021, decision 023).
 
 Envoy cannot end a stream it has already let through, so a check that allows a WebSocket
-upgrade or an event stream (``gate.streaming``) admits it here instead: the answer carries a
+upgrade, an event stream or any other request that is not a page or a static file
+(``gate.relayed``, SSC-021) admits it here instead: the answer carries a
 one-time ticket in ``X-SSC-Stream``, and Envoy sends that request to this relay on loopback
 rather than to the app. The relay redeems the ticket, opens its own connection to the
 environment's service, sends the request on without the ticket and copies bytes both ways until
@@ -97,11 +98,14 @@ class Streams:
         return await asyncio.start_server(self._relay, host, port, limit=HEAD_MAX_BYTES)
 
     async def _head(self, reader: asyncio.StreamReader) -> tuple[Allow, bytes] | None:
-        """The request head with the ticket taken out, and what the ticket admitted."""
+        """The request head with the ticket taken out, and what the ticket admitted. A request
+        that is not an upgrade goes on with ``connection: close``, so the app ends the
+        connection after its answer and the relay's copy ends with it."""
         with suppress(asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError):
             raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HEAD_SECONDS)
             first, *lines = raw[:-4].split(b"\r\n")
-            ticket, host, kept = None, None, [first]
+            ticket, host, upgrade, kept = None, None, False, [first]
+            hop: list[bytes] = []
             for line in lines:
                 name, _, value = line.partition(b":")
                 key = name.strip().lower()
@@ -110,10 +114,16 @@ class Streams:
                     continue
                 if key == b"host":
                     host = value.strip().decode("latin-1").lower()
+                if key == b"upgrade":
+                    upgrade = True
+                if key in (b"connection", b"keep-alive"):
+                    hop.append(line)
+                    continue
                 kept.append(line)
             allowed = None if ticket is None else self._redeem(ticket)
             if allowed is None or host != allowed.upstream:
                 return None
+            kept += hop if upgrade else [b"connection: close"]
             return allowed, b"\r\n".join(kept) + b"\r\n\r\n"
         return None
 

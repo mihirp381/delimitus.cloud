@@ -37,7 +37,7 @@ from ssc_edge.gate import (
     GateConfig,
     Redeemer,
     new_nonce,
-    streaming,
+    relayed,
 )
 from ssc_edge.identity_note import sign_note
 from ssc_edge.keys import Keyring, KeyringError, check_published, kms_decrypt, parse_keyring
@@ -317,7 +317,8 @@ def create_app(
 ) -> FastAPI:
     """``gate`` returns None until start-up has loaded the keys. ``tokens`` mints the Google ID
     token for the app's service; None leaves ``X-Serverless-Authorization`` off (dev, tests).
-    ``streams`` admits an allowed WebSocket or event stream to the stream relay. ``age`` is told
+    ``streams`` admits an allowed request that ``gate.relayed`` names to the stream relay; a
+    timer call (no session) never goes there. ``age`` is told
     of each request the check lets through."""
     app = FastAPI(
         title="ssc-edge", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
@@ -343,7 +344,7 @@ def create_app(
                 if tokens is not None:
                     token = await tokens.identity(f"https://{outcome.upstream}")
                     headers[SERVERLESS_AUTH] = f"Bearer {token}"
-                if streams is not None and streaming(facts):
+                if streams is not None and outcome.session is not None and relayed(facts):
                     headers[STREAM_HEADER] = streams.admit(outcome)
                 allowed = Response(status_code=200, headers=headers)
                 for name, value in outcome.client_headers:

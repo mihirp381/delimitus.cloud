@@ -643,6 +643,26 @@ def test_a_relayed_event_stream_tells_the_app_its_deadline(stack: Stack) -> None
     assert stack.relayed[-1] == PAY_UPSTREAM
 
 
+def test_every_request_but_a_page_or_a_static_file_goes_through_the_relay(stack: Stack) -> None:
+    """SSC-021: a fetch(), a plain call and a POST reach the app through the relay, which can cut
+    them; a page load and a script do not. Either way the app's answer is the same."""
+    cookie = {"host": HOST, "cookie": stack.world.cookie()}
+    cases = [
+        ("GET", {"sec-fetch-dest": "empty", "sec-fetch-mode": "cors"}, True),
+        ("GET", {}, True),
+        ("POST", {}, True),
+        ("GET", {"sec-fetch-dest": "script"}, False),
+        ("GET", {"sec-fetch-dest": "document", "sec-fetch-mode": "navigate"}, False),
+    ]
+    for method, extra, through in cases:
+        before = len(stack.relayed)
+        r = httpx2.request(method, stack.url + "/x", headers={**cookie, **extra}, timeout=10)
+        assert r.status_code == 200, (method, extra)
+        assert r.json()["path"] == "/x"
+        assert r.headers.get_list("set-cookie") == ["app=2; Path=/"]
+        assert (len(stack.relayed) > before) == through, (method, extra)
+
+
 def test_everything_is_refused_when_the_authoriser_stops(stack: Stack) -> None:
     stack.server.should_exit = True
     deadline = time.monotonic() + 10

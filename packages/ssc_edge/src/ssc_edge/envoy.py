@@ -15,13 +15,14 @@ Filters, in order:
    that use a platform name.
 5. ``dynamic_forward_proxy`` and ``router``: forwards to that host over TLS, the name checked.
 
-Routes: a WebSocket or event stream the check admitted carries ``x-ssc-stream`` and goes to the
-stream relay on loopback (``ssc_edge.streams``), one request per connection, which can close it
-when access goes. The wake route gives the app 2 seconds to start answering (a per-try timeout,
-which stops counting once the answer has started), and the local reply for that timeout is the
-"waking up" page (``pages.WAKING``), which retries by itself; the retry carries the wake cookie,
-so it takes the other route and waits for the app. Every other request waits for the app with no
-route timeout; Cloud Run's 3600-second request timeout bounds it.
+Routes: a request the check admitted to the relay (a WebSocket, an event stream, and any other
+request that is not a page or a static file, ``gate.relayed``) carries ``x-ssc-stream`` and goes
+to the stream relay on loopback (``ssc_edge.streams``), one request per connection, which can
+close it when access goes. The wake route gives the app 2 seconds to start answering (a per-try
+timeout, which stops counting once the answer has started), and the local reply for that timeout
+is the "waking up" page (``pages.WAKING``), which retries by itself; the retry carries the wake
+cookie, so it takes the other route and waits for the app. Every other request waits for the app
+with no route timeout; Cloud Run's 3600-second request timeout bounds it.
 
 ``python -m ssc_edge.envoy`` prints the JSON; CI checks it with ``envoy --mode validate``.
 """

@@ -260,3 +260,17 @@ async def test_the_websocket_ticks_and_logs_how_it_ended(
 
 def test_health_answers_ok(app: ModuleType) -> None:
     assert app.health() == {"ok": True}
+
+
+async def test_the_plain_answer_sends_a_line_a_second_and_logs_its_end(
+    app: ModuleType, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(app, "TICK_SECONDS", 0.0)
+    response = await app.drip(run="r1")
+    assert response.media_type == "text/plain"
+    body = response.body_iterator
+    assert [await anext(body) for _ in range(3)] == [b"1\n", b"2\n", b"3\n"]
+    await body.aclose()
+    capsys.readouterr()
+    ends = [ln for ln in lines(capsys) if ln["drill"]["leg"] == "drip"]
+    assert ends == [] or ends[-1]["drill"]["event"] == "end"

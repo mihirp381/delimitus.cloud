@@ -23,9 +23,10 @@ Stages, in order, stopping at the first refusal:
    refusal are the same ``404`` page.
 8. Allowed: the identity note is minted, and the request goes to the environment's service with
    the time Cloud Run will end it (``X-SSC-Request-Deadline``). A browser page load without the
-   wake cookie is marked for the "waking up" page (``ssc_edge.envoy``). A WebSocket or an event
-   stream is admitted to the stream relay (``ssc_edge.streams``), which asks :meth:`Gate.holds`
-   again while it is open.
+   wake cookie is marked for the "waking up" page (``ssc_edge.envoy``). A WebSocket, an event
+   stream and every other request that is not a page or a static file (:func:`relayed`) is
+   admitted to the stream relay (``ssc_edge.streams``), which asks :meth:`Gate.holds` again
+   while it is open. A timer call is never relayed.
 
 A refusal never names the reason to the caller; ``Deny.reason`` is for the gateway's own log.
 """
@@ -186,6 +187,21 @@ def streaming(facts: Facts) -> bool:
     """A request that may stay open: a WebSocket upgrade or an ``EventSource`` stream."""
     h = facts.headers
     return h.get("upgrade", "").lower() == "websocket" or "text/event-stream" in h.get("accept", "")
+
+
+PAGE_DESTS: Final = frozenset(
+    {"document", "iframe", "script", "style", "image", "font", "manifest"}
+)
+"""``Sec-Fetch-Dest`` values of a page or a static file, which Envoy sends to the app itself."""
+
+
+def relayed(facts: Facts) -> bool:
+    """Whether the stream relay carries the request, so that a removed grant or the kill switch
+    ends it while it is open (SSC-021, decided 2026-10-06): a stream, and every request that is
+    not a page or a static file. That is ``Sec-Fetch-Dest`` outside ``PAGE_DESTS`` (a
+    ``fetch()``, among them the usual AI chat stream) or no ``Sec-Fetch-Dest`` at all (scripts,
+    curl, agents). A slow page load itself is not relayed and runs to the request timeout."""
+    return streaming(facts) or facts.headers.get("sec-fetch-dest", "") not in PAGE_DESTS
 
 
 def normal_host(raw: str) -> str:

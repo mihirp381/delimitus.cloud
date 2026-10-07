@@ -3,6 +3,8 @@ drill (``ssc_conformance.kill_drill``) drives it through the cell's public load 
 
 - ``/health``: 200.
 - ``/ws?run=``: a WebSocket that sends a tick a second until something ends it.
+- ``/drip?run=``: a plain HTTP answer, not a stream to the browser's eyes, that sends a line a
+  second until something ends it. The gateway must cut it too (SSC-021).
 - ``/start?run=``: starts a long query through the data gateway (``SELECT pg_sleep(25)`` in a
   loop, on the connection ``drill-db``) and a tunnel through the egress proxy (held open with a
   ``GET /rate_limit`` every 20 s), and answers 200 once both are running.
@@ -26,11 +28,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any, Final
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 CONNECTION: Final = "drill-db"
 QUERY_SQL: Final = "SELECT pg_sleep(25)"
@@ -252,6 +254,24 @@ async def ticks(ws: WebSocket, run: str = Query("", pattern="^[a-z0-9]{0,32}$"))
         reason = "disconnected"
     finally:
         emit(run, "ws", "end", outcome=reason, ticks=n)
+
+
+@app.get("/drip")
+async def drip(run: str = Query("", pattern="^[a-z0-9]{0,32}$")) -> StreamingResponse:
+    """A plain answer that sends a line a second; logs when it ends."""
+
+    async def lines() -> AsyncIterator[bytes]:
+        emit(run, "drip", "start")
+        n = 0
+        try:
+            while True:
+                n += 1
+                yield f"{n}\n".encode()
+                await asyncio.sleep(TICK_SECONDS)
+        finally:
+            emit(run, "drip", "end", outcome="stopped", ticks=n)
+
+    return StreamingResponse(lines(), media_type="text/plain")
 
 
 @app.get("/start")

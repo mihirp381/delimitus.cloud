@@ -8,7 +8,7 @@ import json
 import re
 import time
 import urllib.parse
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -82,13 +82,15 @@ class Clock:
 
 
 class FakeStream:
-    def __init__(self, world: World) -> None:
+    def __init__(self, world: World, plain: bool = False) -> None:
         self.world = world
+        self.plain = plain
         self.closed = False
 
     async def drain(self) -> None:
         w = self.world
-        while w.kill_at is None or w.clock.now < w.kill_at + w.cut:
+        cut = w.plain_cut if self.plain else w.cut
+        while w.kill_at is None or cut is None or w.clock.now < w.kill_at + cut:
             await w.clock.sleep(0.25)
 
     async def aclose(self) -> None:
@@ -111,6 +113,9 @@ class FakeFront:
     async def open_stream(self, run: str) -> FakeStream:
         return FakeStream(self.world)
 
+    async def open_plain(self, run: str) -> FakeStream:
+        return FakeStream(self.world, plain=True)
+
 
 class World:
     """One cell as the drill sees it. Times are seconds from the command."""
@@ -122,6 +127,7 @@ class World:
         self.starts = True
         self.denial = 2.4
         self.cut = 2.5
+        self.plain_cut: float | None = 2.75
         self.query_end: float | None = 3.1
         self.tunnel_end: float | None = 5.2
         self.query_running = True
@@ -420,6 +426,10 @@ async def test_the_credentials_file_wins_over_a_hand_run_token(
 async def test_the_control_plane_calls_and_never_shows_the_token() -> None:
     seen: list[httpx2.Request] = []
 
+    async def lines() -> AsyncIterator[bytes]:
+        for line in (b"1\n", b"2\n"):
+            yield line
+
     def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request)
         if request.url.path.endswith("/enable") and len(seen) == 2:
@@ -481,6 +491,31 @@ async def test_the_front_door_over_http_and_a_real_websocket() -> None:
     }
 
 
+async def test_the_plain_answer_is_asked_with_no_browser_headers() -> None:
+    seen: list[httpx2.Request] = []
+
+    async def lines() -> AsyncIterator[bytes]:
+        for line in (b"1\n", b"2\n"):
+            yield line
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        ok = request.url.params["run"] == "r1"
+        return httpx2.Response(200 if ok else 404, content=lines())
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    front = kd.FrontDoor("https://app.example", "cookie-value", client=client)
+    answer = await front.open_plain("r1")
+    await asyncio.wait_for(answer.drain(), 5)
+    await answer.aclose()
+    assert answer.closed
+    with pytest.raises(kd.DrillError, match="plain answer: 404"):
+        await front.open_plain("r2")
+    assert seen[0].url.path == "/drip"
+    assert not {h for h in seen[0].headers if h.lower().startswith("sec-fetch-")}
+    assert seen[0].headers["Cookie"] == f"{COOKIE_NAME}=cookie-value"
+
+
 async def test_a_refused_websocket_is_a_drill_error() -> None:
     front = kd.FrontDoor("http://127.0.0.1:9", "c", client=httpx2.AsyncClient())
     with pytest.raises(kd.DrillError, match="WebSocket"):
@@ -493,6 +528,7 @@ async def test_an_awake_run_is_timed_from_the_command(world: World, clock: Clock
     assert run.door == pytest.approx(2.5)
     assert run.door_status == 403
     assert run.stream == pytest.approx(2.5)
+    assert run.plain == pytest.approx(2.75)
     assert run.query == pytest.approx(3.1)
     assert run.tunnel == pytest.approx(5.2)
     assert run.instance_stop == pytest.approx(4.0)
@@ -515,6 +551,17 @@ async def test_an_awake_run_names_what_it_did_not_see(world: World, clock: Clock
     assert "no end line for tunnel" in run.problems
     assert "tunnel close not seen" in kd.judge(run)
     assert clock.now > kd.LOGS_LIMIT_SECONDS
+
+
+async def test_a_plain_answer_left_open_fails_the_run(
+    world: World, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(kd, "WATCH_SECONDS", 0.5)
+    world.plain_cut = None
+    run = await clock.run(drill(world, clock).awake())
+    assert run.stream == pytest.approx(2.5)
+    assert run.plain is None
+    assert "plain answer cut not seen" in kd.judge(run)
 
 
 async def test_a_run_over_a_limit_fails(world: World, clock: Clock) -> None:
@@ -596,9 +643,17 @@ async def test_both_states_make_one_report(world: World, clock: Clock) -> None:
     assert report.failures == []
     assert report.longest_stream == pytest.approx(2.5)
     text = report.markdown()
-    awake = ["2.0 / 2.0", "2.5 / 2.5", "3.1 / 3.1", "5.2 / 5.2", "4.0 / 4.0", "4.5 / 4.5"]
+    awake = [
+        "2.0 / 2.0",
+        "2.5 / 2.5",
+        "2.8 / 2.8",
+        "3.1 / 3.1",
+        "5.2 / 5.2",
+        "4.0 / 4.0",
+        "4.5 / 4.5",
+    ]
     assert "| awake | 2 | " + " | ".join([*awake, "1.9 / 1.9"]) + " |" in text
-    asleep = ["2.0 / 2.0", "none open", "nothing started", "nothing started"]
+    asleep = ["2.0 / 2.0", "none open", "none open", "nothing started", "nothing started"]
     assert (
         "| asleep | 2 | " + " | ".join([*asleep, "4.0 / 4.0", "4.5 / 4.5", "missing"]) + " |"
         in text
@@ -620,7 +675,14 @@ async def test_a_run_that_cannot_be_taken_ends_its_state(world: World, clock: Cl
 def test_asleep_needs_the_proxy_log_seen_when_awake() -> None:
     steps = {n: kd.StepTime("done", 3.0) for n in kd.STEPS}
     awake = kd.Observed(
-        "awake", door=1.0, stream=1.0, query=1.0, tunnel=1.0, steps=steps, proxy_logged=False
+        "awake",
+        door=1.0,
+        stream=1.0,
+        plain=1.0,
+        query=1.0,
+        tunnel=1.0,
+        steps=steps,
+        proxy_logged=False,
     )
     asleep = kd.Observed("asleep", door=1.0, steps=steps, nothing_started=True)
     failures = kd.Report([awake, asleep]).failures
@@ -632,7 +694,7 @@ def test_asleep_needs_the_proxy_log_seen_when_awake() -> None:
 
 def test_the_table_says_missing_rather_than_guess() -> None:
     steps = {n: kd.StepTime("done", 3.0) for n in kd.STEPS}
-    run = kd.Observed("awake", door=1.0, stream=None, query=1.0, tunnel=1.0, steps=steps)
+    run = kd.Observed("awake", door=1.0, stream=None, plain=1.0, query=1.0, tunnel=1.0, steps=steps)
     text = kd.Report([run]).markdown()
     assert "| awake | 1 | 1.0 / 1.0 | missing |" in text
     assert "Longest an open stream survived: not seen" in text
