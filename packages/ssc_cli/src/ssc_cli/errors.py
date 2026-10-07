@@ -102,6 +102,9 @@ class CliError(Exception):
         # The next step, printed as a ``Fix:`` line without ``--json``. Not part of the JSON.
         self.fix = fix
         self.retry_after: float | None = None
+        # The last log lines that show why a build or health check failed, printed under the
+        # error without ``--json``. Not part of the JSON.
+        self.log_tail: tuple[str, ...] = ()
 
 
 def local_error(

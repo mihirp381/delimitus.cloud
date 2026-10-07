@@ -10,6 +10,10 @@ exits 4 with the code the API would give, and ``status: null``. ``deploy`` alway
 The deployment's ``notice`` says what it sets off, such as the company's database being created
 (SSC-087). The first deploy of an app also says how a sleeping app wakes up.
 
+A build that fails prints the last lines of its log under the error, and a deployment that
+fails its health check the last lines of the app's log, so the cause shows without a second
+command. A log that cannot be read leaves the error as it was.
+
 The build is always waited for, because only its release can be deployed. ``--wait`` also waits
 for the deployment to be live. ``--build`` picks up a build an earlier run stopped waiting for:
 it skips packing and upload, waits for that build and deploys its release.
@@ -17,7 +21,8 @@ it skips packing and upload, waits for that build and deploys its release.
 
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final
@@ -33,6 +38,7 @@ from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.errors import (
     BAD_RESPONSE,
     BUILD_NOT_FOUND,
+    WAIT_TIMED_OUT,
     CliError,
     ErrorBody,
     ExitCode,
@@ -53,6 +59,9 @@ DEPLOY: Final = "deploy"
 COMMIT: Final = re.compile(r"[0-9a-f]{40}")
 BUILD_ID: Final = re.compile(r"bld_[a-z0-9]{20}")
 MAX_DETAIL_LINES: Final = 5
+LOG_TAIL_LINES: Final = 20
+HEALTH_CHECK_FAILED: Final = "HEALTH_CHECK_FAILED"
+LOG_LINE_CHARS: Final = 300
 WAKING: Final = (
     "The app sleeps when nobody uses it. The first visit after a quiet spell wakes it in a few "
     'seconds, and a browser shows a "waking up" page until it answers.'
@@ -133,13 +142,14 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
                 started = _resume(client, target.id, env.id, str(build))
             resume = f"ssc deploy --app {target.slug} --build {started.build_id}"
             resume += " --wait" if wait else ""
-            release_id, number = wait_for_build(
-                client,
-                started.build_id,
-                sleep=s.sleep,
-                budget=budget,
-                next_step=f"Deploy its release once it is built with `{resume}`.",
-            )
+            with _log_on_failure(client, target.id, env.id, "build"):
+                release_id, number = wait_for_build(
+                    client,
+                    started.build_id,
+                    sleep=s.sleep,
+                    budget=budget,
+                    next_step=f"Deploy its release once it is built with `{resume}`.",
+                )
             digest = started.digest or client.get_release(target.id, release_id).source_digest
             note(f"Built R{number}. Deploying it to preview.")
             op = client.create_deployment(target.id, env.id, release_id, DEPLOY)
@@ -147,15 +157,16 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
                 note(op.notice)
             state = op.state
             if wait:
-                state = wait_for_operation(
-                    client,
-                    op.operation_id,
-                    sleep=s.sleep,
-                    budget=budget,
-                    next_step=f"Follow it with `ssc status {target.slug}`.",
-                    note=note,
-                    told=op.notice,
-                ).state
+                with _log_on_failure(client, target.id, env.id, "app"):
+                    state = wait_for_operation(
+                        client,
+                        op.operation_id,
+                        sleep=s.sleep,
+                        budget=budget,
+                        next_step=f"Follow it with `ssc status {target.slug}`.",
+                        note=note,
+                        told=op.notice,
+                    ).state
     result = DeployResult(
         app_id=target.id,
         slug=target.slug,
@@ -189,6 +200,31 @@ def deploy(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option)
         say(f"Preview: {env.url}")
     if env.current_deployment_id is None:
         say(WAKING)
+
+
+@contextmanager
+def _log_on_failure(
+    client: ApiClient, app_id: str, environment_id: str, source: str
+) -> Generator[None]:
+    """A failed build gets the end of the ``build`` log, a failed health check that of the
+    ``app`` log; a wait that timed out, or any other failure, gets none."""
+    try:
+        yield
+    except CliError as e:
+        if (source == "build" and e.body.code != WAIT_TIMED_OUT) or (
+            source == "app" and e.body.code == HEALTH_CHECK_FAILED
+        ):
+            e.log_tail = _log_tail(client, app_id, environment_id, source)
+        raise
+
+
+def _log_tail(client: ApiClient, app_id: str, environment_id: str, source: str) -> tuple[str, ...]:
+    """The newest lines of the preview's ``source`` log, or none when it cannot be read."""
+    try:
+        page = client.get_logs(app_id, environment_id, source=source)
+    except CliError:
+        return ()
+    return tuple(line.text[:LOG_LINE_CHARS] for line in page.lines[-LOG_TAIL_LINES:])
 
 
 @dataclass(frozen=True, slots=True)

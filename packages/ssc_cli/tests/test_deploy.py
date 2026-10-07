@@ -524,6 +524,62 @@ def test_a_sqlite_build_failure_shows_the_postgres_fix(cli, api, folder):
     assert "postgres = true" in human.stderr
 
 
+LOGS = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/logs"
+
+
+def _log_page(source: str, *texts: str) -> httpx2.Response:
+    lines = [
+        {"timestamp": "2026-10-07T00:00:00Z", "severity": "INFO", "source": source, "text": t}
+        for t in texts
+    ]
+    body = {"environment_id": PREVIEW, "source": source, "lines": lines, "cursor": "1.1.1"}
+    return httpx2.Response(200, json=body)
+
+
+def test_a_failed_build_prints_the_end_of_its_log(cli, api, folder):
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [
+        _build("failed", failure_code="BUILD_DEPENDENCY_UNRESOLVED")
+    ]
+    noise = [f"step {n}" for n in range(30)]
+    api.routes[("GET", LOGS)] = [_log_page("build", *noise, "No matching version for left-padd")]
+    r = cli("deploy", str(folder), "--app", "demo", session=api.session())
+    assert r.code == ExitCode.FAILED
+    assert "Last log lines:\n" in r.stderr
+    assert "  No matching version for left-padd" in r.stderr
+    assert "step 10\n" not in r.stderr
+    assert "step 11\n" in r.stderr
+    asked = [q for q in api.seen if q.url.path == LOGS]
+    assert [q.url.params["source"] for q in asked] == ["build"]
+
+
+def test_a_failed_health_check_prints_the_end_of_the_app_log(cli, api, folder):
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("failed", failure_code="HEALTH_CHECK_FAILED")
+    ]
+    api.routes[("GET", LOGS)] = [_log_page("app", "Error: listen EADDRINUSE 0.0.0.0:3000")]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", session=api.session())
+    assert r.code == ExitCode.FAILED
+    assert "  Error: listen EADDRINUSE 0.0.0.0:3000" in r.stderr
+    asked = [q for q in api.seen if q.url.path == LOGS]
+    assert [q.url.params["source"] for q in asked] == ["app"]
+
+
+def test_a_log_that_cannot_be_read_leaves_the_error_as_it_was(cli, api, folder, fake_problem):
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("failed", failure_code="BUILD_FAILED")]
+    api.routes[("GET", LOGS)] = [fake_problem(503, "LOGS_UNAVAILABLE")]
+    r = cli("deploy", str(folder), "--app", "demo", session=api.session())
+    assert r.code == ExitCode.FAILED
+    assert "Code: BUILD_FAILED" in r.stderr
+    assert "Last log lines" not in r.stderr
+
+
+def test_a_timed_out_wait_reads_no_log(cli, api, folder):
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("running")]
+    r = cli("deploy", str(folder), "--app", "demo", "--timeout", "1", session=api.session())
+    assert r.code == ExitCode.FAILED
+    assert not any(q.url.path == LOGS for q in api.seen)
+
+
 def test_a_build_failed_without_a_code(cli, api, folder):
     api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("failed")]
     r = cli("deploy", str(folder), "--app", "demo", "--json", session=api.session())
