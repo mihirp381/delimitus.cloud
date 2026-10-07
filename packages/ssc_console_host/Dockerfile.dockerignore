@@ -1,0 +1,23 @@
+# Build context is the repository root; send only what the console image needs.
+*
+!pyproject.toml
+!uv.lock
+!packages/
+!conformance/pyproject.toml
+!console/
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.hypothesis
+**/node_modules
+**/.DS_Store
+**/tests
+console/dist
+console/dist-e2e
+console/test-results
+console/playwright-report
+console/blob-report
+console/e2e/.state
+console/.tanstack
+console/**/*.tsbuildinfo

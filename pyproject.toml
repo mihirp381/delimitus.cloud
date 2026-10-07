@@ -15,6 +15,7 @@ dependencies = [
     "ssc-app",
     "ssc-agent",
     "ssc-landing",
+    "ssc-console-host",
 ]
 
 [dependency-groups]
@@ -51,6 +52,7 @@ ssc-cli = { workspace = true }
 ssc-app = { workspace = true }
 ssc-agent = { workspace = true }
 ssc-landing = { workspace = true }
+ssc-console-host = { workspace = true }
 ssc-conformance = { workspace = true }
 
 [tool.ruff]
@@ -102,6 +104,7 @@ include = [
   "packages/ssc_control/src/ssc_control/github",
   "e2e/isolation/rig.py",
   "packages/ssc_landing/src",
+  "packages/ssc_console_host/src",
 ]
 strict = [
   "packages/ssc_contracts/src",
@@ -135,6 +138,7 @@ strict = [
   "packages/ssc_control/src/ssc_control/github",
   "e2e/isolation/rig.py",
   "packages/ssc_landing/src",
+  "packages/ssc_console_host/src",
 ]
 reportMissingImports = true
 
@@ -146,10 +150,10 @@ addopts = "-q --import-mode=importlib"
 pythonpath = ["packages/ssc_control/tests"]
 
 [tool.deptry]
-known_first_party = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing"]
+known_first_party = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing", "ssc_console_host"]
 
 [tool.importlinter]
-root_packages = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing"]
+root_packages = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing", "ssc_console_host"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -162,12 +166,12 @@ forbidden_modules = ["ssc_control", "sqlalchemy", "alembic", "psycopg"]
 name = "Contracts depend on nothing inside SSC"
 type = "forbidden"
 source_modules = ["ssc_contracts"]
-forbidden_modules = ["ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing"]
+forbidden_modules = ["ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing", "ssc_console_host"]
 
 [[tool.importlinter.contracts]]
 name = "Nobody imports httpx directly; use httpx2"
 type = "forbidden"
-source_modules = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing"]
+source_modules = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing", "ssc_console_host"]
 forbidden_modules = ["httpx"]
 
 [[tool.importlinter.contracts]]
@@ -177,9 +181,15 @@ source_modules = ["ssc_landing"]
 forbidden_modules = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "sqlalchemy", "psycopg"]
 
 [[tool.importlinter.contracts]]
+name = "The console host stands alone: it serves built files and holds no platform code or credentials"
+type = "forbidden"
+source_modules = ["ssc_console_host"]
+forbidden_modules = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_agent", "ssc_landing", "sqlalchemy", "psycopg"]
+
+[[tool.importlinter.contracts]]
 name = "Layers: contracts < shared < services"
 type = "layers"
-layers = ["ssc_control | ssc_edge | ssc_datagw | ssc_egress | ssc_cli | ssc_app | ssc_agent | ssc_landing", "ssc_bundle", "ssc_shared", "ssc_contracts"]
+layers = ["ssc_control | ssc_edge | ssc_datagw | ssc_egress | ssc_cli | ssc_app | ssc_agent | ssc_landing | ssc_console_host", "ssc_bundle", "ssc_shared", "ssc_contracts"]
 
 [[tool.importlinter.contracts]]
 name = "Cross-lane ports depend on no implementation"

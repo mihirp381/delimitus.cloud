@@ -18,7 +18,7 @@ from typing import Final, cast
 import pulumi
 import pulumi_gcp as gcp
 
-from ssc_infra import landing
+from ssc_infra import console, landing
 from ssc_infra import naming as n
 from ssc_shared.hosts import check_cell_label
 
@@ -95,6 +95,12 @@ LANDING_CERT: Final = f"{ENTRY}-landing"
 """The second certificate, for the apex and ``www`` only: adding them to ``ENTRY``'s would
 reprovision the live control hosts."""
 LANDING_MATCHER: Final = "landing"
+CONSOLE_CERT: Final = f"{ENTRY}-console"
+"""The third certificate, for the console host only, for the same reason as ``LANDING_CERT``."""
+CONSOLE_MATCHER: Final = "console"
+CONSOLE_API_PATHS: Final = ("/v1", "/v1/*")
+"""On the console host these go to the API, so the console calls it on its own origin; never
+``/mcp``, which the console host answers 404."""
 LB_SCHEME: Final = "EXTERNAL_MANAGED"
 TLS_MIN: Final = "TLS_1_2"
 TLS_PROFILE: Final = "MODERN"
@@ -130,7 +136,8 @@ class ControlConfig:
     ``cell_label`` and ``cell_jwks`` the one cell, both or none. ``timer_key_id`` names the
     worker's timer key, whose PEM is the ``SSC_TIMER_SIGNING_KEY`` secret (SSC-041).
     ``landing`` builds delimitus.com's account, bucket and alert in the public stage's project
-    (SSC-065); ``landing_image`` then puts the page behind the entry load balancer."""
+    (SSC-065); ``landing_image`` then puts the page behind the entry load balancer.
+    ``console_image`` puts the console host behind it at ``console.delimitus.com`` (SSC gap 1)."""
 
     stages: tuple[n.Stage, ...] = ()
     public: n.Stage | None = None
@@ -145,6 +152,7 @@ class ControlConfig:
     landing: bool = False
     landing_image: str | None = None
     landing_notify_email: str = n.OPERATOR.removeprefix("user:")
+    console_image: str | None = None
 
     @property
     def released(self) -> bool:
@@ -219,6 +227,11 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         raise ValueError("landing needs a control stage (control_stages)")
     if landing_image is not None and not PINNED_IMAGE.fullmatch(landing_image):
         raise ValueError(f"landing_image must be {n.platform_registry()}/<image>@sha256:<digest>")
+    console_image = config.get("console_image") or None
+    if console_image is not None and public is None:
+        raise ValueError("console_image needs a control stage (control_stages)")
+    if console_image is not None and not PINNED_IMAGE.fullmatch(console_image):
+        raise ValueError(f"console_image must be {n.platform_registry()}/<image>@sha256:<digest>")
     return ControlConfig(
         stages=stages,
         public=public,
@@ -233,6 +246,7 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         landing=on,
         landing_image=landing_image,
         landing_notify_email=config.get("landing_notify_email") or n.OPERATOR.removeprefix("user:"),
+        console_image=console_image,
     )
 
 
@@ -403,6 +417,7 @@ class ControlPlane:
         self.pid = cp.project.project_id
         self.public = cfg.public == cp.stage
         self.site: landing.Landing | None = None
+        self.console: console.Console | None = None
         self.opts = opts
         self.apis = [
             gcp.projects.Service(
@@ -439,6 +454,10 @@ class ControlPlane:
                     landing.LandingSettings(self.cfg.landing_image, self.cfg.landing_notify_email),
                     self._name,
                     self._o(),
+                )
+            if self.cfg.console_image is not None:
+                self.console = console.build(
+                    self.pid, self.stage, self.cfg.console_image, self._name, self._o()
                 )
             self.entry()
 
@@ -799,7 +818,10 @@ class ControlPlane:
         issues once their A records, written here into the ``delimitus`` zone, resolve. With the
         landing page's image set (SSC-065), ``delimitus.com`` and ``www.delimitus.com`` are two
         more hosts on the same map, to one more path matcher whose default service is the
-        landing backend; a second certificate names just those two, and both go on the proxy."""
+        landing backend; a second certificate names just those two, and both go on the proxy.
+        With the console's image set (SSC gap 1), ``console.delimitus.com`` is one more host, to
+        a path matcher sending ``/v1`` and ``/v1/*`` to the API backend and everything else to
+        the console host; a third certificate names just that host."""
         self.entry_ip = gcp.compute.GlobalAddress(
             self._name("entry-ip"),
             project=self.pid,
@@ -812,6 +834,7 @@ class ControlPlane:
         auth = self._backend("auth", AUTH_SERVICE, self.auth_)
         keys = self._keys()
         site = self.site.backend if self.site is not None else None
+        console_host = self.console.backend if self.console is not None else None
         url_map = gcp.compute.URLMap(
             self._name("entry-map"),
             project=self.pid,
@@ -824,7 +847,16 @@ class ControlPlane:
             + [
                 gcp.compute.URLMapHostRuleArgs(hosts=[host], path_matcher=LANDING_MATCHER)
                 for host in (n.LANDING_HOSTS if site is not None else ())
-            ],
+            ]
+            + (
+                [
+                    gcp.compute.URLMapHostRuleArgs(
+                        hosts=[n.CONSOLE_HOST], path_matcher=CONSOLE_MATCHER
+                    )
+                ]
+                if console_host is not None
+                else []
+            ),
             path_matchers=[
                 gcp.compute.URLMapPathMatcherArgs(name=API, default_service=api.id),
                 gcp.compute.URLMapPathMatcherArgs(name=AUTH, default_service=auth.id),
@@ -834,7 +866,8 @@ class ControlPlane:
                 [gcp.compute.URLMapPathMatcherArgs(name=LANDING_MATCHER, default_service=site.id)]
                 if site is not None
                 else []
-            ),
+            )
+            + ([self._console_matcher(console_host, api)] if console_host is not None else []),
             opts=self._o(),
         )
         certificate = gcp.compute.ManagedSslCertificate(
@@ -854,6 +887,16 @@ class ControlPlane:
                     managed=gcp.compute.ManagedSslCertificateManagedArgs(
                         domains=list(n.LANDING_HOSTS)
                     ),
+                    opts=self._o(),
+                )
+            )
+        if console_host is not None:
+            certificates.append(
+                gcp.compute.ManagedSslCertificate(
+                    self._name("console-cert"),
+                    project=self.pid,
+                    name=CONSOLE_CERT,
+                    managed=gcp.compute.ManagedSslCertificateManagedArgs(domains=[n.CONSOLE_HOST]),
                     opts=self._o(),
                 )
             )
@@ -928,6 +971,33 @@ class ControlPlane:
                 rrdatas=[self.entry_ip.address],
                 opts=self._o(),
             )
+        if console_host is not None:
+            gcp.dns.RecordSet(
+                self._name("dns-console"),
+                project=n.BOOTSTRAP_PROJECT,
+                managed_zone=n.PLATFORM_ZONE,
+                name=f"{n.CONSOLE_HOST}.",
+                type="A",
+                ttl=DNS_TTL,
+                rrdatas=[self.entry_ip.address],
+                opts=self._o(),
+            )
+
+    @staticmethod
+    def _console_matcher(
+        console_host: gcp.compute.BackendService, api: gcp.compute.BackendService
+    ) -> gcp.compute.URLMapPathMatcherArgs:
+        """``console.delimitus.com``: the API's ``/v1`` on the console's own origin (decision
+        018's same-origin calls), the console host for everything else."""
+        return gcp.compute.URLMapPathMatcherArgs(
+            name=CONSOLE_MATCHER,
+            default_service=console_host.id,
+            path_rules=[
+                gcp.compute.URLMapPathMatcherPathRuleArgs(
+                    paths=list(CONSOLE_API_PATHS), service=api.id
+                )
+            ],
+        )
 
     def _backend(
         self, resource: str, name: str, service: gcp.cloudrunv2.Service

@@ -106,6 +106,8 @@ LANDING_HOSTS: Final = (PLATFORM_DOMAIN, f"www.{PLATFORM_DOMAIN}")
 """The public page's hosts (SSC-065, decision 028): the apex, then ``www``."""
 LANDING_SA: Final = "ssc-landing"
 LANDING_BUCKET_PURPOSE: Final = "pilot-requests"
+CONSOLE_SA: Final = "ssc-console"
+"""The console host's own account (SSC gap 1); it holds no role."""
 APPS_ZONE: Final = "delimitusapps"
 PLATFORM_ZONE: Final = "delimitus"
 AGENT_HOST_LABEL: Final = "ssc--agent"

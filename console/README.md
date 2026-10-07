@@ -50,6 +50,8 @@ and back to `/auth/callback`, which exchanges the code at `/token`. The build re
 | `VITE_SSC_AUTH_URL` | `https://auth.delimitus.com` | The auth host's origin; also the `iss` the callback must carry. |
 | `VITE_SSC_API_AUDIENCE` | `https://api.delimitus.com` | The resource asked for, the API's user audience (`SSC_API_USER_AUDIENCE`). |
 
+In production the console is served at `https://console.delimitus.com` by `packages/ssc_console_host` (its Dockerfile runs `npm ci && npm run build` with these two settings), and the control entry sends `/v1` on that host to the API; see "Console" in `infra/README.md`.
+
 The auth host must know the console's origin as `SSC_CONSOLE_URL`: its client `ssc-console`
 redirects only to `<SSC_CONSOLE_URL>/auth/callback`, and `/token` and `/revoke` answer CORS for that
 origin alone. Tokens live in memory, so a reload asks the auth host again (its own session cookie
