@@ -136,6 +136,21 @@ async def test_a_follow_sees_a_new_line_within_five_seconds(cell: Cell) -> None:
     assert again.lines == ()
 
 
+async def test_a_line_readable_long_after_its_timestamp_still_reaches_a_follower(
+    cell: Cell,
+) -> None:
+    """Cloud Logging makes a line readable 12 to 17 s after its timestamp (cell 1, 2026-10-07);
+    the follow must not have moved past it by then."""
+    query = _app()
+    logs = await _agent_logs(cell.hub(follow_interval=0.05), cell.driver)
+    first = await logs.follow(query, cursor=None, wait_seconds=0.3, caller="org/alice")
+    assert first.lines == ()
+    late = datetime.now(UTC) - timedelta(seconds=20)
+    cell.logging.app_line(query.service, "written 20 s ago", at=late)
+    nxt = await logs.follow(query, cursor=first.cursor, wait_seconds=2, caller="org/alice")
+    assert [line.text for line in nxt.lines] == ["written 20 s ago"]
+
+
 async def test_many_followers_share_one_upstream_read(cell: Cell) -> None:
     interval = 0.05
     hub = cell.hub(follow_interval=interval)

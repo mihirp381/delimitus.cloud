@@ -65,9 +65,10 @@ LOG_VIEW: Final = re.compile(
 CALL_TIMEOUT_SECONDS: Final = 30.0
 FOLLOW_INTERVAL: Final = 2.0
 FOLLOW_PAGE: Final = 1000
-LAG: Final = timedelta(seconds=10)
-"""Cloud Logging may take a few seconds to make an entry readable; each follow read reaches
-this far back and drops what it has already seen."""
+LAG: Final = timedelta(seconds=60)
+"""Cloud Logging makes an entry readable some time after its timestamp (12 to 17 s for request
+lines on cell 1, measured 2026-10-07; 10 s here lost most of them); each follow read reaches this
+far back and drops what it has already seen."""
 MAX_FOLLOW_BACK: Final = timedelta(hours=1)
 READS_PER_MINUTE: Final = 20
 READ_BURST: Final = 5
