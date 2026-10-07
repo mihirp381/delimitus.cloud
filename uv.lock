@@ -17,6 +17,7 @@ members = [
     "ssc-bundle",
     "ssc-cli",
     "ssc-conformance",
+    "ssc-console-host",
     "ssc-contracts",
     "ssc-control",
     "ssc-datagw",
@@ -1440,6 +1441,7 @@ dependencies = [
     { name = "ssc-app" },
     { name = "ssc-bundle" },
     { name = "ssc-cli" },
+    { name = "ssc-console-host" },
     { name = "ssc-contracts" },
     { name = "ssc-control" },
     { name = "ssc-datagw" },
@@ -1469,6 +1471,7 @@ requires-dist = [
     { name = "ssc-app", editable = "packages/ssc_app" },
     { name = "ssc-bundle", editable = "packages/ssc_bundle" },
     { name = "ssc-cli", editable = "packages/ssc_cli" },
+    { name = "ssc-console-host", editable = "packages/ssc_console_host" },
     { name = "ssc-contracts", editable = "packages/ssc_contracts" },
     { name = "ssc-control", editable = "packages/ssc_control" },
     { name = "ssc-datagw", editable = "packages/ssc_datagw" },
@@ -1614,6 +1617,21 @@ requires-dist = [
     { name = "ssc-edge", editable = "packages/ssc_edge" },
     { name = "ssc-shared", extras = ["gcs"], editable = "packages/ssc_shared" },
     { name = "websockets", specifier = "==17.1" },
+]
+
+[[package]]
+name = "ssc-console-host"
+version = "0.0.1"
+source = { editable = "packages/ssc_console_host" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = "==0.141.1" },
+    { name = "uvicorn", specifier = "==0.38.0" },
 ]
 
 [[package]]

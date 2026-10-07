@@ -227,6 +227,8 @@ describe('admin gating', () => {
       expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
         'Apps',
         'Approvals',
+        'Connections',
+        'Internet access',
         'Your environment',
         'Audit log',
       ]),
@@ -239,6 +241,8 @@ describe('admin gating', () => {
     const nav = screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav).queryByRole('link', { name: 'Audit log' })).toBeNull();
     expect(within(nav).getByRole('link', { name: 'Approvals' })).toBeTruthy();
+    expect(within(nav).getByRole('link', { name: 'Connections' })).toBeTruthy();
+    expect(within(nav).getByRole('link', { name: 'Internet access' })).toBeTruthy();
     expect(api.of('GET', '/v1/audit')).toHaveLength(0);
   });
 
