@@ -136,6 +136,7 @@ def test_probes_get_the_other_cell_as_their_peer_and_the_data_gateway_when_set()
     assert first == {
         "SSC_PROBE_PROJECT": "ssc-c-one",
         "SSC_PROBE_AGENT_URL": "https://agent-one.example.test",
+        "SSC_PROBE_ORG_ID": "org_" + "a" * 20,
         "SSC_PROBE_TLS_HOST": "alpha.bcdfghjklmnp.apps.example.test",
         "SSC_PROBE_PEER_APP_URL": "https://app-two.example.test",
         "SSC_PROBE_PEER_GATEWAY_URL": "https://gateway-two-uc.a.run.app",

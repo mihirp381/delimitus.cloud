@@ -42,7 +42,16 @@ import pytest
 import test_app_databases
 import test_deploy
 from httpx import Response
-from ssc_testkit import CloudSqlLike, Dsns, SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import (
+    CloudSqlLike,
+    Dsns,
+    SigningKey,
+    assert_problem,
+    auth,
+    mint,
+    new_key,
+    with_cell,
+)
 from test_app_databases import STATEFUL, Cell, database_ready, latest, pinned, run_through_the_cell
 from test_deploy import (
     AGENT,
@@ -216,13 +225,17 @@ async def on_the_cell(b: Bench, root: Path, toml: str) -> AsyncIterator[OnTheCel
         access_token,
         client=httpx2.AsyncClient(transport=httpx2.MockTransport(emulator.handler)),
     )
-    agent = httpx2.ASGITransport(app=create_agent(b.runtime, cloud_build))
+    agent = httpx2.ASGITransport(app=create_agent(b.runtime, cloud_build, org_id=b.w.org))
     builder = CellAgentBuildDriver(
-        AGENT, agent_token, ports.blob_store, client=httpx2.AsyncClient(transport=agent)
+        AGENT,
+        agent_token,
+        ports.blob_store,
+        org_id=b.w.org,
+        client=httpx2.AsyncClient(transport=agent),
     )
     try:
         yield OnTheCell(
-            replace(ports, build_driver=builder),
+            with_cell(ports, build=builder),
             emulator,
             bundle,
             hashlib.sha256(data).hexdigest(),
@@ -286,7 +299,7 @@ async def test_a_failing_gate_starts_no_prod_instance(
     databases = FakeAppDatabases(ceiling=1)
     database_ready(dsns, b.w.org)
     async with on_the_cell(b, tmp_path, toml) as cell:
-        ports = replace(cell.ports, app_databases=databases)
+        ports = with_cell(cell.ports, app_databases=databases)
         r1 = await cell.preview_release(b)
         op = start_deploy(b, b.w.preview, r1).json()["operation_id"]
         assert await run(b, op, ports) == "healthy"
@@ -392,7 +405,7 @@ async def test_prod_takes_its_own_database_and_place(
 async def test_prod_runs_its_own_secrets_never_previews(b: Bench, dsns: Dsns) -> None:
     database_ready(dsns, b.w.org)
     databases = FakeAppDatabases()
-    ports = replace(b.ports, app_databases=databases)
+    ports = with_cell(b.ports, app_databases=databases)
     set_secret_ref(b, b.w.preview, "STRIPE_KEY", "4")
     r1 = await build_release(b, b.w.preview, manifest_of(**STATEFUL))
     op = start_deploy(b, b.w.preview, r1).json()["operation_id"]

@@ -10,6 +10,7 @@ evidence never holds a secret value, masked or not. A build reads the stored bun
 import asyncio
 import hashlib
 import hmac
+import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from ssc_shared.blobstore import BlobCorruptError, BlobNotFoundError, BlobStore,
 from ssc_shared.canonical import manifest_digest
 
 DIGEST_PREFIX: Final = "sha256:"
+BUNDLE_KEY: Final = re.compile(r"bundles/([^/]+)/([^/]+)/sha256/([0-9a-f]{64})\.tar\.gz")
+"""A ``bundle_key``: groups are the org, the app and the sha256 hex."""
 MAX_EVIDENCE_FINDINGS: Final = 20
 
 

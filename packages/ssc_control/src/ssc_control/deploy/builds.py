@@ -7,7 +7,8 @@ worker, and no transaction stays open across a builder call. A builder error is 
 the build's deadline; after it, the build fails with ``BUILD_TIMED_OUT`` or
 ``BUILD_DRIVER_ERROR``, so no build stays ``running``. Every step starts by claiming the build
 and re-reading its app: a disabled or quarantined app fails the build with ``APP_NOT_ACTIVE``
-before any builder call.
+before any builder call. The builder is the org's own cell's (``runtime.cells``); an org
+whose cell is not configured fails the build with ``CELL_UNAVAILABLE``.
 
 Before the builder is first called the job reads the stored bundle (``ssc_bundle.analyze``,
 SSC-015): a refusal fails the build with its code (``STATE_SQLITE_EPHEMERAL``,
@@ -53,6 +54,8 @@ from ssc_control.deploy.build_driver import (
 from ssc_control.deploy.bundles import analyze_stored, bundle_key
 from ssc_control.deploy.releases import NewRelease, allocate_and_insert
 from ssc_control.deploy.tasks import defer_build
+from ssc_control.runtime.cells import CELL_UNAVAILABLE, CellUnavailableError
+from ssc_control.storage import org_bundle_store
 from ssc_control.worker_ports import Ports
 from ssc_shared.canonical import manifest_digest
 
@@ -190,7 +193,11 @@ async def run_build(
     build = await _claim(ports, org_id, build_id)
     if isinstance(build, str):
         return build
-    driver = ports.build_driver
+    try:
+        cell = None if ports.cells is None else await ports.cells.for_org(org_id)
+    except CellUnavailableError:
+        return await _fail(ports, org_id, build, CELL_UNAVAILABLE)
+    driver = None if cell is None else cell.build
     if driver is None:
         return await _fail(ports, org_id, build, BUILD_DRIVER_UNAVAILABLE)
     request = _request(org_id, build)
@@ -254,8 +261,12 @@ async def _check_source(
     """Analyse the bundle before the builder is first called: the build with its framework and
     migrations and the request with the system packages to install, a refusal, or None when the
     bundle could not be read (try again later)."""
-    store = ports.blob_store
-    if store is None or build.driver_ref is not None:
+    if build.driver_ref is not None:
+        return build, request
+    store = await org_bundle_store(
+        ports.engine, org_id, blob_store=ports.blob_store, cell_stores=ports.cell_stores
+    )
+    if store is None:
         return build, request
     try:
         found = await analyze_stored(store, request.bundle_key, request.manifest)

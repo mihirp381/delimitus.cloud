@@ -34,7 +34,7 @@ from ssc_control.api.problems import Refusal, request_id_of
 from ssc_control.api.ratelimit import limit
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
-from ssc_control.api.runtime import runtime_of
+from ssc_control.api.runtime import cell_of, runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, check_scope, check_session
 from ssc_control.db.bind import bound_org
 from ssc_shared.logs import (
@@ -141,6 +141,7 @@ class HealthOut(Strict):
         ErrorCode.AGENT_LOGS_OFF,
         ErrorCode.LOGS_RATE_LIMITED,
         ErrorCode.LOGS_UNAVAILABLE,
+        ErrorCode.CELL_UNAVAILABLE,
     ),
 )
 async def get_logs(
@@ -178,14 +179,17 @@ async def get_logs(
 @router.get(
     "/apps/{app_id}/environments/{environment_id}/health",
     response_model=HealthOut,
-    responses=problem_responses(*AUTHENTICATED, ErrorCode.NOT_FOUND, ErrorCode.LOGS_UNAVAILABLE),
+    responses=problem_responses(
+        *AUTHENTICATED, ErrorCode.NOT_FOUND, ErrorCode.LOGS_UNAVAILABLE, ErrorCode.CELL_UNAVAILABLE
+    ),
 )
 async def get_health(app_id: Id, environment_id: Id, request: Request, uow: UserUoW) -> HealthOut:
     """Whether the environment runs, sleeps or fails, without sending the app a request."""
     params = {"org": uow.org_id, "app": app_id, "env": environment_id}
     if (await uow.conn.execute(_SELECT_ENV, params)).first() is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
-    logs = runtime_of(request).cell_logs
+    cell = await cell_of(request, uow.org_id)
+    logs = None if cell is None else cell.logs
     if logs is None:
         raise Refusal(ErrorCode.LOGS_UNAVAILABLE, evidence={"reason": "not_configured"})
     try:
@@ -241,7 +245,8 @@ async def _cell_page(
     params: LogsQuery,
     builds: tuple[str, ...],
 ) -> LogPage:
-    logs = runtime_of(request).cell_logs
+    cell = await cell_of(request, principal.org_id)
+    logs = None if cell is None else cell.logs
     if logs is None:
         raise Refusal(ErrorCode.LOGS_UNAVAILABLE, evidence={"reason": "not_configured"})
     source: Literal["app", "build"] = "build" if params.source == "build" else "app"

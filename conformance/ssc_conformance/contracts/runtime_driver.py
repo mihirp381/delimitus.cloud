@@ -13,6 +13,7 @@ Every test works on a fresh service name, so a real runtime can run the suite re
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from typing import Final
 
 import pytest
 
@@ -28,6 +29,10 @@ from ssc_control.runtime.driver import (
 )
 
 type Settle = Callable[[], Awaitable[None]]
+
+CONTRACT_ORG: Final = "org_contractcontract0001"
+"""The org of every contract spec (``ssc-org``): a cell agent applies its own org's specs only
+(decision 030)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +55,7 @@ def new_spec(image_digest: str, *, service: str | None = None) -> ServiceSpec:
         concurrency=80,
         min_instances=0,
         max_instances=2,
-        labels={"ssc-env": env, "ssc-contract": "runtime-driver"},
+        labels={"ssc-org": CONTRACT_ORG, "ssc-env": env, "ssc-contract": "runtime-driver"},
     )
 
 
@@ -96,7 +101,12 @@ class RuntimeDriverContract:
         spec = new_spec(images.first)
         rev = await runtime_driver.apply(spec)
         assert await runtime_driver.apply(spec) == rev
-        rescaled = replace(spec, min_instances=1, max_instances=1, labels={"ssc-other": "x"})
+        rescaled = replace(
+            spec,
+            min_instances=1,
+            max_instances=1,
+            labels={"ssc-org": CONTRACT_ORG, "ssc-other": "x"},
+        )
         assert rescaled.spec_fingerprint == spec.spec_fingerprint
         assert await runtime_driver.apply(rescaled) == rev
         await settle()

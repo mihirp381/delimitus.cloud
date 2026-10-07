@@ -54,6 +54,7 @@ from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
 from ssc_control.lifecycle.tasks import defer_kill_switch, queueing_lock
 from ssc_control.ports import KillReason, TimersPort
+from ssc_control.runtime.cells import CELL_UNAVAILABLE, CellUnavailableError
 from ssc_control.runtime.driver import (
     RuntimeDriver,
     RuntimeDriverError,
@@ -491,7 +492,12 @@ async def _confirm(job: _Job, run: _Run, step: Step) -> str | None:
 
 async def _scale(job: _Job, run: _Run, step: Step) -> str | None:
     """Stop the next environment if this job holds its lock, else hand over to a job that does."""
-    driver = job.ports.runtime_driver
+    if job.ports.cells is None:
+        raise StepFailedError(RUNTIME_UNAVAILABLE, final=True)
+    try:
+        driver = (await job.ports.cells.for_org(job.org_id)).runtime
+    except CellUnavailableError:
+        raise StepFailedError(CELL_UNAVAILABLE, final=True) from None
     if driver is None:
         raise StepFailedError(RUNTIME_UNAVAILABLE, final=True)
     pending = [e for e in run.env_ids if e not in step.stopped]

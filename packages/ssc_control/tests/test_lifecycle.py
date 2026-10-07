@@ -52,7 +52,7 @@ from psycopg.rows import dict_row
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key, with_cell
 
 from ssc_contracts.audit import ActorKind
 from ssc_contracts.errors import ErrorCode
@@ -79,6 +79,7 @@ from ssc_control.lifecycle import kill_switch, tasks
 from ssc_control.lifecycle.kill_switch import Timings
 from ssc_control.metrics import metrics_port
 from ssc_control.ports import KillReason, NullTimersPort
+from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.runtime.driver import RuntimeDriverError, service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver, changed
 from ssc_control.runtime.reconciler import reconcile_env
@@ -281,12 +282,11 @@ async def b(
     specs = StaticReleaseSpecs()
     ports = Ports(
         engine=engine,
-        runtime_driver=driver,
+        cells=StaticCells(OrgCell(label=STATIC_LABEL, runtime=driver, build=FakeBuildDriver())),
         release_specs=specs,
         snapshot=snapshot,
         timers=timers,
         prod_gate=approvals_prod_gate(),
-        build_driver=FakeBuildDriver(),
         metrics=metrics_port(MASTER),
     )
     with TestClient(create_app(settings)) as client:
@@ -737,7 +737,7 @@ async def test_a_step_fails_after_five_tries_and_the_rest_still_run(b: Bench) ->
 
 async def test_no_runtime_fails_the_scale_at_once(b: Bench) -> None:
     run_id = pulled(b)
-    ran = await drain(b, replace(b.ports, runtime_driver=None))
+    ran = await drain(b, with_cell(b.ports, runtime=None))
     assert [(r.lock, r.outcome) for r in ran] == [(None, "failed")]
     got = run_of(b, run_id)
     scale = got["steps"][3]
@@ -1387,7 +1387,7 @@ async def test_a_running_worker_completes_the_kill_switch(dsns: Dsns) -> None:
     )
     ports = Ports(
         engine=engine,
-        runtime_driver=Recording(events),
+        cells=StaticCells(OrgCell(label=STATIC_LABEL, runtime=Recording(events))),
         snapshot=SpySnapshot(events),
         timers=SpyTimers(events),
     )

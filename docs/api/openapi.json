@@ -3218,6 +3218,7 @@
           "REQUIRED_CHECKS_FAILING",
           "GITHUB_UNAVAILABLE",
           "CEILING_REQUIRED",
+          "CELL_UNAVAILABLE",
           "INTERNAL"
         ],
         "title": "ErrorCode",
@@ -7715,6 +7716,16 @@
               }
             },
             "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CELL_UNAVAILABLE`"
           }
         },
         "summary": "Create Bundle",
@@ -7948,6 +7959,16 @@
               }
             },
             "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CELL_UNAVAILABLE`"
           }
         },
         "summary": "Complete Bundle",
@@ -8874,7 +8895,7 @@
                 }
               }
             },
-            "description": "`DATABASE_UNAVAILABLE`"
+            "description": "`DATABASE_UNAVAILABLE`, `CELL_UNAVAILABLE`"
           }
         },
         "summary": "Rotate Database",
@@ -9489,7 +9510,7 @@
                 }
               }
             },
-            "description": "`LOGS_UNAVAILABLE`"
+            "description": "`LOGS_UNAVAILABLE`, `CELL_UNAVAILABLE`"
           }
         },
         "summary": "Get Health",
@@ -9665,7 +9686,7 @@
                 }
               }
             },
-            "description": "`LOGS_UNAVAILABLE`"
+            "description": "`LOGS_UNAVAILABLE`, `CELL_UNAVAILABLE`"
           }
         },
         "summary": "Get Logs",
@@ -11017,7 +11038,7 @@
                 }
               }
             },
-            "description": "`SECRETS_UNAVAILABLE`"
+            "description": "`SECRETS_UNAVAILABLE`, `CELL_UNAVAILABLE`"
           }
         },
         "summary": "Grant Secret Upload",
@@ -13107,7 +13128,7 @@
     },
     "/v1/egress": {
       "get": {
-        "description": "The allowlist, and the cell's fixed outbound address when its agent can say.",
+        "description": "The allowlist, and the cell's fixed outbound address when its agent can say. An org\nwhose cell is not configured here gets the allowlist alone.",
         "operationId": "get_egress_v1_egress_get",
         "responses": {
           "200": {

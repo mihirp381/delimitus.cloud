@@ -15,7 +15,6 @@ from procrastinate import JobContext
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.cell.deployer import CellDeployer
-from ssc_control.deploy.build_driver import BuildDriver
 from ssc_control.github.client import GitHubApp
 from ssc_control.identity.workos import WorkOSClient
 from ssc_control.notifications.mailer import Mailer
@@ -29,13 +28,10 @@ from ssc_control.ports import (
     SnapshotPort,
     TimersPort,
 )
-from ssc_control.runtime.app_databases import AppDatabases
-from ssc_control.runtime.cell_egress import CellEgress
-from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
+from ssc_control.runtime.cells import CellPorts
 from ssc_control.runtime.specs import NoReleaseSpecs, ReleaseSpecs
 from ssc_control.timers.dispatch import ScheduleDispatcher
 from ssc_shared.blobstore import BlobStore
-from ssc_shared.usage import CellUsage
 
 PORTS_KEY: Final = "ssc_ports"
 APPS_DOMAIN: Final = "delimitusapps.com"
@@ -47,25 +43,26 @@ def _utcnow() -> datetime:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Ports:
-    """``runtime_driver`` None means no runtime is configured: the reconciler defers nothing
-    and deployments fail with ``RUNTIME_UNAVAILABLE``. ``build_driver`` None fails builds with
-    ``BUILD_DRIVER_UNAVAILABLE``. ``blob_store`` and ``cell_stores`` both None: the snapshot and
+    """``cells`` None means no cell is configured: the reconciler defers nothing, deployments
+    fail with ``RUNTIME_UNAVAILABLE`` and builds with ``BUILD_DRIVER_UNAVAILABLE``. Set, it gives
+    each org its own cell's ports (``runtime.cells``, decision 030); an org whose cell is not
+    configured fails its jobs with ``CELL_UNAVAILABLE`` and is skipped by the ticks. Within a
+    cell, an app database port of None fails the first deployment of an environment that
+    declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040), an identity of None gives apps no
+    identity keys and no origin (SSC-018), a usage port of None records no usage (SSC-028) and
+    an egress port of None deploys an app that declares outbound hosts with no proxy credential,
+    so it reaches none (SSC-053). ``blob_store`` and ``cell_stores`` both None: the snapshot and
     anchor ticks defer nothing and a compile does nothing. ``cell_stores`` set sends each org's
     snapshots and audit anchors to its cell's bucket instead of ``blob_store``
-    (``storage.org_store``). ``timer_dispatcher`` None fails timer runs
-    with ``dispatch_unavailable``. ``cell_deployer`` None fails a lazy cell resource with
-    ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087). ``app_databases`` None fails the first deployment
-    of an environment that declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040).
-    ``app_identity`` None gives apps no identity keys and no origin (SSC-018). ``directory`` None
-    skips the directory sync (SSC-064). ``cell_usage`` None skips the usage collection and records
-    no usage events (SSC-028). ``github`` None leaves a push job with nothing to do (SSC-047);
-    ``apps_domain`` makes the preview address it reports. ``cell_egress`` None deploys an app
-    that declares outbound hosts with no proxy credential, so it reaches none (SSC-053).
-    ``mailer`` None leaves queued approval mail waiting (SSC-049); ``console_url`` is the link
-    those mails carry."""
+    (``storage.org_store``). ``timer_dispatcher`` None fails timer runs with
+    ``dispatch_unavailable``. ``cell_deployer`` None fails a lazy cell resource with
+    ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087). ``directory`` None skips the directory sync
+    (SSC-064). ``github`` None leaves a push job with nothing to do (SSC-047); ``apps_domain``
+    makes the preview address it reports. ``mailer`` None leaves queued approval mail waiting
+    (SSC-049); ``console_url`` is the link those mails carry."""
 
     engine: AsyncEngine
-    runtime_driver: RuntimeDriver | None = None
+    cells: CellPorts | None = None
     release_specs: ReleaseSpecs = field(default_factory=NoReleaseSpecs)
     blob_store: BlobStore | None = None
     cell_stores: Callable[[str], BlobStore] | None = None
@@ -73,17 +70,12 @@ class Ports:
     timers: TimersPort = field(default_factory=NullTimersPort)
     prod_gate: ProdGate = field(default_factory=RefusingProdGate)
     clock: Callable[[], datetime] = _utcnow
-    build_driver: BuildDriver | None = None
     metrics: MetricsPort = field(default_factory=NullMetricsPort)
     timer_dispatcher: ScheduleDispatcher | None = None
     cell_deployer: CellDeployer | None = None
-    app_databases: AppDatabases | None = None
-    app_identity: AppIdentity | None = None
     directory: WorkOSClient | None = None
-    cell_usage: CellUsage | None = None
     github: GitHubApp | None = None
     apps_domain: str = APPS_DOMAIN
-    cell_egress: CellEgress | None = None
     mailer: Mailer | None = None
     console_url: str = ""
 

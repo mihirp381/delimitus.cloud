@@ -9,6 +9,12 @@ stored with the manifest read from it. A release built from a bundle carries
 ``complete`` locks the row, so the bundle collector (``deploy.bundle_gc``) skips or waits for
 both. An object that is not the declared bytes is deleted at ``complete``, because a bucket URL
 only creates: the client then asks for a fresh URL and uploads again.
+
+The bytes go to the org's own cell bucket when cell buckets are configured
+(``storage.org_bundle_store``, decision 015), so app source never rests in the control plane;
+an org whose cell this API does not serve is refused ``CELL_UNAVAILABLE`` before any URL is
+signed. A stored digest whose object is gone (the collector expired it and crashed before the
+row went back to ``pending``) is reset to ``pending`` here and answered with a fresh URL.
 """
 
 import json
@@ -29,11 +35,12 @@ from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
-from ssc_control.api.runtime import Runtime, runtime_of
+from ssc_control.api.runtime import cell_of, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.deploy.bundle_gc import lock_bundle_key
 from ssc_control.deploy.bundles import DIGEST_PREFIX, BundleRejectedError, bundle_key, check_upload
+from ssc_control.storage import org_bundle_store
 from ssc_shared.blobstore import BlobError, BlobStore
 
 log = logging.getLogger(__name__)
@@ -97,6 +104,14 @@ _SELECT_BY_ID = text(
     "where org_id = :org and app_id = :app and id = :id"
 )
 _LOCK_BY_ID = text(_SELECT_BY_ID.text + " for update")
+_ASK_AGAIN = text(
+    "update ssc.bundle set state = 'pending', stored_at = null, manifest = null, "
+    "manifest_digest = null, file_count = null "
+    "where org_id = :org and id = :id and state = 'stored' "
+    "returning id as bundle_id, app_id, digest, size_bytes, state, source_commit, "
+    "manifest_digest, file_count, created_at, stored_at"
+)
+"""A stored bundle whose object is gone goes back to ``pending`` (as ``bundle_gc`` expires it)."""
 _STORE = text(
     "update ssc.bundle set state = 'stored', manifest = cast(:manifest as jsonb), "
     "manifest_digest = :manifest_digest, file_count = :file_count, stored_at = now() "
@@ -114,10 +129,29 @@ def limits_of(settings: Settings) -> Limits:
     )
 
 
-def _store_of(rt: Runtime) -> BlobStore:
-    if rt.blob_store is None:
+async def _store_of(request: Request, org_id: str) -> BlobStore:
+    """The org's bundle store. ``CELL_UNAVAILABLE`` for an org whose cell is not served."""
+    rt = runtime_of(request)
+    await cell_of(request, org_id)
+    store = await org_bundle_store(
+        rt.engine, org_id, blob_store=rt.blob_store, cell_stores=rt.cell_stores
+    )
+    if store is None:
         raise Refusal(ErrorCode.INTERNAL, evidence={"reason": "no_blob_store"})
-    return rt.blob_store
+    return store
+
+
+async def _gone(uow: UnitOfWork, store: BlobStore, key: str, row: RowMapping) -> RowMapping:
+    """``row``, back to ``pending`` when it is stored but its object is not in ``store``."""
+    if row["state"] != "stored" or await store.stat(key) is not None:
+        return row
+    params = {"org": uow.org_id, "id": row["bundle_id"]}
+    reset = (await uow.conn.execute(_ASK_AGAIN, params)).mappings().one()
+    log.warning(
+        "stored bundle had no object; asked for again",
+        extra={"org_id": uow.org_id, "app_id": row["app_id"], "digest": row["digest"]},
+    )
+    return reset
 
 
 async def _app_status_for_builder(uow: UnitOfWork, app_id: str) -> str:
@@ -175,6 +209,7 @@ def _location(app_id: str, bundle_id: str) -> dict[str, str]:
             ErrorCode.APP_NOT_ACTIVE,
             ErrorCode.BUNDLE_TOO_LARGE,
             ErrorCode.BUNDLE_DIGEST_MISMATCH,
+            ErrorCode.CELL_UNAVAILABLE,
         ),
     },
 )
@@ -189,7 +224,7 @@ async def create_bundle(app_id: Id, body: BundleCreate, request: Request, uow: U
             ErrorCode.BUNDLE_TOO_LARGE,
             evidence={"size_bytes": body.size_bytes, "max_bytes": rt.settings.bundle_max_bytes},
         )
-    store = _store_of(rt)
+    store = await _store_of(request, uow.org_id)
     key = bundle_key(uow.org_id, app_id, body.digest)
     await lock_bundle_key(uow.conn, key)
     p = uow.principal
@@ -216,6 +251,7 @@ async def create_bundle(app_id: Id, body: BundleCreate, request: Request, uow: U
             ErrorCode.BUNDLE_DIGEST_MISMATCH,
             evidence={"size_bytes": body.size_bytes, "recorded_size_bytes": row["size_bytes"]},
         )
+    row = await _gone(uow, store, key, row)
     upload = None
     if row["state"] == "pending":
         signed = await store.signed_url(
@@ -249,6 +285,7 @@ async def create_bundle(app_id: Id, body: BundleCreate, request: Request, uow: U
         ErrorCode.MANIFEST_INVALID,
         ErrorCode.SECRET_IN_BUNDLE,
         ErrorCode.BUNDLE_TOO_LARGE,
+        ErrorCode.CELL_UNAVAILABLE,
     ),
 )
 async def complete_bundle(app_id: Id, bundle_id: Id, request: Request, uow: UserUoW) -> Response:
@@ -260,7 +297,7 @@ async def complete_bundle(app_id: Id, bundle_id: Id, request: Request, uow: User
         return uow.reply(_out(row))
     if status != "active":
         raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"status": status})
-    store = _store_of(rt)
+    store = await _store_of(request, uow.org_id)
     key = bundle_key(uow.org_id, app_id, row["digest"])
     try:
         checked = await check_upload(

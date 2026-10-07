@@ -22,6 +22,7 @@ from ssc_conformance.runtime_probes import PROBES
 from ssc_shared.runtime import RuntimeDriver, ServiceObservation, ServiceSpec
 
 DIGEST = "sha256:" + "7" * 64
+PROBE_ORG = "org_" + "p" * 20
 CELL = CellRuntime(
     project=PROJECT,
     region=REGION,
@@ -119,17 +120,24 @@ def _job(script: ScriptedJob, clock: Clock) -> nightly.ProbeJob:
     )
 
 
+def every_variable() -> dict[str, str]:
+    return {name: "x" for name in nightly.ENV.values()} | {nightly.ENV["org_id"]: PROBE_ORG}
+
+
 def test_config_needs_every_variable() -> None:
-    full = {name: "x" for name in nightly.ENV.values()}
+    full = every_variable()
     assert nightly.config_from_env(full).control_sa is None
     assert nightly.config_from_env(full | {"SSC_CONTROL_SA": "sa"}).control_sa == "sa"
     for name in nightly.ENV.values():
         with pytest.raises(nightly.NightlyError, match=name):
             nightly.config_from_env({k: v for k, v in full.items() if k != name})
+    for bad in ("org_short", "env_" + "a" * 20):
+        with pytest.raises(nightly.NightlyError, match="SSC_PROBE_ORG_ID is not an org id"):
+            nightly.config_from_env(full | {"SSC_PROBE_ORG_ID": bad})
 
 
 def test_config_takes_a_peer_cell_whole_or_not_at_all() -> None:
-    full = {name: "x" for name in nightly.ENV.values()}
+    full = every_variable()
     assert nightly.config_from_env(full).peer_cell is None
     values = ("https://a", "https://g", "10.30.0.0/22", "ssc-c-peer")
     peer = dict(zip(nightly.PEER_CELL_ENV, values, strict=True))
@@ -153,7 +161,7 @@ DATAGW = {
 
 
 def test_config_takes_an_optional_data_gateway() -> None:
-    full = {name: "x" for name in nightly.ENV.values()}
+    full = every_variable()
     assert nightly.config_from_env(full).datagw_url is None
     assert nightly.config_from_env(full | {"SSC_PROBE_DATAGW_URL": ""}).datagw_url is None
     named = nightly.config_from_env(full | DATAGW)
@@ -165,11 +173,12 @@ def test_config_takes_an_optional_data_gateway() -> None:
 
 
 def test_probe_apps_are_the_cell_runner_targets() -> None:
-    a, b = (nightly.probe_spec(env, DIGEST) for env in nightly.PROBE_ENVS)
+    a, b = (nightly.probe_spec(env, DIGEST, PROBE_ORG) for env in nightly.PROBE_ENVS)
     assert (a.service, b.service) == ("ssc-a-probe00000000000000a", "ssc-a-probe00000000000000b")
     assert a.env == {"PORT": "8080", "HOME": "/tmp"}  # noqa: S108
     assert (a.resource_class, a.min_instances, a.max_instances) == ("small", 0, 1)
     assert (a.billing, a.timeout_seconds, a.concurrency) == ("request", 300, 80)
+    assert a.labels["ssc-org"] == PROBE_ORG
 
 
 def test_reconciler_tick() -> None:
@@ -181,7 +190,7 @@ async def test_nightly_deploys_probes_and_times_the_drift(
 ) -> None:
     script = ScriptedJob(_results())
     report = await nightly.nightly(
-        driver, _job(script, clock), DIGEST, sleep=clock.sleep, clock=clock
+        driver, _job(script, clock), DIGEST, org_id=PROBE_ORG, sleep=clock.sleep, clock=clock
     )
 
     assert report.failures == []
@@ -189,7 +198,7 @@ async def test_nightly_deploys_probes_and_times_the_drift(
     assert report.drift_seconds is not None
     assert nightly.TICK_SECONDS <= report.drift_seconds <= nightly.DRIFT_LIMIT_SECONDS
     for env in nightly.PROBE_ENVS:
-        spec = nightly.probe_spec(env, DIGEST)
+        spec = nightly.probe_spec(env, DIGEST, PROBE_ORG)
         seen = await driver.observe(spec.service)
         assert seen is not None
         live = [r for r in seen.revisions if r.traffic_percent == 100]
@@ -210,7 +219,7 @@ async def test_nightly_deploys_probes_and_times_the_drift(
 async def test_failed_probe_fails_the_night(driver: CloudRunDriver, clock: Clock) -> None:
     script = ScriptedJob(_results(failed="no_dns_exfil")[1:])
     report = await nightly.nightly(
-        driver, _job(script, clock), DIGEST, sleep=clock.sleep, clock=clock
+        driver, _job(script, clock), DIGEST, org_id=PROBE_ORG, sleep=clock.sleep, clock=clock
     )
     assert report.failures == ["non_root_10001: did not report", "no_dns_exfil: r"]
     assert "- FAILED no_dns_exfil: r" in report.markdown()
@@ -230,7 +239,7 @@ def _peer_cell_skipped() -> list[dict[str, str]]:
 async def test_no_peer_cell_is_a_skip_not_a_failure(driver: CloudRunDriver, clock: Clock) -> None:
     script = ScriptedJob(_peer_cell_skipped())
     report = await nightly.nightly(
-        driver, _job(script, clock), DIGEST, sleep=clock.sleep, clock=clock
+        driver, _job(script, clock), DIGEST, org_id=PROBE_ORG, sleep=clock.sleep, clock=clock
     )
     assert report.failures == []
     assert json.loads(script.calls[0].content) == {}
@@ -244,7 +253,13 @@ async def test_a_named_peer_cell_reaches_the_job_and_must_pass(
     script = ScriptedJob(_peer_cell_skipped())
     peer = {"PROBE_PEER_CELL_APP_URL": "https://a", "PROBE_PEER_CELL_RANGE": "10.30.0.0/22"}
     report = await nightly.nightly(
-        driver, _job(script, clock), DIGEST, peer_cell=peer, sleep=clock.sleep, clock=clock
+        driver,
+        _job(script, clock),
+        DIGEST,
+        org_id=PROBE_ORG,
+        peer_cell=peer,
+        sleep=clock.sleep,
+        clock=clock,
     )
     assert report.failures == [
         "cannot_reach_peer_cell: no peer cell",
@@ -273,6 +288,7 @@ async def test_a_data_gateway_reaches_the_job_and_must_pass(
         driver,
         _job(script, clock),
         DIGEST,
+        org_id=PROBE_ORG,
         sleep=clock.sleep,
         clock=clock,
         datagw_url="https://datagw.run.app",
@@ -291,7 +307,12 @@ async def test_without_a_data_gateway_its_probe_may_wait(
 ) -> None:
     waiting = _skipped(frozenset({"datagw_read_only"}), "waits for the data gateway")
     report = await nightly.nightly(
-        driver, _job(ScriptedJob(waiting), clock), DIGEST, sleep=clock.sleep, clock=clock
+        driver,
+        _job(ScriptedJob(waiting), clock),
+        DIGEST,
+        org_id=PROBE_ORG,
+        sleep=clock.sleep,
+        clock=clock,
     )
     assert report.failures == []
     assert "| datagw_read_only | skipped | waits for the data gateway |" in report.markdown()
@@ -343,7 +364,7 @@ class IgnoresTraffic:
 
 
 async def test_unrepaired_drift_fails_after_a_minute(driver: CloudRunDriver, clock: Clock) -> None:
-    spec = nightly.probe_spec(nightly.PROBE_ENVS[0], DIGEST)
+    spec = nightly.probe_spec(nightly.PROBE_ENVS[0], DIGEST, PROBE_ORG)
     await nightly.converge(driver, spec, every=5, limit=600, sleep=clock.sleep, clock=clock)
     stuck = IgnoresTraffic(driver)
     with pytest.raises(nightly.NightlyError, match="not converged after 75 s"):
@@ -379,6 +400,7 @@ def test_config_takes_an_optional_tls_host() -> None:
     full = {
         "SSC_PROBE_PROJECT": "p",
         "SSC_PROBE_AGENT_URL": "https://agent.test",
+        "SSC_PROBE_ORG_ID": PROBE_ORG,
         "SSC_PROBE_DIGEST": DIGEST,
     }
     assert nightly.config_from_env(full).tls_host is None
@@ -403,6 +425,7 @@ async def test_a_certificate_under_21_days_fails_the_night(
         driver,
         _job(script, clock),
         DIGEST,
+        org_id=PROBE_ORG,
         sleep=clock.sleep,
         clock=clock,
         tls_host="x.cell.example",
@@ -432,7 +455,13 @@ async def test_without_a_tls_host_no_certificate_is_read(
 
     script = ScriptedJob(_results())
     report = await nightly.nightly(
-        driver, _job(script, clock), DIGEST, sleep=clock.sleep, clock=clock, days_left=never
+        driver,
+        _job(script, clock),
+        DIGEST,
+        org_id=PROBE_ORG,
+        sleep=clock.sleep,
+        clock=clock,
+        days_left=never,
     )
     assert report.failures == []
 
@@ -500,6 +529,7 @@ async def test_the_run_leaves_evidence_for_the_one_page_result(
         driver,
         _job(script, clock),
         DIGEST,
+        org_id=PROBE_ORG,
         sleep=clock.sleep,
         clock=clock,
         tls_host="x.cell.example",
@@ -522,7 +552,7 @@ async def test_the_evidence_says_what_failed_and_what_was_not_checked(
 ) -> None:
     script = ScriptedJob(_results())
     report = await nightly.nightly(
-        driver, _job(script, clock), DIGEST, sleep=clock.sleep, clock=clock
+        driver, _job(script, clock), DIGEST, org_id=PROBE_ORG, sleep=clock.sleep, clock=clock
     )
     by_proof = {r.proof: r for r in report.as_evidence(PROJECT, peer=False).results}
     assert by_proof["certificate"] == evidence.Result(
@@ -543,7 +573,7 @@ def test_main_async_adds_its_results_to_the_evidence_file(
         return report
 
     class Closable:
-        def __init__(self, *_args: object) -> None:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
 
         async def aclose(self) -> None:
@@ -553,7 +583,7 @@ def test_main_async_adds_its_results_to_the_evidence_file(
     monkeypatch.setattr(nightly, "CellAgentDriver", Closable)
     monkeypatch.setattr(nightly, "ProbeJob", Closable)
     path = tmp_path / "e.json"
-    environ = {name: "x" for name in nightly.ENV.values()} | {"SSC_EVIDENCE_FILE": str(path)}
+    environ = every_variable() | {"SSC_EVIDENCE_FILE": str(path)}
     assert asyncio.run(nightly.main_async(environ)) is report
     written = evidence.read_file(path)
     assert (written.cell, written.peer) == ("x", False)

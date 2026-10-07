@@ -3,8 +3,8 @@
 
 ``usage_collect`` runs at twenty past every hour: ``collect.collect_all`` reads the hours that
 ended at least ``collect.LAG`` ago from each cell and writes their usage events. One run at a
-time (``lock``) and at most one waiting (``queueing_lock``). With no cell usage source in the
-ports it does nothing and logs why.
+time (``lock``) and at most one waiting (``queueing_lock``). With no cells in the ports it
+does nothing and logs why.
 
 ``blueprint()`` builds fresh tasks on each call: ``App.add_tasks_from`` renames what it copies.
 """
@@ -33,9 +33,9 @@ def blueprint(*, cron: str = COLLECT_CRON) -> Blueprint:
     async def usage_collect(context: JobContext, timestamp: int) -> int:  # pyright: ignore[reportUnusedFunction]
         """Collect every cell's usage; returns how many events were written."""
         ports = ports_of(context)
-        if ports.cell_usage is None:
+        if ports.cells is None:
             log.warning("usage events skipped: no cell usage source", extra={"tick": timestamp})
             return 0
-        return await collect_all(ports.engine, ports.cell_usage, ports.clock())
+        return await collect_all(ports.engine, ports.cells, ports.clock())
 
     return bp

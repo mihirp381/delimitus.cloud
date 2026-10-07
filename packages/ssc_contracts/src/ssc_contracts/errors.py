@@ -97,6 +97,8 @@ class ErrorCode(StrEnum):
     GITHUB_UNAVAILABLE = "GITHUB_UNAVAILABLE"
     # connections (SSC-052)
     CEILING_REQUIRED = "CEILING_REQUIRED"
+    # placement
+    CELL_UNAVAILABLE = "CELL_UNAVAILABLE"
     # ours
     INTERNAL = "INTERNAL"
 
@@ -419,6 +421,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "This connection needs an audience ceiling.",
         "A confidential or restricted connection must say the widest audience an app using it may "
         "have, for example one group. Send a ceiling with it and retry.",
+    ),
+    ErrorCode.CELL_UNAVAILABLE: CatalogueEntry(
+        503,
+        "Your organization's cell cannot be reached right now.",
+        "The cell that runs this organization's apps is not configured here, so nothing was "
+        "changed. Retry later.",
     ),
     ErrorCode.INTERNAL: CatalogueEntry(
         500,

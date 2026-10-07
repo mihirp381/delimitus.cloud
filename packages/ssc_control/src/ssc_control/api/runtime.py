@@ -1,6 +1,6 @@
 """What one running API process holds: settings, the engine, the verifier, the limiter, the
-metrics recorder, the blob store, the production gate, the timers, the secret grants, the app
-databases, the cell's logs and egress proxy, and the GitHub App."""
+metrics recorder, the blob store and the cell buckets, the production gate, the timers, each
+org's cell (its secret grants, app databases, logs and egress proxy) and the GitHub App."""
 
 from __future__ import annotations
 
@@ -9,8 +9,11 @@ from typing import TYPE_CHECKING
 
 from fastapi import Request
 
+from ssc_contracts.errors import ErrorCode
+from ssc_control.api.problems import Refusal
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.ports import MetricsPort, NullMetricsPort, NullTimersPort, ProdGate, TimersPort
+from ssc_control.runtime.cells import CellPorts, CellUnavailableError, OrgCell
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -19,11 +22,8 @@ if TYPE_CHECKING:
     from ssc_control.api.ratelimit import RateLimiter
     from ssc_control.api.settings import Settings
     from ssc_control.github.client import GitHubApp
-    from ssc_control.runtime.app_databases import AppDatabases
-    from ssc_control.runtime.cell_egress import CellEgress
-    from ssc_control.runtime.secret_grants import SecretGrants
+    from ssc_control.storage import CellStores
     from ssc_shared.blobstore import BlobStore
-    from ssc_shared.logs import CellLogs
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,26 +35,34 @@ class Runtime:
     owns_engine: bool
     metrics: MetricsPort = field(default_factory=NullMetricsPort)
     blob_store: BlobStore | None = None
-    """Where bundles go; ``None`` when ``blob_backend`` is ``none``."""
+    """Where bundles go without ``cell_stores``; ``None`` when ``blob_backend`` is ``none``."""
+    cell_stores: CellStores | None = None
+    """Each cell's bucket, where its org's bundles go (``storage.org_bundle_store``, decision
+    015); ``None`` without ``SSC_CELL_BUCKET_TEMPLATE``."""
     prod_gate: ProdGate = field(default_factory=approvals_prod_gate)
     """Checked when a ``prod`` deployment is posted; the deploy job checks it again."""
     timers: TimersPort = field(default_factory=NullTimersPort)
     """Resumes the schedules the kill switch paused when an app is enabled."""
-    secret_grants: SecretGrants | None = None
-    """Prepares a secret in the cell and grants one upload of its value (SSC-026); ``None``
-    when the cell is not configured, and secret writes refuse."""
-    app_databases: AppDatabases | None = None
-    """Rotates and reads app databases through the cell agent (SSC-040); ``None`` when the cell
-    is not configured, and rotation refuses."""
-    cell_logs: CellLogs | None = None
-    """App logs and health through the cell agent (SSC-024); ``None`` when the cell is not
-    configured, and log reads answer ``LOGS_UNAVAILABLE``."""
+    cells: CellPorts | None = None
+    """Each org's cell (decision 030): through its agent, secret grants (SSC-026), app database
+    rotation and reads (SSC-040), app logs and health (SSC-024) and where its proxy is
+    (SSC-053). ``None`` when no cell is configured, and each of those answers its own
+    ``*_UNAVAILABLE`` (the console shows no proxy). See :func:`cell_of`."""
     github: GitHubApp | None = None
     """The GitHub App (SSC-047); ``None`` when it is not configured, and connecting a
     repository refuses."""
-    cell_egress: CellEgress | None = None
-    """Where the cell's proxy is and its fixed outbound address, through the cell agent
-    (SSC-053); ``None`` when the cell is not configured, and the console shows neither."""
+
+
+async def cell_of(request: Request, org_id: str) -> OrgCell | None:
+    """``org_id``'s cell, or None when no cell is configured. An org whose cell this process
+    cannot reach is refused ``CELL_UNAVAILABLE``."""
+    cells = runtime_of(request).cells
+    if cells is None:
+        return None
+    try:
+        return await cells.for_org(org_id)
+    except CellUnavailableError as exc:
+        raise Refusal(ErrorCode.CELL_UNAVAILABLE, evidence={"cell_label": exc.label}) from None
 
 
 def runtime_of(request: Request) -> Runtime:

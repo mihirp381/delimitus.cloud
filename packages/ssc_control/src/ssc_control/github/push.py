@@ -60,6 +60,7 @@ from ssc_control.github.client import (
 from ssc_control.github.links import push_actor
 from ssc_control.github.source import fetch_bundle
 from ssc_control.github.tasks import defer_push
+from ssc_control.storage import org_bundle_store
 from ssc_control.worker_ports import Ports
 from ssc_shared.blobstore import BlobError, BlobStore
 from ssc_shared.hosts import app_origin, slug_problem
@@ -270,7 +271,9 @@ async def _start(p: _Push) -> str:
             status="in_progress", title="Building", summary="Building this commit for preview."
         ),
     )
-    store = p.ports.blob_store
+    store = await org_bundle_store(
+        p.ports.engine, p.org_id, blob_store=p.ports.blob_store, cell_stores=p.ports.cell_stores
+    )
     if store is None:
         await _report(p, check_run_id, _failed(NO_BLOB_STORE))
         return "failed"

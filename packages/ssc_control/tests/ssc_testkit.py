@@ -12,7 +12,7 @@ import base64
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -22,6 +22,7 @@ import jwt
 import psycopg
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi import FastAPI
 from httpx import Response
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
@@ -45,9 +46,37 @@ from ssc_control.db import (
     make_engine,
     upgrade,
 )
+from ssc_control.runtime.cells import STATIC_LABEL, CellPorts, OrgCell, StaticCells
+from ssc_control.worker_ports import Ports
 
 ISSUER = "https://auth.test"
 KID = "test-1"
+
+
+# ── cells ────────────────────────────────────────────────────────────────────
+
+
+def static_cell(cells: CellPorts | None, **changes: Any) -> StaticCells:
+    """One cell for every org: the one of ``cells`` (a new one when it has none), with
+    ``changes`` (``runtime=``, ``build=``, ``app_databases=`` and so on) made to it."""
+    cell = cells.cell if isinstance(cells, StaticCells) else None
+    return StaticCells(replace(cell or OrgCell(label=STATIC_LABEL), **changes))
+
+
+def cells_with(ports: Ports, **changes: Any) -> StaticCells:
+    """:func:`static_cell` of ``ports``'s cells."""
+    return static_cell(ports.cells, **changes)
+
+
+def with_cell(ports: Ports, **changes: Any) -> Ports:
+    """``ports`` with :func:`cells_with` ``changes`` made to its one cell."""
+    return replace(ports, cells=cells_with(ports, **changes))
+
+
+def with_api_cell(app: FastAPI, **changes: Any) -> None:
+    """The API ``app`` reaches one cell for every org, its own with ``changes`` made."""
+    rt = app.state.runtime
+    app.state.runtime = replace(rt, cells=static_cell(rt.cells, **changes))
 
 
 # ── database ─────────────────────────────────────────────────────────────────

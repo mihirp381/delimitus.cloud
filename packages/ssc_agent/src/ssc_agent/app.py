@@ -3,7 +3,11 @@ protocol (SSC-015), ``SecretCustody`` (SSC-026) and app databases (SSC-040), one
 
 Cloud Run lets only the control plane's service account invoke the agent (decision 022), so
 every request here already passed IAM. The agent still refuses any service or secret name that
-is not an SSC app's, because its own IAM cannot limit a create by name. Secrets have one method,
+is not an SSC app's, because its own IAM cannot limit a create by name. Each agent serves one
+org (``SSC_ORG_ID``, decision 030): every call but ``/healthz`` must name it in ``X-SSC-Org``,
+and ``apply`` takes only a spec labelled ``ssc-org`` with it; anything else is 403
+``WRONG_CELL``, so a control plane that routed a call to the wrong cell changes nothing there.
+Secrets have one method,
 ``ensure``; nothing here reads, returns or receives a secret value. App databases have
 ``ensure``, ``rotate``, ``usage``, ``recovery_point`` and ``drop``; their passwords stay in the
 agent and the cell's Secret Manager, and the answers carry secret versions only. ``drop`` runs
@@ -36,7 +40,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Final, cast
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from ssc_agent.app_database import (
     AdminSqlError,
@@ -70,11 +74,15 @@ from ssc_shared.logs import (
 )
 from ssc_shared.redaction import redact
 from ssc_shared.runtime import (
+    ORG_HEADER,
+    ORG_LABEL,
     SERVICE_NAME,
     RevisionNotFoundError,
     RuntimeDriver,
     RuntimeDriverError,
     ServiceNotFoundError,
+    ServiceSpec,
+    check_org,
     observation_to_wire,
     spec_from_wire,
 )
@@ -96,8 +104,14 @@ LOGS_PREFIX: Final = "/v1/logs"
 USAGE_PREFIX: Final = "/v1/usage"
 EGRESS_PREFIX: Final = "/v1/egress"
 FILES_PREFIX: Final = "/v1/files"
+HEALTH_PATH: Final = "/healthz"
+WRONG_CELL: Final = "WRONG_CELL"
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
+
+
+class _WrongCellError(Exception):
+    """A spec for another org's service: this agent's cell is not its cell."""
 
 
 def create_app(  # noqa: PLR0913  (usage is keyword-only)
@@ -107,14 +121,17 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
     databases: CellAppDatabases | None = None,
     logs: CellLogs | None = None,
     *,
+    org_id: str,
     usage: CellUsage | None = None,
     egress: ProxyCredentials | None = None,
     files: CellFiles | None = None,
 ) -> FastAPI:
+    org = check_org(org_id)
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
+    _serve_one_org(app, org)
 
     async def apply(body: dict[str, Any]) -> dict[str, object]:
-        return {"revision": await driver.apply(spec_from_wire(body["spec"]))}
+        return {"revision": await driver.apply(_spec_of(org, body))}
 
     async def set_traffic(body: dict[str, Any]) -> dict[str, object]:
         await driver.set_traffic(_service(body), _str(body, "revision"))
@@ -135,7 +152,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
         "observe": observe,
     }
 
-    @app.get("/healthz")
+    @app.get(HEALTH_PATH)
     def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok"}
 
@@ -446,6 +463,35 @@ def _int(body: dict[str, Any], key: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError(f"{key} must be an integer")
     return value
+
+
+def _spec_of(org: str, body: dict[str, Any]) -> ServiceSpec:
+    """The spec in ``body``, which must be labelled ``ssc-org`` with ``org``."""
+    spec = spec_from_wire(body["spec"])
+    if spec.labels.get(ORG_LABEL) != org:
+        raise _WrongCellError(f"the spec is not labelled {ORG_LABEL}={org}")
+    return spec
+
+
+def _serve_one_org(app: FastAPI, org: str) -> None:
+    """Refuse ``WRONG_CELL`` a call that does not name ``org`` in ``X-SSC-Org`` (all but
+    ``/healthz``), and an ``apply`` of a spec for another org."""
+
+    @app.middleware("http")
+    async def one_org(  # pyright: ignore[reportUnusedFunction]
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        path = request.url.path
+        if path != HEALTH_PATH and request.headers.get(ORG_HEADER) != org:
+            log.warning("call for another org refused", extra={"path": path})
+            return _error(403, WRONG_CELL, "this agent serves another org")
+        return await call_next(request)
+
+    async def wrong_spec(request: Request, exc: Exception) -> Response:
+        log.warning("apply for another org refused", extra={"path": request.url.path})
+        return _error(403, WRONG_CELL, str(exc))
+
+    app.add_exception_handler(_WrongCellError, wrong_spec)
 
 
 def _error(status: int, code: str, message: str, **extra: object) -> JSONResponse:

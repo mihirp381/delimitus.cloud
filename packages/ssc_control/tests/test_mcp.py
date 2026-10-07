@@ -68,6 +68,7 @@ from ssc_control.api.settings import INTERNAL_AUDIENCE, USER_AUDIENCE
 from ssc_control.db import CreatedOrg, bind_org_sync, make_engine
 from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.builds import run_build
+from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.worker_ports import Ports
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
@@ -202,7 +203,8 @@ def serving(settings_for: Callable[[str], Settings], blobs: Path | None = None) 
     if blobs is not None:
         signer = UrlSigner({"k1": b"k" * 32}, active="k1", clock=SystemClock())
         store = FsBlobStore(blobs, signer=signer, base_url=f"{url}/blobs")
-    app = create_app(settings_for(url), None, store, cell_logs=PlantedLogs())
+    cells = StaticCells(OrgCell(label=STATIC_LABEL, logs=PlantedLogs()))
+    app = create_app(settings_for(url), None, store, cells=cells)
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
@@ -979,7 +981,8 @@ async def test_deploy_to_preview(world: World) -> None:
 
         engine = make_engine(world.dsns.app)
         try:
-            ports = Ports(engine=engine, build_driver=FakeBuildDriver())
+            cells = StaticCells(OrgCell(label=STATIC_LABEL, build=FakeBuildDriver()))
+            ports = Ports(engine=engine, cells=cells)
             assert await run_build(ports, org_id=org, build_id=build) == "succeeded"
             # The same bundle built for prod, as promote leaves it: a newer release preview must
             # not run.

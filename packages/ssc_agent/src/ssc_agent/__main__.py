@@ -2,7 +2,8 @@
 
 Configuration, all required and set by the cell stack: ``SSC_CELL_PROJECT``,
 ``SSC_CELL_REGION``, ``SSC_CELL_NETWORK``, ``SSC_CELL_SUBNETWORK``, ``SSC_IMAGE_REPOSITORY``,
-``SSC_GATEWAY_SA``. Builds (SSC-015) need all of ``SSC_BUILD_SA``, ``SSC_BUILD_TOOLS_IMAGE`` and
+``SSC_GATEWAY_SA``, and ``SSC_ORG_ID``, the one org this cell serves (decision 030). Builds
+(SSC-015) need all of ``SSC_BUILD_SA``, ``SSC_BUILD_TOOLS_IMAGE`` and
 ``SSC_BUILD_FRONTEND_IMAGE``, or none, and then the agent refuses builds. Exits 2 when one is
 missing or malformed. Secrets (SSC-026) need nothing more: they live in the cell's project and
 region. App databases (SSC-040) need ``SSC_SQL_INSTANCE``, the name of the cell's Cloud SQL
@@ -43,6 +44,7 @@ from ssc_agent.files import CellFiles
 from ssc_agent.metadata import MetadataAccessTokens
 from ssc_agent.secret_manager import CellSecretCustody, CellSecretWriter, ConnectionSecrets
 from ssc_shared import redaction
+from ssc_shared.runtime import check_org
 
 ENV: Final = {
     "project": "SSC_CELL_PROJECT",
@@ -67,6 +69,7 @@ CONNECTION_TAG: Final = re.compile(r"(tagKeys/[0-9]+)=(tagValues/[0-9]+)")
 PROXY_ADDRESS_ENV: Final = "SSC_PROXY_ADDRESS"
 OUTBOUND_IP_ENV: Final = "SSC_OUTBOUND_IP"
 BUCKET_ENV: Final = "SSC_CELL_BUCKET"
+ORG_ENV: Final = "SSC_ORG_ID"
 
 
 class ConfigError(ValueError):
@@ -132,6 +135,17 @@ def connections_from_env(env: Mapping[str, str]) -> ConnectionSecrets | None:
     return ConnectionSecrets(reader=reader, tag_key=m.group(1), tag_value=m.group(2))
 
 
+def org_from_env(env: Mapping[str, str]) -> str:
+    """``SSC_ORG_ID``; ``ConfigError`` when it is missing or not an org id."""
+    value = env.get(ORG_ENV, "")
+    if not value:
+        raise ConfigError(f"missing {ORG_ENV}")
+    try:
+        return check_org(value)
+    except ValueError:
+        raise ConfigError(f"{ORG_ENV} is not an org id") from None
+
+
 def ipv4_from_env(env: Mapping[str, str], name: str) -> str | None:
     """None when unset; ``ConfigError`` for anything but an IPv4 address."""
     value = env.get(name, "")
@@ -147,6 +161,7 @@ def ipv4_from_env(env: Mapping[str, str], name: str) -> str | None:
 def main() -> int:
     try:
         cell = cell_from_env(os.environ)
+        org_id = org_from_env(os.environ)
         build = build_config_from_env(os.environ, cell)
         views = log_views_from_env(os.environ)
         usage_source = usage_source_from_env(os.environ)
@@ -182,6 +197,7 @@ def main() -> int:
         custody,
         databases,
         hub,
+        org_id=org_id,
         usage=CellUsageReader(series),
         egress=egress,
         files=files,

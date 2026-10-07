@@ -21,6 +21,7 @@ from ssc_conformance.cloud_build_emulator import PROJECT, REGION, CloudBuildEmul
 from ssc_conformance.cloud_run_emulator import CloudRunEmulator
 from ssc_conformance.contracts.blobstore import ManualClock
 from ssc_conformance.contracts.build_driver import BuildDriverContract, NewRequest, until_done
+from ssc_conformance.contracts.runtime_driver import CONTRACT_ORG
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import Manifest
 from ssc_control.deploy.build_driver import (
@@ -32,8 +33,10 @@ from ssc_control.deploy.build_driver import (
 )
 from ssc_control.deploy.cell_build import CellAgentBuildDriver
 from ssc_shared.blobstore_fs import FsBlobStore, SignedUrlError, UrlSigner
+from ssc_shared.runtime import ORG_HEADER
 
 AGENT = "https://ssc-cell-agent.test"
+HEADERS = {ORG_HEADER: CONTRACT_ORG}
 BLOBS = "https://control.test/v1/blobs"
 REPO = f"{REGION}-docker.pkg.dev/{PROJECT}/ssc-apps/apps"
 BUILD_CELL = CellBuildConfig(
@@ -120,7 +123,7 @@ def runtime_driver() -> CloudRunDriver:
 async def agent_app(emulator: CloudBuildEmulator) -> AsyncIterator[FastAPI]:
     transport = httpx2.MockTransport(emulator.handler)
     builder = CloudBuildDriver(BUILD_CELL, token, client=httpx2.AsyncClient(transport=transport))
-    yield create_app(runtime_driver(), builder)
+    yield create_app(runtime_driver(), builder, org_id=CONTRACT_ORG)
     await builder.aclose()
 
 
@@ -135,7 +138,7 @@ async def agent_driver(
     store = FsBlobStore(tmp_path / "blobs", signer=bundles.signer, base_url=BLOBS, clock=clock)
     transport = httpx2.ASGITransport(app=agent_app)
     driver = CellAgentBuildDriver(
-        AGENT, id_token, store, client=httpx2.AsyncClient(transport=transport)
+        AGENT, id_token, store, org_id=CONTRACT_ORG, client=httpx2.AsyncClient(transport=transport)
     )
     yield driver
     await driver.aclose()
@@ -257,9 +260,10 @@ async def test_a_cloud_build_outage_is_a_driver_error_without_the_url(
     down = httpx2.MockTransport(lambda _: httpx2.Response(503))
     builder = CloudBuildDriver(BUILD_CELL, token, client=httpx2.AsyncClient(transport=down))
     store = FsBlobStore(tmp_path, signer=bundles.signer, base_url=BLOBS, clock=clock)
-    transport = httpx2.ASGITransport(app=create_app(runtime_driver(), builder))
+    agent = create_app(runtime_driver(), builder, org_id=CONTRACT_ORG)
+    transport = httpx2.ASGITransport(app=agent)
     driver = CellAgentBuildDriver(
-        AGENT, id_token, store, client=httpx2.AsyncClient(transport=transport)
+        AGENT, id_token, store, org_id=CONTRACT_ORG, client=httpx2.AsyncClient(transport=transport)
     )
     with pytest.raises(BuildDriverError) as caught:
         await driver.start(bundles.new())
@@ -270,8 +274,8 @@ async def test_a_cloud_build_outage_is_a_driver_error_without_the_url(
 
 
 async def test_an_agent_without_a_builder_refuses_builds() -> None:
-    transport = httpx2.ASGITransport(app=create_app(runtime_driver()))
-    async with httpx2.AsyncClient(transport=transport, base_url=AGENT) as client:
+    transport = httpx2.ASGITransport(app=create_app(runtime_driver(), org_id=CONTRACT_ORG))
+    async with httpx2.AsyncClient(transport=transport, base_url=AGENT, headers=HEADERS) as client:
         refused = await client.post("/v1/build/poll", json={"ref": "x"})
         assert refused.status_code == 503
         assert refused.json()["code"] == "BUILD_NOT_CONFIGURED"
@@ -287,7 +291,7 @@ async def test_the_agent_refuses_a_malformed_build(agent_app: FastAPI) -> None:
         "start": None,
     }
     transport = httpx2.ASGITransport(app=agent_app)
-    async with httpx2.AsyncClient(transport=transport, base_url=AGENT) as client:
+    async with httpx2.AsyncClient(transport=transport, base_url=AGENT, headers=HEADERS) as client:
         for body in ({"build": {"build_id": "nope"}}, {"build": plain_http}, []):
             answer = await client.post("/v1/build/start", json=body)
             assert answer.status_code == 400, body

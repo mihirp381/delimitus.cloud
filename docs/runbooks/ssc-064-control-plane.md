@@ -9,7 +9,7 @@ Never write a secret value to a file, a shell history or a ticket. Each value go
 ## Before you start
 
 - A free billing slot for `ssc-control-prod` (SSC-089).
-- The staging cell from SSC-086 (`<label>` below), applied with `agent_image` and the four gateway settings. Its gateway answers on `*.<label>.delimitusapps.com`.
+- The staging cell from SSC-086 (`<label>` below), applied with `agent_image`, `org_id` and the four gateway settings. Its gateway answers on `*.<label>.delimitusapps.com`.
 - The WorkOS **production** environment's API key and client ID. For each tenant, Okta and Google, you also need:
   - the WorkOS organisation id (`org_01…`), with a verified domain matching the users' emails;
   - the directory id (`directory_01…`) and the SSO connection id (`conn_01…`);
@@ -65,9 +65,11 @@ These are local stack settings; nothing changes until step 4.
 cd infra
 pulumi config set --stack platform control_stages '["prod"]'
 pulumi config set --stack platform public_stage prod
-pulumi config set --stack platform cell_label $LABEL
-pulumi config set --stack platform cell_jwks "$(pulumi stack output --stack c-$LABEL identity_jwks)"
+pulumi config set --stack platform cells "$(jq -cn --arg label $LABEL \
+  --arg jwks "$(pulumi stack output --stack c-$LABEL identity_jwks)" '[{label: $label, jwks: $jwks}]')"
 ```
+
+`cells` lists every cell this control plane serves (decision 030); add one `{label, jwks}` per cell. A stack that still has `cell_label` and `cell_jwks` works as one cell, but remove them before setting `cells`: both at once are refused.
 
 Leave `control_image`, `auth_jwks` and `auth_signing_kid` unset for now. Without them, every service runs the placeholder with no settings, the worker pool runs no instance and there is no migration job.
 
@@ -112,6 +114,7 @@ The preview should change only these, from `ssc-control-staging` to `ssc-control
 - `agent-invoker` moves to `ssc-control@ssc-control-prod`;
 - `bucket-control` is deleted if it is still there (SSC-012: only the worker uses the cell bucket);
 - `agent-invoker-worker` and `bucket-control-worker` are new, for `ssc-control-worker@ssc-control-prod`;
+- `bucket-control-api-bundles` is new, for `ssc-control@ssc-control-prod`: `storage.objectUser` under `bundles/` only (source bundles, decision 015);
 - the intake's `SSC_CONTROL_SA`.
 
 Then wait for the certificate:
@@ -273,6 +276,8 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
    pulumi up --stack c-$LABEL
    ```
 
+   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 030) and refuses any other `WRONG_CELL`. The Okta org has no configured cell, so its deploys fail `CELL_UNAVAILABLE` until it gets one.
+
 5. Finish up:
 
    ```sh
@@ -354,6 +359,53 @@ Pass:
 Then drop the token-creator grants **[real]**.
 
 **f. The resource flags.** A non-admin is refused and an admin's change is audited. `packages/ssc_control/tests/test_cell_resources.py::test_an_admin_turns_a_resource_on_and_it_is_audited` covers this. The warm flag's refusals and audit are covered by `packages/ssc_control/tests/test_warm.py::test_members_agents_previews_and_a_wrong_cost_are_refused` and `::test_one_warm_environment_takes_one_pass_and_nothing_else`.
+
+## Move source bundles to the cells **[real]**
+
+Since the decision 015 amendment of 2026-10-07, each org's source bundles go to its cell's bucket, and nothing writes `bundles/` to the control plane's `ssc-control-<stage>-blobs`. Do this once on every control deployment whose blobs bucket still holds `bundles/`, after the release with that change runs (step 9) and after `cells` names each org's cell. Run it as the operator, with the just-in-time grant on the cells folder (it writes each cell bucket) and access to the blobs bucket (it reads and deletes there).
+
+1. Check whether there is anything to move:
+
+   ```sh
+   gcloud storage ls gs://ssc-control-prod-blobs/bundles/ | head
+   ```
+
+   Nothing listed: stop here.
+
+2. With the proxy running (step 6) and `$APP_PW` as in step 10, give the shell the worker's settings. The command signs nothing; `SSC_BLOB_SIGNER` is only checked.
+
+   ```sh
+   export SSC_DATABASE_DSN="postgresql://ssc_app:$APP_PW@127.0.0.1:5433/ssc"
+   export SSC_ENV=prod SSC_BLOB_BACKEND=gcs SSC_BLOB_BUCKET=ssc-control-prod-blobs \
+     SSC_BLOB_SIGNER=ssc-control-worker@$P.iam.gserviceaccount.com \
+     SSC_CELL_BUCKET_TEMPLATE='ssc-c-{cell}-cell'
+   ```
+
+3. Dry run. It lists and changes nothing:
+
+   ```sh
+   uv run python -m ssc_control.deploy.bundle_move
+   ```
+
+   Pass: one `would_move: bundles/<org>/…` line per object, then `would move N, already there 0, failed 0, skipped 0`. Add `--org <org_…>` to limit it to one org.
+
+4. Move. Each object is copied to its org's cell bucket under the same key, its size and SHA-256 are checked, and only then is the source deleted:
+
+   ```sh
+   uv run python -m ssc_control.deploy.bundle_move --apply
+   gcloud storage ls gs://ssc-control-prod-blobs/bundles/
+   gcloud storage ls gs://ssc-c-$LABEL-cell/bundles/ | head
+   ```
+
+   Pass: `moved N, already there 0, failed 0, skipped 0`, exit 0, nothing left under the blobs bucket's `bundles/`, and the cell bucket lists the org's keys. A `failed` line keeps its source and says why; an org whose cell bucket does not exist yet fails this way. Fix the cause and run it again.
+
+5. Run it once more. Pass: `moved 0, already there 0, failed 0, skipped 0`. A run that stopped halfway finishes here: an object already in the cell counts as `already there`, and its source is deleted.
+
+6. Finish up:
+
+   ```sh
+   unset APP_PW SSC_DATABASE_DSN SSC_ENV SSC_BLOB_BACKEND SSC_BLOB_BUCKET SSC_BLOB_SIGNER SSC_CELL_BUCKET_TEMPLATE
+   ```
 
 ## Record
 

@@ -12,6 +12,7 @@ from ssc_agent.app import create_app
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_conformance.cloud_run_emulator import PROJECT, REGION, CloudRunEmulator
 from ssc_conformance.contracts.runtime_driver import (
+    CONTRACT_ORG,
     Images,
     RuntimeDriverContract,
     Settle,
@@ -24,7 +25,7 @@ from ssc_contracts.manifest import ResourceClassName
 from ssc_control.runtime.cell_agent import CellAgentDriver
 from ssc_control.runtime.driver import RuntimeDriverError, ServiceNotFoundError
 from ssc_control.runtime.reconciler import reconcile_once
-from ssc_shared.runtime import Billing
+from ssc_shared.runtime import ORG_HEADER, Billing
 
 FIRST = "sha256:" + "1" * 64
 SECOND = "sha256:" + "2" * 64
@@ -87,8 +88,10 @@ class TestCellAgentDriver(RuntimeDriverContract):
             audiences.append(audience)
             return "id-token"
 
-        transport = httpx2.ASGITransport(app=create_app(cloud_run))
-        driver = CellAgentDriver(AGENT, id_token, client=httpx2.AsyncClient(transport=transport))
+        transport = httpx2.ASGITransport(app=create_app(cloud_run, org_id=CONTRACT_ORG))
+        driver = CellAgentDriver(
+            AGENT, id_token, org_id=CONTRACT_ORG, client=httpx2.AsyncClient(transport=transport)
+        )
         yield driver
         await driver.aclose()
         assert set(audiences) <= {AGENT}
@@ -418,8 +421,9 @@ async def test_set_traffic_waits_for_cloud_run(emulator: CloudRunEmulator) -> No
 
 
 async def test_agent_refuses_bad_requests(cloud_run: CloudRunDriver) -> None:
-    transport = httpx2.ASGITransport(app=create_app(cloud_run))
-    async with httpx2.AsyncClient(transport=transport, base_url=AGENT) as client:
+    transport = httpx2.ASGITransport(app=create_app(cloud_run, org_id=CONTRACT_ORG))
+    headers = {ORG_HEADER: CONTRACT_ORG}
+    async with httpx2.AsyncClient(transport=transport, base_url=AGENT, headers=headers) as client:
         bad_name = await client.post("/v1/runtime/observe", json={"service": "ssc-gateway"})
         assert (bad_name.status_code, bad_name.json()["code"]) == (400, "INVALID_REQUEST")
         not_json = await client.post("/v1/runtime/observe", content=b"[]")
@@ -453,8 +457,10 @@ async def test_agent_errors_map_back_to_driver_errors(cloud_run: CloudRunDriver)
     async def id_token(_: str) -> str:
         return "id-token"
 
-    transport = httpx2.ASGITransport(app=create_app(cloud_run))
-    driver = CellAgentDriver(AGENT, id_token, client=httpx2.AsyncClient(transport=transport))
+    transport = httpx2.ASGITransport(app=create_app(cloud_run, org_id=CONTRACT_ORG))
+    driver = CellAgentDriver(
+        AGENT, id_token, org_id=CONTRACT_ORG, client=httpx2.AsyncClient(transport=transport)
+    )
     with pytest.raises(ServiceNotFoundError):
         await driver.scale_to_zero(new_spec(FIRST).service)
     with pytest.raises(RuntimeDriverError, match="INVALID_REQUEST"):

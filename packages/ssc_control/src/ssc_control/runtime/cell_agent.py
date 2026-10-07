@@ -14,12 +14,14 @@ from typing import Any, Final, cast
 import httpx2
 
 from ssc_shared.runtime import (
+    ORG_HEADER,
     RevisionNotFoundError,
     RuntimeDriver,
     RuntimeDriverError,
     ServiceNotFoundError,
     ServiceObservation,
     ServiceSpec,
+    check_org,
     observation_from_wire,
     spec_to_wire,
 )
@@ -39,10 +41,16 @@ _ERRORS: Final[dict[str, type[RuntimeDriverError]]] = {
 
 class CellAgentDriver(RuntimeDriver):
     def __init__(
-        self, agent_url: str, id_tokens: IdTokens, *, client: httpx2.AsyncClient | None = None
+        self,
+        agent_url: str,
+        id_tokens: IdTokens,
+        *,
+        org_id: str,
+        client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._url = agent_url.rstrip("/")
         self._id_tokens = id_tokens
+        self._org = check_org(org_id)
         self._client = client or httpx2.AsyncClient(timeout=CALL_TIMEOUT_SECONDS)
 
     async def aclose(self) -> None:
@@ -77,7 +85,7 @@ class CellAgentDriver(RuntimeDriver):
             response = await self._client.post(
                 f"{self._url}/v1/runtime/{method}",
                 json=body,
-                headers={"Authorization": f"Bearer {token}"},
+                headers={"Authorization": f"Bearer {token}", ORG_HEADER: self._org},
             )
         except httpx2.HTTPError as exc:
             raise RuntimeDriverError(f"cell agent {method}: {type(exc).__name__}") from None

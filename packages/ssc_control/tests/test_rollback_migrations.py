@@ -16,7 +16,7 @@ import importlib
 import json
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,7 @@ import pytest
 import test_app_databases
 import test_deploy
 from sqlalchemy.engine import make_url
-from ssc_testkit import Dsns, assert_problem, new_key
+from ssc_testkit import Dsns, assert_problem, new_key, with_cell
 from test_app_databases import STATEFUL, Cell, database_ready, run_through_the_cell
 from test_deploy import (
     AGENT,
@@ -48,6 +48,7 @@ from test_deploy import (
 
 from ssc_contracts.app_database import LSN
 from ssc_contracts.errors import CATALOGUE, ErrorCode
+from ssc_contracts.ids import new_id
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.db import MIGRATE_ROLE, bind_org_sync, downgrade, upgrade
 from ssc_control.deploy.builds import run_build
@@ -143,7 +144,7 @@ async def test_a_rollback_past_a_forward_migration_warns_and_needs_confirm(
     b: Bench, dsns: Dsns, tmp_path: Path
 ) -> None:
     database_ready(dsns, b.w.org)
-    ports = replace(b.ports, app_databases=FakeAppDatabases())
+    ports = with_cell(b.ports, app_databases=FakeAppDatabases())
     env = b.w.preview
     first = await release_from(b, tmp_path / "r1", [INIT])
     shown = get(b, f"/v1/apps/{b.w.app}/releases/{first}").json()
@@ -186,7 +187,7 @@ async def test_a_deploy_and_other_ledgers_are_not_checked(
     b: Bench, dsns: Dsns, tmp_path: Path
 ) -> None:
     database_ready(dsns, b.w.org)
-    ports = replace(b.ports, app_databases=FakeAppDatabases())
+    ports = with_cell(b.ports, app_databases=FakeAppDatabases())
     env = b.w.preview
     first = await release_from(b, tmp_path / "r1", [INIT])
     second = await release_from(b, tmp_path / "r2", [INIT, ADD_TOTAL])
@@ -209,7 +210,7 @@ async def test_no_warning_without_a_database_or_with_unknown_migrations(
     assert await run(b, back.json()["operation_id"]) == "healthy"
 
     database_ready(dsns, b.w.org)
-    ports = replace(b.ports, app_databases=FakeAppDatabases())
+    ports = with_cell(b.ports, app_databases=FakeAppDatabases())
     unknown = await build_release(b, b.w.preview, manifest_of(**STATEFUL))
     assert get(b, f"/v1/apps/{b.w.app}/releases/{unknown}").json()["latest_migrations"] is None
     await deployed(b, b.w.preview, unknown, ports)
@@ -239,7 +240,7 @@ async def test_a_production_deployment_records_its_recovery_point_once(
 ) -> None:
     database_ready(dsns, b.w.org)
     fake = FakeAppDatabases()
-    ports = replace(b.ports, app_databases=fake)
+    ports = with_cell(b.ports, app_databases=fake)
     first = await release_from(b, tmp_path / "r1", [INIT], b.w.prod)
     op = await deployed(b, b.w.prod, first, ports)
     point = operation(b, op)["recovery_point"]
@@ -268,7 +269,7 @@ async def test_a_recovery_point_the_agent_cannot_give_is_the_control_planes_time
     b: Bench, dsns: Dsns
 ) -> None:
     database_ready(dsns, b.w.org)
-    ports = replace(b.ports, app_databases=Unreachable())
+    ports = with_cell(b.ports, app_databases=Unreachable())
     release = await build_release(b, b.w.prod, manifest_of(**STATEFUL))
     op = await deployed(b, b.w.prod, release, ports)
     point = operation(b, op)["recovery_point"]
@@ -306,13 +307,14 @@ class Answer:
 )
 async def test_the_agents_recovery_point_is_checked(body: dict[str, Any]) -> None:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(Answer(body)))
-    databases = CellAppDatabases(AGENT, agent_token, client=client)
+    databases = CellAppDatabases(AGENT, agent_token, org_id=new_id("org"), client=client)
     with pytest.raises(AppDatabaseError) as raised:
         await databases.recovery_point("ssc-env-x")
     assert raised.value.code == "DATABASE_UNAVAILABLE"
     good = {"at": "2026-10-03T09:00:00.123456Z", "lsn": "0/16B3748"}
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(Answer(good)))
-    point = await CellAppDatabases(AGENT, agent_token, client=client).recovery_point("ssc-env-x")
+    databases = CellAppDatabases(AGENT, agent_token, org_id=new_id("org"), client=client)
+    point = await databases.recovery_point("ssc-env-x")
     assert (point.at.isoformat(), point.lsn) == ("2026-10-03T09:00:00.123456+00:00", "0/16B3748")
 
 

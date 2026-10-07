@@ -107,6 +107,8 @@ LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
 PROXY_ADDRESS_ENV: Final = "SSC_PROXY_ADDRESS"
 OUTBOUND_IP_ENV: Final = "SSC_OUTBOUND_IP"
 BUCKET_ENV: Final = "SSC_CELL_BUCKET"
+ORG_ENV: Final = "SSC_ORG_ID"
+"""The one org the agent serves (``ssc_agent.__main__``, decision 030)."""
 USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
 USAGE_SOURCE: Final = "monitoring"
 DATA_SA_ENV: Final = "SSC_DATA_SA"
@@ -280,14 +282,16 @@ def read_config(stack: str) -> CellConfig:
         raise ValueError(f"stage must be one of {n.STAGES}, not {stage!r}")
     tools, frontend = build_images(config.get(BUILD_IMAGES[0]), config.get(BUILD_IMAGES[1]))
     image, keyring, jwks, org = gateway_settings(*(config.get(key) for key in GATEWAY_SETTINGS))
-    datagw_image = datagw_settings(config.get("datagw_image"), org)
+    gateway_org = org if image else None
+    datagw_image = datagw_settings(config.get("datagw_image"), gateway_org)
+    agent_image = agent_settings(config.get("agent_image"), org)
     return CellConfig(
         label=n.label_of_stack(stack),
         stage=stage,
         probe=config.get_bool("probe") or False,
         gateway_min=_int_or(config.get_int("gateway_min"), 0),
         gateway_max=_int_or(config.get_int("gateway_max"), 20),
-        agent_image=config.get("agent_image"),
+        agent_image=agent_image,
         probe_digest=config.get("probe_digest"),
         billing_account=config.get("billing_account") or n.BILLING_ACCOUNT,
         database=config.get_bool("database") or False,
@@ -305,7 +309,7 @@ def read_config(stack: str) -> CellConfig:
         datagw_connections=datagw_connections_setting(
             config.get("datagw_connections"), datagw_image
         ),
-        proxy_image=proxy_settings(config.get("proxy_image"), org),
+        proxy_image=proxy_settings(config.get("proxy_image"), gateway_org),
         proxy_ha=config.get_bool("proxy_ha") or False,
         oncall_email=config.get("oncall_email"),
     )
@@ -329,15 +333,16 @@ def gateway_settings(
     image: str | None, keyring: str | None, jwks: str | None, org: str | None
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """All four gateway settings or none (``infra/README.md``): the image pinned in the platform
-    registry, the keyring as base64 KMS ciphertext, its public JWKS and the customer's org."""
-    if not (image or keyring or jwks or org):
-        return None, None, None, None
+    registry, the keyring as base64 KMS ciphertext, its public JWKS and the customer's org. The
+    org may be set alone, for the agent (decision 030)."""
+    if org and not CUSTOMER_ORG.fullmatch(org):
+        raise ValueError("org_id must be org_ followed by 20 lowercase letters or digits")
+    if not (image or keyring or jwks):
+        return None, None, None, org or None
     if not (image and keyring and jwks and org):
         raise ValueError(f"set all of {', '.join(GATEWAY_SETTINGS)} or none")
     if not PINNED_IMAGE.fullmatch(image):
         raise ValueError(f"gateway_image must be {n.platform_registry()}/<image>@sha256:<digest>")
-    if not CUSTOMER_ORG.fullmatch(org):
-        raise ValueError("org_id must be org_ followed by 20 lowercase letters or digits")
     try:
         sealed = base64.b64decode(keyring, validate=True)
     except binascii.Error:
@@ -346,6 +351,14 @@ def gateway_settings(
         raise ValueError("gateway_keyring must be the keyring's KMS ciphertext, in base64")
     _check_public_jwks(jwks)
     return image, keyring, jwks, org
+
+
+def agent_settings(image: str | None, org: str | None) -> str | None:
+    """``agent_image`` only with ``org_id``: the agent serves that org alone and refuses every
+    call that names another (decision 030)."""
+    if image and not org:
+        raise ValueError("agent_image needs org_id, the one org the agent serves")
+    return image or None
 
 
 def datagw_settings(image: str | None, org: str | None) -> str | None:
@@ -1314,7 +1327,10 @@ class Cell:
         (SSC-046), encrypted with the cell's own key ``bucket``. Under ``files/<env_id>/`` only
         ``ssc-data``, the file broker, reads and writes, and the agent deletes an environment's
         files when it is gone; a replaced or deleted file stays a noncurrent version for
-        ``NONCURRENT_FILE_DAYS``."""
+        ``NONCURRENT_FILE_DAYS``. Source bundles sit under ``bundles/`` (decision 015): the
+        control plane's API, which signs their upload and download URLs as itself, may read
+        and write there alone (``bucket-control-api-bundles``); the worker builds from them and
+        collects them with its bucket-wide grant."""
         cfg = self.cfg
         self.bucket_ = gcp.storage.Bucket(
             "bucket",
@@ -1350,6 +1366,18 @@ class Cell:
             gcp.storage.BucketIAMMember(
                 name, bucket=self.bucket_.name, role=role, member=member, opts=self._o()
             )
+        bundles = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/bundles/"
+        gcp.storage.BucketIAMMember(
+            "bucket-control-api-bundles",
+            bucket=self.bucket_.name,
+            role="roles/storage.objectUser",
+            member=pulumi.Output.concat("serviceAccount:", self.control_sa),
+            condition=gcp.storage.BucketIAMMemberConditionArgs(
+                title="only source bundles",
+                expression=f'resource.name.startsWith("{bundles}")',
+            ),
+            opts=self._o(),
+        )
         snapshots = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/snapshots/"
         for name, account in (("bucket-data", self.data_sa), ("bucket-proxy", self.proxy_sa)):
             gcp.storage.BucketIAMMember(
@@ -1748,7 +1776,8 @@ class Cell:
         alone (SSC-051). It writes each app environment's egress proxy credential into its
         ``HTTPS_PROXY`` secret, naming the proxy's reserved address, and tells the console the
         cell's fixed outbound address (SSC-053); both exist from onboarding. It deletes a gone
-        environment's files from the cell bucket's ``files/`` (SSC-046)."""
+        environment's files from the cell bucket's ``files/`` (SSC-046). It serves ``org_id``
+        alone (``SSC_ORG_ID``) and refuses any call that names another org (decision 030)."""
         tag_key, tag_value = self.connection_tag
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
@@ -1765,6 +1794,8 @@ class Cell:
             OUTBOUND_IP_ENV: self.nat_ip.address,
             BUCKET_ENV: self.bucket_.name,
         }
+        if self.cfg.org_id:
+            env[ORG_ENV] = self.cfg.org_id
         tools, frontend = self.cfg.build_tools_image, self.cfg.build_frontend_image
         if tools and frontend:
             env |= {

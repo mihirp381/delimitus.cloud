@@ -16,7 +16,7 @@ from ssc_contracts.errors import ErrorCode
 from ssc_control.api.problems import Refusal
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.settings import Settings
-from ssc_control.storage import BLOBS_PATH, blob_store
+from ssc_control.storage import BLOBS_PATH, CellStores, blob_store, cell_stores
 from ssc_control.storage import check_fs_allowed as check_fs_environment
 from ssc_shared.blobstore import (
     DEFAULT_CONTENT_TYPE,
@@ -46,6 +46,13 @@ def blob_store_for(settings: Settings) -> BlobStore | None:
         bucket=settings.blob_bucket,
         signer=settings.blob_signer,
     )
+
+
+def cell_stores_for(settings: Settings) -> CellStores | None:
+    """``storage.cell_stores`` over the API's settings, signed as ``blob_signer``; None without
+    ``cell_bucket_template``. No I/O."""
+    template = settings.cell_bucket_template
+    return cell_stores(template, signer=settings.blob_signer) if template else None
 
 
 def check_fs_allowed(store: BlobStore | None, settings: Settings) -> None:

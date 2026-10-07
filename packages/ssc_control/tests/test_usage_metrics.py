@@ -30,8 +30,18 @@ import psycopg
 import pytest
 import test_deploy
 from sqlalchemy import make_url
-from ssc_testkit import Dsns, assert_problem
-from test_deploy import AGENT, Bench, agent_token, build_release, deploy, get, manifest_of, rows_of
+from ssc_testkit import Dsns, assert_problem, with_cell
+from test_deploy import (
+    AGENT,
+    Bench,
+    World,
+    agent_token,
+    build_release,
+    deploy,
+    get,
+    manifest_of,
+    rows_of,
+)
 
 from ssc_agent.app import create_app as create_agent
 from ssc_agent.cloud_monitoring import CellUsageReader, CloudMonitoringSeries
@@ -45,7 +55,8 @@ from ssc_control.metrics.collect import LAG, collect_all, collect_org, next_wind
 from ssc_control.metrics.usage import HEAVY_MIN_SECONDS, RARE_MAX_SECONDS, usage_type
 from ssc_control.ports import MetricKind
 from ssc_control.runtime.cell_usage import AgentCellUsage
-from ssc_control.worker import CompositionError, build_app, cell_usage_from_env
+from ssc_control.runtime.cells import StaticCells
+from ssc_control.worker import build_app, cells_of
 from ssc_control.worker_ports import PORTS_KEY
 from ssc_shared.runtime import service_name
 from ssc_shared.usage import UsageWindow
@@ -81,7 +92,7 @@ class Cell:
     hosts: list[str]
 
 
-def _cell(source: bool = True) -> Cell:
+def _cell(org_id: str, source: bool = True) -> Cell:
     clock = Clock(at(0))
     monitoring = CloudMonitoringEmulator(now=lambda: clock.now)
     hosts: list[str] = []
@@ -94,15 +105,17 @@ def _cell(source: bool = True) -> Cell:
     reader = CellUsageReader(
         CloudMonitoringSeries(PROJECT, _token, client=client) if source else None
     )
-    agent = create_agent(cast("Any", None), usage=reader)
+    agent = create_agent(cast("Any", None), usage=reader, org_id=org_id)
     transport = httpx2.ASGITransport(app=agent)
-    usage = AgentCellUsage(AGENT, agent_token, client=httpx2.AsyncClient(transport=transport))
+    usage = AgentCellUsage(
+        AGENT, agent_token, org_id=org_id, client=httpx2.AsyncClient(transport=transport)
+    )
     return Cell(clock, monitoring, usage, hosts)
 
 
 @pytest.fixture
-async def cell() -> AsyncIterator[Cell]:
-    made = _cell()
+async def cell(world: World) -> AsyncIterator[Cell]:
+    made = _cell(world.org)
     yield made
     await made.usage.aclose()
 
@@ -286,7 +299,7 @@ async def test_without_a_usage_source_nothing_is_written_and_the_log_says_why(
     b: Bench, caplog: pytest.LogCaptureFixture
 ) -> None:
     for refuse in (None, 403):
-        cell = _cell(source=refuse is not None)
+        cell = _cell(b.w.org, source=refuse is not None)
         cell.monitoring.refuse = refuse
         await _session_open_an_hour(b, cell)
         with caplog.at_level(logging.WARNING, logger=collect.__name__):
@@ -339,10 +352,11 @@ async def test_the_job_collects_every_org_and_logs_when_there_is_no_source(
         assert await task.func(none, timestamp=0) == 0
     assert "no cell usage source" in caplog.text
     cell.clock.now = at(11, 20)
-    ports = replace(b.ports, cell_usage=cell.usage, clock=lambda: at(11, 20))
+    ports = replace(with_cell(b.ports, usage=cell.usage), clock=lambda: at(11, 20))
     some = SimpleNamespace(additional_context={PORTS_KEY: ports})
     assert await task.func(some, timestamp=0) == 2
-    assert await collect_all(ports.engine, cell.usage, at(11, 20)) == 0
+    assert ports.cells is not None
+    assert await collect_all(ports.engine, ports.cells, at(11, 20)) == 0
 
 
 def test_the_worker_collects_usage_at_twenty_past_every_hour() -> None:
@@ -360,15 +374,13 @@ def test_the_worker_collects_usage_at_twenty_past_every_hour() -> None:
     assert app.tasks[jobs.COLLECT_TASK].lock == "usage_collect"
 
 
-async def test_the_worker_reads_usage_through_the_cell_agent_only() -> None:
-    assert cell_usage_from_env({}) is None
-    assert cell_usage_from_env({"SSC_RUNTIME_DRIVER": "fake"}) is None
-    env = {"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": "https://agent.test"}
-    usage = cell_usage_from_env(env)
-    assert isinstance(usage, AgentCellUsage)
-    await usage.aclose()
-    with pytest.raises(CompositionError, match="https"):
-        cell_usage_from_env({**env, "SSC_CELL_AGENT_URL": "http://agent.test"})
+def test_the_worker_reads_usage_through_the_cell_agent_only() -> None:
+    engine = cast("Any", None)
+    assert cells_of({}, engine) is None
+    fake = cells_of({"SSC_RUNTIME_DRIVER": "fake"}, engine)
+    assert isinstance(fake, StaticCells)
+    assert fake.cell is not None
+    assert fake.cell.usage is None
 
 
 def test_an_hour_is_read_once_it_is_lag_old_and_at_most_six_hours_at_a_time() -> None:

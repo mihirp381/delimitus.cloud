@@ -20,7 +20,7 @@ from ssc_control.api.authz import require_admin
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.common import Strict
-from ssc_control.api.runtime import runtime_of
+from ssc_control.api.runtime import cell_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.egress import allowlist
 from ssc_control.runtime.cell_egress import CellEgressError, EgressInfo
@@ -107,13 +107,18 @@ async def _change(uow: UnitOfWork) -> None:
     responses=problem_responses(*AUTHENTICATED),
 )
 async def get_egress(request: Request, uow: UserUoW) -> EgressOut:
-    """The allowlist, and the cell's fixed outbound address when its agent can say."""
+    """The allowlist, and the cell's fixed outbound address when its agent can say. An org
+    whose cell is not configured here gets the allowlist alone."""
     listed = await _hosts(uow)
     info = EgressInfo(proxy_address=None, outbound_ip=None)
-    cell = runtime_of(request).cell_egress
-    if cell is not None:
+    try:
+        cell = await cell_of(request, uow.org_id)
+    except Refusal:
+        log.warning("egress info skipped: the org's cell is not configured")
+        cell = None
+    if cell is not None and cell.egress is not None:
         try:
-            info = await cell.info()
+            info = await cell.egress.info()
         except CellEgressError as exc:
             log.warning("egress info failed", extra={"error": str(exc)})
     return EgressOut(

@@ -103,8 +103,10 @@ async def _agent_logs(hub: CellLogHub, driver: CloudRunDriver) -> AgentCellLogs:
     async def id_token(_: str) -> str:
         return "id-token"
 
-    transport = httpx2.ASGITransport(app=create_app(driver, logs=hub))
-    return AgentCellLogs(AGENT, id_token, client=httpx2.AsyncClient(transport=transport))
+    org = "org_" + "l" * 20
+    transport = httpx2.ASGITransport(app=create_app(driver, logs=hub, org_id=org))
+    client = httpx2.AsyncClient(transport=transport)
+    return AgentCellLogs(AGENT, id_token, org_id=org, client=client)
 
 
 # ── follow ───────────────────────────────────────────────────────────────────

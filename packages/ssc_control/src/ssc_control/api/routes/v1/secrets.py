@@ -36,7 +36,7 @@ from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_re
 from ssc_control.api.routes.v1.bundles import UploadTarget
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.routes.v1.deployments import start_deployment
-from ssc_control.api.runtime import runtime_of
+from ssc_control.api.runtime import cell_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.runtime.secret_grants import SecretGrantError
 from ssc_shared.runtime import SECRET_VERSION, secret_id, service_name
@@ -177,6 +177,7 @@ async def list_secrets(app_id: Id, environment_id: Id, uow: UserUoW) -> SecretLi
         ErrorCode.APP_NOT_ACTIVE,
         ErrorCode.AGENT_SESSION_REFUSED,
         ErrorCode.SECRETS_UNAVAILABLE,
+        ErrorCode.CELL_UNAVAILABLE,
     ),
 )
 async def grant_secret_upload(
@@ -186,7 +187,8 @@ async def grant_secret_upload(
     cell's secret intake, for a few minutes. Nothing is recorded until ``PUT``."""
     env = await _environment(uow, app_id, environment_id)
     _writable(uow, env, app_id, name)
-    grants = runtime_of(request).secret_grants
+    cell = await cell_of(request, uow.org_id)
+    grants = None if cell is None else cell.secret_grants
     if grants is None:
         raise Refusal(ErrorCode.SECRETS_UNAVAILABLE, evidence={"reason": "not_configured"})
     try:

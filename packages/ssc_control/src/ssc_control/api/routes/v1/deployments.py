@@ -258,8 +258,10 @@ _SELECT_DEPLOYMENTS = text(
     "order by d.started_at desc, d.id desc limit :limit"
 )
 _SELECT_BUNDLE = text(
-    "select state, manifest from ssc.bundle where org_id = :org and app_id = :app and id = :id"
+    "select state, manifest from ssc.bundle where org_id = :org and app_id = :app and id = :id "
+    "for share"
 )
+"""Shared, so a build never starts on a bundle the collector is expiring (``bundle_gc``)."""
 _INSERT_BUILD = text(
     "insert into ssc.build (id, org_id, app_id, environment_id, bundle_id, actor_kind, actor_id, "
     "actor_via_agent, actor_client_id) values (:id, :org, :app, :env, :bundle, :actor_kind, "

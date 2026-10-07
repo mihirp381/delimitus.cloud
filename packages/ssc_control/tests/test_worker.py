@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import importlib.metadata
 import importlib.resources
+import json
 import os
 import signal
 import subprocess
@@ -40,7 +41,7 @@ from procrastinate import App, PsycopgConnector
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
-from ssc_testkit import Dsns, make_org
+from ssc_testkit import Dsns, make_org, static_cell
 
 import ssc_control.db
 from ssc_contracts.ids import new_id
@@ -48,7 +49,7 @@ from ssc_contracts.manifest import default_manifest
 from ssc_control.db import MIGRATE_ROLE, SqlState, all_org_ids, bind_org_sync, bound_org, upgrade
 from ssc_control.deferral import DeferralError, defer
 from ssc_control.runtime import jobs as runtime_jobs
-from ssc_control.runtime.cell_agent import CellAgentDriver
+from ssc_control.runtime.cells import CellRouter, StaticCells
 from ssc_control.runtime.driver import service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver, changed
 from ssc_control.runtime.specs import BundleReleaseSpecs, ReleaseSpec, StaticReleaseSpecs
@@ -57,13 +58,13 @@ from ssc_control.worker import (
     Ports,
     WorkerSettings,
     build_app,
+    cells_of,
     compose_ports,
     queue_conninfo,
     refuse_fakes,
     retry_stalled,
     run,
     run_worker,
-    runtime_driver_from_env,
 )
 
 CHILD = Path(__file__).with_name("worker_crash_child.py")
@@ -441,7 +442,7 @@ async def running_worker(
 ) -> AsyncIterator[None]:
     specs = StaticReleaseSpecs({e.release: ReleaseSpec(manifest=default_manifest()) for e in envs})
     engine = ssc_control.db.make_engine(db.app)
-    ports = Ports(engine=engine, runtime_driver=driver, release_specs=specs)
+    ports = Ports(engine=engine, cells=static_cell(None, runtime=driver), release_specs=specs)
     task = asyncio.create_task(
         run_worker(
             build_app(db.app, settings=FAST), ports, settings=FAST, install_signal_handlers=False
@@ -570,32 +571,31 @@ def test_default_timings_repair_within_a_minute() -> None:
 def test_fakes_run_only_in_dev_and_test() -> None:
     ports = Ports(
         engine=ssc_control.db.make_engine("postgresql://ssc_app@localhost/ssc"),
-        runtime_driver=FakeRuntimeDriver(),
+        cells=static_cell(None, runtime=FakeRuntimeDriver()),
     )
     for env in ({}, {"SSC_ENV": "prod"}, {"SSC_ENV": "staging"}):
-        with pytest.raises(CompositionError, match="fake runtime_driver"):
+        with pytest.raises(CompositionError, match="fake cells.FakeRuntimeDriver"):
             refuse_fakes(ports, env)
     for ok in ("dev", "test"):
         refuse_fakes(ports, {"SSC_ENV": ok})
     base = {"SSC_DATABASE_DSN": "postgresql://ssc_app@localhost/ssc"}
     with pytest.raises(CompositionError):
         compose_ports({**base, "SSC_RUNTIME_DRIVER": "fake"})
-    assert isinstance(
-        compose_ports({**base, "SSC_RUNTIME_DRIVER": "fake", "SSC_ENV": "test"}).runtime_driver,
-        FakeRuntimeDriver,
-    )
-    assert compose_ports(base).runtime_driver is None
+    cells = compose_ports({**base, "SSC_RUNTIME_DRIVER": "fake", "SSC_ENV": "test"}).cells
+    assert isinstance(cells, StaticCells)
+    assert isinstance(cells.cell.runtime, FakeRuntimeDriver)
+    assert compose_ports(base).cells is None
     assert isinstance(compose_ports(base).release_specs, BundleReleaseSpecs)
     with pytest.raises(CompositionError, match="unknown"):
-        runtime_driver_from_env({"SSC_RUNTIME_DRIVER": "cloudrun"})
-    for url in ("", "http://agent.test"):
-        with pytest.raises(CompositionError, match="SSC_CELL_AGENT_URL"):
-            runtime_driver_from_env({"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": url})
-    agent = runtime_driver_from_env(
-        {"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_CELL_AGENT_URL": "https://agent.test"}
-    )
-    assert isinstance(agent, CellAgentDriver)
-    refuse_fakes(Ports(engine=ports.engine, runtime_driver=agent), {"SSC_ENV": "prod"})
+        cells_of({"SSC_RUNTIME_DRIVER": "cloudrun"}, ports.engine)
+    agent = {"SSC_RUNTIME_DRIVER": "cell_agent"}
+    with pytest.raises(CompositionError, match="SSC_CELLS"):
+        cells_of(agent, ports.engine)
+    jwks = {"keys": [{"kid": "k1", "kty": "EC", "crv": "P-256", "x": "AA", "y": "AA"}]}
+    cells_env = json.dumps({"cellabcd01": {"identity_jwks": jwks}})
+    router = cells_of({**agent, "SSC_CELLS": cells_env}, ports.engine)
+    assert isinstance(router, CellRouter)
+    refuse_fakes(Ports(engine=ports.engine, cells=router), {"SSC_ENV": "prod"})
 
 
 def test_worker_refuses_to_start_without_a_database() -> None:

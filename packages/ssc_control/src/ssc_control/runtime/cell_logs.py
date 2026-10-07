@@ -23,6 +23,7 @@ from ssc_shared.logs import (
     query_to_wire,
 )
 from ssc_shared.redaction import redact
+from ssc_shared.runtime import ORG_HEADER, check_org
 
 CALL_TIMEOUT_SECONDS: Final = 60.0
 _HTTP_TOO_MANY: Final = 429
@@ -33,10 +34,16 @@ class AgentCellLogs(CellLogs):
     """``CellLogs`` through one cell's agent, with an ID token for its URL on every call."""
 
     def __init__(
-        self, agent_url: str, id_tokens: IdTokens, *, client: httpx2.AsyncClient | None = None
+        self,
+        agent_url: str,
+        id_tokens: IdTokens,
+        *,
+        org_id: str,
+        client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._url = agent_url.rstrip("/")
         self._id_tokens = id_tokens
+        self._org = check_org(org_id)
         self._client = client or httpx2.AsyncClient(timeout=CALL_TIMEOUT_SECONDS)
 
     async def read(
@@ -80,7 +87,7 @@ class AgentCellLogs(CellLogs):
             response = await self._client.post(
                 f"{self._url}/v1/logs/{method}",
                 json=payload,
-                headers={"Authorization": f"Bearer {token}"},
+                headers={"Authorization": f"Bearer {token}", ORG_HEADER: self._org},
             )
         except httpx2.HTTPError as exc:
             raise LogsError(f"cell agent {method}: {type(exc).__name__}") from None
