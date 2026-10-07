@@ -1327,7 +1327,10 @@ class Cell:
         (SSC-046), encrypted with the cell's own key ``bucket``. Under ``files/<env_id>/`` only
         ``ssc-data``, the file broker, reads and writes, and the agent deletes an environment's
         files when it is gone; a replaced or deleted file stays a noncurrent version for
-        ``NONCURRENT_FILE_DAYS``."""
+        ``NONCURRENT_FILE_DAYS``. Source bundles sit under ``bundles/`` (decision 015): the
+        control plane's API, which signs their upload and download URLs as itself, may read
+        and write there alone (``bucket-control-api-bundles``); the worker builds from them and
+        collects them with its bucket-wide grant."""
         cfg = self.cfg
         self.bucket_ = gcp.storage.Bucket(
             "bucket",
@@ -1363,6 +1366,18 @@ class Cell:
             gcp.storage.BucketIAMMember(
                 name, bucket=self.bucket_.name, role=role, member=member, opts=self._o()
             )
+        bundles = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/bundles/"
+        gcp.storage.BucketIAMMember(
+            "bucket-control-api-bundles",
+            bucket=self.bucket_.name,
+            role="roles/storage.objectUser",
+            member=pulumi.Output.concat("serviceAccount:", self.control_sa),
+            condition=gcp.storage.BucketIAMMemberConditionArgs(
+                title="only source bundles",
+                expression=f'resource.name.startsWith("{bundles}")',
+            ),
+            opts=self._o(),
+        )
         snapshots = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/snapshots/"
         for name, account in (("bucket-data", self.data_sa), ("bucket-proxy", self.proxy_sa)):
             gcp.storage.BucketIAMMember(

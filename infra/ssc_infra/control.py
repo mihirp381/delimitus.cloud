@@ -281,7 +281,8 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
 def api_env(
     cfg: ControlConfig, stage: n.Stage, signer: pulumi.Input[str]
 ) -> dict[str, pulumi.Input[str]]:
-    """What ``api.settings.Settings.from_env`` reads, beside its secrets."""
+    """What ``api.settings.Settings.from_env`` reads, beside its secrets. Bundles go to each
+    org's cell bucket (``SSC_CELL_BUCKET_TEMPLATE``, decision 015), signed as ``signer``."""
     env: dict[str, pulumi.Input[str]] = {
         "SSC_ENV": stage,
         "SSC_API_ISSUER": n.origin(n.AUTH_HOST),
@@ -289,6 +290,7 @@ def api_env(
         "SSC_API_USER_AUDIENCE": n.origin(n.API_HOST),
         "SSC_API_PUBLIC_URL": n.origin(n.API_HOST),
         "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
+        "SSC_CELL_BUCKET_TEMPLATE": n.CELL_BUCKET_TEMPLATE,
         **_blob_env(stage, signer),
     }
     if cfg.cells and cfg.serves_cells(stage):

@@ -51,6 +51,9 @@ class Settings:
     """``SSC_BLOB_BUCKET``: the ``gcs`` store's bucket."""
     blob_signer: str = ""
     """``SSC_BLOB_SIGNER``: the service account the ``gcs`` store signs URLs as (IAM signBlob)."""
+    cell_bucket_template: str = ""
+    """``SSC_CELL_BUCKET_TEMPLATE`` (``storage.cell_stores``): each org's bundles go to its
+    cell's bucket, URLs signed as ``blob_signer`` (decision 015). Empty: the blob store."""
     bundle_max_bytes: int = 100 * MIB
     bundle_max_unpacked_bytes: int = 500 * MIB
     bundle_max_files: int = 20_000
@@ -99,6 +102,7 @@ class Settings:
             blob_signing_kid=e.get("SSC_BLOB_SIGNING_KID", ""),
             blob_bucket=e.get("SSC_BLOB_BUCKET", ""),
             blob_signer=e.get("SSC_BLOB_SIGNER", ""),
+            cell_bucket_template=e.get("SSC_CELL_BUCKET_TEMPLATE", ""),
             bundle_max_bytes=int(e.get("SSC_BUNDLE_MAX_BYTES", str(100 * MIB))),
             bundle_max_unpacked_bytes=int(e.get("SSC_BUNDLE_MAX_UNPACKED_BYTES", str(500 * MIB))),
             bundle_max_files=int(e.get("SSC_BUNDLE_MAX_FILES", "20000")),

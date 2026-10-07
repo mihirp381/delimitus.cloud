@@ -258,6 +258,7 @@ def test_every_setting_of_the_api_is_wired(released: list[Declared]) -> None:
             "SSC_BLOB_BACKEND": "gcs",
             "SSC_BLOB_BUCKET": f"ssc-control-{stage}-blobs",
             "SSC_BLOB_SIGNER": email(naming.CONTROL_SA, stage),
+            "SSC_CELL_BUCKET_TEMPLATE": "ssc-c-{cell}-cell",
             **cell,
         }
         assert secrets == {"SSC_DATABASE_DSN", "SSC_METRICS_KEY"}

@@ -7713,6 +7713,16 @@
               }
             },
             "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CELL_UNAVAILABLE`"
           }
         },
         "summary": "Create Bundle",
@@ -7946,6 +7956,16 @@
               }
             },
             "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CELL_UNAVAILABLE`"
           }
         },
         "summary": "Complete Bundle",

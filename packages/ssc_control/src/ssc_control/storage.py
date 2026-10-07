@@ -7,13 +7,14 @@ readers in step.
 
 ``none`` (the default) means no store. ``fs`` is the development store and is refused unless
 ``SSC_ENV`` is ``dev`` or ``test``. ``gcs`` is the bucket ``SSC_BLOB_BUCKET``, whose URLs are
-signed through IAM ``signBlob`` as ``SSC_BLOB_SIGNER`` (decision 015): one bucket until placement
-(which cell holds an org) has its ticket.
+signed through IAM ``signBlob`` as ``SSC_BLOB_SIGNER`` (decision 015).
 
 ``cell_stores_from_env`` is the other store family (SSC-013): one bucket per customer cell,
-named by ``SSC_CELL_BUCKET_TEMPLATE`` with ``{cell}`` standing for the org's cell label. Access
-snapshots go there, so a cell reads its rules from its own project, and so do the org's audit
-anchors (decision 012). ``org_store`` makes that choice for one org, for both.
+named by ``SSC_CELL_BUCKET_TEMPLATE`` with ``{cell}`` standing for the org's cell label, whose
+URLs are signed as ``SSC_BLOB_SIGNER`` too. Access snapshots go there, so a cell reads its rules
+from its own project, and so do the org's audit anchors (decision 012) and its source bundles
+(decision 015 amendment), so app source never rests in the control plane. ``org_store`` and
+``org_bundle_store`` make that choice for one org.
 """
 
 import base64
@@ -150,11 +151,23 @@ def _gcs_store(name: str) -> BlobStore:
     return GcsBlobStore(bucket_of(name))
 
 
-def cell_stores(template: str, *, bucket: Callable[[str], BlobStore] | None = None) -> CellStores:
-    """Stores for ``template`` (one ``{cell}``), built once per label. No I/O."""
+def _signed_gcs_store(signer: str) -> Callable[[str], BlobStore]:
+    def make(name: str) -> BlobStore:
+        return GcsBlobStore(bucket_of(name), signer=IamSigner(signer))
+
+    return make
+
+
+def cell_stores(
+    template: str, *, bucket: Callable[[str], BlobStore] | None = None, signer: str = ""
+) -> CellStores:
+    """Stores for ``template`` (one ``{cell}``), built once per label, their URLs signed as
+    ``signer`` (none without it: such a store signs nothing). No I/O."""
     if template.count(CELL_PLACEHOLDER) != 1:
         raise StorageConfigError(f"{CELL_BUCKET_ENV} needs exactly one {CELL_PLACEHOLDER}")
-    make = bucket or _gcs_store
+    if signer and not _SERVICE_ACCOUNT.fullmatch(signer):
+        raise StorageConfigError("SSC_BLOB_SIGNER must be a service account email")
+    make = bucket or (_signed_gcs_store(signer) if signer else _gcs_store)
     built: dict[str, BlobStore] = {}
 
     def store(cell_label: str) -> BlobStore:
@@ -167,9 +180,10 @@ def cell_stores(template: str, *, bucket: Callable[[str], BlobStore] | None = No
 
 
 def cell_stores_from_env(env: Mapping[str, str]) -> CellStores | None:
-    """``SSC_CELL_BUCKET_TEMPLATE``, or None when it is unset."""
+    """``SSC_CELL_BUCKET_TEMPLATE``, signed as ``SSC_BLOB_SIGNER`` when it is set; None when
+    the template is unset."""
     template = env.get(CELL_BUCKET_ENV, "")
-    return cell_stores(template) if template else None
+    return cell_stores(template, signer=env.get("SSC_BLOB_SIGNER", "")) if template else None
 
 
 async def org_store(
@@ -186,3 +200,17 @@ async def org_store(
     async with bound_org(engine, org_id) as conn:
         label = (await conn.execute(_CELL_LABEL, {"org": org_id})).scalar_one()
     return cell_stores(str(label))
+
+
+async def org_bundle_store(
+    engine: AsyncEngine,
+    org_id: str,
+    *,
+    blob_store: BlobStore | None,
+    cell_stores: CellStores | None,
+) -> BlobStore | None:
+    """Where the org's source bundles are written, signed, read and collected: its cell's
+    bucket when ``cell_stores`` is set, so nothing writes ``bundles/`` to the control store;
+    else the one blob store (development and tests; None when neither is configured). The
+    keys are the same in both (``deploy.bundles.bundle_key``)."""
+    return await org_store(engine, org_id, blob_store=blob_store, cell_stores=cell_stores)

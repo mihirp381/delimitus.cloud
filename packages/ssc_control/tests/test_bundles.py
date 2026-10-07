@@ -54,7 +54,7 @@ from ssc_contracts.manifest import Manifest, load_manifest
 from ssc_control import storage
 from ssc_control.api import Settings, create_app
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
-from ssc_control.api.routes.blobs import blob_store_for
+from ssc_control.api.routes.blobs import blob_store_for, cell_stores_for
 from ssc_control.db import NewOrg, bind_org_sync, bound_org, create_org, make_engine
 from ssc_control.deploy.bundle_gc import GRACE, LOCK_CLASS, Collected, collect_org
 from ssc_control.deploy.bundles import bundle_key
@@ -557,6 +557,17 @@ def test_settings_read_the_blob_and_bundle_environment() -> None:
     assert key not in repr(s)
     defaults = Settings.from_env({k: env[k] for k in list(env)[:3]})
     assert (defaults.environment, defaults.blob_backend) == ("prod", "none")
+    # Each org's bundles go to its cell's bucket, signed as SSC_BLOB_SIGNER (decision 015).
+    assert defaults.cell_bucket_template == ""
+    assert cell_stores_for(defaults) is None
+    signer = "ssc-control@ssc-control-prod.iam.gserviceaccount.com"
+    cells = Settings.from_env(
+        env | {"SSC_CELL_BUCKET_TEMPLATE": "ssc-c-{cell}-cell", "SSC_BLOB_SIGNER": signer}
+    )
+    assert cells.cell_bucket_template == "ssc-c-{cell}-cell"
+    assert cell_stores_for(cells) is not None
+    with pytest.raises(StorageConfigError):
+        cell_stores_for(replace(cells, cell_bucket_template="ssc-c-cell"))
     for bad in ("[]", '{"k": "not base64!"}'):
         with pytest.raises(ValueError):
             Settings.from_env(env | {"SSC_BLOB_SIGNING_KEYS": bad})

@@ -3,8 +3,9 @@
 The control plane holds no Cloud Build role in a cell, only invoker on its agent (decision 022),
 so each call is one POST to the agent's ``/v1/build/{start,poll}`` with a Google ID token, as
 ``runtime.cell_agent`` does for the runtime. ``start`` signs a 10-minute GET URL for the bundle
-in the control plane's blob store and hands it to the agent; the build's own identity holds no
-storage role, so it reads that one object and can list no bucket.
+in ``blob_store``, the org's own cell bucket in a deployment (``CellRouter``'s ``build_store``,
+the store ``storage.org_bundle_store`` names, decision 015), and hands it to the agent; the
+build's own identity holds no storage role, so it reads that one object and can list no bucket.
 """
 
 from datetime import timedelta

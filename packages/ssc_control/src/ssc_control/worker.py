@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
@@ -212,15 +212,19 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
 
 
 def cells_of(
-    env: Mapping[str, str], engine: AsyncEngine, blob_store: BlobStore | None = None
+    env: Mapping[str, str],
+    engine: AsyncEngine,
+    blob_store: BlobStore | None = None,
+    cell_stores: CellStores | None = None,
 ) -> CellPorts | None:
     """``SSC_RUNTIME_DRIVER`` and ``SSC_BUILD_DRIVER``. Both unset: no cell (the reconciler
     defers nothing, deployments fail with ``RUNTIME_UNAVAILABLE``, builds with
     ``BUILD_DRIVER_UNAVAILABLE``). ``fake``: one in-memory cell for every org, its runtime with
     in-memory app databases and egress, and the identity of ``SSC_IDENTITY_*``. ``cell_agent``:
     each org's own cell (``runtime.cells``), from ``SSC_CELLS``, through its agent with this
-    instance's ID token; a ``cell_agent`` build also needs the blob store, which it signs the
-    bundle's URL from and the build job analyses the bundle from (SSC-015)."""
+    instance's ID token; a ``cell_agent`` build also needs where the bundles are, which it signs
+    the bundle's URL from and the build job analyses the bundle from (SSC-015): each cell's own
+    bucket with ``cell_stores`` (decision 015 amendment), else the blob store."""
     runtime, build = env.get(RUNTIME_DRIVER_ENV, ""), env.get(BUILD_DRIVER_ENV, "")
     for name, value in ((RUNTIME_DRIVER_ENV, runtime), (BUILD_DRIVER_ENV, build)):
         if value not in DRIVERS:
@@ -231,8 +235,10 @@ def cells_of(
                 f"{BUILD_DRIVER_ENV}=cell_agent needs {RUNTIME_DRIVER_ENV}=cell_agent, and "
                 "the reverse allows no fake builder"
             )
-        if build == CELL_AGENT and blob_store is None:
-            raise CompositionError(f"{BUILD_DRIVER_ENV}=cell_agent needs SSC_BLOB_* set")
+        if build == CELL_AGENT and blob_store is None and cell_stores is None:
+            raise CompositionError(
+                f"{BUILD_DRIVER_ENV}=cell_agent needs SSC_CELL_BUCKET_TEMPLATE or SSC_BLOB_* set"
+            )
         domain = apps_domain_from_env(env)
         try:
             cells = cells_from_env(env, domain)
@@ -241,13 +247,16 @@ def cells_of(
         if not cells:
             raise CompositionError(f"{RUNTIME_DRIVER_ENV}=cell_agent needs {CELLS_ENV}")
         store = blob_store
+        bundles: Callable[[str], BlobStore] | None = cell_stores
+        if bundles is None and store is not None:
+            bundles = lambda _label: store  # noqa: E731
         return CellRouter(
             engine,
             cells,
             apps_domain=domain,
             id_tokens=MetadataIdTokens(),
             grant_tokens=MetadataIdTokens(cache=False),
-            build_store=(lambda _label: store) if store is not None and build else None,
+            build_store=bundles if build else None,
         )
     if not (runtime or build):
         return None
@@ -485,7 +494,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
     console_url = console_url_from_env(env)
     ports = Ports(
         engine=engine,
-        cells=cells_of(env, engine, blob_store),
+        cells=cells_of(env, engine, blob_store, cell_stores),
         release_specs=BundleReleaseSpecs(),
         blob_store=blob_store,
         cell_stores=cell_stores,

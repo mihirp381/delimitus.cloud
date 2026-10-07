@@ -1,6 +1,6 @@
 """What one running API process holds: settings, the engine, the verifier, the limiter, the
-metrics recorder, the blob store, the production gate, the timers, each org's cell (its secret
-grants, app databases, logs and egress proxy) and the GitHub App."""
+metrics recorder, the blob store and the cell buckets, the production gate, the timers, each
+org's cell (its secret grants, app databases, logs and egress proxy) and the GitHub App."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ssc_control.api.ratelimit import RateLimiter
     from ssc_control.api.settings import Settings
     from ssc_control.github.client import GitHubApp
+    from ssc_control.storage import CellStores
     from ssc_shared.blobstore import BlobStore
 
 
@@ -34,7 +35,10 @@ class Runtime:
     owns_engine: bool
     metrics: MetricsPort = field(default_factory=NullMetricsPort)
     blob_store: BlobStore | None = None
-    """Where bundles go; ``None`` when ``blob_backend`` is ``none``."""
+    """Where bundles go without ``cell_stores``; ``None`` when ``blob_backend`` is ``none``."""
+    cell_stores: CellStores | None = None
+    """Each cell's bucket, where its org's bundles go (``storage.org_bundle_store``, decision
+    015); ``None`` without ``SSC_CELL_BUCKET_TEMPLATE``."""
     prod_gate: ProdGate = field(default_factory=approvals_prod_gate)
     """Checked when a ``prod`` deployment is posted; the deploy job checks it again."""
     timers: TimersPort = field(default_factory=NullTimersPort)

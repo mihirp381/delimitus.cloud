@@ -4,7 +4,8 @@ the API defers them by name (``deploy.tasks``).
 ``run_build`` has one job per build (``queueing_lock`` ``bld:<id>``) and defers its own next
 poll. ``run_deployment`` (``dep:<id>``) takes the environment's lock, like every job that calls
 the runtime driver for that environment. ``collect_bundles`` runs hourly and deletes the bundle
-objects ``deploy.bundle_gc`` finds unusable; with no blob store it does nothing.
+objects ``deploy.bundle_gc`` finds unusable, in each org's cell bucket when ``Ports.cell_stores``
+is set, else in the blob store; with neither it does nothing.
 """
 
 from typing import Final
@@ -38,9 +39,14 @@ def blueprint() -> Blueprint:
         """Delete stale pending and orphan bundle objects in every org; returns how many."""
         del timestamp
         ports = ports_of(context)
-        if ports.blob_store is None:
+        if ports.blob_store is None and ports.cell_stores is None:
             return 0
-        collected = await bundle_gc.collect_all(ports.engine, ports.blob_store, now=ports.clock())
+        collected = await bundle_gc.collect_all(
+            ports.engine,
+            blob_store=ports.blob_store,
+            cell_stores=ports.cell_stores,
+            now=ports.clock(),
+        )
         return collected.deleted
 
     return bp

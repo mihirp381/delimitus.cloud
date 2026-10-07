@@ -55,6 +55,7 @@ from ssc_control.deploy.bundles import analyze_stored, bundle_key
 from ssc_control.deploy.releases import NewRelease, allocate_and_insert
 from ssc_control.deploy.tasks import defer_build
 from ssc_control.runtime.cells import CELL_UNAVAILABLE, CellUnavailableError
+from ssc_control.storage import org_bundle_store
 from ssc_control.worker_ports import Ports
 from ssc_shared.canonical import manifest_digest
 
@@ -260,8 +261,12 @@ async def _check_source(
     """Analyse the bundle before the builder is first called: the build with its framework and
     migrations and the request with the system packages to install, a refusal, or None when the
     bundle could not be read (try again later)."""
-    store = ports.blob_store
-    if store is None or build.driver_ref is not None:
+    if build.driver_ref is not None:
+        return build, request
+    store = await org_bundle_store(
+        ports.engine, org_id, blob_store=ports.blob_store, cell_stores=ports.cell_stores
+    )
+    if store is None:
         return build, request
     try:
         found = await analyze_stored(store, request.bundle_key, request.manifest)

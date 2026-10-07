@@ -99,7 +99,7 @@ from ssc_contracts.audit import ActorKind
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import Manifest
-from ssc_control import worker
+from ssc_control import storage, worker
 from ssc_control.api import Settings, create_app
 from ssc_control.api.dberrors import classify
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
@@ -1673,6 +1673,9 @@ def test_the_worker_registers_the_deploy_tasks_and_ports() -> None:
     router = worker.cells_of(agent, engine, store)
     assert isinstance(router, CellRouter)
     assert router.labels == {"cellabcd01"}
+    # Each cell's own bucket is enough: its bundles are signed from there (decision 015).
+    buckets = storage.cell_stores("cells-{cell}", bucket=lambda _name: store)
+    assert isinstance(worker.cells_of(agent, engine, None, buckets), CellRouter)
     key = base64.b64encode(MASTER).decode()
     assert not isinstance(compose_ports({**base, "SSC_METRICS_KEY": key}).metrics, NullMetricsPort)
     with pytest.raises(CompositionError, match="base64"):

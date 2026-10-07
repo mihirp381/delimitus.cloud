@@ -1234,7 +1234,7 @@ def test_only_the_control_plane_invokes_the_cell_agent(cell_a: list[Declared]) -
 
 def test_the_control_plane_reads_and_writes_the_cell_bucket(cell_a: list[Declared]) -> None:
     """Snapshots and audit anchors go to the cell bucket from the worker's jobs (SSC-064,
-    SSC-012); the API never touches it, so it holds no grant there."""
+    SSC-012); the API reaches only its ``bundles/`` (decision 015)."""
     grants = {
         d.name: (d.inputs["member"], d.inputs["role"])
         for d in cell_a
@@ -1246,7 +1246,34 @@ def test_the_control_plane_reads_and_writes_the_cell_bucket(cell_a: list[Declare
             f"serviceAccount:{mockcloud.WORKERS['staging']}",
             "roles/storage.objectUser",
         ),
+        "bucket-control-api-bundles": (
+            f"serviceAccount:{mockcloud.CONTROL['staging']}",
+            "roles/storage.objectUser",
+        ),
     }
+
+
+def test_only_the_api_gains_the_bundles_prefix(cell_a: list[Declared]) -> None:
+    """Source bundles (decision 015): the API signs their URLs as itself, so it reads and
+    writes ``bundles/`` and nothing else of the bucket. Every other conditioned grant names a
+    prefix of its own, and the cell's build account holds none: no cell account gains
+    ``bundles/``. (The gateway and the agent still read the whole bucket; narrowing them is a
+    follow-up.)"""
+    bound = [d for d in cell_a if d.type == "gcp:storage/bucketIAMMember:BucketIAMMember"]
+    bundles = f"projects/_/buckets/{naming.cell_bucket(A)}/objects/bundles/"
+    api = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-control-api-bundles")
+    assert api.inputs["condition"]["expression"] == f'resource.name.startsWith("{bundles}")'
+    assert [d.name for d in bound if "bundles/" in str(d.inputs.get("condition", ""))] == [
+        "bucket-control-api-bundles"
+    ]
+    project = naming.cell_project(A)
+    unconditioned = {d.name for d in bound if "condition" not in d.inputs}
+    assert unconditioned == {"bucket-control-worker", "bucket-gateway", "bucket-agent"}
+    for account in ("ssc-data", "ssc-proxy", "ssc-build"):
+        member = f"serviceAccount:{naming.sa_email(account, project)}"
+        held = [d for d in bound if d.inputs["member"] == member]
+        assert all("condition" in d.inputs for d in held)
+        assert all("bundles/" not in str(d.inputs["condition"]) for d in held)
 
 
 def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Declared]) -> None:
@@ -1283,6 +1310,10 @@ def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Decl
     assert writers == {
         "bucket-control-worker": (
             f"serviceAccount:{mockcloud.WORKERS['staging']}",
+            "roles/storage.objectUser",
+        ),
+        "bucket-control-api-bundles": (
+            f"serviceAccount:{mockcloud.CONTROL['staging']}",
             "roles/storage.objectUser",
         ),
         "bucket-data-files": (data, "roles/storage.objectUser"),

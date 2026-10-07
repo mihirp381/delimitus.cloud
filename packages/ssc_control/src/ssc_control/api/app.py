@@ -15,7 +15,7 @@ from ssc_control.api.idempotency import REPLAYED_HEADER, Replay
 from ssc_control.api.mcp.server import install_mcp
 from ssc_control.api.problems import REQUEST_ID_HEADER, RequestIdMiddleware, request_id_of
 from ssc_control.api.ratelimit import RateLimiter
-from ssc_control.api.routes.blobs import blob_store_for, check_fs_allowed
+from ssc_control.api.routes.blobs import blob_store_for, cell_stores_for, check_fs_allowed
 from ssc_control.api.routes.blobs import router as blobs_router
 from ssc_control.api.routes.internal import router as internal_router
 from ssc_control.api.routes.v1 import router as v1_router
@@ -26,6 +26,7 @@ from ssc_control.github.client import GitHubApp
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.cell_agent import MetadataIdTokens
 from ssc_control.runtime.cells import CellPorts, CellRouter
+from ssc_control.storage import CellStores
 from ssc_control.timers.service import Timers
 from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
@@ -56,17 +57,20 @@ async def _on_replay(request: Request, exc: Exception) -> Response:
     )
 
 
-def create_app(
+def create_app(  # noqa: PLR0913  (the ports a test replaces, by keyword)
     settings: Settings,
     engine: AsyncEngine | None = None,
     blob_store: BlobStore | None = None,
     *,
     cells: CellPorts | None = None,
     github: GitHubApp | None = None,
+    cell_stores: CellStores | None = None,
 ) -> FastAPI:
     """The API. ``cells`` None reaches each org's cell through ``settings.cells`` (none when
-    that is empty); tests pass their own."""
+    that is empty), and ``cell_stores`` None its bucket through
+    ``settings.cell_bucket_template``; tests pass their own."""
     store = blob_store if blob_store is not None else blob_store_for(settings)
+    buckets = cell_stores if cell_stores is not None else cell_stores_for(settings)
     check_fs_allowed(store, settings)
     redaction.install()
     owned_github = github_for(settings) if github is None else None
@@ -113,6 +117,7 @@ def create_app(
         owns_engine=engine is None,
         metrics=metrics_port(settings.metrics_key),
         blob_store=store,
+        cell_stores=buckets,
         timers=Timers(),
         cells=cells if cells is not None else owned_cells,
         github=github if github is not None else owned_github,
