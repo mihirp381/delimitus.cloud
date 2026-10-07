@@ -17,6 +17,8 @@ import {
   KIND_TITLE,
   LIMIT_KEYS,
   LIMIT_TITLE,
+  ADVISORY_LIMITS,
+  ADVISORY_NOTE,
   type Limits,
   limitsText,
   limitsTyped,
@@ -182,9 +184,13 @@ function LimitFields({ typed, onChange }: { readonly typed: Typed; readonly onCh
   return (
     <fieldset className="choices">
       <legend>Limits, empty for none</legend>
+      <p className="muted">{ADVISORY_NOTE}</p>
       {LIMIT_KEYS.map((key) => (
         <label key={key} className="field" htmlFor={`${prefix}-${key}`}>
-          <span>{LIMIT_TITLE[key]}</span>
+          <span>
+            {LIMIT_TITLE[key]}
+            {ADVISORY_LIMITS.includes(key) ? ' (advisory)' : ''}
+          </span>
           <input
             id={`${prefix}-${key}`}
             inputMode="numeric"

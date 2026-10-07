@@ -76,5 +76,6 @@ A failure here never reaches a user: only the throwaway environment is granted. 
 ## Know before you rely on it
 
 - A user is inside a group ceiling when they are an active member of a listed group at the moment of the check. Nobody re-checks when directory membership changes later; a change to the ceiling or to the sharing does.
+- `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and up to ten run, so a grant can reach up to ten times them (decision 034). Say so to the data owner when they set them.
 - The ceiling is not enforced at the data gateway. Flagging is the signal; narrowing the audience or suspending the connection is the action.
 - Rolling back: `DELETE /v1/apps/<app>/environments/<env>/connections/finance` stops an environment reaching it; `{"status": "suspended"}` stops all of them.

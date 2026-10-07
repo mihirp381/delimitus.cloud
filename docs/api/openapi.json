@@ -2104,7 +2104,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Caps on every query. `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and the service runs up to ten, so a grant can reach up to ten times them (decision 034)."
           },
           "name": {
             "pattern": "^[a-z][a-z0-9-]{0,62}$",
@@ -2298,7 +2299,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Caps on every query. `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and the service runs up to ten, so a grant can reach up to ten times them (decision 034)."
           },
           "owner_user_id": {
             "anyOf": [
@@ -3371,7 +3373,7 @@
                 "type": "null"
               }
             ],
-            "description": "The caps this environment's queries have, inside the connection's."
+            "description": "The caps this environment's queries have, inside the connection's. Caps on every query. `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and the service runs up to ten, so a grant can reach up to ten times them (decision 034)."
           }
         },
         "title": "GrantBody",

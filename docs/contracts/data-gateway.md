@@ -126,7 +126,7 @@ Each limit is the minimum of the platform, the connection's `limits`, the grant'
 | `daily_rows` (per grant, UTC day) | 1,000,000 | |
 | `daily_bytes` (per grant, UTC day) | 1 GB | |
 
-A grant is one connection and one environment. Within the day's budget a result is cut at what is left (`daily_rows`, `daily_bytes`); with nothing left the query is refused. **v1 counts the budget and the slots per instance**: with several instances a grant can exceed them by up to that many times, at most 10 (the service's instance cap, `DATAGW_MAX` in `infra/ssc_infra/cell.py`), so 40 queries at once and 10,000,000 rows or 10 GB a day at the platform ceilings. A shared count needs storage the cell does not have yet.
+A grant is one connection and one environment. Within the day's budget a result is cut at what is left (`daily_rows`, `daily_bytes`); with nothing left the query is refused. **v1 counts the budget and the slots per instance**: with several instances a grant can exceed them by up to that many times, at most 10 (the service's instance cap, `DATAGW_MAX` in `infra/ssc_infra/cell.py`), so 40 queries at once and 10,000,000 rows or 10 GB a day at the platform ceilings. A shared count needs storage the cell does not have yet. For GA the three are called **advisory** wherever a customer meets them (the API's field descriptions, the console's limit fields, runbook ssc-052, the trust pack); `max_rows`, `max_bytes` and `timeout_ms` are exact (decision 034).
 
 ## Snapshot and kill switch
 

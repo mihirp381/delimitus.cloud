@@ -133,6 +133,12 @@ export const LIMIT_TITLE: Readonly<Record<keyof Limits, string>> = {
   daily_bytes: 'Bytes a day',
 };
 
+/** The limits each gateway instance counts for itself (decision 034): a grant can reach up to ten times them. */
+export const ADVISORY_LIMITS: readonly (keyof Limits)[] = ['concurrency', 'daily_rows', 'daily_bytes'];
+
+export const ADVISORY_NOTE =
+  'Rows per query, bytes per query and the timeout are exact. Queries at once, rows a day and bytes a day are advisory: each gateway instance counts its own, and up to ten run, so a busy app can reach up to ten times them.';
+
 export const LIMIT_KEYS = Object.keys(LIMIT_TITLE) as readonly (keyof Limits)[];
 
 /** The limits that are set, as "Rows per query 1000, Queries at once 4"; "None" otherwise. */

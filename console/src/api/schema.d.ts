@@ -2218,6 +2218,7 @@ export interface components {
              * @enum {string}
              */
             kind: "postgres" | "mysql" | "sqlserver" | "bigquery" | "snowflake" | "gsheets" | "gcs" | "s3" | "airtable" | "rest";
+            /** @description Caps on every query. `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and the service runs up to ten, so a grant can reach up to ten times them (decision 034). */
             limits?: components["schemas"]["SnapshotLimits"] | null;
             /** Name */
             name: string;
@@ -2282,12 +2283,13 @@ export interface components {
             ceiling?: components["schemas"]["CeilingDoc"] | null;
             /** Classification */
             classification?: ("internal" | "confidential" | "restricted") | null;
+            /** @description Caps on every query. `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and the service runs up to ten, so a grant can reach up to ten times them (decision 034). */
             limits?: components["schemas"]["SnapshotLimits"] | null;
             /** Owner User Id */
             owner_user_id?: string | null;
             /**
              * Setup Status
-             * @description `ready` once the runbook's first read worked.
+             * @description `ready` puts the connection in the snapshot, so the data gateway serves it to the environments granted it; a `pending` connection answers CONNECTION_NOT_GRANTED. Set it before the first read (runbook ssc-052, step 3); `pending` takes it out again.
              */
             setup_status?: ("pending" | "ready") | null;
             /**
@@ -2693,7 +2695,7 @@ export interface components {
         };
         /** GrantBody */
         GrantBody: {
-            /** @description The caps this environment's queries have, inside the connection's. */
+            /** @description The caps this environment's queries have, inside the connection's. Caps on every query. `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and the service runs up to ten, so a grant can reach up to ten times them (decision 034). */
             limits?: components["schemas"]["SnapshotLimits"] | null;
         };
         /**

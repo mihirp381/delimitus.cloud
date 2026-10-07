@@ -52,6 +52,13 @@ _ENVIRONMENT: Final = text(
 )
 
 
+LIMITS_DESCRIPTION = (
+    "Caps on every query. `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, "
+    "`daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, "
+    "and the service runs up to ten, so a grant can reach up to ten times them (decision 034)."
+)
+
+
 class SubjectDoc(Strict):
     kind: Literal["group", "user"]
     id: Annotated[str, StringConstraints(pattern=r"^(grp|usr)_[a-z0-9]{20}$")]
@@ -91,7 +98,7 @@ class ConnectionIn(Strict):
     allowed_schemas: list[Schema] = Field(
         default_factory=lambda: ["public"], min_length=1, max_length=50
     )
-    limits: SnapshotLimits | None = None
+    limits: SnapshotLimits | None = Field(default=None, description=LIMITS_DESCRIPTION)
     address: dict[str, Any] | None = Field(
         default=None,
         description="Where the source is, by kind: `{host, port?, database}` for `postgres`, "
@@ -142,7 +149,7 @@ class ConnectionPatch(Strict):
     classification: Classification | None = None
     ceiling: CeilingDoc | None = None
     allowed_schemas: list[Schema] | None = Field(default=None, min_length=1, max_length=50)
-    limits: SnapshotLimits | None = None
+    limits: SnapshotLimits | None = Field(default=None, description=LIMITS_DESCRIPTION)
     setup_status: Literal["pending", "ready"] | None = Field(
         default=None,
         description="`ready` puts the connection in the snapshot, so the data gateway serves it "
@@ -176,7 +183,8 @@ class ConnectionsOut(Strict):
 class GrantBody(Strict):
     limits: SnapshotLimits | None = Field(
         default=None,
-        description="The caps this environment's queries have, inside the connection's.",
+        description="The caps this environment's queries have, inside the connection's. "
+        + LIMITS_DESCRIPTION,
     )
 
 
