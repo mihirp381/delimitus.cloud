@@ -727,6 +727,25 @@ async def _fail(
     return "failed"
 
 
+_FAIL_STUCK = text(
+    "update ssc.deployment set state = 'failed', failure_code = :code, finished_at = now() "
+    "where org_id = :org and id = :id and state in ('pending', 'running')"
+)
+
+
+async def fail_stuck(conn: AsyncConnection, org_id: str, deployment_id: str, code: str) -> bool:
+    """Fail a ``pending`` or ``running`` deployment whose job keeps failing (``deploy.reaper``),
+    without calling the runtime; False when it had already ended."""
+    params = {"org": org_id, "id": deployment_id}
+    row = (await conn.execute(_LOAD, params)).first()
+    if row is None or (await conn.execute(_FAIL_STUCK, params | {"code": code})).rowcount == 0:
+        return False
+    dep = _deployment(deployment_id, row)
+    await _audit(conn, org_id, dep, _FAILED[dep.kind], state="failed", code=code)
+    log.info("deployment failed", extra={"deployment_id": dep.id, "code": code})
+    return True
+
+
 async def _audit(  # noqa: PLR0913  (keyword-only)
     conn: AsyncConnection,
     org_id: str,

@@ -6,13 +6,15 @@ poll. ``run_deployment`` (``dep:<id>``) takes the environment's lock, like every
 the runtime driver for that environment. ``collect_bundles`` runs hourly and deletes the bundle
 objects ``deploy.bundle_gc`` finds unusable, in each org's cell bucket when ``Ports.cell_stores``
 is set, else in the blob store; with neither it does nothing.
+``deployment_sweep`` runs every five minutes and defers again, or fails, a deployment whose job is
+gone (``deploy.reaper``).
 """
 
 from typing import Final
 
 from procrastinate import Blueprint, JobContext
 
-from ssc_control.deploy import builds, bundle_gc, deployments
+from ssc_control.deploy import builds, bundle_gc, deployments, reaper
 from ssc_control.worker_ports import ports_of
 
 GC_CRON: Final = "17 * * * *"
@@ -48,5 +50,14 @@ def blueprint() -> Blueprint:
             now=ports.clock(),
         )
         return collected.deleted
+
+    @bp.periodic(
+        cron=reaper.SWEEP_CRON, periodic_id="deployment_sweep", queueing_lock="deployment_sweep"
+    )
+    @bp.task(name="deployment_sweep", pass_context=True)
+    async def deployment_sweep(context: JobContext, timestamp: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        """Defer again, or fail, every deployment whose job is gone; returns how many."""
+        del timestamp
+        return await reaper.sweep(ports_of(context).engine)
 
     return bp

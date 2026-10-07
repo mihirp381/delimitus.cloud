@@ -55,6 +55,9 @@ FIXES: Final = {
     "again, tell an org admin.",
     "SNAPSHOT_UNCONFIRMED": "The platform did not confirm the new version in time. Nothing "
     "changed and the old version is still serving. Deploy again.",
+    "DEPLOYMENT_STALLED": "The platform failed to finish this deployment three times and "
+    "stopped trying. The old version is still serving. Deploy again; if it stalls again, quote "
+    "the operation id to support.",
     **FIX_ITS,
 }
 

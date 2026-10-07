@@ -117,7 +117,7 @@ from ssc_control.db import (
     upgrade,
 )
 from ssc_control.deferral import KILL_SWITCH_PRIORITY, MANUAL_TIMER_PRIORITY, ROLLBACK_PRIORITY
-from ssc_control.deploy import tasks
+from ssc_control.deploy import reaper, tasks
 from ssc_control.deploy.build_driver import (
     BUILD_TIMED_OUT,
     BuildStatus,
@@ -1680,3 +1680,108 @@ def test_the_worker_registers_the_deploy_tasks_and_ports() -> None:
     assert not isinstance(compose_ports({**base, "SSC_METRICS_KEY": key}).metrics, NullMetricsPort)
     with pytest.raises(CompositionError, match="base64"):
         compose_ports({**base, "SSC_METRICS_KEY": "not base64!"})
+
+
+# ── deployments whose job is gone (deploy.reaper) ────────────────────────────
+
+
+def end_jobs(dsn: str, queueing_lock: str, status: str) -> None:
+    """What a worker leaves when the job raised (``failed``) or the job is otherwise gone."""
+    with psycopg.connect(dsn) as conn:
+        conn.execute("set search_path to procrastinate")
+        conn.execute(
+            "update procrastinate_jobs set status = %s "
+            "where queueing_lock = %s and status in ('todo', 'doing')",
+            (status, queueing_lock),
+        )
+
+
+def waiting_jobs(dsn: str, queueing_lock: str) -> list[dict[str, Any]]:
+    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        return conn.execute(
+            "select task_name, lock, args from procrastinate.procrastinate_jobs "
+            "where queueing_lock = %s and status = 'todo'",
+            (queueing_lock,),
+        ).fetchall()
+
+
+async def sweep(b: Bench) -> int:
+    async with bound_org(b.ports.engine, b.w.org) as conn:
+        return await reaper.sweep_org(conn, b.w.org)
+
+
+async def test_a_deployment_whose_job_raised_is_run_again(b: Bench) -> None:
+    release = await build_release(b, b.w.preview)
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    lock = f"dep:{op}"
+    assert await sweep(b) == 0  # its job waits
+    take_job(b.dsn, lock)
+    assert await sweep(b) == 0  # its job runs
+    execute(b.dsn, b.w.org, "update ssc.deployment set state = 'running' where id = %s", op)
+    end_jobs(b.dsn, lock, "failed")
+    assert await sweep(b) == 1
+    assert waiting_jobs(b.dsn, lock) == [
+        {
+            "task_name": tasks.RUN_DEPLOYMENT,
+            "lock": f"env:{b.w.preview}",
+            "args": {"org_id": b.w.org, "deployment_id": op},
+        }
+    ]
+    assert await sweep(b) == 0
+    assert await run(b, op) == "healthy"
+    assert pointer(b, b.w.preview) == op
+
+
+async def test_a_deployment_that_keeps_failing_is_failed_and_frees_its_environment(
+    b: Bench,
+) -> None:
+    release = await build_release(b, b.w.preview)
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    lock = f"dep:{op}"
+    for _ in range(reaper.MAX_ATTEMPTS - 1):
+        end_jobs(b.dsn, lock, "failed")
+        assert await sweep(b) == 1
+    end_jobs(b.dsn, lock, "failed")
+    assert await sweep(b) == 1
+    assert waiting_jobs(b.dsn, lock) == []
+    out = operation(b, op)
+    assert (out["state"], out["failure_code"]) == ("failed", reaper.STALLED)
+    actions = [a["action"] for a in audit_of(b, op)]
+    assert actions == ["deploy.started", "deploy.failed"]
+    started, failed = audit_of(b, op)
+    assert [failed[k] for k in ("actor_kind", "actor_id")] == [
+        started[k] for k in ("actor_kind", "actor_id")
+    ]
+    assert await sweep(b) == 0
+    assert start_deploy(b, b.w.preview, release).status_code == 202
+    assert b.runtime.calls == []
+
+
+async def test_a_deployment_waiting_for_a_cell_resource_is_left_alone(b: Bench) -> None:
+    release = await build_release(b, b.w.preview)
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.cell_resource (org_id, resource, state, cause, actor_kind, actor_id, "
+        "started_at) values (%s, 'database', 'creating', 'deploy', 'user', %s, now()) "
+        "on conflict do nothing",
+        b.w.org,
+        b.w.admin,
+    )
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.cell_resource_waiter (org_id, resource, deployment_id) "
+        "values (%s, 'database', %s)",
+        b.w.org,
+        op,
+    )
+    end_jobs(b.dsn, f"dep:{op}", "succeeded")
+    assert await sweep(b) == 0
+
+
+def test_the_worker_runs_the_deployment_sweep() -> None:
+    app = worker.build_app("postgresql://ssc_app@localhost/ssc")
+    assert "deploy:deployment_sweep" in app.tasks
+    assert any(key[0] == "deploy:deployment_sweep" for key in app.periodic_registry.periodic_tasks)
