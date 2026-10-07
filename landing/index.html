@@ -951,11 +951,11 @@ table.tbl tr:last-child td { border-bottom: 0; }
         <summary>Where the numbers come from</summary>
         <p data-claim="econ-cloud">Cloud: Google Cloud list prices for us-central1, in US dollars, 730 hours a month, no free tiers and no discounts. A month costs $129.53 plus $9.86 for each app:</p>
         <ul data-claim="econ-cloud">
-          <li>HTTPS load balancer for company login, $18.25 ($0.025 an hour). Cloud Load Balancing pricing, fetched 2026-10-01.</li>
-          <li>Managed Postgres, smallest high-availability tier with point-in-time recovery, $102.02. Cloud SQL price list, fetched 2026-09-29.</li>
-          <li>A fixed outbound IP address, $4.67. Cloud NAT price list, fetched 2026-09-29.</li>
-          <li>Logs, 5 GB a month, $2.50. Secret store, 20 secrets, $1.23. Builds, 60 minutes, $0.36. Image registry, 5 GB, $0.50. Price lists fetched 2026-09-29.</li>
-          <li>Each app: one instance kept warm so the first visit is not slow (minimum instances 1; 1 vCPU, 512 MiB), $9.86: $6.57 for CPU and $3.29 for memory. Cloud Run pricing (cloud.google.com/run/pricing), idle minimum-instance rate, fetched 2026-10-01.</li>
+          <li>HTTPS load balancer for company login, $18.25 ($0.025 an hour). Cloud Load Balancing pricing, fetched 2026-10-07.</li>
+          <li>Managed Postgres, smallest high-availability tier with point-in-time recovery, $102.02. Cloud SQL price list, fetched 2026-10-07.</li>
+          <li>A fixed outbound IP address, $4.67. Cloud NAT price list, fetched 2026-10-07.</li>
+          <li>Logs, 5 GB a month, $2.50. Secret store, 20 secrets, $1.23. Builds, 60 minutes, $0.36. Image registry, 5 GB, $0.50. Price lists fetched 2026-10-07.</li>
+          <li>Each app: one instance kept warm so the first visit is not slow (minimum instances 1; 1 vCPU, 512 MiB), $9.86: $6.57 for CPU and $3.29 for memory. Cloud Run pricing (cloud.google.com/run/pricing), idle minimum-instance rate, fetched 2026-10-07.</li>
         </ul>
         <p data-claim="econ-labour">IT rate: $47.66 an hour, the median pay of network and computer systems administrators (US Bureau of Labor Statistics, 2025), times 1.43 for benefits, because wages are 70.0% of what private employers pay per hour worked (BLS Employer Costs for Employee Compensation, June 2026). That is $68.15; the default rounds it to $68.</p>
         <p data-claim="econ-labour">Hours, our estimate: 80 to set up the cloud account, network, company login, build pipeline, logs and a security review; 12 to put each app live; 2 a month per app for updates, access changes and fixes.</p>

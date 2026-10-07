@@ -18,7 +18,7 @@ Update a row's status when its ticket closes; reword the page if a ticket is cut
 | `deploy` | Deploy from a folder (`ssc deploy`) or a GitHub push | SSC-014, SSC-015, SSC-016, SSC-022, SSC-023, SSC-047 | Partly done; SSC-015 and SSC-047 not started |
 | `agent` | A coding agent can run the deploy | SSC-048 | Partly done, control-plane half |
 | `langs` | Python and Node apps | SSC-003 (20 apps run), SSC-015 | SSC-003 done; SSC-015 not started |
-| `tools` | Claude Code, Codex, Cursor, Lovable, Replit | SSC-003 corpus: Cursor, Lovable, Replit | **Blocker:** record one Claude Code and one Codex run through the SSC-003 harness |
+| `tools` | Claude Code, Codex, Cursor, Lovable, Replit | SSC-003 corpus: Cursor, Lovable, Replit | Not yet recorded for Claude Code and Codex; published by the founder's choice (2026-10-06), runs in backlog SSC-099 |
 | `preview` | Preview, then production, each at its own address | SSC-042, decision 004 | Partly done, control-plane half |
 | `cloud` | Runs on Google Cloud | Decision 001 (SSC-001) | Decided |
 | `account` | In the US, each company in a cloud account of its own | Decisions 001 and 021, assumption A2 (SSC-013) | Done for the cell layout; region us-central1 |
@@ -43,8 +43,8 @@ Update a row's status when its ticket closes; reword the page if a ticket is cut
 | `no-public` | No public apps; every request needs a company login | Tickets section 8, SSC-085 out of MVP | Decided |
 | `no-domains` | No custom domains | Assumption A1, tickets section 8 | Decided |
 | `no-webhooks` | No inbound webhooks | Tickets question 7, SSC-085 | Decided |
-| `retention` | Form details kept 12 months, used for nothing else, deletion on request | SSC-065: bucket lifecycle rule (`infra/ssc_infra/landing.py`) | **Blocker:** `privacy@delimitus.com` must receive mail |
-| `econ-cloud` | Do-it-yourself cloud bill, $129.53 a month plus $9.86 an app; the app line assumes one instance kept warm (minimum instances 1) so the first visit is not slow, a choice the company makes, not ours | See below | **Blocker:** prices fetched 2026-09-29 to be fetched again and dated at publish |
+| `retention` | Form details kept 12 months, used for nothing else, deletion on request | SSC-065: bucket lifecycle rule (`infra/ssc_infra/landing.py`) | `privacy@delimitus.com` receives mail (forwarding set up by the founder, 2026-10-07) |
+| `econ-cloud` | Do-it-yourself cloud bill, $129.53 a month plus $9.86 an app; the app line assumes one instance kept warm (minimum instances 1) so the first visit is not slow, a choice the company makes, not ours | See below | Prices fetched again 2026-10-07 from the Cloud Billing Catalog API: every unit price unchanged, so every figure stands |
 | `econ-labour` | IT rate $68 an hour; hours are our estimate | See below | Hours are labelled "our estimate" |
 
 ## Economics sources
@@ -53,15 +53,17 @@ Google Cloud list prices, us-central1, USD, 730 hours a month, no free tier, no 
 
 | Line | Monthly | Source | Fetched |
 |---|---|---|---|
-| External HTTPS load balancer, one forwarding rule, $0.025 an hour | $18.25 | cloud.google.com/vpc/network-pricing#lb | 2026-10-01 |
-| Cloud SQL Postgres, smallest high-availability tier with point-in-time recovery | $102.02 | `spikes/bakeoff/COST_SHEET.md` (Cloud SQL price list) | 2026-09-29 |
-| Static outbound IP for Cloud NAT | $4.67 | `spikes/bakeoff/COST_SHEET.md` (Cloud NAT price list) | 2026-09-29 |
-| Cloud Logging, 5 GB | $2.50 | `spikes/bakeoff/COST_SHEET.md` | 2026-09-29 |
-| Secret Manager, 20 secrets | $1.23 | `spikes/bakeoff/COST_SHEET.md` | 2026-09-29 |
-| Cloud Build, 60 minutes | $0.36 | `spikes/bakeoff/COST_SHEET.md` | 2026-09-29 |
-| Artifact Registry, 5 GB | $0.50 | `spikes/bakeoff/COST_SHEET.md` | 2026-09-29 |
+| External HTTPS load balancer, one forwarding rule, $0.025 an hour | $18.25 | cloud.google.com/vpc/network-pricing#lb | 2026-10-07 |
+| Cloud SQL Postgres, smallest high-availability tier with point-in-time recovery | $102.02 | `spikes/bakeoff/COST_SHEET.md` (Cloud SQL price list) | 2026-10-07 |
+| Static outbound IP for Cloud NAT | $4.67 | `spikes/bakeoff/COST_SHEET.md` (Cloud NAT price list) | 2026-10-07 |
+| Cloud Logging, 5 GB | $2.50 | `spikes/bakeoff/COST_SHEET.md` | 2026-10-07 |
+| Secret Manager, 20 secrets | $1.23 | `spikes/bakeoff/COST_SHEET.md` | 2026-10-07 |
+| Cloud Build, 60 minutes | $0.36 | `spikes/bakeoff/COST_SHEET.md` | 2026-10-07 |
+| Artifact Registry, 5 GB | $0.50 | `spikes/bakeoff/COST_SHEET.md` | 2026-10-07 |
 | **Fixed** | **$129.53** | | |
-| Each app: Cloud Run, 1 vCPU and 512 MiB, one instance kept warm (minimum instances 1) at the idle rate: $6.57 for CPU and $3.29 for memory over 730 hours | $9.86 | cloud.google.com/run/pricing; `spikes/bakeoff/RESULTS.md` | 2026-10-01 |
+| Each app: Cloud Run, 1 vCPU and 512 MiB, one instance kept warm (minimum instances 1) at the idle rate: $6.57 for CPU and $3.29 for memory over 730 hours | $9.86 | cloud.google.com/run/pricing; `spikes/bakeoff/RESULTS.md` | 2026-10-07 |
+
+Fetched again 2026-10-07 from the Cloud Billing Catalog API (`cloudbilling.googleapis.com/v1/services/<id>/skus`); each unit price matched the earlier figure: forwarding rule minimum $0.025/h (DEE3-C42E-3E4D); Cloud SQL for PostgreSQL regional vCPU $0.0826/h, RAM $0.014/GiB-h, standard storage $0.34/GiB-month (1912-86A6-9950, 9BE2-CB5B-66F8, F5EC-5814-93C3); Cloud NAT gateway uptime $0.0014/h and IP $0.005/h (32E2-4EFC-EF9F, 8515-9425-D2CE); log storage $0.50/GiB (143F-A1B0-E0BE); secret versions $0.06 a month and $0.03 per 10,000 accesses (7756-ADEF-84F4, EBA7-264F-2D2C); Cloud Build e2-standard-2 $0.006/min (A464-9020-6404); Artifact Registry $0.10/GiB-month (8502-299A-ABAF); Cloud Run minimum-instance CPU $0.0000025/vCPU-s and memory $0.0000025/GiB-s (7EBB-8579-2C98, 740D-08F2-7A11). Free tiers are left out, as above.
 
 Not on the page, by the moat rule: the cost sheet's gateway and egress-proxy lines, our own cost
 of a customer's cloud account, and our margin.
@@ -82,8 +84,8 @@ The calculator's formula and its test vectors are in `calculator_vectors.json`.
 
 ## Before publishing
 
-1. Record one Claude Code and one Codex app through the SSC-003 harness (`tools`).
-2. Fetch the 2026-09-29 prices again and update the dates on the page and above (`econ-cloud`).
-3. Make `privacy@delimitus.com` receive mail (`retention`).
-4. Founder sign-off on the copy and the calculator's default inputs.
+1. Record one Claude Code and one Codex app through the SSC-003 harness (`tools`). Moved to backlog SSC-099; the founder chose to publish first (2026-10-06).
+2. Fetch the 2026-09-29 prices again and update the dates on the page and above (`econ-cloud`). Done 2026-10-07: no price changed.
+3. Make `privacy@delimitus.com` receive mail (`retention`). Done 2026-10-07 (founder).
+4. Founder sign-off on the copy and the calculator's default inputs. Given 2026-10-06 ("publish the page").
 5. Apply the hosting from `main`, after `round-2` is merged: `landing: true` makes the account, bucket and alert; `landing_image` (a digest in the platform registry) puts the page on the control entry (decision 028).
