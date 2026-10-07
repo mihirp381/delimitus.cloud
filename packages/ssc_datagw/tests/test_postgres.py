@@ -24,6 +24,7 @@ from uuid import UUID
 import asyncpg  # pyright: ignore[reportMissingTypeStubs]
 import httpx2
 import pytest
+from connector_suite import CHECKS, Subject, conform
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -376,6 +377,43 @@ async def test_a_read_returns_typed_columns_and_one_row_past_the_cap(db: Db) -> 
         b"\x02",
         0.5,
     ]
+
+
+def subject(db: Db) -> Subject:
+    """The Postgres connector as the connector suite sees it (GA-5)."""
+    target = db.target()
+    nowhere = target.model_copy(update={"host": "127.0.0.1", "port": 9})
+    return Subject(
+        connector=PostgresConnector(target),
+        unreachable=PostgresConnector(nowhere, connect_seconds=2),
+        credential=ROLE_PASSWORD,
+        secrets=(target, nowhere),
+        read="SELECT id, amount, placed, at, ok, note FROM reporting.orders ORDER BY id",
+        read_columns={
+            "id": "integer",
+            "amount": "decimal",
+            "placed": "date",
+            "at": "timestamp",
+            "ok": "boolean",
+            "note": "string",
+        },
+        first_row=[1, "1.25", "2026-01-02", "2026-01-01T01:00:00+00:00", False, "note 1"],
+        writes=(
+            "DELETE FROM reporting.orders",
+            "SELECT 1; SELECT 2",
+            "CREATE TEMP TABLE t (x int)",
+        ),
+        bad="SELECT who FROM secret.payroll",
+        slow="SELECT pg_sleep(30)",
+        params=("SELECT id, note FROM reporting.orders WHERE id = $1", (3,), [3, "note 3"]),
+    )
+
+
+@pytest.mark.parametrize("check", CHECKS, ids=lambda c: c.__name__.removeprefix("check_"))
+async def test_the_postgres_connector_conforms(
+    db: Db, check: Callable[[Subject], Awaitable[None]]
+) -> None:
+    await conform(check, subject(db))
 
 
 async def test_a_read_of_fewer_rows_than_the_cap_returns_them_all(db: Db) -> None:

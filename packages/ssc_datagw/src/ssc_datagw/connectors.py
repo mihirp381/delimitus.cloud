@@ -15,17 +15,38 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Protocol, cast
+from typing import Final, Protocol, cast
 from uuid import UUID
 
 type Scalar = str | int | float | bool | None
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 
 
+PORTABLE_TYPES: Final = frozenset(
+    {
+        "string",
+        "integer",
+        "float",
+        "decimal",
+        "boolean",
+        "date",
+        "time",
+        "timestamp",
+        "interval",
+        "bytes",
+        "uuid",
+        "json",
+        "array",
+    }
+)
+"""Every ``Column.type`` a connector may answer (``docs/contracts/data-gateway.md``, Response).
+A source type that fits none is ``string``."""
+
+
 @dataclass(frozen=True, slots=True)
 class Column:
-    """``type`` is portable (``string``, ``integer``, ``decimal``, ``timestamp``, ...);
-    ``db_type`` is the database's own name for it."""
+    """``type`` is one of :data:`PORTABLE_TYPES` (``string``, ``integer``, ``decimal``,
+    ``timestamp``, ...); ``db_type`` is the database's own name for it."""
 
     name: str
     type: str

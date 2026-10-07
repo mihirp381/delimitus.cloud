@@ -7,7 +7,8 @@ from uuid import UUID
 
 import pytest
 
-from ssc_datagw.connectors import encoded_size, jsonable
+from ssc_datagw.connectors import PORTABLE_TYPES, encoded_size, jsonable
+from ssc_datagw.postgres import PORTABLE
 
 CASES = [
     (None, None),
@@ -41,3 +42,7 @@ def test_jsonable(value: object, expect: object) -> None:
 
 def test_the_size_is_the_compact_json_and_its_comma() -> None:
     assert encoded_size([1, "é"]) == len('[1,"é"]'.encode()) + 1
+
+
+def test_every_postgres_type_maps_to_a_portable_type() -> None:
+    assert set(PORTABLE.values()) | {"string", "array"} <= PORTABLE_TYPES
