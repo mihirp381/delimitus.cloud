@@ -5018,6 +5018,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `CELL_UNAVAILABLE` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     get_bundle_v1_apps__app_id__bundles__bundle_id__get: {
@@ -5176,6 +5185,15 @@ export interface operations {
             };
             /** @description `RATE_LIMITED` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `CELL_UNAVAILABLE` */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
