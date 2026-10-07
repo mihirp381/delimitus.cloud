@@ -93,7 +93,7 @@ GATEWAY_IMAGE = f"{naming.platform_registry()}/ssc-gateway@sha256:" + "f" * 64
 AGENT_IMAGE = "us-central1-docker.pkg.dev/ssc-c-testcell05/ssc-platform/agent@sha256:" + "a" * 64
 AGENT_ORG = "org_" + "b" * 20
 AGENT = {"agent_image": AGENT_IMAGE, "org_id": AGENT_ORG}
-"""The agent and the one org it serves (decision 029), without the gateway."""
+"""The agent and the one org it serves (decision 030), without the gateway."""
 INTAKE_ENV = {"SSC_CELL_PROJECT", "SSC_INTAKE_ORIGIN", "SSC_CONTROL_SA"}
 CONTROL_MEMBER = f"serviceAccount:{mockcloud.CONTROL['staging']}"
 POINT = "A" * 43
@@ -1057,7 +1057,7 @@ def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
 
 
 def test_the_agent_serves_one_org_set_without_the_gateway() -> None:
-    """Decision 029: the agent refuses every call for another org, so it needs ``org_id``,
+    """Decision 030: the agent refuses every call for another org, so it needs ``org_id``,
     which may be set before the gateway's other three."""
     with pytest.raises(ValueError, match="agent_image needs org_id"):
         run(naming.cell_stack("testcell05"), {"agent_image": AGENT_IMAGE})

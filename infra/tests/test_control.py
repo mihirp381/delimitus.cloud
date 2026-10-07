@@ -19,7 +19,7 @@ Ticket "done when" checks:
         test_every_setting_of_the_worker_is_wired, test_every_setting_of_the_auth_host_is_wired
   * api, auth and keys hosts with certificate and records
         -> test_the_public_hosts_are_on_one_load_balancer, test_keys_serves_each_cell_jwks
-  * every cell the control plane serves, as SSC_CELLS (decision 029)
+  * every cell the control plane serves, as SSC_CELLS (decision 030)
         -> test_the_cells_are_one_compact_setting, test_the_legacy_cell_is_a_one_cell_list,
         test_the_cells_are_validated, test_the_control_plane_names_cell_hosts_as_the_cells_do
 """
@@ -76,7 +76,7 @@ RETIRED = (
     "SSC_IDENTITY_JWKS",
     "SSC_IDENTITY_ISSUER",
 )
-"""The one cell's settings before ``SSC_CELLS`` (decision 029), set on no process now."""
+"""The one cell's settings before ``SSC_CELLS`` (decision 030), set on no process now."""
 TIMER_KID = "timer-202610"
 SERVICE = "gcp:cloudrunv2/service:Service"
 POOL = "gcp:cloudrunv2/workerPool:WorkerPool"

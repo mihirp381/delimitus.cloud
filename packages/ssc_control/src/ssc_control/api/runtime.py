@@ -40,7 +40,7 @@ class Runtime:
     timers: TimersPort = field(default_factory=NullTimersPort)
     """Resumes the schedules the kill switch paused when an app is enabled."""
     cells: CellPorts | None = None
-    """Each org's cell (decision 029): through its agent, secret grants (SSC-026), app database
+    """Each org's cell (decision 030): through its agent, secret grants (SSC-026), app database
     rotation and reads (SSC-040), app logs and health (SSC-024) and where its proxy is
     (SSC-053). ``None`` when no cell is configured, and each of those answers its own
     ``*_UNAVAILABLE`` (the console shows no proxy). See :func:`cell_of`."""

@@ -10,7 +10,7 @@
 
 Configuration, all required: ``SSC_PROBE_PROJECT`` (the cell project), ``SSC_PROBE_AGENT_URL``,
 ``SSC_PROBE_ORG_ID`` (the org the cell serves: the agent takes calls and specs for it alone,
-decision 029) and ``SSC_PROBE_DIGEST`` (the probe image in the cell's ``ssc-apps/apps``
+decision 030) and ``SSC_PROBE_DIGEST`` (the probe image in the cell's ``ssc-apps/apps``
 repository).
 ``SSC_CONTROL_SA`` names the identity the agent accepts; the run mints its ID tokens. Without
 it, an operator calls the agent as themselves. The caller's access token comes from

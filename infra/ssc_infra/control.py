@@ -103,7 +103,7 @@ KEYS_CACHE: Final = "public, max-age=300"
 RELEASE_SETTINGS: Final = ("control_image", "auth_jwks", "auth_signing_kid")
 CELLS: Final = "cells"
 LEGACY_CELL_SETTINGS: Final = ("cell_label", "cell_jwks")
-"""The one cell before ``cells`` (decision 029): read as a one-cell ``cells`` when that is
+"""The one cell before ``cells`` (decision 030): read as a one-cell ``cells`` when that is
 unset."""
 
 
@@ -139,7 +139,7 @@ class Cell:
 class ControlConfig:
     """``control_stages`` run the control plane; ``public_stage`` holds the public hosts.
     ``control_image``, ``auth_jwks`` and ``auth_signing_kid`` are the release, all or none;
-    ``cells`` every cell the control plane serves (decision 029). ``timer_key_id`` names the
+    ``cells`` every cell the control plane serves (decision 030). ``timer_key_id`` names the
     worker's timer key, whose PEM is the ``SSC_TIMER_SIGNING_KEY`` secret (SSC-041).
     ``landing`` builds delimitus.com's account, bucket and alert in the public stage's project
     (SSC-065); ``landing_image`` then puts the page behind the entry load balancer."""

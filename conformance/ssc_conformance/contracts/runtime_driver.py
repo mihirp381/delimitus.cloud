@@ -32,7 +32,7 @@ type Settle = Callable[[], Awaitable[None]]
 
 CONTRACT_ORG: Final = "org_contractcontract0001"
 """The org of every contract spec (``ssc-org``): a cell agent applies its own org's specs only
-(decision 029)."""
+(decision 030)."""
 
 
 @dataclass(frozen=True, slots=True)

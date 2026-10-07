@@ -1,4 +1,4 @@
-"""One agent serves one org (decision 029): a call without that org's ``X-SSC-Org``, or a spec
+"""One agent serves one org (decision 030): a call without that org's ``X-SSC-Org``, or a spec
 labelled for another org, is refused ``WRONG_CELL`` before anything in the cell changes, and
 ``/healthz`` stays open for the platform's probes."""
 

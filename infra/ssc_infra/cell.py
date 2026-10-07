@@ -108,7 +108,7 @@ PROXY_ADDRESS_ENV: Final = "SSC_PROXY_ADDRESS"
 OUTBOUND_IP_ENV: Final = "SSC_OUTBOUND_IP"
 BUCKET_ENV: Final = "SSC_CELL_BUCKET"
 ORG_ENV: Final = "SSC_ORG_ID"
-"""The one org the agent serves (``ssc_agent.__main__``, decision 029)."""
+"""The one org the agent serves (``ssc_agent.__main__``, decision 030)."""
 USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
 USAGE_SOURCE: Final = "monitoring"
 DATA_SA_ENV: Final = "SSC_DATA_SA"
@@ -334,7 +334,7 @@ def gateway_settings(
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """All four gateway settings or none (``infra/README.md``): the image pinned in the platform
     registry, the keyring as base64 KMS ciphertext, its public JWKS and the customer's org. The
-    org may be set alone, for the agent (decision 029)."""
+    org may be set alone, for the agent (decision 030)."""
     if org and not CUSTOMER_ORG.fullmatch(org):
         raise ValueError("org_id must be org_ followed by 20 lowercase letters or digits")
     if not (image or keyring or jwks):
@@ -355,7 +355,7 @@ def gateway_settings(
 
 def agent_settings(image: str | None, org: str | None) -> str | None:
     """``agent_image`` only with ``org_id``: the agent serves that org alone and refuses every
-    call that names another (decision 029)."""
+    call that names another (decision 030)."""
     if image and not org:
         raise ValueError("agent_image needs org_id, the one org the agent serves")
     return image or None
@@ -1762,7 +1762,7 @@ class Cell:
         ``HTTPS_PROXY`` secret, naming the proxy's reserved address, and tells the console the
         cell's fixed outbound address (SSC-053); both exist from onboarding. It deletes a gone
         environment's files from the cell bucket's ``files/`` (SSC-046). It serves ``org_id``
-        alone (``SSC_ORG_ID``) and refuses any call that names another org (decision 029)."""
+        alone (``SSC_ORG_ID``) and refuses any call that names another org (decision 030)."""
         tag_key, tag_value = self.connection_tag
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,

@@ -134,7 +134,7 @@ def test_the_runner_sets_exactly_its_flag_and_nothing_else(
         "probe": "true",
         "gateway_min": "1",
         "agent_image": "img@sha256:1",
-        "org_id": "org_" + "d" * 20,  # the agent serves one org (decision 029)
+        "org_id": "org_" + "d" * 20,  # the agent serves one org (decision 030)
     }
     outputs = {"config": _exported(applied, monkeypatch)["config"]}
     fake = FakePulumi(outputs)

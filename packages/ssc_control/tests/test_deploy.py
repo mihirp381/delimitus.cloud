@@ -911,7 +911,7 @@ async def test_a_revision_that_never_starts_times_out(b: Bench) -> None:
 
 def elsewhere(b: Bench) -> Ports:
     """The bench's ports with its one cell serving another org alone: the bench's org has no
-    cell this worker can reach (decision 029)."""
+    cell this worker can reach (decision 030)."""
     cell = OrgCell(label=STATIC_LABEL, runtime=b.runtime, build=b.builds)
     return replace(b.ports, cells=StaticCells(orgs={new_id("org"): cell}))
 

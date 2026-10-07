@@ -4,7 +4,7 @@ protocol (SSC-015), ``SecretCustody`` (SSC-026) and app databases (SSC-040), one
 Cloud Run lets only the control plane's service account invoke the agent (decision 022), so
 every request here already passed IAM. The agent still refuses any service or secret name that
 is not an SSC app's, because its own IAM cannot limit a create by name. Each agent serves one
-org (``SSC_ORG_ID``, decision 029): every call but ``/healthz`` must name it in ``X-SSC-Org``,
+org (``SSC_ORG_ID``, decision 030): every call but ``/healthz`` must name it in ``X-SSC-Org``,
 and ``apply`` takes only a spec labelled ``ssc-org`` with it; anything else is 403
 ``WRONG_CELL``, so a control plane that routed a call to the wrong cell changes nothing there.
 Secrets have one method,

@@ -1,4 +1,4 @@
-"""Decision 029: each org reaches its own cell, and only its own.
+"""Decision 030: each org reaches its own cell, and only its own.
 
 Ticket "done when" checks:
   * two orgs on two cells through one API and one worker, each call to its org's agent with
@@ -414,7 +414,7 @@ def test_the_legacy_variables_must_name_one_cell(changes: dict[str, str], proble
 
 
 def identity_before_placement(env: Mapping[str, str]) -> AppIdentity:
-    """``worker.app_identity_from_env`` as it was before decision 029, kept here verbatim (its
+    """``worker.app_identity_from_env`` as it was before decision 030, kept here verbatim (its
     error paths aside) so the identity every app's spec carries is pinned against it."""
     jwks, issuer = env["SSC_IDENTITY_JWKS"], env["SSC_IDENTITY_ISSUER"]
     parsed = json.loads(jwks)

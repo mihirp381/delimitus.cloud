@@ -1,4 +1,4 @@
-"""Placement: which cell holds an org, and the clients that reach it (decision 029).
+"""Placement: which cell holds an org, and the clients that reach it (decision 030).
 
 Every org has one cell, named by its opaque ``ssc.org.cell_label`` (revision 0011), and every
 cell has one agent, at ``hosts.agent_url(label, apps domain)``. ``SSC_CELLS`` says which cells

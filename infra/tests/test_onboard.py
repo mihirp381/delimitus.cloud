@@ -288,7 +288,7 @@ def test_the_late_settings_wait_for_step_4_and_the_keyring_is_never_printed(
     assert "stage=staging" in first
     assert "probe=true" in first
     assert "oncall_email=ops@example.com" in first
-    assert f"org_id={SETTINGS['org_id']}" in first  # the agent needs it (decision 029)
+    assert f"org_id={SETTINGS['org_id']}" in first  # the agent needs it (decision 030)
     second = " ".join(sets[1])
     assert f"gateway_image={GATEWAY_IMAGE}" in second
     assert "org_id=" not in second

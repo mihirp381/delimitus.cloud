@@ -2,7 +2,7 @@
 
 Configuration, all required and set by the cell stack: ``SSC_CELL_PROJECT``,
 ``SSC_CELL_REGION``, ``SSC_CELL_NETWORK``, ``SSC_CELL_SUBNETWORK``, ``SSC_IMAGE_REPOSITORY``,
-``SSC_GATEWAY_SA``, and ``SSC_ORG_ID``, the one org this cell serves (decision 029). Builds
+``SSC_GATEWAY_SA``, and ``SSC_ORG_ID``, the one org this cell serves (decision 030). Builds
 (SSC-015) need all of ``SSC_BUILD_SA``, ``SSC_BUILD_TOOLS_IMAGE`` and
 ``SSC_BUILD_FRONTEND_IMAGE``, or none, and then the agent refuses builds. Exits 2 when one is
 missing or malformed. Secrets (SSC-026) need nothing more: they live in the cell's project and

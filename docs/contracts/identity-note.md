@@ -41,7 +41,7 @@ No other claim is allowed; a note with an unknown claim is refused. Schedule not
 - The public half reaches each app inline, as a `data:` URL in `SSC_IDENTITY_KEYS_URL` (`data:application/json;base64,<JWKS>`). An app has no internet and cannot reach the gateway (SSC-027), so it never fetches keys, and verification never depends on the gateway being up. Pass the variable as `keys`; both helpers read a `data:` URL without a network call. Nothing public is stored in a cell bucket: cells are under public access prevention (SSC-095).
 - The operator makes the keyring and its JWKS once per cell with `python -m ssc_edge.keys` and sets the JWKS as the cell's `gateway_jwks` (`infra/README.md`); the cell stack exports it as `identity_jwks`. The gateway refuses to start when its keyring does not match it.
 - Code outside a cell may use a URL instead (`https://keys.delimitus.com/<cell label>/jwks.json`); the helpers fetch and cache it and refetch when a `kid` is unknown.
-- The control plane's worker sets both variables on every app from its org's cell in `SSC_CELLS`: the cell's `identity_jwks` and its label (SSC-018, decision 029).
+- The control plane's worker sets both variables on every app from its org's cell in `SSC_CELLS`: the cell's `identity_jwks` and its label (SSC-018, decision 030).
 - Rotation: publish the new key beside the old one and put both in that cell's `jwks` in the platform stack's `cells` (the worker's `SSC_CELLS`); the reconciler rolls every running app to a revision whose `SSC_IDENTITY_KEYS_URL` holds both. Then start signing with the new `kid`, and remove the old key after a day. The JWKS therefore holds one or two keys.
 
 ## Refusal codes

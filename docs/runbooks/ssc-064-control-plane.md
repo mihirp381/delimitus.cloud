@@ -69,7 +69,7 @@ pulumi config set --stack platform cells "$(jq -cn --arg label $LABEL \
   --arg jwks "$(pulumi stack output --stack c-$LABEL identity_jwks)" '[{label: $label, jwks: $jwks}]')"
 ```
 
-`cells` lists every cell this control plane serves (decision 029); add one `{label, jwks}` per cell. A stack that still has `cell_label` and `cell_jwks` works as one cell, but remove them before setting `cells`: both at once are refused.
+`cells` lists every cell this control plane serves (decision 030); add one `{label, jwks}` per cell. A stack that still has `cell_label` and `cell_jwks` works as one cell, but remove them before setting `cells`: both at once are refused.
 
 Leave `control_image`, `auth_jwks` and `auth_signing_kid` unset for now. Without them, every service runs the placeholder with no settings, the worker pool runs no instance and there is no migration job.
 
@@ -275,7 +275,7 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
    pulumi up --stack c-$LABEL
    ```
 
-   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 029) and refuses any other `WRONG_CELL`. The Okta org has no configured cell, so its deploys fail `CELL_UNAVAILABLE` until it gets one.
+   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 030) and refuses any other `WRONG_CELL`. The Okta org has no configured cell, so its deploys fail `CELL_UNAVAILABLE` until it gets one.
 
 5. Finish up:
 

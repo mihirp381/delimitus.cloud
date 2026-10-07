@@ -45,7 +45,7 @@ def _utcnow() -> datetime:
 class Ports:
     """``cells`` None means no cell is configured: the reconciler defers nothing, deployments
     fail with ``RUNTIME_UNAVAILABLE`` and builds with ``BUILD_DRIVER_UNAVAILABLE``. Set, it gives
-    each org its own cell's ports (``runtime.cells``, decision 029); an org whose cell is not
+    each org its own cell's ports (``runtime.cells``, decision 030); an org whose cell is not
     configured fails its jobs with ``CELL_UNAVAILABLE`` and is skipped by the ticks. Within a
     cell, an app database port of None fails the first deployment of an environment that
     declares Postgres with ``DATABASE_UNAVAILABLE`` (SSC-040), an identity of None gives apps no

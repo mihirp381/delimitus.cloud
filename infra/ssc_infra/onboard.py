@@ -7,7 +7,7 @@ It does what ``infra/README.md`` and the proof run's T1 and T3 do by hand, in or
 each step with the time it took and the total, so the operator sees where the minutes go. The
 settings file is a JSON object of stack settings (``gateway_image`` and ``org_id`` are required;
 the sealed keyring, its JWKS and ``probe_digest`` are produced here, never given). The org goes
-in the first apply, which the agent needs (decision 029); settings that apply cannot take yet
+in the first apply, which the agent needs (decision 030); settings that apply cannot take yet
 (the gateway's, and the images that need the gateway) are set in step 4.
 
 Each step is idempotent. ``--resume`` continues a stack that exists, skipping a step whose work
@@ -120,7 +120,7 @@ LATE_SETTINGS: Final = (
 )
 """Left out of the first apply, which refuses the gateway's settings unless all four are there and
 the images that need the gateway unless it is: they arrive in step 4 with the keyring. ``org_id``
-is not held: it may be set alone, and ``agent_image`` needs it (decision 029)."""
+is not held: it may be set alone, and ``agent_image`` needs it (decision 030)."""
 PROBE_IMAGE: Final = re.compile(
     r"[a-z0-9-]+-docker\.pkg\.dev/[a-z0-9-]+/[a-z0-9-]+/[a-z0-9._/-]+@(sha256:[0-9a-f]{64})"
 )
