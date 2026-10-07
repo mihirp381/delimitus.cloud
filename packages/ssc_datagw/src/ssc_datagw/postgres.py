@@ -20,6 +20,12 @@ superuser or may create objects or temporary tables is not the role the setup sc
 When the gateway cancels a read (its kill watch or its deadline), the connector ends the backend
 with ``pg_terminate_backend`` from a second connection as the same role, which may end only its
 own sessions, so a statement that ignores the cancel does not run on.
+
+A new instance's outbound calls through Cloud NAT may not connect for its first 20 to 37 s
+(``spikes/proofrun`` T6). For :data:`WARMUP_SECONDS` after the process starts, a connect that
+times out is tried again, each attempt cut to :data:`WARMUP_CONNECT_SECONDS`, until it connects
+or the gateway's deadline cancels the read. Any other failure, and a time-out after warm-up,
+is ``UpstreamUnavailableError`` at once.
 """
 
 import asyncio
@@ -31,6 +37,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, fields
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
+from time import monotonic
 from typing import Any, Final, cast
 from uuid import UUID
 
@@ -50,6 +57,10 @@ from ssc_datagw.connectors import (
 log = logging.getLogger(__name__)
 
 CONNECT_SECONDS: Final = 10.0
+WARMUP_SECONDS: Final = 60.0
+WARMUP_CONNECT_SECONDS: Final = 5.0
+WARMUP_PAUSE_SECONDS: Final = 1.0
+PROCESS_STARTED: Final = monotonic()
 KILL_SECONDS: Final = 5.0
 BATCH: Final = 500
 IDLE_IN_TRANSACTION_MS: Final = 60_000
@@ -253,6 +264,15 @@ def _failure(exc: Exception) -> Exception:
     return UpstreamUnavailableError(f"the connection failed: {name}")
 
 
+@dataclass(frozen=True, slots=True)
+class Warmup:
+    """When the process started, and the clock and pause the warm-up retry uses."""
+
+    started: float = PROCESS_STARTED
+    clock: Callable[[], float] = monotonic
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+
+
 class PostgresConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one Postgres connection. ``classify``
     replaces the classifier (tests that prove what the database refuses by itself)."""
@@ -263,14 +283,31 @@ class PostgresConnector:
         *,
         classify: Callable[[str], str | None] = refusal,
         connect_seconds: float = CONNECT_SECONDS,
+        warmup: Warmup | None = None,
     ) -> None:
         self._target = target
         self._tls = tls_context(target.ca)
         self._classify = classify
         self._connect_seconds = connect_seconds
+        self._warmup = warmup or Warmup()
         self._ending: set[asyncio.Task[None]] = set()
 
+    def _warming(self) -> bool:
+        return self._warmup.clock() - self._warmup.started < WARMUP_SECONDS
+
     async def _connect(self) -> Any:
+        while True:
+            warming = self._warming()
+            seconds = min(self._connect_seconds, WARMUP_CONNECT_SECONDS) if warming else None
+            try:
+                return await self._connect_once(seconds or self._connect_seconds)
+            except TimeoutError:
+                if not warming:
+                    raise UpstreamUnavailableError("cannot connect: TimeoutError") from None
+                log.info("connect timed out while the instance is new; trying again")
+            await self._warmup.sleep(WARMUP_PAUSE_SECONDS)
+
+    async def _connect_once(self, seconds: float) -> Any:
         t = self._target
         try:
             return await _CONNECT(
@@ -281,11 +318,13 @@ class PostgresConnector:
                 database=t.database,
                 ssl=self._tls,
                 direct_tls=False,
-                timeout=self._connect_seconds,
+                timeout=seconds,
                 statement_cache_size=0,
                 server_settings=SESSION,
             )
-        except (OSError, TimeoutError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
+        except TimeoutError:
+            raise
+        except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
             raise UpstreamUnavailableError(f"cannot connect: {type(exc).__name__}") from None
 
     async def _terminate(self, pid: int) -> None:

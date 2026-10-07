@@ -4,7 +4,8 @@ Limits compose by taking the minimum: the platform's ceiling, the connection's c
 caps and what the request asks for (or the default when it asks for nothing). A cap a layer
 leaves out puts no cap at that layer; 0 is a cap of zero, so a layer can only narrow, never widen
 (mined from Delimitus ``spec.limit-composition``). The daily budget and the concurrency slots
-are counted per grant, in this instance.
+are counted per grant, in this instance: with the service's ten instances at most, a grant can
+get up to ten times them (``docs/contracts/data-gateway.md``).
 """
 
 import asyncio
