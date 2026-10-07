@@ -229,8 +229,8 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
     ErrorCode.AGENT_SESSION_REFUSED: CatalogueEntry(
         403,
         "An agent session cannot do this.",
-        "Approvals, cell resources and secrets are handled by a person in an interactive "
-        "session, never through an agent.",
+        "Approvals, cell resources, secrets, promote and a repository's required checks are "
+        "handled by a person in an interactive session, never through an agent.",
     ),
     ErrorCode.APPROVER_NOT_ELIGIBLE: CatalogueEntry(
         403,

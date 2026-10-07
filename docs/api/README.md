@@ -278,8 +278,9 @@ repository's default branch otherwise) and up to ten `required_checks` (`name`, 
 `workflow` file under `.github/workflows/` it must come from). The repository must be reachable
 through a GitHub App installation an SSC operator bound to the org (`409
 REPOSITORY_NOT_INSTALLED`); `503 GITHUB_UNAVAILABLE` when GitHub cannot be asked. Connecting,
-changing and `DELETE` need a builder on prod (a `scope: preview` credential is refused), `GET`
-a builder on the app. Each change is audited as `repo.connected` or `repo.disconnected` with
+changing and `DELETE` need a builder on prod in a session of their own (a `scope: preview`
+credential is refused, an agent session is `403 AGENT_SESSION_REFUSED`), `GET` a builder on the
+app. Each change is audited as `repo.connected` or `repo.disconnected` with
 the installation and repository ids, the branch and the required checks, never the repository's
 name. `POST /v1/github/webhook` is GitHub's alone and not in `openapi.json`: no bearer
 credential and no rate limit; the `X-Hub-Signature-256` HMAC of the body with the App's
@@ -290,6 +291,8 @@ delivery, a pull request from a fork or not among them, answers `200 {"status": 
 Promote then also refuses `409 REQUIRED_CHECKS_FAILING` until every required check is green on
 the commit preview runs (or when that release has no commit), and `503 GITHUB_UNAVAILABLE`
 when GitHub cannot say; an app with no connection or no required checks promotes as before.
+Promote itself is a person's step: an agent session is `403 AGENT_SESSION_REFUSED`, since the
+prod gate asks for no approval when the app adds no connection or host.
 
 **Rate limits are per credential.** A token bucket per `jti`; when empty, `429 RATE_LIMITED`
 with `Retry-After` in whole seconds. The bucket lives in the process; a shared store is SSC-013's

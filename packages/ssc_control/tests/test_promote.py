@@ -504,6 +504,13 @@ async def test_a_preview_scoped_token_cannot_promote(b: Bench, signing_key: Sign
     )
 
 
+async def test_an_agent_session_cannot_promote(b: Bench, signing_key: SigningKey) -> None:
+    r1 = await live_in_preview(b)
+    agent = mint(signing_key, org=b.w.org, sub=b.w.admin, jti=f"cred_{new_key()[:16]}", agent=True)
+    assert_problem(promote(b, {"preview_release_id": r1}, agent), ErrorCode.AGENT_SESSION_REFUSED)
+    assert prod_builds(b) == []
+
+
 async def test_only_a_builder_on_prod_may_promote(b: Bench) -> None:
     await live_in_preview(b)
     assert_problem(promote(b, token=b.t.member), ErrorCode.FORBIDDEN)

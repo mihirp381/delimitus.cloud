@@ -17,6 +17,9 @@ which each of them is green, bound to its workflow file and the connected branch
 ``REQUIRED_CHECKS_FAILING`` otherwise, and ``GITHUB_UNAVAILABLE`` when GitHub cannot say, both
 before anything is built. Such an app promotes only a release built from a bundle the push job
 made for that link, since an uploaded bundle's commit is only what the client declared.
+
+Promote is a person's step: an agent session is ``AGENT_SESSION_REFUSED`` even when its user is a
+builder on prod, since the prod gate asks for no approval when the app adds no connection or host.
 """
 
 from typing import Final
@@ -92,6 +95,7 @@ _SELECT_SOURCE_BUNDLE = text(
     responses=problem_responses(
         *POST_COMMON,
         ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
         ErrorCode.NOT_FOUND,
         ErrorCode.APP_NOT_ACTIVE,
         ErrorCode.NOTHING_TO_PROMOTE,
@@ -109,7 +113,8 @@ async def promote(app_id: Id, body: PromoteIn, request: Request, uow: UserUoW) -
     """Build for prod the source of the release live in preview: 202 plus a ``Location`` to
     poll. Deploy the release it makes to prod with ``POST .../deployments``.
 
-    Needs a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a
+    Needs a builder on prod in a session of their own: a ``preview``-scoped credential is
+    ``FORBIDDEN`` and an agent session ``AGENT_SESSION_REFUSED``. Preview must run a
     healthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when
     given (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every
     secret set on preview must be set on prod too (``PROD_SECRET_MISSING``). A connected
@@ -121,6 +126,8 @@ async def promote(app_id: Id, body: PromoteIn, request: Request, uow: UserUoW) -
     if status is None or prod is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"app_id": app_id})
     await require_builder(uow, prod)
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     if status != "active":
         raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"app_id": app_id})
     live = (await uow.conn.execute(_SELECT_PREVIEW_LIVE, params)).mappings().first()

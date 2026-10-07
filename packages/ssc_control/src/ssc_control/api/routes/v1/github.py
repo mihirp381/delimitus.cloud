@@ -109,13 +109,16 @@ class WebhookOut(Strict):
 
 async def _app_env(uow: UnitOfWork, app_id: str, *, change: bool) -> None:
     """``NOT_FOUND`` for an app the org does not have, then ``FORBIDDEN`` unless the caller is a
-    builder on prod (``change``) or on the app."""
+    builder on prod (``change``) or on the app. A change is a person's: the required checks are
+    promote's gate, so an agent session is ``AGENT_SESSION_REFUSED``."""
     params = {"org": uow.org_id, "app": app_id}
     prod = (await uow.conn.execute(_SELECT_PROD, params)).scalar_one_or_none()
     if prod is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"app_id": app_id})
     if change:
         await require_builder(uow, str(prod))
+        if uow.principal.is_agent:
+            raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     else:
         await require_app_builder(uow, app_id)
 
@@ -165,6 +168,7 @@ async def _find(
     responses=problem_responses(
         *AUTHENTICATED,
         ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
         ErrorCode.NOT_FOUND,
         ErrorCode.REPOSITORY_NOT_INSTALLED,
         ErrorCode.GITHUB_UNAVAILABLE,
@@ -225,7 +229,12 @@ async def get_repository(app_id: Id, uow: UserUoW) -> RepoLinkOut:
 @router.delete(
     "/apps/{app_id}/github",
     status_code=204,
-    responses=problem_responses(*AUTHENTICATED, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND),
+    responses=problem_responses(
+        *AUTHENTICATED,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
+        ErrorCode.NOT_FOUND,
+    ),
 )
 async def disconnect_repository(app_id: Id, uow: UserUoW) -> Response:
     """Disconnect the repository: pushes stop deploying preview and promote stops checking its

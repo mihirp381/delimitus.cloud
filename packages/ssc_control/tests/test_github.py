@@ -643,6 +643,10 @@ async def test_connecting_needs_a_bound_installation_and_a_builder_on_prod(
         signing_key, org=g.b.w.org, sub=g.b.w.admin, jti=f"cred_{new_key()[:16]}", scope="preview"
     )
     assert_problem(put(g, body, scoped), ErrorCode.FORBIDDEN)
+    agent = mint(
+        signing_key, org=g.b.w.org, sub=g.b.w.admin, jti=f"cred_{new_key()[:16]}", agent=True
+    )
+    assert_problem(put(g, body, agent), ErrorCode.AGENT_SESSION_REFUSED)
     assert_problem(put(g, body, app=new_id("app")), ErrorCode.NOT_FOUND)
     bad = {"repository": "acme/ledger", "required_checks": [{"name": "t", "workflow": "ci.yml"}]}
     assert_problem(put(g, bad), ErrorCode.VALIDATION_FAILED)
@@ -651,6 +655,7 @@ async def test_connecting_needs_a_bound_installation_and_a_builder_on_prod(
     assert put(g, body).status_code == 200
     assert_problem(delete(g, g.b.t.member), ErrorCode.FORBIDDEN)
     assert_problem(delete(g, scoped), ErrorCode.FORBIDDEN)
+    assert_problem(delete(g, agent), ErrorCode.AGENT_SESSION_REFUSED)
     g.hub.fail = 500
     assert_problem(put(g, body), ErrorCode.GITHUB_UNAVAILABLE)
     g.hub.fail = None

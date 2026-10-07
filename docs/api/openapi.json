@@ -11189,7 +11189,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {
@@ -11363,7 +11363,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {
@@ -11742,7 +11742,7 @@
     },
     "/v1/apps/{app_id}/promote": {
       "post": {
-        "description": "Build for prod the source of the release live in preview: 202 plus a ``Location`` to\npoll. Deploy the release it makes to prod with ``POST .../deployments``.\n\nNeeds a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a\nhealthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when\ngiven (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every\nsecret set on preview must be set on prod too (``PROD_SECRET_MISSING``). A connected\nrepository's required checks must be green on the release's commit\n(``REQUIRED_CHECKS_FAILING``).",
+        "description": "Build for prod the source of the release live in preview: 202 plus a ``Location`` to\npoll. Deploy the release it makes to prod with ``POST .../deployments``.\n\nNeeds a builder on prod in a session of their own: a ``preview``-scoped credential is\n``FORBIDDEN`` and an agent session ``AGENT_SESSION_REFUSED``. Preview must run a\nhealthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when\ngiven (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every\nsecret set on preview must be set on prod too (``PROD_SECRET_MISSING``). A connected\nrepository's required checks must be green on the release's commit\n(``REQUIRED_CHECKS_FAILING``).",
         "operationId": "promote_v1_apps__app_id__promote_post",
         "parameters": [
           {
@@ -11821,7 +11821,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {

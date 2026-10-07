@@ -911,7 +911,8 @@ export interface paths {
          * @description Build for prod the source of the release live in preview: 202 plus a ``Location`` to
          *     poll. Deploy the release it makes to prod with ``POST .../deployments``.
          *
-         *     Needs a builder on prod; a ``preview``-scoped credential is ``FORBIDDEN``. Preview must run a
+         *     Needs a builder on prod in a session of their own: a ``preview``-scoped credential is
+         *     ``FORBIDDEN`` and an agent session ``AGENT_SESSION_REFUSED``. Preview must run a
          *     healthy deployment (``NOTHING_TO_PROMOTE``), the one named by ``preview_release_id`` when
          *     given (``PRECONDITION_STALE``), prod must have no deployment or build in flight, and every
          *     secret set on preview must be set on prod too (``PROD_SECRET_MISSING``). A connected
@@ -7367,7 +7368,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -7450,7 +7451,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -7762,7 +7763,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
