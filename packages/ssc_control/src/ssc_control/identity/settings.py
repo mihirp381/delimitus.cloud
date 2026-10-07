@@ -55,7 +55,8 @@ class AuthSettings:
     a third-party OAuth client may ask for (decision 029)."""
     console_url: str = CONSOLE_URL
     """``SSC_CONSOLE_URL``: the console's origin. Its OAuth client redirects to
-    ``<console_url>/auth/callback``."""
+    ``<console_url>/auth/callback``, and it is the one origin ``/token`` and ``/revoke`` allow
+    through CORS, without credentials."""
     trusted_hops: int = LOAD_BALANCER_HOPS
     """``SSC_AUTH_TRUSTED_HOPS``: proxies in front of this host that append to
     ``X-Forwarded-For``; 0 trusts none (dev and tests)."""

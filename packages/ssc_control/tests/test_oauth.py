@@ -17,6 +17,7 @@ Brief checks:
   * enumeration-equal responses               -> test_every_miss_looks_the_same
   * MCP refuses a user-audience token and /v1
     an MCP-audience token from outside        -> test_an_mcp_client_signs_in_and_calls_the_...
+  * CORS for the console origin only          -> test_only_the_console_origin_calls_token_...
 """
 
 import base64
@@ -316,6 +317,38 @@ async def test_the_console_signs_in_without_consent(rig: OAuthRig) -> None:
 
     wrong = await rig.authorize(challenge=challenge, **console)
     assert query(wrong.headers["location"])["error"] == "invalid_target"
+
+
+async def test_only_the_console_origin_calls_token_and_revoke_cross_origin(
+    rig: OAuthRig,
+) -> None:
+    preflight = {"origin": CONSOLE, "access-control-request-method": "POST"}
+    for path in ("/token", "/revoke"):
+        ok = await rig.http.options(path, headers=preflight)
+        assert ok.status_code == 204
+        assert ok.headers["access-control-allow-origin"] == CONSOLE
+        assert ok.headers["access-control-allow-methods"] == "POST"
+        assert "access-control-allow-credentials" not in ok.headers
+        other = await rig.http.options(path, headers={**preflight, "origin": "https://evil.test"})
+        assert other.status_code == 400
+        assert "access-control-allow-origin" not in other.headers
+
+    answer = await rig.http.post(
+        "/token", data={"grant_type": "refresh_token"}, headers={"origin": CONSOLE}
+    )
+    assert answer.status_code == 400 and answer.json() == {"error": "invalid_grant"}
+    assert answer.headers["access-control-allow-origin"] == CONSOLE
+    assert "access-control-allow-credentials" not in answer.headers
+    assert "Origin" in answer.headers["vary"]
+    revoked = await rig.http.post("/revoke", data={"token": "x"}, headers={"origin": CONSOLE})
+    assert revoked.headers["access-control-allow-origin"] == CONSOLE
+    for origin in ("https://evil.test", f"{CONSOLE}.evil.test", "null"):
+        refused = await rig.http.post("/revoke", data={"token": "x"}, headers={"origin": origin})
+        assert "access-control-allow-origin" not in refused.headers
+    elsewhere = await rig.http.get("/.well-known/jwks.json", headers={"origin": CONSOLE})
+    assert "access-control-allow-origin" not in elsewhere.headers
+    preflight_elsewhere = await rig.http.options("/authorize", headers=preflight)
+    assert "access-control-allow-origin" not in preflight_elsewhere.headers
 
 
 async def test_a_denied_client_hears_access_denied(rig: OAuthRig) -> None:

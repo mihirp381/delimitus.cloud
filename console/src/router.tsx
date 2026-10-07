@@ -3,13 +3,17 @@ import { createRouter, RouterProvider, type RouterHistory } from '@tanstack/reac
 import { createApiClient, createQueries } from './api/client';
 import { ApiProblem } from './api/problem';
 import { isAdmin as defaultIsAdmin } from './auth/admin';
+import { consoleOAuth, type OAuthClient } from './auth/oauth';
 import type { Session } from './auth/session';
 import type { RouterContext } from './context';
 import { routeTree } from './routeTree.gen';
 
 interface Options {
+  /** The console's own origin; the API is called through it and it names the OAuth callback. */
   readonly baseUrl: string;
   readonly session: Session;
+  /** The auth host client; `consoleOAuth(baseUrl)` unless a test replaces it. */
+  readonly oauth?: OAuthClient;
   readonly fetch?: (request: Request) => Promise<Response>;
   readonly history?: RouterHistory;
   readonly isAdmin?: RouterContext['isAdmin'];
@@ -28,23 +32,29 @@ function newQueryClient(): QueryClient {
   });
 }
 
-export function createConsole({ baseUrl, session, fetch, history, isAdmin }: Options) {
+export function createConsole({ baseUrl, session, oauth, fetch, history, isAdmin }: Options) {
   const queryClient = newQueryClient();
+  // A refused token or a failed refresh: forget everything and sign in again, then come back.
+  const toLogin = () => {
+    queryClient.clear();
+    const { pathname, href } = router.state.location;
+    if (pathname !== '/login') void router.navigate({ to: '/login', search: { next: href } });
+  };
   const api = createApiClient({
     baseUrl,
     fetch,
     getToken: session.token,
     onUnauthorized: () => {
-      session.clear();
-      queryClient.clear();
-      const { pathname, href } = router.state.location;
-      if (pathname !== '/login') void router.navigate({ to: '/login', search: { next: href } });
+      void session.signOut();
+      toLogin();
     },
   });
+  session.onLost(toLogin);
   const context: RouterContext = {
     api,
     queries: createQueries(api),
     session,
+    oauth: oauth ?? consoleOAuth(baseUrl),
     queryClient,
     isAdmin: isAdmin ?? defaultIsAdmin,
   };

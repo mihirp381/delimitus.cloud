@@ -16,7 +16,8 @@ function AuthedLayout() {
   const me = queries.useQuery('get', '/v1/whoami');
 
   function signOut() {
-    session.clear();
+    // Forgets the tokens at once; the auth host's /revoke ends the session behind them.
+    void session.signOut();
     queryClient.clear();
     void navigate({ to: '/login' });
   }

@@ -15,7 +15,9 @@ sign-on, and every access token of the session carries ``agent: true`` and its `
 
 OAuth 2.1 for remote MCP clients and the console (decision 029): ``authorize``. Its sign-in
 rides the same ``/callback`` with ``flow: oauth``, and ``/token`` takes its
-``authorization_code`` grant. A refreshed access token keeps its session's audience.
+``authorization_code`` grant. A refreshed access token keeps its session's audience. The
+console, on its own origin, may call ``/token`` and ``/revoke`` cross-origin (CORS for exactly
+``console_url``, no credentials); nothing else on this host answers CORS.
 
 Every refused sign-in shows the same page (``pages.REFUSED``); the reason is logged and audited
 as ``login.failed``. Login state lives in a signed, ten-minute cookie; the WorkOS ``state`` is only
@@ -31,7 +33,7 @@ import logging
 import re
 import secrets
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final, Literal, cast
 from urllib.parse import parse_qs, urlencode
@@ -57,6 +59,8 @@ log = logging.getLogger("ssc.auth")
 LOGIN_SECONDS: Final = 600
 _BINDING_LENGTH: Final = 43
 _WORKOS_ERROR: Final = re.compile(r"[a-z_]{1,64}")
+CORS_PATHS: Final = frozenset({"/token", "/revoke"})
+"""The only paths the console calls cross-origin."""
 _ORG_CELL = text("select cell_label from ssc.org where id = :org")
 
 Flow = Literal["browser", "device", "oauth"]
@@ -246,6 +250,35 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         )
     )
     oauth_flow.add_routes(app)
+
+    @app.middleware("http")
+    async def console_cors(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """The console calls ``/token`` and ``/revoke`` from its own origin (decision 029): CORS
+        for exactly ``console_url``, without credentials, on those two paths only."""
+        if request.url.path not in CORS_PATHS:
+            return await call_next(request)
+        allowed = request.headers.get("origin") == s.console_url
+        if request.method == "OPTIONS":
+            asked = request.headers.get("access-control-request-method", "")
+            if not allowed or asked != "POST":
+                return Response(status_code=400, headers={"vary": "Origin"})
+            return Response(
+                status_code=204,
+                headers={
+                    "access-control-allow-origin": s.console_url,
+                    "access-control-allow-methods": "POST",
+                    "access-control-allow-headers": "content-type",
+                    "access-control-max-age": "600",
+                    "vary": "Origin",
+                },
+            )
+        response = await call_next(request)
+        response.headers.append("vary", "Origin")
+        if allowed:
+            response.headers["access-control-allow-origin"] = s.console_url
+        return response
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
