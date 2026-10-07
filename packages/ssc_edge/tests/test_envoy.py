@@ -309,12 +309,20 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
                 "-p", "127.0.0.1::80", "-v", f"{tmp}:/c:ro", APP_IMAGE, "python", "/c/echo.py",
             )  # fmt: skip
             published[alias] = int(run("port", name, "80/tcp").splitlines()[0].rsplit(":", 1)[1])
+        # No --rm: an Envoy that exits at once keeps its log for the error below.
         run(
-            "run", "-d", "--rm", "--name", f"{tag}-envoy", "--network", tag,
+            "run", "-d", "--name", f"{tag}-envoy", "--network", tag,
             "--add-host", "host.docker.internal:host-gateway", "-p", "127.0.0.1::8080",
             "-v", f"{tmp}:/c:ro", ENVOY_IMAGE, "-c", "/c/envoy.json", "--log-level", "warn",
         )  # fmt: skip
-        host_port = run("port", f"{tag}-envoy", "8080/tcp").splitlines()[0].rsplit(":", 1)[1]
+        try:
+            host_port = run("port", f"{tag}-envoy", "8080/tcp").splitlines()[0].rsplit(":", 1)[1]
+        except AssertionError as e:
+            logs = subprocess.run(
+                [docker(), "logs", f"{tag}-envoy"], capture_output=True, text=True, check=False
+            )
+            said = (logs.stdout + logs.stderr)[-3000:]
+            raise AssertionError(f"Envoy did not start: {said}") from e
         time.sleep(0.5)
         for name in (f"{tag}-app", f"{tag}-pay"):
             # A dead app drops its alias, and Envoy would resolve the real run.app name.
