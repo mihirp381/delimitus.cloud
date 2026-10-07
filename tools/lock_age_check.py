@@ -1,12 +1,17 @@
 """Fail if uv.lock pins any package uploaded to PyPI less than MIN_AGE_DAYS ago.
 
 Exceptions live in docs/lock-exceptions.toml: [[exception]] name, version, reason, expires.
+
+``--uploads FILE`` reads upload times from a JSON object of ``"name==version": "<ISO time>"``
+instead of PyPI, and ``--now TIME`` fixes the clock. The CI gate fixture uses both, so the planted
+violation stays a violation however old the fixture gets and needs no network.
 """
 
+import argparse
 import json
-import sys
 import tomllib
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -37,8 +42,23 @@ def load_exceptions(path: Path, now: datetime) -> dict[tuple[str, str], str]:
     return out
 
 
-def main(lock_path: Path, exceptions_path: Path) -> int:
-    now = datetime.now(UTC)
+def recorded_uploads(path: Path) -> Callable[[str, str], datetime | None]:
+    """Upload times from ``path`` (``{"name==version": "<ISO time>"}``) in place of PyPI."""
+    times = {
+        str(k).lower(): datetime.fromisoformat(str(v))
+        for k, v in json.loads(path.read_text()).items()
+    }
+    return lambda name, version: times.get(f"{name}=={version}")
+
+
+def main(
+    lock_path: Path,
+    exceptions_path: Path,
+    *,
+    now: datetime | None = None,
+    uploads: Callable[[str, str], datetime | None] = upload_time,
+) -> int:
+    now = now or datetime.now(UTC)
     cutoff = now - timedelta(days=MIN_AGE_DAYS)
     exceptions = load_exceptions(exceptions_path, now)
     lock = tomllib.loads(lock_path.read_text())
@@ -49,7 +69,7 @@ def main(lock_path: Path, exceptions_path: Path) -> int:
             continue
         name, version = pkg["name"].lower(), pkg["version"]
         try:
-            uploaded = upload_time(name, version)
+            uploaded = uploads(name, version)
         except Exception as exc:  # noqa: BLE001
             print(f"WARN {name}=={version}: could not query PyPI ({exc})")  # noqa: T201
             continue
@@ -67,6 +87,19 @@ def main(lock_path: Path, exceptions_path: Path) -> int:
 
 
 if __name__ == "__main__":
-    lock = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "uv.lock"
-    exc = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "docs" / "lock-exceptions.toml"
-    raise SystemExit(main(lock, exc))
+    parser = argparse.ArgumentParser(description="Fail if uv.lock pins a package under 7 days old.")
+    parser.add_argument("lock", nargs="?", type=Path, default=ROOT / "uv.lock")
+    parser.add_argument(
+        "exceptions", nargs="?", type=Path, default=ROOT / "docs" / "lock-exceptions.toml"
+    )
+    parser.add_argument("--uploads", type=Path, help="recorded upload times instead of PyPI")
+    parser.add_argument("--now", type=datetime.fromisoformat, help="the clock, an ISO time")
+    args = parser.parse_args()
+    raise SystemExit(
+        main(
+            args.lock,
+            args.exceptions,
+            now=args.now,
+            uploads=recorded_uploads(args.uploads) if args.uploads else upload_time,
+        )
+    )

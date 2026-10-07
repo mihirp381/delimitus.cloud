@@ -1,11 +1,9 @@
 """Prove every CI gate fires: each fixture must FAIL its gate. Exit 1 if any gate stays silent."""
 
-import json
 import os
 import shutil
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,14 +16,8 @@ def run(cmd: list[str], cwd: Path = ROOT, env: dict[str, str] | None = None) -> 
     return subprocess.run(cmd, cwd=cwd, env=e, capture_output=True, check=False).returncode
 
 
-def refresh_lockage() -> None:
-    with urllib.request.urlopen("https://pypi.org/pypi/pyjwt/json", timeout=20) as r:  # noqa: S310
-        version = json.load(r)["info"]["version"]
-    (FX / "lockage" / "uv.lock").write_text(
-        'version = 1\nrevision = 3\nrequires-python = ">=3.14"\n\n[[package]]\nname = "pyjwt"\n'
-        f'version = "{version}"\nsource = {{ registry = "https://pypi.org/simple" }}\n'
-    )
-
+LOCKAGE_NOW = "2026-09-30T00:00:00+00:00"
+"""Two days after the fixture's recorded upload, so the 7-day rule always fires on it."""
 
 GATES = {
     "ruff": lambda: run([PY, "-m", "ruff", "check", "--no-cache", "--isolated", "--select", "F,S,T20", str(FX / "ruff")]),
@@ -39,15 +31,13 @@ GATES = {
     "zizmor": lambda: run([PY, "-m", "zizmor", "--no-online-audits", str(FX / "zizmor")]),
     "pytest": lambda: run([PY, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", str(FX / "pytest"), str(FX / "pytest")]),
     "hypothesis": lambda: run([PY, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", str(FX / "hypothesis"), str(FX / "hypothesis")]),
-    "lock-age": lambda: run([PY, str(ROOT / "tools" / "lock_age_check.py"), str(FX / "lockage" / "uv.lock"), str(FX / "lockage" / "none.toml")]),
+    "lock-age": lambda: run([PY, str(ROOT / "tools" / "lock_age_check.py"), str(FX / "lockage" / "uv.lock"), str(FX / "lockage" / "none.toml"), "--uploads", str(FX / "lockage" / "uploads.json"), "--now", LOCKAGE_NOW]),
     "openapi-breaking": lambda: run([PY, str(ROOT / "tools" / "openapi_breaking.py"), str(FX / "openapi" / "old.json"), str(FX / "openapi" / "new.json")]),
     "gitleaks": lambda: run(["gitleaks", "detect", "--no-git", "--source", str(FX / "gitleaks"), "--exit-code", "1", "--no-banner"]) if shutil.which("gitleaks") else None,
 }
 
 
 def main() -> int:
-    if "--refresh-lockage" in sys.argv:
-        refresh_lockage()
     silent = []
     for name, gate in GATES.items():
         code = gate()

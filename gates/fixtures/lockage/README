@@ -1,1 +1,1 @@
-pyjwt 2.15.1 was the newest release when this fixture was generated (2026-09-28). Regenerate with gates/run_gates.py --refresh-lockage if it ages past 7 days.
+The planted violation: pyjwt 2.15.1, recorded as uploaded 2026-09-28 (uploads.json), checked as of 2026-09-30 (LOCKAGE_NOW in gates/run_gates.py). Two days is under the 7-day minimum, so the gate fires with no network and never ages out.
