@@ -48,6 +48,7 @@ A failed row goes back to the architecture as a change with its cost. The founde
   3. A certificate shared across cells: refused by rule 1.
 - **Third figure:** the next new cell (SSC-091's measurement).
 - **Chosen 2026-10-06 (founder):** options 1 and 2. The certificate is reported beside onboarding, a cell is handed over only once it is active (up to 120 minutes), and a new cell's apply starts the certificate first (SSC-091).
+- **Accepted 2026-10-07 (founder):** the FAIL stands as measured but does not block the pilot: it delays only a new cell's set-up, before any customer is placed. Both options are built (9ec9e71, a741701).
 
 ### T7: cold start through the gateway
 
