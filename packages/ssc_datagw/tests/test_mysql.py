@@ -141,11 +141,15 @@ class Db:
         result = self.container.exec(["mysql", "-uroot", f"-p{ROOT_PASSWORD}", "-e", sql])
         return result.exit_code, result.output.decode()
 
-    def setup(self, **variables: str) -> tuple[int | None, str]:
-        """``mysql_setup.sql`` run as the header says, with ``variables`` set first."""
+    def setup(
+        self, *, admin: tuple[str, str] = ("root", ROOT_PASSWORD), **variables: str
+    ) -> tuple[int | None, str]:
+        """``mysql_setup.sql`` run as the header says by ``admin`` (name, password), with
+        ``variables`` set first."""
         init = ", ".join(f"@{name} = '{value}'" for name, value in variables.items())
         flag = f"--init-command={shlex.quote('SET ' + init)} " if init else ""
-        command = f"mysql -uroot -p{ROOT_PASSWORD} {flag}reporting < /tmp/setup.sql"
+        name, password = admin
+        command = f"mysql -u{name} -p{password} {flag}reporting < /tmp/setup.sql"
         result = self.container.exec(["bash", "-c", command])
         return result.exit_code, result.output.decode()
 
@@ -538,6 +542,77 @@ async def test_the_setup_script_refuses_to_run_without_schemas_or_password(db: D
     code, out = db.setup(schemas="reporting")
     assert code != 0
     assert "set @password first" in out
+    _, rows = await read(MySqlConnector(db.target()), ask("SELECT COUNT(*) FROM reporting.orders"))
+    assert list(rows[0]) == [50]
+
+
+def grants_of_the_user(db: Db) -> list[str]:
+    code, out = db.mysql(f"SHOW GRANTS FOR '{USER}'@'%'")
+    assert code == 0, out
+    return sorted(line for line in out.splitlines() if line.startswith("GRANT "))
+
+
+ONLY_SELECT = sorted(
+    [f"GRANT USAGE ON *.* TO `{USER}`@`%`", f"GRANT SELECT ON `reporting`.* TO `{USER}`@`%`"]
+)
+
+
+async def test_the_setup_script_revokes_each_grant_on_its_own_level(db: Db) -> None:
+    account = f"'{USER}'@'%'"
+    code, out = db.mysql(
+        f"GRANT PROCESS, BACKUP_ADMIN ON *.* TO {account} WITH GRANT OPTION; "
+        f"GRANT INSERT, UPDATE ON reporting.* TO {account} WITH GRANT OPTION; "
+        f"GRANT SELECT ON secret.* TO {account}; "
+        f"GRANT DELETE ON reporting.orders TO {account}; "
+        f"GRANT UPDATE (note, ratio), INSERT (note) ON reporting.orders TO {account}; "
+        "CREATE PROCEDURE reporting.ssc_noop() SELECT 1; "
+        f"GRANT EXECUTE, ALTER ROUTINE ON PROCEDURE reporting.ssc_noop TO {account} "
+        "WITH GRANT OPTION; "
+        f"GRANT PROXY ON 'analyst'@'%' TO {account}"
+    )
+    assert code == 0, out
+    assert len(grants_of_the_user(db)) > len(ONLY_SELECT) + 4
+    code, out = db.setup(password=USER_PASSWORD, schemas="reporting")
+    assert code == 0, out
+    assert grants_of_the_user(db) == ONLY_SELECT
+    code, out = db.mysql("DROP PROCEDURE reporting.ssc_noop")
+    assert code == 0, out
+
+
+async def test_the_setup_script_runs_for_an_admin_with_partial_revokes(db: Db) -> None:
+    """Cloud SQL's root may not touch mysql and sys (partial revokes), so a blanket ``REVOKE
+    ALL PRIVILEGES, GRANT OPTION FROM`` the user stopped with ERROR 3879 there (2026-10-08)."""
+    writes = (
+        "INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, "
+        "LOCK TABLES, CREATE VIEW, CREATE ROUTINE, ALTER ROUTINE"
+    )
+    code, out = db.mysql(
+        "SET GLOBAL partial_revokes = ON; "
+        f"CREATE USER IF NOT EXISTS 'cloudroot'@'%' IDENTIFIED BY '{ROOT_PASSWORD}'; "
+        "GRANT ALL PRIVILEGES ON *.* TO 'cloudroot'@'%' WITH GRANT OPTION; "
+        f"REVOKE {writes} ON mysql.* FROM 'cloudroot'@'%'; "
+        f"REVOKE {writes} ON sys.* FROM 'cloudroot'@'%'; "
+        f"GRANT PROCESS ON *.* TO '{USER}'@'%'; "
+        f"GRANT INSERT ON reporting.* TO '{USER}'@'%'"
+    )
+    assert code == 0, out
+    blanket = db.container.exec(
+        [
+            "mysql",
+            "-ucloudroot",
+            f"-p{ROOT_PASSWORD}",
+            "-e",
+            f"REVOKE ALL PRIVILEGES, GRANT OPTION FROM '{USER}'@'%'",
+        ]
+    )
+    assert blanket.exit_code != 0
+    assert "ERROR 3879" in blanket.output.decode()
+    code, out = db.setup(
+        admin=("cloudroot", ROOT_PASSWORD), password=USER_PASSWORD, schemas="reporting"
+    )
+    assert code == 0, out
+    assert "reporting\tSELECT\t2" in out
+    assert grants_of_the_user(db) == ONLY_SELECT
     _, rows = await read(MySqlConnector(db.target()), ask("SELECT COUNT(*) FROM reporting.orders"))
     assert list(rows[0]) == [50]
 
