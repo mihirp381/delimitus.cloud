@@ -174,6 +174,7 @@ What stops each attack: local-proven on MySQL 8.4 and 9 (`tests/test_mysql.py`, 
 | no connection, a TLS failure | `CONNECTION_UNAVAILABLE` |
 | a body over 32 MiB (decoded) | `QUERY_FAILED`, no `sqlstate`; reading stops at the cap |
 | a body that is not JSON | `QUERY_FAILED` 22P02 |
+| a body its `Content-Encoding` cannot decode | `QUERY_FAILED` 22P02 |
 
 **Records and columns.** The value at `items` (each key into an object; a missing key or a value that is not an object on the way is `QUERY_FAILED` 42P01) is the records: an array is one record per element, an object one record, anything else `QUERY_FAILED` 22P02. When the first record is an object its keys, in order, are the columns; a later record's missing key is `null`, a key that is not a column is dropped, and a later record that is not an object is a row of `null`. When the first record is not an object there is one column, `value`, holding each record as it is. No records is no columns and no rows. A column's type is that of its first non-null value in the first 100 records: boolean `boolean`, integer `integer`, other number `float`, string `string`, array or object `json`, none `string`; `db_type` is the JSON type (`boolean`, `number`, `string`, `array`, `object`, `null`). A value of another type than its column's is kept as it is. At most `max_rows` plus one rows are read, as for every connector.
 

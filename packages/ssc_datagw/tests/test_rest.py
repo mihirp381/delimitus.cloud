@@ -365,6 +365,28 @@ async def test_the_scheme_and_header_are_the_targets() -> None:
     assert request.headers["x-ssc-query"] == "ssc:t"
 
 
+async def test_a_body_that_does_not_decode_is_22p02() -> None:
+    """A ``Content-Encoding: gzip`` answer whose body is not gzip. The body is a stream, so it
+    is decoded as the connector reads it, as from the network, not when the answer is made."""
+
+    def answer(_: httpx2.Request) -> httpx2.Response:
+        body = httpx2.ByteStream(b"not gzip at all")
+        return httpx2.Response(200, headers={"Content-Encoding": "gzip"}, stream=body)
+
+    target = RestTarget(base_url="https://api.example.com/v1", token=TOKEN)  # pyright: ignore[reportArgumentType]
+    connector = RestConnector(target, transport=httpx2.MockTransport(answer))
+    with pytest.raises(QueryFailedError) as corrupt:
+        await read(connector, ask("/orders?page=secret-page"))
+    assert corrupt.value.sqlstate == "22P02"
+    assert str(corrupt.value) == "the body could not be decoded"
+    assert corrupt.value.__cause__ is None
+    assert corrupt.value.__suppress_context__, "the decoder's error is not shown"
+    shown = "".join(traceback.format_exception_only(corrupt.value)) + repr(corrupt.value)
+    for hidden in (TOKEN, "api.example.com", "/orders", "secret-page"):
+        assert hidden not in shown, hidden
+    assert TOKEN not in "".join(traceback.format_exception(corrupt.value))
+
+
 def test_an_http_base_url_is_refused_by_the_model() -> None:
     for base_url in (
         "http://api.example.com",

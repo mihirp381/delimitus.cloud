@@ -215,6 +215,8 @@ async def _body(response: httpx2.Response) -> bytes:
                 raise QueryFailedError("the body is larger than 32 MiB", sqlstate=None)
     except httpx2.TimeoutException:
         raise TimeoutError("the source stopped answering") from None
+    except httpx2.DecodingError:
+        raise QueryFailedError("the body could not be decoded", sqlstate="22P02") from None
     except httpx2.TransportError as exc:
         raise UpstreamUnavailableError(f"the read failed: {type(exc).__name__}") from None
     return bytes(body)
