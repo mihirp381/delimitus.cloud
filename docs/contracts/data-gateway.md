@@ -290,6 +290,61 @@ At most `max_rows` plus one rows are kept, as for every connector; a CSV or JSON
 
 The connector logs one line per read, `s3 read: op=<list|get> status=<status> bytes=<body bytes> pages=<requests>`, with no bucket, key or URL. Local-proven on S3Mock 4.9.1 over TLS (wire protocol) and on a contract fake that verifies SigV4 (signing, timeout, cancel); live proof against a real bucket is a GA-5 C step (`packages/ssc_datagw/tests/test_s3.py`, which runs the connector suite against both).
 
+<!-- gcs -->
+## The GCS connector
+
+`{kind: "gcs", bucket, prefix?, service_account}` (`ssc_datagw.gcs.GcsTarget`; unknown members are refused), the value of a `gcs` connection's `SSC_CONNECTION_*` variable ([Connectors by kind](#connectors-by-kind)). The address is the control plane's (`ssc_contracts.connections.GcsAddress`), with the same patterns.
+
+| Member | Rule |
+|---|---|
+| `bucket` | `^[a-z0-9][a-z0-9._-]{1,221}[a-z0-9]$`. |
+| `prefix` | Default `""`; `^[^\x00-\x1f]{0,512}$`. Every object read or listed starts with it, as text: `exports` also covers `exports-old/`, so end it with `/` to mean a folder. |
+| `service_account` | The service account's JSON key file, as for Google Sheets: JSON with `client_email`, `private_key` (a PEM RSA key) and `private_key_id`, or the variable is refused with a message that quotes none of them. Never shown in a repr, an error or a log line, nor are the email, the key or a JWT made from it. |
+
+**The binding.** The customer grants the service account Storage Object Viewer (`roles/storage.objectViewer`) on the bucket, with a condition that keeps object reads under the prefix (`<bucket>` and `<prefix>` the connection's):
+
+```sh
+gcloud storage buckets add-iam-policy-binding gs://<bucket> \
+  --member="serviceAccount:<client_email>" \
+  --role="roles/storage.objectViewer" \
+  --condition='title=ssc-read-under-prefix,expression=resource.name.startsWith("projects/_/buckets/<bucket>/objects/<prefix>") || resource.name == "projects/_/buckets/<bucket>"'
+```
+
+The bucket needs uniform bucket-level access for a conditional binding. The account needs no other role and no role in any project. The bucket-level clause is there because Cloud Storage checks a list against the bucket, not an object, so the account may **list every object name in the bucket**, though it reads objects only under the prefix. The connector itself lists and reads only under the prefix (the grammar below), but whoever holds the key can see every name. A customer who must keep names outside the prefix private puts the exported objects in a bucket of their own.
+
+**Who reads.** Each read signs one JWT with the service account's key, as for Google Sheets (`ssc_datagw.google`: RS256, header `kid` the `private_key_id`, `iss` and `sub` the `client_email`, `iat` now and `exp` an hour later) with `aud` `https://storage.googleapis.com/`, and sends it as `Authorization: Bearer <jwt>` on each request of that read, every list page included.
+
+**The query.** As for the S3 connector (`ssc_datagw.s3.s3_request`): `list <prefix>` or `get <key>`, the keyword in any case, one space, then the argument, which starts with the connection's `prefix`, is at most 1,024 bytes of UTF-8, does not start with `/`, and holds no control character and no `.` or `..` segment; a `get` key ends in `.csv`, `.json`, `.jsonl` or `.ndjson`. Anything else, and `params`, which a GCS read does not take, is `QUERY_REFUSED` with the S3 connector's messages, before anything is sent.
+
+| Query | Request |
+|---|---|
+| `list <prefix>` | `GET https://storage.googleapis.com/storage/v1/b/<bucket>/o?prefix=<prefix>&maxResults=<min(1000, rows left)>&pageToken=<token>&fields=items(name,size,updated,etag),nextPageToken` (`objects.list`, `pageToken` from the second page on), following `nextPageToken` until `max_rows` plus one objects are read or the list ends. A bare `list` is `list` of the empty prefix. |
+| `get <key>` | `GET https://storage.googleapis.com/storage/v1/b/<bucket>/o/<key>?alt=media` (`objects.get`, the media), the key percent-encoded as one segment, its `/` as `%2F`. |
+
+Each request has `Authorization`, `User-Agent: ssc-datagw (<tag>)` (as for S3: the query's tag kept to printable ASCII without `(` and `)`, at most 128 characters; Cloud Storage's Data Access audit logs, when the customer turns them on, record it as `callerSuppliedUserAgent`), and a list `Accept: application/json`. TLS is checked against the system trust store, no redirect is followed, and the process environment's proxy and CA settings are ignored.
+
+**Time.** As for the S3 connector (the same request code, `ssc_datagw.rest.get`): 10 s to connect with the warm-up retry, and the whole read, every list page included, ends at `timeout_ms`: past it is `QUERY_TIMEOUT`. When the gateway cancels a read the request is dropped and its connection closed.
+
+**The answer.** Every answer's body is read (at most 32 MiB); an error's reason is Google's `error.errors[0].reason`, and the message names the status and the reason (only when it is a plain word), never the body, a header or the URL:
+
+| Answer | Result |
+|---|---|
+| 2xx | read on |
+| 401 | `QUERY_FAILED` 28000 (Google refused the JWT: a revoked or wrong key) |
+| 403 | `QUERY_FAILED` 42501 (the binding does not allow the read: an object outside the prefix, or no binding) |
+| 404 | `QUERY_FAILED` 42P01 (no such object, or no such bucket) |
+| 400, 3xx, other 4xx | `QUERY_FAILED`, no `sqlstate` |
+| 429, 5xx | `CONNECTION_UNAVAILABLE` |
+| no connection, a TLS failure | `CONNECTION_UNAVAILABLE` |
+| a body over 32 MiB (decoded) | `QUERY_FAILED`, no `sqlstate`; reading stops at the cap |
+| a body that does not parse: a list that is not JSON or not an object list, CSV, JSON, or not UTF-8 | `QUERY_FAILED` 22P02 |
+
+**Records and columns.** As for the S3 connector ([The S3 connector](#the-s3-connector), "Records and columns"; the same code, `ssc_datagw.s3.object_table`). A `list` has the same four columns: `key` (`string`, the object's `name`), `size` (`integer`, from Google's decimal string), `last_modified` (`timestamp`, from `updated`, RFC 3339, in UTC) and `etag` (`string`, Google's base64 ETag as given, `null` when absent), one row per object in Google's order (lexicographic by name). A `.csv`, `.json`, `.jsonl` or `.ndjson` object is read by the S3 rules, and at most `max_rows` plus one rows are kept, as for every connector.
+
+**Limits.** An object larger than 32 MiB (decoded) is not read. A list reads at most 1,000 objects a page and stops at `max_rows` plus one. Google's own request quotas apply first (a 429 is `CONNECTION_UNAVAILABLE`).
+
+The connector logs one line per read, `gcs read: op=<list|get> status=<status> bytes=<body bytes> pages=<requests>`, with no bucket, key or URL. Contract-fake-proven (an in-process fake of the JSON API that verifies the service-account JWT, `packages/ssc_datagw/tests/test_gcs.py`, over TLS, which also runs the connector suite); live proof on a bucket in our GCP sandbox project is a GA-5 C step, and it also settles that Cloud Storage takes the self-signed JWT with `aud` `https://storage.googleapis.com/`, which only the live API can show.
+
 <!-- bigquery -->
 ## The BigQuery connector
 
