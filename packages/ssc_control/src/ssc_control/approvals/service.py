@@ -460,23 +460,32 @@ async def cancel(  # noqa: PLR0913  (keyword-only)
     *,
     org_id: str,
     approval_id: str,
-    user_id: str,
-    channel: DecisionChannel,
+    user_id: str | None,
+    channel: DecisionChannel | None,
     reason: str,
     actor: Actor,
 ) -> ApprovalRow:
     """The requester withdraws their own pending request. Raises :class:`ApprovalRefusedError`:
-    missing, someone else's, no longer pending. Audited as ``approval.cancelled``."""
+    missing, someone else's, no longer pending. Audited as ``approval.cancelled`` by ``actor``.
+    ``user_id`` None is the system withdrawing a request that no longer applies (a ceiling
+    re-check): no requester check, and the row records the requester as the one who withdrew it,
+    since a cancelled row always names a user."""
     row = await get(conn, org_id=org_id, approval_id=approval_id, lock=True)
     if row is None:
         raise ApprovalRefusedError("not_found")
-    if row.requested_by_user_id != user_id:
+    if user_id is not None and row.requested_by_user_id != user_id:
         raise ApprovalRefusedError("not_requester")
     if row.state != "pending":
         raise ApprovalRefusedError("not_pending")
     await conn.execute(
         _CANCEL,
-        {"org": org_id, "id": approval_id, "by": user_id, "reason": reason, "channel": channel},
+        {
+            "org": org_id,
+            "id": approval_id,
+            "by": row.requested_by_user_id if user_id is None else user_id,
+            "reason": reason,
+            "channel": channel,
+        },
     )
     cancelled = await get(conn, org_id=org_id, approval_id=approval_id)
     if cancelled is None:

@@ -6,10 +6,13 @@ new user, a status change, a membership change) also marks the org's access snap
 that transaction (decision 019). A deactivation, a role change or a removal from a group pauses the
 schedules whose owner or declarer lost authority by it (``timers.service.pause_blocked``, decision
 020), and a deactivation revokes every session and token the person holds
-(``identity.sessions.revoke_user``, SSC-019). The database refuses demoting or deleting the org's
-last active admin (SC002, ``LAST_ORG_ADMIN``); deactivating them is allowed, and an operator
-restores an admin (decision 024). Two first syncs of one identity racing each other end
-with one unique violation (``ALREADY_EXISTS``); the directory retries and finds the user.
+(``identity.sessions.revoke_user``, SSC-019). A membership change re-checks the ceiling of every
+connection that lists the group: an environment now over it is flagged and its app's owner asks
+the connection's owner (``connections.service.recheck_group``, GA-5.3). The database refuses
+demoting or deleting the org's last active admin (SC002, ``LAST_ORG_ADMIN``); deactivating them
+is allowed, and an operator restores an admin (decision 024). Two first syncs of one identity
+racing each other end with one unique violation (``ALREADY_EXISTS``); the directory retries and
+finds the user.
 """
 
 from collections.abc import Mapping, Sequence
@@ -22,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor, NewEvent, append_event
+from ssc_control.connections.service import recheck_group
 from ssc_control.identity.sessions import revoke_user
 from ssc_control.snapshot.service import mark_dirty
 from ssc_control.timers.service import pause_blocked
@@ -312,4 +316,6 @@ async def set_group_members(
         await mark_dirty(conn, org_id)
     if removed:
         await pause_blocked(conn, org_id)
+    if added or removed:
+        await recheck_group(conn, org_id, group_id, actor)
     return MembersResult(group_id=group_id, added=tuple(added), removed=tuple(removed))

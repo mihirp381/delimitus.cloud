@@ -13,6 +13,12 @@ Ticket "done when" checks:
 SSC-021 "a user removed from a group loses access on the next request after the snapshot update
 and their open session is dropped", from the directory to the gateway ->
 test_removal_from_a_group_reaches_the_gateway_and_closes_the_open_stream
+
+GA-5.3 "a directory change re-checks connection ceilings: the grant is flagged and the owner is
+asked" -> test_a_sync_out_of_a_ceiling_group_flags_the_grant_and_asks_the_owner,
+test_a_sync_back_into_the_group_clears_the_flag_and_withdraws_the_request,
+test_a_group_no_ceiling_lists_opens_nothing, test_two_syncs_open_one_request (the internal
+directory route is in test_connections)
 """
 
 import asyncio
@@ -32,9 +38,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import Dsns
 
 from ssc_contracts.audit import ActorKind, AuditAction
+from ssc_contracts.connections import SqlAddress
 from ssc_contracts.ids import new_id
+from ssc_control.approvals import service as approvals
 from ssc_control.audit.chain import Actor
+from ssc_control.connections import service as data_connections
 from ssc_control.db import NewOrg, bound_org, create_org, make_engine
+from ssc_control.domain.approval_rules import exceed_subject_key
+from ssc_control.domain.audience import Ceiling
 from ssc_control.identity import connections, join, sessions, sync, tokens
 from ssc_control.identity.connections import ConnectError, directory_issuer
 from ssc_control.identity.rules import JoinRule, SsoProfile
@@ -550,6 +561,202 @@ async def test_removal_from_a_group_reaches_the_gateway_and_closes_the_open_stre
         relay.close()
         app_server.close()
         await snap.aclose()
+
+
+# ── a directory change re-checks connection ceilings (GA-5.3) ────────────────
+
+FIN, OPS = "directory_group_01FIN", "directory_group_01OPS"
+CAROL_UID, CAROL_IDP = "directory_user_01CAROL", "00ucarol"
+DAVE_UID, DAVE_IDP = "directory_user_01DAVE", "00udave"
+
+
+@dataclass
+class Ceilinged:
+    env: str
+    bob: str  # shared the environment, a member of FIN
+    carol: str  # the finance connection's owner
+    exceed: str  # the subject key of an exceed_ceiling request for prod's grants
+
+
+async def finance_inside_fin(world: World) -> Ceilinged:
+    """Prod of the founder's app is shared with Bob and linked to a confidential connection whose
+    ceiling lists FIN, which Bob and Dave are in; Bob is also in OPS."""
+    world.wo.user(BOB_UID, BOB_IDP, "bob@example.com")
+    world.wo.user(CAROL_UID, CAROL_IDP, "carol@example.com")
+    world.wo.user(DAVE_UID, DAVE_IDP, "dave@example.com")
+    world.wo.group(FIN, "Finance", BOB_UID, DAVE_UID)
+    world.wo.group(OPS, "Ops", BOB_UID)
+    await world.tick()
+    bob, carol = (await world.person(BOB_IDP))[0], (await world.person(CAROL_IDP))[0]
+    ((fin,),) = await world.rows(
+        "select id from ssc.user_group where org_id = :org and directory_ref = :ref", ref=FIN
+    )
+    app, prod = new_id("app"), new_id("env")
+    for sql in (
+        "insert into ssc.app (id, org_id, slug, owner_user_id) values (:app, :org, 'ledger', :by)",
+        "insert into ssc.environment (id, org_id, app_id, name) values (:env, :org, :app, 'prod')",
+        "insert into ssc.app_grant (id, org_id, environment_id, role, subject_kind, user_id, "
+        "granted_by_user_id) values (:gnt, :org, :env, 'user', 'user', :bob, :by)",
+    ):
+        await world.rows(sql, app=app, env=prod, gnt=new_id("gnt"), bob=bob, by=world.founder)
+    async with bound_org(world.engine, world.org) as conn:
+        finance = await data_connections.create(
+            conn,
+            org_id=world.org,
+            actor=OPERATOR,
+            name="finance",
+            owner_user_id=carol,
+            classification="confidential",
+            ceiling=Ceiling(frozenset({("group", str(fin))})),
+            allowed_schemas=["public"],
+            limits={},
+            kind="postgres",
+            address=SqlAddress(host="db.corp.internal", port=5432, database="warehouse"),
+        )
+        await data_connections.grant(
+            conn,
+            org_id=world.org,
+            actor=OPERATOR,
+            connection=finance,
+            environment_id=prod,
+            limits={},
+            by_user_id=world.founder,
+            policy_decision_id=None,
+        )
+    exceed = exceed_subject_key("finance", {("user", "user", bob)})
+    return Ceilinged(prod, bob, carol, exceed)
+
+
+async def move(world: World, group: str, uid: str, *, out: bool) -> None:
+    """The directory takes ``uid`` out of ``group`` (or puts them back) and the sync runs."""
+    if out:
+        world.wo.members[group].discard(uid)
+    else:
+        world.wo.members[group].add(uid)
+    kind = "dsync.group.user_removed" if out else "dsync.group.user_added"
+    world.wo.event(kind, {"directory_id": world.wo.directory, "group": {"id": group}})
+    await world.tick()
+
+
+async def flags(world: World) -> list[Any]:
+    return await world.rows(
+        "select environment_id, over_ceiling_since is not null from ssc.connection_grant "
+        "where org_id = :org"
+    )
+
+
+async def requests(world: World) -> list[Any]:
+    return await world.rows(
+        "select id, kind, state, environment_id, subject_key, payload, requested_by_user_id, "
+        "requested_via_agent, decided_by_user_id, decision_reason, decision_channel "
+        "from ssc.approval_request where org_id = :org order by created_at, id"
+    )
+
+
+async def actors(world: World, action: AuditAction) -> list[Any]:
+    return await world.rows(
+        "select actor_kind, actor_id from ssc.audit_event where org_id = :org and action = :a "
+        "order by seq",
+        a=action.value,
+    )
+
+
+async def test_a_sync_out_of_a_ceiling_group_flags_the_grant_and_asks_the_owner(
+    world: World,
+) -> None:
+    w = await finance_inside_fin(world)
+    assert await flags(world) == [(w.env, False)]
+    await move(world, FIN, BOB_UID, out=True)
+    assert await flags(world) == [(w.env, True)]
+    (flagged,) = await world.audit(AuditAction.CONNECTION_FLAGGED)
+    assert flagged[2]["environment_id"] == w.env
+    ((apr, kind, state, env, key, payload, by, via_agent, *_),) = await requests(world)
+    assert (kind, state, env, key, by, via_agent) == (
+        "exceed_ceiling",
+        "pending",
+        w.env,
+        w.exceed,
+        world.founder,
+        False,
+    )
+    assert payload == {
+        "connection": "finance",
+        "grants": [{"role": "user", "subject_kind": "user", "subject_id": w.bob}],
+    }
+    sync_actor = (ActorKind.INTEGRATION.value, (await world.connection()).id)
+    assert await actors(world, AuditAction.APPROVAL_REQUESTED) == [sync_actor]
+    async with bound_org(world.engine, world.org) as conn:
+        inbox = await approvals.search(
+            conn,
+            org_id=world.org,
+            visible_to=w.carol,
+            decidable_by=w.carol,
+            state=None,
+            environment_id=None,
+            before=None,
+            limit=10,
+        )
+        assert [(a.id, a.connection) for a in inbox] == [(apr, "finance")]
+        decided = await approvals.decide(
+            conn,
+            org_id=world.org,
+            approval_id=apr,
+            decider=approvals.Decider(
+                user_id=w.carol,
+                via_agent=False,
+                recorded_by_operator=None,
+                channel="console",
+                reason="Bob may keep it.",
+                outcome="approved",
+            ),
+            actor=Actor(ActorKind.USER, w.carol),
+        )
+    assert decided.state == "approved"
+
+
+async def test_a_sync_back_into_the_group_clears_the_flag_and_withdraws_the_request(
+    world: World,
+) -> None:
+    w = await finance_inside_fin(world)
+    await move(world, FIN, BOB_UID, out=True)
+    await move(world, FIN, BOB_UID, out=False)
+    assert await flags(world) == [(w.env, False)]
+    ((_, _, state, _, _, _, _, _, decided_by, reason, channel),) = await requests(world)
+    assert (state, decided_by, reason, channel) == (
+        "cancelled",
+        world.founder,
+        data_connections.BACK_INSIDE,
+        None,
+    )
+    sync_actor = (ActorKind.INTEGRATION.value, (await world.connection()).id)
+    assert await actors(world, AuditAction.APPROVAL_CANCELLED) == [sync_actor]
+
+
+async def test_a_group_no_ceiling_lists_opens_nothing(world: World) -> None:
+    w = await finance_inside_fin(world)
+    await move(world, OPS, BOB_UID, out=True)
+    assert (
+        await world.rows(
+            "select 1 from ssc.group_member m join ssc.user_group g "
+            "on g.org_id = m.org_id and g.id = m.group_id "
+            "where m.org_id = :org and g.directory_ref = :ref",
+            ref=OPS,
+        )
+    ) == []
+    assert await flags(world) == [(w.env, False)]
+    assert await requests(world) == []
+    assert await world.audit(AuditAction.CONNECTION_FLAGGED) == []
+
+
+async def test_two_syncs_open_one_request(world: World) -> None:
+    w = await finance_inside_fin(world)
+    await move(world, FIN, BOB_UID, out=True)
+    await move(world, FIN, DAVE_UID, out=True)
+    await world.full_sync_due()
+    await world.tick()
+    assert await flags(world) == [(w.env, True)]
+    assert len(await world.audit(AuditAction.CONNECTION_FLAGGED)) == 1
+    assert [(r[1], r[2]) for r in await requests(world)] == [("exceed_ceiling", "pending")]
 
 
 # ── joining a login to a person ──────────────────────────────────────────────

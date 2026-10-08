@@ -336,12 +336,29 @@ async def _blocked(
     return None
 
 
+async def _settles_flag(uow: UnitOfWork, row: ApprovalRow, same_grants: bool) -> bool:
+    """Clear the flag an approved ``exceed_ceiling`` for the current grants answers; whether it
+    did."""
+    name = row.connection
+    if name is None or not same_grants:
+        return False
+    links = await connections.links(uow.conn, uow.org_id, row.environment_id)
+    if not any(k.connection.name == name and k.over_ceiling_since is not None for k in links):
+        return False
+    await connections.settle_environment(
+        uow.conn, uow.org_id, row.environment_id, approved={name}, actor=actor_of(uow.principal)
+    )
+    return True
+
+
 async def apply_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcome, str | None]:
     """After ``row`` was approved: write its stored grant set when every requirement for that
     exact set is now approved, in the caller's transaction. ``waiting`` while another is open;
     ``not_applied`` with the reason when the world moved on (version, floors, ceilings,
     quarantine, the requester's right to build); ``not_applicable`` for the kinds that apply
-    nothing. The approval stands either way."""
+    nothing. The approval stands either way. An ``exceed_ceiling`` approval for exactly the
+    current grants of an environment flagged over that connection's ceiling (a directory change
+    opened it, GA-5.3) clears the flag and is ``applied``."""
     if row.kind not in _SHARING or row.state != "approved":
         return "not_applicable", None
     desired = _stored_grants(row)
@@ -375,7 +392,8 @@ async def apply_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcom
         via_agent=row.requested_via_agent,
     )
     if row.requirement not in needed:
-        return "not_applied", "stale"
+        settled = await _settles_flag(uow, row, set(desired) == set(existing))
+        return ("applied", None) if settled else ("not_applied", "stale")
     if any(r not in found or found[r].state != "approved" for r in needed):
         return "waiting", None
     await _write(

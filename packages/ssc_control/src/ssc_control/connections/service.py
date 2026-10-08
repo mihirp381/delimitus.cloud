@@ -6,11 +6,15 @@ reach the snapshot. A grant links one environment to one connection. Each change
 caller's org-bound transaction, is audited, and marks the org's access snapshot dirty.
 
 The ceiling is checked when a sharing change widens an environment's audience, when a grant is
-created, and when a ceiling changes. Changing a ceiling only flags: every environment now over it
-gets ``over_ceiling_since`` and one ``connection.flagged`` row. Nothing is blocked at the data
-gateway and no approval is opened for it. The flag clears when the environment's audience is back
-inside every ceiling, or when a widening past it was approved. Directory membership is read at
-the moment of each check and not watched afterwards.
+created, when a ceiling changes, and when the directory changes the members of a group a ceiling
+lists (GA-5.3, decision 034). Changing a ceiling only flags: every environment now over it gets
+``over_ceiling_since`` and one ``connection.flagged`` row. A directory change flags the same way
+and also opens one ``exceed_ceiling`` approval per environment it newly flags, asked in the name
+of the app's owner, for the connection's owner or an org admin to decide. Nothing is blocked at
+the data gateway and nothing is suspended. The flag clears when the environment's audience is back
+inside every ceiling, or when a widening past it was approved; clearing withdraws the pending
+``exceed_ceiling`` requests on that environment and connection. Directory membership is read at
+the moment of each check; a deactivation is not re-checked.
 """
 
 import json
@@ -25,8 +29,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.connections import AVAILABLE, SQL_KINDS, Address, Kind, SqlAddress, address_json
 from ssc_contracts.ids import new_id
+from ssc_control.approvals import service as approvals
 from ssc_control.audit import Actor, NewEvent, append_event
-from ssc_control.domain.approval_rules import GrantKey
+from ssc_control.domain.approval_rules import (
+    GrantKey,
+    Requirement,
+    RequirementKind,
+    exceed_subject_key,
+)
 from ssc_control.domain.audience import (
     ORG,
     Ceiling,
@@ -46,6 +56,7 @@ Status = Literal["active", "suspended"]
 
 CONNECTION: Final = "connection"
 GRANT: Final = "connection_grant"
+BACK_INSIDE: Final = "the audience is back inside the ceiling"
 _COLUMNS: Final = (
     "id, name, kind, classification, owner_user_id, ceiling, allowed_schemas, limits, "
     "setup_status, status, created_at, updated_at"
@@ -119,6 +130,15 @@ _ACTIVE_MEMBERS = text(
     "on u.org_id = m.org_id and u.id = m.user_id where m.org_id = :org "
     "and m.group_id = any(cast(:groups as text[])) and m.user_id = any(cast(:users as text[])) "
     "and u.status = 'active'"
+)
+_APP_OWNER = text(
+    "select a.owner_user_id from ssc.environment e join ssc.app a "
+    "on a.org_id = e.org_id and a.id = e.app_id where e.org_id = :org and e.id = :env"
+)
+_PENDING_EXCEED = text(
+    "select id from ssc.approval_request where org_id = :org and environment_id = :env "
+    "and kind = 'exceed_ceiling' and state = 'pending' and payload ->> 'connection' = :name "
+    "order by id"
 )
 
 
@@ -376,8 +396,8 @@ async def flag_over_ceiling(
     conn: AsyncConnection, org_id: str, connection: Connection, actor: Actor
 ) -> list[str]:
     """Flag every environment using ``connection`` whose audience is now over its ceiling, one
-    ``connection.flagged`` row each, and clear the flag of those back inside. Opens no approval.
-    The environments newly flagged."""
+    ``connection.flagged`` row each, and clear the flag of those back inside (withdrawing their
+    pending ``exceed_ceiling`` requests). Opens no approval. The environments newly flagged."""
     flagged: list[str] = []
     rows = (await conn.execute(_OF_CONNECTION, {"org": org_id, "con": connection.id})).all()
     for grant_id, env_id, since in rows:
@@ -399,7 +419,7 @@ async def flag_over_ceiling(
             await _clear(
                 conn,
                 org_id,
-                connection_id=connection.id,
+                connection=connection,
                 grant_id=str(grant_id),
                 env_id=str(env_id),
                 actor=actor,
@@ -407,15 +427,79 @@ async def flag_over_ceiling(
     return flagged
 
 
+async def recheck_group(
+    conn: AsyncConnection, org_id: str, group_id: str, actor: Actor
+) -> list[tuple[str, str]]:
+    """After the directory changed ``group_id``'s members: re-check every connection whose
+    ceiling lists that group (:func:`flag_over_ceiling`), and open one ``exceed_ceiling`` approval
+    for each environment newly flagged. The ``(connection name, environment id)`` pairs newly
+    flagged."""
+    flagged: list[tuple[str, str]] = []
+    for connection in await list_all(conn, org_id):
+        subjects = connection.ceiling.subjects
+        if subjects is None or ("group", group_id) not in subjects:
+            continue
+        for env_id in await flag_over_ceiling(conn, org_id, connection, actor):
+            await _ask_owner(conn, org_id, connection.name, env_id, actor)
+            flagged.append((connection.name, env_id))
+    return flagged
+
+
+async def _ask_owner(
+    conn: AsyncConnection, org_id: str, name: str, env_id: str, actor: Actor
+) -> None:
+    """Open (or find) the ``exceed_ceiling`` request for the environment's current grants, asked
+    in the name of the app's owner, whose sharing is now over the ceiling."""
+    grants = await environment_grants(conn, org_id, env_id)
+    owner = (await conn.execute(_APP_OWNER, {"org": org_id, "env": env_id})).scalar_one()
+    await approvals.request(
+        conn,
+        org_id=org_id,
+        environment_id=env_id,
+        requirement=Requirement(RequirementKind.EXCEED_CEILING, exceed_subject_key(name, grants)),
+        requested_by=str(owner),
+        via_agent=False,
+        payload={
+            "connection": name,
+            "grants": [
+                {"role": role, "subject_kind": kind, "subject_id": sid}
+                for role, kind, sid in sorted(grants, key=lambda g: (g[0], g[1], g[2] or ""))
+            ],
+        },
+        actor=actor,
+    )
+
+
+async def _withdraw_recheck_requests(
+    conn: AsyncConnection, org_id: str, env_id: str, name: str, actor: Actor
+) -> None:
+    """Cancel every pending ``exceed_ceiling`` request on the environment that names connection
+    ``name``, whatever grants it was asked for: the flag it answered is gone."""
+    pending = (
+        await conn.execute(_PENDING_EXCEED, {"org": org_id, "env": env_id, "name": name})
+    ).all()
+    for (apr_id,) in pending:
+        await approvals.cancel(
+            conn,
+            org_id=org_id,
+            approval_id=str(apr_id),
+            user_id=None,
+            channel=None,
+            reason=BACK_INSIDE,
+            actor=actor,
+        )
+
+
 async def _clear(  # noqa: PLR0913  (keyword-only)
     conn: AsyncConnection,
     org_id: str,
     *,
-    connection_id: str,
+    connection: Connection,
     grant_id: str,
     env_id: str,
     actor: Actor,
 ) -> None:
+    connection_id = connection.id
     await conn.execute(_CLEAR, {"org": org_id, "id": grant_id})
     await _audit(
         conn,
@@ -431,6 +515,7 @@ async def _clear(  # noqa: PLR0913  (keyword-only)
             "over_ceiling_since": None,
         },
     )
+    await _withdraw_recheck_requests(conn, org_id, env_id, connection.name, actor)
 
 
 async def settle_environment(
@@ -453,7 +538,7 @@ async def settle_environment(
             await _clear(
                 conn,
                 org_id,
-                connection_id=link.connection.id,
+                connection=link.connection,
                 grant_id=link.id,
                 env_id=environment_id,
                 actor=actor,

@@ -5,6 +5,9 @@ Ticket "done when" checks:
         -> test_sharing_a_finance_app_with_the_org_waits_for_its_owner
   * lowering a ceiling flags every app now over it
         -> test_lowering_a_ceiling_flags_every_environment_now_over_it
+GA-5.3 "a directory change re-checks connection ceilings" through the internal directory route
+        -> test_a_directory_change_flags_the_grant_and_asks_the_owner and
+        test_narrowing_the_sharing_withdraws_the_re_check_request (the sync is in test_identity)
 Plus: the ceiling rules, a user's group membership at the moment of the check, the two approvals
 a change can need, grant creation over the ceiling, who may decide, the snapshot, the routes and
 who sees which connection.
@@ -41,6 +44,7 @@ from ssc_contracts.connections import AVAILABLE as AVAILABLE_KINDS
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.snapshot import SnapshotDoc
+from ssc_control.api.settings import INTERNAL_AUDIENCE
 from ssc_control.connections import service as connection_service
 from ssc_control.db import bind_org_sync
 from ssc_control.domain.approval_rules import check_decider
@@ -920,3 +924,87 @@ def test_the_snapshot_names_the_kind_of_every_ready_connection(
     # postgres is the kind before GA-5, so it is left out and a document keeps its bytes.
     assert "kind" not in doc["connections"]["finance"]
     assert SnapshotDoc.model_validate(doc).connections["finance"].kind == "postgres"
+
+
+def set_members(client: TestClient, key: SigningKey, w: World, group: str, users: list[str]) -> Any:
+    """The internal directory route, as an operator."""
+    operator = mint(
+        key, org=w.org, sub="op_sync", kind="operator", audience=INTERNAL_AUDIENCE, jti=new_key()
+    )
+    return client.put(
+        f"/internal/v1/directory/groups/{group}/members",
+        json={"user_ids": users},
+        headers=auth(operator),
+    )
+
+
+def shared_past_a_group(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns, key: SigningKey
+) -> tuple[str, list[dict[str, Any]], int]:
+    """Prod shared with the approver, inside a confidential ceiling that lists one group; then
+    the directory takes the approver out of it. The group, prod's grants before the share, and
+    the grants version after it."""
+    group = add_group(dsns.app, world, [world.builder, world.approver])
+    finance(client, world, tokens, ceiling_doc(("group", group)))
+    before, version = prod_grants(client, world, tokens)
+    shared = [*before, user_grant(world.approver)]
+    assert put(client, world, world.prod, tokens.admin, shared, version).status_code == 200
+    assert link(client, world, world.prod, tokens.admin).status_code == 200
+    assert links_of(client, world, world.prod, tokens.admin)[0]["over_ceiling_since"] is None
+    r = set_members(client, key, world, group, [world.builder])
+    assert r.status_code == 200, r.text
+    assert r.json()["removed"] == [world.approver]
+    return group, before, version + 1
+
+
+def test_a_directory_change_flags_the_grant_and_asks_the_owner(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    shared_past_a_group(client, world, tokens, dsns, signing_key)
+    assert links_of(client, world, world.prod, tokens.admin)[0]["over_ceiling_since"] is not None
+    (flagged,) = events_of(dsns.app, world.org, AuditAction.CONNECTION_FLAGGED)
+    assert flagged["after"]["environment_id"] == world.prod
+    (asked,) = approvals_of(dsns.app, world.org)
+    assert (asked["kind"], asked["state"], asked["environment_id"]) == (
+        "exceed_ceiling",
+        "pending",
+        world.prod,
+    )
+    assert asked["requested_by_user_id"] == world.admin
+    assert asked["payload"]["connection"] == "finance"
+    assert user_grant(world.approver) in asked["payload"]["grants"]
+    (requested,) = events_of(dsns.app, world.org, AuditAction.APPROVAL_REQUESTED)
+    assert requested["actor_kind"] == "operator"
+    inbox = client.get("/v1/approvals?inbox=true", headers=auth(tokens.member))
+    assert [a["id"] for a in inbox.json()["approvals"]] == [asked["id"]]
+    cleared_before = len(events_of(dsns.app, world.org, AuditAction.CONNECTION_UPDATED))
+    decided = post(
+        client,
+        f"/v1/approvals/{asked['id']}/decide",
+        tokens.member,
+        {"outcome": "approved", "reason": "Bob may keep it.", "channel": "console"},
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["applied"] == "applied"
+    assert links_of(client, world, world.prod, tokens.admin)[0]["over_ceiling_since"] is None
+    updated = events_of(dsns.app, world.org, AuditAction.CONNECTION_UPDATED)
+    assert len(updated) == cleared_before + 1
+    assert updated[-1]["after"]["over_ceiling_since"] is None
+    assert [a["state"] for a in approvals_of(dsns.app, world.org)] == ["approved"]
+
+
+def test_narrowing_the_sharing_withdraws_the_re_check_request(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    _, before, version = shared_past_a_group(client, world, tokens, dsns, signing_key)
+    assert [a["state"] for a in approvals_of(dsns.app, world.org)] == ["pending"]
+    assert put(client, world, world.prod, tokens.admin, before, version).status_code == 200
+    assert links_of(client, world, world.prod, tokens.admin)[0]["over_ceiling_since"] is None
+    (withdrawn,) = approvals_of(dsns.app, world.org)
+    assert (withdrawn["state"], withdrawn["decision_reason"], withdrawn["decision_channel"]) == (
+        "cancelled",
+        connection_service.BACK_INSIDE,
+        None,
+    )
+    (cancelled,) = events_of(dsns.app, world.org, AuditAction.APPROVAL_CANCELLED)
+    assert (cancelled["actor_kind"], cancelled["actor_id"]) == ("user", world.admin)

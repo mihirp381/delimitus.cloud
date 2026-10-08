@@ -85,7 +85,8 @@ A failure here never reaches a user: only the throwaway environment is granted. 
 
 ## Know before you rely on it
 
-- A user is inside a group ceiling when they are an active member of a listed group at the moment of the check. Nobody re-checks when directory membership changes later; a change to the ceiling or to the sharing does.
+- A user is inside a group ceiling when they are an active member of a listed group at the moment of the check. When the directory sync (or the internal directory route) changes the members of a listed group, every environment now over the ceiling is flagged and one `exceed_ceiling` approval asks the connection's owner, who decides; approving clears the flag. The data gateway is not told, and suspending the connection stays the admin's action. Deactivating a user is not re-checked yet.
+- An approved widening keeps covering those grants: a later directory change re-flags the environment but asks nobody, and narrowing the audience or suspending the connection is the action.
 - `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and up to ten run, so a grant can reach up to ten times them (decision 034). Say so to the data owner when they set them.
 - The ceiling is not enforced at the data gateway. Flagging is the signal; narrowing the audience or suspending the connection is the action.
 - Rolling back: `DELETE /v1/apps/<app>/environments/<env>/connections/finance` stops an environment reaching it; `{"status": "suspended"}` stops all of them.

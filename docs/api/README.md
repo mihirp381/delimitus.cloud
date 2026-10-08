@@ -270,7 +270,8 @@ admin, never the requester or an agent session. It is checked on a sharing chang
 on creating a link. Lowering a ceiling opens no approval: it flags each environment now over it
 (`over_ceiling_since`, one `connection.flagged` audit row each) and clears the flag once the
 audience is inside. A user is inside a group ceiling when they are an active member of a listed
-group at the moment of the check; a later membership change is not re-checked.
+group at the moment of the check; when the directory changes a listed group's members, each
+environment now over is flagged and an `exceed_ceiling` request is opened for the owner to decide.
 
 **A connected GitHub repository deploys preview on every push** (SSC-047, decision 027).
 `PUT /v1/apps/{app_id}/github` names `repository` (`owner/name`), optionally `branch` (the
