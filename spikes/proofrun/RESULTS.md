@@ -249,6 +249,14 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
 - **T9 request hold** (ended 2026-10-08 ~04:01 UTC): 8.02 h held over 8.02 h, PASS. 8
   reconnects, longest gap 2.5 s, none refused. 7 of 8 drops at about 60 minutes, one at 7.0
   minutes (stream 3). `t9 report` and `t9 bill` are still to run, the bill after it is exported.
+- **Rollback and failed deploy (GA-1.5), app ga1pg01 on cell 2, 2026-10-08, control 69cb999f.**
+  R4 (a second deploy) went live in 5 min 8 s, most of it the build. Before 997d5cc, R3 failed
+  HEALTH_CHECK_FAILED after 180 s: Cloud Run retires a revision with no traffic unstarted, so it
+  never got `ContainerHealthy`. `ssc rollback ga1pg01 R1 --wait` took 17.8 s, PASS (under 30 s).
+  R5, made to exit at import, failed HEALTH_CHECK_FAILED in 2 min 40 s with the log tail and the
+  fix-it line. The audit log shows traffic moving to R5's revision, Cloud Run refusing it (code 9),
+  and the control sending traffic back to R1's revision; `ssc releases` shows R1 still live. The
+  audit row was not read: the CLI has no audit command, and the console was not used.
 
 ## Release, 2026-10-07 (GA-0)
 
