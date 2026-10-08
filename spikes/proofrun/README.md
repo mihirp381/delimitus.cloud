@@ -412,6 +412,39 @@ It puts 4 KiB of random bytes as `ga42/<UTC stamp>.bin` and reaches Cloud Storag
 
 Pass: every check that ran passed. The checks, the link's path, credential, date and lifetime (never its signature or the operator login), the loop lines and the timings go to `results/ga-4.2.json` and to `results/files-<app>-<UTC stamp>.json`. Copy the final line into the GA-4.2 record. This covers `infra/README.md`, File storage, live checks 3, 4, 6 and 8.
 
+### Rollback warning (GA-4.5)
+
+The app is `apps/rollback`: a FastAPI app with `[state] postgres = true` and an alembic ledger in `alembic/versions` (`0001_ga45_first.py`, `0002_ga45_second.py`). The platform reads the migration names from the source and never runs them, and the app does not run them either; `/` prints the names its release carries. The kit makes two releases from the one folder: R1 from a temporary copy without `0002_ga45_second.py` (removed afterwards), R2 from the whole folder. Only preview is used, because `ssc deploy` always targets preview, so the command has no `--env`.
+
+Before the first run:
+
+1. Create the app once: `uv run ssc apps create <slug>` (at the repository root).
+2. Give the person who will check the console preview access (`uv run ssc share <slug> <usr_…> --env preview`), as under Probe apps.
+3. For the MCP surface, keep an agent login on this machine: `uv run ssc login --org <org id> --agent ga45` (or set `SSC_TOKEN` to an agent's token). `ssc mcp` refuses a person's token. Without it check 5 is "not read" and the command prints this line. The audit export needs the org admin's own login.
+
+From `spikes/proofrun`:
+
+```sh
+uv run python -m proofrun rollback --app <slug> [--console-url https://console.delimitus.com]
+```
+
+The kit prints the app and the four **[real]** steps, then goes on without asking. A first run creates the app's database, so the first deploy may take several minutes (its `--timeout` is 1200 s, the others 900 s); expect roughly 15 to 30 minutes in all.
+
+| # | Check |
+| --- | --- |
+| 1 | **[real]** deploy R1 (0001 only): healthy. |
+| 2 | **[real]** deploy R2 (0001 and 0002): healthy, with a higher release number. |
+| 3 | `ssc rollback <slug> R1` is refused: exit non-zero, `Code: SCHEMA_AHEAD`, and the `Fix:` line names `0002_ga45_second` (and not `0001_ga45_first`). |
+| 4 | The same with `--json`: `error.code` is `SCHEMA_AHEAD`. The names are not in the JSON (`CliError.fix` is text-only, `errors.py:104-106`); the output and the results say so in a `note:` line. |
+| 5 | `ssc mcp` over stdio (newline-delimited JSON-RPC, 60 s limit): `initialize`, `tools/list` has `rollback`, and `tools/call rollback` without `confirm` answers `isError` with `SCHEMA_AHEAD` and `0002_ga45_second` in its text and in `structuredContent.error.detail`. |
+| 6 | `ssc audit export --since <start>` holds exactly one `rollback.started` row for R1 on this environment, the confirmed one: the refusals wrote none. |
+| 7 | **[real]** `ssc rollback <slug> R1 --confirm --wait`: healthy on R1. |
+| 8 | That row says `confirmed: true` and `migrations_ahead` contains `alembic:0002_ga45_second`; its actor and action are printed. |
+| 9 | **[real]** `ssc rollback <slug> R2 --wait` needs no `--confirm` and is healthy. It puts R2 back, so R1 can be picked in the console (the live release cannot). |
+| 10 | Console, manual: open `<console-url>/apps/<app id>`, on the Preview card press Roll back, pick R1, type the slug and press Roll back. Do not tick the checkbox; press Cancel. You must see "The database may have run migrations R<n> does not have" and a list item `0002_ga45_second (alembic)`, with "Roll back anyway" off. Record what the page showed. |
+
+Pass: every automatic check (1 to 9) passed; check 10 never sets the verdict. The kit never reads the operator's token. The checks, the MCP reply, the audit row and the note go to `results/ga-4.5.json` and to `results/rollback-<app>-<UTC stamp>.json`. Copy the final line, and what check 10 showed, into the GA-4.5 record.
+
 ## What feeds what
 
 | Result | Feeds |
