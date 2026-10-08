@@ -9,9 +9,10 @@ Each read is one GET with its own client, over TLS checked by :func:`ssc_datagw.
 following no redirect. Sending it and waiting for the answer's headers runs under the shared
 warm-up retry (:func:`ssc_datagw.warmup.connect_with_warmup`); the body is then read up to
 :data:`BODY_BYTES` and parsed as JSON, and the whole read, connect included, ends at the query's
-``timeout_ms``. The records sit at the target's ``items`` path (the body itself without one):
-an array is one record per element, an object one record. The first record's keys name the
-columns; a record that is not an object is one column, ``value``.
+``timeout_ms``. :func:`get` is that GET, which the Google Sheets connector shares. The
+records sit at the target's ``items`` path (the body itself without one): an array is one record
+per element, an object one record. The first record's keys name the columns; a record that is
+not an object is one column, ``value``.
 
 The token is a ``SecretStr`` and travels only in its header: every error names a status or an
 exception class, never the URL's query, a header or the body.
@@ -20,7 +21,7 @@ exception class, never the URL's query, a header or the body.
 import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Final, Literal, cast
 from urllib.parse import unquote
@@ -190,7 +191,7 @@ def rows_for(
     ]
 
 
-def _status_failure(status: int) -> Exception | None:
+def status_failure(status: int) -> Exception | None:
     """The connector's error for an answer's status, or ``None`` for a 2xx."""
     if 200 <= status < 300:
         return None
@@ -205,7 +206,7 @@ def _status_failure(status: int) -> Exception | None:
     return QueryFailedError(f"the source answered {status}", sqlstate=None)
 
 
-async def _body(response: httpx2.Response) -> bytes:
+async def read_body(response: httpx2.Response) -> bytes:
     """The answer's body, decoded, at most :data:`BODY_BYTES`."""
     body = bytearray()
     try:
@@ -225,6 +226,49 @@ async def _body(response: httpx2.Response) -> bytes:
 class _ReadTimedOutError(Exception):
     """The source took the request and did not answer in time: not a connect time-out, which
     the warm-up retry would try again."""
+
+
+async def get(  # noqa: PLR0913  (the request and how it is timed)
+    client: httpx2.AsyncClient,
+    url: httpx2.URL,
+    headers: Mapping[str, str],
+    *,
+    seconds: float,
+    connect_seconds: float,
+    warmup: Warmup,
+    failure: Callable[[int], Exception | None] = status_failure,
+) -> tuple[int, bytes]:
+    """One GET of ``url``: the answer's status and body. Sending it and waiting for the
+    headers runs under the warm-up retry; ``failure`` maps the status to the connector's error
+    (``None`` reads on), and the body is read by :func:`read_body`. Every read waits at most
+    ``seconds``; a connect or TLS failure is ``UpstreamUnavailableError``."""
+
+    async def connect_once(connect: float) -> httpx2.Response:
+        timeout = httpx2.Timeout(seconds, connect=connect)
+        request = client.build_request("GET", url, headers=headers, timeout=timeout)
+        try:
+            return await client.send(request, stream=True)
+        except httpx2.ConnectTimeout:
+            raise TimeoutError("connect") from None
+        except httpx2.TimeoutException:
+            raise _ReadTimedOutError from None
+        except httpx2.TransportError as exc:
+            raise UpstreamUnavailableError(f"cannot connect: {type(exc).__name__}") from None
+
+    try:
+        response = await connect_with_warmup(
+            connect_once, connect_seconds=connect_seconds, warmup=warmup
+        )
+    except _ReadTimedOutError:
+        raise TimeoutError("the source did not answer in time") from None
+    try:
+        refused = failure(response.status_code)
+        if refused is not None:
+            raise refused
+        body = await read_body(response)
+    finally:
+        await response.aclose()
+    return response.status_code, body
 
 
 class _Cursor:
@@ -268,41 +312,6 @@ class RestConnector:
             headers[t.header] = f"{t.scheme} {token}" if t.scheme else token
         return headers
 
-    async def _fetch(
-        self,
-        client: httpx2.AsyncClient,
-        url: httpx2.URL,
-        headers: Mapping[str, str],
-        seconds: float,
-    ) -> bytes:
-        async def connect_once(connect: float) -> httpx2.Response:
-            timeout = httpx2.Timeout(seconds, connect=connect)
-            request = client.build_request("GET", url, headers=headers, timeout=timeout)
-            try:
-                return await client.send(request, stream=True)
-            except httpx2.ConnectTimeout:
-                raise TimeoutError("connect") from None
-            except httpx2.TimeoutException:
-                raise _ReadTimedOutError from None
-            except httpx2.TransportError as exc:
-                raise UpstreamUnavailableError(f"cannot connect: {type(exc).__name__}") from None
-
-        try:
-            response = await connect_with_warmup(
-                connect_once, connect_seconds=self._connect_seconds, warmup=self._warmup
-            )
-        except _ReadTimedOutError:
-            raise TimeoutError("the source did not answer in time") from None
-        try:
-            failure = _status_failure(response.status_code)
-            if failure is not None:
-                raise failure
-            body = await _body(response)
-        finally:
-            await response.aclose()
-        log.info("rest read: status=%s bytes=%s", response.status_code, len(body))
-        return body
-
     @asynccontextmanager
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         path = request_path(query.sql)
@@ -321,9 +330,17 @@ class RestConnector:
         )
         try:
             async with asyncio.timeout(seconds):
-                body = await self._fetch(client, url, self._headers(query.tag), seconds)
+                status, body = await get(
+                    client,
+                    url,
+                    self._headers(query.tag),
+                    seconds=seconds,
+                    connect_seconds=self._connect_seconds,
+                    warmup=self._warmup,
+                )
         finally:
             await client.aclose()
+        log.info("rest read: status=%s bytes=%s", status, len(body))
         try:
             parsed = cast("JsonValue", json.loads(body))
         except ValueError, RecursionError:

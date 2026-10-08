@@ -180,6 +180,54 @@ What stops each attack: local-proven on MySQL 8.4 and 9 (`tests/test_mysql.py`, 
 
 The connector logs one line per read, `rest read: status=<status> bytes=<body bytes>`, with no URL. Local-proven against a TLS server in-process (`packages/ssc_datagw/tests/test_rest.py`), which also runs the connector suite.
 
+<!-- gsheets -->
+## The Google Sheets connector
+
+`{kind: "gsheets", spreadsheet_id, sheet?, service_account}` (`ssc_datagw.gsheets.GsheetsTarget`; unknown members are refused), the value of a `gsheets` connection's `SSC_CONNECTION_*` variable ([Connectors by kind](#connectors-by-kind)). The address is the control plane's (`ssc_contracts.connections.SheetsAddress`), with the same patterns.
+
+| Member | Rule |
+|---|---|
+| `spreadsheet_id` | `^[A-Za-z0-9_-]{20,128}$`, the id in the spreadsheet's URL. |
+| `sheet` | Optional. The one tab apps read, `^[^\x00-\x1f'!:]{1,100}$`; left out, every tab. |
+| `service_account` | The service account's JSON key file, as Google gives it. It must be JSON with `client_email`, `private_key` (a PEM RSA key) and `private_key_id`, or the variable is refused with a message that quotes none of them. Never shown in a repr, an error or a log line, nor are the email, the key or a JWT made from it. |
+
+**Who reads.** Each read signs its own JWT with the service account's key, Google's self-signed JWT for a service account (no token endpoint, no cache): RS256, header `kid` the `private_key_id`, `iss` and `sub` the `client_email`, `aud` `https://sheets.googleapis.com/`, `iat` now and `exp` an hour later, sent as `Authorization: Bearer <jwt>`. The service account needs no role in any project; the customer shares the spreadsheet with its email, and viewer is enough. Turning the Sheets API on in the service account's project is the customer's step.
+
+**The range.** For this kind `sql` is not SQL: it is one A1 range, at most 300 characters, in one of these forms:
+
+| Form | Example |
+|---|---|
+| a cell, or cell to cell | `A1`, `A1:D100` |
+| a cell to the end of a column | `A2:D` |
+| whole columns | `A:D` |
+| whole rows | `1:100` |
+| any of these after a tab | `Orders!A1:D`, `'Q1 sales'!B2` |
+| a tab alone (all of it) | `Orders`, `'Q1 sales'` |
+
+A column is 1 to 3 letters (any case), a row 1 to 9,999,999. A tab name is bare when it is letters, digits and `_`, else quoted in `'...'` with `''` for a quote, 1 to 100 characters either way. A bare text that reads as a range is a range: quote a tab named like one (`'A1'`). With `sheet` set, a range without a tab reads that tab, and a named tab must be it (compared without case; sent as `sheet` spells it); another is `QUERY_REFUSED` ("the range names another sheet than the connection's"). Without `sheet`, a range without a tab reads the spreadsheet's first tab. Anything else is `QUERY_REFUSED` ("the query is not an A1 range"), and so are `params`, which a Sheets read does not take; both are refused before anything is sent.
+
+The request is `GET https://sheets.googleapis.com/v4/spreadsheets/<spreadsheet_id>/values/<range>?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER&majorDimension=ROWS`, the range percent-encoded and its tab always quoted, with `Accept: application/json` and `User-Agent: ssc-datagw`. TLS is checked against the system trust store, no redirect is followed, and the process environment's proxy and CA settings are ignored. Time is as for the REST connector (the same request code, `ssc_datagw.rest.get`): 10 s to connect with the warm-up retry, the whole read ends at `timeout_ms`, and a cancelled read drops its request.
+
+**The answer.**
+
+| Answer | Result |
+|---|---|
+| 2xx | read on |
+| 3xx | `QUERY_FAILED`, no `sqlstate` |
+| 400 | `QUERY_FAILED` 42P01 (no such tab or range: the grammar was already checked) |
+| 401 | `QUERY_FAILED` 28000 (Google refused the JWT: a revoked or wrong key) |
+| 403 | `QUERY_FAILED` 42501 (the spreadsheet is not shared with the service account, or its project has the Sheets API off) |
+| 404 | `QUERY_FAILED` 42P01 (no such spreadsheet) |
+| 429 | `CONNECTION_UNAVAILABLE` (Google's quota) |
+| other 4xx | `QUERY_FAILED`, no `sqlstate` |
+| 5xx, no connection, a TLS failure | `CONNECTION_UNAVAILABLE` |
+| a body over 32 MiB (decoded) | `QUERY_FAILED`, no `sqlstate` |
+| a body that is not JSON, or not `{"values": [[cell, ...], ...]}` with each cell a string, number or boolean | `QUERY_FAILED` 22P02 |
+
+**Records and columns.** Values are unformatted: a number is a JSON number, a date or time Google's serial number (days since 1899-12-30), a formula its result. The first row of `values` is the header: a cell's text names its column (a number or boolean its JSON text), an empty cell `col<n>` by its 1-based position, and a name already taken gets `_2`, `_3`, ... The rows after it are the records: a short row is padded with `null`, a longer one cut at the column count, and an empty cell (Google's `""`) is `null`. No `values` (an empty tab or range) is no columns and no rows; a header alone is columns and no rows. A column's type is that of its first non-null value in the first 100 rows after the header: boolean `boolean`, integer `integer`, other number `float`, string `string`, none `string`; `db_type` is `boolean`, `number` or `string`. A value of another type than its column's is kept as it is. At most `max_rows` plus one rows are read, as for every connector; the answer itself is one request, so Google's own limits (a request's size and the per-minute quota) apply first.
+
+The connector logs one line per read, `gsheets read: status=<status> bytes=<body bytes>`, with no id, range or URL. Contract-fake-proven: a fake Sheets API that checks the JWT (`packages/ssc_datagw/tests/test_gsheets.py`, over TLS in-process, which also runs the connector suite); live proof is a GA-5 C step.
+
 ## Limits
 
 Each limit is the minimum of the platform, the connection's `limits`, the grant's `limits` and the request's ask (`docs/contracts/access-snapshot.md`, amendment SSC-050). A cap a layer leaves out puts no cap at that layer; `0` is a cap of zero.
