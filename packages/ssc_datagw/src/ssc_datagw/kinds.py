@@ -18,6 +18,7 @@ from typing import Any, Final
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ssc_contracts.connections import Kind
+from ssc_datagw.airtable import AirtableConnector, AirtableTarget
 from ssc_datagw.bigquery import BigQueryConnector, BigQueryTarget
 from ssc_datagw.connectors import Connector
 from ssc_datagw.gcs import GcsConnector, GcsTarget
@@ -37,6 +38,7 @@ type Target = (
     | BigQueryTarget
     | SqlServerTarget
     | GcsTarget
+    | AirtableTarget
 )
 """Every target model a kind may validate to; grows with each connector."""
 
@@ -66,6 +68,7 @@ REGISTRY: Final[Mapping[Kind, Registered]] = {
     "bigquery": Registered(BigQueryTarget, BigQueryConnector),
     "sqlserver": Registered(SqlServerTarget, SqlServerConnector),
     "gcs": Registered(GcsTarget, GcsConnector),
+    "airtable": Registered(AirtableTarget, AirtableConnector),
 }
 
 AVAILABLE: Final[frozenset[Kind]] = frozenset(REGISTRY)

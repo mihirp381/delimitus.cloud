@@ -6,6 +6,7 @@ import pytest
 from pki import make_pki
 
 from ssc_contracts import connections as contract
+from ssc_datagw.airtable import AirtableConnector, AirtableTarget
 from ssc_datagw.bigquery import BigQueryConnector, BigQueryTarget
 from ssc_datagw.gcs import GcsConnector, GcsTarget
 from ssc_datagw.gsheets import GsheetsConnector, GsheetsTarget
@@ -123,6 +124,16 @@ def test_a_gcs_connection_names_the_key_field_and_never_its_text() -> None:
     assert REGISTRY["gcs"] == Registered(GcsTarget, GcsConnector)
 
 
+def test_an_airtable_connection_parses_to_its_target_and_connector() -> None:
+    token = "pat" + "A" * 14 + "." + "f" * 64
+    raw = {"kind": "airtable", "base_id": "appA1b2C3d4E5f6G7", "table": "Orders", "token": token}
+    target = parse_target(json.dumps(raw))
+    assert target == AirtableTarget.model_validate(raw)
+    assert isinstance(target, AirtableTarget)
+    assert isinstance(connector_for(target), AirtableConnector)
+    assert token not in repr(target)
+
+
 def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
     with pytest.raises(TargetError) as caught:
         parse_target(json.dumps({**TARGET, "kind": "rest"}))
@@ -135,7 +146,7 @@ def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
     [
         ("{" + PASSWORD, "(the JSON)"),
         (json.dumps({**TARGET, "kind": "oracle"}), "kind"),
-        (json.dumps({**TARGET, "kind": "airtable"}), "kind"),  # a kind with no connector yet
+        (json.dumps({**TARGET, "kind": "snowflake"}), "kind"),  # a kind with no connector yet
         (json.dumps({k: v for k, v in TARGET.items() if k != "host"}), "host"),
         (json.dumps({**TARGET, "sslmode": "disable"}), "sslmode"),
     ],
