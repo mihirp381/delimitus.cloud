@@ -27,7 +27,12 @@
 -- SSC_DATAGW_READ or to the user stays, and the readback at the end shows it. It is safe to run
 -- again, which is how a new key or another schema lands.
 --
--- Not yet run on a live account: the live proof is a GA-5 C step.
+-- Run on a live trial account on 2026-10-08 (GA-5.6). Its first form read the schema list
+-- through one RESULTSET with two cursors, one to check the names and one to grant; the second
+-- cursor granted nothing and the script still ended with "granted on 1 schema(s)". The role held
+-- USAGE on the database and no schema, so every read was 002003 (object does not exist). Now
+-- the names are checked by one query, the grants walk a cursor of their own, and the script
+-- fails unless it granted every schema it was given.
 
 USE ROLE ACCOUNTADMIN;
 
@@ -42,6 +47,7 @@ DECLARE
     not_a_name EXCEPTION (-20001, 'ssc_user, ssc_warehouse, ssc_database and each of ssc_schemas must be letters, digits and _ only');
     not_a_key EXCEPTION (-20002, 'ssc_public_key is not the base64 of an RSA public key');
     no_schema EXCEPTION (-20003, 'name at least one schema in ssc_schemas');
+    not_granted EXCEPTION (-20004, 'a schema in ssc_schemas was not granted; run the script again and read the grants it shows');
 BEGIN
     IF (NOT (usr RLIKE '[A-Z_][A-Z0-9_]{0,254}' AND wh RLIKE '[A-Z_][A-Z0-9_]{0,254}'
              AND db RLIKE '[A-Z_][A-Z0-9_]{0,254}')) THEN
@@ -50,19 +56,15 @@ BEGIN
     IF (NOT pk RLIKE '[A-Za-z0-9+/]{200,}={0,2}') THEN
         RAISE not_a_key;
     END IF;
-    LET schemas RESULTSET := (
-        SELECT TRIM(value) AS name FROM TABLE(SPLIT_TO_TABLE(:schema_list, ','))
-        WHERE TRIM(value) <> ''
-    );
     LET named INTEGER := 0;
-    LET checked CURSOR FOR schemas;
-    FOR item IN checked DO
-        sch := item.name;
-        IF (NOT sch RLIKE '[A-Z_][A-Z0-9_]{0,254}') THEN
-            RAISE not_a_name;
-        END IF;
-        named := named + 1;
-    END FOR;
+    LET bad INTEGER := 0;
+    SELECT COUNT(*), COUNT_IF(NOT TRIM(value) RLIKE '[A-Z_][A-Z0-9_]{0,254}')
+      INTO :named, :bad
+      FROM TABLE(SPLIT_TO_TABLE(:schema_list, ','))
+     WHERE TRIM(value) <> '';
+    IF (bad > 0) THEN
+        RAISE not_a_name;
+    END IF;
     IF (named = 0) THEN
         RAISE no_schema;
     END IF;
@@ -80,6 +82,11 @@ BEGIN
     EXECUTE IMMEDIATE 'GRANT USAGE ON WAREHOUSE ' || wh || ' TO ROLE SSC_DATAGW_READ';
     EXECUTE IMMEDIATE 'GRANT USAGE ON DATABASE ' || db || ' TO ROLE SSC_DATAGW_READ';
 
+    LET schemas RESULTSET := (
+        SELECT TRIM(value) AS name FROM TABLE(SPLIT_TO_TABLE(:schema_list, ','))
+        WHERE TRIM(value) <> ''
+    );
+    LET granted INTEGER := 0;
     LET granting CURSOR FOR schemas;
     FOR item IN granting DO
         sch := db || '.' || item.name;
@@ -88,8 +95,12 @@ BEGIN
         EXECUTE IMMEDIATE 'GRANT SELECT ON ALL VIEWS IN SCHEMA ' || sch || ' TO ROLE SSC_DATAGW_READ';
         EXECUTE IMMEDIATE 'GRANT SELECT ON FUTURE TABLES IN SCHEMA ' || sch || ' TO ROLE SSC_DATAGW_READ';
         EXECUTE IMMEDIATE 'GRANT SELECT ON FUTURE VIEWS IN SCHEMA ' || sch || ' TO ROLE SSC_DATAGW_READ';
+        granted := granted + 1;
     END FOR;
-    RETURN 'SSC_DATAGW_READ granted on ' || named || ' schema(s) of ' || db || ' for ' || usr;
+    IF (granted <> named) THEN
+        RAISE not_granted;
+    END IF;
+    RETURN 'SSC_DATAGW_READ granted on ' || granted || ' schema(s) of ' || db || ' for ' || usr;
 END;
 $$;
 
