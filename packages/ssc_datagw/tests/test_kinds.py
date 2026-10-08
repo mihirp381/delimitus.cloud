@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from pki import make_pki
 
 from ssc_contracts import connections as contract
 from ssc_datagw.bigquery import BigQueryConnector, BigQueryTarget
@@ -19,6 +20,7 @@ from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 from ssc_datagw.rest import RestConnector, RestTarget
 from ssc_datagw.s3 import S3Connector, S3Target
+from ssc_datagw.sqlserver import SqlServerConnector, SqlServerTarget
 
 PASSWORD = "fake-" + "registry-" + "password"
 TARGET = {"host": "10.0.0.5", "database": "sales", "user": "ssc_datagw", "password": PASSWORD}
@@ -96,6 +98,16 @@ def test_a_bigquery_connection_names_the_key_field_and_never_its_text() -> None:
     assert REGISTRY["bigquery"] == Registered(BigQueryTarget, BigQueryConnector)
 
 
+def test_a_sqlserver_connection_parses_to_its_target_and_connector() -> None:
+    raw = {**TARGET, "kind": "sqlserver", "ca": make_pki().ca}
+    target = parse_target(json.dumps(raw))
+    assert target == SqlServerTarget.model_validate(raw)
+    assert isinstance(target, SqlServerTarget)
+    assert target.port == 1433
+    assert isinstance(connector_for(target), SqlServerConnector)
+    assert PASSWORD not in repr(target)
+
+
 def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
     with pytest.raises(TargetError) as caught:
         parse_target(json.dumps({**TARGET, "kind": "rest"}))
@@ -108,7 +120,7 @@ def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
     [
         ("{" + PASSWORD, "(the JSON)"),
         (json.dumps({**TARGET, "kind": "oracle"}), "kind"),
-        (json.dumps({**TARGET, "kind": "sqlserver"}), "kind"),  # a kind with no connector yet
+        (json.dumps({**TARGET, "kind": "airtable"}), "kind"),  # a kind with no connector yet
         (json.dumps({k: v for k, v in TARGET.items() if k != "host"}), "host"),
         (json.dumps({**TARGET, "sslmode": "disable"}), "sslmode"),
     ],

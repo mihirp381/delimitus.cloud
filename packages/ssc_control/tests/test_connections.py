@@ -847,7 +847,7 @@ def test_a_connection_has_a_kind_and_only_an_available_kind_is_created(
     assert made.status_code == 201
     assert made.json()["kind"] == "postgres"
     for kind, address in [
-        ("sqlserver", {"host": "sql.corp.internal", "database": "shop"}),
+        ("gcs", {"bucket": "corp-exports"}),
         ("snowflake", {"account": "corp-acme", "database": "ANALYTICS", "warehouse": "WH"}),
         ("airtable", {"base_id": "appA1b2C3d4E5f6G7"}),
     ]:
