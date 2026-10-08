@@ -126,6 +126,9 @@ SQL_MAX_CONNECTIONS: Final = "25"
 SQL_CA_MODE: Final = "GOOGLE_MANAGED_CAS_CA"
 SQL_DNS_ZONE: Final = "sql-psa.goog."
 SQL_DNS_NAMES: Final = f"*.{SQL_DNS_ZONE}"
+RUN_APP_ZONE: Final = "run.app."
+"""Apps have no tag and no NAT, so `run.app` (the data gateway, SSC-050) resolves to
+`private.googleapis.com`, which `egress-google-private` allows (GA-5.8 live check 3)."""
 GOOGLE_DNS_PASSTHRU: Final = (
     "googleapis.com.",
     "*.googleapis.com.",
@@ -1061,6 +1064,29 @@ class Cell:
             project=self.pid,
             managed_zone=zone.name,
             name="*.googleapis.com.",
+            type="CNAME",
+            ttl=300,
+            rrdatas=["private.googleapis.com."],
+            opts=self._o(),
+        )
+        run = gcp.dns.ManagedZone(
+            "run-app",
+            project=self.pid,
+            name="run-app",
+            dns_name=RUN_APP_ZONE,
+            visibility="private",
+            private_visibility_config=gcp.dns.ManagedZonePrivateVisibilityConfigArgs(
+                networks=[
+                    gcp.dns.ManagedZonePrivateVisibilityConfigNetworkArgs(network_url=self.vpc.id)
+                ]
+            ),
+            opts=self._o(),
+        )
+        gcp.dns.RecordSet(
+            "run-app-cname",
+            project=self.pid,
+            managed_zone=run.name,
+            name=f"*.{RUN_APP_ZONE}",
             type="CNAME",
             ttl=300,
             rrdatas=["private.googleapis.com."],

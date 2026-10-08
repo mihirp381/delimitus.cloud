@@ -263,6 +263,26 @@ def test_the_database_allows_25_connections_on_the_base_tier(cell_a: list[Declar
     assert {"name": "max_connections", "value": "25"} in settings["databaseFlags"]
 
 
+def test_run_app_resolves_to_private_googleapis_so_untagged_apps_reach_the_data_gateway(
+    cell_a: list[Declared],
+) -> None:
+    """GA-5.8 live check 3: apps carry no tag and the apps subnet has no NAT, so the data
+    gateway's ``run.app`` host must resolve inside ``199.36.153.8/30`` (``egress-google-private``);
+    the response policy passes ``run.app`` through to this zone."""
+    zone = one(cell_a, "gcp:dns/managedZone:ManagedZone", "run-app").inputs
+    assert (zone["name"], zone["dnsName"], zone["visibility"]) == ("run-app", "run.app.", "private")
+    assert zone["privateVisibilityConfig"]["networks"] == [{"networkUrl": "vpc-id"}]
+    record = one(cell_a, RECORD, "run-app-cname").inputs
+    assert (record["managedZone"], record["name"], record["type"], record["rrdatas"]) == (
+        "run-app",
+        "*.run.app.",
+        "CNAME",
+        ["private.googleapis.com."],
+    )
+    assert "run.app." in cell.GOOGLE_DNS_PASSTHRU
+    assert "*.run.app." in cell.GOOGLE_DNS_PASSTHRU
+
+
 def test_the_database_certificate_names_its_dns_name_which_resolves_in_the_cell(
     cell_a: list[Declared],
 ) -> None:

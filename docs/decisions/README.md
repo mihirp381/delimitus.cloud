@@ -897,6 +897,8 @@ Cost: $0 (VPC-SC has no charge). Risk: an enforced perimeter that misses a path 
 
 Reverse if: the founder accepts the gap for pilots (then it goes in the security notes for the outside test, blocker 12), or a perimeter is built (then this becomes the switch above).
 
+Amendment (2026-10-08, GA-5.8 live check 3): the same zone pattern now covers `run.app`. `cell._private_google_dns` adds a private zone `run.app.` whose `*.run.app.` CNAME answers `private.googleapis.com.`; the response policy already passes `run.app` through. Reason: an app has no network tag and the apps subnet has no NAT, so under `egress-deny-all` a query to the data gateway's `run.app` host hung until Cloud Run's 300 s timeout (proof cell 2, 06:00 UTC: the app answered `504`, the data gateway logged nothing). Through `199.36.153.8/30` the `egress-google-private` rule admits every workload, and Cloud Run's internal ingress accepts the private path. The gateway and the agent resolve `run.app` the same way from then on; they reached it through the NAT before and lose nothing. The switch to `restricted.googleapis.com` above would move this zone too.
+
 ## 033 Approval mail and its domain records
 
 Choice: the worker's mailer (`worker.mailer_from_env`, plain SMTP with certificate checks, no plaintext setting) is wired by the platform stack, so the provider is a setting, not code.
