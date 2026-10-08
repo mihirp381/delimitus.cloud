@@ -34,6 +34,7 @@ from proofrun import (
     t11,
     t12,
     timers,
+    warm,
 )
 from proofrun.common import (
     KIT,
@@ -67,6 +68,7 @@ PROOFS: dict[str, ModuleType] = {
     "rollback": rollback,
     "secrets": secret_proof,
     "sessions": sessions,
+    "warm": warm,
     "instances": instances,
 }
 

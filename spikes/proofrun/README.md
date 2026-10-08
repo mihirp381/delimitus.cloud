@@ -524,6 +524,50 @@ Verdict: any FAIL is FAIL, else any "not read" is INCOMPLETE, else PASS. A host 
 
 Results go to `results/ga-4.7.json` and to `results/sessions-<UTC stamp>.json` (the checks, each drop's time and last number, other ends, and each host's `check.py` lines). Copy the final line, and the screenshot, into the GA-4.7 record.
 
+### Warm option (GA-4.8)
+
+The app is `apps/warm`: a FastAPI app whose `ssc.toml` declares the runtime only (no schedules, files, state or egress, so the control plane creates no cell resource for it). `/health` answers `started_at` (when the process started, ISO UTC), `pid` and `uptime_s`. `/` is a small page with the same `started_at` and `pid` in `<meta>` tags. A kept instance answers the same `started_at` after an idle hold, and a new one answers a later one. Before the first run, at the repository root:
+
+1. **[real]** `uv run ssc apps create ga4warm`, `uv run ssc deploy --app ga4warm spikes/proofrun/apps/warm --wait`, then `uv run ssc promote ga4warm --wait`.
+2. Share prod with the person whose cookie the kit uses: `uv run ssc share ga4warm <email or usr_…>` (prod, role user, by default).
+3. Put the prod host's session cookie in the jar: `uv run python -m proofrun cookie set ga4warm.proofcell02.delimitusapps.com`.
+4. Be logged in with `ssc login` as an org admin (admin2), not an agent session. Nothing in the org may be warm: the kit stops before any change otherwise, because `PUT /v1/warm` names every warm environment and the kit's own "off" would turn the others off too.
+
+Then, from `spikes/proofrun`:
+
+```sh
+uv run python -m proofrun warm --app ga4warm --label proofcell02 [--project ssc-c-proofcell02] [--idle-minutes 20] [--settle-seconds 300]
+```
+
+The cell's project defaults to `ssc-c-<label>`. `--idle-minutes` is refused below 16, because Cloud Run takes an idle request-billed instance away after about 15 minutes. Every `PUT /v1/warm` sends `gateway: false`. Min instances are read with `gcloud run services describe` as the service's `run.googleapis.com/minScale`. That is the v1 view of the `scaling.minInstanceCount` that the cell agent writes (`ssc_agent/cloud_run.py`). The template's `autoscaling.knative.dev/minScale` is recorded, not judged. Page loads are sent the way a browser sends them (`Accept: text/html…`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Site: none`, the session cookie, no wake cookie), so the gateway marks them for the wake route (`ssc_edge.gate.page_load`). There, an app that has not answered within 2 s gets the waking page (503, `pages.WAKING`). The checks:
+
+| # | Check |
+| --- | --- |
+| 1 | `GET /v1/warm`: the prod environment is listed with `warm` false, nothing is warm (`monthly_usd` 0), the gateway is not wanted and its `state` is `off`, and the service is at minimum 0. `monthly_usd` and `environment_monthly_usd` are recorded. On a FAIL the kit stops before any change. |
+| 2 | Refusals: the prod environment with `monthly_usd_shown` off by one, and the preview environment at the right cost, each answer `422 VALIDATION_FAILED`. A `GET` after still shows nothing warm. |
+| 3 | `PUT /v1/warm` with the prod environment at `environment_monthly_usd`: 200, `warm` true, `monthly_usd` is the cost, gateway `off`. This is T_on. |
+| 4 | One reconciler pass: read the service every 5 s, up to `--settle-seconds`, until its minimum is 1 and it is ready (`observedGeneration` caught up, `Ready` true). The seconds from T_on to each are recorded. The serving revision must be the one from before: the minimum is a service setting, so no new revision is made. The kit then waits 30 s and reads `/health` three times, 5 s apart, to record the kept instance. |
+| 5 | Audit: an `org.updated` row on target kind `warm` since T_on (less 2 minutes for clock skew), with `after.environment_ids` the prod environment, `gateway` false and `monthly_usd_shown` the cost. |
+| 6 | The idle hold (`--idle-minutes`, no request to the app), one GET to the cell's `www` host, then one page load of `/`. Pass: 200 with the fixture page and not the waking page, a `started_at` that matches one of check 4's reads (the detail names which), and a first byte under 2.0 s. The `www` GET's time, whether the wake cookie was set (the gateway sets it on every page load, so it is recorded and never judged) and a `/health` read after are recorded. |
+| 7 | `PUT /v1/warm` with nothing warm and cost 0: 200, `warm` false, `monthly_usd` 0, gateway `off`. This is T_off. Then the service's minimum is back to 0 and the service is ready, timed as in 4. |
+| 8 | Audit: the row for the change off. `before.environment_ids` has the environment, `after.environment_ids` is empty and `monthly_usd_shown` is 0. |
+| 9 | The same idle hold, `www` GET and page load. If the waking page shows, the kit does what the page does by itself: it loads `/` again every 2 s with the wake cookie, for up to 60 s. Pass: the app's eventual answer has a `started_at` other than check 6's (a new process). Whether the waking page showed, the retries and the cold time are recorded. |
+| 10 | Manual, never in the verdict: the console. |
+
+**Console (check 10).** Sign in to the console as admin2 and open the environment screen ("Your environment"). In the "Warm option" panel, tick `ga4warm`'s prod app and read the monthly add the screen shows. It should equal `environment_monthly_usd` ($10). Untick it and do not save. Save a screenshot showing the ticked box and the figure as `spikes/proofrun/results/ga-4.8-console.png`. The kit prints these steps and reports `check 10 manual` as "present" (a non-empty PNG) or "absent".
+
+Verdict: any FAIL is FAIL, else any "not read" is INCOMPLETE, else PASS. If a check that the rest depend on fails (1, 3, 4, or the PUT in 7), the remaining checks are "not read".
+
+**Leaves behind nothing.** If the kit set warm on, it sets it off again (`PUT` with no environment and cost 0) before the command ends, whatever stopped the run: a failed or timed-out check, an error, or Ctrl-C. It says so in a `finally:` line. The final line ends `warm left off: yes` or `warm left off: NO`. On `NO` it prints how to undo by hand (untick in the console's Warm option and save). There is no `--keep-warm`.
+
+**Disclosed gaps.**
+
+- Only the environment part of the warm option is proven. The gateway part sets the cell stack's `warm` flag through the cell deployer, whose image is stale on cell 2 and must not be run (GA-4.2). The kit never sends `gateway: true` and checks that the gateway's `state` stays `off`.
+- The gateway itself is at minimum 0, so its cold start is paid by the GET to the cell's `www` host just before each page load. The gateway answers that GET itself and never asks the app. The page load's first byte then measures the app hop, which is what the wake route's 2 s timer covers.
+- The monthly figures (API and console) are what the setting is said to cost, not a bill. Nothing charges for the option (A6).
+
+Wall time: about 2 × `--idle-minutes` plus up to 2 × `--settle-seconds`, plus a few minutes. That is about 45 minutes with the defaults. Keep the machine awake. Results go to `results/ga-4.8.json` and to `results/warm-<UTC stamp>.json` (the checks, the timeline of every change, read and page load, and the timings). Neither ever holds the operator's token or the cookie. Copy the final line, and the screenshot, into the GA-4.8 record.
+
 ## What feeds what
 
 | Result | Feeds |

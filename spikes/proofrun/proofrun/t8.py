@@ -161,20 +161,27 @@ def control_api(run: Run) -> tuple[str, str]:
     return url.strip(), token.strip()
 
 
-def read_audit(run: Run, http: Http, run_id: str) -> dict[str, dict[str, Any]]:
-    api, token = control_api(run)
-    query = urllib.parse.urlencode(
-        {
-            "action": STEP_ACTION,
-            "target_kind": "kill_switch_run",
-            "target_id": run_id,
-            "limit": 50,
-        }
-    )
+def search_audit(
+    http: Http, api: str, token: str, filters: Mapping[str, str | int]
+) -> list[dict[str, Any]]:
+    """One page of ``GET /v1/audit`` with ``filters`` (action, target_kind, since, ...), newest
+    first. The token stays in the header; only the status is said on a refusal."""
+    query = urllib.parse.urlencode(dict(filters))
     answer = http(f"{api}/v1/audit?{query}", {"Authorization": f"Bearer {token}"}, 30.0)
     if answer.status != 200:
         raise CommandError(f"audit search answered {answer.status or answer.error}")
-    return since_by_step(json.loads(answer.body))
+    return list(json.loads(answer.body).get("events", []))
+
+
+def read_audit(run: Run, http: Http, run_id: str) -> dict[str, dict[str, Any]]:
+    api, token = control_api(run)
+    filters = {
+        "action": STEP_ACTION,
+        "target_kind": "kill_switch_run",
+        "target_id": run_id,
+        "limit": 50,
+    }
+    return since_by_step({"events": search_audit(http, api, token, filters)})
 
 
 def latest_changed(run: Run, label: str, org_id: str) -> datetime:
