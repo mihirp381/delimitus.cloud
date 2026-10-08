@@ -63,6 +63,7 @@ class _Service:
     stopped: bool = False
     revisions: list[_Revision] = field(default_factory=list[_Revision])
     traffic: dict[str, int] = field(default_factory=dict[str, int])
+    started: set[str] = field(default_factory=set[str])
     created: int = 0
 
     def add(self, template: _Revision) -> _Revision:
@@ -85,6 +86,7 @@ class FakeRuntimeDriver(RuntimeDriver):
         self._delays: dict[Method, float] = {}
         self._unhealthy: set[str] = set()
         self._starting: set[str] = set()
+        self._cold: dict[str, bool] = {}
 
     # ── injection ────────────────────────────────────────────────────────────
 
@@ -109,6 +111,14 @@ class FakeRuntimeDriver(RuntimeDriver):
     def healthy(self, image_digest: str) -> None:
         self._unhealthy.discard(image_digest)
         self._starting.discard(image_digest)
+        self._cold.pop(image_digest, None)
+
+    def cold(self, image_digest: str, *, passes: bool = True) -> None:
+        """Revisions of this image start, as on Cloud Run, only when traffic moves to them: still
+        starting until then, then ready, or failed with traffic left where it was."""
+        self._unhealthy.discard(image_digest)
+        self._starting.discard(image_digest)
+        self._cold[image_digest] = passes
 
     def drift(  # noqa: PLR0913  (keyword-only)
         self,
@@ -199,9 +209,12 @@ class FakeRuntimeDriver(RuntimeDriver):
     async def set_traffic(self, service: str, revision: str) -> None:
         await self._enter("set_traffic", service)
         svc = self._service(service)
-        if revision not in {r.name for r in svc.revisions}:
+        found = {r.name: r for r in svc.revisions}.get(revision)
+        if found is None:
             raise RevisionNotFoundError(f"{service}: no revision {revision}")
-        svc.route_all(revision)
+        svc.started.add(revision)
+        if self._cold.get(found.image_digest, True):
+            svc.route_all(revision)
 
     async def scale_to_zero(self, service: str) -> None:
         await self._enter("scale_to_zero", service)
@@ -225,12 +238,17 @@ class FakeRuntimeDriver(RuntimeDriver):
     def _observe_revision(self, svc: _Service, revision: _Revision) -> RevisionObservation:
         digest = revision.image_digest
         ready = None if digest in self._starting else digest not in self._unhealthy
+        failed = digest in self._unhealthy
+        if digest in self._cold:
+            started = revision.name in svc.started or svc.traffic.get(revision.name, 0) > 0
+            ready = self._cold[digest] if started else None
+            failed = started and not self._cold[digest]
         return RevisionObservation(
             revision=revision.name,
             spec_fingerprint=revision.fingerprint,
             image_digest=digest,
             ready=ready,
-            failed=digest in self._unhealthy,
+            failed=failed,
             traffic_percent=svc.traffic.get(revision.name, 0),
         )
 

@@ -32,26 +32,30 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    A ``prod`` deployment of an environment with a database then records a recovery point
    before any runtime call, once: the instance's time and log position from the cell agent, or
    the control plane's time alone when the agent cannot say, so the deployment goes ahead.
-2. ``apply`` the release's spec, then poll ``observe`` until the new revision is ready, fails, or
-   the health timeout passes. A deployment another one pre-empted (``superseded``) stops at the
-   next poll without touching traffic. So does one whose app stopped (the kill switch): it
-   fails with ``APP_NOT_ACTIVE`` and frees ``env:<id>`` within one poll. A deployment that
-   lowered the timeout, or made a proxy credential, then waits for the org's cell to confirm that
-   snapshot, so the gateway never tells an app it has longer than the revision serving it allows
-   and the proxy knows the credential before traffic moves; unconfirmed within
-   ``confirm_within`` it fails with ``SNAPSHOT_UNCONFIRMED``, the pointer and traffic untouched.
+2. ``apply`` the release's spec. A deployment that lowered the timeout, or made a proxy
+   credential, then waits for the org's cell to confirm that snapshot, so the gateway never tells
+   an app it has longer than the revision serving it allows and the proxy knows the credential
+   before traffic moves; unconfirmed within ``confirm_within`` it fails with
+   ``SNAPSHOT_UNCONFIRMED``, the pointer and traffic untouched. Then traffic moves to the new
+   revision and ``observe`` is polled until it is ready, fails, or the health timeout passes.
+   Cloud Run starts a revision only when traffic moves to it, and keeps the old one serving when
+   the new one fails its startup probe, so the move is the health check. A revision that failed
+   before the move gets no traffic; one that fails or times out after it sends traffic back to
+   the revision that served before. So does one whose app stopped (the kill switch): it fails
+   with ``APP_NOT_ACTIVE`` and frees ``env:<id>`` within one poll. A deployment another one
+   pre-empted (``superseded``) stops at the next poll and leaves traffic to the one that
+   pre-empted it.
    Any end short of going live puts the column back to the live release's timeout, in the
    transaction that records it, if the pointer has not moved, and asks for a snapshot.
 3. Healthy: one transaction checks the app is still active (``FOR SHARE``, so it waits for a
    kill switch pulled at the same moment; ``APP_NOT_ACTIVE`` otherwise), marks it ``healthy``
    (only if still ``running``), supersedes the previous live deployment, moves the
    environment's pointer, records ``first_url`` for the environment's first live deployment,
-   for a forward deploy only syncs the manifest's schedules, and audits ``*.finished``. Then
-   traffic moves; if that call fails the reconciler finishes it. Once traffic is on the new
-   revision, a longer timeout raises ``request_timeout_seconds`` and asks for a snapshot; a lost
-   traffic call leaves it at the lower figure until the next deployment. Unhealthy or stopped:
-   ``failed`` with the reason code and ``*.failed``; the pointer and traffic are untouched, and
-   a service that never had a live deployment is scaled to zero.
+   for a forward deploy only syncs the manifest's schedules, and audits ``*.finished``. Then a
+   longer timeout raises ``request_timeout_seconds`` and asks for a snapshot; a failure there
+   leaves it at the lower figure until the next deployment. Unhealthy or stopped: ``failed``
+   with the reason code and ``*.failed``; the pointer is untouched, and a service that never had
+   a live deployment is scaled to zero.
 """
 
 import asyncio
@@ -87,6 +91,7 @@ from ssc_control.runtime.cells import CELL_UNAVAILABLE, CellUnavailableError, Or
 from ssc_control.runtime.driver import (
     EnvironmentRow,
     ReleaseRow,
+    RevisionNotFoundError,
     RuntimeDriver,
     ServiceObservation,
     ServiceSpec,
@@ -305,23 +310,32 @@ async def run_deployment(
     dep, health = ready.deployment, health or HealthWait()
     if ready.recovery_point:
         await _record_recovery_point(ports, ready.cell, org_id, dep)
+    before: str | None = None  # the revision serving before traffic moved
     try:
         revision = await ready.driver.apply(ready.desired)
-        verdict = await _wait_healthy(ports, org_id, ready, revision, health)
+        verdict: _Verdict = "ready"
+        if ready.confirm_version is not None:
+            verdict = await _confirmed(ports, org_id, ready.confirm_version, health)
+        if verdict == "ready":
+            before = _serving(await ready.driver.observe(ready.desired.service))
+            verdict = await _wait_healthy(ports, org_id, ready, revision, health)
     except Exception:
         log.exception("runtime call failed", extra={"deployment_id": dep.id})
+        await _put_back(ready, before)
         return await _fail_after_runtime(ports, org_id, ready, RUNTIME_ERROR)
-    if verdict == "ready" and ready.confirm_version is not None:
-        verdict = await _confirmed(ports, org_id, ready.confirm_version, health)
     if verdict == "preempted":
+        # The deployment that pre-empted this one moves traffic itself.
         async with bound_org(ports.engine, org_id) as conn:
             await _restore_timeout(conn, ports, org_id, ready)
         return "superseded"
     if verdict != "ready":
+        await _put_back(ready, before)
         return await _fail_after_runtime(ports, org_id, ready, _VERDICT_CODE[verdict])
     state = await _go_live(ports, org_id, ready)
     if state == "healthy":
-        await _move_traffic(ports, org_id, ready, revision)
+        await _raise_timeout(ports, org_id, ready)
+    elif state == "failed":
+        await _put_back(ready, before)
     return state
 
 
@@ -566,15 +580,10 @@ async def _confirmed(ports: Ports, org_id: str, version: int, health: HealthWait
     return "ready"
 
 
-async def _move_traffic(ports: Ports, org_id: str, ready: _Ready, revision: str) -> None:
-    """Traffic to ``revision``; then a longer timeout raises ``request_timeout_seconds`` and asks
-    for the snapshot carrying it. A failure of either leaves the lower figure, which is safe."""
+async def _raise_timeout(ports: Ports, org_id: str, ready: _Ready) -> None:
+    """With traffic on the new revision, a longer timeout raises ``request_timeout_seconds`` and
+    asks for the snapshot carrying it. A failure leaves the lower figure, which is safe."""
     dep = ready.deployment
-    try:
-        await ready.driver.set_traffic(ready.desired.service, revision)
-    except Exception:
-        log.exception("set_traffic failed; the reconciler repairs it", extra={"id": dep.id})
-        return
     params = {
         "org": org_id,
         "env": dep.environment_id,
@@ -589,14 +598,28 @@ async def _move_traffic(ports: Ports, org_id: str, ready: _Ready, revision: str)
         log.exception("raising the request timeout failed", extra={"id": dep.id})
 
 
+async def _put_back(ready: _Ready, before: str | None) -> None:
+    """Traffic back to ``before``, the revision that served when this deployment moved it."""
+    if before is None:
+        return
+    try:
+        await ready.driver.set_traffic(ready.desired.service, before)
+    except Exception:
+        log.exception("traffic back failed", extra={"deployment_id": ready.deployment.id})
+
+
 async def _wait_healthy(
     ports: Ports, org_id: str, ready: _Ready, revision: str, health: HealthWait
 ) -> _Verdict:
-    """``ready`` when ``revision`` is; ``unhealthy`` when it failed, vanished or timed out;
-    ``preempted`` when the deployment stopped being ``running``; ``stopped`` when the app did.
-    Both are read before each ``observe``."""
+    """``ready`` when ``revision`` is, after traffic moved to it; ``unhealthy`` when it failed,
+    vanished or timed out; ``preempted`` when the deployment stopped being ``running``;
+    ``stopped`` when the app did. Both are read before each ``observe``. Traffic moves once
+    ``revision`` is listed and has not failed: Cloud Run starts a revision only then (one with
+    no traffic is retired unstarted, seen on cell 2, 2026-10-08)."""
     deadline = time.monotonic() + health.within
     params = {"org": org_id, "id": ready.deployment.id}
+    service = ready.desired.service
+    moved = False
     while True:
         async with bound_org(ports.engine, org_id) as conn:
             row = (await conn.execute(_POLL, params)).first()
@@ -604,12 +627,33 @@ async def _wait_healthy(
             return "preempted"
         if row.app_status != "active":
             return "stopped"
-        verdict = _health(await ready.driver.observe(ready.desired.service), revision)
-        if verdict is not None:
-            return "ready" if verdict else "unhealthy"
+        verdict = _health(await ready.driver.observe(service), revision)
+        if verdict is False:
+            return "unhealthy"
+        if moved and verdict:
+            return "ready"
+        if not moved:
+            moved = await _route(ready.driver, service, revision)
+            if moved:
+                continue
         if time.monotonic() >= deadline:
             return "unhealthy"
         await health.sleep(health.every)
+
+
+async def _route(driver: RuntimeDriver, service: str, revision: str) -> bool:
+    """All traffic to ``revision``; False while the runtime does not list it yet."""
+    try:
+        await driver.set_traffic(service, revision)
+    except RevisionNotFoundError:
+        return False
+    return True
+
+
+def _serving(observed: ServiceObservation | None) -> str | None:
+    """The revision taking the most traffic, if any takes some."""
+    routed = [r for r in observed.revisions if r.traffic_percent] if observed else []
+    return max(routed, key=lambda r: r.traffic_percent).revision if routed else None
 
 
 def _health(observed: ServiceObservation | None, revision: str) -> bool | None:

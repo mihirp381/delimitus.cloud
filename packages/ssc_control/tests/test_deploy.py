@@ -152,7 +152,7 @@ from ssc_control.ports import (
 from ssc_control.runtime.cell_agent import CellAgentDriver
 from ssc_control.runtime.cells import STATIC_LABEL, CellRouter, OrgCell, StaticCells
 from ssc_control.runtime.driver import service_name
-from ssc_control.runtime.fake import FakeRuntimeDriver
+from ssc_control.runtime.fake import FakeRuntimeDriver, changed
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.snapshot.compiler import compile_document
 from ssc_control.timers.service import Timers
@@ -896,6 +896,34 @@ async def test_a_failed_health_check_keeps_the_old_pointer(b: Bench) -> None:
     ]
 
 
+async def test_a_new_revision_starts_when_traffic_moves_to_it(b: Bench) -> None:
+    # Cloud Run retires a revision with no traffic unstarted (cell 2, 2026-10-08): R3 of
+    # ga1pg01 was ready only once traffic moved, and failed HEALTH_CHECK_FAILED while it waited.
+    r1 = await build_release(b, b.w.preview)
+    await deploy(b, b.w.preview, r1)
+    r2 = await build_release(b, b.w.preview)
+    b.runtime.cold(image_of(b, r2))
+    second, state = await deploy(b, b.w.preview, r2)
+    assert state == "healthy"
+    assert pointer(b, b.w.preview) == second
+    assert live_image(b, b.w.preview) == image_of(b, r2)
+
+
+async def test_a_new_revision_that_fails_once_started_gives_traffic_back(b: Bench) -> None:
+    r1 = await build_release(b, b.w.preview)
+    first, _ = await deploy(b, b.w.preview, r1)
+    r2 = await build_release(b, b.w.preview)
+    b.runtime.cold(image_of(b, r2), passes=False)
+    b.runtime.reset_calls()
+    second, state = await deploy(b, b.w.preview, r2)
+    assert state == "failed"
+    assert operation(b, second)["failure_code"] == HEALTH_CHECK_FAILED
+    assert pointer(b, b.w.preview) == first
+    assert live_image(b, b.w.preview) == image_of(b, r1)
+    service = service_name(b.w.preview)
+    assert changed(b.runtime.calls, service) == ["apply", "set_traffic", "set_traffic"]
+
+
 async def test_a_revision_that_never_starts_times_out(b: Bench) -> None:
     release = await build_release(b, b.w.preview)
     b.runtime.starting(image_of(b, release))
@@ -1151,8 +1179,9 @@ async def test_a_stopped_app_ends_a_deploy_within_one_poll(b: Bench) -> None:
     job = run_deployment(b.ports, org_id=b.w.org, deployment_id=second, health=wait)
     assert await asyncio.wait_for(job, 10) == "failed"
     assert_stopped_without_going_live(b, second, first, r1, synced)
+    # Traffic moved to R2 for its health check, and went back to R1 at the stop.
     service = service_name(b.w.preview)
-    assert b.runtime.calls == [("apply", service), ("observe", service)]
+    assert changed(b.runtime.calls, service) == ["apply", "set_traffic", "set_traffic"]
 
 
 async def test_a_stop_while_observing_is_caught_when_going_live(b: Bench) -> None:
@@ -1190,7 +1219,9 @@ async def test_a_stop_while_observing_is_caught_when_going_live(b: Bench) -> Non
     await asyncio.wait_for(switch, 10)
     assert await asyncio.wait_for(job, 10) == "failed"
     assert_stopped_without_going_live(b, second, first, r1, synced)
-    assert "set_traffic" not in {method for method, _ in b.runtime.calls}
+    # R2 took traffic for its health check; going live failed, so traffic went back to R1.
+    service = service_name(b.w.preview)
+    assert changed(b.runtime.calls, service) == ["apply", "set_traffic", "set_traffic"]
 
 
 def assert_stopped_without_going_live(
@@ -1469,7 +1500,8 @@ async def test_a_failed_first_deploy_has_nothing_to_put_back(b: Bench) -> None:
     assert await run(b, op, ports) == "failed"
     assert pointer(b, b.w.preview) is None
     assert stored_timeout(b, b.w.preview) == REQUEST_TIMEOUT_SECONDS
-    assert cell.events == ["request"]
+    # The lowered timeout is confirmed before traffic moves; nothing is asked for after.
+    assert cell.events == ["request", "confirmed"]
 
 
 # ── through the cell agent, on the emulators ─────────────────────────────────
