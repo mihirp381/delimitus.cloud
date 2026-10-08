@@ -333,7 +333,7 @@ def auth_app(secret: str, password: str) -> FastAPI:  # noqa: PLR0915  (one host
     def methods(back: str, name: str) -> str:
         """Okta Identity Engine's list of security methods, as org 2's Okta shows it to a person
         with Okta Verify and a password: one Select per method."""
-        rows = []
+        rows: list[str] = []
         for se, label in (("okta_verify-totp", "Okta Verify"), ("okta_password", "Password")):
             method = "password" if se == "okta_password" else "okta_verify"
             rows.append(
