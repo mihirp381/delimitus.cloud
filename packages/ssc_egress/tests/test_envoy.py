@@ -46,6 +46,9 @@ from ssc_egress.envoy import (
 )
 from ssc_shared.access import AccessView
 
+# pytest makes its folders 0700 for the CI user; Linux Docker keeps that in a mount, and Envoy
+# (uid 101) then fails with `Invalid path`. Docker Desktop hides it.
+READABLE = 0o755
 ENVOY_IMAGE = (
     f"envoyproxy/envoy:v{ENVOY_VERSION}"
     "@sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66"
@@ -198,6 +201,7 @@ LONGEST = "*." + ".".join(["a" * 61] * 4)
 def test_the_rendered_config_validates(tmp_path: Path, policy: Policy) -> None:
     assert len(LONGEST) <= 253  # noqa: PLR2004
     (tmp_path / "envoy.json").write_text(json.dumps(static(EgressConfig(), policy)))
+    tmp_path.chmod(READABLE)
     out = subprocess.run(
         [docker(), "run", "--rm", "-v", f"{tmp_path}:/c:ro", ENVOY_IMAGE]
         + ["--mode", "validate", "-c", "/c/envoy.json"],
@@ -273,6 +277,7 @@ def wait_until(check: Any, seconds: float = 10) -> None:
 def proxy(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Proxy]:
     docker()
     tmp = tmp_path_factory.mktemp("egress")
+    tmp.chmod(READABLE)
     (tmp / "lds").mkdir()
     (tmp / "echo.py").write_text(ECHO)
     cfg = EgressConfig(lds_dir="/lds", resolvers=())
