@@ -142,6 +142,43 @@ What stops each attack: local-proven on MySQL 8.4 and 9 (`tests/test_mysql.py`, 
 | a schema not granted (`secret.payroll`) | passes (a read) | 42000 (1142) |
 | a role granted to the user | `SET ROLE` refused | the read-back refuses an active role; `mysql_setup.sql` revokes every role |
 
+<!-- rest -->
+## The REST connector
+
+`{kind: "rest", base_url, token?, header?, scheme?, items?, ca?}` (`ssc_datagw.rest.RestTarget`; unknown members are refused), the value of a `rest` connection's `SSC_CONNECTION_*` variable ([Connectors by kind](#connectors-by-kind)).
+
+| Member | Rule |
+|---|---|
+| `base_url` | `https://<host>[:<port>][/<path>]`, at most 2,000 characters, no query or fragment. The gateway target may carry a port; the control plane address (`ssc_contracts.connections.RestAddress`) does not yet. A trailing `/` is dropped. |
+| `token` | Optional. 1 to 4,096 visible ASCII characters (no space, no control character). Never shown in a repr, an error or a log line, not even the error that refuses it. |
+| `header` | The header the token travels in, default `Authorization`; `^[A-Za-z0-9-]{1,64}$`, and never `Host`, `Accept`, `User-Agent`, `X-SSC-Query`, `Content-Length`, `Transfer-Encoding`, `Connection` or `Cookie` (any case). |
+| `scheme` | Default `Bearer`; `^[A-Za-z0-9-]{0,32}$`. The header's value is `<scheme> <token>`, or the bare token when `scheme` is empty. |
+| `items` | Optional dotted path of object keys (`^[A-Za-z0-9_.-]{1,200}$`, e.g. `data.orders`) to the records in the answer; left out, the body itself. |
+| `ca` | As for Postgres: with it the chain must lead to it and the host name is not checked; without it the system trust store and the host name decide. There is no plain `http` and no unverified mode. |
+
+**The request.** For this kind `sql` is not SQL: it is one GET path, with an optional query string, appended to `base_url`. It must start with one `/` (not `//`), be at most 2,000 characters, all visible ASCII (no whitespace, no control or non-ASCII character), with no `\` and no `#`, and its path part (before `?`) must have no `..` segment, also after percent-decoding (`%2e%2e`, `%2f..%2f`). Anything else is `QUERY_REFUSED` ("the request is not a GET path"), and so are `params`, which a REST read does not take; both are refused before anything is sent. So a read stays on the base's host and under its path. The request is `GET` only, sends `Accept: application/json`, `User-Agent: ssc-datagw`, `X-SSC-Query: <tag>` and the credential header when a token is set, follows no redirect, and ignores the process environment's proxy and CA settings.
+
+**Time.** 10 s to connect, with the warm-up retry of the Postgres connector (a connect that times out in an instance's first 60 s is tried again). Each read of the answer has `timeout_ms`, and the whole read, connect and retries included, ends at `timeout_ms`: past it is `QUERY_TIMEOUT`. When the gateway cancels a read (the kill watch or its deadline) the request is dropped and its connection closed.
+
+**The answer.**
+
+| Answer | Result |
+|---|---|
+| 2xx | read on |
+| 3xx | `QUERY_FAILED`, no `sqlstate` (no redirect is followed) |
+| 401, 403 | `QUERY_FAILED` 28000 (the source refused the credential) |
+| 404 | `QUERY_FAILED` 42P01 (no such path) |
+| 429 | `CONNECTION_UNAVAILABLE` (the source is rate limiting) |
+| other 4xx | `QUERY_FAILED`, no `sqlstate` |
+| 5xx | `CONNECTION_UNAVAILABLE` |
+| no connection, a TLS failure | `CONNECTION_UNAVAILABLE` |
+| a body over 32 MiB (decoded) | `QUERY_FAILED`, no `sqlstate`; reading stops at the cap |
+| a body that is not JSON | `QUERY_FAILED` 22P02 |
+
+**Records and columns.** The value at `items` (each key into an object; a missing key or a value that is not an object on the way is `QUERY_FAILED` 42P01) is the records: an array is one record per element, an object one record, anything else `QUERY_FAILED` 22P02. When the first record is an object its keys, in order, are the columns; a later record's missing key is `null`, a key that is not a column is dropped, and a later record that is not an object is a row of `null`. When the first record is not an object there is one column, `value`, holding each record as it is. No records is no columns and no rows. A column's type is that of its first non-null value in the first 100 records: boolean `boolean`, integer `integer`, other number `float`, string `string`, array or object `json`, none `string`; `db_type` is the JSON type (`boolean`, `number`, `string`, `array`, `object`, `null`). A value of another type than its column's is kept as it is. At most `max_rows` plus one rows are read, as for every connector.
+
+The connector logs one line per read, `rest read: status=<status> bytes=<body bytes>`, with no URL. Local-proven against a TLS server in-process (`packages/ssc_datagw/tests/test_rest.py`), which also runs the connector suite.
+
 ## Limits
 
 Each limit is the minimum of the platform, the connection's `limits`, the grant's `limits` and the request's ask (`docs/contracts/access-snapshot.md`, amendment SSC-050). A cap a layer leaves out puts no cap at that layer; `0` is a cap of zero.
