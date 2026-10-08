@@ -44,9 +44,20 @@ SQL_KINDS: Final[frozenset[Kind]] = frozenset({"postgres", "mysql", "sqlserver"}
 """Kinds with a host, a port and a database, whose statements the classifier reads as SQL."""
 DEFAULT_PORT: Final[dict[Kind, int]] = {"postgres": 5432, "mysql": 3306, "sqlserver": 1433}
 AVAILABLE: Final[frozenset[Kind]] = frozenset(
-    {"postgres", "mysql", "sqlserver", "rest", "gsheets", "s3", "gcs", "bigquery", "airtable"}
+    {
+        "postgres",
+        "mysql",
+        "sqlserver",
+        "rest",
+        "gsheets",
+        "s3",
+        "gcs",
+        "bigquery",
+        "airtable",
+        "snowflake",
+    }
 )
-"""The kinds a connector exists for. Grows one kind per connector commit."""
+"""The kinds a connector exists for: every kind since GA-5 B8 landed the tenth connector."""
 
 TITLE: Final[dict[Kind, str]] = {
     "postgres": "PostgreSQL",

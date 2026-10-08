@@ -37,9 +37,11 @@ from test_approvals import (
 )
 
 from ssc_contracts.audit import AuditAction
+from ssc_contracts.connections import AVAILABLE as AVAILABLE_KINDS
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.snapshot import SnapshotDoc
+from ssc_control.connections import service as connection_service
 from ssc_control.db import bind_org_sync
 from ssc_control.domain.approval_rules import check_decider
 from ssc_control.domain.audience import (
@@ -841,11 +843,13 @@ def test_connections_are_seen_by_the_approvals_rule(
 
 
 def test_a_connection_has_a_kind_and_only_an_available_kind_is_created(
-    client: TestClient, world: World, tokens: Tokens
+    client: TestClient, world: World, tokens: Tokens, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     made = create_connection(client, tokens.admin, world.member)
     assert made.status_code == 201
     assert made.json()["kind"] == "postgres"
+    # Every kind has a connector since GA-5 B8; a build without one still refuses the kind.
+    monkeypatch.setattr(connection_service, "AVAILABLE", AVAILABLE_KINDS - {"snowflake"})
     for kind, address in [
         ("snowflake", {"account": "corp-acme", "database": "ANALYTICS", "warehouse": "WH"}),
     ]:

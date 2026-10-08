@@ -3,6 +3,8 @@
 import json
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pki import make_pki
 
 from ssc_contracts import connections as contract
@@ -22,6 +24,7 @@ from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 from ssc_datagw.rest import RestConnector, RestTarget
 from ssc_datagw.s3 import S3Connector, S3Target
+from ssc_datagw.snowflake import SnowflakeConnector, SnowflakeTarget
 from ssc_datagw.sqlserver import SqlServerConnector, SqlServerTarget
 
 PASSWORD = "fake-" + "registry-" + "password"
@@ -30,7 +33,8 @@ TARGET = {"host": "10.0.0.5", "database": "sales", "user": "ssc_datagw", "passwo
 
 def test_the_gateway_serves_exactly_the_kinds_the_control_plane_lets_a_customer_create() -> None:
     assert AVAILABLE == contract.AVAILABLE
-    assert AVAILABLE <= set(contract.KINDS)
+    assert AVAILABLE == set(contract.KINDS)
+    assert set(REGISTRY) == AVAILABLE
 
 
 def test_a_connection_without_a_kind_is_postgres_as_before_ga_5() -> None:
@@ -134,6 +138,32 @@ def test_an_airtable_connection_parses_to_its_target_and_connector() -> None:
     assert token not in repr(target)
 
 
+def test_a_snowflake_connection_parses_to_its_target_and_connector() -> None:
+    pem = (
+        rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        .private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        .decode()
+    )
+    raw = {
+        "kind": "snowflake",
+        "account": "corp-acme",
+        "user": "SSC_DATAGW",
+        "database": "ANALYTICS",
+        "warehouse": "WH",
+        "private_key": pem,
+    }
+    target = parse_target(json.dumps(raw))
+    assert target == SnowflakeTarget.model_validate(raw)
+    assert isinstance(target, SnowflakeTarget)
+    assert target.schema_name == "PUBLIC"
+    assert isinstance(connector_for(target), SnowflakeConnector)
+    assert pem.splitlines()[1] not in repr(target)
+
+
 def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
     with pytest.raises(TargetError) as caught:
         parse_target(json.dumps({**TARGET, "kind": "rest"}))
@@ -146,7 +176,6 @@ def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
     [
         ("{" + PASSWORD, "(the JSON)"),
         (json.dumps({**TARGET, "kind": "oracle"}), "kind"),
-        (json.dumps({**TARGET, "kind": "snowflake"}), "kind"),  # a kind with no connector yet
         (json.dumps({k: v for k, v in TARGET.items() if k != "host"}), "host"),
         (json.dumps({**TARGET, "sslmode": "disable"}), "sslmode"),
     ],

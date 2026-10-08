@@ -32,7 +32,7 @@ export const KIND_TITLE: Readonly<Record<Kind, string>> = {
  * The kinds a connector exists for (`ssc_contracts.connections.AVAILABLE`). The API refuses any
  * other kind with CONNECTOR_UNAVAILABLE, so the picker offers only these.
  */
-export const AVAILABLE_KINDS: readonly Kind[] = ['postgres', 'mysql', 'sqlserver', 'rest', 'gsheets', 's3', 'gcs', 'bigquery', 'airtable'];
+export const AVAILABLE_KINDS: readonly Kind[] = ['postgres', 'mysql', 'sqlserver', 'rest', 'gsheets', 's3', 'gcs', 'bigquery', 'airtable', 'snowflake'];
 
 /** The kinds whose address is a host, a port and a database, sent as the three top-level members. */
 export const SQL_KINDS: readonly Kind[] = ['postgres', 'mysql', 'sqlserver'];

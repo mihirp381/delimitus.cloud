@@ -5,6 +5,7 @@ import json
 import pytest
 from datagw_world import ENV, NOTE_JWKS, SALES, SETTINGS
 
+from ssc_datagw import kinds
 from ssc_datagw.postgres import PostgresTarget
 from ssc_datagw.settings import MAX_STALE_SECONDS, SettingsError, settings_from_env
 
@@ -54,9 +55,6 @@ BAD = {
         CONNECTION_VAR: json.dumps({**TARGET, "sslmode": "disable"})
     },
     "a connection with a bad port": {CONNECTION_VAR: json.dumps({**TARGET, "port": 0})},
-    "a connection of a kind this build lacks": {
-        CONNECTION_VAR: json.dumps({**TARGET, "kind": "snowflake"})
-    },
     "a connection of no kind at all": {CONNECTION_VAR: json.dumps({**TARGET, "kind": "oracle"})},
     "a connection with a bad id": {"SSC_CONNECTION_SALES": json.dumps(TARGET)},
 }
@@ -78,3 +76,13 @@ def test_each_connection_variable_is_a_target_and_its_password_is_never_shown() 
     assert sales.password.get_secret_value() == PASSWORD
     assert PASSWORD not in repr(got)
     assert settings_from_env(ENV).connections == {}
+
+
+def test_a_connection_of_a_kind_this_build_lacks_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delitem(kinds.REGISTRY, "snowflake")
+    with pytest.raises(SettingsError) as e:
+        settings_from_env({**ENV, CONNECTION_VAR: json.dumps({**TARGET, "kind": "snowflake"})})
+    assert "kind" in str(e.value)
+    assert PASSWORD not in str(e.value)

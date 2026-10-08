@@ -27,6 +27,7 @@ from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 from ssc_datagw.rest import RestConnector, RestTarget
 from ssc_datagw.s3 import S3Connector, S3Target
+from ssc_datagw.snowflake import SnowflakeConnector, SnowflakeTarget
 from ssc_datagw.sqlserver import SqlServerConnector, SqlServerTarget
 
 type Target = (
@@ -39,6 +40,7 @@ type Target = (
     | SqlServerTarget
     | GcsTarget
     | AirtableTarget
+    | SnowflakeTarget
 )
 """Every target model a kind may validate to; grows with each connector."""
 
@@ -69,6 +71,7 @@ REGISTRY: Final[Mapping[Kind, Registered]] = {
     "sqlserver": Registered(SqlServerTarget, SqlServerConnector),
     "gcs": Registered(GcsTarget, GcsConnector),
     "airtable": Registered(AirtableTarget, AirtableConnector),
+    "snowflake": Registered(SnowflakeTarget, SnowflakeConnector),
 }
 
 AVAILABLE: Final[frozenset[Kind]] = frozenset(REGISTRY)
