@@ -64,6 +64,7 @@ from ssc_control.db import (
     upgrade,
 )
 from ssc_control.domain import grant_rules
+from ssc_control.runtime.cells import OrgCell, StaticCells
 from ssc_control.snapshot import jobs as snapshot_jobs
 from ssc_control.snapshot.compiler import latest_key, point_latest, publish
 from ssc_control.snapshot.service import COMPILE_TASK, Snapshots, compile_lock, mark_dirty
@@ -1159,6 +1160,51 @@ async def test_each_orgs_snapshot_goes_to_its_own_cell_and_the_cell_applies_it(
         feed = SnapshotFeed(mine, ViewHolder(org))
         assert await feed.poll_once() is True
         assert feed.version == 1
+
+
+async def test_an_org_whose_cell_is_not_configured_is_skipped_not_retried(
+    dsns: Dsns, tmp_path: Path
+) -> None:
+    """An org made without ``--cell-label`` keeps a generated label with no applied cell, so the
+    bucket template names a bucket that does not exist: the compile and the sweep skip it
+    (``worker_ports.cell_configured``) instead of retrying a 404 for good (seen 2026-10-07).
+    The placed org is served as before."""
+    name = f"s{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database {name} owner {MIGRATE_ROLE}")
+    at = {
+        r: make_url(d).set(database=name).render_as_string(hide_password=False)
+        for r, d in (("app", dsns.app), ("migrate", dsns.migrate), ("superuser", dsns.superuser))
+    }
+    await asyncio.to_thread(upgrade, at["migrate"])
+    first, second = [(await asyncio.to_thread(new_org, at["app"]))[0] for _ in range(2)]
+    labels = {
+        org: sql(at["app"], org, "select cell_label from ssc.org")[0]["cell_label"]
+        for org in (first, second)
+    }
+    buckets: dict[str, FsBlobStore] = {}
+
+    def cell_store(label: str) -> FsBlobStore:
+        return buckets.setdefault(label, blob_store(tmp_path / label))
+
+    engine = make_engine(at["app"])
+    try:
+        for org in (first, second):
+            async with bound_org(engine, org) as conn:
+                await mark_dirty(conn, org)
+        placed, stray = first, second
+        cells = StaticCells(orgs={placed: OrgCell(label=labels[placed])})
+        ports = Ports(engine=engine, cells=cells, cell_stores=cell_store)
+        await run_snapshot_worker(at["app"], ports, sweep=False)
+        await run_snapshot_worker(at["app"], ports, sweep=True)
+    finally:
+        await engine.dispose()
+    # One job each: the stray's compile ended without a retry, and the sweep did not mark it
+    # dirty again; only the placed org's bucket exists.
+    assert compile_jobs(at["superuser"]) == sorted([(placed, "succeeded"), (stray, "succeeded")])
+    assert set(buckets) == {labels[placed]}
+    feed = SnapshotFeed(buckets[labels[placed]], ViewHolder(placed))
+    assert await feed.poll_once() is True
 
 
 def heartbeat(client: TestClient, w: World, cell: str, version: int | None) -> Response:

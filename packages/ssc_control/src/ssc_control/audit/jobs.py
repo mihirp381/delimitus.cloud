@@ -31,7 +31,7 @@ from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
 from ssc_control.deferral import defer
 from ssc_control.storage import org_store
-from ssc_control.worker_ports import ports_of
+from ssc_control.worker_ports import cell_configured, ports_of
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +103,8 @@ def blueprint(*, tick_cron: str = TICK_CRON) -> Blueprint:
     async def anchor(context: JobContext, org_id: str, day: str) -> int | None:  # pyright: ignore[reportUnusedFunction]
         """Write the org's anchor for ``day``; returns the anchored seq."""
         ports = ports_of(context)
+        if not await cell_configured(ports, org_id, "anchor"):
+            return None
         store = await org_store(
             ports.engine, org_id, blob_store=ports.blob_store, cell_stores=ports.cell_stores
         )

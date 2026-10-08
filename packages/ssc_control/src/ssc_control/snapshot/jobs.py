@@ -8,6 +8,8 @@ set (SSC-013), else to ``Ports.blob_store``; with neither configured it does not
 ``stale_sweep`` is periodic: for every org whose newest version lags a live compile, or whose
 ``latest.json`` lags its newest version (a compile that ran out of retries, a lost job), it marks
 the snapshot dirty, which defers a compile. One org's failure is logged and the sweep goes on.
+An org whose cell is not configured (``worker_ports.cell_configured``) is skipped by both, so a
+label with no applied cell never sends a compile at a bucket that does not exist.
 
 Lateness is only logged (SSC-062): a compile that runs over ``COMPILE_LATE_SECONDS`` or fails for
 good logs ``snapshot compile late``, and a sweep that finds a stale snapshot logs ``stale
@@ -26,7 +28,7 @@ from ssc_control.db.orgs import all_org_ids
 from ssc_control.snapshot.compiler import is_stale, point_latest, publish
 from ssc_control.snapshot.service import mark_dirty
 from ssc_control.storage import org_store
-from ssc_control.worker_ports import Ports, ports_of
+from ssc_control.worker_ports import Ports, cell_configured, ports_of
 from ssc_shared.blobstore import BlobError, BlobStore
 
 log = logging.getLogger(__name__)
@@ -69,6 +71,8 @@ def blueprint(*, sweep_cron: str = SWEEP_CRON) -> Blueprint:
         ports = ports_of(context)
         started = time.monotonic()
         try:
+            if not await cell_configured(ports, org_id, "snapshot compile"):
+                return None
             store = await snapshot_store(ports, org_id)
             if store is None:
                 log.warning("snapshot compile skipped: no blob store", extra={"org_id": org_id})
@@ -94,6 +98,8 @@ def blueprint(*, sweep_cron: str = SWEEP_CRON) -> Blueprint:
         dirty = 0
         for org_id in await all_org_ids(ports.engine):
             try:
+                if not await cell_configured(ports, org_id, "snapshot sweep"):
+                    continue
                 store = await snapshot_store(ports, org_id)
                 if store is None or not await is_stale(ports.engine, org_id, store):
                     continue

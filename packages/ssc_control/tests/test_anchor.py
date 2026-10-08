@@ -81,6 +81,7 @@ from ssc_control.db import (
 )
 from ssc_control.db.errors import INSUFFICIENT_PRIVILEGE
 from ssc_control.db.migrate import alembic_config
+from ssc_control.runtime.cells import OrgCell, StaticCells
 from ssc_control.storage import cell_stores
 from ssc_control.worker import build_app, queue_conninfo
 from ssc_control.worker_ports import PORTS_KEY, Ports
@@ -703,6 +704,31 @@ async def test_the_tick_anchors_each_org_in_its_own_cell_bucket(dsns: Dsns, tmp_
         assert await every_key(bucket) == [key]
         assert parse_anchor(key, await read(bucket, key), org_id=org.org_id).seq == 1
         assert not key.startswith(snapshot_prefix(org.org_id))
+    assert await every_key(blob) == []
+
+
+async def test_the_tick_skips_an_org_whose_cell_is_not_configured(
+    dsns: Dsns, tmp_path: Path
+) -> None:
+    """An org with a generated cell label and no applied cell gets no anchor job that would
+    retry a 404 for good (``worker_ports.cell_configured``); the placed org is anchored."""
+    db = await asyncio.to_thread(fresh_db, dsns)
+    placed, stray = [await asyncio.to_thread(make_org, db.app, n) for n in ("A", "B")]
+    blob = blob_store(tmp_path / "blobs")
+    cells = cell_stores(CELL_TEMPLATE, bucket=fs_buckets(tmp_path))
+    configured = StaticCells(orgs={placed.org_id: OrgCell(label=placed.cell_label)})
+    now = datetime.now(UTC)
+    today = now.date()
+    engine = make_engine(db.app)
+    try:
+        ports = Ports(engine=engine, blob_store=blob, cell_stores=cells, cells=configured)
+        await run_tick(db, ports, now)
+    finally:
+        await engine.dispose()
+    assert anchor_jobs(db) == sorted([(placed.org_id, "succeeded"), (stray.org_id, "succeeded")])
+    key = daily_key(placed.org_id, today)
+    assert await every_key(cell_bucket(tmp_path, placed.cell_label)) == [key]
+    assert not (tmp_path / CELL_TEMPLATE.replace("{cell}", stray.cell_label)).exists()
     assert await every_key(blob) == []
 
 

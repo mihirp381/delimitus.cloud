@@ -6,6 +6,7 @@ production ``Ports``; tests build their own. Lanes add a field here, with a safe
 they first need one.
 """
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -28,10 +29,12 @@ from ssc_control.ports import (
     SnapshotPort,
     TimersPort,
 )
-from ssc_control.runtime.cells import CellPorts
+from ssc_control.runtime.cells import CellPorts, CellUnavailableError
 from ssc_control.runtime.specs import NoReleaseSpecs, ReleaseSpecs
 from ssc_control.timers.dispatch import ScheduleDispatcher
 from ssc_shared.blobstore import BlobStore
+
+log = logging.getLogger(__name__)
 
 PORTS_KEY: Final = "ssc_ports"
 APPS_DOMAIN: Final = "delimitusapps.com"
@@ -92,3 +95,23 @@ def ports_of(context: JobContext) -> Ports:
             f"run the worker with additional_context={{{PORTS_KEY!r}: Ports(...)}}"
         )
     return ports
+
+
+async def cell_configured(ports: Ports, org_id: str, what: str) -> bool:
+    """Whether a job that writes to the org's cell bucket may run: False, logged, when the org's
+    cell label is not one of ``SSC_CELLS``. ``cell_stores`` names a bucket for any label, so an
+    org made without ``--cell-label`` (its label generated, its cell never applied) would send
+    the job to a bucket that does not exist, a 404 on every retry and on every sweep (seen
+    2026-10-07 to 08). The reconcile tick already skips such an org the same way."""
+    if ports.cells is None or ports.cell_stores is None:
+        return True
+    try:
+        await ports.cells.for_org(org_id)
+    except CellUnavailableError as exc:
+        log.warning(
+            "%s skipped an org: its cell is not configured",
+            what,
+            extra={"org_id": org_id, "cell_label": exc.label},
+        )
+        return False
+    return True
