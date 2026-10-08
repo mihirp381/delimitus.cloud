@@ -23,7 +23,7 @@ Update a row's status when its ticket closes; reword the page if a ticket is cut
 | `preview` | Preview, then production, each at its own address; a person promotes | SSC-042, decision 004 | 2026-10-07: code on `round-2` |
 | `cloud` | Runs on Google Cloud | Decision 001 (SSC-001) | Decided |
 | `account` | In the US, each company in a cloud account of its own | Decisions 001 and 021, assumption A2 (SSC-013) | Done for the cell layout; region us-central1 |
-| `idp` | Sign in with Google Workspace or Okta | Decision 002 (SSC-002), SSC-019 live check on Okta | Proven; Entra is not named |
+| `idp` | Sign in with Okta | Decision 002 (SSC-002), SSC-019 live check on Okta | Proven; Google Workspace hidden until its lockout and rename checks pass on SSC (GA-2.6, founder 2026-10-08); Entra is not named |
 | `names` | Product names belong to their owners; no affiliation | Legal line, SSC-065 | True today |
 | `db` | A database for each app | SSC-005, SSC-040 | SSC-005 done; SSC-040 not started |
 | `timers` | Timers for scheduled jobs | SSC-041 | Partly done, control-plane half |
