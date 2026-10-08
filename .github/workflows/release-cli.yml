@@ -46,12 +46,18 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # One environment per package: PyPI registers a trusted publisher once per repository, workflow
+  # and environment, so four new projects need four environments. Dependencies go first.
   publish:
-    name: Publish to PyPI
+    name: Publish ${{ matrix.package }} to PyPI
     if: vars.SSC_PUBLISH_ENABLED == 'true'
     needs: build
     runs-on: ubuntu-24.04
-    environment: pypi
+    strategy:
+      max-parallel: 1
+      matrix:
+        package: [contracts, shared, bundle, cli]
+    environment: pypi-${{ matrix.package }}
     permissions:
       id-token: write # PyPI trusted publishing
     steps:
@@ -59,4 +65,11 @@ jobs:
         with:
           name: dist
           path: dist/
+      - name: Keep only this package's files
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          find dist -type f ! -name "ssc_${PACKAGE}-*" -delete
+          ls dist
+          test "$(ls dist | wc -l)" -eq 2
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
