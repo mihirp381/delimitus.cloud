@@ -3,6 +3,7 @@
 one ``SSC_CONNECTION_<CON_ID>`` per connection, its id in upper case, holding the target of its
 kind as JSON, credential included (SSC-051; the kinds, :mod:`ssc_datagw.kinds`, GA-5)."""
 
+import ipaddress
 import json
 import re
 from collections.abc import Mapping
@@ -10,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final, cast
 
 from ssc_datagw.kinds import Target, TargetError, parse_target
+from ssc_datagw.resolver import PUBLIC_RESOLVERS
 from ssc_shared.hosts import check_apps_domain, check_cell_label
 
 MAX_STALE_SECONDS: Final = 120.0
@@ -47,6 +49,7 @@ class Settings:
     apps_domain: str
     max_stale: float = MAX_STALE_SECONDS
     agent_account: str | None = None
+    resolvers: tuple[str, ...] = PUBLIC_RESOLVERS
     connections: Mapping[str, Target] = field(default_factory=dict[str, Target], repr=False)
 
     @property
@@ -113,6 +116,25 @@ def _agent_account(env: Mapping[str, str], project_id: str) -> str | None:
     return value
 
 
+def _resolvers(env: Mapping[str, str]) -> tuple[str, ...]:
+    """``SSC_DATAGW_RESOLVERS``: the addresses public names are resolved through
+    (:mod:`ssc_datagw.resolver`), comma-separated; unset is Google's public resolvers and empty
+    is none (the VPC's resolver answers everything, for a gateway outside a cell)."""
+    if "SSC_DATAGW_RESOLVERS" not in env:
+        return PUBLIC_RESOLVERS
+    addresses = tuple(
+        part.strip() for part in env["SSC_DATAGW_RESOLVERS"].split(",") if part.strip()
+    )
+    for address in addresses:
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            raise SettingsError(
+                "SSC_DATAGW_RESOLVERS must be IP addresses, comma-separated"
+            ) from None
+    return addresses
+
+
 def settings_from_env(env: Mapping[str, str]) -> Settings:
     org_id = _need(env, "SSC_ORG_ID")
     if _ORG.fullmatch(org_id) is None:
@@ -142,5 +164,6 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         apps_domain=apps_domain,
         max_stale=max_stale,
         agent_account=_agent_account(env, project_id),
+        resolvers=_resolvers(env),
         connections=_connections(env),
     )

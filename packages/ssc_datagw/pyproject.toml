@@ -17,6 +17,7 @@ dependencies = [
     "asyncmy==0.2.14",
     "python-tds==1.17.1",
     "pyopenssl==26.4.0",
+    "dnspython>=2.7",
 ]
 
 [build-system]

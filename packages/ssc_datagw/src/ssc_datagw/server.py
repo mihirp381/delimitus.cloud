@@ -60,6 +60,7 @@ from pydantic import (
 )
 
 from ssc_contracts.identity import IDENTITY_HEADER
+from ssc_datagw import resolver
 from ssc_datagw.admission import (
     Admitted,
     OnDemandSnapshot,
@@ -876,6 +877,9 @@ def main() -> None:
     # httpx2 logs every request's method and URL at INFO; a REST source's path is the query text.
     logging.getLogger("httpx2").setLevel(logging.WARNING)
     redaction.install()
+    resolvers = settings_from_env(os.environ).resolvers
+    if resolvers:
+        resolver.install(resolvers)
     port = int(os.environ.get("PORT", "8080"))
     config = uvicorn.Config(
         production_app(),
