@@ -12,7 +12,8 @@ The egress proxy had the same problem and answers it by resolving each allowed h
 Google's public resolvers, by address and over TCP (``ssc_egress.envoy.PUBLIC_RESOLVERS``). The
 gateway does the same here. :func:`install` replaces ``socket.getaddrinfo`` for the process, which
 is where asyncio's ``loop.getaddrinfo`` (asyncpg, asyncmy, anyio and so httpx) and the synchronous
-drivers (pytds) all end up. A public name goes to the resolvers; the answer's addresses are then
+drivers (pytds) all end up. anyio hands the name over as ASCII bytes (its IDNA step), so bytes are
+read as a name too. A public name goes to the resolvers; the answer's addresses are then
 shaped by the original ``getaddrinfo`` with ``AI_NUMERICHOST``, so the port, the socket type and
 the protocol are what the caller asked for and the driver still holds the host name for TLS.
 Names the VPC must answer stay with it: Google's (``*.googleapis.com`` to Private Google Access,
@@ -92,6 +93,19 @@ def public_resolver(nameservers: Sequence[str]) -> dns.resolver.Resolver:
     return resolver
 
 
+def _as_name(host: Any) -> str | None:
+    """``host`` as the name it is: a ``str``, or ASCII bytes (anyio's IDNA step); anything else
+    is not a name the lookup can take."""
+    if isinstance(host, str):
+        return host
+    if isinstance(host, bytes):
+        try:
+            return host.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class PublicLookup:
     """``socket.getaddrinfo`` with public names resolved by ``lookup``; ``original`` shapes the
@@ -109,15 +123,16 @@ class PublicLookup:
         proto: int = 0,
         flags: int = 0,
     ) -> list[tuple[Any, Any, Any, str, Any]]:
+        name = _as_name(host)
         if (
-            not isinstance(host, str)
+            name is None
             or family not in (0, socket.AF_INET)
             or flags & socket.AI_NUMERICHOST
-            or resolves_in_vpc(host)
+            or resolves_in_vpc(name)
         ):
             return self.original(host, port, family, type, proto, flags)
         shaped: list[tuple[Any, Any, Any, str, Any]] = []
-        for address in self.lookup(host):
+        for address in self.lookup(name):
             shaped.extend(
                 self.original(
                     address, port, socket.AF_INET, type, proto, flags | socket.AI_NUMERICHOST

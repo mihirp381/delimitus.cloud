@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Any
 
+import anyio
 import dns.exception
 import dns.resolver
 import pytest
@@ -84,18 +85,33 @@ def test_the_vpc_keeps_addresses_localhost_and_the_names_it_must_answer(host: st
     assert original.calls == [(host, 5432, 0, socket.SOCK_STREAM, 0, 0)]
 
 
-def test_a_numeric_or_ipv6_or_bytes_lookup_goes_to_the_original() -> None:
+def test_a_name_as_bytes_is_resolved_too() -> None:
+    """anyio encodes the host before asking (``anyio.getaddrinfo``); the first live Snowflake
+    read on cell 2 went to the sinkhole this way (2026-10-08)."""
+    lookup, asked = table_lookup({SNOWFLAKE: ADDRESSES})
+    original = Recording()
+    public = PublicLookup(lookup=lookup, original=original)
+
+    got = public.getaddrinfo(SNOWFLAKE.encode("ascii"), 443, 0, socket.SOCK_STREAM, 0, 0)
+
+    assert asked == [SNOWFLAKE]
+    assert [entry[4] for entry in got] == [(a, 443) for a in ADDRESSES]
+    assert original.calls[0][0] == ADDRESSES[0]
+
+
+def test_a_numeric_or_ipv6_or_literal_bytes_lookup_goes_to_the_original() -> None:
     lookup, asked = table_lookup({SNOWFLAKE: ADDRESSES})
     original = Recording()
     public = PublicLookup(lookup=lookup, original=original)
 
     public.getaddrinfo(SNOWFLAKE, 443, socket.AF_INET6, 0, 0, 0)
     public.getaddrinfo(SNOWFLAKE, 443, 0, 0, 0, socket.AI_NUMERICHOST)
-    public.getaddrinfo(SNOWFLAKE.encode(), 443)
+    public.getaddrinfo(b"10.21.0.5", 443)
+    public.getaddrinfo(b"\xff\xfe", 443)
     public.getaddrinfo(None, 443)
 
     assert asked == []
-    assert len(original.calls) == 4
+    assert len(original.calls) == 5
 
 
 def test_an_unknown_name_is_the_gaierror_a_driver_expects() -> None:
@@ -173,6 +189,13 @@ def test_install_puts_the_lookup_under_asyncio_too(monkeypatch: pytest.MonkeyPat
 
     got = asyncio.run(through_the_loop())
     assert asked == [SNOWFLAKE]
+    assert sorted(entry[4][0] for entry in got) == sorted(ADDRESSES)
+
+    async def through_anyio() -> list[Any]:
+        return await anyio.getaddrinfo(SNOWFLAKE, 443, type=socket.SOCK_STREAM)
+
+    got = asyncio.run(through_anyio())
+    assert asked == [SNOWFLAKE, SNOWFLAKE]
     assert sorted(entry[4][0] for entry in got) == sorted(ADDRESSES)
 
 
