@@ -275,3 +275,50 @@ def _scope_refusal(node: exp.Expression, dialect: Dialect, project: str | None) 
 def bigquery_refusal(sql: str, project: str) -> str | None:
     """:func:`refusal` as BigQuery reads the text, for a connection to ``project``."""
     return refusal(sql, BIGQUERY, project=project)
+
+
+TSQL: Final = Dialect(
+    read="tsql",
+    denied=frozenset({"openrowset", "openquery", "opendatasource", "openxml", "waitfor"}),
+    denied_prefixes=("xp_", "sp_", "fn_"),
+)
+"""SQL Server's refused names: the functions that reach another server or a file
+(``OPENROWSET``, ``OPENQUERY``, ``OPENDATASOURCE``), parse XML handles (``OPENXML``), wait on
+purpose (``WAITFOR``), and the extended, system and system-function prefixes."""
+
+
+def _tsql_object(node: exp.Expression) -> str | None:  # noqa: PLR0911  (one return per refusal)
+    """Why one node of a T-SQL read is refused, or ``None``."""
+    if isinstance(node, exp.NextValueFor):
+        return "the statement advances a sequence"
+    if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func):
+        if isinstance(node.this, exp.Dot):
+            return "the statement calls a function in another database"
+    if not isinstance(node, exp.Table):
+        return None
+    if node.args.get("catalog"):
+        return "the statement names another database or server"
+    name = node.this
+    if isinstance(name, exp.Identifier) and (
+        name.args.get("temporary") or name.args.get("global_")
+    ):
+        return "the statement reads a temporary table"
+    if isinstance(name, exp.Identifier) and TSQL.refuses(name.name):
+        return "the statement reads an object that is refused"
+    return None
+
+
+def tsql_refusal(sql: str) -> str | None:
+    """:func:`refusal` as SQL Server reads the text, plus what T-SQL adds: a variable (``@x``,
+    ``@@x``), a three- or four-part name (another database or a linked server), a temporary
+    table (``#t``, and ``##t``, which any login may read whatever its grants), ``NEXT VALUE
+    FOR`` (it advances a sequence), a function called in another database, and a table named
+    like the refused prefixes. sqlglot nests block comments as SQL Server does. ``FOR JSON``
+    does not parse in sqlglot 28, so it is refused."""
+    reason = refusal(sql, TSQL)
+    if reason is not None:
+        return reason
+    if any(t.token_type == TokenType.PARAMETER for t in sqlglot.tokenize(sql, read=TSQL.read)):
+        return "the statement uses a variable"
+    root = sqlglot.parse_one(sql, read=TSQL.read)  # pyright: ignore[reportUnknownMemberType]
+    return next((why for node in root.walk() if (why := _tsql_object(node)) is not None), None)

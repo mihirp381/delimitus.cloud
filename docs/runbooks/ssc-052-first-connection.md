@@ -9,6 +9,7 @@ Connects one customer database (Postgres) so apps can read it through the cell's
 - You are an active org admin in a person session. An agent session is refused (`AGENT_SESSION_REFUSED`).
 - The customer ran `packages/ssc_datagw/src/ssc_datagw/postgres_setup.sql` on the database (`docs/contracts/data-gateway.md`, "The Postgres connector") and gave you the host, port, database, the role's password and the server CA.
 - For a MySQL connection the customer ran `packages/ssc_datagw/src/ssc_datagw/mysql_setup.sql` instead (`docs/contracts/data-gateway.md`, "The MySQL connector") and gave you the host, port, a database the user may read, the user's password and the server CA.
+- For a SQL Server connection the customer ran `packages/ssc_datagw/src/ssc_datagw/sqlserver_setup.sql` with `sqlcmd`, as a sysadmin, in the connection's database (`docs/contracts/data-gateway.md`, "The SQL Server connector") and gave you the host, port, the database, the login, its password and the server CA (required).
 - For a `gsheets` connection, the customer shared the spreadsheet with the service account's email as a viewer and gave you the service-account JSON key and the spreadsheet id (`docs/contracts/data-gateway.md`, "The Google Sheets connector").
 - For an `s3` connection, the customer created an IAM user with the policy from `packages/ssc_datagw/src/ssc_datagw/s3_policy.json` attached (`<bucket>` and `<prefix>` filled in) and gave you its access key id and secret access key, the bucket, its region and the prefix (`docs/contracts/data-gateway.md`, "The S3 connector").
 - For a `bigquery` connection, the customer granted the service account BigQuery Job User on the project and BigQuery Data Viewer on the dataset and gave you the service-account JSON key, the project, the dataset and the location (`docs/contracts/data-gateway.md`, "The BigQuery connector").
@@ -68,6 +69,7 @@ From the granted environment, run one real query with `ssc_app.data.query("finan
 | `CONNECTION_UNAVAILABLE` | the credentials, the CA, the address or the network are wrong, or a pooler sits between (`a pooler is between` in the gateway log) | `infra/README.md`, "Data gateway" checks 6, 7 and 9; re-enter the secret (step 2) |
 | `QUERY_FAILED` 42501 | the role may not read that schema or table | the customer runs `postgres_setup.sql` again with the schema named |
 | `QUERY_FAILED` 42000 (MySQL) | the user may not read that schema or table (MySQL answers 42000 where Postgres answers 42501) | the customer runs `mysql_setup.sql` again with the schema named in `@schemas` |
+| `QUERY_FAILED` 42501 (SQL Server) | the login may not read that schema or table (errors 229 and 230) | the customer runs `sqlserver_setup.sql` again with the schema named in `schemas` |
 | `QUERY_FAILED` 42P01 | no such table | the query |
 | `QUERY_REFUSED` | the text is not one plain read | the query; `docs/contracts/data-gateway.md`, "The Postgres connector", step 1 |
 

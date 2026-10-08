@@ -3,7 +3,7 @@ else is refused, including the forms where sqlglot and Postgres would read the t
 
 import pytest
 
-from ssc_datagw.classify import BIGQUERY, bigquery_refusal, mysql_refusal, refusal
+from ssc_datagw.classify import BIGQUERY, bigquery_refusal, mysql_refusal, refusal, tsql_refusal
 
 READS = [
     "SELECT 1",
@@ -209,3 +209,77 @@ def test_without_a_project_any_project_passes_and_other_dialects_are_unchanged()
     assert refusal("SELECT * FROM other_db.reporting.orders") is None
     assert refusal("SELECT ml.f(1)") is None
     assert mysql_refusal("SELECT * FROM information_schema.tables") is None
+
+
+TSQL_READS = [
+    "SELECT 1",
+    "SELECT TOP 10 id, amount FROM reporting.orders ORDER BY id",
+    "SELECT id FROM reporting.orders WITH (NOLOCK) WHERE id = ?",
+    "SELECT id FROM reporting.orders OPTION (MAXDOP 1)",
+    "SELECT id FROM reporting.orders FOR XML AUTO",
+    "SELECT o.id, c.name FROM reporting.orders o JOIN reporting.customers c ON c.id = o.customer",
+    "WITH r AS (SELECT id FROM reporting.orders) SELECT count(*) FROM r",
+    "SELECT [id], \"note\" FROM [reporting].[orders] WHERE note LIKE '50%' AND id = ?",
+    "SELECT 'a?b', N'it''s', 0x1F, CAST(1 AS money)",
+    "SELECT 1 /* a /* nested */ comment */ AS x",
+    "SELECT * FROM reporting.tvf(1)",
+    "SELECT reporting.f(1) FROM reporting.orders",
+    "SELECT fn_total FROM reporting.orders",
+]
+
+TSQL_REFUSED = {
+    "insert": "INSERT INTO reporting.orders VALUES (1)",
+    "update": "UPDATE reporting.orders SET amount = 0",
+    "delete": "DELETE FROM reporting.orders",
+    "select into": "SELECT * INTO reporting.copy FROM reporting.orders",
+    "select into a temp table": "SELECT 1 AS x INTO #t",
+    "exec": "EXEC sp_who",
+    "exec xp_cmdshell": "EXEC xp_cmdshell 'dir'",
+    "declare": "DECLARE @x int",
+    "two statements": "SELECT 1; SELECT 2",
+    "waitfor": "WAITFOR DELAY '00:00:05'",
+    "openrowset": "SELECT * FROM OPENROWSET('SQLNCLI', 'Server=x', 'SELECT 1')",
+    "openrowset bulk": "SELECT * FROM OPENROWSET(BULK 'C:/x.txt', SINGLE_CLOB) AS x",
+    "openquery": "SELECT * FROM OPENQUERY(srv, 'DELETE FROM t')",
+    "opendatasource": "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Server=x').db.dbo.t",
+    "openxml": "SELECT * FROM OPENXML(1, '/r')",
+    "a variable": "SELECT @x",
+    "a system variable": "SELECT @@SPID",
+    "three-part name": "SELECT * FROM otherdb.dbo.t",
+    "three-part name, default schema": "SELECT * FROM otherdb..t",
+    "four-part name": "SELECT * FROM srv.otherdb.dbo.t",
+    "temporary table": "SELECT * FROM #t",
+    "global temporary table": "SELECT * FROM ##g",
+    "next value for": "SELECT NEXT VALUE FOR reporting.seq",
+    "function in another database": "SELECT otherdb.dbo.f(1)",
+    "an fn_ function": "SELECT * FROM sys.fn_get_audit_file('x', default, default)",
+    "an xp_ function": "SELECT xp_foo(1)",
+    "an sp_ table": "SELECT * FROM dbo.sp_x",
+    "for json": "SELECT id FROM reporting.orders FOR JSON PATH",
+    "a comment hiding a statement": "SELECT 1 /* /* */ ' */ ; DELETE FROM t --'",
+    "truncate": "TRUNCATE TABLE reporting.orders",
+    "drop": "DROP TABLE reporting.orders",
+    "set": "SET LOCK_TIMEOUT 0",
+    "begin transaction": "BEGIN TRANSACTION",
+    "empty": "",
+    "garbage": "SELEC 1 FROM",
+}
+
+
+@pytest.mark.parametrize("sql", TSQL_READS)
+def test_tsql_one_plain_read_passes(sql: str) -> None:
+    assert tsql_refusal(sql) is None
+
+
+@pytest.mark.parametrize("case", sorted(TSQL_REFUSED))
+def test_tsql_anything_else_is_refused(case: str) -> None:
+    assert tsql_refusal(TSQL_REFUSED[case]) is not None
+
+
+def test_tsql_reasons_name_the_construct() -> None:
+    assert tsql_refusal("SELECT @@VERSION") == "the statement uses a variable"
+    assert tsql_refusal("SELECT * FROM a.b.c") == "the statement names another database or server"
+    assert tsql_refusal("SELECT * FROM ##g") == "the statement reads a temporary table"
+    assert tsql_refusal("SELECT NEXT VALUE FOR s") == "the statement advances a sequence"
+    assert tsql_refusal("SELECT * FROM dbo.xp_x") == "the statement reads an object that is refused"
+    assert tsql_refusal("SELECT a.b.f(1)") == "the statement calls a function in another database"

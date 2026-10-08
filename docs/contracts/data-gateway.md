@@ -361,6 +361,69 @@ The connector logs one line per read, `s3 read: op=<list|get> status=<status> by
 At most `max_rows` plus one rows are read, as for every connector.
 
 The connector logs one line per read, `bigquery read: pages=<n> polls=<n> bytes=<body bytes>`, and `could not cancel the job: <error class>` when a cancel fails, with no project, job id or query text. Contract-fake-proven: a fake BigQuery API that checks the JWT (`packages/ssc_datagw/tests/test_bigquery.py`, over TLS in-process, which also runs the connector suite); live proof on the BigQuery sandbox is a GA-5 C step.
+<!-- sqlserver -->
+## The SQL Server connector
+
+`{kind: "sqlserver", host, port, database, user, password, ca}` (`ssc_datagw.sqlserver.SqlServerTarget`; `port` defaults to 1433). `database` is the database the session must be in; `user` is a SQL Server login (no Windows or Entra authentication). `ca` is required: the server's CA certificate in PEM, which must parse when the connector is built. The value is held, tagged and pinned as for Postgres. Each query gets its own connection and runs in this order; the first step that refuses answers:
+
+1. **Classify.** sqlglot parses the text as T-SQL (`ssc_datagw.classify.TSQL`, `tsql_refusal`); anything but exactly one `SELECT` (or `UNION`, `INTERSECT`, `EXCEPT` of them) is `QUERY_REFUSED`, as for Postgres: a second statement, `SELECT ... INTO`, `EXEC`, `WAITFOR`, `SET`, and any call to `OPENROWSET`, `OPENQUERY`, `OPENDATASOURCE` or `OPENXML`. On top of that it refuses a variable (`@x`, and `@@` functions such as `@@SPID`), a temporary table (`#t`, `##t`), `NEXT VALUE FOR` (it advances a sequence), a three- or four-part name (another database or a linked server) and a function called in another database, and a table or function whose name starts `xp_`, `sp_` or `fn_` (a column of that name is fine). `FOR XML` passes; `FOR JSON` is refused because sqlglot 28 does not parse it, and text the classifier cannot parse is refused: the app builds JSON from the rows. `WITH (NOLOCK)` and `OPTION (...)` hints pass.
+2. **Connect over TLS 1.2**, `verify-ca` with the pasted `ca`: the chain must lead to it and the name is not checked, the rule of `ssc_datagw.tls` and the Postgres connector. The driver (python-tds) speaks TLS 1.2 only and refuses a server that offers no encryption; there is no plaintext or unverified mode. The connector opens the TCP connection itself, so a server that redirects the login elsewhere (Azure SQL's redirect policy) is refused as `CONNECTION_UNAVAILABLE`: point the connection at the server's own address, or use the proxy policy. The login sets `program_name=ssc-datagw` and `autocommit`. 10 s to connect, with the same 60 s warm-up retry. A refused connection, a TLS failure, a bad password (18456), a database the login cannot open (4060) or a time-out after the warm-up is `CONNECTION_UNAVAILABLE` at once.
+3. **Settle the session and read it back.** One batch sets `TRANSACTION ISOLATION LEVEL READ COMMITTED`, `LOCK_TIMEOUT` to `timeout_ms`, `ARITHABORT ON` and `DATEFORMAT ymd`; then one `SELECT` reads the session back. SQL Server has no read-only session, so the login's grants and the classifier are the guard, and the read-back checks them: `CONNECTION_UNAVAILABLE` when `DB_NAME()` is not `database`, when the login is in `sysadmin`, in `db_owner`, `db_datawriter` or `db_ddladmin`, when `HAS_PERMS_BY_NAME` on the database answers yes for `INSERT`, `UPDATE`, `DELETE`, `ALTER`, `CONTROL` or `EXECUTE`, or when the login's user holds any of those as a grant of its own on a schema or object (`sys.database_permissions`). A check that answers `NULL` counts as a yes.
+4. **Bind and read.** Each `?` placeholder that sqlglot's T-SQL tokenizer finds (a `?` inside a string, a bracketed name or a comment is not one) becomes a parameter of `sp_executesql` (`@P1`, `@P2`, ...), so values never enter the text; a null is sent as `NULL`. A wrong count is `QUERY_FAILED` 07001; `%` is never a format directive. The statement carries the query's tag in a leading comment, `/* <tag> */` (at most 128 characters; `/*` and `*/` are dropped until none is left, since T-SQL comments nest), which `sys.dm_exec_sql_text` shows the customer's DBA. The rows are fetched 500 at a time, at most `max_rows` plus one.
+5. **Close.** The connection is closed. Every read is one statement in autocommit, so nothing is left open.
+
+**Stopping a read.** One deadline, `timeout_ms` after the statement is sent, covers the statement and every fetch; `LOCK_TIMEOUT` (error 1222) ends a read that waits on a lock sooner. Both are `QUERY_TIMEOUT`. When the deadline passes, or the gateway cancels the read (the kill watch or its deadline), the connector shuts its TCP connection down: SQL Server ends the request of a client that went away and drops the session (gone within seconds in `tests/test_sqlserver.py`). There is no `KILL`: it needs `ALTER ANY CONNECTION`, a server-wide right to end anyone's session, which this login must not hold.
+
+**Types.** By the type the driver reports:
+
+| SQL Server | `type` | `db_type` |
+|---|---|---|
+| `bit` | `boolean` | `bit` |
+| `tinyint`, `smallint`, `int`, `bigint` | `integer` | its name |
+| `real`, `float` | `float` | its name |
+| `decimal`, `numeric` | `decimal` | `decimal` |
+| `money`, `smallmoney` | `decimal` | its name |
+| `char`, `varchar`, `varchar(max)` | `string` | `varchar` |
+| `nchar`, `nvarchar`, `nvarchar(max)` | `string` | `nvarchar` |
+| `text`, `ntext`, `xml`, `sql_variant` | `string` | its name |
+| `uniqueidentifier` | `uuid` | `uniqueidentifier` |
+| `date`, `time` | `date`, `time` | its name |
+| `datetime`, `datetime2`, `smalldatetime` | `timestamp`, without a zone | its name |
+| `datetimeoffset` | `timestamp`, with its offset | `datetimeoffset` |
+| `binary`, `varbinary`, `varbinary(max)`, `image` | `bytes` | `varbinary` (`image` for `image`) |
+| a CLR type (`hierarchyid`, `geography`, `geometry`) | `bytes`, its serialized form | its name |
+
+The driver reports some types by one wire type, so `db_type` merges them: `char` is `varchar`, `nchar` is `nvarchar`, `binary` is `varbinary`, `numeric` is `decimal`. A `sql_variant` arrives as its value's own JSON.
+
+**Errors.** Error 1222 (lock timeout) is `QUERY_TIMEOUT`; 18456, 4060, 701 (out of memory), 1204 (out of locks), 17809 (out of connections) and a lost connection are `CONNECTION_UNAVAILABLE`; any other database error is `QUERY_FAILED` with the SQLSTATE its number stands for (`ssc_datagw.sqlserver.SQLSTATE`), or none:
+
+| Number | SQLSTATE | Meaning |
+|---|---|---|
+| 208, 4104 | 42P01 | no such object; a multi-part name that does not bind |
+| 207 | 42703 | no such column |
+| 209 | 42702 | an ambiguous column |
+| 102, 156 | 42601 | syntax |
+| 195, 4121 | 42883 | no such function |
+| 229, 230, 262, 297, 916 | 42501 | permission denied (an object, a column, the database, the action, the database for the login) |
+| 8134 | 22012 | division by zero |
+| 245, 8114, 241, 242 | 22P02 | a value that does not convert |
+| 8115, 220 | 22003 | arithmetic overflow |
+| 512 | 21000 | a subquery returned more than one value |
+| 1205 | 40P01 | a deadlock victim |
+
+The message names the error class and number only, never the server's text, which quotes names and values. The driver's own log is held at `WARNING`: at `INFO` it would log the statement.
+
+**The login.** `packages/ssc_datagw/src/ssc_datagw/sqlserver_setup.sql` is the script the customer runs with `sqlcmd` (or SSMS in SQLCMD mode), as a sysadmin, in the connection's database: `read -rs password && export password`, then `sqlcmd -S <host> -d reporting -U admin -N -C -i sqlserver_setup.sql -v login=ssc_datagw schemas=reporting,finance`. sqlcmd reads the environment variable `password` as `$(password)`, so the password is never in a file or on the command line; in SSMS, `:setvar` lines above the script, not saved. It makes the login `WITH CHECK_POLICY = ON` (the password may not contain the login's name, nor a single quote) or gives it the new password, makes its user in the database, takes the login out of every server role and the user out of every database role, and grants `SELECT` on each named schema; a schema that does not exist stops it. It ends by acting as the user (`EXECUTE AS USER`) and stops with an error if the user may still write, alter, control or execute anything, such as a grant made by hand, which it does not revoke. It is safe to run again, which is how a new password or another schema lands.
+
+What stops each attack: local-proven on SQL Server 2022 in a container; no 2025 run yet (`tests/test_sqlserver.py`, in `packages/ssc_datagw`, which also runs the connector suite). The classifier column is tested for every row, the database-alone column for every row with an error number and the two logins:
+
+| Attack | Classifier | Database alone |
+|---|---|---|
+| `INSERT`, `UPDATE`, `DELETE` | refused | 42501 (229): the login has `SELECT` only |
+| `CREATE TABLE`, `SELECT ... INTO` | refused | 42501 (262): no `CREATE TABLE` |
+| a schema not granted (`secret.payroll`) | passes (a read) | 42501 (229) |
+| `EXEC`, `WAITFOR`, `OPENROWSET`, a second statement | refused | not tested with the classifier off |
+| a login in `db_datawriter`, or `sa` | passes (a read) | the read-back refuses it before any read; `sqlserver_setup.sql` takes the login out of every role |
 
 ## Limits
 

@@ -35,7 +35,7 @@ dev = [
 [tool.uv]
 required-version = ">=0.12,<0.13"
 exclude-newer = "2026-09-21T00:00:00Z"
-exclude-newer-package = { procrastinate = "2026-09-24T00:00:00Z", pyjwt = "2026-09-24T00:00:00Z" }
+exclude-newer-package = { procrastinate = "2026-09-24T00:00:00Z", pyjwt = "2026-09-24T00:00:00Z", pyopenssl = "2026-08-02T00:00:00Z" }
 
 [tool.uv.workspace]
 members = ["packages/*", "conformance"]

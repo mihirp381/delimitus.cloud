@@ -15,6 +15,8 @@ dependencies = [
     "pyjwt[crypto]==2.15.0",
     "pydantic==2.13.5",
     "asyncmy==0.2.14",
+    "python-tds==1.17.1",
+    "pyopenssl==26.4.0",
 ]
 
 [build-system]
