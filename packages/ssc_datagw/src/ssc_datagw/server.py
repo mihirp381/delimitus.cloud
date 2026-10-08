@@ -748,6 +748,8 @@ def main() -> None:
     retries for up to two minutes when the bucket cannot be reached; ``asyncio.run`` would wait
     for it, so the loop is our own."""
     logging.basicConfig(level=logging.INFO)
+    # httpx2 logs every request's method and URL at INFO; a REST source's path is the query text.
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
     redaction.install()
     port = int(os.environ.get("PORT", "8080"))
     config = uvicorn.Config(

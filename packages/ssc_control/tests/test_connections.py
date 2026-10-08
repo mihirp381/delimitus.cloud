@@ -849,7 +849,7 @@ def test_a_connection_has_a_kind_and_only_an_available_kind_is_created(
     for kind, address in [
         ("sqlserver", {"host": "sql.corp.internal", "database": "shop"}),
         ("gsheets", {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"}),
-        ("rest", {"base_url": "https://api.corp.example/v2"}),
+        ("s3", {"bucket": "corp-exports", "region": "eu-west-1"}),
     ]:
         body = {
             "name": f"src-{kind}",

@@ -8,6 +8,7 @@ from ssc_contracts import connections as contract
 from ssc_datagw.kinds import AVAILABLE, REGISTRY, TargetError, connector_for, parse_target
 from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
+from ssc_datagw.rest import RestConnector, RestTarget
 
 PASSWORD = "fake-" + "registry-" + "password"
 TARGET = {"host": "10.0.0.5", "database": "sales", "user": "ssc_datagw", "password": PASSWORD}
@@ -28,8 +29,25 @@ def test_a_connection_without_a_kind_is_postgres_as_before_ga_5() -> None:
 def test_a_mysql_connection_parses_to_a_mysql_target_and_its_connector() -> None:
     target = parse_target(json.dumps({**TARGET, "kind": "mysql"}))
     assert target == MySqlTarget.model_validate({**TARGET, "kind": "mysql"})
+    assert isinstance(target, MySqlTarget)
     assert (target.port, target.database) == (3306, "sales")
     assert isinstance(connector_for(target), MySqlConnector)
+
+
+def test_a_rest_connection_parses_to_a_rest_target_and_its_connector() -> None:
+    raw = {"kind": "rest", "base_url": "https://api.example.com/v2", "token": PASSWORD}
+    target = parse_target(json.dumps(raw))
+    assert target == RestTarget.model_validate(raw)
+    assert isinstance(target, RestTarget)
+    assert target.token is not None and target.token.get_secret_value() == PASSWORD
+    assert isinstance(connector_for(target), RestConnector)
+
+
+def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
+    with pytest.raises(TargetError) as caught:
+        parse_target(json.dumps({**TARGET, "kind": "rest"}))
+    assert "base_url" in caught.value.fields
+    assert PASSWORD not in str(caught.value)
 
 
 @pytest.mark.parametrize(

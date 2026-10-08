@@ -73,7 +73,8 @@ def test_a_bad_environment_is_refused(case: str) -> None:
 def test_each_connection_variable_is_a_target_and_its_password_is_never_shown() -> None:
     got = settings_from_env({**ENV, CONNECTION_VAR: json.dumps({**TARGET, "port": 6432})})
     assert got.connections == {SALES: PostgresTarget.model_validate({**TARGET, "port": 6432})}
-    assert got.connections[SALES].kind == "postgres"
-    assert got.connections[SALES].password.get_secret_value() == PASSWORD
+    sales = got.connections[SALES]
+    assert isinstance(sales, PostgresTarget)
+    assert sales.password.get_secret_value() == PASSWORD
     assert PASSWORD not in repr(got)
     assert settings_from_env(ENV).connections == {}
