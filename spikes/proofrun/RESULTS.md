@@ -266,6 +266,15 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
   host answers 302 to sign-in. It has no `[connections]`, so no approval was asked; the gated
   promote is still to run. `uv tool install ssc-cli` from PyPI: 0.0.1 in 6 s. Finding: AGENTS.md
   points apps at `ssc_app.identity` and `@delimitus/ssc-identity`, which are not on PyPI or npm.
+- **Ten parallel deploys from one login (GA-1.8), ga1pg01 to ga1pg10 on cell 2, 2026-10-08,
+  control 6f4d1a94, ssc-cli 0.0.1.** Started 15:51:55. All ten exited 0 with the release live in
+  preview: the first at 15:55:00, the last (pg03) at 16:00:50, 8 min 55 s. No retry loop around
+  the CLI; a `/v1/audit` call from the same login during the run got 429, which the CLI's
+  waiting absorbs. PASS.
+- **GA-1.5 audit rows, read through `GET /v1/audit`.** seq 186 `rollback.finished` at
+  13:21:48, deployment dep_xnsreqiypugc7q1lan2r on ga1pg01 preview, after `healthy` on R1's
+  release; seq 206 `deploy.failed` at 13:25:24, `HEALTH_CHECK_FAILED`, same environment. Both by
+  admin2, not through an agent. 1.5 PASS in full.
 
 ## Release, 2026-10-07 (GA-0)
 

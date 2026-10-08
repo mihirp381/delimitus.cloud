@@ -8,12 +8,12 @@ Replace `<support_email>` with the address from the `support_email` setting befo
 
 You need Python 3.14 and [uv](https://docs.astral.sh/uv/) (or pipx).
 
-1. Install the CLI: `uv tool install ssc-cli` (or `pipx install ssc-cli`). Until it is on PyPI, your org admin gives you the four wheel files (`ssc_contracts`, `ssc_shared`, `ssc_bundle`, `ssc_cli`); put them in one folder and run `uv tool install --find-links <that folder> ssc-cli`.
+1. Install the CLI from PyPI: `uv tool install ssc-cli` (or `pipx install ssc-cli`). It takes a few seconds.
 2. Check it: `ssc --version`.
 3. Sign in with your work account: `ssc login --org <org id>`. Your org admin gives you the org id (`org_` and 20 characters).
 4. Create the app once: `ssc apps create <name>` (lower-case; it becomes part of the address).
 5. In your app's folder: `ssc init` (it writes the notes your coding agent reads), then `ssc doctor`.
-6. Deploy: `ssc deploy --app <name> --wait`. It prints the preview address when the app is live. This takes under ten minutes from a fresh install.
+6. Deploy: `ssc deploy --app <name> --wait`. It prints the preview address when the app is live. A small app's first deploy takes about three minutes, so the whole path from a fresh install is under ten.
 7. When preview is right: `ssc promote <name> --wait` (production may first need an org admin's approval). If a new version is wrong: `ssc releases <name>`, then `ssc rollback <name> R<number> --wait`.
 
 If a deploy fails, the error names a code and, for a failed build or health check, the last lines of the log. The `Fix:` line says what to change.
