@@ -237,15 +237,20 @@ async def get(  # noqa: PLR0913  (the request and how it is timed)
     connect_seconds: float,
     warmup: Warmup,
     failure: Callable[[int], Exception | None] = status_failure,
+    method: str = "GET",
+    content: bytes | None = None,
 ) -> tuple[int, bytes]:
     """One GET of ``url``: the answer's status and body. Sending it and waiting for the
     headers runs under the warm-up retry; ``failure`` maps the status to the connector's error
     (``None`` reads on), and the body is read by :func:`read_body`. Every read waits at most
-    ``seconds``; a connect or TLS failure is ``UpstreamUnavailableError``."""
+    ``seconds``; a connect or TLS failure is ``UpstreamUnavailableError``. ``method`` and
+    ``content`` send another request the same way (the BigQuery connector's POSTs)."""
 
     async def connect_once(connect: float) -> httpx2.Response:
         timeout = httpx2.Timeout(seconds, connect=connect)
-        request = client.build_request("GET", url, headers=headers, timeout=timeout)
+        request = client.build_request(
+            method, url, headers=headers, content=content, timeout=timeout
+        )
         try:
             return await client.send(request, stream=True)
         except httpx2.ConnectTimeout:

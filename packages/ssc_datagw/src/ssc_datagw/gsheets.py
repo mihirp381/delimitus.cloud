@@ -19,19 +19,13 @@ import asyncio
 import json
 import logging
 import re
-import time
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from typing import Final, Literal, cast
 from urllib.parse import quote
 
 import httpx2
-import jwt
-from cryptography.exceptions import UnsupportedAlgorithm
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from ssc_datagw.connectors import (
     Column,
@@ -40,6 +34,7 @@ from ssc_datagw.connectors import (
     QueryFailedError,
     QueryRefusedError,
 )
+from ssc_datagw.google import ServiceAccount, signer
 from ssc_datagw.rest import TYPE_SAMPLE, USER_AGENT, get, status_failure
 from ssc_datagw.tls import tls_context
 from ssc_datagw.warmup import CONNECT_SECONDS, Warmup
@@ -51,7 +46,6 @@ type Cell = str | int | float | bool
 SHEETS_URL: Final = "https://sheets.googleapis.com"
 AUDIENCE: Final = "https://sheets.googleapis.com/"
 """The self-signed JWT's ``aud``: the API's own URL, in place of an OAuth scope."""
-TOKEN_SECONDS: Final = 3600
 SPREADSHEET_ID: Final = r"^[A-Za-z0-9_-]{20,128}$"
 SHEET: Final = r"^[^\x00-\x1f'!:]{1,100}$"
 """``ssc_contracts.connections.SheetsAddress``'s two patterns."""
@@ -62,9 +56,6 @@ RENDER: Final = {
     "dateTimeRenderOption": "SERIAL_NUMBER",
     "majorDimension": "ROWS",
 }
-NOT_A_KEY: Final = (
-    "the service account is not a JSON key with client_email, private_key and private_key_id"
-)
 NOT_A_RANGE: Final = "the query is not an A1 range"
 OTHER_SHEET: Final = "the range names another sheet than the connection's"
 NOT_VALUES: Final = "the body is not a Sheets value range"
@@ -88,58 +79,6 @@ CELL_TYPES: Final[Sequence[tuple[type, str, str]]] = (
 which it is a subclass of."""
 
 
-@dataclass(frozen=True, slots=True, repr=False)
-class _Signer:
-    """The three parts of the key a read needs. No repr: each part is the credential's."""
-
-    email: str
-    kid: str
-    key: rsa.RSAPrivateKey
-
-    def token(self) -> str:
-        now = int(time.time())
-        claims = {
-            "iss": self.email,
-            "sub": self.email,
-            "aud": AUDIENCE,
-            "iat": now,
-            "exp": now + TOKEN_SECONDS,
-        }
-        return jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": self.kid})
-
-
-def _parsed(raw: str) -> _Signer | None:
-    try:
-        account = json.loads(raw)
-        if not isinstance(account, dict):
-            return None
-        fields = cast("dict[str, object]", account)
-        email, pem, kid = (
-            fields.get("client_email"),
-            fields.get("private_key"),
-            fields.get("private_key_id"),
-        )
-        if not (isinstance(email, str) and isinstance(pem, str) and isinstance(kid, str)):
-            return None
-        if not (email and pem and kid):
-            return None
-        key = serialization.load_pem_private_key(pem.encode(), password=None)
-    except ValueError, TypeError, RecursionError, UnsupportedAlgorithm:
-        return None
-    if not isinstance(key, rsa.RSAPrivateKey):
-        return None
-    return _Signer(email, kid, key)
-
-
-def _signer(service_account: SecretStr) -> _Signer:
-    """The parsed key, or a ``ValueError`` that quotes nothing of it (raised outside the
-    ``except`` so it carries no parser error, which holds the text)."""
-    signer = _parsed(service_account.get_secret_value())
-    if signer is None:
-        raise ValueError(NOT_A_KEY)
-    return signer
-
-
 class GsheetsTarget(BaseModel):
     """One spreadsheet and the service account that reads it. ``sheet`` is the one tab apps
     read, every tab when left out. ``service_account`` is the key file's JSON text."""
@@ -149,13 +88,7 @@ class GsheetsTarget(BaseModel):
     kind: Literal["gsheets"] = "gsheets"
     spreadsheet_id: str = Field(pattern=SPREADSHEET_ID)
     sheet: str | None = Field(default=None, pattern=SHEET)
-    service_account: SecretStr
-
-    @field_validator("service_account")
-    @classmethod
-    def _is_a_key(cls, value: SecretStr) -> SecretStr:
-        _signer(value)
-        return value
+    service_account: ServiceAccount
 
 
 def _quoted(name: str) -> str:
@@ -290,7 +223,7 @@ class GsheetsConnector:
         base_url: str = SHEETS_URL,
     ) -> None:
         self._target = target
-        self._signer = _signer(target.service_account)
+        self._signer = signer(target.service_account)
         self._base = base_url.rstrip("/")
         self._tls = tls_context(None)
         self._connect_seconds = connect_seconds
@@ -309,7 +242,7 @@ class GsheetsConnector:
         headers = {
             "Accept": "application/json",
             "User-Agent": USER_AGENT,
-            "Authorization": f"Bearer {self._signer.token()}",
+            "Authorization": f"Bearer {self._signer.token(AUDIENCE)}",
         }
         seconds = max(1, query.timeout_ms) / 1000
         client = httpx2.AsyncClient(

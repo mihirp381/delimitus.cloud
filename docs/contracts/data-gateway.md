@@ -290,6 +290,78 @@ At most `max_rows` plus one rows are kept, as for every connector; a CSV or JSON
 
 The connector logs one line per read, `s3 read: op=<list|get> status=<status> bytes=<body bytes> pages=<requests>`, with no bucket, key or URL. Local-proven on S3Mock 4.9.1 over TLS (wire protocol) and on a contract fake that verifies SigV4 (signing, timeout, cancel); live proof against a real bucket is a GA-5 C step (`packages/ssc_datagw/tests/test_s3.py`, which runs the connector suite against both).
 
+<!-- bigquery -->
+## The BigQuery connector
+
+`{kind: "bigquery", project, dataset, location?, service_account, max_bytes_billed?}` (`ssc_datagw.bigquery.BigQueryTarget`; unknown members are refused), the value of a `bigquery` connection's `SSC_CONNECTION_*` variable ([Connectors by kind](#connectors-by-kind)). The address is the control plane's (`ssc_contracts.connections.BigQueryAddress`), with the same patterns.
+
+| Member | Rule |
+|---|---|
+| `project` | `^[a-z][a-z0-9-]{4,28}[a-z0-9]$`, the project the jobs run and bill in. |
+| `dataset` | `^[A-Za-z0-9_]{1,1024}$`, the dataset an unqualified table is read from (`defaultDataset`). |
+| `location` | `^[A-Za-z0-9-]{1,32}$`, default `US`; the location the jobs run in. |
+| `service_account` | The service account's JSON key file, as for Google Sheets: JSON with `client_email`, `private_key` (a PEM RSA key) and `private_key_id`, or the variable is refused with a message that quotes none of them. Never shown in a repr, an error or a log line, nor are the email, the key or a JWT made from it. |
+| `max_bytes_billed` | Default 1,073,741,824 (1 GiB), from 1,048,576 (1 MiB) to 1,099,511,627,776 (1 TiB). The most one read may bill. |
+
+**Who reads.** Each read signs one JWT with the service account's key, as for Google Sheets (`ssc_datagw.google`: RS256, header `kid` the `private_key_id`, `iss` and `sub` the `client_email`, `iat` now and `exp` an hour later) with `aud` `https://bigquery.googleapis.com/`, and sends it as `Authorization: Bearer <jwt>` on each request of that read. The customer grants the service account BigQuery Job User on `project` and BigQuery Data Viewer on `dataset`; what the classifier misses, those roles stop, since Data Viewer cannot change a table.
+
+**The statement.** `sql` is GoogleSQL (never legacy SQL). Before anything is sent:
+
+1. **Classify.** `ssc_datagw.classify.bigquery_refusal`, sqlglot reading the text as BigQuery: exactly one plain `SELECT`, as for Postgres, and also refused (`QUERY_REFUSED`):
+   - a table, or a function, qualified by another project than `project` (compared without case): `other-project.d.t`, `` `other-project.d.t` ``, `` `other-project`.d.fn() ``;
+   - `EXTERNAL_QUERY` (a query given as text, on another database) and `SESSION_USER` (it answers the service account's email);
+   - any `ML.` or `AI.` function (they train, call or bill models);
+   - any `INFORMATION_SCHEMA.JOBS*` view, which shows the service account's earlier queries (another app's text and parameters on the same connection), and any region-qualified `INFORMATION_SCHEMA` (`` `region-us` ``), which is project-wide. A dataset's own `INFORMATION_SCHEMA` (`reporting.INFORMATION_SCHEMA.TABLES`) is read;
+   - scripting (`DECLARE`, `SET`, `BEGIN`, `CALL`, `EXECUTE IMMEDIATE`), `EXPORT DATA`, `LOAD DATA` and every DDL and DML, as statements that are not a `SELECT` or do not parse.
+2. **Parameters.** Placeholders are BigQuery's own positional `?`, counted by sqlglot's BigQuery tokenizer (one in a string or a comment is not one); a count that differs from `params` is `QUERY_FAILED` 07001. Each parameter is typed by its JSON value: a boolean `BOOL`, an integer `INT64` (outside its range `QUERY_FAILED` 22003), another number `FLOAT64`, a string `STRING`, `null` a `STRING` null. Write `CAST(? AS DATE)` for a date.
+
+**The job.** One `POST https://bigquery.googleapis.com/bigquery/v2/projects/<project>/queries` (`jobs.query`) with `query`, `useLegacySql: false`, `parameterMode: "POSITIONAL"`, `queryParameters`, `defaultDataset: {projectId: <project>, datasetId: <dataset>}`, `location`, `maximumBytesBilled` (the cost guard: BigQuery refuses before running a job that would bill more), `timeoutMs` (`timeout_ms`, at most 60,000), `jobTimeoutMs` (`timeout_ms`), `maxResults` (`max_rows` plus one), `formatOptions: {useInt64Timestamp: true}` and `labels: {"ssc-tag": <tag>}`, the query's tag in lower case with each character outside `[a-z0-9_-]` an `_`, at most 63 characters, which the customer's job history and billing export show. While `jobComplete` is false the connector polls `GET .../queries/<jobId>?location=&timeoutMs=&maxResults=` (`getQueryResults`); further pages follow `pageToken` until `max_rows` plus one rows. Every request has `Accept: application/json` and `User-Agent: ssc-datagw`; TLS is checked against the system trust store, no redirect is followed, and the process environment's proxy and CA settings are ignored.
+
+**Time.** As for the REST connector (the same request code, `ssc_datagw.rest.get`): 10 s to connect with the warm-up retry, each answer at most 32 MiB, and the whole read, polls and pages included, ends at `timeout_ms`: past it is `QUERY_TIMEOUT`. Past it, and when the gateway cancels a read (the kill watch or its deadline), the connector cancels the job with `POST .../jobs/<jobId>/cancel?location=`, from a client of its own, 5 s at most and run to its end even if the read is cancelled again; a cancel that fails is logged by its error class. A read that ends before `jobs.query` named its job cannot cancel it: `jobTimeoutMs` stops it in BigQuery.
+
+**The answer.** BigQuery's reason (`error.errors[0].reason`) decides first, then the status; the message names the reason (only when it is a plain word), never the body:
+
+| Answer | Result |
+|---|---|
+| 2xx | read on |
+| `invalidQuery` | `QUERY_FAILED` 42601 |
+| `notFound` | `QUERY_FAILED` 42P01 |
+| `accessDenied`, `billingNotEnabled`, `billingTierLimitExceeded`, or any other 403 | `QUERY_FAILED` 42501 |
+| `bytesBilledLimitExceeded` | `QUERY_FAILED` 53400 ("the read would bill more than max_bytes_billed") |
+| `responseTooLarge` | `QUERY_FAILED` 54000 |
+| `stopped` (the job was cancelled outside the gateway) | `QUERY_FAILED` 57014 |
+| `invalid` (e.g. a parameter BigQuery cannot take) | `QUERY_FAILED` 22023 |
+| `timeout` (`jobTimeoutMs` ran out) | `QUERY_TIMEOUT` |
+| `rateLimitExceeded`, `quotaExceeded`, `backendError`, `jobRateLimitExceeded`, `internalError` | `CONNECTION_UNAVAILABLE` |
+| 401 | `QUERY_FAILED` 28000 (Google refused the JWT: a revoked or wrong key) |
+| 429, 5xx, no connection, a TLS failure | `CONNECTION_UNAVAILABLE` |
+| other 3xx, 4xx | `QUERY_FAILED`, no `sqlstate` |
+| a complete job with `errors` and no `schema` | as its first reason, by this table (`errors` beside a `schema` are warnings) |
+| a body over 32 MiB (decoded) | `QUERY_FAILED`, no `sqlstate` |
+| a body that is not JSON or not a query result, or a value that does not convert to its column's type | `QUERY_FAILED` 22P02 |
+
+**Columns and values.** The columns are `schema.fields` in order; `db_type` is the GoogleSQL name (the API's legacy `INTEGER`, `FLOAT`, `BOOLEAN`, `RECORD` are given as `INT64`, `FLOAT64`, `BOOL`, `STRUCT`), `ARRAY<...>` for a `REPEATED` column. Values arrive as text and are converted by column:
+
+| BigQuery | Portable type | Value |
+|---|---|---|
+| `INT64` | `integer` | number |
+| `FLOAT64` | `float` | number; `NaN`, `Infinity`, `-Infinity` as those strings |
+| `NUMERIC`, `BIGNUMERIC` | `decimal` | exact, as a string |
+| `BOOL` | `boolean` | |
+| `STRING`, `GEOGRAPHY` (WKT) | `string` | |
+| `BYTES` | `bytes` | base64 |
+| `DATE`, `TIME` | `date`, `time` | ISO 8601 |
+| `DATETIME` | `timestamp` | ISO 8601 without a zone |
+| `TIMESTAMP` | `timestamp` | ISO 8601 in UTC, to the microsecond |
+| `JSON` | `json` | the JSON itself |
+| `INTERVAL` | `interval` | an ISO 8601 duration, each part with its own sign (`1-2 3 4:5:6.5` is `P1Y2M3DT4H5M6.5S`) |
+| `ARRAY<...>`, `STRUCT` | `json` | an array, an object by member name, each member by this table |
+| any other (`RANGE`, ...) | `string` | BigQuery's text |
+
+At most `max_rows` plus one rows are read, as for every connector.
+
+The connector logs one line per read, `bigquery read: pages=<n> polls=<n> bytes=<body bytes>`, and `could not cancel the job: <error class>` when a cancel fails, with no project, job id or query text. Contract-fake-proven: a fake BigQuery API that checks the JWT (`packages/ssc_datagw/tests/test_bigquery.py`, over TLS in-process, which also runs the connector suite); live proof on the BigQuery sandbox is a GA-5 C step.
+
 ## Limits
 
 Each limit is the minimum of the platform, the connection's `limits`, the grant's `limits` and the request's ask (`docs/contracts/access-snapshot.md`, amendment SSC-050). A cap a layer leaves out puts no cap at that layer; `0` is a cap of zero.

@@ -144,6 +144,10 @@ class Dialect:
     denied_prefixes: tuple[str, ...]
     denied_suffixes: tuple[str, ...] = ()
     unsafe_strings: dict[TokenType, str] | None = None
+    denied_qualifiers: frozenset[str] = frozenset()
+    """Qualifiers whose functions are refused (BigQuery's ``ML.``), in lower case."""
+    denied_paths: re.Pattern[str] | None = None
+    """Tables refused by their dotted path, matched in lower case."""
 
     def refuses(self, name: str) -> bool:
         low = name.lower()
@@ -170,9 +174,12 @@ def _names(node: exp.Func) -> set[str]:
     return {node.sql_name(), *type(node).sql_names()}
 
 
-def refusal(sql: str, dialect: Dialect = POSTGRES) -> str | None:  # noqa: PLR0911  (one return per refusal)
+def refusal(  # noqa: PLR0911  (one return per refusal)
+    sql: str, dialect: Dialect = POSTGRES, *, project: str | None = None
+) -> str | None:
     """Why ``sql`` is not one plain read, or ``None`` when it is. The reason is for the log; it
-    names the construct and never quotes the statement."""
+    names the construct and never quotes the statement. With ``project`` (BigQuery) a table or
+    function another project qualifies is refused."""
     try:
         tokens = sqlglot.tokenize(sql, read=dialect.read)
         statements = sqlglot.parse(sql, read=dialect.read)  # pyright: ignore[reportUnknownMemberType]
@@ -191,6 +198,9 @@ def refusal(sql: str, dialect: Dialect = POSTGRES) -> str | None:  # noqa: PLR09
     for node in root.walk():
         if isinstance(node, _WRITES):
             return f"the statement contains {type(node).__name__}"
+        scoped = _scope_refusal(node, dialect, project)
+        if scoped is not None:
+            return scoped
         if isinstance(node, exp.Func):
             names = _names(node)
             if isinstance(node, exp.Anonymous) and not _PLAIN_NAME.fullmatch(node.name):
@@ -203,3 +213,65 @@ def refusal(sql: str, dialect: Dialect = POSTGRES) -> str | None:  # noqa: PLR09
 def mysql_refusal(sql: str) -> str | None:
     """:func:`refusal` as MySQL reads the text."""
     return refusal(sql, MYSQL)
+
+
+BIGQUERY_DENIED: Final = frozenset({"external_query", "session_user"})
+"""``EXTERNAL_QUERY`` runs a query given as text on another database; ``SESSION_USER`` answers
+the service account's email, which is the credential's."""
+BIGQUERY_DENIED_QUALIFIERS: Final = frozenset({"ml", "ai"})
+"""``ML.`` and ``AI.`` functions train, call or bill models outside the read."""
+BIGQUERY_DENIED_PATHS: Final = re.compile(r"(^|\.)region-|information_schema\.jobs")
+"""Region-qualified ``INFORMATION_SCHEMA`` views are project-wide, and the ``JOBS`` views show
+the service account's earlier queries: another app's text and parameters on the same
+connection."""
+BIGQUERY: Final = Dialect(
+    read="bigquery",
+    denied=BIGQUERY_DENIED,
+    denied_prefixes=(),
+    denied_qualifiers=BIGQUERY_DENIED_QUALIFIERS,
+    denied_paths=BIGQUERY_DENIED_PATHS,
+)
+OTHER_PROJECT: Final = "the statement names another project"
+
+
+def _dotted(node: exp.Expression) -> list[str]:
+    if isinstance(node, exp.Dot):
+        return _dotted(node.this) + _dotted(node.expression)
+    if isinstance(node, exp.Column):
+        return [part.name for part in node.parts]
+    return [node.name]
+
+
+def _qualifiers(node: exp.Func) -> list[str]:
+    """The names before a function's own (``ML`` in ``ML.PREDICT``), in lower case, without
+    BigQuery's ``SAFE.`` prefix."""
+    parent = node.parent
+    names: list[str] = []
+    if isinstance(parent, exp.Dot) and parent.expression is node:
+        names = _dotted(parent.this)
+    elif isinstance(parent, exp.Table) and parent.this is node:
+        names = [n for n in (parent.catalog, parent.db) if n]
+    names = [n.lower() for n in names]
+    return names[1:] if names[:1] == ["safe"] else names
+
+
+def _scope_refusal(node: exp.Expression, dialect: Dialect, project: str | None) -> str | None:
+    """Why a table or function reaches outside what the connection reads (BigQuery)."""
+    if isinstance(node, exp.Table):
+        if project is not None and node.catalog and node.catalog.lower() != project.lower():
+            return OTHER_PROJECT
+        path = ".".join(part.name for part in node.parts).lower()
+        if dialect.denied_paths is not None and dialect.denied_paths.search(path):
+            return "the statement reads a view that is refused"
+    if isinstance(node, exp.Func) and (dialect.denied_qualifiers or project is not None):
+        qualifiers = _qualifiers(node)
+        if any(q in dialect.denied_qualifiers for q in qualifiers):
+            return "the statement calls a function that is refused"
+        if project is not None and len(qualifiers) >= 2 and qualifiers[0] != project.lower():  # noqa: PLR2004  (project.dataset.function)
+            return OTHER_PROJECT
+    return None
+
+
+def bigquery_refusal(sql: str, project: str) -> str | None:
+    """:func:`refusal` as BigQuery reads the text, for a connection to ``project``."""
+    return refusal(sql, BIGQUERY, project=project)
