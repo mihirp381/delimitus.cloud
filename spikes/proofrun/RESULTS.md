@@ -246,6 +246,9 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
   the old one stops.
 - **T9 instance hold.** Besides the 60-minute drop, one at 37 minutes (05:59:22): Cloud Run
   replaced pstream's instance on the same revision, with no deploy. The hold reconnected at once.
+- **T9 request hold** (ended 2026-10-08 ~04:01 UTC): 8.02 h held over 8.02 h, PASS. 8
+  reconnects, longest gap 2.5 s, none refused. 7 of 8 drops at about 60 minutes, one at 7.0
+  minutes (stream 3). `t9 report` and `t9 bill` are still to run, the bill after it is exported.
 
 ## Release, 2026-10-07 (GA-0)
 
