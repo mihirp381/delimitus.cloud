@@ -3,7 +3,14 @@ else is refused, including the forms where sqlglot and Postgres would read the t
 
 import pytest
 
-from ssc_datagw.classify import BIGQUERY, bigquery_refusal, mysql_refusal, refusal, tsql_refusal
+from ssc_datagw.classify import (
+    BIGQUERY,
+    bigquery_refusal,
+    mysql_refusal,
+    refusal,
+    snowflake_refusal,
+    tsql_refusal,
+)
 
 READS = [
     "SELECT 1",
@@ -283,3 +290,117 @@ def test_tsql_reasons_name_the_construct() -> None:
     assert tsql_refusal("SELECT NEXT VALUE FOR s") == "the statement advances a sequence"
     assert tsql_refusal("SELECT * FROM dbo.xp_x") == "the statement reads an object that is refused"
     assert tsql_refusal("SELECT a.b.f(1)") == "the statement calls a function in another database"
+
+
+SNOWFLAKE_READS = [
+    "SELECT 1",
+    "SELECT id, amount FROM orders WHERE id = ?",
+    "SELECT * FROM reporting.sales.orders",
+    "SELECT * FROM REPORTING.SALES.ORDERS",
+    'SELECT * FROM "REPORTING".sales.orders',
+    "SELECT * FROM REPORTING..orders",
+    "SELECT * FROM sales.orders",
+    "SELECT * FROM reporting.information_schema.tables",
+    "SELECT v:a.b::string, v['x'] FROM orders",
+    "SELECT f.value FROM orders, LATERAL FLATTEN(input => orders.v) f",
+    "SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('[1]')))",
+    "SELECT * FROM TABLE(GENERATOR(ROWCOUNT => 5))",
+    "SELECT * FROM orders AT(OFFSET => -60)",
+    "SELECT sales.f(1), reporting.sales.f(2)",
+    "SELECT '@stage', '$1', 'a;b', $$ x $$",
+    "WITH r AS (SELECT * FROM orders) SELECT COUNT(*) FROM r",
+    "SELECT id FROM a UNION ALL SELECT id FROM b",
+    "SELECT CURRENT_TIMESTAMP(), CURRENT_ROLE()",
+]
+
+SNOWFLAKE_REFUSED = {
+    "insert": "INSERT INTO orders VALUES (1)",
+    "update": "UPDATE orders SET note = 'x'",
+    "delete": "DELETE FROM orders",
+    "merge": "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE",
+    "create table": "CREATE TABLE t (a int)",
+    "create table as": "CREATE TABLE t AS SELECT 1 AS x",
+    "drop": "DROP TABLE orders",
+    "truncate": "TRUNCATE TABLE orders",
+    "two statements": "SELECT 1; SELECT 2",
+    "call": "CALL reporting.sales.cleanup()",
+    "copy": "COPY INTO orders FROM @s",
+    "put": "PUT file:///tmp/x @s",
+    "get": "GET @s file:///tmp",
+    "use": "USE DATABASE other",
+    "execute immediate": "EXECUTE IMMEDIATE 'DELETE FROM orders'",
+    "set": "SET x = 1",
+    "result_scan": "SELECT * FROM TABLE(RESULT_SCAN('x'))",
+    "result_scan of the last query": "SELECT * FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))",
+    "get_query_operator_stats": "SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS(LAST_QUERY_ID()))",
+    "system$ function": "SELECT SYSTEM$WHITELIST()",
+    "system$ lower case": "SELECT system$cancel_all_queries(1)",
+    "system$ quoted": 'SELECT "SYSTEM$ALLOWLIST"()',
+    "query_history": "SELECT * FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY())",
+    "query_history_by_user": "SELECT * FROM TABLE(information_schema.query_history_by_user())",
+    "login_history": "SELECT * FROM TABLE(INFORMATION_SCHEMA.LOGIN_HISTORY())",
+    "task_history": "SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY())",
+    "copy_history": "SELECT * FROM TABLE(INFORMATION_SCHEMA.COPY_HISTORY(TABLE_NAME => 't'))",
+    "validate": "SELECT * FROM TABLE(VALIDATE(orders, JOB_ID => '_last'))",
+    "get_ddl": "SELECT GET_DDL('table', 'orders')",
+    "identifier": "SELECT * FROM IDENTIFIER('other.public.t')",
+    "infer_schema": "SELECT * FROM TABLE(INFER_SCHEMA(LOCATION => '@s'))",
+    "generate_column_description": "SELECT GENERATE_COLUMN_DESCRIPTION(ARRAY_AGG(o), 'table')",
+    "table over a string": "SELECT * FROM TABLE('other.public.t')",
+    "table over a bind": "SELECT * FROM TABLE(?)",
+    "table over a numbered bind": "SELECT * FROM TABLE(:1)",
+    "table over a variable": "SELECT * FROM TABLE($t)",
+    "a session variable": "SELECT $v",
+    "a stage column": "SELECT $1 FROM orders",
+    "a stage": "SELECT $1 FROM @mystage",
+    "a stage path": "SELECT * FROM @mystage/path",
+    "the user stage": "SELECT * FROM @~",
+    "a table stage": "SELECT * FROM @%orders",
+    "a stage in a function": "SELECT GET_PRESIGNED_URL(@s, 'f.csv')",
+    "a directory table": "SELECT * FROM DIRECTORY(@s)",
+    "another database": "SELECT * FROM other_db.public.t",
+    "another database quoted": 'SELECT * FROM "OTHER".public.t',
+    "another database in a join": "SELECT * FROM orders JOIN other.s.t USING (id)",
+    "another database in a subquery": "SELECT (SELECT 1 FROM other.s.t) AS x",
+    "another database's function": "SELECT other.s.f(1)",
+    "the snowflake database": "SELECT * FROM snowflake.account_usage.query_history",
+    "the snowflake database quoted": 'SELECT * FROM "SNOWFLAKE".ACCOUNT_USAGE.LOGIN_HISTORY',
+    "a snowflake function": "SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'p')",
+    "a snowflake table function": "SELECT * FROM TABLE(snowflake.information_schema.tables())",
+    "garbage": "SELEC 1 FROM",
+    "empty": "",
+}
+
+
+@pytest.mark.parametrize("sql", SNOWFLAKE_READS)
+def test_snowflake_passes_one_plain_read_of_its_database(sql: str) -> None:
+    assert snowflake_refusal(sql, "reporting") is None
+
+
+@pytest.mark.parametrize("case", sorted(SNOWFLAKE_REFUSED))
+def test_snowflake_refuses_anything_else(case: str) -> None:
+    assert snowflake_refusal(SNOWFLAKE_REFUSED[case], "reporting") is not None
+
+
+def test_snowflake_reasons_name_the_construct() -> None:
+    def why(sql: str) -> str | None:
+        return snowflake_refusal(sql, "REPORTING")
+
+    assert why("SELECT * FROM other.s.t") == "the statement names another database"
+    assert why("SELECT other.s.f(1)") == "the statement names another database"
+    assert why("SELECT * FROM snowflake.account_usage.query_history") == (
+        "the statement reads the SNOWFLAKE database"
+    )
+    assert why("SELECT * FROM @s") == "the statement reads a stage"
+    assert why("SELECT $v") == "the statement uses a session variable"
+    assert why("SELECT * FROM TABLE('a.b.c')") == "the statement names a table by text"
+    assert why("SELECT * FROM TABLE(RESULT_SCAN('x'))") == (
+        "the statement calls a function that is refused"
+    )
+    assert why("CALL p()") == "the statement is not a SELECT (Command)"
+    assert why("USE DATABASE x") == "the statement is not a SELECT (Use)"
+
+
+def test_the_snowflake_database_is_refused_even_when_it_is_the_connections() -> None:
+    assert snowflake_refusal("SELECT * FROM snowflake.s.t", "SNOWFLAKE") is not None
+    assert snowflake_refusal("SELECT * FROM reporting.s.t", "Reporting") is None

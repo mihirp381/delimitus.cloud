@@ -322,3 +322,98 @@ def tsql_refusal(sql: str) -> str | None:
         return "the statement uses a variable"
     root = sqlglot.parse_one(sql, read=TSQL.read)  # pyright: ignore[reportUnknownMemberType]
     return next((why for node in root.walk() if (why := _tsql_object(node)) is not None), None)
+
+
+SNOWFLAKE_DENIED: Final = frozenset(
+    {
+        "result_scan",
+        "get_query_operator_stats",
+        "validate",
+        "get_ddl",
+        "identifier",
+        "infer_schema",
+        "generate_column_description",
+    }
+)
+"""``RESULT_SCAN`` and ``GET_QUERY_OPERATOR_STATS`` read another statement's result or plan,
+``VALIDATE`` a load's rejected rows, ``GET_DDL`` an object's text; ``IDENTIFIER`` names a table
+by a string this check never resolves; ``INFER_SCHEMA`` and ``GENERATE_COLUMN_DESCRIPTION``
+read a stage named in a string."""
+SNOWFLAKE_DENIED_PREFIXES: Final = (
+    "system$",
+    "query_history",
+    "login_history",
+    "task_history",
+    "copy_history",
+)
+"""``SYSTEM$`` functions act on the account; the history functions show other sessions'
+queries, logins, tasks and loads."""
+SNOWFLAKE: Final = Dialect(
+    read="snowflake", denied=SNOWFLAKE_DENIED, denied_prefixes=SNOWFLAKE_DENIED_PREFIXES
+)
+SNOWFLAKE_DATABASE: Final = "snowflake"
+"""The shared database of account usage, history and Cortex functions."""
+_TABLE_BY_TEXT: Final = frozenset(
+    {TokenType.STRING, TokenType.PLACEHOLDER, TokenType.PARAMETER, TokenType.COLON}
+)
+
+
+def _snowflake_tokens(sql: str) -> str | None:
+    """Why the tokens of a Snowflake read are refused: a stage (``@s``, ``@~``, ``@%t``) or a
+    session variable (``$v``, ``$1``), both sqlglot's ``PARAMETER``, or ``TABLE(...)`` naming a
+    table by a string, a bind or a variable."""
+    tokens = sqlglot.tokenize(sql, read=SNOWFLAKE.read)
+    for at, token in enumerate(tokens):
+        if token.token_type == TokenType.PARAMETER:
+            if token.text == "@":
+                return "the statement reads a stage"
+            return "the statement uses a session variable"
+        following = tokens[at + 1 : at + 3]
+        if (
+            token.token_type == TokenType.TABLE
+            and len(following) == 2  # noqa: PLR2004  (the parenthesis and what it opens)
+            and following[0].token_type == TokenType.L_PAREN
+            and following[1].token_type in _TABLE_BY_TEXT
+        ):
+            return "the statement names a table by text"
+    return None
+
+
+def _snowflake_object(node: exp.Expression, database: str) -> str | None:
+    """Why one node of a Snowflake read reaches outside the connection's database."""
+    names: list[str] = []
+    if isinstance(node, exp.Table) and node.catalog:
+        names = [node.catalog]
+    elif (
+        isinstance(node, exp.Func)
+        and isinstance(node.parent, exp.Dot)
+        and node.parent.expression is node
+    ):
+        qualifiers = _dotted(node.parent.this)
+        names = qualifiers[:1] if len(qualifiers) >= 2 else []  # noqa: PLR2004  (db.schema.function)
+    if not names:
+        return None
+    if names[0].lower() == SNOWFLAKE_DATABASE:
+        return "the statement reads the SNOWFLAKE database"
+    if names[0].lower() != database.lower():
+        return "the statement names another database"
+    return None
+
+
+def snowflake_refusal(sql: str, database: str) -> str | None:
+    """:func:`refusal` as Snowflake reads the text, for a connection to ``database``, plus what
+    Snowflake adds: a stage, a session variable, ``TABLE(...)`` over a string, a bind or a
+    variable, a table or function another database qualifies (compared without case), and
+    anything in the ``SNOWFLAKE`` database. ``CALL``, ``COPY``, ``PUT``, ``GET``, ``USE`` and
+    ``EXECUTE IMMEDIATE`` are not a ``SELECT``."""
+    reason = refusal(sql, SNOWFLAKE)
+    if reason is not None:
+        return reason
+    reason = _snowflake_tokens(sql)
+    if reason is not None:
+        return reason
+    root = sqlglot.parse_one(sql, read=SNOWFLAKE.read)  # pyright: ignore[reportUnknownMemberType]
+    return next(
+        (why for node in root.walk() if (why := _snowflake_object(node, database)) is not None),
+        None,
+    )

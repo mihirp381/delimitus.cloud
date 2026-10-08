@@ -480,6 +480,83 @@ What stops each attack: local-proven on SQL Server 2022 in a container; no 2025 
 | `EXEC`, `WAITFOR`, `OPENROWSET`, a second statement | refused | not tested with the classifier off |
 | a login in `db_datawriter`, or `sa` | passes (a read) | the read-back refuses it before any read; `sqlserver_setup.sql` takes the login out of every role |
 
+<!-- snowflake -->
+## The Snowflake connector
+
+`{kind: "snowflake", account, user, database, schema?, warehouse, role?, private_key}` (`ssc_datagw.snowflake.SnowflakeTarget`; unknown members are refused), the value of a `snowflake` connection's `SSC_CONNECTION_*` variable ([Connectors by kind](#connectors-by-kind)). The address is the control plane's (`ssc_contracts.connections.SnowflakeAddress`), with the same patterns; `schema` may also be given as `schema_name`.
+
+| Member | Rule |
+|---|---|
+| `account` | `^[A-Za-z0-9_.-]{1,128}$`, the account identifier (`<org>-<account>`, or a locator such as `xy12345.us-east-1`), never a URL. |
+| `user` | `^[A-Za-z0-9_.-]{1,128}$`, the service user `snowflake_setup.sql` makes. |
+| `database` | `^[A-Za-z0-9_.-]{1,128}$`, the database a read runs in and the only one it may name. |
+| `schema` | `^[A-Za-z0-9_.-]{1,128}$`, default `PUBLIC`; the schema an unqualified table is read from. |
+| `warehouse` | `^[A-Za-z0-9_.-]{1,128}$`, the warehouse the reads run on and bill to. |
+| `role` | `^[A-Za-z0-9_.-]{1,128}$`, optional; the user's default role (`SSC_DATAGW_READ`) when left out. |
+| `private_key` | The user's RSA private key as an unencrypted PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`) of at least 2048 bits, or the variable is refused with a message that names the field and quotes none of it (a PKCS#1 `BEGIN RSA PRIVATE KEY`, an encrypted key and an EC key are refused). Never shown in a repr, an error or a log line, nor are its fingerprint or a JWT made from it. |
+
+**The user.** `packages/ssc_datagw/src/ssc_datagw/snowflake_setup.sql` is the script the customer runs as `ACCOUNTADMIN`, in a worksheet or with SnowSQL, after five `SET`s: `ssc_public_key` (the public key you generated, with or without its PEM lines), `ssc_user`, `ssc_warehouse`, `ssc_database` and `ssc_schemas` (comma-separated). It makes the role `SSC_DATAGW_READ` with `USAGE` on the warehouse, the database and each schema and `SELECT` on every table and view in each schema, now and future; and the user with `TYPE = SERVICE` (key-pair sign-in only), no password, the public key as `RSA_PUBLIC_KEY`, `DEFAULT_ROLE = SSC_DATAGW_READ` and `DEFAULT_SECONDARY_ROLES = ()`, so no other role it holds is active. A name that is not letters, digits and `_`, a key that is not base64, or no schema stops it before any change. It revokes nothing; the readback at the end (`SHOW GRANTS TO ROLE`, `DESC USER`, `SHOW GRANTS TO USER`) shows every grant, and `RSA_PUBLIC_KEY_FP` must equal the fingerprint of the key you generated. It is safe to run again, which is how a new key or another schema lands. What the classifier misses, the role stops: it holds `SELECT` and `USAGE` only, and Snowflake gives every role what is granted to `PUBLIC`.
+
+**Who reads.** Each read signs one JWT with the private key (RS256, pyjwt): `iss` `<ACCOUNT>.<USER>.SHA256:<fingerprint>`, `sub` `<ACCOUNT>.<USER>`, `iat` now and `exp` 59 minutes later. `<ACCOUNT>` is `account` in upper case with everything from its first `.` removed (a locator's region; an `org-account` identifier has no `.` and is whole), `<USER>` is `user` in upper case, and the fingerprint is the base64 of the SHA-256 of the public key's DER `SubjectPublicKeyInfo` (what `DESC USER` shows as `RSA_PUBLIC_KEY_FP`). Every request of the read sends it as `Authorization: Bearer <jwt>` with `X-Snowflake-Authorization-Token-Type: KEYPAIR_JWT`. The requests go to `https://<account>.snowflakecomputing.com`, each `_` of the account a `-`. Both rules, the JWT's account and the host, are Snowflake's documented ones; the live proof is a GA-5 C step with the founder's trial account.
+
+**The statement.** `sql` is Snowflake SQL. Before anything is sent:
+
+1. **Classify.** `ssc_datagw.classify.snowflake_refusal`, sqlglot reading the text as Snowflake: exactly one plain `SELECT`, as for Postgres, and also refused (`QUERY_REFUSED`):
+   - the functions `RESULT_SCAN`, `GET_QUERY_OPERATOR_STATS` (another statement's result or plan), `VALIDATE`, `GET_DDL`, `IDENTIFIER` (a name given as text), `INFER_SCHEMA` and `GENERATE_COLUMN_DESCRIPTION` (a stage named in a string), any `SYSTEM$` function, and any function starting `QUERY_HISTORY`, `LOGIN_HISTORY`, `TASK_HISTORY` or `COPY_HISTORY`, called plainly or in `TABLE(...)`;
+   - a stage (`@s`, `@s/path`, `@~`, `@%t`, and `@s` as a function's argument) and a session variable or positional stage column (`$v`, `$1`);
+   - `TABLE(...)` over a string, a bind or a variable (`TABLE('db.s.t')`, `TABLE(?)`, `TABLE(:1)`, `TABLE($t)`), which names a table this check never sees;
+   - a table or function qualified by another database than `database` (compared without case): `other.s.t`, `other.s.f()`;
+   - anything in the `SNOWFLAKE` database (`SNOWFLAKE.ACCOUNT_USAGE`, `SNOWFLAKE.CORTEX`), even when it is the connection's;
+   - `CALL`, `COPY`, `PUT`, `GET`, `USE`, `SET`, `EXECUTE IMMEDIATE` and every DDL and DML, as statements that are not a `SELECT` or do not parse.
+2. **Bindings.** Placeholders are positional `?`, counted by sqlglot's Snowflake tokenizer (one in a string or a comment is not one); a count that differs from `params` is `QUERY_FAILED` 07001. Each parameter is bound by its JSON value as `bindings` `"1"`, `"2"`, ...: a boolean `BOOLEAN` (`"true"`, `"false"`), an integer `FIXED` (more than 38 digits is `QUERY_FAILED` 22003), another number `REAL` (`NaN`, `inf`, `-inf` as those strings), a string `TEXT`, `null` a `TEXT` null. Write `?::DATE` for a date. (The connector also binds a date `DATE`, a time `TIME` and a datetime `TIMESTAMP_NTZ` as ISO 8601 text and bytes `BINARY` as hex; an app's JSON parameters never are those.)
+
+**The requests.** SQL API v2, every one through `ssc_datagw.rest.get` with `Accept` and `Content-Type: application/json` and `User-Agent: ssc-datagw`:
+
+1. `POST /api/v2/statements` with `statement`, `timeout` (`timeout_ms` in seconds, rounded up, at least 1: Snowflake stops the statement itself), `database`, `schema`, `warehouse`, `role` (when set), `bindings`, `parameters: {query_tag: <tag>, MULTI_STATEMENT_COUNT: "1"}` and `resultSetMetaData: {format: "jsonv2"}`. The tag shows in the customer's `QUERY_HISTORY`.
+2. A 202 means the statement is still running: the connector polls `GET /api/v2/statements/<statementHandle>` every 500 ms until a 200.
+3. A 200 carries `resultSetMetaData.rowType`, `partitionInfo`, the first partition's `data` and `statementHandle`; further partitions are `GET /api/v2/statements/<handle>?partition=<n>`, read in order until `max_rows` plus one rows or the last partition.
+
+**Time.** As for the REST connector: 10 s to connect with the warm-up retry, each answer at most 32 MiB, TLS checked against the system trust store, no redirect followed, the process environment's proxy and CA settings ignored, and the whole read, polls and partitions included, ends at `timeout_ms`: past it is `QUERY_TIMEOUT`. Past it, and when the gateway cancels a read (the kill watch or its deadline), the connector posts `POST /api/v2/statements/<handle>/cancel` from a client of its own, 5 s at most and run to its end even if the read is cancelled again; a cancel that fails is logged by its error class. A read that ends before Snowflake named the statement cannot cancel it: the request's `timeout` stops it in Snowflake.
+
+**The answer.** Snowflake's `code` decides first, then the status; the message names the code (only when it is six digits), never Snowflake's `message`, which quotes names and values:
+
+| Answer | Result |
+|---|---|
+| 200 | read on; 202 polls |
+| `002003` (no such object, or not authorized to see it) | `QUERY_FAILED` 42P01 |
+| `001003` (a syntax error) | `QUERY_FAILED` 42601 |
+| `003001` (insufficient privileges) | `QUERY_FAILED` 42501 |
+| `000630` (the statement passed its `timeout`) | `QUERY_TIMEOUT` |
+| `000604` (the statement was cancelled outside the gateway) | `QUERY_FAILED` 57014 (`QUERY_TIMEOUT` when the connector cancelled it) |
+| `390100`, `390144`, `390142`, or any 401 | `QUERY_FAILED` 28000 (Snowflake refused the JWT: a wrong or replaced key, another user) |
+| 429, 5xx, no connection, a TLS failure | `CONNECTION_UNAVAILABLE` |
+| any other 3xx, 4xx | `QUERY_FAILED` with the answer's `sqlState` when it is five digits or capitals, else no `sqlstate` |
+| a body over 32 MiB (decoded) | `QUERY_FAILED`, no `sqlstate` |
+| a body that is not JSON, a 200 without `rowType`, `data` or a handle, a 202 without a handle, a partition without `data`, or a value that does not convert to its column's type | `QUERY_FAILED` 22P02 |
+
+**Columns and values.** The columns are `rowType` in order; `db_type` is Snowflake's type name in lower case (`fixed`, `text`, `timestamp_tz`, ...). Values arrive as text (`jsonv2`) and are converted by column; a null stays `null`:
+
+| Snowflake | Portable type | Value |
+|---|---|---|
+| `FIXED`, scale 0 | `integer` | number |
+| `FIXED`, any other scale | `decimal` | exact, as a string |
+| `REAL` | `float` | number; `NaN`, `Infinity`, `-Infinity` as those strings |
+| `TEXT` | `string` | |
+| `BOOLEAN` | `boolean` | |
+| `DATE` | `date` | ISO 8601 (Snowflake sends days since the epoch) |
+| `TIME` | `time` | ISO 8601 (seconds since midnight) |
+| `TIMESTAMP_NTZ` | `timestamp` | ISO 8601 without a zone |
+| `TIMESTAMP_LTZ` | `timestamp` | ISO 8601 in UTC |
+| `TIMESTAMP_TZ` | `timestamp` | ISO 8601 with the value's own offset (Snowflake sends seconds since the epoch and the offset in minutes plus 1440) |
+| `BINARY` | `bytes` | base64 (Snowflake sends hex) |
+| `VARIANT`, `OBJECT`, `ARRAY` | `json` | the JSON itself |
+| any other (`GEOGRAPHY`, `VECTOR`, ...) | `string` | Snowflake's text |
+
+Fractions of a second past the microsecond are cut, toward the past. At most `max_rows` plus one rows are read, as for every connector.
+
+**Limits.** One statement a read (`MULTI_STATEMENT_COUNT` 1). No stage, no session variable, no other database, no `SNOWFLAKE` database, no result of an earlier statement. The warehouse bills for the time each read runs; `timeout_ms` bounds it. Only key-pair sign-in: no password, no OAuth, no encrypted key.
+
+The connector logs one line per read, `snowflake read: partitions=<n> polls=<n> bytes=<body bytes>`, and `could not cancel the statement: <error class>` when a cancel fails, with no account, handle or statement text. Contract-fake-proven (an in-process fake of the SQL API v2 that verifies the key-pair JWT; `packages/ssc_datagw/tests/test_snowflake.py`, over TLS in-process, which also runs the connector suite); live proof on a real account is a GA-5 C step with the founder's trial account.
 <!-- airtable -->
 ## The Airtable connector
 
