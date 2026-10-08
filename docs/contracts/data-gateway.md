@@ -464,7 +464,7 @@ The connector logs one line per read, `bigquery read: pages=<n> polls=<n> bytes=
 | `binary`, `varbinary`, `varbinary(max)`, `image` | `bytes` | `varbinary` (`image` for `image`) |
 | a CLR type (`hierarchyid`, `geography`, `geometry`) | `bytes`, its serialized form | its name |
 
-The driver reports some types by one wire type, so `db_type` merges them: `char` is `varchar`, `nchar` is `nvarchar`, `binary` is `varbinary`, `numeric` is `decimal`. A `sql_variant` arrives as its value's own JSON.
+The driver reports some types by one wire type, so `db_type` merges them: `char` is `varchar`, `nchar` is `nvarchar`, `binary` is `varbinary`, `numeric` is `decimal`. A `sql_variant` arrives as its value's own JSON. A `decimal`, `numeric`, `money` or `smallmoney` value is exact but loses its trailing zeros, since the driver divides by its scale: `75.00` in a `decimal(10, 2)` arrives as `"75"` and `1.50` as `"1.5"` (Postgres and MySQL keep the column's scale; seen live on SQL Server 2022, 2026-10-08).
 
 **Errors.** Error 1222 (lock timeout) is `QUERY_TIMEOUT`; 18456, 4060, 701 (out of memory), 1204 (out of locks), 17809 (out of connections) and a lost connection are `CONNECTION_UNAVAILABLE`; any other database error is `QUERY_FAILED` with the SQLSTATE its number stands for (`ssc_datagw.sqlserver.SQLSTATE`), or none:
 
