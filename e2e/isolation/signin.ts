@@ -4,6 +4,9 @@
  * writes what the night needs) and by `signin.spec.ts` (which runs it against the rig's stand-in).
  * Nothing here reads the environment, names a host or logs the password.
  */
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import type { APIRequestContext, Page } from '@playwright/test';
 
 export const SESSION_COOKIE = '__Host-ssc-session';
@@ -12,6 +15,10 @@ const STEP_MS = 250;
 const TRIES = 3;
 export const SIGN_IN_TIMEOUT_MS = 90_000;
 const SLOW_DOWN_SECONDS = 5;
+/** How long the identity provider may show nothing the loop answers, after the password, before the run says what it shows. */
+export const STALL_MS = 20_000;
+/** A form that was just answered is left alone this long: Okta may keep its button enabled while it works, and a second submit of a password could lock the account. */
+const SETTLE_MS = 8_000;
 
 export type Login = {
   authUrl: string;
@@ -33,6 +40,7 @@ export const OKTA = {
     submit: 'input[type="submit"]',
     chooser: '[data-se="okta_password"] [data-se="button"]',
     methods: '.authenticator-verify-list',
+    error: '.o-form-error-container, .okta-form-infobox-error',
   },
   classic: {
     username: '#okta-signin-username',
@@ -40,6 +48,7 @@ export const OKTA = {
     submit: '#okta-signin-submit',
     chooser: '',
     methods: '',
+    error: '.o-form-error-container, .okta-form-infobox-error',
   },
 } as const;
 
@@ -123,22 +132,132 @@ async function shown(page: Page, selector: string): Promise<boolean> {
     .catch(() => false);
 }
 
+
+const startedAt = Date.now();
+const steps: string[] = [];
+
+/** What the run did and when, for the failure's dump: never a value the person typed. */
+export function note(message: string): void {
+  steps.push(`+${((Date.now() - startedAt) / 1000).toFixed(1)}s ${message}`);
+}
+
+/** Where a page is, without its query: addresses can carry codes. */
+function where(address: string): string {
+  try {
+    const url = new URL(address);
+    const keys = [...url.searchParams.keys()];
+    return `${url.host}${url.pathname}${keys.length > 0 ? ` (query: ${keys.join(',')})` : ''}`;
+  } catch {
+    return address;
+  }
+}
+
+/** What the page says on the screen, short, for a failure's message. Reads no input value. */
+async function said(page: Page): Promise<string> {
+  const text = await page
+    .evaluate(() => {
+      const shown = (e: Element) => (e as HTMLElement).offsetParent !== null;
+      const heads = [...document.querySelectorAll('h1,h2,h3,.okta-form-title,.o-form-error-container,.okta-form-infobox-error')]
+        .filter(shown)
+        .map((e) => (e as HTMLElement).innerText.trim())
+        .filter((t) => t !== '');
+      return (heads.length > 0 ? heads.join(' | ') : document.body.innerText).replace(/\s+/g, ' ').slice(0, 300);
+    })
+    .catch(() => '');
+  return text === '' ? 'nothing readable' : text;
+}
+
+/**
+ * Write what a failed run saw into `dir` (mode 0600): `screenshot.png`, `page.json` (address
+ * without its query values, the visible text, the visible fields and buttons) and `steps.log`.
+ * No input value is read, so no password reaches a file; a screenshot shows dots. Never throws.
+ */
+export async function dumpPage(page: Page, dir: string, failure: string): Promise<void> {
+  try {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const write = async (name: string, body: string | Buffer) => {
+      await writeFile(join(dir, name), body, { mode: 0o600 });
+      await chmod(join(dir, name), 0o600);
+    };
+    await write('steps.log', `${steps.join('\n')}\nfailure: ${failure}\n`);
+    const seen = await page
+      .evaluate(() => {
+        const shown = (e: Element) => (e as HTMLElement).offsetParent !== null;
+        const attrs = (e: Element) => {
+          const out: Record<string, string> = { tag: e.tagName.toLowerCase() };
+          for (const name of ['type', 'name', 'id', 'class', 'data-se', 'role', 'href', 'aria-disabled']) {
+            const value = e.getAttribute(name);
+            if (value !== null) out[name] = name === 'href' ? value.split('?')[0] ?? '' : value;
+          }
+          const type = (e.getAttribute('type') ?? '').toLowerCase();
+          if (e.tagName === 'INPUT' && (type === 'submit' || type === 'button')) out.value = (e as HTMLInputElement).value;
+          if ('disabled' in e) out.disabled = String((e as HTMLButtonElement).disabled);
+          const label = (e as HTMLElement).innerText;
+          if (e.tagName !== 'INPUT' && label) out.text = label.trim().slice(0, 120);
+          return out;
+        };
+        return {
+          text: document.body ? document.body.innerText : '',
+          fields: [...document.querySelectorAll('input,button,select,textarea,a,form,[role=button]')].filter(shown).map(attrs),
+          frames: window.frames.length,
+        };
+      })
+      .catch((error: unknown) => ({ text: '', fields: [], frames: 0, unreadable: String(error) }));
+    await write('page.json', JSON.stringify({ at: new Date().toISOString(), address: where(page.url()), ...seen }, null, 2));
+    const shot = await page.screenshot({ fullPage: true, timeout: 10_000 }).catch(() => null);
+    if (shot !== null) await write('screenshot.png', shot);
+  } catch {
+    // a dump that cannot be written must not hide the failure it describes
+  }
+}
+
 /**
  * Answer the identity provider's sign-in form wherever the browser meets it until `done` is true
  * of the page's address. A person who is already signed in to Okta meets no form, and the loop
  * ends at once. A form that comes back after it was answered three times is a failure, named by
  * the field and never by what was typed.
  */
-export async function completeIdp(page: Page, login: Login, done: (address: URL) => boolean, timeout = SIGN_IN_TIMEOUT_MS): Promise<void> {
+export async function completeIdp(
+  page: Page,
+  login: Login,
+  done: (address: URL) => boolean,
+  timeout = SIGN_IN_TIMEOUT_MS,
+  label = 'sign-in',
+  stall = STALL_MS,
+): Promise<void> {
   const fields = OKTA[login.okta];
   const answered = { username: 0, password: 0 };
+  const answeredAt = { username: 0, password: 0 };
   const deadline = Date.now() + timeout;
   let chosen = 0;
+  let last = '';
+  let quietSince = Date.now();
+  note(`${label}: at ${where(page.url())}`);
   while (Date.now() < deadline) {
-    if (done(new URL(page.url()))) return;
+    const address = new URL(page.url());
+    if (`${address.host}${address.pathname}` !== last) {
+      last = `${address.host}${address.pathname}`;
+      quietSince = Date.now();
+      if (answered.username + answered.password + chosen > 0) note(`${label}: moved to ${where(page.url())}`);
+    }
+    if (done(address)) {
+      note(`${label}: done at ${where(page.url())}`);
+      return;
+    }
+    if (answered.username + answered.password > 0) {
+      // Okta says why it refused an answer; retyping a refused password could lock the account.
+      const why = await page
+        .locator(fields.error)
+        .first()
+        .innerText({ timeout: 1_000 })
+        .catch(() => '');
+      if (why.trim() !== '') throw new Error(`the identity provider refused the ${answered.password > 0 ? 'password' : 'username'}: ${why.trim().replace(/\s+/g, ' ').slice(0, 200)}`);
+    }
     if (fields.methods && (await shown(page, fields.methods))) {
       if (answered.password > 0 || !(await shown(page, fields.chooser))) throw new Error(PASSWORD_ONLY);
       if (++chosen > TRIES) throw new Error(`the identity provider offered its security methods ${TRIES} times`);
+      note(`${label}: chose the password method`);
+      quietSince = Date.now();
       await page.locator(fields.chooser).first().click({ timeout: 5_000 }).catch(() => undefined);
       await sleep(STEP_MS);
       continue;
@@ -147,6 +266,15 @@ export async function completeIdp(page: Page, login: Login, done: (address: URL)
     const submit = page.locator(fields.submit).first();
     // Okta disables its button while it handles an answer; the old field is still on the page then.
     if ((!asksName && !asksPassword) || !(await submit.isEnabled().catch(() => false))) {
+      // After the password, a page with no form to answer is Okta asking for something else (a push,
+      // a code, an enrolment): say what it shows rather than wait out the clock.
+      if (answered.password > 0 && !asksName && !asksPassword && Date.now() - quietSince > stall) {
+        throw new Error(`after the password the identity provider shows a page the script cannot answer: ${await said(page)}`);
+      }
+      await sleep(STEP_MS);
+      continue;
+    }
+    if ((asksName && Date.now() - answeredAt.username < SETTLE_MS) || (asksPassword && Date.now() - answeredAt.password < SETTLE_MS)) {
       await sleep(STEP_MS);
       continue;
     }
@@ -156,8 +284,11 @@ export async function completeIdp(page: Page, login: Login, done: (address: URL)
     ] as const) {
       if (!asked) continue;
       if (++answered[field] > TRIES) throw new Error(`the identity provider asked for the ${field} ${TRIES} times`);
+      answeredAt[field] = Date.now();
+      note(`${label}: answered the ${field} (time ${answered[field]})`);
       await type(page, fields[field], field, value);
     }
+    quietSince = Date.now();
     await Promise.all([page.waitForLoadState('load').catch(() => undefined), submit.click({ timeout: 5_000 }).catch(() => undefined)]);
     await sleep(STEP_MS);
   }
@@ -166,17 +297,19 @@ export async function completeIdp(page: Page, login: Login, done: (address: URL)
 
 /** Approve a device grant as the person: the form the host shows, then the identity provider. */
 export async function approveDevice(page: Page, login: Login, device: Device): Promise<void> {
+  note('device approval: opening the verification page');
   await page.goto(device.verificationUrl);
   await page.getByRole('button', { name: 'Continue' }).click();
   const auth = new URL(login.authUrl);
-  await completeIdp(page, login, (address) => address.host === auth.host && address.pathname === '/callback');
+  await completeIdp(page, login, (address) => address.host === auth.host && address.pathname === '/callback', SIGN_IN_TIMEOUT_MS, 'device approval');
   await page.getByText('You are signed in').waitFor({ timeout: 15_000 });
 }
 
 /** Sign in on the app host `name` through the auth host; fails unless its session cookie is set. */
 export async function signInOn(page: Page, login: Login, name: string): Promise<void> {
+  note(`sign-in on ${name}: opening it`);
   await page.goto(`https://${name}/`).catch(() => undefined);
-  await completeIdp(page, login, (address) => address.host === name && address.pathname !== '/.ssc/callback');
+  await completeIdp(page, login, (address) => address.host === name && address.pathname !== '/.ssc/callback', SIGN_IN_TIMEOUT_MS, `sign-in on ${name}`);
   const cookies = await page.context().cookies(`https://${name}/`);
   if (!cookies.some((c) => c.name === SESSION_COOKIE)) throw new Error(`no session on ${name} after signing in`);
 }

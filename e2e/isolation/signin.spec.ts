@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 import { type BrowserContext, expect, test } from '@playwright/test';
 
-import { approveDevice, completeIdp, type Login, oktaFrom, pollTokens, SESSION_COOKIE, signInOn, startDevice, userOf } from './signin';
+import { approveDevice, completeIdp, dumpPage, type Login, oktaFrom, pollTokens, SESSION_COOKIE, signInOn, startDevice, userOf } from './signin';
 import { A, B, fast, putSession, SESSION, target, url, whoami } from './support';
 
 const exec = promisify(execFile);
@@ -50,16 +50,40 @@ test.describe('the nightly sign-in', () => {
     const device = await startDevice(page.context().request, login);
     await page.goto(device.verificationUrl);
     await page.getByRole('button', { name: 'Continue' }).click();
-    const failed = await completeIdp(page, wrong, (address) => address.pathname === '/callback', 4_000).then(
+    const failed = await completeIdp(page, wrong, (address) => address.pathname === '/callback', 20_000).then(
       () => '',
       (error: Error) => error.message,
     );
-    expect(failed).toMatch(/did not finish/);
+    expect(failed).toMatch(/refused the password: Authentication failed/);
     expect(failed).not.toContain(wrong.password);
     const polled = await request.post(`${login.authUrl}/token`, {
       form: { grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: device.deviceCode },
     });
     expect((await polled.json()).error, 'nothing was approved').toBe('authorization_pending');
+  });
+
+  test('a second factor after the password fails at once with what the page says, and the dump holds no password', async ({ page }) => {
+    const push = { ...login, username: 'push@example.test' };
+    const device = await startDevice(page.context().request, login);
+    await page.goto(device.verificationUrl);
+    await page.getByRole('button', { name: 'Continue' }).click();
+    const failed = await completeIdp(page, push, (address) => address.pathname === '/callback', 30_000, 'device approval', 1_500).then(
+      () => '',
+      (error: Error) => error.message,
+    );
+    expect(failed).toMatch(/after the password .*Get a push notification/);
+    expect(failed).not.toContain(login.password);
+    const dir = mkdtempSync(join(tmpdir(), 'ssc-night-dump-'));
+    try {
+      await dumpPage(page, join(dir, 'out'), failed);
+      for (const name of ['steps.log', 'page.json', 'screenshot.png']) expect(statSync(join(dir, 'out', name)).mode & 0o777, name).toBe(0o600);
+      const text = ['steps.log', 'page.json'].map((name) => readFileSync(join(dir, 'out', name), 'utf8')).join('\n');
+      expect(text).not.toContain(login.password);
+      expect(text).toContain('Get a push notification');
+      expect(text).toContain('answered the password');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('a browser sign-in on an app host meets the form once, and the identity session spares the next', async ({ page, context }) => {

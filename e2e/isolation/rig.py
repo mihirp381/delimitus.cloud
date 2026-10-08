@@ -85,6 +85,7 @@ AUTH_URL: Final = f"https://{AUTH_HOST}"
 PERSON_COOKIE: Final = "iso-person"
 IDP_COOKIE: Final = "iso-idp"
 NIGHT_USERNAME: Final = "ada@example.test"
+NIGHT_SECOND_FACTOR_USERNAME: Final = "push@example.test"
 USER_CODE_ALPHABET: Final = "BCDFGHJKLMNPQRSTVWXZ"
 DEVICE_SECONDS: Final = 600
 ACCESS_SECONDS: Final = 900
@@ -246,7 +247,7 @@ def auth_app(secret: str, password: str) -> FastAPI:  # noqa: PLR0915  (one host
     codes: dict[str, Issued] = {}
     grants: dict[str, DeviceGrant] = {}
     refresh_tokens: dict[str, str] = {}
-    logins = {NIGHT_USERNAME: ADA}
+    logins = {NIGHT_USERNAME: ADA, NIGHT_SECOND_FACTOR_USERNAME: ADA}
 
     def signed_in(request: Request) -> str:
         return request.cookies.get(PERSON_COOKIE) or request.cookies.get(IDP_COOKIE) or ""
@@ -354,17 +355,29 @@ def auth_app(secret: str, password: str) -> FastAPI:  # noqa: PLR0915  (one host
         typed = form.get("credentials.passcode")
         if typed is None and form.get("method") != ["password"]:
             return page("Verify it's you with a security method", methods(back, name))
-        if typed is None:
+
+        def password_form(refusal: str = "") -> Response:
             return page(
                 "Verify",
                 "<form method=post action='/idp'>"
+                f"{refusal}"
                 f"<input type=hidden name=next value='{escape(back)}'>"
                 f"<input type=hidden name=identifier value='{escape(name)}'>"
                 "<input type=password name=credentials.passcode> <input type=submit value=Verify>"
                 "</form>",
             )
+
+        if typed is None:
+            return password_form()
         if not hmac.compare_digest(typed[0], password):
-            return page("Sign-in refused", status=403)
+            # Okta puts its refusal in an error container above the form, and answers 200.
+            return password_form("<div class=o-form-error-container>Authentication failed</div>")
+        if name == NIGHT_SECOND_FACTOR_USERNAME:
+            # A policy that wants Okta Verify after the password: a page with nothing to type.
+            return page(
+                "Verify with Okta Verify",
+                "<h2>Get a push notification</h2><p>Okta Verify sent a push to your phone.</p>",
+            )
         answer = RedirectResponse(back, status_code=303)
         answer.set_cookie(IDP_COOKIE, logins[name], secure=True, httponly=True, samesite="lax")
         return answer
