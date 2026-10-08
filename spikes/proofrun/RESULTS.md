@@ -275,6 +275,13 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
   13:21:48, deployment dep_xnsreqiypugc7q1lan2r on ga1pg01 preview, after `healthy` on R1's
   release; seq 206 `deploy.failed` at 13:25:24, `HEALTH_CHECK_FAILED`, same environment. Both by
   admin2, not through an agent. 1.5 PASS in full.
+- **Fixtures re-run on cell 1 (GA-1.1, GA-1.4), app pfix, 2026-10-08, control 6f4d1a94, agent
+  daa5da5e (false-healthy fix ac996e1).** One at a time: cf-startup-hang R15 failed
+  HEALTH_CHECK_FAILED in 261 s, cf-exits-nonzero R16 in 152 s, cf-no-port-bound in 235 s;
+  listed-native-library went live as R18 in 206 s. Each failure printed its code and the fix-it
+  line, and the environment was left unchanged. PASS: none of the three is reported healthy now.
+  Gap: only cf-no-port-bound printed a log tail (Cloud Run's probe lines). cf-startup-hang and
+  cf-exits-nonzero printed none, so the app's own output (the exit, the hang) is not shown.
 
 ## Release, 2026-10-07 (GA-0)
 
