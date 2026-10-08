@@ -2,7 +2,7 @@
 
 One command per proof from SSC-086 (architecture document, section 8). Each command ends in one line, `T<n> <number> PASS|FAIL|INCOMPLETE`, appends the full result to `results/t<n>.json` and exits 0, 1 or 2. Copy the final lines into `RESULTS.md`.
 
-Steps marked **[real]** create, change or delete a real resource, as in the SSC-064 runbook. Run them in order, each only after the founder has agreed. Every other step only reads. The kit itself never creates anything: its commands read with `gcloud ... describe/list`, `ssc status`, HTTP requests to the cell's public hosts, and Cloud Monitoring. There are three exceptions, and each is called out where it happens: `t6 nat` and the stand-in `t6 proxy` execute an existing Cloud Run job (`t6 egress` only reads), `t8` runs `ssc disable`, and `t3 nightly`/`t4` run the existing nightly, which deploys the probe apps.
+Steps marked **[real]** create, change or delete a real resource, as in the SSC-064 runbook. Run them in order, each only after the founder has agreed. Every other step only reads. The kit itself never creates anything: its commands read with `gcloud ... describe/list`, `ssc status`, HTTP requests to the cell's public hosts, and Cloud Monitoring. There are five exceptions, and each is called out where it happens: `t6 nat` and the stand-in `t6 proxy` execute an existing Cloud Run job (`t6 egress` only reads), `t8` runs `ssc disable`, `t3 nightly`/`t4` run the existing nightly, which deploys the probe apps, and `timers --disable` and `files --disable` run `ssc disable` and `ssc enable`.
 
 ## Setup
 
@@ -359,6 +359,31 @@ If the count is not back that day, decision 026's rule stands: unlink before del
 3. `gcloud projects delete $P2`
 
 The account is printed masked.
+
+### Timers (GA-4.1)
+
+The app is `apps/timer`: `/health` answers at once, and `/tick` verifies the identity note, prints `TICK role=<role> at=<iso> method=<method>` (or `TICK refused=<code>`, with 401) and records it. Its `ssc.toml` declares one schedule, `minute` (`* * * * *`, UTC, `POST /tick`, 60 s timeout). Deploy it to prod, with everything at zero first: `ssc deploy`, then `ssc promote`. Preview schedules are stored paused, so a preview deploy fails the first phase. Then, from `spikes/proofrun`:
+
+```sh
+uv run python -m proofrun timers --app <slug> [--env prod] [--minutes 4] [--disable]
+```
+
+It lists the schedules (it stops at once unless `minute` is `active`), then reads the schedule's runs from the control API every 10 s until two scheduled runs have succeeded or `--minutes` are up, and prints them newest first. Runs scheduled before the command started are left out of the table and every check; one line says how many. The checks:
+
+| # | Check |
+| --- | --- |
+| 1 | Two scheduled runs succeeded with HTTP 200. |
+| 2 | The two latest of them are exactly 60 s apart (`scheduled_for`). |
+| 3 | No two runs overlap (started to finished), and none has error `overlap`. |
+| 4 | Each of the two started at most 15 s after its `scheduled_for`; the numbers are printed either way. |
+| 5 | Both have `start_ms` and `duration_ms`: the history shows the start apart from the call. |
+| 6 | `ssc logs --source app` shows at least two `TICK role=schedule` lines and no `TICK refused=` line. The app prints a tick only after the gateway admitted the `SSC-Schedule-Token` and the note verified. Read up to three times, 15 s apart, for log lag. If the logs cannot be read the check is "not read", the command prints the `ssc logs` line to run by hand, and the proof ends INCOMPLETE. |
+| 7 | With `--disable` **[real]**: after `ssc disable`, `minute` is `paused` with `pause_reason` `app_disabled`. |
+| 8 | With `--disable` **[real]**: after `ssc enable`, `minute` is `active` with `next_run_at` set. |
+
+`--disable` **[real]** runs `ssc disable <slug>` and, always, `ssc enable <slug>`; it reads the schedules for up to 60 s after each command and prints how long each took. If `ssc enable` fails it prints `undo: ssc enable <slug>`. Apart from those two commands and `ssc logs`, the command only reads the control API, with the operator's login, which is never printed or saved.
+
+Pass: every check that ran passed. The schedules and runs read, and the check results, go to `results/ga-4.1.json` and to `results/timers-<app>-<UTC stamp>.json`. Copy the final line into the GA-4.1 record.
 
 ## What feeds what
 

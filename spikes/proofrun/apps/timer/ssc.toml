@@ -1,0 +1,13 @@
+schema = "ssc/v1"
+
+[runtime]
+start = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+health_path = "/health"
+
+[[schedules]]
+name = "minute"
+cron = "* * * * *"
+timezone = "UTC"
+path = "/tick"
+method = "POST"
+timeout_seconds = 60
