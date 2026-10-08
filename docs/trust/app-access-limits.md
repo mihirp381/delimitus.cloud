@@ -24,9 +24,11 @@ promise beyond what is written here. Decided for MVP V1 by the founder, 2026-10-
 
 ## Logs
 
-- `ssc logs --follow` shows a line 12 to 17 s after the app writes it, measured on cell 1 on
-  2026-10-07. The delay is Cloud Logging's: a line becomes readable that long after it is
-  written. SSC looks back 60 s, so a late line is still shown, once.
+- `ssc logs --follow` shows a line 12 to 26 s after the app writes it: measured on cell 2 on
+  2026-10-08, 15 lines from 7 browser requests, median 16.8 s, slowest 25.4 s, none lost. Cloud
+  Logging received each line within 5 s (most within 0.3 s); the rest is the time until a line
+  can be read back, which arrived in batches about 11 s apart. SSC looks back 60 s, so a late
+  line is still shown, once.
 - Only an app's builders, its owner and org admins can read its logs. A person with the `user`
   role on an app is refused (`403 FORBIDDEN`).
 
