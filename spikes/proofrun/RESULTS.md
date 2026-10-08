@@ -259,6 +259,7 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
 | Migration head | 0033 |
 | Merged, not yet deployed | cbb821f (decision 032), 3e8d07a (approval mail, decision 033), f5b3937, b32c084, f5b53bd, 784ba71, c0aeb18. These are the pilot-blockers fixes |
 | Left out of pilot-blockers | c4cdb36 and 7e3bdd9 duplicate routing and console sign-in already on mvp-merge. 04521a0 (revoke `CONNECT` on `postgres` from `PUBLIC`) goes against the SSC-040 acceptance |
+| Released 2026-10-08 after T9 | control `sha256:3b426923…` built from 0bf78b3 (f5b3937, f5b53bd, 784ba71) on ssc-api, ssc-auth (new image and env vars, revision 00004) and ssc-worker. Migration head stays 0033, so no migration ran. Worker back to 1 instance and pstream back to instance billing. 3e8d07a's worker mail settings went out in the same apply. b32c084 is CLI only (ssc-cli 0.0.1 on PyPI). cbb821f is a decision. c0aeb18 (data gateway) waits for the cell 2 datagw image (GA-5) |
 | Local gates on c0aeb18 | All lint-job gates, `gates/run_gates.py`, root, infra and proofrun pytest, node helpers, console typecheck, test and build pass. Playwright suites not run locally |
 
 ## Settled here
