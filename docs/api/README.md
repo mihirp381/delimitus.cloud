@@ -262,7 +262,13 @@ and an owner who is an active user (`OWNER_NOT_ACTIVE`). A ceiling is `{audience
 `{audience: subjects, subjects: [{kind: group|user, id}]}`. `GET /v1/connections[/{name}]` follows
 the approvals visibility rule above. `PUT` and `DELETE`
 `/v1/apps/{app_id}/environments/{environment_id}/connections/{name}` link and unlink an
-environment (`GET` without a name lists them with `over_ceiling_since`). Sharing an environment
+environment (`GET` without a name lists them with `over_ceiling_since`). `GET
+.../connections/{name}/schema` answers the tables and columns that environment sees
+(`{connection, kind, tables, snapshot_version, cached}`), asked of the cell's data gateway through
+the cell agent and kept five minutes per org, environment and connection; it follows the same
+visibility rule, maps the gateway's refusals to `CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`,
+`APP_NOT_ACTIVE`, `DATA_SNAPSHOT_STALE`, `CONNECTION_UNAVAILABLE` and `QUERY_TIMEOUT`, answers
+`CELL_UNAVAILABLE` when the cell cannot be asked, and is not audited (GA-5.8). Sharing an environment
 beyond the ceiling of any connection it is linked to, or linking an environment whose audience is
 already beyond it, is `409 APPROVAL_REQUIRED` until an `exceed_ceiling` request (`POST
 /v1/approvals`, `payload: {connection, grants}`) is approved by the connection's owner or an org
@@ -393,6 +399,8 @@ stateless, JSON replies. Code: `api/mcp/`.
   - `list_connections()`: `GET /v1/connections` as is: every connection for an org admin,
     otherwise those the caller may see; names and classifications, never an address
     (decision 029).
+  - `describe_connection(app, environment, connection)`: `GET .../connections/{name}/schema`
+    for the app's `prod` or `preview`, as is (GA-5.8).
   - `create_app(slug, idempotency_key?)`: `POST /v1/apps` with the body `ssc apps create`
     sends; the caller owns the app. Audited `app.created` with `via_agent` (decision 029).
   - Asking opens a pending request only; another active admin of the org approves (decision

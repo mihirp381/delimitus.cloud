@@ -13,6 +13,7 @@ from ssc_contracts.errors import ErrorCode
 from ssc_control.api.problems import Refusal
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.ports import MetricsPort, NullMetricsPort, NullTimersPort, ProdGate, TimersPort
+from ssc_control.runtime.cell_datagw import SchemaCache
 from ssc_control.runtime.cells import CellPorts, CellUnavailableError, OrgCell
 
 if TYPE_CHECKING:
@@ -51,6 +52,9 @@ class Runtime:
     github: GitHubApp | None = None
     """The GitHub App (SSC-047); ``None`` when it is not configured, and connecting a
     repository refuses."""
+    schema_cache: SchemaCache = field(default_factory=SchemaCache)
+    """Connections' tables and columns as the data gateway last showed them, for five minutes
+    (GA-5.8)."""
 
 
 async def cell_of(request: Request, org_id: str) -> OrgCell | None:

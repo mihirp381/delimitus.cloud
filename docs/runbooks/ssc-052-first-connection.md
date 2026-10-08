@@ -61,7 +61,7 @@ Pass: `200` listing the connection; `ssc connections <app>` shows it and its `ov
 
 ## 5. The first read
 
-From the granted environment, run one real query with `ssc_app.data.query("finance", "select 1")`, then one on the customer's data, `select * from reporting.<a table> limit 5`. Pass: rows come back (a read is logged by the data gateway in the cell, never in the org's audit chain, which records the grant and the approvals). If not, the code says who acts; none of the first four is a credential problem:
+From the granted environment, run one real query with `ssc_app.data.query("finance", "select 1")`, then one on the customer's data, `select * from reporting.<a table> limit 5`. Pass: rows come back (a read is logged by the data gateway in the cell, never in the org's audit chain, which records the grant and the approvals). An admin can check the columns the app sees from the console's environment page (Columns, under Data connections) or with the agent tool `describe_connection`, which reaches the data gateway through the cell agent, answers with the same codes as below and is kept five minutes. If not, the code says who acts; none of the first four is a credential problem:
 
 | Answer | Means | Do |
 |---|---|---|

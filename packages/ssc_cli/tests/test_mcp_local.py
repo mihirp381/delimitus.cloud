@@ -491,3 +491,35 @@ async def test_list_connections_reads_the_connections_route(fake_api):
         r = await client.call_tool("list_connections", {})
     assert r.structured_content == listed
     assert [(q.method, q.url.path) for q in fake_api.seen] == [("GET", "/v1/connections")]
+
+
+async def test_describe_connection_reads_the_schema_route(fake_api, fake_problem):
+    app = {"id": APP_ID, "slug": "a1", "environments": [{"id": ENV_ID, "name": "prod"}]}
+    schema = {
+        "connection": "warehouse",
+        "kind": "postgres",
+        "tables": [{"name": "public.orders", "columns": [{"name": "id", "type": "integer"}]}],
+        "snapshot_version": 3,
+        "cached": False,
+    }
+    path = f"/v1/apps/{APP_ID}/environments/{ENV_ID}/connections"
+    fake_api.add("GET", "/v1/apps", httpx2.Response(200, json={"apps": [app]}))
+    fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
+    fake_api.add("GET", f"{path}/warehouse/schema", httpx2.Response(200, json=schema))
+    fake_api.add("GET", f"{path}/hr/schema", fake_problem(409, "CONNECTION_NOT_GRANTED"))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool(
+            "describe_connection", {"app": "a1", "environment": "prod", "connection": "warehouse"}
+        )
+        refused = await client.call_tool(
+            "describe_connection", {"app": APP_ID, "environment": "prod", "connection": "hr"}
+        )
+        no_env = await client.call_tool(
+            "describe_connection", {"app": APP_ID, "environment": "preview", "connection": "hr"}
+        )
+    assert not r.is_error
+    assert r.structured_content == schema
+    assert ("GET", f"{path}/warehouse/schema") in [(q.method, q.url.path) for q in fake_api.seen]
+    assert refused.is_error
+    assert refused.structured_content["error"]["code"] == "CONNECTION_NOT_GRANTED"
+    assert no_env.structured_content["error"]["code"] == "ENVIRONMENT_NOT_FOUND"

@@ -90,6 +90,7 @@ ALLOWLIST = {
     "deploy",
     "request_share",
     "list_connections",
+    "describe_connection",
     "request_connection",
     "get_logs",
     "set_secret",
@@ -335,6 +336,7 @@ async def test_tool_set_is_the_allowlist(world: World) -> None:
         "get_status",
         "list_releases",
         "list_connections",
+        "describe_connection",
         "get_logs",
         "set_secret",
     ):
@@ -919,6 +921,14 @@ async def test_list_connections_shows_what_the_route_shows(world: World) -> None
     )
     assert listed.structured_content == direct.json()
     assert set(listed.structured_content) == {"connections"}
+
+
+async def test_describe_connection_reads_the_schema_route(world: World) -> None:
+    args = {"app": "mcp-app", "environment": "prod", "connection": "nothing"}
+    async with session(world.url, world.agent) as client:
+        described = await client.call_tool("describe_connection", args)
+    assert described.is_error
+    assert described.structured_content["error"]["code"] == "NOT_FOUND"
 
 
 # ── releases and deploy ──────────────────────────────────────────────────────

@@ -10,20 +10,24 @@ GA-5.3 "a directory change re-checks connection ceilings" through the internal d
         test_narrowing_the_sharing_withdraws_the_re_check_request (the sync is in test_identity)
 Plus: the ceiling rules, a user's group membership at the moment of the check, the two approvals
 a change can need, grant creation over the ceiling, who may decide, the snapshot, the routes and
-who sees which connection.
+who sees which connection. GA-5.8: the columns a connection shows an environment, from the cell's
+data gateway through the cell agent, kept five minutes.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx2
 import psycopg
 import pytest
 import test_approvals
 from fastapi.testclient import TestClient
-from ssc_testkit import Dsns, SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
 from test_approvals import (
     Tokens,
     World,
@@ -44,6 +48,7 @@ from ssc_contracts.connections import AVAILABLE as AVAILABLE_KINDS
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.snapshot import SnapshotDoc
+from ssc_control.api import Settings, create_app
 from ssc_control.api.settings import INTERNAL_AUDIENCE
 from ssc_control.connections import service as connection_service
 from ssc_control.db import bind_org_sync
@@ -58,6 +63,17 @@ from ssc_control.domain.audience import (
     parse_ceiling,
     with_members,
 )
+from ssc_control.runtime.cell_datagw import (
+    AgentCellSchemas,
+    CellSchemaError,
+    Column,
+    FakeCellSchemas,
+    Schema,
+    SchemaCache,
+    SchemaRefusal,
+    Table,
+)
+from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.snapshot.compiler import compile_document
 
 client = test_approvals.client
@@ -1008,3 +1024,240 @@ def test_narrowing_the_sharing_withdraws_the_re_check_request(
     )
     (cancelled,) = events_of(dsns.app, world.org, AuditAction.APPROVAL_CANCELLED)
     assert (cancelled["actor_kind"], cancelled["actor_id"]) == ("user", world.admin)
+
+
+# GA-5.8: the columns an environment sees, from the cell's data gateway through the agent.
+
+ORDERS = Schema(
+    connection="finance",
+    kind="postgres",
+    tables=(
+        Table(
+            name="reporting.orders",
+            columns=(
+                Column(name="id", type="integer", db_type="int8"),
+                Column(name="total", type="decimal", db_type=None),
+            ),
+        ),
+    ),
+    snapshot_version=12,
+)
+ORDERS_OUT = {
+    "connection": "finance",
+    "kind": "postgres",
+    "tables": [
+        {
+            "name": "reporting.orders",
+            "columns": [
+                {"name": "id", "type": "integer", "db_type": "int8"},
+                {"name": "total", "type": "decimal", "db_type": None},
+            ],
+        }
+    ],
+    "snapshot_version": 12,
+}
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class Gateway:
+    """The API with one cell whose data gateway is ``fake``, and a cache on ``clock``."""
+
+    def __init__(self, client: TestClient, fake: FakeCellSchemas, clock: Clock) -> None:
+        self.client = client
+        self.fake = fake
+        self.clock = clock
+
+    def schema(self, w: World, token: str, name: str = "finance", env: str | None = None) -> Any:
+        path = f"{link_path(w, env or w.prod, name)}/schema"
+        return self.client.get(path, headers=auth(token))
+
+
+@pytest.fixture
+def gw(dsns: Dsns, signing_key: SigningKey) -> Iterator[Gateway]:
+    settings = Settings(
+        database_dsn=dsns.app,
+        jwks={"keys": [signing_key.jwk]},
+        issuer=ISSUER,
+        rate_capacity=1000,
+        rate_refill_per_second=1000.0,
+    )
+    fake = FakeCellSchemas(answers={"finance": ORDERS})
+    clock = Clock()
+    app = create_app(settings, cells=StaticCells(OrgCell(label=STATIC_LABEL, datagw=fake)))
+    with TestClient(app) as c:
+        # The runtime is frozen; the cache is swapped for one on the test's clock.
+        object.__setattr__(app.state.runtime, "schema_cache", SchemaCache(clock=clock))
+        yield Gateway(c, fake, clock)
+
+
+def audit_rows(dsn: str, w: World) -> int:
+    return len(rows(dsn, w, "select 1 from ssc.audit_event"))
+
+
+def test_an_admin_reads_the_columns_and_the_answer_is_kept_five_minutes(
+    gw: Gateway, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    assert create_connection(gw.client, tokens.admin, world.member).status_code == 201
+    before = audit_rows(dsns.app, world)
+    first = gw.schema(world, tokens.admin)
+    assert first.status_code == 200, first.text
+    assert first.json() == {**ORDERS_OUT, "cached": False}
+    assert gw.fake.calls == [("finance", world.prod)]
+    gw.clock.now += 299
+    again = gw.schema(world, tokens.admin_agent)
+    assert again.json() == {**ORDERS_OUT, "cached": True}
+    assert len(gw.fake.calls) == 1
+    gw.clock.now += 1
+    assert gw.schema(world, tokens.admin).json()["cached"] is False
+    assert len(gw.fake.calls) == 2
+    other_env = gw.schema(world, tokens.admin, env=world.preview)
+    assert other_env.json()["cached"] is False
+    assert gw.fake.calls[-1] == ("finance", world.preview)
+    assert audit_rows(dsns.app, world) == before  # a read is not an audit event
+
+
+def test_the_columns_follow_the_approvals_rule(
+    gw: Gateway, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    for name in ("finance", "hr"):
+        assert create_connection(gw.client, tokens.admin, world.member, name).status_code == 201
+    asked = ask_api(gw.client, tokens.builder, world.prod, subject="finance")
+    assert decide_as(gw.client, tokens, asked.json()["id"], world.approver).status_code == 200
+    assert gw.schema(world, tokens.builder).status_code == 200
+    assert_problem(gw.schema(world, tokens.builder, "hr"), ErrorCode.NOT_FOUND)
+    assert_problem(gw.schema(world, tokens.member), ErrorCode.NOT_FOUND)
+    assert_problem(gw.schema(world, tokens.workload), ErrorCode.FORBIDDEN)
+    assert_problem(gw.schema(world, tokens.admin, "nothing"), ErrorCode.NOT_FOUND)
+    unknown = "env_" + "x" * 20
+    assert_problem(gw.schema(world, tokens.admin, env=unknown), ErrorCode.NOT_FOUND)
+    assert gw.fake.calls == [("finance", world.prod)]
+    operators = len(events_of(dsns.app, world.org, AuditAction.OPERATOR_ACCESS))
+    assert gw.schema(world, tokens.operator).json()["cached"] is True
+    assert len(events_of(dsns.app, world.org, AuditAction.OPERATOR_ACCESS)) == operators + 1
+
+
+@pytest.mark.parametrize(
+    ("gateway_code", "status", "code"),
+    [
+        ("CONNECTION_NOT_GRANTED", 403, ErrorCode.CONNECTION_NOT_GRANTED),
+        ("UNKNOWN_ENVIRONMENT", 403, ErrorCode.CONNECTION_NOT_GRANTED),
+        ("CONNECTION_SUSPENDED", 403, ErrorCode.CONNECTION_SUSPENDED),
+        ("APP_NOT_ACTIVE", 403, ErrorCode.APP_NOT_ACTIVE),
+        ("DATA_SNAPSHOT_STALE", 503, ErrorCode.DATA_SNAPSHOT_STALE),
+        ("CONNECTION_UNAVAILABLE", 503, ErrorCode.CONNECTION_UNAVAILABLE),
+        ("QUERY_TIMEOUT", 408, ErrorCode.QUERY_TIMEOUT),
+        ("UNAUTHENTICATED", 401, ErrorCode.CELL_UNAVAILABLE),
+        ("UNAVAILABLE", 503, ErrorCode.CELL_UNAVAILABLE),
+        ("SOMETHING_NEW", 500, ErrorCode.CELL_UNAVAILABLE),
+        ("", 502, ErrorCode.CELL_UNAVAILABLE),
+    ],
+)
+def test_the_gateway_s_refusals_pass_on_and_are_not_kept(  # noqa: PLR0913  (fixtures)
+    gw: Gateway, world: World, tokens: Tokens, gateway_code: str, status: int, code: ErrorCode
+) -> None:
+    assert create_connection(gw.client, tokens.admin, world.member).status_code == 201
+    gw.fake.answers["finance"] = SchemaRefusal(status, gateway_code)
+    assert_problem(gw.schema(world, tokens.admin), code)
+    assert_problem(gw.schema(world, tokens.admin), code)
+    assert len(gw.fake.calls) == 2
+
+
+def test_a_cell_that_cannot_be_asked_is_cell_unavailable(
+    gw: Gateway, client: TestClient, world: World, tokens: Tokens
+) -> None:
+    assert create_connection(gw.client, tokens.admin, world.member).status_code == 201
+    gw.fake.answers["finance"] = CellSchemaError("cell agent datagw schema: ConnectError")
+    assert_problem(gw.schema(world, tokens.admin), ErrorCode.CELL_UNAVAILABLE)
+    no_cell = client.get(
+        f"{link_path(world, world.prod, 'finance')}/schema", headers=auth(tokens.admin)
+    )
+    assert_problem(no_cell, ErrorCode.CELL_UNAVAILABLE)
+
+
+AGENT_URL = "https://agent.example.test"
+ENV = "env_" + "e" * 20
+
+
+async def agent_tokens(audience: str) -> str:
+    assert audience == AGENT_URL
+    return "agent-token"
+
+
+def agent_schemas(answer: httpx2.Response, seen: list[httpx2.Request]) -> AgentCellSchemas:
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return answer
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+    return AgentCellSchemas(AGENT_URL, agent_tokens, org_id="org_" + "o" * 20, client=client)
+
+
+async def test_the_agent_client_asks_its_cell_and_reads_the_schema() -> None:
+    seen: list[httpx2.Request] = []
+    body = {"status": 200, "body": {**ORDERS_OUT, "request_id": "r1"}}
+    schemas = agent_schemas(httpx2.Response(200, json=body), seen)
+    assert await schemas.schema("finance", ENV) == ORDERS
+    (request,) = seen
+    assert str(request.url) == f"{AGENT_URL}/v1/datagw/schema"
+    assert json.loads(request.content) == {"connection": "finance", "environment_id": ENV}
+    assert request.headers["Authorization"] == "Bearer agent-token"
+    assert request.headers["X-SSC-Org"] == "org_" + "o" * 20
+
+
+@pytest.mark.parametrize(
+    ("body", "code"),
+    [
+        ({"error": {"code": "CONNECTION_SUSPENDED", "stage": "admission"}}, "CONNECTION_SUSPENDED"),
+        ({"code": "DATA_SNAPSHOT_STALE", "stage": "admission"}, "DATA_SNAPSHOT_STALE"),
+        (None, ""),
+    ],
+)
+async def test_the_agent_client_reads_the_gateway_s_code(body: object, code: str) -> None:
+    answer = httpx2.Response(200, json={"status": 403, "body": body})
+    with pytest.raises(SchemaRefusal) as refused:
+        await agent_schemas(answer, []).schema("finance", ENV)
+    assert (refused.value.status, refused.value.code) == (403, code)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx2.Response(502, json={"code": "DATAGW_ERROR", "message": "ConnectTimeout"}),
+        httpx2.Response(503, json={"code": "DATAGW_NOT_CONFIGURED", "message": "no"}),
+        httpx2.Response(200, json={"body": {}}),
+        httpx2.Response(200, json={"status": 200, "body": {"connection": "finance"}}),
+        httpx2.Response(200, json={"status": 200, "body": {**ORDERS_OUT, "tables": [{}]}}),
+    ],
+)
+async def test_the_agent_client_refuses_what_is_not_an_answer(answer: httpx2.Response) -> None:
+    with pytest.raises(CellSchemaError):
+        await agent_schemas(answer, []).schema("finance", ENV)
+
+
+async def test_an_agent_that_cannot_be_reached_is_a_cell_schema_error() -> None:
+    def lost(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("down", request=request)
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(lost))
+    schemas = AgentCellSchemas(AGENT_URL, agent_tokens, org_id="org_" + "o" * 20, client=client)
+    with pytest.raises(CellSchemaError, match="ConnectError"):
+        await schemas.schema("finance", ENV)
+
+
+def test_the_cache_keeps_the_newest_entries_for_their_time() -> None:
+    clock = Clock()
+    cache = SchemaCache(seconds=300, entries=2, clock=clock)
+    for env in ("a", "b", "c"):
+        cache.put(("org", env, "finance"), ORDERS)
+    assert cache.get(("org", "a", "finance")) is None
+    assert cache.get(("org", "b", "finance")) == ORDERS
+    assert cache.get(("other", "b", "finance")) is None
+    clock.now += 300
+    assert cache.get(("org", "c", "finance")) is None

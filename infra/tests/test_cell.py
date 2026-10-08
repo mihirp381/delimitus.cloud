@@ -493,6 +493,9 @@ def test_egress_is_denied_unless_allowed(cell_a: list[Declared]) -> None:
     assert rules["egress-deny-all"]["denies"] == [{"protocol": "all"}]
     assert rules["egress-deny-all"]["destinationRanges"] == ["0.0.0.0/0"]
     assert rules["egress-gateway"]["targetTags"] == ["ssc-gateway"]
+    assert rules["egress-agent"]["targetTags"] == ["ssc-agent"]
+    assert rules["egress-agent"]["destinationRanges"] == ["0.0.0.0/0"]
+    assert rules["egress-agent"]["priority"] == rules["egress-gateway"]["priority"]
 
 
 def test_the_gateway_is_request_billed_from_zero_with_an_hour_per_request(
@@ -598,6 +601,7 @@ DATAGW_ENV = {
     "SSC_IDENTITY_JWKS",
     "SSC_APPS_DOMAIN",
     "SSC_IDENTITY_ISSUER",
+    "SSC_DATAGW_AGENT_ACCOUNT",
 }
 
 
@@ -624,6 +628,7 @@ def test_the_data_gateway_runs_its_image_with_the_cell_wired_in() -> None:
     assert env["SSC_IDENTITY_JWKS"] == GATEWAY["gateway_jwks"]
     assert env["SSC_APPS_DOMAIN"] == naming.APPS_DOMAIN
     assert env["SSC_IDENTITY_ISSUER"] == f"https://{naming.KEYS_HOST}/{label}"
+    assert env["SSC_DATAGW_AGENT_ACCOUNT"] == naming.sa_email(naming.CELL_AGENT, project)
 
 
 def test_without_datagw_image_the_data_gateway_is_a_placeholder(cell_a: list[Declared]) -> None:
@@ -1113,7 +1118,7 @@ def test_the_agent_names_the_sql_instance_only_with_the_database_flag() -> None:
     database = run(naming.cell_stack("testcell05"), AGENT | LAZY)
     agent = one(database, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
-    assert set(env) == AGENT_ENV | {naming.SQL_INSTANCE_ENV}
+    assert set(env) == AGENT_ENV | {naming.SQL_INSTANCE_ENV} | AGENT_DATAGW_ENV
     assert env["SSC_SQL_INSTANCE"] == cell.SQL_INSTANCE
     instance = one(database, "gcp:sql/databaseInstance:DatabaseInstance").inputs
     assert instance["name"] == env["SSC_SQL_INSTANCE"]
@@ -1121,7 +1126,33 @@ def test_the_agent_names_the_sql_instance_only_with_the_database_flag() -> None:
     without = run(naming.cell_stack("testcell05"), rest)
     agent = one(without, "gcp:cloudrunv2/service:Service", "ssc-cell-agent").inputs
     env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
-    assert set(env) == AGENT_ENV
+    assert set(env) == AGENT_ENV | AGENT_DATAGW_ENV
+
+
+AGENT_DATAGW_ENV = {"SSC_DATAGW_URL", "SSC_DATAGW_AUDIENCE"}
+
+
+def test_the_agent_reaches_the_data_gateway_only_once_it_exists() -> None:
+    """GA-5.8: with the ``connections`` flag the agent names the gateway's ``run.app`` URL and
+    leaves through the edge subnet with its own tag, since the gateway's ingress is internal only;
+    without it the agent has neither."""
+    label = "testcell05"
+    project = naming.cell_project(label)
+    declared = run(naming.cell_stack(label), AGENT | {"connections": "true"})
+    agent = one(declared, "gcp:cloudrunv2/service:Service", naming.CELL_AGENT).inputs
+    env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
+    assert set(env) == AGENT_ENV | AGENT_DATAGW_ENV
+    url = naming.run_url(naming.DATA_GATEWAY, project_number(project))
+    assert env["SSC_DATAGW_URL"] == env["SSC_DATAGW_AUDIENCE"] == url
+    assert agent["template"]["vpcAccess"]["egress"] == "ALL_TRAFFIC"
+    (nic,) = agent["template"]["vpcAccess"]["networkInterfaces"]
+    assert (nic["subnetwork"], nic["tags"]) == ("subnet-gateway-id", [cell.AGENT_TAG])
+    for config in (AGENT, AGENT | {"database": "true", "egress": "true"}):
+        without = run(naming.cell_stack(label), config)
+        agent = one(without, "gcp:cloudrunv2/service:Service", naming.CELL_AGENT).inputs
+        env = {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
+        assert not set(env) & AGENT_DATAGW_ENV
+        assert "vpcAccess" not in agent["template"]
 
 
 def test_the_database_flag_on_a_running_agent_differs_only_in_what_it_names() -> None:
@@ -1140,6 +1171,31 @@ def test_the_database_flag_on_a_running_agent_differs_only_in_what_it_names() ->
         f"{naming.AGENT_SERVICE} out.template.containers[0].envs.SSC_SQL_INSTANCE.{key}"
         for key in ("name", "value")
     }
+
+
+def test_the_connections_flag_on_a_running_agent_differs_only_in_its_way_to_the_gateway() -> None:
+    """GA-5.8: check 1 leaves out the agent's VPC access and its two gateway variables, and
+    nothing else of the agent, when ``connections`` differs."""
+    before = run(naming.cell_stack("testcell05"), AGENT)
+    after = run(naming.cell_stack("testcell05"), AGENT | {"connections": "true"})
+    flags = EMPTY_FLAGS | {"connections": True}
+    first = cell_diff.normalise(as_export(before, "testcell05", EMPTY_FLAGS), "testcell05")
+    second = cell_diff.normalise(as_export(after, "testcell05", flags), "testcell05")
+    assert cell_diff.compare(first, second, ["connections"]) == []
+    shown = {d.split(": ")[0] for d in cell_diff.compare(first, second)}
+    prefix = f"{naming.AGENT_SERVICE} "
+    agent = {d.removeprefix(prefix) for d in shown if d.startswith(prefix)}
+    assert shown - {prefix + d for d in agent} == {"only in second"}
+    assert f"only in second: {cell_diff.DATAGW_SERVICE}" in cell_diff.compare(first, second)
+    envs = {d for d in agent if ".envs." in d}
+    assert envs == {
+        f"{side}.template.containers[0].envs.{env}.{key}"
+        for side in ("in", "out")
+        for env in AGENT_DATAGW_ENV
+        for key in ("name", "value")
+    }
+    assert agent - envs
+    assert all(".template.vpcAccess." in d for d in agent - envs)
 
 
 def test_two_cells_with_the_database_differ_only_in_its_assigned_name_and_address() -> None:
@@ -1722,7 +1778,11 @@ def test_each_flag_adds_only_its_named_resources(flag: str, empty_b: list[Declar
     first = cell_diff.normalise(as_export(empty_b, B, EMPTY_FLAGS), B)
     second = cell_diff.normalise(as_export(flagged, B, flags), B)
     assert cell_diff.compare(first, second, [flag]) == []
-    assert len(cell_diff.compare(first, second)) == len(naming.LAZY_RESOURCES[flag])
+    unflagged = cell_diff.compare(first, second)
+    agent = [d for d in unflagged if d.startswith(f"{naming.AGENT_SERVICE} ")]
+    assert len(unflagged) - len(agent) == len(naming.LAZY_RESOURCES[flag])
+    assert bool(agent) == (flag == "connections")  # the agent's way to the gateway (GA-5.8)
+    assert all(".template.vpcAccess." in d for d in agent)
 
 
 def test_the_lazy_resources_are_what_the_flags_say(cell_a: list[Declared]) -> None:

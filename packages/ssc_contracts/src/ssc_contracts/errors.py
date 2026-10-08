@@ -98,6 +98,12 @@ class ErrorCode(StrEnum):
     # connections (SSC-052)
     CEILING_REQUIRED = "CEILING_REQUIRED"
     CONNECTOR_UNAVAILABLE = "CONNECTOR_UNAVAILABLE"
+    # the data gateway's answers, passed on (GA-5.8)
+    CONNECTION_NOT_GRANTED = "CONNECTION_NOT_GRANTED"
+    CONNECTION_SUSPENDED = "CONNECTION_SUSPENDED"
+    DATA_SNAPSHOT_STALE = "DATA_SNAPSHOT_STALE"
+    CONNECTION_UNAVAILABLE = "CONNECTION_UNAVAILABLE"
+    QUERY_TIMEOUT = "QUERY_TIMEOUT"
     # placement
     CELL_UNAVAILABLE = "CELL_UNAVAILABLE"
     # ours
@@ -429,6 +435,38 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "This kind of data source is not available yet.",
         "The platform has no connector for this kind of source. Pick one of the kinds the "
         "console offers, or ask your operator when this one arrives.",
+    ),
+    ErrorCode.CONNECTION_NOT_GRANTED: CatalogueEntry(
+        409,
+        "This environment cannot use this connection yet.",
+        "The connection is pending, the environment is not linked to it, or the data gateway has "
+        "not read the change yet. Set the connection ready, link the environment, and retry in "
+        "a minute.",
+    ),
+    ErrorCode.CONNECTION_SUSPENDED: CatalogueEntry(
+        409,
+        "This connection is suspended.",
+        "The data gateway serves no query on a suspended connection. An org admin sets its "
+        "status back to active.",
+    ),
+    ErrorCode.DATA_SNAPSHOT_STALE: CatalogueEntry(
+        503,
+        "The data gateway's access rules are out of date.",
+        "The data gateway has not read its access snapshot recently, so it answers nothing. "
+        "This is the platform's to fix; retry later.",
+    ),
+    ErrorCode.CONNECTION_UNAVAILABLE: CatalogueEntry(
+        503,
+        "The data source cannot be reached.",
+        "The data gateway could not open a good session: the credentials, the CA, the address or "
+        "the network are wrong, or a pooler sits between. Check the connection's setup and enter "
+        "its secret again.",
+    ),
+    ErrorCode.QUERY_TIMEOUT: CatalogueEntry(
+        504,
+        "The data source took too long to answer.",
+        "The read ran past its time limit and was stopped. Retry later, or raise the "
+        "connection's timeout.",
     ),
     ErrorCode.CELL_UNAVAILABLE: CatalogueEntry(
         503,

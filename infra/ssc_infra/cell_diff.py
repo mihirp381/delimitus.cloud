@@ -12,9 +12,10 @@ address, the IDs of the cell's connection tag (SSC-051) and of its notification 
 (SSC-062). The connections the data gateway
 mounts (``datagw_connections``) are the customer's own too and are left out. Where the stacks'
 ``flags`` output differ, the lazy resources of a differing flag, the proxy's resources for
-``proxy_ha`` (``naming.PROXY_HA_RESOURCES``), the agent's ``SSC_SQL_INSTANCE`` for ``database``
-and the gateway's minimum (``gateway_min``, ``warm``) are left out. The proxy template's name is
-assigned by the cloud. Prints each difference; exit 1 if there is any.
+``proxy_ha`` (``naming.PROXY_HA_RESOURCES``), the agent's ``SSC_SQL_INSTANCE`` for ``database``,
+the agent's VPC access and its ``SSC_DATAGW_URL`` and ``SSC_DATAGW_AUDIENCE`` for ``connections``
+(GA-5.8) and the gateway's minimum (``gateway_min``, ``warm``) are left out. The proxy
+template's name is assigned by the cloud. Prints each difference; exit 1 if there is any.
 
 Then, for each cell, the organisation policies in force (SSC-095): the table the platform stack
 applied to the ``ssc-cells`` folder (its ``cell_policies`` output), and what would weaken it there
@@ -122,6 +123,7 @@ TAG_TYPES: Final = {
 CHANNEL_TYPE: Final = "gcp:monitoring/notificationChannel:NotificationChannel"
 DATAGW_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{n.DATA_GATEWAY}"
 CONNECTION_ENVS: Final = ".envs.SSC_CONNECTION_"
+AGENT_DATAGW_ENVS: Final = ("SSC_DATAGW_URL", "SSC_DATAGW_AUDIENCE")
 FLAG_DEFAULTS: Final[dict[str, Json]] = {
     "database": False,
     "egress": False,
@@ -265,14 +267,26 @@ def _customers(key: str, path: str) -> bool:
     return key == DATAGW_SERVICE and CONNECTION_ENVS in path
 
 
+def _agent_datagw(path: str) -> bool:
+    """The agent's way to the data gateway, which the ``connections`` flag sets (GA-5.8)."""
+    return ".template.vpcAccess." in path or any(
+        f".envs.{env}." in path for env in AGENT_DATAGW_ENVS
+    )
+
+
 def _flagged(key: str, path: str, flags_differ: Sequence[str]) -> bool:
     """Whether a differing flag names this resource, or this path of it."""
     if any(key in n.LAZY_RESOURCES.get(f, ()) for f in flags_differ):
         return True
     if "proxy_ha" in flags_differ and key in n.PROXY_HA_RESOURCES:
         return True
-    if "database" in flags_differ and key == n.AGENT_SERVICE:
-        return f".envs.{n.SQL_INSTANCE_ENV}." in f"{path}."
+    if key == n.AGENT_SERVICE:
+        named = f"{path}."
+        if "database" in flags_differ and f".envs.{n.SQL_INSTANCE_ENV}." in named:
+            return True
+        if "connections" in flags_differ and _agent_datagw(named):
+            return True
+        return False
     gateway_min = {"gateway_min", "warm"} & set(flags_differ)
     return bool(gateway_min) and key == n.GATEWAY_SERVICE and path.endswith(n.GATEWAY_MIN_PATH)
 

@@ -84,9 +84,10 @@ once and `ssc enable` starts it again; only an org admin can run them.
 `ssc mcp` serves SSC's agent tools (MCP) over stdio: `get_platform_requirements`,
 `get_org_deployment_policy`, `preflight`, `list_apps`, `create_app`, `get_app`, `get_status`,
 `list_releases`, `rollback`, `deploy` (a folder, to preview only), `get_logs`, `set_secret`,
-`request_share`, `list_connections` and `request_connection`. Call `get_platform_requirements`
-first: it gives the rules below and the platform package list, the same ones `ssc doctor`
-checks. `get_org_deployment_policy` says which
+`request_share`, `list_connections`, `describe_connection` (the columns an environment sees
+through a connection) and `request_connection`. Call `get_platform_requirements` first: it gives
+the rules below and the platform package list, the same ones `ssc doctor` checks.
+`get_org_deployment_policy` says which
 internet hosts and data connections you may use, what waits for approval and whether the company's
 database has room. Run `preflight` on the folder before `deploy` and fix every finding marked
 `block`. On the command line they are `ssc requirements`, `ssc policy` and `ssc doctor`. Asking

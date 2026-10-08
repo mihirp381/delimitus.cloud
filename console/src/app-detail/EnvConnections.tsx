@@ -3,6 +3,7 @@ import { type FormEvent, useId, useState } from 'react';
 import {
   askCeilingApproval,
   attachConnection,
+  type ConnectionSchema,
   detachConnection,
   type EnvironmentConnection,
   type EnvironmentConnections,
@@ -24,6 +25,7 @@ interface Props {
 }
 
 const PATH = '/v1/apps/{app_id}/environments/{environment_id}/connections' as const;
+const SCHEMA_PATH = '/v1/apps/{app_id}/environments/{environment_id}/connections/{name}/schema' as const;
 
 /**
  * The data connections one environment may reach, read only once the section is opened. Org
@@ -76,6 +78,7 @@ function ConnectionsBody({ app, env }: Props) {
       ),
     },
     { header: 'Limits here', cell: (l) => limitsText(l.limits) },
+    { header: 'Columns', cell: (l) => <ConnectionColumns app={app} env={env} name={l.connection.name} /> },
     {
       header: 'Linked',
       cell: (l) => <time dateTime={l.granted_at}>{new Date(l.granted_at).toLocaleString()}</time>,
@@ -140,6 +143,61 @@ function ConnectionsBody({ app, env }: Props) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+interface ColumnsProps extends Props {
+  readonly name: string;
+}
+
+/**
+ * The tables and columns this environment sees through one connection, asked of the cell's data
+ * gateway only once opened (GA-5.8). The API keeps an answer five minutes.
+ */
+function ConnectionColumns({ app, env, name }: ColumnsProps) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary aria-label={`Columns of ${name}`}>Columns</summary>
+      {open ? <ColumnsBody app={app} env={env} name={name} /> : null}
+    </details>
+  );
+}
+
+function ColumnsBody({ app, env, name }: ColumnsProps) {
+  const { queries } = useRouteContext({ from: '/_authed/apps/$appId' });
+  const schema = queries.useQuery('get', SCHEMA_PATH, {
+    params: { path: { app_id: app.id, environment_id: env.id, name } },
+  });
+  if (schema.isPending) return <p className="muted">Asking the data gateway…</p>;
+  if (schema.isError) return <ProblemNotice error={schema.error} />;
+  return <SchemaTables schema={schema.data} />;
+}
+
+function SchemaTables({ schema }: { readonly schema: ConnectionSchema }) {
+  if (schema.tables.length === 0) return <p className="muted">This connection shows no table here.</p>;
+  return (
+    <div className="stack">
+      {schema.tables.map((t) => (
+        <section key={t.name} aria-label={t.name}>
+          <strong>
+            <code>{t.name}</code>
+          </strong>
+          <ul>
+            {t.columns.map((c) => (
+              <li key={c.name}>
+                <code>{c.name}</code> {c.type}
+                {c.db_type ? <span className="muted"> ({c.db_type})</span> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      <p className="muted">
+        Snapshot {schema.snapshot_version}
+        {schema.cached ? ', as read in the last five minutes' : ''}.
+      </p>
     </div>
   );
 }

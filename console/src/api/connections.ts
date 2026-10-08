@@ -12,6 +12,8 @@ export type Classification = Connection['classification'];
 export type Kind = Connection['kind'];
 export type EnvironmentConnection = components['schemas']['EnvironmentConnectionOut'];
 export type EnvironmentConnections = components['schemas']['EnvironmentConnectionsOut'];
+/** The tables and columns an environment sees through a connection, from the cell's data gateway (GA-5.8). */
+export type ConnectionSchema = components['schemas']['ConnectionSchemaOut'];
 
 export const CLASSIFICATIONS: readonly Classification[] = ['internal', 'confidential', 'restricted'];
 

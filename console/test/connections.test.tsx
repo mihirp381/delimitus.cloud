@@ -281,4 +281,61 @@ describe("an environment's data connections", () => {
     expect(within(panel).getByText('Only org admins can link and unlink connections.')).toBeTruthy();
     expect(within(panel).queryByRole('button', { name: /Unlink/ })).toBeNull();
   });
+
+  it('asks for the columns only once a row is opened, and lists them', async () => {
+    const schema = {
+      connection: 'ledger',
+      kind: 'postgres',
+      tables: [
+        {
+          name: 'reporting.orders',
+          columns: [
+            { name: 'id', type: 'integer', db_type: 'int8' },
+            { name: 'total', type: 'decimal', db_type: null },
+          ],
+        },
+      ],
+      snapshot_version: 12,
+      cached: true,
+    };
+    const { api } = start(
+      `/apps/app_aaaaaaaaaaaaaaaaaaaa`,
+      page({
+        [`GET ${ENV_CONNECTIONS}`]: () => json(200, linked(LEDGER)),
+        'GET /v1/connections': () => json(200, { connections: [LEDGER] }),
+        [`GET ${ENV_CONNECTIONS}/ledger/schema`]: () => json(200, schema),
+      }),
+      signedIn(),
+    );
+    const panel = await envPanel('Production');
+    await openSection(panel, 'Data connections');
+    const row = (await within(panel).findByText('ledger')).closest('tr');
+    if (!row) throw new Error('no row');
+    expect(api.of('GET', `${ENV_CONNECTIONS}/ledger/schema`)).toHaveLength(0);
+    await openSection(row, 'Columns');
+    const table = await within(panel).findByRole('region', { name: 'reporting.orders' });
+    expect(table.textContent).toContain('id integer (int8)');
+    expect(table.textContent).toContain('total decimal');
+    expect(within(panel).getByText(/Snapshot 12, as read in the last five minutes/)).toBeTruthy();
+    expect(api.of('GET', `${ENV_CONNECTIONS}/ledger/schema`)).toHaveLength(1);
+  });
+
+  it("shows the gateway's refusal with its fix", async () => {
+    start(
+      `/apps/app_aaaaaaaaaaaaaaaaaaaa`,
+      page({
+        [`GET ${ENV_CONNECTIONS}`]: () => json(200, linked(CRM)),
+        'GET /v1/connections': () => json(200, { connections: [CRM] }),
+        [`GET ${ENV_CONNECTIONS}/crm/schema`]: () =>
+          problem(409, 'CONNECTION_NOT_GRANTED', 'This environment cannot use that connection yet.'),
+      }),
+      signedIn(),
+    );
+    const panel = await envPanel('Production');
+    await openSection(panel, 'Data connections');
+    const row = (await within(panel).findByText('crm')).closest('tr');
+    if (!row) throw new Error('no row');
+    await openSection(row, 'Columns');
+    expect((await within(panel).findByRole('alert')).textContent).toContain('CONNECTION_NOT_GRANTED');
+  });
 });

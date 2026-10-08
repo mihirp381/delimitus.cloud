@@ -2006,6 +2006,39 @@
         "title": "CellUsageOut",
         "type": "object"
       },
+      "ColumnOut": {
+        "additionalProperties": false,
+        "properties": {
+          "db_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The source's own type name.",
+            "title": "Db Type"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "description": "Portable: `integer`, `decimal`, `string`, `timestamp`, ...",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "db_type"
+        ],
+        "title": "ColumnOut",
+        "type": "object"
+      },
       "ConnectionIn": {
         "additionalProperties": false,
         "properties": {
@@ -2348,6 +2381,45 @@
           }
         },
         "title": "ConnectionPatch",
+        "type": "object"
+      },
+      "ConnectionSchemaOut": {
+        "additionalProperties": false,
+        "properties": {
+          "cached": {
+            "description": "True when this answer was kept from an earlier read, at most five minutes ago; the data gateway was not asked again.",
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "snapshot_version": {
+            "description": "The access snapshot the data gateway answered by.",
+            "title": "Snapshot Version",
+            "type": "integer"
+          },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/TableOut"
+            },
+            "title": "Tables",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connection",
+          "kind",
+          "tables",
+          "snapshot_version",
+          "cached"
+        ],
+        "title": "ConnectionSchemaOut",
         "type": "object"
       },
       "ConnectionsOut": {
@@ -3275,6 +3347,11 @@
           "GITHUB_UNAVAILABLE",
           "CEILING_REQUIRED",
           "CONNECTOR_UNAVAILABLE",
+          "CONNECTION_NOT_GRANTED",
+          "CONNECTION_SUSPENDED",
+          "DATA_SNAPSHOT_STALE",
+          "CONNECTION_UNAVAILABLE",
+          "QUERY_TIMEOUT",
           "CELL_UNAVAILABLE",
           "TRANSIENT_CONFLICT",
           "INTERNAL"
@@ -5448,6 +5525,28 @@
           "id"
         ],
         "title": "SubjectDoc",
+        "type": "object"
+      },
+      "TableOut": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ColumnOut"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "columns"
+        ],
+        "title": "TableOut",
         "type": "object"
       },
       "TimerRunList": {
@@ -8723,6 +8822,140 @@
           }
         },
         "summary": "Put Environment Connection",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/connections/{name}/schema": {
+      "get": {
+        "description": "The tables and columns the connection shows the environment's app, as the cell's data\ngateway answers for it, asked through the cell agent. For anyone who may see the connection\n(`NOT_FOUND` otherwise), agents included. An answer is kept five minutes (`cached`). The\ngateway's refusals pass on with its code: `CONNECTION_NOT_GRANTED` (pending, not linked, or\nnot in the snapshot yet), `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`, `DATA_SNAPSHOT_STALE`,\n`CONNECTION_UNAVAILABLE`, `QUERY_TIMEOUT`; `CELL_UNAVAILABLE` when the cell could not be\nasked. A read, not an audit event (an operator's access is recorded as on every read).",
+        "operationId": "get_environment_connection_schema_v1_apps__app_id__environments__environment_id__connections__name__schema_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9-]{0,62}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionSchemaOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`DATA_SNAPSHOT_STALE`, `CONNECTION_UNAVAILABLE`, `CELL_UNAVAILABLE`"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`QUERY_TIMEOUT`"
+          }
+        },
+        "summary": "Get Environment Connection Schema",
         "tags": [
           "v1"
         ]

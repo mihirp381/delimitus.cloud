@@ -24,7 +24,9 @@ runs only in the local server (``ssc mcp``); here it answers with how to run it,
 does for packing.
 
 ``list_connections`` answers ``GET /v1/connections``, which shows an agent only the connections
-its person's own approved requests name (SSC-052). ``create_app`` answers ``POST /v1/apps``, as
+its person's own approved requests name (SSC-052); ``describe_connection`` answers that
+connection's ``/schema`` route for one environment, the columns the cell's data gateway shows it
+(GA-5.8). ``create_app`` answers ``POST /v1/apps``, as
 ``ssc apps create`` sends it.
 
 The credential is the MCP audience's (decision 029), which ``/v1`` refuses from outside. The
@@ -78,6 +80,7 @@ TOOLS: Final = (
     "deploy",
     "request_share",
     "list_connections",
+    "describe_connection",
     "request_connection",
     "get_logs",
     "set_secret",
@@ -744,8 +747,28 @@ def _org_tools(
         Ask for one with request_connection."""
         return await run(api, ctx, lambda c: c.get("/v1/connections"))
 
+    async def describe_connection(
+        app: AppRef,
+        environment: Literal["prod", "preview"],
+        connection: ConnectionName,
+        ctx: Context,
+    ) -> CallToolResult:
+        """The tables and columns one environment of an app sees through a data connection:
+        each table's name, each column's name and type, and the snapshot version they come
+        from. Only a connection you may see; the answer is kept five minutes (`cached`)."""
+
+        async def work(c: V1) -> Body:
+            found = await resolve_app(c, app)
+            env_id = environment_id(found, environment)
+            return await c.get(
+                f"/v1/apps/{found['id']}/environments/{env_id}/connections/{connection}/schema"
+            )
+
+        return await run(api, ctx, work)
+
     server.add_tool(create_app, annotations=ask)
     server.add_tool(list_connections, annotations=read)
+    server.add_tool(describe_connection, annotations=read)
 
 
 def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:

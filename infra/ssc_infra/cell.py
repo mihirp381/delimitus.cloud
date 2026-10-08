@@ -95,6 +95,7 @@ PSA_PREFIX: Final = 20
 GOOGLE_PRIVATE: Final = ("199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11")
 GOOGLE_PRIVATE_RANGE: Final = "199.36.153.8/30"
 GATEWAY_TAG: Final = "ssc-gateway"
+AGENT_TAG: Final = "ssc-agent"
 AGENT_MAX: Final = 1
 AGENT_CONCURRENCY: Final = 200
 AGENT_TIMEOUT: Final = "300s"
@@ -918,7 +919,14 @@ class Cell:
         self._egress("egress-deny-all", 65534, deny=True, ranges=["0.0.0.0/0"])
         self._egress("egress-internal", 1000, ranges=internal_ranges())
         self._egress("egress-google-private", 1000, ranges=[GOOGLE_PRIVATE_RANGE])
-        for name, tag in (("gateway", GATEWAY_TAG), ("proxy", PROXY_TAG), ("data", DATA_TAG)):
+        # The agent reaches the cell's internal-only data gateway the way the edge gateway
+        # reaches internal-only apps: from the edge subnet, with its own tag (GA-5.8).
+        for name, tag in (
+            ("gateway", GATEWAY_TAG),
+            ("proxy", PROXY_TAG),
+            ("data", DATA_TAG),
+            ("agent", AGENT_TAG),
+        ):
             self._egress(f"egress-{name}", 1000, ranges=["0.0.0.0/0"], tags=[tag])
         self._egress(
             "egress-proxy-private", 900, deny=True, ranges=PRIVATE_RANGES, tags=[PROXY_TAG]
@@ -1777,7 +1785,12 @@ class Cell:
         ``HTTPS_PROXY`` secret, naming the proxy's reserved address, and tells the console the
         cell's fixed outbound address (SSC-053); both exist from onboarding. It deletes a gone
         environment's files from the cell bucket's ``files/`` (SSC-046). It serves ``org_id``
-        alone (``SSC_ORG_ID``) and refuses any call that names another org (decision 030)."""
+        alone (``SSC_ORG_ID``) and refuses any call that names another org (decision 030).
+
+        With the ``connections`` flag it asks the cell's data gateway for a connection's columns
+        on the control plane's behalf (GA-5.8): ``SSC_DATAGW_URL`` and ``SSC_DATAGW_AUDIENCE`` name
+        the gateway's ``run.app`` URL, and since the gateway's ingress is internal only, the agent
+        leaves through the edge subnet with the ``ssc-agent`` tag, as the edge gateway does."""
         tag_key, tag_value = self.connection_tag
         env: dict[str, pulumi.Input[str]] = {
             "SSC_CELL_PROJECT": self.pid,
@@ -1805,11 +1818,14 @@ class Cell:
             }
         if self.cfg.database:
             env[n.SQL_INSTANCE_ENV] = self.sql.name
+        if self.cfg.connections:
+            datagw_url = self.project_.number.apply(lambda p: n.run_url(n.DATA_GATEWAY, p))
+            env |= {"SSC_DATAGW_URL": datagw_url, "SSC_DATAGW_AUDIENCE": datagw_url}
         self.agent_ = self._run(
             n.CELL_AGENT,
             self.agent_sa,
             ingress="INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
-            vpc=None,
+            vpc=self._edge_vpc(AGENT_TAG) if self.cfg.connections else None,
             instances=(0, AGENT_MAX),
             image=self.cfg.agent_image,
             env=env if self.cfg.agent_image else None,
@@ -2053,7 +2069,8 @@ class Cell:
     def _datagw_env(self) -> dict[str, pulumi.Input[str]] | None:
         """What ``ssc_datagw.settings.settings_from_env`` reads, once ``datagw_image`` is set.
         ``SSC_DATAGW_AUDIENCE`` is the service's own ``run.app`` URL, the audience apps mint
-        their workload token for."""
+        their workload token for; ``SSC_DATAGW_AGENT_ACCOUNT`` is the cell agent's account, which
+        the gateway admits on the schema route alone (GA-5.8)."""
         cfg = self.cfg
         if not (cfg.datagw_image and cfg.org_id and cfg.gateway_jwks):
             return None
@@ -2068,6 +2085,7 @@ class Cell:
             "SSC_IDENTITY_JWKS": cfg.gateway_jwks,
             "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
             "SSC_IDENTITY_ISSUER": n.identity_issuer(cfg.label),
+            "SSC_DATAGW_AGENT_ACCOUNT": self.agent_sa.email,
         }
 
     def deny(self) -> None:

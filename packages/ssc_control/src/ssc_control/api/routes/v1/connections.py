@@ -10,12 +10,15 @@ active org admins see every connection; anyone else sees only those their own ap
 Linking an environment whose audience already exceeds the connection's ceiling needs an approved
 ``exceed_ceiling`` request, decided by the connection's owner or an org admin. Lowering a ceiling
 flags every environment now over it and opens nothing (``ssc_control.connections.service``).
+
+What a connection shows an environment, its tables and columns, comes from the cell's data
+gateway through the cell agent (GA-5.8, ``ssc_control.runtime.cell_datagw``), kept five minutes.
 """
 
 from datetime import datetime
 from typing import Annotated, Any, Final, Literal, Self
 
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, Path, Request
 from pydantic import Field, StringConstraints, model_validator
 from sqlalchemy import text
 
@@ -30,11 +33,14 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.approvals import sees_every_request
 from ssc_control.api.routes.v1.common import Id, Strict
+from ssc_control.api.runtime import cell_of, runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals.service import newest
 from ssc_control.connections import service
 from ssc_control.domain.approval_rules import Requirement, RequirementKind, exceed_subject_key
 from ssc_control.domain.audience import Ceiling, CeilingError, ceiling_json, parse_ceiling
+from ssc_control.runtime import cell_datagw
+from ssc_control.runtime.cell_datagw import CellSchemaError, SchemaRefusal
 
 router = APIRouter()
 
@@ -47,6 +53,17 @@ _OWN_NAMES: Final = text(
     "select distinct subject_key from ssc.approval_request where org_id = :org "
     "and kind = 'connect_data_source' and state = 'approved' and requested_by_user_id = :me"
 )
+_GATEWAY_CODES: Final = {
+    "CONNECTION_NOT_GRANTED": ErrorCode.CONNECTION_NOT_GRANTED,
+    "UNKNOWN_ENVIRONMENT": ErrorCode.CONNECTION_NOT_GRANTED,
+    "CONNECTION_SUSPENDED": ErrorCode.CONNECTION_SUSPENDED,
+    "APP_NOT_ACTIVE": ErrorCode.APP_NOT_ACTIVE,
+    "DATA_SNAPSHOT_STALE": ErrorCode.DATA_SNAPSHOT_STALE,
+    "CONNECTION_UNAVAILABLE": ErrorCode.CONNECTION_UNAVAILABLE,
+    "QUERY_TIMEOUT": ErrorCode.QUERY_TIMEOUT,
+}
+"""The data gateway's codes this API passes on. Any other (its ``UNAUTHENTICATED`` for the
+agent's own token among them) is ``CELL_UNAVAILABLE``: never the caller's problem."""
 _ENVIRONMENT: Final = text(
     "select 1 from ssc.environment where org_id = :org and app_id = :app and id = :env"
 )
@@ -201,6 +218,44 @@ class EnvironmentConnectionOut(Strict):
 
 class EnvironmentConnectionsOut(Strict):
     connections: list[EnvironmentConnectionOut]
+
+
+class ColumnOut(Strict):
+    name: str
+    type: str = Field(description="Portable: `integer`, `decimal`, `string`, `timestamp`, ...")
+    db_type: str | None = Field(description="The source's own type name.")
+
+
+class TableOut(Strict):
+    name: str
+    columns: list[ColumnOut]
+
+
+class ConnectionSchemaOut(Strict):
+    connection: str
+    kind: str
+    tables: list[TableOut]
+    snapshot_version: int = Field(description="The access snapshot the data gateway answered by.")
+    cached: bool = Field(
+        description="True when this answer was kept from an earlier read, at most five minutes "
+        "ago; the data gateway was not asked again."
+    )
+
+
+def _schema_out(schema: cell_datagw.Schema, *, cached: bool) -> ConnectionSchemaOut:
+    return ConnectionSchemaOut(
+        connection=schema.connection,
+        kind=schema.kind,
+        tables=[
+            TableOut(
+                name=t.name,
+                columns=[ColumnOut(name=c.name, type=c.type, db_type=c.db_type) for c in t.columns],
+            )
+            for t in schema.tables
+        ],
+        snapshot_version=schema.snapshot_version,
+        cached=cached,
+    )
 
 
 def _ceiling_doc(ceiling: Ceiling) -> CeilingDoc:
@@ -419,6 +474,61 @@ async def get_environment_connections(
     visible = await _visible(uow)
     await _environment(uow, app_id, environment_id)
     return await _environment_out(uow, environment_id, visible)
+
+
+@router.get(
+    "/apps/{app_id}/environments/{environment_id}/connections/{name}/schema",
+    response_model=ConnectionSchemaOut,
+    responses=problem_responses(
+        *AUTHENTICATED,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.NOT_FOUND,
+        ErrorCode.CONNECTION_NOT_GRANTED,
+        ErrorCode.CONNECTION_SUSPENDED,
+        ErrorCode.APP_NOT_ACTIVE,
+        ErrorCode.DATA_SNAPSHOT_STALE,
+        ErrorCode.CONNECTION_UNAVAILABLE,
+        ErrorCode.QUERY_TIMEOUT,
+        ErrorCode.CELL_UNAVAILABLE,
+    ),
+)
+async def get_environment_connection_schema(  # noqa: PLR0913  (FastAPI maps each parameter)
+    app_id: Id, environment_id: Id, name: Name, request: Request, uow: UserUoW
+) -> ConnectionSchemaOut:
+    """The tables and columns the connection shows the environment's app, as the cell's data
+    gateway answers for it, asked through the cell agent. For anyone who may see the connection
+    (`NOT_FOUND` otherwise), agents included. An answer is kept five minutes (`cached`). The
+    gateway's refusals pass on with its code: `CONNECTION_NOT_GRANTED` (pending, not linked, or
+    not in the snapshot yet), `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`, `DATA_SNAPSHOT_STALE`,
+    `CONNECTION_UNAVAILABLE`, `QUERY_TIMEOUT`; `CELL_UNAVAILABLE` when the cell could not be
+    asked. A read, not an audit event (an operator's access is recorded as on every read)."""
+    visible = await _visible(uow)
+    if visible is not None and name not in visible:
+        raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
+    await _connection(uow, name)
+    await _environment(uow, app_id, environment_id)
+    await _audit_operator(uow)
+    cache = runtime_of(request).schema_cache
+    key = (uow.org_id, environment_id, name)
+    kept = cache.get(key)
+    if kept is not None:
+        return _schema_out(kept, cached=True)
+    cell = await cell_of(request, uow.org_id)
+    if cell is None or cell.datagw is None:
+        raise Refusal(ErrorCode.CELL_UNAVAILABLE, evidence={"reason": "not_configured"})
+    try:
+        schema = await cell.datagw.schema(name, environment_id)
+    except SchemaRefusal as exc:
+        code = _GATEWAY_CODES.get(exc.code, ErrorCode.CELL_UNAVAILABLE)
+        raise Refusal(
+            code, evidence={"connection": name, "gateway_code": exc.code, "status": exc.status}
+        ) from None
+    except CellSchemaError as exc:
+        raise Refusal(
+            ErrorCode.CELL_UNAVAILABLE, evidence={"connection": name, "error": str(exc)}
+        ) from None
+    cache.put(key, schema)
+    return _schema_out(schema, cached=False)
 
 
 @router.put(

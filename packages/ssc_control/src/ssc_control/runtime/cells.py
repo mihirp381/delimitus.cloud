@@ -34,6 +34,7 @@ from ssc_control.deploy.build_driver import BuildDriver
 from ssc_control.deploy.cell_build import CellAgentBuildDriver
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases
 from ssc_control.runtime.cell_agent import CellAgentDriver, IdTokens
+from ssc_control.runtime.cell_datagw import AgentCellSchemas, CellSchemas
 from ssc_control.runtime.cell_egress import AgentCellEgress, CellEgress
 from ssc_control.runtime.cell_logs import AgentCellLogs
 from ssc_control.runtime.cell_usage import AgentCellUsage
@@ -102,6 +103,8 @@ class OrgCell:
     logs: CellLogs | None = None
     secret_grants: SecretGrants | None = None
     identity: AppIdentity | None = None
+    datagw: CellSchemas | None = None
+    """A connection's tables and columns from the cell's data gateway (GA-5.8)."""
 
 
 class CellPorts(Protocol):
@@ -270,6 +273,7 @@ class CellRouter(CellPorts):
                 client=client,
             ),
             identity=config.identity(self._domain),
+            datagw=AgentCellSchemas(url, tokens, org_id=org_id, client=client),
         )
 
 

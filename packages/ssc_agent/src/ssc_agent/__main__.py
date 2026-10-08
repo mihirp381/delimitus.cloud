@@ -19,7 +19,10 @@ without the other or a malformed tag exits 2. Egress proxy credentials (SSC-053)
 ``SSC_PROXY_ADDRESS``, the proxy's reserved internal address; unset, the agent refuses them.
 ``SSC_OUTBOUND_IP`` is the cell's fixed outbound address, which ``info`` reports. Either one not
 an IPv4 address exits 2. App files (SSC-046) need ``SSC_CELL_BUCKET``, the cell bucket's name;
-unset, the agent refuses to drop them.
+unset, the agent refuses to drop them. Schema reads (GA-5.8) need both ``SSC_DATAGW_URL``, the
+cell's data gateway (``https://``), and ``SSC_DATAGW_AUDIENCE``, the audience it checks tokens
+for; with neither the agent refuses them, and one without the other, or a URL that is not https,
+exits 2.
 """
 
 import ipaddress
@@ -39,9 +42,10 @@ from ssc_agent.cloud_logging import LOG_VIEW, CellLogHub, CloudLoggingEntries
 from ssc_agent.cloud_monitoring import CellUsageReader, CloudMonitoringSeries
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_agent.cloud_sql import CloudSqlAdmin
+from ssc_agent.datagw import DataGateway
 from ssc_agent.egress import ProxyCredentials
 from ssc_agent.files import CellFiles
-from ssc_agent.metadata import MetadataAccessTokens
+from ssc_agent.metadata import MetadataAccessTokens, MetadataIdTokens
 from ssc_agent.secret_manager import CellSecretCustody, CellSecretWriter, ConnectionSecrets
 from ssc_shared import redaction
 from ssc_shared.runtime import check_org
@@ -70,6 +74,8 @@ PROXY_ADDRESS_ENV: Final = "SSC_PROXY_ADDRESS"
 OUTBOUND_IP_ENV: Final = "SSC_OUTBOUND_IP"
 BUCKET_ENV: Final = "SSC_CELL_BUCKET"
 ORG_ENV: Final = "SSC_ORG_ID"
+DATAGW_URL_ENV: Final = "SSC_DATAGW_URL"
+DATAGW_AUDIENCE_ENV: Final = "SSC_DATAGW_AUDIENCE"
 
 
 class ConfigError(ValueError):
@@ -135,6 +141,19 @@ def connections_from_env(env: Mapping[str, str]) -> ConnectionSecrets | None:
     return ConnectionSecrets(reader=reader, tag_key=m.group(1), tag_value=m.group(2))
 
 
+def datagw_from_env(env: Mapping[str, str]) -> tuple[str, str] | None:
+    """The data gateway's URL and audience; None when neither is set, ``ConfigError`` when only
+    one is or the URL is not https."""
+    url, audience = env.get(DATAGW_URL_ENV, ""), env.get(DATAGW_AUDIENCE_ENV, "")
+    if not url and not audience:
+        return None
+    if not url or not audience:
+        raise ConfigError(f"set both {DATAGW_URL_ENV} and {DATAGW_AUDIENCE_ENV}, or neither")
+    if not url.startswith("https://"):
+        raise ConfigError(f"{DATAGW_URL_ENV} is not an https URL")
+    return url, audience
+
+
 def org_from_env(env: Mapping[str, str]) -> str:
     """``SSC_ORG_ID``; ``ConfigError`` when it is missing or not an org id."""
     value = env.get(ORG_ENV, "")
@@ -168,6 +187,7 @@ def main() -> int:
         connections = connections_from_env(os.environ)
         proxy_address = ipv4_from_env(os.environ, PROXY_ADDRESS_ENV)
         outbound_ip = ipv4_from_env(os.environ, OUTBOUND_IP_ENV)
+        gateway = datagw_from_env(os.environ)
     except ConfigError as exc:
         print(f"ssc-agent: {exc}", file=sys.stderr)  # noqa: T201
         return 2
@@ -191,6 +211,7 @@ def main() -> int:
     hub = CellLogHub(entries, driver)
     bucket = os.environ.get(BUCKET_ENV, "")
     files = CellFiles(bucket, tokens) if bucket else None
+    datagw = None if gateway is None else DataGateway(gateway[0], MetadataIdTokens(gateway[1]))
     app = create_app(
         driver,
         builder,
@@ -201,6 +222,7 @@ def main() -> int:
         usage=CellUsageReader(series),
         egress=egress,
         files=files,
+        datagw=datagw,
     )
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
     return 0

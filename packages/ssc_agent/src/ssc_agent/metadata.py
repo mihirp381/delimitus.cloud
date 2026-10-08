@@ -37,3 +37,35 @@ class MetadataAccessTokens:
                 self._token = str(body["access_token"])
                 self._expires = time.monotonic() + int(body["expires_in"]) - EARLY_SECONDS
             return self._token
+
+
+ID_TOKEN_SECONDS: Final = 3600
+
+
+class MetadataIdTokens:
+    """Google ID tokens for one audience, the instance identity's, refreshed five minutes before
+    they expire (an hour after they are minted)."""
+
+    def __init__(self, audience: str, client: httpx2.AsyncClient | None = None) -> None:
+        self._audience = audience
+        self._client = client or httpx2.AsyncClient(timeout=5.0)
+        self._token = ""
+        self._expires = 0.0
+        self._lock = asyncio.Lock()
+
+    async def __call__(self) -> str:
+        async with self._lock:
+            if time.monotonic() >= self._expires:
+                url = f"{METADATA}/instance/service-accounts/default/identity"
+                try:
+                    response = await self._client.get(
+                        url,
+                        params={"audience": self._audience, "format": "full"},
+                        headers=HEADERS,
+                    )
+                    response.raise_for_status()
+                except httpx2.HTTPError as exc:
+                    raise MetadataError(f"no ID token: {type(exc).__name__}") from None
+                self._token = response.text.strip()
+                self._expires = time.monotonic() + ID_TOKEN_SECONDS - EARLY_SECONDS
+            return self._token
