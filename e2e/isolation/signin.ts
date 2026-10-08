@@ -128,7 +128,9 @@ export async function completeIdp(page: Page, login: Login, done: (address: URL)
   while (Date.now() < deadline) {
     if (done(new URL(page.url()))) return;
     const [asksName, asksPassword] = [await shown(page, fields.username), await shown(page, fields.password)];
-    if (!asksName && !asksPassword) {
+    const submit = page.locator(fields.submit).first();
+    // Okta disables its button while it handles an answer; the old field is still on the page then.
+    if ((!asksName && !asksPassword) || !(await submit.isEnabled().catch(() => false))) {
       await sleep(STEP_MS);
       continue;
     }
@@ -140,7 +142,7 @@ export async function completeIdp(page: Page, login: Login, done: (address: URL)
       if (++answered[field] > TRIES) throw new Error(`the identity provider asked for the ${field} ${TRIES} times`);
       await type(page, fields[field], field, value);
     }
-    await Promise.all([page.waitForLoadState('load').catch(() => undefined), page.locator(fields.submit).first().click()]);
+    await Promise.all([page.waitForLoadState('load').catch(() => undefined), submit.click({ timeout: 5_000 }).catch(() => undefined)]);
     await sleep(STEP_MS);
   }
   throw new Error(`the sign-in did not finish within ${Math.round(timeout / 1000)} seconds, at ${new URL(page.url()).host}`);
