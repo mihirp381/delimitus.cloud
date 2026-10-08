@@ -14,12 +14,13 @@
  *     the user id the tokens name (`user`), which the suite uses as `SSC_ISO_USER` when that is unset;
  *   - `SSC_DRILL_CREDENTIALS_FILE`, when set: the access and refresh tokens and the drill host's
  *     session cookie, as `ssc_conformance.kill_drill` reads them.
- * Both files are secrets: never upload them, and delete them when the job ends. `SSC_ISO_PROXY`,
+ * `SSC_NIGHT_BROWSER=webkit` signs in with WebKit instead of Chromium (until f44106e is live, Chromium
+ * stops at the device form's Continue). Both files are secrets: never upload them, and delete them when the job ends. `SSC_ISO_PROXY`,
  * set only by the rig, sends the browser through its proxy and accepts its throwaway certificate.
  */
 import { chmod, writeFile } from 'node:fs/promises';
 
-import { chromium } from '@playwright/test';
+import { chromium, webkit } from '@playwright/test';
 
 import { approveDevice, type Login, oktaFrom, pollTokens, SESSION_COOKIE, signInOn, startDevice, userOf } from './signin.ts';
 
@@ -52,7 +53,7 @@ async function main(): Promise<void> {
   const credentialsPath = env.SSC_DRILL_CREDENTIALS_FILE || null;
   if (hosts.length === 0) throw new Error('SSC_NIGHT_HOSTS names no host');
 
-  const browser = await chromium.launch();
+  const browser = await (env.SSC_NIGHT_BROWSER === 'webkit' ? webkit : chromium).launch();
   try {
     const context = await browser.newContext(env.SSC_ISO_PROXY ? { ignoreHTTPSErrors: true, proxy: { server: env.SSC_ISO_PROXY } } : {});
     const page = await context.newPage();
