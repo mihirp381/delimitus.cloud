@@ -14,6 +14,7 @@ Connects one customer database (Postgres) so apps can read it through the cell's
 - For an `s3` connection, the customer created an IAM user with the policy from `packages/ssc_datagw/src/ssc_datagw/s3_policy.json` attached (`<bucket>` and `<prefix>` filled in) and gave you its access key id and secret access key, the bucket, its region and the prefix (`docs/contracts/data-gateway.md`, "The S3 connector").
 - For a `gcs` connection, the customer granted the service account `roles/storage.objectViewer` on the bucket with the condition that keeps reads under the prefix (the `gcloud storage buckets add-iam-policy-binding` command in `docs/contracts/data-gateway.md`, "The GCS connector") and gave you the service-account JSON key, the bucket and the prefix.
 - For a `bigquery` connection, the customer granted the service account BigQuery Job User on the project and BigQuery Data Viewer on the dataset and gave you the service-account JSON key, the project, the dataset and the location (`docs/contracts/data-gateway.md`, "The BigQuery connector").
+- For an `airtable` connection, the customer created a personal access token with the `data.records:read` scope, its access restricted to the base, and gave you the token, the base id and, optionally, the table (`docs/contracts/data-gateway.md`, "The Airtable connector").
 - The ids of the groups (`GET /v1/groups?name=`) and users (`GET /v1/users?email=`) for the ceiling.
 
 ## 1. Create the connection

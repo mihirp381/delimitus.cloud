@@ -480,6 +480,52 @@ What stops each attack: local-proven on SQL Server 2022 in a container; no 2025 
 | `EXEC`, `WAITFOR`, `OPENROWSET`, a second statement | refused | not tested with the classifier off |
 | a login in `db_datawriter`, or `sa` | passes (a read) | the read-back refuses it before any read; `sqlserver_setup.sql` takes the login out of every role |
 
+<!-- airtable -->
+## The Airtable connector
+
+`{kind: "airtable", base_id, table?, token}` (`ssc_datagw.airtable.AirtableTarget`; unknown members are refused), the value of an `airtable` connection's `SSC_CONNECTION_*` variable ([Connectors by kind](#connectors-by-kind)). The address is the control plane's (`ssc_contracts.connections.AirtableAddress`), with the same patterns.
+
+| Member | Rule |
+|---|---|
+| `base_id` | `^app[A-Za-z0-9]{14}$`. |
+| `table` | Optional; `^[^\x00-\x1f]{1,100}$`, a table name or id. When set, every query must read exactly this table, as written (a name and its `tbl…` id are not the same). |
+| `token` | A personal access token with the scope `data.records:read`, its access limited to this base and nothing else: `pat`, then the rest, 20 to 200 visible ASCII characters in all (`!` to `~`). Never shown in a repr, an error or a log line, not even the error that refuses it. |
+
+The connector reaches `https://api.airtable.com` with the system trust store and the host name checked; the address of the API and the trust are not members of the target (only tests replace them).
+
+**The query.** For this kind `sql` is not SQL: it is one list request, `<table>[ view <view>][ where <formula>]`, the keywords in any case, each part parted from the next by one space. The first ` view ` and the first ` where ` split it; everything after ` where ` is the formula, unchanged.
+
+| Part | Rule |
+|---|---|
+| `<table>` | A table name or id (`tbl` and 14 characters), 1 to 100 characters, no control character (`\x00` to `\x1f`, `\x7f`), no space at either end, no `;`, and a first word (up to the first space) that is not `insert`, `delete`, `update`, `select`, `create`, `drop`, `alter`, `replace`, `upsert`, `merge` or `truncate` (any case). A table whose name breaks a rule, starts with such a word, or holds ` view ` or ` where ` is read by its `tbl…` id. With the connection's `table` set, it must equal it ("the query's table is not the connection's table"). |
+| `<view>` | Optional. A view name or id (`viw…`), the same rules. Airtable reads the view's records in the view's order, its filters applied. |
+| `<formula>` | Optional. An Airtable formula, 1 to 2,000 characters, no control character, sent as `filterByFormula`: a record is read when the formula is true for it. |
+
+Anything else is `QUERY_REFUSED` ("the query is not <table>[ view <view>][ where <formula>]"), and so are `params`, which an Airtable read does not take; all are refused before anything is sent. A write cannot be expressed: the connector sends only `GET`, and the token's scope reads only.
+
+**The requests.** Each page is `GET https://api.airtable.com/v0/<base_id>/<table>?pageSize=<min(100, rows left)>[&view=<view>][&filterByFormula=<formula>][&offset=<offset>]`, the table and every value percent-encoded (a `/` too), with `Authorization: Bearer <token>`, `Accept: application/json` and `User-Agent: ssc-datagw (<tag>)` (the query's tag as for the S3 connector: printable ASCII without `(` and `)`, at most 128 characters). Pages follow the previous page's `offset` until `max_rows` plus one records are read or a page has no `offset`. Airtable allows 5 requests a second per base, so each page after the first waits 200 ms (`ssc_datagw.airtable.PAGE_PAUSE_SECONDS`); a 50,000-row read is 500 pages, at least 100 s of pauses, so `timeout_ms` (30 s at most) bounds a read at fewer than 150 pages, 15,000 records. No redirect is followed; the process environment's proxy and CA settings are ignored.
+
+**Time.** As for the REST connector (the same request code, `ssc_datagw.rest.get`): 10 s to connect with the warm-up retry, each read of an answer has `timeout_ms`, and the whole read, every page and pause included, ends at `timeout_ms`: past it is `QUERY_TIMEOUT`. When the gateway cancels a read the request is dropped and its connection closed.
+
+**The answer.** Every answer's body is read (at most 32 MiB); an error's `error.type` (or `error`, when it is a string) is named in the message when it is an upper-case word (`^[A-Z][A-Z0-9_]{0,63}$`, e.g. `the source answered 422 INVALID_FILTER_BY_FORMULA`), and Airtable's `message` never is.
+
+| Answer | Result |
+|---|---|
+| 2xx | read on |
+| 401 (`AUTHENTICATION_REQUIRED`) | `QUERY_FAILED` 28000 (the token is wrong, expired or revoked) |
+| 403 (`INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND`, ...) | `QUERY_FAILED` 42501: no permission, or no such base or table; Airtable does not tell the two apart |
+| 404 (`NOT_FOUND`) | `QUERY_FAILED` 42P01 (the base or table) |
+| 422 (`INVALID_FILTER_BY_FORMULA`, `UNKNOWN_FIELD_NAME`, `VIEW_NAME_NOT_FOUND`, ...) | `QUERY_FAILED` 42601, the type only |
+| 3xx, other 4xx | `QUERY_FAILED`, no `sqlstate` (no redirect is followed) |
+| 429, 5xx | `CONNECTION_UNAVAILABLE` (not retried; Airtable asks for 30 s before the next request) |
+| no connection, a TLS failure | `CONNECTION_UNAVAILABLE` |
+| a body over 32 MiB (decoded) | `QUERY_FAILED`, no `sqlstate`; reading stops at the cap |
+| a body that is not JSON, or not `{"records": [...], "offset"?: "<text>"}` with each record `{"id": "<text>", "createdTime": "<ISO 8601 with a zone>", "fields"?: {...}}` | `QUERY_FAILED` 22P02 |
+
+**Records and columns.** One row per record, in Airtable's order (the view's, or the table's default). The columns are `id` (`string`, `db_type` `string`), `created_time` (`timestamp`, `db_type` `timestamp`, UTC, from `createdTime`), then one column per field name, in the order names first appear across the records read. Airtable leaves an empty field out of a record, so a record without a field is `null` there. A field column's type and `db_type` are the REST connector's: its first non-null value in the first 100 records, boolean `boolean`, integer `integer`, other number `float`, string `string`, array or object `json` (attachments, linked records, lookups, collaborators: as Airtable sends them), none `string`; a date or date-time field is Airtable's ISO text, a `string`. A field named like a column already taken (`id`, `created_time`, or a repeat) gets `_2`, `_3`, ..., as Google Sheets header names do. No records is the two fixed columns and no rows. At most `max_rows` plus one rows are read, as for every connector.
+
+The connector logs one line per read, `airtable read: status=<status> bytes=<body bytes> pages=<requests>`, with no base, table, formula or URL. Contract-fake-proven (an in-process fake of the Airtable REST API that checks the token); live proof on a real base is a GA-5 C step with the founder's free-plan base (`packages/ssc_datagw/tests/test_airtable.py`, which runs the connector suite against the fake).
+
 ## Limits
 
 Each limit is the minimum of the platform, the connection's `limits`, the grant's `limits` and the request's ask (`docs/contracts/access-snapshot.md`, amendment SSC-050). A cap a layer leaves out puts no cap at that layer; `0` is a cap of zero.
