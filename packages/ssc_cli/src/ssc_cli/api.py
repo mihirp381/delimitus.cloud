@@ -68,6 +68,8 @@ from ssc_cli.models import (
     KillSwitchAccepted,
     KillSwitchCreate,
     KillSwitchRun,
+    Linked,
+    LinkIn,
     LogPageOut,
     MigrationsAhead,
     OperationAccepted,
@@ -80,6 +82,7 @@ from ssc_cli.models import (
     SecretList,
     SecretSet,
     SecretSetOut,
+    UnlinkedLogins,
     UploadTarget,
     UsageOut,
     UserMatches,
@@ -319,6 +322,15 @@ class ApiClient:
     def find_users(self, email: str) -> UserMatches:
         """The org's people with this address, deactivated ones included. Org admins only."""
         return _parse(self._send("GET", f"/v1/users?{urlencode({'email': email})}"), UserMatches)
+
+    def list_unlinked_logins(self) -> UnlinkedLogins:
+        """Logins no person could be found for, newest first, at most 200. Org admins only."""
+        return _parse(self._send("GET", "/v1/unlinked-logins"), UnlinkedLogins)
+
+    def link_unlinked_login(self, unlinked_login_id: str, user_id: str) -> Linked:
+        """Tie the login to an active person; their next login with it signs them in."""
+        path = f"/v1/unlinked-logins/{_seg(unlinked_login_id)}/link"
+        return _parse(self._send("POST", path, body=LinkIn(user_id=user_id)), Linked)
 
     def find_groups(self, name: str) -> GroupMatches:
         return _parse(self._send("GET", f"/v1/groups?{urlencode({'name': name})}"), GroupMatches)

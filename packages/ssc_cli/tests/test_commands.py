@@ -43,6 +43,7 @@ from ssc_cli.shapes import (
     ShareResult,
     TokenClearResult,
     TokenSetResult,
+    UnlinkedLoginsResult,
     WhoamiResult,
 )
 from ssc_contracts import app_database
@@ -59,6 +60,7 @@ ALLOWED = {
     "login",
     "logout",
     "whoami",
+    "logins",
     "token",
     "apps",
     "status",
@@ -123,6 +125,8 @@ def test_help_lists_exact_set(cli):
         ("login",),
         ("logout",),
         ("whoami",),
+        ("logins", "list"),
+        ("logins", "link"),
         ("token", "set"),
         ("token", "clear"),
         ("apps",),
@@ -159,6 +163,7 @@ def test_help_lists_exact_set(cli):
         ("secret", {"set", "list"}),
         ("database", {"rotate"}),
         ("approvals", {"list", "show", "approve", "reject"}),
+        ("logins", {"list", "link"}),
     ):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
         assert {line.split()[0] for line in text.splitlines() if line.startswith("  ")} == subs
@@ -1182,6 +1187,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("policy",): ([], PolicyResult, None),
         ("connections",): ([], ConnectionsResult, None),
         ("approvals", "list"): ([], ApprovalsResult, None),
+        ("logins", "list"): ([], UnlinkedLoginsResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),
         ("logout",): ([], LogoutResult, None),
@@ -1189,10 +1195,15 @@ def test_every_command_has_json(on_live, live, tmp_path):
     # `mcp` serves stdio; its --json covers start-up refusals only (test_mcp_local.py). `login`
     # needs an auth host and a browser; test_login.py covers its --json. `secret set` needs a
     # cell's secret intake; test_secret.py covers its --json. `approvals show`, `approve` and
-    # `reject` need a request to decide; test_approvals.py covers their --json.
-    expected = {("mcp",), ("login",), ("secret", "set"), ("database", "rotate")} | {
-        ("approvals", name) for name in ("show", "approve", "reject")
-    }
+    # `reject` need a request to decide; test_approvals.py covers their --json. `logins link`
+    # needs an unlinked login; test_logins.py covers its --json.
+    expected = {
+        ("mcp",),
+        ("login",),
+        ("secret", "set"),
+        ("database", "rotate"),
+        ("logins", "link"),
+    } | {("approvals", name) for name in ("show", "approve", "reject")}
     assert set(cases) | expected == _paths()
     for path, (args, shape, stdin) in cases.items():
         r = on_live(*path, *args, "--json", input=stdin)

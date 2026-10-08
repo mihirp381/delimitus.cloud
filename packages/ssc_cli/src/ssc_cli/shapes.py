@@ -547,6 +547,34 @@ class ErrorResult(Shape):
     error: ErrorBody
 
 
+class UnlinkedLoginRow(Shape):
+    """One login the platform could not tie to a person. ``linkable`` is false for an
+    address-shaped subject (Google SAML), which only the directory can fix."""
+
+    id: str
+    email: str
+    reason: str
+    attempts: int
+    last_seen_at: str
+    linkable: bool
+
+
+class UnlinkedLoginsResult(Shape):
+    """``logins list``: unlinked logins, newest first, at most 200."""
+
+    api_url: str
+    unlinked_logins: list[UnlinkedLoginRow]
+
+
+class LoginLinkedResult(Shape):
+    """``logins link``: the login now signs in as ``user_id``."""
+
+    api_url: str
+    unlinked_login_id: str
+    user_id: str
+    identity_link_id: str
+
+
 SHAPES: dict[str, type[BaseModel]] = {
     m.__name__: m
     for m in (
@@ -604,5 +632,8 @@ SHAPES: dict[str, type[BaseModel]] = {
         ApprovalGrantRow,
         ApprovalShowResult,
         ApprovalDecisionResult,
+        UnlinkedLoginRow,
+        UnlinkedLoginsResult,
+        LoginLinkedResult,
     )
 }

@@ -16,6 +16,7 @@ from ssc_cli.commands.doctor import doctor
 from ssc_cli.commands.init import init
 from ssc_cli.commands.lifecycle import disable, enable
 from ssc_cli.commands.login import login, logout
+from ssc_cli.commands.logins import logins_app
 from ssc_cli.commands.logs import logs
 from ssc_cli.commands.mcp import mcp
 from ssc_cli.commands.policy import policy
@@ -69,6 +70,7 @@ def root(
 app.command()(login)
 app.command()(logout)
 app.command()(whoami)
+app.add_typer(logins_app)
 app.add_typer(token_app)
 app.add_typer(apps_app)
 app.add_typer(approvals_app)

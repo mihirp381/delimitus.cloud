@@ -243,6 +243,12 @@
     "text": "string",
     "timestamp": "string"
   },
+  "LoginLinkedResult": {
+    "api_url": "string",
+    "identity_link_id": "string",
+    "unlinked_login_id": "string",
+    "user_id": "string"
+  },
   "LoginResult": {
     "agent": "string|null",
     "api_url": "string",
@@ -411,6 +417,18 @@
     "org_id": "string",
     "stored_in": "string",
     "subject": "string"
+  },
+  "UnlinkedLoginRow": {
+    "attempts": "integer",
+    "email": "string",
+    "id": "string",
+    "last_seen_at": "string",
+    "linkable": "boolean",
+    "reason": "string"
+  },
+  "UnlinkedLoginsResult": {
+    "api_url": "string",
+    "unlinked_logins": "array<UnlinkedLoginRow>"
   },
   "UsageRow": {
     "cold_starts": "integer",

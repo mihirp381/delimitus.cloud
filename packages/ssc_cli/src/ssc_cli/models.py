@@ -188,6 +188,31 @@ class UserMatches(Wire):
     users: list[UserMatch]
 
 
+class UnlinkedLogin(Wire):
+    id: str
+    connection_id: str
+    subject: str
+    email: str
+    reason: str
+    attempts: int
+    first_seen_at: str
+    last_seen_at: str
+    linkable: bool
+
+
+class UnlinkedLogins(Wire):
+    unlinked_logins: list[UnlinkedLogin]
+
+
+class LinkIn(Wire):
+    user_id: str
+
+
+class Linked(Wire):
+    identity_link_id: str
+    user_id: str
+
+
 class GroupMatch(Wire):
     id: str
     name: str

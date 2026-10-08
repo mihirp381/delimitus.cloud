@@ -40,6 +40,9 @@ RESPONSES = (
     models.ReleaseList,
     models.UserMatch,
     models.UserMatches,
+    models.UnlinkedLogin,
+    models.UnlinkedLogins,
+    models.Linked,
     models.GroupMatch,
     models.GroupMatches,
     models.KillSwitchAccepted,
@@ -87,6 +90,7 @@ REQUESTS = (
     models.KillSwitchCreate,
     models.SecretSet,
     models.PersonDecisionIn,
+    models.LinkIn,
 )
 
 
