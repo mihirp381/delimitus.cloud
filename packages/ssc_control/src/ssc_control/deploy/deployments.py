@@ -39,7 +39,9 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    ``SNAPSHOT_UNCONFIRMED``, the pointer and traffic untouched. Then traffic moves to the new
    revision and ``observe`` is polled until it is ready, fails, or the health timeout passes.
    Cloud Run starts a revision only when traffic moves to it, and keeps the old one serving when
-   the new one fails its startup probe, so the move is the health check. A revision that failed
+   the new one fails its startup probe, so the move is the health check. A new service's first
+   revision, or the one already serving, has the traffic and is not moved; a first revision's
+   traffic is named to it once it is live. A revision that failed
    before the move gets no traffic; one that fails or times out after it sends traffic back to
    the revision that served before. So does one whose app stopped (the kill switch): it fails
    with ``APP_NOT_ACTIVE`` and frees ``env:<id>`` within one poll. A deployment another one
@@ -311,6 +313,7 @@ async def run_deployment(
     if ready.recovery_point:
         await _record_recovery_point(ports, ready.cell, org_id, dep)
     before: str | None = None  # the revision serving before traffic moved
+    move = False
     try:
         revision = await ready.driver.apply(ready.desired)
         verdict: _Verdict = "ready"
@@ -318,7 +321,8 @@ async def run_deployment(
             verdict = await _confirmed(ports, org_id, ready.confirm_version, health)
         if verdict == "ready":
             before = _serving(await ready.driver.observe(ready.desired.service))
-            verdict = await _wait_healthy(ports, org_id, ready, revision, health)
+            move = before not in (None, revision)
+            verdict = await _wait_healthy(ports, org_id, ready, revision, health, move=move)
     except Exception:
         log.exception("runtime call failed", extra={"deployment_id": dep.id})
         await _put_back(ready, before)
@@ -333,6 +337,8 @@ async def run_deployment(
         return await _fail_after_runtime(ports, org_id, ready, _VERDICT_CODE[verdict])
     state = await _go_live(ports, org_id, ready)
     if state == "healthy":
+        if not move:
+            await _pin(ready, revision)
         await _raise_timeout(ports, org_id, ready)
     elif state == "failed":
         await _put_back(ready, before)
@@ -598,6 +604,16 @@ async def _raise_timeout(ports: Ports, org_id: str, ready: _Ready) -> None:
         log.exception("raising the request timeout failed", extra={"id": dep.id})
 
 
+async def _pin(ready: _Ready, revision: str) -> None:
+    """Traffic named to ``revision`` once it is live, when the deployment did not move it: a new
+    service's first revision then serves as Cloud Run's latest, and the next deploy's revision
+    must take none until it is moved."""
+    try:
+        await ready.driver.set_traffic(ready.desired.service, revision)
+    except Exception:
+        log.exception("pinning traffic failed", extra={"deployment_id": ready.deployment.id})
+
+
 async def _put_back(ready: _Ready, before: str | None) -> None:
     """Traffic back to ``before``, the revision that served when this deployment moved it."""
     if before is None:
@@ -608,18 +624,21 @@ async def _put_back(ready: _Ready, before: str | None) -> None:
         log.exception("traffic back failed", extra={"deployment_id": ready.deployment.id})
 
 
-async def _wait_healthy(
-    ports: Ports, org_id: str, ready: _Ready, revision: str, health: HealthWait
+async def _wait_healthy(  # noqa: PLR0913  (keyword-only)
+    ports: Ports, org_id: str, ready: _Ready, revision: str, health: HealthWait, *, move: bool
 ) -> _Verdict:
     """``ready`` when ``revision`` is, after traffic moved to it; ``unhealthy`` when it failed,
     vanished or timed out; ``preempted`` when the deployment stopped being ``running``;
     ``stopped`` when the app did. Both are read before each ``observe``. Traffic moves once
     ``revision`` is listed and has not failed: Cloud Run starts a revision only then (one with
-    no traffic is retired unstarted, seen on cell 2, 2026-10-08)."""
+    no traffic is retired unstarted, seen on cell 2, 2026-10-08). With ``move`` False (a new
+    service's first revision, or the one already serving) traffic is already there: a call to
+    move it while Cloud Run is still making the service was refused by the org's ingress policy
+    (cell 2, 2026-10-08)."""
     deadline = time.monotonic() + health.within
     params = {"org": org_id, "id": ready.deployment.id}
     service = ready.desired.service
-    moved = False
+    moved = not move
     while True:
         async with bound_org(ports.engine, org_id) as conn:
             row = (await conn.execute(_POLL, params)).first()

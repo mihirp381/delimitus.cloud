@@ -909,6 +909,17 @@ async def test_a_new_revision_starts_when_traffic_moves_to_it(b: Bench) -> None:
     assert live_image(b, b.w.preview) == image_of(b, r2)
 
 
+async def test_a_first_deploy_leaves_traffic_to_the_runtime(b: Bench) -> None:
+    # Moving traffic while Cloud Run was still making the service sent its default ingress, and
+    # the org's ingress policy refused it (ga1lovable, cell 2, 2026-10-08): RUNTIME_ERROR.
+    release = await build_release(b, b.w.preview)
+    b.runtime.reset_calls()
+    op, state = await deploy(b, b.w.preview, release)
+    assert state == "healthy"
+    # Named to the first revision only once it is live, as before.
+    assert changed(b.runtime.calls, service_name(b.w.preview)) == ["apply", "set_traffic"]
+
+
 async def test_a_new_revision_that_fails_once_started_gives_traffic_back(b: Bench) -> None:
     r1 = await build_release(b, b.w.preview)
     first, _ = await deploy(b, b.w.preview, r1)
