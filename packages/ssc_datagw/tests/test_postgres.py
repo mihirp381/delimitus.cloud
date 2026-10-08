@@ -16,7 +16,6 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from importlib.resources import files
-from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -25,10 +24,6 @@ import asyncpg  # pyright: ignore[reportMissingTypeStubs]
 import httpx2
 import pytest
 from connector_suite import CHECKS, Subject, conform
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from datagw_world import (
     AUDIENCE,
     CERTS,
@@ -40,6 +35,7 @@ from datagw_world import (
     publish,
     store,
 )
+from pki import Pki, make_pki
 from testcontainers.community.postgres import PostgresContainer
 
 from ssc_datagw.connectors import (
@@ -54,9 +50,9 @@ from ssc_datagw.postgres import (
     Readback,
     bind,
     session_problem,
-    tls_context,
 )
 from ssc_datagw.server import production_app
+from ssc_datagw.tls import tls_context
 from ssc_datagw.workload import GoogleWorkloads
 
 ROLE = "ssc_datagw"
@@ -118,89 +114,6 @@ never comes; ``pg_terminate_backend`` against another role's session is refused,
 role's own sessions only the classifier stops it. Both are below."""
 
 
-def _name(cn: str) -> x509.Name:
-    return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
-
-
-def _ca(cn: str) -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate]:
-    key = ec.generate_private_key(ec.SECP256R1())
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(_name(cn))
-        .issuer_name(_name(cn))
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(hours=1))
-        .not_valid_after(now + timedelta(days=1))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .add_extension(
-            x509.KeyUsage(
-                digital_signature=False,
-                content_commitment=False,
-                key_encipherment=False,
-                data_encipherment=False,
-                key_agreement=False,
-                key_cert_sign=True,
-                crl_sign=True,
-                encipher_only=False,
-                decipher_only=False,
-            ),
-            critical=True,
-        )
-        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
-        .sign(key, hashes.SHA256())
-    )
-    return key, cert
-
-
-def _pem(cert: x509.Certificate) -> str:
-    return cert.public_bytes(serialization.Encoding.PEM).decode()
-
-
-@dataclass(frozen=True)
-class Pki:
-    """The server's CA, its certificate and key, and a CA that signed nothing here."""
-
-    ca: str
-    cert: str
-    key: str
-    other_ca: str
-
-
-def _pki() -> Pki:
-    ca_key, ca = _ca("ssc test ca")
-    _, other = _ca("ssc other ca")
-    key = ec.generate_private_key(ec.SECP256R1())
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(_name("localhost"))
-        .issuer_name(ca.subject)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(hours=1))
-        .not_valid_after(now + timedelta(days=1))
-        .add_extension(
-            x509.SubjectAlternativeName(
-                [x509.DNSName("localhost"), x509.IPAddress(IPv4Address("127.0.0.1"))]
-            ),
-            critical=False,
-        )
-        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
-        .add_extension(
-            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False
-        )
-        .sign(ca_key, hashes.SHA256())
-    )
-    key_pem = key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    ).decode()
-    return Pki(_pem(ca), _pem(cert), key_pem, _pem(other))
-
-
 @dataclass(frozen=True)
 class Db:
     """One running Postgres, its PKI, and ways in."""
@@ -253,7 +166,7 @@ class Db:
 
 @pytest.fixture(scope="module", params=["postgres:17", "postgres:18"])
 def db(request: pytest.FixtureRequest) -> Iterator[Db]:
-    pki = _pki()
+    pki = make_pki()
     container = (
         PostgresContainer(cast("str", request.param), driver=None)
         .with_env("SSC_TLS_CERT", pki.cert)
@@ -660,7 +573,7 @@ def test_parameters_are_coerced_by_the_placeholder_types() -> None:
 def test_tls_is_always_verified() -> None:
     assert tls_context(None).verify_mode == ssl.CERT_REQUIRED
     assert tls_context(None).check_hostname is True
-    pki = _pki()
+    pki = make_pki()
     pasted = tls_context(pki.ca)
     assert pasted.verify_mode == ssl.CERT_REQUIRED
     assert pasted.check_hostname is False

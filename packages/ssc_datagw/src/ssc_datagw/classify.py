@@ -1,6 +1,7 @@
-"""Whether a statement is one plain read, before it reaches the database (SSC-051).
+"""Whether a statement is one plain read, before it reaches the database (SSC-051, GA-5).
 
-sqlglot parses the text as Postgres. The statement is refused unless it is exactly one
+sqlglot parses the text as the connector's :class:`Dialect` reads it (:data:`POSTGRES`,
+:data:`MYSQL`). The statement is refused unless it is exactly one
 ``SELECT`` (or ``UNION``, ``INTERSECT``, ``EXCEPT`` of them), with no data-changing ``WITH``, no
 ``SELECT INTO``, no row locks, and no function on :data:`DENIED` or matching a denied prefix or
 suffix: those write, signal other sessions, read server files, or run a query given as text,
@@ -13,11 +14,18 @@ parameter. A function name that is not a plain identifier (a ``U&"..."`` name Po
 is refused for the same reason. Anything sqlglot cannot parse is refused. The session behind the
 check forces ``standard_conforming_strings`` on, so plain strings lex alike in both.
 
-What the check misses, the database stops: every read runs in ``BEGIN READ ONLY`` as a role with
-``SELECT`` only (``postgres_setup.sql``) and ends in ``ROLLBACK``.
+What the check misses, the database stops: every read runs in a read-only transaction as a role
+with ``SELECT`` only (``postgres_setup.sql``, ``mysql_setup.sql``) and ends in ``ROLLBACK``.
+
+MySQL's denied names are the functions that read server files (``LOAD_FILE``), hold locks other
+sessions wait on (``GET_LOCK`` and kin), wait on replication, burn time on purpose
+(``BENCHMARK``) or reach outside the server through the ``sys_*`` UDFs; ``SLEEP`` is allowed, as
+``max_execution_time`` and the gateway's deadline end it. sqlglot and MySQL read backslash
+escapes alike, so no string form is refused.
 """
 
 import re
+from dataclasses import dataclass
 from typing import Final
 
 import sqlglot
@@ -74,6 +82,35 @@ DENIED_PREFIXES: Final = (
     "pg_copy_",
 )
 DENIED_SUFFIXES: Final = ("_to_xml", "_to_xmlschema", "_to_xml_and_xmlschema")
+MYSQL_DENIED: Final = frozenset(
+    {
+        "load_file",
+        "benchmark",
+        "get_lock",
+        "release_lock",
+        "release_all_locks",
+        "is_free_lock",
+        "is_used_lock",
+        "master_pos_wait",
+        "source_pos_wait",
+        "wait_for_executed_gtid_set",
+        "wait_until_sql_thread_after_gtids",
+        "statement_digest",
+        "statement_digest_text",
+    }
+)
+MYSQL_DENIED_PREFIXES: Final = (
+    "sys_",
+    "group_replication_",
+    "asynchronous_connection_failover_",
+    "gtid_",
+    "ps_",
+    "mysql_firewall_",
+    "audit_",
+    "keyring_",
+    "version_tokens_",
+    "service_",
+)
 _PLAIN_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
 _READS: Final = (exp.Select, exp.SetOperation, exp.Subquery)
 _WRITES: Final = (
@@ -96,28 +133,53 @@ _UNSAFE_STRINGS: Final = {
 }
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Dialect:
+    """How sqlglot reads one engine's SQL and which function names that engine refuses."""
+
+    read: str
+    denied: frozenset[str]
+    denied_prefixes: tuple[str, ...]
+    denied_suffixes: tuple[str, ...] = ()
+    unsafe_strings: dict[TokenType, str] | None = None
+
+    def refuses(self, name: str) -> bool:
+        low = name.lower()
+        return (
+            low in self.denied
+            or low.startswith(self.denied_prefixes)
+            or (bool(self.denied_suffixes) and low.endswith(self.denied_suffixes))
+        )
+
+
+POSTGRES: Final = Dialect(
+    read="postgres",
+    denied=DENIED,
+    denied_prefixes=DENIED_PREFIXES,
+    denied_suffixes=DENIED_SUFFIXES,
+    unsafe_strings=_UNSAFE_STRINGS,
+)
+MYSQL: Final = Dialect(read="mysql", denied=MYSQL_DENIED, denied_prefixes=MYSQL_DENIED_PREFIXES)
+
+
 def _names(node: exp.Func) -> set[str]:
     if isinstance(node, exp.Anonymous):
         return {node.name}
     return {node.sql_name(), *type(node).sql_names()}
 
 
-def _denied(name: str) -> bool:
-    low = name.lower()
-    return low in DENIED or low.startswith(DENIED_PREFIXES) or low.endswith(DENIED_SUFFIXES)
-
-
-def refusal(sql: str) -> str | None:  # noqa: PLR0911  (one return per refusal)
+def refusal(sql: str, dialect: Dialect = POSTGRES) -> str | None:  # noqa: PLR0911  (one return per refusal)
     """Why ``sql`` is not one plain read, or ``None`` when it is. The reason is for the log; it
     names the construct and never quotes the statement."""
     try:
-        tokens = sqlglot.tokenize(sql, read="postgres")
-        statements = sqlglot.parse(sql, read="postgres")  # pyright: ignore[reportUnknownMemberType]
+        tokens = sqlglot.tokenize(sql, read=dialect.read)
+        statements = sqlglot.parse(sql, read=dialect.read)  # pyright: ignore[reportUnknownMemberType]
     except SqlglotError:
         return "the statement does not parse"
+    unsafe = dialect.unsafe_strings or {}
     for token in tokens:
-        if token.token_type in _UNSAFE_STRINGS:
-            return f"the statement uses {_UNSAFE_STRINGS[token.token_type]}"
+        if token.token_type in unsafe:
+            return f"the statement uses {unsafe[token.token_type]}"
     found = [s for s in statements if s is not None]
     if len(found) != 1 or len(statements) > 1:
         return "the text is not exactly one statement"
@@ -131,6 +193,11 @@ def refusal(sql: str) -> str | None:  # noqa: PLR0911  (one return per refusal)
             names = _names(node)
             if isinstance(node, exp.Anonymous) and not _PLAIN_NAME.fullmatch(node.name):
                 return "a function name is not a plain identifier"
-            if any(_denied(n) for n in names):
+            if any(dialect.refuses(n) for n in names):
                 return "the statement calls a function that is refused"
     return None
+
+
+def mysql_refusal(sql: str) -> str | None:
+    """:func:`refusal` as MySQL reads the text."""
+    return refusal(sql, MYSQL)

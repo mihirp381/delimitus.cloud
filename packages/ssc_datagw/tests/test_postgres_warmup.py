@@ -1,4 +1,4 @@
-"""A new instance tries a timed-out connect again for its first minute (``postgres._connect``)."""
+"""A new instance tries a timed-out connect again for its first minute (``connect_with_warmup``)."""
 
 from typing import Any
 
@@ -6,12 +6,12 @@ import pytest
 
 from ssc_datagw import postgres
 from ssc_datagw.connectors import UpstreamUnavailableError
-from ssc_datagw.postgres import (
+from ssc_datagw.postgres import PostgresConnector, PostgresTarget
+from ssc_datagw.warmup import (
+    CONNECT_SECONDS,
     WARMUP_CONNECT_SECONDS,
     WARMUP_PAUSE_SECONDS,
     WARMUP_SECONDS,
-    PostgresConnector,
-    PostgresTarget,
     Warmup,
 )
 
@@ -70,7 +70,7 @@ async def test_after_warm_up_a_time_out_is_unavailable_at_once(
     c = PostgresConnector(TARGET, warmup=Warmup(0.0, clock, clock.sleep))
     with pytest.raises(UpstreamUnavailableError, match="TimeoutError"):
         await c._connect()  # pyright: ignore[reportPrivateUsage]
-    assert timeouts == [postgres.CONNECT_SECONDS]
+    assert timeouts == [CONNECT_SECONDS]
 
 
 async def test_warm_up_stops_retrying_once_it_ends(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,7 +79,7 @@ async def test_warm_up_stops_retrying_once_it_ends(monkeypatch: pytest.MonkeyPat
     c = PostgresConnector(TARGET, warmup=Warmup(0.0, clock, clock.sleep))
     with pytest.raises(UpstreamUnavailableError):
         await c._connect()  # pyright: ignore[reportPrivateUsage]
-    assert timeouts[-1] == postgres.CONNECT_SECONDS
+    assert timeouts[-1] == CONNECT_SECONDS
     assert all(t == WARMUP_CONNECT_SECONDS for t in timeouts[:-1])
 
 

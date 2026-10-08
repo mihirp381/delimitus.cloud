@@ -31,13 +31,11 @@ is ``UpstreamUnavailableError`` at once.
 import asyncio
 import json
 import logging
-import ssl
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, fields
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
-from time import monotonic
 from typing import Any, Final, Literal, cast
 from uuid import UUID
 
@@ -53,14 +51,15 @@ from ssc_datagw.connectors import (
     Scalar,
     UpstreamUnavailableError,
 )
+from ssc_datagw.tls import tls_context
+from ssc_datagw.warmup import (
+    CONNECT_SECONDS,
+    Warmup,
+    connect_with_warmup,
+)
 
 log = logging.getLogger(__name__)
 
-CONNECT_SECONDS: Final = 10.0
-WARMUP_SECONDS: Final = 60.0
-WARMUP_CONNECT_SECONDS: Final = 5.0
-WARMUP_PAUSE_SECONDS: Final = 1.0
-PROCESS_STARTED: Final = monotonic()
 KILL_SECONDS: Final = 5.0
 BATCH: Final = 500
 IDLE_IN_TRANSACTION_MS: Final = 60_000
@@ -133,21 +132,6 @@ class PostgresTarget(BaseModel):
     user: str = Field(min_length=1, max_length=NAME_BYTES)
     password: SecretStr
     ca: str | None = Field(default=None, min_length=1)
-
-
-def tls_context(ca: str | None) -> ssl.SSLContext:
-    """``verify-ca`` against a pasted CA, else ``verify-full`` against the system store. Python
-    3.13 and later refuse a CA without an Authority Key Identifier under ``VERIFY_X509_STRICT``,
-    which Cloud SQL's per-instance CA lacks, so that one flag is cleared for a pasted CA."""
-    if ca is None:
-        return ssl.create_default_context()
-    try:
-        context = ssl.create_default_context(cadata=ca)
-    except (ssl.SSLError, ValueError) as exc:
-        raise ValueError("the CA certificate is not PEM") from exc
-    context.check_hostname = False
-    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-    return context
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,15 +249,6 @@ def _failure(exc: Exception) -> Exception:
     return UpstreamUnavailableError(f"the connection failed: {name}")
 
 
-@dataclass(frozen=True, slots=True)
-class Warmup:
-    """When the process started, and the clock and pause the warm-up retry uses."""
-
-    started: float = PROCESS_STARTED
-    clock: Callable[[], float] = monotonic
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
-
-
 class PostgresConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one Postgres connection. ``classify``
     replaces the classifier (tests that prove what the database refuses by itself)."""
@@ -293,20 +268,10 @@ class PostgresConnector:
         self._warmup = warmup or Warmup()
         self._ending: set[asyncio.Task[None]] = set()
 
-    def _warming(self) -> bool:
-        return self._warmup.clock() - self._warmup.started < WARMUP_SECONDS
-
     async def _connect(self) -> Any:
-        while True:
-            warming = self._warming()
-            seconds = min(self._connect_seconds, WARMUP_CONNECT_SECONDS) if warming else None
-            try:
-                return await self._connect_once(seconds or self._connect_seconds)
-            except TimeoutError:
-                if not warming:
-                    raise UpstreamUnavailableError("cannot connect: TimeoutError") from None
-                log.info("connect timed out while the instance is new; trying again")
-            await self._warmup.sleep(WARMUP_PAUSE_SECONDS)
+        return await connect_with_warmup(
+            self._connect_once, connect_seconds=self._connect_seconds, warmup=self._warmup
+        )
 
     async def _connect_once(self, seconds: float) -> Any:
         t = self._target
