@@ -998,8 +998,9 @@ def test_the_deployment_policy_shows_only_what_the_caller_may_see(
         ):
             conn.execute(
                 "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
-                "database_name) values (%s, %s, %s, 'postgres', %s, 'db.corp.internal', 5432, "
-                "'warehouse')",
+                "database_name, address) values (%s, %s, %s, 'postgres', %s, 'db.corp.internal', "
+                "5432, 'warehouse', jsonb_build_object('host', 'db.corp.internal', 'port', 5432, "
+                "'database', 'warehouse'))",
                 (new_id("con"), world.org, name, classification),
             )
         conn.execute(

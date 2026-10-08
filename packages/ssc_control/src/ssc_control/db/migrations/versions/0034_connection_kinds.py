@@ -6,7 +6,8 @@ Revision ID: 0034_connection_kinds
 Revises: 0033_oauth
 
 Downgrade deletes the rows of the other kinds, drops ``address`` and restores the columns and the
-vocabulary (development databases only).
+vocabulary (development databases only). ``FORCE ROW LEVEL SECURITY`` is lifted on both tables
+for the deletes, which run with no org bound, and restored, as in 0025.
 """
 
 from pathlib import Path
@@ -22,6 +23,7 @@ SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
 
 DOWNGRADE_SQL = """
 ALTER TABLE ssc.connection NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE ssc.connection_grant NO FORCE ROW LEVEL SECURITY;
 DELETE FROM ssc.connection_grant WHERE (org_id, connection_id) IN (
   SELECT org_id, id FROM ssc.connection WHERE kind <> 'postgres');
 DELETE FROM ssc.connection WHERE kind <> 'postgres';
@@ -34,6 +36,7 @@ ALTER TABLE ssc.connection
   ALTER COLUMN database_name SET NOT NULL,
   DROP CONSTRAINT connection_kind_check,
   ADD CONSTRAINT connection_kind_check CHECK (kind IN ('postgres'));
+ALTER TABLE ssc.connection_grant FORCE ROW LEVEL SECURITY;
 ALTER TABLE ssc.connection FORCE ROW LEVEL SECURITY;
 """
 
