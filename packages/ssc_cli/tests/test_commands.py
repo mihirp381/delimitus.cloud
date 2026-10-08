@@ -26,6 +26,8 @@ from ssc_cli.shapes import (
     AppResult,
     ApprovalsResult,
     AppsResult,
+    AuditExportResult,
+    AuditVerifyResult,
     ConnectionsResult,
     DeployResult,
     DisableResult,
@@ -61,6 +63,7 @@ ALLOWED = {
     "logout",
     "whoami",
     "logins",
+    "audit",
     "token",
     "apps",
     "status",
@@ -127,6 +130,8 @@ def test_help_lists_exact_set(cli):
         ("whoami",),
         ("logins", "list"),
         ("logins", "link"),
+        ("audit", "export"),
+        ("audit", "verify"),
         ("token", "set"),
         ("token", "clear"),
         ("apps",),
@@ -164,6 +169,7 @@ def test_help_lists_exact_set(cli):
         ("database", {"rotate"}),
         ("approvals", {"list", "show", "approve", "reject"}),
         ("logins", {"list", "link"}),
+        ("audit", {"export", "verify"}),
     ):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
         assert {line.split()[0] for line in text.splitlines() if line.startswith("  ")} == subs
@@ -1188,6 +1194,8 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("connections",): ([], ConnectionsResult, None),
         ("approvals", "list"): ([], ApprovalsResult, None),
         ("logins", "list"): ([], UnlinkedLoginsResult, None),
+        ("audit", "export"): (["--out", str(tmp_path / "audit.jsonl")], AuditExportResult, None),
+        ("audit", "verify"): ([str(tmp_path / "audit.jsonl")], AuditVerifyResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
         ("token", "clear"): ([], TokenClearResult, None),
         ("logout",): ([], LogoutResult, None),

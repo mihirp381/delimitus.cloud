@@ -18,6 +18,7 @@
 """
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
@@ -331,6 +332,16 @@ class ApiClient:
         """Tie the login to an active person; their next login with it signs them in."""
         path = f"/v1/unlinked-logins/{_seg(unlinked_login_id)}/link"
         return _parse(self._send("POST", path, body=LinkIn(user_id=user_id)), Linked)
+
+    def export_audit(
+        self, fmt: str, *, since: str | None = None, until: str | None = None
+    ) -> tuple[bytes, str]:
+        """Every matching audit event, oldest first, and the file name the API suggests. Org
+        admins in their own session only; the export is itself audited (``audit.exported``)."""
+        query = {"format": fmt} | {k: v for k, v in (("since", since), ("until", until)) if v}
+        r = self._send("GET", f"/v1/audit/export?{urlencode(query)}")
+        found = re.search(r'filename="([^"/\\]+)"', r.headers.get("Content-Disposition", ""))
+        return r.content, found[1] if found else f"audit.{fmt}"
 
     def find_groups(self, name: str) -> GroupMatches:
         return _parse(self._send("GET", f"/v1/groups?{urlencode({'name': name})}"), GroupMatches)

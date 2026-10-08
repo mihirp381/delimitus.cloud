@@ -9,6 +9,7 @@ from ssc_cli.commands._common import session
 from ssc_cli.commands.access import access_app
 from ssc_cli.commands.approvals import approvals_app
 from ssc_cli.commands.apps import apps_app
+from ssc_cli.commands.audit import audit_app
 from ssc_cli.commands.connections import connections
 from ssc_cli.commands.database import database_app
 from ssc_cli.commands.deploy import deploy
@@ -74,6 +75,7 @@ app.add_typer(logins_app)
 app.add_typer(token_app)
 app.add_typer(apps_app)
 app.add_typer(approvals_app)
+app.add_typer(audit_app)
 app.command()(status)
 app.command()(logs)
 app.command()(share)

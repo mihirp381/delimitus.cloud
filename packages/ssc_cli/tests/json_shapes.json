@@ -86,6 +86,26 @@
   "AppsResult": {
     "apps": "array<AppRow>"
   },
+  "AuditExportResult": {
+    "api_url": "string",
+    "bytes": "integer",
+    "events": "integer",
+    "format": "string",
+    "path": "string"
+  },
+  "AuditVerifyResult": {
+    "broken_line": "integer|null",
+    "broken_seq": "integer|null",
+    "cause": "string|null",
+    "checked": "integer",
+    "first_seq": "integer|null",
+    "from_genesis": "boolean",
+    "last_hash": "string|null",
+    "last_seq": "integer|null",
+    "ok": "boolean",
+    "org_id": "string|null",
+    "path": "string"
+  },
   "BundleWarning": {
     "line": "integer",
     "masked": "string",

@@ -575,6 +575,35 @@ class LoginLinkedResult(Shape):
     identity_link_id: str
 
 
+class AuditExportResult(Shape):
+    """``audit export``: where the export was written. ``events`` counts its rows."""
+
+    api_url: str
+    format: str
+    path: str
+    events: int
+    bytes: int
+
+
+class AuditVerifyResult(Shape):
+    """``audit verify``: the export's hash chain checked offline. ``from_genesis`` is true when
+    the file starts at seq 1, so every link back to the first event was checked. On a break,
+    ``broken_line`` is the file line, ``broken_seq`` the seq expected there and ``cause`` one of
+    ``unreadable``, ``missing``, ``prev_link``, ``hash`` or ``fields``."""
+
+    path: str
+    ok: bool
+    checked: int
+    org_id: str | None
+    first_seq: int | None
+    last_seq: int | None
+    last_hash: str | None
+    from_genesis: bool
+    broken_line: int | None
+    broken_seq: int | None
+    cause: str | None
+
+
 SHAPES: dict[str, type[BaseModel]] = {
     m.__name__: m
     for m in (
@@ -635,5 +664,7 @@ SHAPES: dict[str, type[BaseModel]] = {
         UnlinkedLoginRow,
         UnlinkedLoginsResult,
         LoginLinkedResult,
+        AuditExportResult,
+        AuditVerifyResult,
     )
 }
