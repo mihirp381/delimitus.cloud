@@ -200,15 +200,24 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         return RedirectResponse(f"https://{host_name}/.ssc/callback?{query}", status_code=302)
 
     def to_workos(
-        connection: connections.DirectoryConnection, login: dict[str, Any]
-    ) -> RedirectResponse:
+        connection: connections.DirectoryConnection,
+        login: dict[str, Any],
+        *,
+        from_form: bool = False,
+    ) -> Response:
+        """On to WorkOS: a redirect, or after a form a page that moves on by itself
+        (:func:`pages.continue_to`), so the form's CSP does not stop the IdP's redirects."""
         check = secrets.token_urlsafe(24)
         url = host.workos.authorize_url(
             organization=connection.workos_organization_id,
             redirect_uri=f"{s.auth_url}/callback",
             state=check,
         )
-        response = RedirectResponse(url, status_code=302, headers={"cache-control": "no-store"})
+        response: Response = (
+            html(pages.continue_to(url))
+            if from_form
+            else RedirectResponse(url, status_code=302, headers={"cache-control": "no-store"})
+        )
         sealed = sealer.seal("login", {**login, "check": check}, now() + LOGIN_SECONDS)
         set_cookie(response, login_cookie, sealed, LOGIN_SECONDS)
         return response
@@ -457,7 +466,7 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             code = tokens.normal_user_code(form.get("user_code", ""))
             return html(pages.agent_consent(org_id, code, agent))
         login = {"flow": "device", "org": org_id, "grant": grant, "agent": agent}
-        return to_workos(connection, login)
+        return to_workos(connection, login, from_form=True)
 
     async def device_token(device_code: str) -> JSONResponse:
         parsed = tokens.org_of(device_code)

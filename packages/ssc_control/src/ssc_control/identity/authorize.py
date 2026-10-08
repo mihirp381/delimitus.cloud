@@ -90,6 +90,16 @@ class TokenReply(Protocol):
     ) -> JSONResponse: ...
 
 
+class ToWorkos(Protocol):
+    def __call__(
+        self,
+        connection: connections.DirectoryConnection,
+        login: dict[str, Any],
+        *,
+        from_form: bool = False,
+    ) -> Response: ...
+
+
 @dataclass(frozen=True, slots=True)
 class Kit:
     """What the auth host lends this flow."""
@@ -99,7 +109,7 @@ class Kit:
     workos: WorkOSClient
     sealer: Seals
     clock: Callable[[], float]
-    to_workos: Callable[[connections.DirectoryConnection, dict[str, Any]], RedirectResponse]
+    to_workos: ToWorkos
     set_cookie: Callable[[Response, str, str, int], None]
     clear: Callable[[Response, str], None]
     token_reply: TokenReply
@@ -584,7 +594,8 @@ class OAuthFlow:
             if connection is None:
                 return self._html(pages.NO_SIGN_IN)
             pending = {k: str(sealed.get(k, "")) for k in PENDING}
-            return kit.to_workos(connection, {"flow": "oauth", "org": connection.org_id, **pending})
+            login = {"flow": "oauth", "org": connection.org_id, **pending}
+            return kit.to_workos(connection, login, from_form=True)
 
         @app.post("/authorize/consent")
         async def consent(request: Request) -> Response:

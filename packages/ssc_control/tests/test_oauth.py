@@ -36,7 +36,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from ssc_testkit import Dsns
-from test_auth_host import AUTH, SECRET, Rig, client_for, settings
+from test_auth_host import AUTH, SECRET, Rig, client_for, onward, settings
 from test_identity import FOUNDER_IDP, OPERATOR, World, new_world
 
 from ssc_contracts.audit import AuditAction
@@ -124,10 +124,10 @@ class OAuthRig:
         return await self.http.post("/authorize", data=body, headers=headers)
 
     async def through_workos(self, r: httpx2.Response) -> httpx2.Response:
-        assert r.status_code == 302, r.text
-        assert r.headers["location"].startswith("https://workos.test/sso/authorize")
+        location = onward(r)
+        assert location.startswith("https://workos.test/sso/authorize")
         self.w.wo.profile("oauth-code", FOUNDER_IDP, "ada@example.com")
-        state = query(r.headers["location"])["state"]
+        state = query(location)["state"]
         return await self.http.get("/callback", params={"code": "oauth-code", "state": state})
 
     async def consent(self, page: httpx2.Response, answer: str = "approve") -> httpx2.Response:

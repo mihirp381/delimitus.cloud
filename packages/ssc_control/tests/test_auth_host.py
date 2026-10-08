@@ -8,7 +8,9 @@ session has ended.
 import asyncio
 import base64
 import hashlib
+import html
 import logging
+import re
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -41,6 +43,20 @@ DOMAIN = "apps.test"
 SECRET = "s" * 32
 
 
+REFRESH = re.compile(r"<meta http-equiv=refresh content='0;url=([^']+)'>")
+
+
+def onward(r: httpx2.Response) -> str:
+    """Where the browser goes next: a redirect's location, or the URL a continue page refreshes
+    to (the answer to a form, :func:`pages.continue_to`)."""
+    if r.status_code == 302:
+        return r.headers["location"]
+    assert r.status_code == 200, r.text
+    found = REFRESH.search(r.text)
+    assert found is not None, r.text
+    return html.unescape(found[1])
+
+
 def binding_of(nonce: str) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(nonce.encode()).digest()).rstrip(b"=").decode()
 
@@ -69,8 +85,7 @@ class Rig:
         return await self.http.get("/login", params=params)
 
     async def through_workos(self, r: httpx2.Response, code: str) -> httpx2.Response:
-        assert r.status_code == 302, r.text
-        q = parse_qs(urlsplit(r.headers["location"]).query)
+        q = parse_qs(urlsplit(onward(r)).query)
         return await self.http.get("/callback", params={"code": code, "state": q["state"][0]})
 
     async def redeem(
@@ -358,6 +373,18 @@ async def device_login(rig: Rig) -> dict[str, Any]:
     )
     assert got.status_code == 200, got.text
     return got.json()
+
+
+async def test_the_device_form_moves_on_by_a_page_not_a_redirect(rig: Rig) -> None:
+    """GA-3.2, 2026-10-08: after a form, CSP's ``form-action`` covers every redirect, and WorkOS
+    redirects on to the company's IdP, so Chrome stopped at the auth host. The answer is a page
+    that refreshes to WorkOS, carries the login cookie and runs no script."""
+    start = (await rig.http.post("/device/authorize", data={"org": rig.w.org})).json()
+    r = await rig.http.post("/device", data={"org": rig.w.org, "user_code": start["user_code"]})
+    assert r.status_code == 200 and "location" not in r.headers
+    assert onward(r).startswith("https://workos.test/sso/authorize?")
+    assert "<script" not in r.text and "default-src 'none'" in r.headers["content-security-policy"]
+    assert "ssc-login=" in r.headers["set-cookie"]
 
 
 async def test_the_command_line_signs_in_with_the_device_flow(rig: Rig) -> None:

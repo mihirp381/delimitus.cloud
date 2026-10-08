@@ -7,9 +7,10 @@ from typing import Final
 
 
 def headers(workos_base: str, *, answer_to: str = "") -> dict[str, str]:
-    """``form-action`` names WorkOS because the device and work-email forms' answers redirect
-    there; a consent page also names ``answer_to``, where its answer redirects (the client's
-    redirect URI: CSP applies ``form-action`` to a form's redirects too)."""
+    """``form-action`` names WorkOS for older pages; the device and work-email forms now answer
+    with :func:`continue_to`, since WorkOS redirects on to hosts no list can name. A consent page
+    also names ``answer_to``, where its answer redirects (the client's redirect URI: CSP applies
+    ``form-action`` to a form's redirects too)."""
     targets = f"{workos_base} {answer_to}".strip()
     return {
         "cache-control": "no-store",
@@ -21,10 +22,10 @@ def headers(workos_base: str, *, answer_to: str = "") -> dict[str, str]:
     }
 
 
-def page(title: str, body: str) -> str:
+def page(title: str, body: str, head: str = "") -> str:
     return (
         "<!doctype html><html lang=en><meta charset=utf-8>"
-        "<meta name=viewport content='width=device-width'>"
+        f"<meta name=viewport content='width=device-width'>{head}"
         f"<title>{escape(title)}</title><h1>{escape(title)}</h1>{body}</html>\n"
     )
 
@@ -38,6 +39,23 @@ BAD_REQUEST: Final = page(
     "This sign-in link is not valid", "<p>Go back to the app and try again.</p>"
 )
 SIGNED_OUT: Final = page("Signed out", "<p>You are signed out.</p>")
+
+
+def continue_to(url: str) -> str:
+    """The answer to a form whose next stop is single sign-on: a page that moves on by itself.
+
+    A redirect would not do. CSP applies the form page's ``form-action`` to every redirect after
+    the form is sent, and WorkOS redirects on to the company's identity provider, a host no list
+    here can name, so Chrome and WebKit stopped there (GA-3.2, 2026-10-08). A refresh is a new
+    navigation, not the form's, and needs no script."""
+    target = escape(url)
+    return page(
+        "Continuing to your company sign-in",
+        f"<p>If nothing happens, <a href='{target}'>continue</a>.</p>",
+        head=f"<meta http-equiv=refresh content='0;url={target}'>",
+    )
+
+
 DEVICE_DONE: Final = page(
     "You are signed in", "<p>Return to your terminal. You can close this window.</p>"
 )
