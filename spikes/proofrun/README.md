@@ -486,6 +486,44 @@ Leaves behind: the secret `GA46_TOKEN` in the app's preview with two more versio
 
 Pass: every automatic check (1 to 10) passed; 11 and 12 never set the verdict. The kit never prints or saves a value, the operator's token or the cookie; the results hold the fingerprints and lengths, the versions, the checks and the notes, in `results/ga-4.6.json` and `results/secrets-<app>-<UTC stamp>.json`. Copy the final line, and what 11 and 12 showed, into the GA-4.6 record.
 
+### Session apps (GA-4.7)
+
+Two apps in `apps/reconnect` prove SSC-090's helpers: `py/` (FastAPI with `ssc_app.reconnect`) and `node/` (`@delimitus/ssc-reconnect`), both `sessions = true`, each serving `/ws?after=<n>` that sends n+1, n+2, ... once a second. `apps/reconnect/check.py` is the measurement; `sessions` runs it for both apps at once and keeps the record. The Streamlit leg uses the existing `pstream` (`apps/streamlit`).
+
+**What the 1012 is.** The helper, not the gateway, ends the connection: it reads the deadline the gateway announces (`X-SSC-Request-Deadline`, 3600 s) and closes with 1012 about 30 s before it, so at about 59.5 minutes. The gateway's own 60-minute cut is never reached. The helpers only close; the client reconnects, which is `check.py` here and `sscSocket` in a browser. The record says "the helper's 1012 close and the client's reconnect", never "a gateway cut".
+
+Before the first run:
+
+1. Create and deploy the apps once **[real]**: `uv run ssc apps create prcpy`, `uv run ssc apps create prcnode`, then `uv run ssc deploy --app prcpy spikes/proofrun/apps/reconnect/py --wait` and `uv run ssc deploy --app prcnode spikes/proofrun/apps/reconnect/node --wait` at the repository root.
+2. Share both previews with the person whose cookie the kit uses (`uv run ssc share <slug> <usr_…> --env preview`), and keep `pstream` deployed and shared the same way.
+3. Keep a fresh session cookie for each app host in the jar: `uv run python -m proofrun cookie set prcpy--preview.proofcell01.delimitusapps.com` and the same for `prcnode--...`. The cookie lasts 12 hours. `check.py` reads the jar itself on every connect; the kit passes it nothing (no argument, setting or input) and replaces it with `[cookie]` in any line a child prints.
+
+From `spikes/proofrun`:
+
+```sh
+uv run python -m proofrun sessions --minutes 70 [--hosts prcpy--preview.proofcell01.delimitusapps.com,prcnode--preview.proofcell01.delimitusapps.com] [--streamlit-host pstream--preview.proofcell01.delimitusapps.com]
+```
+
+The hosts default to those above (the Streamlit host to `pstream--preview.` plus the first host's cell). `--minutes` defaults to 70 (the ticket) and is refused below 62: `check.py` passes only after 60 minutes with a 1012, which comes at about 59.5. The kit runs two `check.py` processes at once and prints their lines with `[prcpy]` and `[prcnode]` in front. It runs 70 minutes; keep the machine awake.
+
+| # | Check (1 to 4 for the first host, 5 to 8 for the second) |
+| --- | --- |
+| 1, 5 | The host has a cookie in the jar. Without one the host is not started, its checks 2 to 4 are "not read" (the detail carries the `cookie set <host>` hint) and the other host still runs. |
+| 2, 6 | `check.py`'s last line is PASS: held 60 minutes or more, at least one restart on 1012, no gap. |
+| 3, 7 | The first connection that ended 1012 was held 58.0 to 61.0 minutes, and the 1012 lines match the restarts `check.py` counted. The time and the number it reached are recorded. |
+| 4, 8 | No user action and no gap: one launch with input closed, no `gap:` line, and numbers went on to a later number on a new connection after the 1012. Other ends are listed in the detail and never fail it. |
+| 9 | Manual: the Streamlit screenshot `results/ga-4.7-streamlit.png`, reported "present" or "absent" and never part of the verdict. |
+
+Verdict: any FAIL is FAIL, else any "not read" is INCOMPLETE, else PASS. A host whose `check.py` ends without a final line (it crashed or was stopped) is "not read".
+
+**Streamlit screenshot (check 9).** The kit prints these steps at the start, with the times worked out:
+
+1. At the printed start time open `https://pstream--preview.proofcell01.delimitusapps.com/` in a signed-in browser and note the caption "page served at HH:MM:SS UTC".
+2. Leave the tab open and untouched (no reload, the machine awake).
+3. At start plus 61 minutes or a little after, and before the run ends, take a screenshot of the whole window and save it as `spikes/proofrun/results/ga-4.7-streamlit.png`. It must show the URL bar with the host, the title "SSC proof run: Streamlit + pandas", a caption with a later time (about 60 minutes after the first) and no "Connecting" banner, and the clock. That Streamlit reruns its script when its own client reconnects is expected; the changed caption is the evidence, and the record says what the page showed.
+
+Results go to `results/ga-4.7.json` and to `results/sessions-<UTC stamp>.json` (the checks, each drop's time and last number, other ends, and each host's `check.py` lines). Copy the final line, and the screenshot, into the GA-4.7 record.
+
 ## What feeds what
 
 | Result | Feeds |
