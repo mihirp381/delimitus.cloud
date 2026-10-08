@@ -98,12 +98,14 @@ test('the list bursts out of the prompt and settles in place', async ({ page }) 
 test('the hero zooms into the app where there is room, and holds still where there is not', async ({ page }) => {
   await page.goto('/');
   const room = await page.evaluate(() => matchMedia('(min-width: 1100px) and (min-height: 640px)').matches);
-  await page.evaluate(() => window.scrollTo(0, window.innerHeight * 0.6));
-  // The zoom is drawn on the frame after the scroll; a slow WebKit runner can take over 200 ms.
+  // Scroll as a person does: headless WebKit on Linux draws no frame for a script's scrollTo.
+  const height = page.viewportSize()?.height ?? 0;
+  await page.mouse.move(10, 10);
+  await page.mouse.wheel(0, height * 0.6);
   const transform = () => page.locator('#scene').evaluate((el) => (el as HTMLElement).style.transform);
   if (room) {
     await expect.poll(transform).toContain('scale(');
-    await page.evaluate(() => window.scrollTo(0, window.innerHeight * 2.05));
+    await page.mouse.wheel(0, height * (2.05 - 0.6));
     await expect(page.locator('#into')).toBeVisible();
     await expect(page.locator('#into')).not.toHaveCSS('opacity', '0');
   } else {
