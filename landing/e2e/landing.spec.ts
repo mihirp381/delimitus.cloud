@@ -99,15 +99,16 @@ test('the hero zooms into the app where there is room, and holds still where the
   await page.goto('/');
   const room = await page.evaluate(() => matchMedia('(min-width: 1100px) and (min-height: 640px)').matches);
   await page.evaluate(() => window.scrollTo(0, window.innerHeight * 0.6));
-  await page.waitForTimeout(200);
-  const transform = await page.locator('#scene').evaluate((el) => (el as HTMLElement).style.transform);
+  // The zoom is drawn on the frame after the scroll; a slow WebKit runner can take over 200 ms.
+  const transform = () => page.locator('#scene').evaluate((el) => (el as HTMLElement).style.transform);
   if (room) {
-    expect(transform).toContain('scale(');
+    await expect.poll(transform).toContain('scale(');
     await page.evaluate(() => window.scrollTo(0, window.innerHeight * 2.05));
     await expect(page.locator('#into')).toBeVisible();
     await expect(page.locator('#into')).not.toHaveCSS('opacity', '0');
   } else {
-    expect(transform).toBe('');
+    await page.waitForTimeout(200);
+    expect(await transform()).toBe('');
     await expect(page.locator('#into')).toBeHidden();
   }
 });
