@@ -257,6 +257,15 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
   fix-it line. The audit log shows traffic moving to R5's revision, Cloud Run refusing it (code 9),
   and the control sending traffic back to R1's revision; `ssc releases` shows R1 still live. The
   audit row was not read: the CLI has no audit command, and the console was not used.
+- **First deploys, promote and an agent-built app (GA-1.2, 1.6, 1.7), cell 2, 2026-10-08, control
+  6f4d1a94.** ga1lovable (a Lovable export) failed its first deploy, R1, with RUNTIME_ERROR on
+  69cb999f: the control moved traffic while Cloud Run was still creating the service, and the
+  allowedIngress org policy refused it. On 6f4d1a94 its R2 went live in preview at 14:59. ga1agent,
+  written from the `ssc init` pack in an empty folder, ran R1 live at 14:58 and R2 at 15:02, so a
+  pinned second deploy still works. `ssc promote ga1pg01 --wait` put R6 in prod at 15:03; the prod
+  host answers 302 to sign-in. It has no `[connections]`, so no approval was asked; the gated
+  promote is still to run. `uv tool install ssc-cli` from PyPI: 0.0.1 in 6 s. Finding: AGENTS.md
+  points apps at `ssc_app.identity` and `@delimitus/ssc-identity`, which are not on PyPI or npm.
 
 ## Release, 2026-10-07 (GA-0)
 
@@ -269,6 +278,7 @@ Run 2026-10-06 with `--cells` for the two proof cells and a bill with no lines. 
 | Left out of pilot-blockers | c4cdb36 and 7e3bdd9 duplicate routing and console sign-in already on mvp-merge. 04521a0 (revoke `CONNECT` on `postgres` from `PUBLIC`) goes against the SSC-040 acceptance |
 | Released 2026-10-08 after T9 | control `sha256:3b426923…` built from 0bf78b3 (f5b3937, f5b53bd, 784ba71) on ssc-api, ssc-auth (new image and env vars, revision 00004) and ssc-worker. Migration head stays 0033, so no migration ran. Worker back to 1 instance and pstream back to instance billing. 3e8d07a's worker mail settings went out in the same apply. b32c084 is CLI only (ssc-cli 0.0.1 on PyPI). cbb821f is a decision. c0aeb18 (data gateway) waits for the cell 2 datagw image (GA-5) |
 | Released 2026-10-08, GA-5 platform | control `sha256:69cb999f…` built from 997d5cc on ssc-api (rev 00007), ssc-auth (rev 00005), ssc-worker (1 instance) and the migrate job; console `sha256:695149fc…`. Migration 0034 ran (ssc-control-migrate-zzpq4, exit 0). Carries round-2's GA-5 code (c26feae) and 997d5cc: a deploy moves traffic before its health check, because Cloud Run starts a revision only then. Without it every second deploy failed HEALTH_CHECK_FAILED (ga1pg01 R3, cell 2). Cell 2's apply (agent 067167fe…, datagw 3dea8b28…) follows |
+| Released 2026-10-08, first-deploy fix | control `sha256:6f4d1a94…` built from a134158 on ssc-api (rev 00008-tjb) and ssc-worker only (targeted apply, 49 s). ssc-auth and the migrate job stay on 69cb999f until the next full platform apply. No migration. Fixes 997d5cc's regression: a new service's first deploy moved traffic while Cloud Run was still creating it, and the allowedIngress org policy refused the PATCH (ga1lovable R1, RUNTIME_ERROR). Traffic now stays put until go-live and is then pinned |
 | Local gates on c0aeb18 | All lint-job gates, `gates/run_gates.py`, root, infra and proofrun pytest, node helpers, console typecheck, test and build pass. Playwright suites not run locally |
 
 ## Settled here
