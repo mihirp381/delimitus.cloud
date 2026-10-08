@@ -541,7 +541,9 @@ def test_the_commands_validate_their_arguments(capsys: pytest.CaptureFixture[str
         with pytest.raises(SystemExit):
             parser.parse_args(_create_argv(label))
     assert parser.parse_args(_create_argv(LABEL)).cell_label == LABEL
-    assert parser.parse_args(_create_argv(None)).cell_label is None
+    with pytest.raises(SystemExit):  # the label is required: no org without an applied cell
+        parser.parse_args(_create_argv(None))
+    assert "--cell-label" in capsys.readouterr().err
     capsys.readouterr()
 
 
