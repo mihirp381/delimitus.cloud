@@ -74,6 +74,8 @@ class Clock:
                 await asyncio.sleep(0)
             if task.done():
                 return task.result()
+            while self._sleepers and self._sleepers[0][2].done():
+                heapq.heappop(self._sleepers)  # a cancelled sleep: nothing wakes, time stays
             if self._sleepers:
                 when, _, waiting = heapq.heappop(self._sleepers)
                 self.now = max(self.now, when)
