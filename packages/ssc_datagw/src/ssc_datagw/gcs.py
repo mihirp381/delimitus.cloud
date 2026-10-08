@@ -16,6 +16,9 @@ store, no redirect, the warm-up retry and the 32 MiB cap. A list follows ``nextP
 it holds ``max_rows`` plus one objects; the whole read, every page included, ends at
 ``timeout_ms``.
 
+A description (:meth:`GcsConnector.describe`, GA-5.8) lists the first 500 objects under the
+prefix and names each readable one a table, by its full name, without columns.
+
 The key, the email, the JSON and each JWT are never in a repr, an error or a log line: every
 error names a status and Google's reason, never the body, a header or the URL.
 """
@@ -35,15 +38,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ssc_datagw.bigquery import REASON
 from ssc_datagw.connectors import (
+    DESCRIBE_TAG,
+    MAX_TABLES,
     Column,
     Query,
     QueryFailedError,
     QueryRefusedError,
+    Table,
     UpstreamUnavailableError,
 )
 from ssc_datagw.google import ServiceAccount, signer
 from ssc_datagw.rest import get
-from ssc_datagw.s3 import LIST_COLUMNS, object_table, s3_request, user_agent
+from ssc_datagw.s3 import LIST_COLUMNS, object_table, readable, s3_request, user_agent
 from ssc_datagw.tls import tls_context
 from ssc_datagw.warmup import CONNECT_SECONDS, Warmup
 
@@ -270,3 +276,29 @@ class GcsConnector:
         finally:
             await client.aclose()
         yield _Cursor(columns, rows)
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """The first :data:`~ssc_datagw.connectors.MAX_TABLES` objects under the prefix, each
+        readable one a table without columns; ``schemas`` does not apply."""
+        del schemas
+        query = Query(
+            sql="", params=(), max_rows=MAX_TABLES - 1, timeout_ms=timeout_ms, tag=DESCRIBE_TAG
+        )
+        headers = {
+            "User-Agent": user_agent(DESCRIBE_TAG),
+            "Authorization": f"Bearer {self._signer.token(AUDIENCE)}",
+        }
+        seconds = max(1, timeout_ms) / 1000
+        client = httpx2.AsyncClient(
+            verify=self._tls,
+            transport=self._transport,
+            follow_redirects=False,
+            trust_env=False,
+        )
+        try:
+            async with asyncio.timeout(seconds):
+                rows = await self._list(client, headers, self._target.prefix, query, seconds)
+        finally:
+            await client.aclose()
+        names = [cast("str", row[0]) for row in rows]
+        return [Table(name, []) for name in names if readable(name)]

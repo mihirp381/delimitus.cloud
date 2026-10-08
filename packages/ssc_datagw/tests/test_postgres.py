@@ -319,6 +319,7 @@ def subject(db: Db) -> Subject:
         bad="SELECT who FROM secret.payroll",
         slow="SELECT pg_sleep(30)",
         params=("SELECT id, note FROM reporting.orders WHERE id = $1", (3,), [3, "note 3"]),
+        table="reporting.orders",
     )
 
 
@@ -332,6 +333,62 @@ async def test_the_postgres_connector_conforms(
 async def test_a_read_of_fewer_rows_than_the_cap_returns_them_all(db: Db) -> None:
     _, rows = await read(PostgresConnector(db.target()), ask("SELECT id FROM reporting.big_orders"))
     assert len(rows) == 10
+
+
+def _refuse_everything(_: str) -> str:
+    return "refused"
+
+
+async def test_a_description_names_what_the_role_reads_typed_as_a_read_types_it(db: Db) -> None:
+    connector = PostgresConnector(db.target(), classify=_refuse_everything)
+    tables = {t.name: t for t in await connector.describe(schemas=None, timeout_ms=5_000)}
+    assert sorted(tables) == ["reporting.big_orders", "reporting.orders"]
+    columns, _ = await read(
+        PostgresConnector(db.target()), ask("SELECT * FROM reporting.orders", max_rows=1)
+    )
+    described = tables["reporting.orders"].columns
+    assert [(c.name, c.type) for c in described] == [(c.name, c.type) for c in columns]
+    assert [c.db_type for c in described][:3] == ["int4", "numeric", "date"]
+    assert described[7].db_type == "_text"
+
+
+async def test_a_description_keeps_to_the_schemas_asked(db: Db) -> None:
+    connector = PostgresConnector(db.target())
+    asked = await connector.describe(schemas=["reporting"], timeout_ms=5_000)
+    assert [t.name for t in asked] == ["reporting.big_orders", "reporting.orders"]
+    assert await connector.describe(schemas=["secret", "public"], timeout_ms=5_000) == []
+
+
+async def test_a_description_stops_at_500_tables_of_500_columns(db: Db) -> None:
+    code, out = db.psql(
+        "-c",
+        "CREATE SCHEMA wide; "
+        "DO $$ BEGIN FOR i IN 1..502 LOOP "
+        "EXECUTE format('CREATE TABLE wide.t%s (x int)', lpad(i::text, 3, '0')); END LOOP; "
+        "EXECUTE 'CREATE TABLE wide.t000 (' || (SELECT string_agg('c' || i || ' int', ', ') "
+        "FROM generate_series(1, 501) AS i) || ')'; END $$;",
+    )
+    assert code == 0, out
+    wide = "fake-" + "wide-" + "password"
+    code, out = db.setup("role=ssc_wide", "schemas=wide", f"password={wide}")
+    assert code == 0, out
+    connector = PostgresConnector(db.target(user="ssc_wide", password=wide))
+    tables = await connector.describe(schemas=None, timeout_ms=10_000)
+    assert len(tables) == 500
+    assert (tables[0].name, len(tables[0].columns)) == ("wide.t000", 500)
+    assert tables[0].columns[-1].name == "c500"
+    assert tables[-1].name == "wide.t499"
+
+
+async def test_a_description_past_its_timeout_times_out(db: Db) -> None:
+    with pytest.raises(TimeoutError):
+        await PostgresConnector(db.target()).describe(schemas=None, timeout_ms=1)
+
+
+async def test_a_description_runs_the_session_checks(db: Db) -> None:
+    connector = PostgresConnector(db.target(user=SUPER, password=SUPER_PASSWORD))
+    with pytest.raises(UpstreamUnavailableError, match="the role is a superuser"):
+        await connector.describe(schemas=None, timeout_ms=5_000)
 
 
 async def test_string_parameters_bind_to_dates_uuids_and_numbers(db: Db) -> None:

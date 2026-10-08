@@ -19,7 +19,7 @@ from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from ssc_contracts.identity import IDENTITY_ALG, IDENTITY_TYP
 from ssc_contracts.snapshot import FORMAT_V1
-from ssc_datagw.connectors import Column, Query
+from ssc_datagw.connectors import Column, Query, Table
 from ssc_datagw.settings import Settings
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.canonical import canonical_bytes
@@ -75,6 +75,10 @@ ENV = {
     "SSC_IDENTITY_JWKS": json.dumps(NOTE_JWKS),
     "SSC_APPS_DOMAIN": DOMAIN,
 }
+
+
+AGENT = f"ssc-cell-agent@{PROJECT}.iam.gserviceaccount.com"
+"""The cell agent's service account, which may describe a connection for an environment."""
 
 
 def account(env_id: str, project: str = PROJECT) -> str:
@@ -199,11 +203,13 @@ async def publish(blobs: FsBlobStore, version: int = 1, **changes: Any) -> None:
 
 
 COLUMNS = (Column("id", "integer", "int4"), Column("amount", "decimal", "numeric"))
+TABLES = (Table("public.sales", COLUMNS), Table("public.empty", ()))
 
 
 @dataclass
 class FakeConnector:
-    """Yields ``rows``; with ``hold`` set, waits on it before the first row, as a slow query."""
+    """Yields ``rows`` and describes ``tables``; with ``hold`` set, waits on it before the first
+    row or the description, as a slow query. ``described`` is each description's ``timeout_ms``."""
 
     rows: Sequence[Sequence[object]] = ()
     error: Exception | None = None
@@ -213,6 +219,8 @@ class FakeConnector:
     started: asyncio.Event = field(default_factory=asyncio.Event)
     cancelled: int = 0
     closed: int = 0
+    tables: Sequence[Table] = TABLES
+    described: list[int] = field(default_factory=list[int])
 
     async def _rows(self) -> AsyncIterator[Sequence[object]]:
         if self.hold is not None:
@@ -223,6 +231,19 @@ class FakeConnector:
                 raise
         for row in self.rows:
             yield row
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        assert schemas is None, "the gateway describes every schema the credential reads"
+        self.described.append(timeout_ms)
+        if self.hold is not None:
+            try:
+                await self.hold.wait()
+            except asyncio.CancelledError:
+                self.cancelled += 1
+                raise
+        if self.error is not None:
+            raise self.error
+        return list(self.tables)
 
     @asynccontextmanager
     async def open(self, query: Query) -> AsyncGenerator[FakeCursor]:

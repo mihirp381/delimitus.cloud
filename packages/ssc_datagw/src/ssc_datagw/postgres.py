@@ -17,6 +17,10 @@ backend pid that differs from the one the server announced, or startup settings 
 land, mean a pooler sits in between and would break the session guarantees; a role that is a
 superuser or may create objects or temporary tables is not the role the setup script makes.
 
+A description (:meth:`PostgresConnector.describe`, GA-5.8) is one fixed statement of ours on
+``information_schema.columns``, run as a read is from step 2 on: the classifier is for the
+app's text, the session checks are for every statement.
+
 When the gateway cancels a read (its kill watch or its deadline), the connector ends the backend
 with ``pg_terminate_backend`` from a second connection as the same role, which may end only its
 own sessions, so a statement that ignores the cancel does not run on.
@@ -44,12 +48,17 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from ssc_datagw.classify import refusal
 from ssc_datagw.connectors import (
+    DESCRIBE_TAG,
+    MAX_COLUMNS,
+    MAX_TABLES,
     Column,
     Query,
     QueryFailedError,
     QueryRefusedError,
     Scalar,
+    Table,
     UpstreamUnavailableError,
+    grouped,
 )
 from ssc_datagw.tls import tls_context
 from ssc_datagw.warmup import (
@@ -113,6 +122,22 @@ PORTABLE: Final = {
 }
 """Portable column types; any other type is ``string`` (an array ``array``)."""
 _JSON: Final = frozenset({"json", "jsonb"})
+DESCRIBE: Final = f"""
+SELECT table_schema, table_name, column_name, data_type, udt_name
+FROM (SELECT c.table_schema, c.table_name, c.column_name, c.data_type, c.udt_name,
+             dense_rank() OVER (ORDER BY c.table_schema, c.table_name) AS t,
+             row_number() OVER (PARTITION BY c.table_schema, c.table_name
+                                ORDER BY c.ordinal_position) AS n
+      FROM information_schema.columns c
+      WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
+        AND c.table_schema NOT LIKE 'pg\\_toast%' AND c.table_schema NOT LIKE 'pg\\_temp\\_%'
+        AND ($1::jsonb IS NULL
+             OR c.table_schema IN (SELECT pg_catalog.jsonb_array_elements_text($1::jsonb)))) d
+WHERE t <= {MAX_TABLES} AND n <= {MAX_COLUMNS}
+ORDER BY t, n
+"""  # noqa: S608  (built from constants only)
+"""Every column the role may read, outside the system schemas and in ``$1`` (a JSON list of
+schema names, or null for every schema), at most 500 tables of 500 columns."""
 _CONNECT: Final = cast("Callable[..., Awaitable[Any]]", asyncpg.connect)  # pyright: ignore[reportUnknownMemberType]
 
 
@@ -317,6 +342,32 @@ class PostgresConnector:
         reason = self._classify(query.sql)
         if reason is not None:
             raise QueryRefusedError(reason)
+        async with self._read(query) as cursor:
+            yield cursor
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """``information_schema.columns`` through :meth:`_read`: ``schema.table`` names."""
+        query = Query(
+            sql=DESCRIBE,
+            params=(json.dumps(list(schemas)) if schemas else None,),
+            max_rows=MAX_TABLES * MAX_COLUMNS,
+            timeout_ms=timeout_ms,
+            tag=DESCRIBE_TAG,
+        )
+        async with asyncio.timeout(max(1, timeout_ms) / 1000):
+            async with self._read(query) as cursor:
+                rows = [row async for row in cursor.rows()]
+        return grouped(
+            (
+                f"{schema}.{table}",
+                Column(str(name), portable(str(udt), "array" if kind == "ARRAY" else ""), str(udt)),
+            )
+            for schema, table, name, kind, udt in rows
+        )
+
+    @asynccontextmanager
+    async def _read(self, query: Query) -> AsyncGenerator[_Cursor]:
+        """One statement in a checked read-only session: steps 2 to 4 of the module's order."""
         conn = await self._connect()
         pid: int | None = None
         try:

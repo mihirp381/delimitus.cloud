@@ -15,6 +15,9 @@ Without ``endpoint`` the bucket is addressed virtual-hosted on AWS (path-style w
 a ``.``, which the wildcard certificate does not cover); with it, path-style on that S3-compatible
 store.
 
+A description (:meth:`S3Connector.describe`, GA-5.8) lists the first 500 objects under the
+prefix and names each readable one a table, by its full key, without columns.
+
 The secret key is a ``SecretStr``; it, the signing key and each ``Authorization`` value are never
 in a repr, an error or a log line: every error names a status and a known S3 error code, never a
 body, a header or the URL.
@@ -40,11 +43,14 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from ssc_datagw.connectors import (
+    DESCRIBE_TAG,
+    MAX_TABLES,
     Column,
     JsonValue,
     Query,
     QueryFailedError,
     QueryRefusedError,
+    Table,
     UpstreamUnavailableError,
 )
 from ssc_datagw.gsheets import Cell, table
@@ -230,6 +236,11 @@ def s3_request(sql: str, prefix: str) -> tuple[Literal["list", "get"], str]:
 def _extension(key: str) -> str:
     name = key.rpartition("/")[2]
     return name.rpartition(".")[2].lower() if "." in name else ""
+
+
+def readable(key: str) -> bool:
+    """Whether ``get`` reads the object: a ``.csv``, ``.json``, ``.jsonl`` or ``.ndjson``."""
+    return _extension(key) in EXTENSIONS
 
 
 def user_agent(tag: str) -> str:
@@ -513,3 +524,25 @@ class S3Connector:
         finally:
             await client.aclose()
         yield _Cursor(columns, rows)
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """The first :data:`~ssc_datagw.connectors.MAX_TABLES` objects under the prefix, each
+        readable one a table without columns; ``schemas`` does not apply."""
+        del schemas
+        query = Query(
+            sql="", params=(), max_rows=MAX_TABLES - 1, timeout_ms=timeout_ms, tag=DESCRIBE_TAG
+        )
+        seconds = max(1, timeout_ms) / 1000
+        client = httpx2.AsyncClient(
+            verify=self._tls,
+            transport=self._transport,
+            follow_redirects=False,
+            trust_env=False,
+        )
+        try:
+            async with asyncio.timeout(seconds):
+                rows = await self._list(client, self._target.prefix, query, seconds)
+        finally:
+            await client.aclose()
+        keys = [cast("str", row[0]) for row in rows]
+        return [Table(key, []) for key in keys if readable(key)]

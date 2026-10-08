@@ -333,6 +333,7 @@ def subject(db: Db) -> Subject:
         bad="SELECT who FROM secret.payroll",
         slow=SLOW,
         params=("SELECT id, note FROM reporting.orders WHERE id = ?", (3,), [3, "note 3"]),
+        table="reporting.orders",
     )
 
 
@@ -342,6 +343,58 @@ async def test_the_sqlserver_connector_conforms(
 ) -> None:
     await conform(check, subject(db))
     assert await until(lambda: gone(db)) is True
+
+
+def _refuse_everything(_: str) -> str:
+    return "refused"
+
+
+async def test_a_description_names_what_the_login_reads_typed_as_a_read_types_it(db: Db) -> None:
+    connector = SqlServerConnector(db.target(), classify=_refuse_everything)
+    tables = {t.name: t for t in await connector.describe(schemas=None, timeout_ms=10_000)}
+    assert sorted(tables) == ["reporting.everything", "reporting.n", "reporting.orders"]
+    columns, _ = await read(
+        SqlServerConnector(db.target()), ask("SELECT * FROM reporting.everything")
+    )
+    described = tables["reporting.everything"].columns
+    assert [(c.name, c.type) for c in described] == [(c.name, c.type) for c in columns]
+    assert [c.db_type for c in described][11:13] == ["char", "varchar"]
+
+
+async def test_a_description_keeps_to_the_schemas_asked(db: Db) -> None:
+    connector = SqlServerConnector(db.target())
+    asked = await connector.describe(schemas=["reporting"], timeout_ms=10_000)
+    assert [t.name for t in asked] == ["reporting.everything", "reporting.n", "reporting.orders"]
+    assert await connector.describe(schemas=["secret", "dbo"], timeout_ms=10_000) == []
+
+
+async def test_a_description_stops_at_500_tables_of_500_columns(db: Db) -> None:
+    code, out = db.sqlcmd("-d", "reporting", "-Q", "CREATE SCHEMA wide")
+    assert code == 0, out
+    wide = ", ".join(f"c{i} INT" for i in range(1, 502))
+    narrow = " ".join(f"CREATE TABLE wide.t{i:03} (x INT);" for i in range(1, 503))
+    code, out = db.sqlcmd("-d", "reporting", "-Q", f"CREATE TABLE wide.t000 ({wide}); {narrow}")
+    assert code == 0, out
+    password = "Fake-" + "wd-" + "Pw-1234"
+    code, out = db.setup(login="ssc_wide", schemas="wide", password=password)
+    assert code == 0, out
+    connector = SqlServerConnector(db.target(user="ssc_wide", password=password))
+    tables = await connector.describe(schemas=None, timeout_ms=20_000)
+    assert len(tables) == 500
+    assert (tables[0].name, len(tables[0].columns)) == ("wide.t000", 500)
+    assert tables[0].columns[-1].name == "c500"
+    assert tables[-1].name == "wide.t499"
+
+
+async def test_a_description_past_its_timeout_times_out(db: Db) -> None:
+    with pytest.raises(TimeoutError):
+        await SqlServerConnector(db.target()).describe(schemas=None, timeout_ms=1)
+
+
+async def test_a_description_runs_the_session_checks(db: Db) -> None:
+    connector = SqlServerConnector(db.target(user="sa", password=SA_PASSWORD))
+    with pytest.raises(UpstreamUnavailableError, match="the login is a sysadmin"):
+        await connector.describe(schemas=None, timeout_ms=10_000)
 
 
 async def test_a_missing_table_is_a_query_failure(db: Db) -> None:

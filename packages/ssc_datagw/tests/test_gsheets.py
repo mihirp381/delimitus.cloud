@@ -7,9 +7,10 @@ against the test service account's public key (RS256, ``kid``, ``iss`` = ``sub``
 ``aud`` exact, at most an hour) and answers Google-shaped errors otherwise; an unknown tab is
 400, a spreadsheet not shared with the account 403, an unknown one 404. Its tabs: 50 orders,
 one whose read sleeps 20 s, one with an empty, a duplicate and a ragged header, an empty one and
-a header alone. The service account's key is made here, never read from disk. The connector
-suite runs against it; the range grammar, the target model and the table rules are unit-tested
-without it."""
+a header alone. For a description it answers the spreadsheet's tab titles and
+``values:batchGet``, the latter without the slow tab's sleep. The service account's key is made
+here, never read from disk. The connector suite runs against it; the range grammar, the target
+model and the table rules are unit-tested without it."""
 
 import asyncio
 import json
@@ -45,6 +46,7 @@ from ssc_datagw.connectors import (
 )
 from ssc_datagw.gsheets import (
     AUDIENCE,
+    DESCRIBE_CHUNK,
     GsheetsConnector,
     GsheetsTarget,
     a1_range,
@@ -126,6 +128,9 @@ class Seen:
     headers: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     claims: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     ranges: list[str] = field(default_factory=list[str])
+    titles: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    batches: list[list[str]] = field(default_factory=list[list[str]])
+    slow_titles: bool = False
 
 
 def _error(code: int, status: str, message: str) -> JSONResponse:
@@ -195,6 +200,39 @@ def app(account: Account, seen: Seen) -> FastAPI:
         seen.headers.append(header)
         seen.claims.append(claims)
         return True
+
+    def refused(spreadsheet: str, request: Request) -> JSONResponse | None:
+        if not verified(request):
+            return _error(401, "UNAUTHENTICATED", "Request had invalid authentication credentials.")
+        if spreadsheet == NOT_SHARED:
+            return _error(403, "PERMISSION_DENIED", "The caller does not have permission")
+        if spreadsheet != SPREADSHEET:
+            return _error(404, "NOT_FOUND", "Requested entity was not found.")
+        return None
+
+    @api.get("/v4/spreadsheets/{spreadsheet}")
+    async def spreadsheet(spreadsheet: str, request: Request) -> Any:
+        if (error := refused(spreadsheet, request)) is not None:
+            return error
+        seen.titles.append(dict(request.query_params))
+        if seen.slow_titles:
+            await asyncio.sleep(20)
+        return {"sheets": [{"properties": {"title": title}} for title in TABS]}
+
+    @api.get("/v4/spreadsheets/{spreadsheet}/values:batchGet")
+    async def batch(spreadsheet: str, request: Request) -> Any:
+        if (error := refused(spreadsheet, request)) is not None:
+            return error
+        ranges = request.query_params.getlist("ranges")
+        seen.batches.append(ranges)
+        found: list[dict[str, Any]] = []
+        for rng in ranges:
+            tab, cells = _split(rng)
+            if tab not in TABS:
+                return _error(400, "INVALID_ARGUMENT", f"Unable to parse range: {rng}")
+            rows = _cut(TABS[tab], cells)
+            found.append({"range": rng} | ({"values": rows} if rows else {}))
+        return {"spreadsheetId": spreadsheet, "valueRanges": found}
 
     @api.get("/v4/spreadsheets/{spreadsheet}/values/{rng:path}")
     async def values(spreadsheet: str, rng: str, request: Request) -> Any:
@@ -310,6 +348,7 @@ def subject(s: Source) -> Subject:
         bad="Nope!A1:B2",
         slow="Slow!A1:B",
         params=None,
+        table="Orders",
     )
 
 
@@ -318,6 +357,58 @@ async def test_the_gsheets_connector_conforms(
     source: Source, check: Callable[[Subject], Awaitable[None]]
 ) -> None:
     await conform(check, subject(source))
+
+
+async def test_a_description_names_each_tab_typed_as_a_read_types_it(source: Source) -> None:
+    tables = await source.connector().describe(schemas=["x"], timeout_ms=5_000)
+    assert [t.name for t in tables] == list(TABS)
+    for tab in ("Orders", "Odd", "Empty", "Header"):
+        columns, _ = await read(source.connector(), ask(tab))
+        assert next(t for t in tables if t.name == tab).columns == columns, tab
+    assert source.seen.titles == [{"fields": "sheets.properties.title"}]
+    assert source.seen.batches == [[f"'{tab}'!1:{1 + TYPE_SAMPLE}" for tab in TABS]]
+    assert len(source.seen.claims) >= 2, "the fake verified each JWT"
+
+
+async def test_a_description_of_a_connection_with_a_sheet_names_that_sheet_alone(
+    source: Source,
+) -> None:
+    (table,) = await source.connector(sheet="Odd").describe(schemas=None, timeout_ms=5_000)
+    assert (table.name, [c.name for c in table.columns][:3]) == ("Odd", ["id", "col2", "id_2"])
+    assert source.seen.titles == []
+    assert source.seen.batches == [["'Odd'!1:101"]]
+
+
+async def test_a_description_stops_at_500_tabs_of_500_columns_in_chunks(
+    source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        f"{__name__}.TABS",
+        {"Wide": [[f"c{i}" for i in range(1, 502)]]} | {f"T{i:03}": [["a"]] for i in range(1, 503)},
+    )
+    tables = await source.connector().describe(schemas=None, timeout_ms=10_000)
+    assert len(tables) == 500
+    assert (tables[0].name, len(tables[0].columns)) == ("Wide", 500)
+    assert tables[-1].name == "T499"
+    assert [len(b) for b in source.seen.batches] == [DESCRIBE_CHUNK] * 10
+
+
+async def test_a_description_past_its_timeout_times_out(source: Source) -> None:
+    source.seen.slow_titles = True
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await source.connector().describe(schemas=None, timeout_ms=500)
+    assert time.monotonic() - started < 5
+
+
+async def test_a_description_of_a_spreadsheet_not_shared_is_42501_without_the_credential(
+    source: Source,
+) -> None:
+    with pytest.raises(QueryFailedError) as denied:
+        await source.connector(spreadsheet_id=NOT_SHARED).describe(schemas=None, timeout_ms=5_000)
+    assert denied.value.sqlstate == "42501"
+    shown = "".join(traceback.format_exception(denied.value))
+    assert all(secret not in shown for secret in source.secrets())
 
 
 async def test_a_read_types_columns_by_cell_type(source: Source) -> None:

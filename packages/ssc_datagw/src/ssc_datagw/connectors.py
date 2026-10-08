@@ -1,6 +1,10 @@
 """What the data gateway asks of a database driver (SSC-050). The Postgres connector is
 :mod:`ssc_datagw.postgres` (SSC-051).
 
+A connector also describes its source (GA-5.8): :meth:`Connector.describe` answers the tables
+the credential may read and their columns, at most :data:`MAX_TABLES` tables of at most
+:data:`MAX_COLUMNS` columns, typed as a read types them.
+
 A connector opens one read for a :class:`Query` and yields its rows; the gateway counts rows and
 bytes, stops reading at a cap, and leaves the context, which ends the read on the database. The
 gateway runs the read under its own deadline and cancels it when the kill switch fires, so a
@@ -10,7 +14,7 @@ connector must let ``CancelledError`` through and stop the statement when it doe
 import base64
 import json
 import math
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -41,6 +45,11 @@ PORTABLE_TYPES: Final = frozenset(
 )
 """Every ``Column.type`` a connector may answer (``docs/contracts/data-gateway.md``, Response).
 A source type that fits none is ``string``."""
+MAX_TABLES: Final = 500
+MAX_COLUMNS: Final = 500
+"""What :meth:`Connector.describe` answers at most: tables, and columns of each table."""
+DESCRIBE_TAG: Final = "ssc:describe"
+"""The tag a description's statement carries, as a read carries its query's."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +60,15 @@ class Column:
     name: str
     type: str
     db_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class Table:
+    """One table (or view, sheet, object) a connector describes. ``name`` is how a read names
+    it; ``columns`` are typed as a read types them, none when only a read can tell."""
+
+    name: str
+    columns: Sequence[Column]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -75,6 +93,27 @@ class Cursor(Protocol):
 
 class Connector(Protocol):
     def open(self, query: Query) -> AbstractAsyncContextManager[Cursor]: ...
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> Sequence[Table]:
+        """The tables the credential may read, in ``schemas`` when the kind has schemas and
+        they are given (``None`` or empty: every one). The whole call ends at ``timeout_ms``
+        with ``TimeoutError``; a cancel goes through; the source's errors are the read's."""
+        ...
+
+
+def grouped(rows: Iterable[tuple[str, Column]]) -> list[Table]:
+    """``(table, column)`` pairs, a table's columns together and in order, as tables: at most
+    :data:`MAX_TABLES` of at most :data:`MAX_COLUMNS` columns each."""
+    tables: dict[str, list[Column]] = {}
+    for name, column in rows:
+        columns = tables.get(name)
+        if columns is None:
+            if len(tables) >= MAX_TABLES:
+                break
+            columns = tables[name] = []
+        if len(columns) < MAX_COLUMNS:
+            columns.append(column)
+    return [Table(name, columns) for name, columns in tables.items()]
 
 
 class QueryRefusedError(Exception):

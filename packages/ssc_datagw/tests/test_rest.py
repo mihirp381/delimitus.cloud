@@ -204,6 +204,7 @@ def subject(s: Source) -> Subject:
         bad="/secret",
         slow="/slow",
         params=None,
+        describes=False,
     )
 
 
@@ -296,6 +297,11 @@ async def test_a_read_yields_max_rows_plus_one(source: Source) -> None:
     for cap, expected in ((0, 1), (5, 6), (49, 50), (50, 50), (5_000, 50)):
         _, rows = await read(source.connector(), ask("/orders", max_rows=cap))
         assert len(rows) == expected, cap
+
+
+async def test_a_description_is_empty_and_asks_the_source_nothing(source: Source) -> None:
+    assert await source.connector().describe(schemas=["x"], timeout_ms=1_000) == []
+    assert source.seen.tags == []
 
 
 async def test_the_tag_arrives_as_a_header(source: Source) -> None:

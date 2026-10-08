@@ -14,6 +14,10 @@ by shutting that socket down: SQL Server ends the request of a client that went 
 seconds, ``tests/test_sqlserver.py``). ``KILL`` would need ``ALTER ANY CONNECTION``, a server-wide
 right to end anyone's session, which the login does not get.
 
+A description (:meth:`SqlServerConnector.describe`, GA-5.8) is one fixed statement of ours on
+``INFORMATION_SCHEMA.COLUMNS`` of the connection's database, run in the same checked session as
+a read, without the classifier, which is for the app's text.
+
 TLS is ``verify-ca`` with the pasted CA, which is required: the chain must lead to it and the
 name is not checked, the rule of :mod:`ssc_datagw.tls`. pytds speaks TLS 1.2 only, and refuses a
 server that offers no encryption.
@@ -41,12 +45,17 @@ from sqlglot.tokens import TokenType
 
 from ssc_datagw.classify import tsql_refusal
 from ssc_datagw.connectors import (
+    DESCRIBE_TAG,
+    MAX_COLUMNS,
+    MAX_TABLES,
     Column,
     Query,
     QueryFailedError,
     QueryRefusedError,
     Scalar,
+    Table,
     UpstreamUnavailableError,
+    grouped,
 )
 from ssc_datagw.tls import tls_context
 from ssc_datagw.warmup import CONNECT_SECONDS, Warmup, connect_with_warmup
@@ -145,6 +154,32 @@ PORTABLE: Final = {
 """Portable column types by the type id pytds reports. pytds reports ``char`` as ``varchar``,
 ``nchar`` as ``nvarchar``, ``binary`` as ``varbinary`` and ``numeric`` as ``decimal``, and
 ``nvarchar(max)`` with the id of ``ntext`` (told apart by its serializer)."""
+BY_NAME: Final = {
+    **{db_type: portable for portable, db_type in PORTABLE.values()},
+    "char": "string",
+    "nchar": "string",
+    "binary": "bytes",
+    "timestamp": "bytes",
+    "rowversion": "bytes",
+    "hierarchyid": "bytes",
+    "geography": "bytes",
+    "geometry": "bytes",
+}
+"""Portable type by ``INFORMATION_SCHEMA``'s ``DATA_TYPE``: as a read types the column (a CLR
+type, ``rowversion``, arrive as bytes)."""
+DESCRIBE: Final = """
+SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE
+FROM (SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE,
+             DENSE_RANK() OVER (ORDER BY TABLE_SCHEMA, TABLE_NAME) AS t,
+             ROW_NUMBER() OVER (PARTITION BY TABLE_SCHEMA, TABLE_NAME
+                                ORDER BY ORDINAL_POSITION) AS n
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_CATALOG = DB_NAME() AND TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA'){only}) d
+WHERE t <= {tables} AND n <= {columns}
+ORDER BY t, n
+"""
+"""Every column the login may see in the connection's database, outside the system schemas;
+``{only}`` limits it to the schemas given, one ``?`` each."""
 _UDT: Final = 0
 _CONNECT: Final = cast("Callable[..., Any]", pytds.connect)  # pyright: ignore[reportUnknownMemberType]
 _DIAL: Final = cast("Callable[..., socket.socket]", socket.create_connection)
@@ -261,6 +296,12 @@ def tagged(sql: str, tag: str) -> str:
     while (shorter := clean.replace("*/", "").replace("/*", "")) != clean:
         clean = shorter
     return f"/* {clean[:TAG_CHARS].replace('%', '%%')} */ {sql}"
+
+
+def describe_sql(schemas: int) -> str:
+    """:data:`DESCRIBE` with ``schemas`` placeholders for the schemas it keeps to."""
+    only = f" AND TABLE_SCHEMA IN ({', '.join('?' * schemas)})" if schemas else ""
+    return DESCRIBE.format(only=only, tables=MAX_TABLES, columns=MAX_COLUMNS)
 
 
 class _Line:
@@ -475,6 +516,31 @@ class SqlServerConnector:
         reason = self._classify(query.sql)
         if reason is not None:
             raise QueryRefusedError(reason)
+        async with self._read(query) as cursor:
+            yield cursor
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """``INFORMATION_SCHEMA.COLUMNS`` through :meth:`_read`, in ``schemas`` when given:
+        ``schema.table`` names."""
+        kept = tuple(schemas or ())
+        query = Query(
+            sql=describe_sql(len(kept)),
+            params=kept,
+            max_rows=MAX_TABLES * MAX_COLUMNS,
+            timeout_ms=timeout_ms,
+            tag=DESCRIBE_TAG,
+        )
+        async with asyncio.timeout(max(1, timeout_ms) / 1000):
+            async with self._read(query) as cursor:
+                rows = [row async for row in cursor.rows()]
+        return grouped(
+            (f"{schema}.{table}", Column(str(name), BY_NAME.get(str(kind), "string"), str(kind)))
+            for schema, table, name, kind in rows
+        )
+
+    @asynccontextmanager
+    async def _read(self, query: Query) -> AsyncGenerator[_Cursor]:
+        """One statement, bound and tagged, in a checked session."""
         timeout_ms = max(1, query.timeout_ms)
         sql, params = bind(query.sql, query.params)
         sql = tagged(sql, query.tag)
@@ -510,6 +576,7 @@ __all__ = [
     "Readback",
     "bind",
     "column",
+    "describe_sql",
     "placeholders",
     "session_problem",
     "tagged",

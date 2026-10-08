@@ -47,13 +47,18 @@ from sqlglot.tokens import TokenType
 
 from ssc_datagw.classify import bigquery_refusal
 from ssc_datagw.connectors import (
+    DESCRIBE_TAG,
+    MAX_COLUMNS,
+    MAX_TABLES,
     Column,
     JsonValue,
     Query,
     QueryFailedError,
     QueryRefusedError,
     Scalar,
+    Table,
     UpstreamUnavailableError,
+    grouped,
 )
 from ssc_datagw.google import ServiceAccount, signer
 from ssc_datagw.rest import USER_AGENT, get
@@ -122,6 +127,17 @@ INTERVAL: Final = re.compile(
 )
 """BigQuery's canonical ``INTERVAL`` text, ``[-]Y-M [-]D [-]H:M:S[.F]``."""
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+DESCRIBE: Final = f"""
+SELECT table_name, column_name, data_type
+FROM (SELECT table_name, column_name, data_type,
+             DENSE_RANK() OVER (ORDER BY table_name) AS t,
+             ROW_NUMBER() OVER (PARTITION BY table_name ORDER BY ordinal_position) AS n
+      FROM `{{project}}.{{dataset}}`.INFORMATION_SCHEMA.COLUMNS)
+WHERE t <= {MAX_TABLES} AND n <= {MAX_COLUMNS}
+ORDER BY t, n
+"""  # noqa: S608  (built from constants and the target's checked names)
+"""Every column of the connection's dataset, at most 500 tables of 500 columns."""
+_PARAMETERS: Final = re.compile(r"\(.*\)$")
 
 
 class BigQueryTarget(BaseModel):
@@ -269,6 +285,18 @@ def schema_fields(raw: object) -> tuple[SchemaField, ...]:
         members = schema_fields(field.get("fields")) if kind == "STRUCT" else ()
         found.append(SchemaField(name, kind, mode.upper(), members))
     return tuple(found)
+
+
+def described(name: str, data_type: str) -> Column:
+    """The portable column for an ``INFORMATION_SCHEMA.COLUMNS`` row, as a read types it: an
+    ``ARRAY<...>`` or ``STRUCT<...>`` is ``json`` (``db_type`` ``ARRAY<...>``, ``STRUCT``), a
+    scalar's parameters (``NUMERIC(10, 2)``) are dropped."""
+    if data_type.startswith("ARRAY<"):
+        return Column(name, "json", data_type)
+    if data_type.startswith("STRUCT<"):
+        return Column(name, "json", "STRUCT")
+    kind = _PARAMETERS.sub("", data_type).strip()
+    return Column(name, PORTABLE.get(kind, "string"), kind)
 
 
 def _timestamp(text: str) -> datetime:
@@ -650,6 +678,28 @@ class BigQueryConnector:
                 f"{len(query.params)} parameters for {count} placeholders", sqlstate="07001"
             )
         query_parameters(query.params)  # a parameter BigQuery cannot take fails before a request
+        columns, rows = await self._run(query)
+        yield _Cursor(columns, rows)
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """The dataset's ``INFORMATION_SCHEMA.COLUMNS`` through :meth:`_run`; ``schemas`` does
+        not apply (the dataset is the connection's). BigQuery bills such a query at least
+        10 MB, so a ``max_bytes_billed`` below that refuses it (53400)."""
+        del schemas
+        t = self._target
+        query = Query(
+            sql=DESCRIBE.format(project=t.project, dataset=t.dataset),
+            params=(),
+            max_rows=MAX_TABLES * MAX_COLUMNS,
+            timeout_ms=timeout_ms,
+            tag=DESCRIBE_TAG,
+        )
+        _, rows = await self._run(query)
+        return grouped((str(table), described(str(name), str(kind))) for table, name, kind in rows)
+
+    async def _run(self, query: Query) -> tuple[list[Column], list[list[object]]]:
+        """Steps 3 and 4 of the module's order, under ``timeout_ms``, the job cancelled past it
+        or when the caller is."""
         headers = {
             "Accept": "application/json",
             "User-Agent": USER_AGENT,
@@ -671,4 +721,4 @@ class BigQueryConnector:
         finally:
             await client.aclose()
         log.info("bigquery read: pages=%s polls=%s bytes=%s", read.pages, read.polls, read.bytes)
-        yield _Cursor(columns, rows)
+        return columns, rows

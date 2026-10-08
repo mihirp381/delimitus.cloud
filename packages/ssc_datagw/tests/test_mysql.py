@@ -251,6 +251,7 @@ def subject(db: Db) -> Subject:
         bad="SELECT who FROM secret.payroll",
         slow=SLOW,
         params=("SELECT id, note FROM reporting.orders WHERE id = ?", (3,), [3, "note 3"]),
+        table="orders",
     )
 
 
@@ -331,6 +332,57 @@ async def test_a_read_returns_typed_columns_and_one_row_past_the_cap(db: Db) -> 
 async def test_a_read_of_fewer_rows_than_the_cap_returns_them_all(db: Db) -> None:
     _, rows = await read(MySqlConnector(db.target()), ask("SELECT id FROM reporting.big_orders"))
     assert len(rows) == 10
+
+
+def _refuse_everything(_: str) -> str:
+    return "refused"
+
+
+async def test_a_description_names_the_databases_tables_typed_as_a_read_types_them(
+    db: Db,
+) -> None:
+    connector = MySqlConnector(db.target(), classify=_refuse_everything)
+    tables = {t.name: t for t in await connector.describe(schemas=["secret"], timeout_ms=5_000)}
+    assert sorted(tables) == ["big_orders", "orders"], "the connection's database alone"
+    columns, _ = await read(
+        MySqlConnector(db.target()), ask("SELECT * FROM reporting.orders", max_rows=1)
+    )
+    described = tables["orders"].columns
+    assert [(c.name, c.type) for c in described] == [(c.name, c.type) for c in columns]
+    assert [c.db_type for c in described][:5] == [
+        "int",
+        "decimal",
+        "date",
+        "timestamp",
+        "tinyint(1)",
+    ]
+
+
+async def test_a_description_stops_at_500_tables_of_500_columns(db: Db) -> None:
+    wide = ", ".join(f"c{i} INT" for i in range(1, 502))
+    narrow = " ".join(f"CREATE TABLE wide.t{i:03} (x INT);" for i in range(1, 503))
+    code, out = db.mysql(f"CREATE DATABASE wide; CREATE TABLE wide.t000 ({wide}); {narrow}")
+    assert code == 0, out
+    password = "fake-" + "wide-" + "password"
+    code, out = db.setup(user="ssc_wide", password=password, schemas="wide")
+    assert code == 0, out
+    target = db.target(user="ssc_wide", password=password).model_copy(update={"database": "wide"})
+    tables = await MySqlConnector(target).describe(schemas=None, timeout_ms=10_000)
+    assert len(tables) == 500
+    assert (tables[0].name, len(tables[0].columns)) == ("t000", 500)
+    assert tables[0].columns[-1].name == "c500"
+    assert tables[-1].name == "t499"
+
+
+async def test_a_description_past_its_timeout_times_out(db: Db) -> None:
+    with pytest.raises(TimeoutError):
+        await MySqlConnector(db.target()).describe(schemas=None, timeout_ms=1)
+
+
+async def test_a_description_runs_the_session_checks(db: Db) -> None:
+    connector = MySqlConnector(db.target(user="root", password=ROOT_PASSWORD))
+    with pytest.raises(UpstreamUnavailableError, match="the user holds a global privilege"):
+        await connector.describe(schemas=None, timeout_ms=5_000)
 
 
 async def test_question_mark_parameters_bind_strings_numbers_booleans_and_null(db: Db) -> None:

@@ -5,6 +5,10 @@ its metadata server for an ID token with the data gateway's URL as audience. Clo
 not what admits it: any service account anywhere can mint a token naming this URL, so the
 gateway checks the signature against Google's keys, the issuer, the audience, a verified email
 and that the email is an app account of this cell's project. The email names the environment.
+
+The cell agent's own account (``SSC_DATAGW_AGENT_ACCOUNT``, GA-5.8) is admitted on the schema
+route alone, where it names the environment it describes for in ``X-SSC-Environment`` and is
+then admitted as that environment's app; anywhere else it is refused as any other account is.
 """
 
 import asyncio
@@ -26,6 +30,8 @@ REFETCH_SECONDS: Final = 30.0
 tokens with made-up key ids cannot turn the gateway into a fetch loop."""
 LEEWAY_SECONDS: Final = 5
 ALGORITHM: Final = "RS256"
+ENVIRONMENT: Final = re.compile(r"env_[a-z0-9]{20}")
+"""An ``X-SSC-Environment`` value: the id of the environment the cell agent describes for."""
 
 
 class WorkloadRefusedError(Exception):
@@ -40,6 +46,8 @@ class WorkloadKeysUnavailableError(Exception):
 class Workload:
     env_id: str
     account: str
+    agent: bool = False
+    """The cell agent, admitted for ``env_id`` by its ``X-SSC-Environment`` header."""
 
 
 class GoogleWorkloads:
@@ -50,11 +58,13 @@ class GoogleWorkloads:
         *,
         audience: str,
         project_id: str,
+        agent_account: str | None = None,
         transport: httpx2.AsyncBaseTransport | None = None,
         certs_url: str = GOOGLE_CERTS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._audience = audience
+        self._agent_account = agent_account
         self._account = re.compile(
             r"ssc-a-([a-z0-9]{20})@" + re.escape(project_id) + r"\.iam\.gserviceaccount\.com"
         )
@@ -91,8 +101,12 @@ class GoogleWorkloads:
             raise WorkloadRefusedError(f"no Google key {kid!r}")
         return found
 
-    async def verify(self, authorization: str | None) -> Workload:
-        """The calling environment, or :class:`WorkloadRefusedError`."""
+    async def verify(
+        self, authorization: str | None, *, agent: bool = False, environment: str | None = None
+    ) -> Workload:
+        """The calling environment, or :class:`WorkloadRefusedError`. With ``agent`` (the
+        schema route) the cell agent's account is admitted too, for the environment
+        ``environment`` (its ``X-SSC-Environment`` header) names."""
         scheme, _, token = (authorization or "").partition(" ")
         if scheme.lower() != "bearer" or not token:
             raise WorkloadRefusedError("no bearer token")
@@ -120,6 +134,12 @@ class GoogleWorkloads:
         if claims.get("email_verified") is not True:
             raise WorkloadRefusedError("email not verified")
         email = claims.get("email")
+        if agent and self._agent_account is not None and email == self._agent_account:
+            if not environment:
+                raise WorkloadRefusedError("the cell agent sent no X-SSC-Environment")
+            if not ENVIRONMENT.fullmatch(environment):
+                raise WorkloadRefusedError("the cell agent's X-SSC-Environment is malformed")
+            return Workload(env_id=environment, account=self._agent_account, agent=True)
         match = self._account.fullmatch(email) if isinstance(email, str) else None
         if match is None:
             raise WorkloadRefusedError(f"{email!r} is not an app of this cell")

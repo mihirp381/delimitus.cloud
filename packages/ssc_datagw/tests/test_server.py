@@ -15,6 +15,7 @@ from typing import Any
 import httpx2
 import pytest
 from datagw_world import (
+    AGENT,
     AUDIENCE,
     BEN,
     CERTS,
@@ -50,7 +51,13 @@ from ssc_datagw.connectors import (
     encoded_size,
 )
 from ssc_datagw.limits import DEFAULT_MAX_ROWS, PLATFORM, Slots
-from ssc_datagw.server import MAX_BODY, DataGateway, create_app, production_app
+from ssc_datagw.server import (
+    MAX_BODY,
+    SCHEMA_SECONDS,
+    DataGateway,
+    create_app,
+    production_app,
+)
 from ssc_datagw.workload import GoogleWorkloads
 from ssc_shared.access import ViewHolder
 from ssc_shared.blobstore_fs import FsBlobStore
@@ -86,6 +93,7 @@ def workloads(*, fail: bool = False) -> GoogleWorkloads:
     return GoogleWorkloads(
         audience=AUDIENCE,
         project_id=PROJECT,
+        agent_account=AGENT,
         transport=certs_transport(fail=fail),
         certs_url=CERTS,
     )
@@ -114,6 +122,17 @@ class World:
         payload = {"sql": SQL, "params": [0]} if body is None else body
         return await self.http.post(f"/v1/connections/{name}/query", json=payload, headers=sent)
 
+    async def describe(
+        self,
+        name: str = "sales",
+        *,
+        env_id: str = PROD,
+        headers: Mapping[str, str] | None = None,
+        **token: Any,
+    ) -> httpx2.Response:
+        sent = {**bearer(env_id, **token), **(headers or {})}
+        return await self.http.get(f"/v1/connections/{name}/schema", headers=sent)
+
 
 @asynccontextmanager
 async def running(  # noqa: PLR0913  (the test's choice of collaborators)
@@ -125,6 +144,8 @@ async def running(  # noqa: PLR0913  (the test's choice of collaborators)
     slots: Slots | None = None,
     grace: float = 2.0,
     watch_seconds: float = 1.0,
+    schema_seconds: float = SCHEMA_SECONDS,
+    clock: Callable[[], float] = time.time,
     google_down: bool = False,
     published: bool = True,
     **changes: Any,
@@ -144,6 +165,8 @@ async def running(  # noqa: PLR0913  (the test's choice of collaborators)
         slots=slots,
         grace=grace,
         watch_seconds=watch_seconds,
+        schema_seconds=schema_seconds,
+        clock=clock,
     )
     async with client(create_app(gateway)) as http:
         try:
@@ -153,8 +176,8 @@ async def running(  # noqa: PLR0913  (the test's choice of collaborators)
             await snapshot.aclose()
 
 
-def records(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-    prefix = "datagw query "
+def records(caplog: pytest.LogCaptureFixture, kind: str = "query") -> list[dict[str, Any]]:
+    prefix = f"datagw {kind} "
     return [
         json.loads(r.getMessage().removeprefix(prefix))
         for r in caplog.records
@@ -666,3 +689,193 @@ async def test_health(tmp_path: Path) -> None:
     async with running(tmp_path) as w:
         r = await w.http.get("/healthz")
     assert (r.status_code, r.json()) == (200, {"status": "ok"})
+
+
+AS_AGENT: dict[str, Any] = {"email": AGENT, "headers": {"x-ssc-environment": PREVIEW}}
+"""The cell agent describing a connection for the preview environment."""
+SALES_TABLES = [
+    {
+        "name": "public.sales",
+        "columns": [
+            {"name": "id", "type": "integer", "db_type": "int4"},
+            {"name": "amount", "type": "decimal", "db_type": "numeric"},
+        ],
+    },
+    {"name": "public.empty", "columns": []},
+]
+
+
+async def test_a_schema_names_the_granted_connections_tables(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ssc_datagw.server")
+    async with running(tmp_path, grant_limits={"timeout_ms": 1234}) as w:
+        r = await w.describe(headers={"x-request-id": "req-s"})
+    assert r.status_code == 200
+    assert r.json() == {
+        "connection": "sales",
+        "kind": "postgres",
+        "tables": SALES_TABLES,
+        "snapshot_version": 1,
+        "request_id": "req-s",
+    }
+    assert r.headers["x-request-id"] == "req-s"
+    assert (w.connector.described, w.connector.queries) == ([1234], [])
+    (record,) = records(caplog, "schema")
+    assert record | {"received_at": "", "elapsed_ms": 0} == {
+        "request_id": "req-s",
+        "connection": "sales",
+        "env_id": PROD,
+        "caller": "app",
+        "snapshot_version": 1,
+        "outcome": "served",
+        "tables": 2,
+        "received_at": "",
+        "elapsed_ms": 0,
+        "instance_started_at": record["instance_started_at"],
+        "cold": True,
+        "ready_ms": None,
+    }
+    assert records(caplog) == []
+
+
+async def test_a_schema_is_kept_five_minutes_per_connection(tmp_path: Path) -> None:
+    clock = Clock()
+    async with running(tmp_path, clock=clock) as w:
+        first = (await w.describe()).json()
+        w.connector.tables = ()
+        clock.advance(SCHEMA_SECONDS - 1)
+        kept = (await w.describe(env_id=PREVIEW)).json()
+        clock.advance(1)
+        fresh = (await w.describe()).json()
+    assert first["tables"] == kept["tables"] == SALES_TABLES
+    assert fresh["tables"] == []
+    assert len(w.connector.described) == 2
+
+
+async def test_a_new_snapshot_drops_the_kept_schemas(tmp_path: Path) -> None:
+    async with running(tmp_path, clock=Clock()) as w:
+        assert (await w.describe()).json()["tables"] == SALES_TABLES
+        w.connector.tables = ()
+        await publish(w.blobs, 2)
+        published_at = time.monotonic()
+        while (r := (await w.describe()).json())["snapshot_version"] == 1:
+            assert r["tables"] == SALES_TABLES
+            assert time.monotonic() - published_at < 5
+            await asyncio.sleep(0.1)
+    assert r["tables"] == []
+
+
+async def test_a_schema_spends_no_budget_and_takes_no_slot(tmp_path: Path) -> None:
+    async with running(
+        tmp_path, sales_limits={"concurrency": 0}, grant_limits={"daily_rows": 0}
+    ) as w:
+        r = await w.describe()
+    assert r.status_code == 200
+    assert w.connector.queries == []
+
+
+async def test_the_cell_agent_describes_for_the_environment_it_names(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ssc_datagw.server")
+    async with running(tmp_path) as w:
+        r = await w.describe(**AS_AGENT)
+        not_granted = await w.describe(email=AGENT, headers={"x-ssc-environment": PAY})
+        unknown = await w.describe(email=AGENT, headers={"x-ssc-environment": "env_" + "z" * 20})
+    assert (r.status_code, r.json()["tables"]) == (200, SALES_TABLES)
+    assert (not_granted.status_code, error(not_granted)["code"]) == (403, "CONNECTION_NOT_GRANTED")
+    assert (unknown.status_code, error(unknown)["code"]) == (403, "UNKNOWN_ENVIRONMENT")
+    served, *_ = records(caplog, "schema")
+    assert (served["caller"], served["env_id"], served["outcome"]) == ("agent", PREVIEW, "served")
+
+
+AGENT_HEADERS = {
+    "no environment": {},
+    "an empty environment": {"x-ssc-environment": ""},
+    "a malformed environment": {"x-ssc-environment": "env_short"},
+    "an app id": {"x-ssc-environment": LEDGER},
+}
+
+
+@pytest.mark.parametrize("case", sorted(AGENT_HEADERS))
+async def test_the_cell_agent_without_a_well_formed_environment_is_refused(
+    tmp_path: Path, case: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ssc_datagw.server")
+    async with running(tmp_path) as w:
+        r = await w.describe(email=AGENT, headers=AGENT_HEADERS[case])
+    assert (r.status_code, error(r)["code"], error(r)["stage"]) == (
+        401,
+        "UNAUTHENTICATED",
+        "workload",
+    )
+    (record,) = records(caplog, "schema")
+    assert "X-SSC-Environment" in record["reason"]
+    assert w.connector.described == []
+
+
+async def test_the_cell_agent_may_not_query(tmp_path: Path) -> None:
+    async with running(tmp_path) as w:
+        r = await w.ask(email=AGENT, headers={"x-ssc-environment": PREVIEW})
+    assert (r.status_code, error(r)["code"]) == (401, "UNAUTHENTICATED")
+    assert w.connector.queries == []
+
+
+async def test_an_app_naming_another_environment_still_describes_as_itself(
+    tmp_path: Path,
+) -> None:
+    async with running(tmp_path) as w:
+        own = await w.describe(headers={"x-ssc-environment": PAY})
+        other = await w.describe("hr", headers={"x-ssc-environment": PAY})
+    assert own.status_code == 200
+    assert (other.status_code, error(other)["code"]) == (403, "CONNECTION_NOT_GRANTED")
+
+
+async def test_a_schema_is_refused_as_a_query_is(tmp_path: Path) -> None:
+    async with running(tmp_path, sales="suspended") as w:
+        suspended = await w.describe()
+        forged = await w.describe(key=FORGED_KEY)
+        other_app = await w.describe(env_id=PAY)
+    assert (suspended.status_code, error(suspended)["code"]) == (403, "CONNECTION_SUSPENDED")
+    assert (forged.status_code, error(forged)["code"]) == (401, "UNAUTHENTICATED")
+    assert (other_app.status_code, error(other_app)["code"]) == (403, "CONNECTION_NOT_GRANTED")
+    async with running(tmp_path / "none", published=False) as w:
+        stale = await w.describe()
+    assert (stale.status_code, error(stale)["code"]) == (503, "DATA_SNAPSHOT_STALE")
+    assert w.connector.described == []
+
+
+@pytest.mark.parametrize("case", sorted(CONNECTOR_ERRORS))
+async def test_description_errors_map_to_their_codes(tmp_path: Path, case: str) -> None:
+    exc, status, code, stage, sqlstate = CONNECTOR_ERRORS[case]
+    async with running(tmp_path, connector=FakeConnector(error=exc)) as w:
+        r = await w.describe()
+        again = await w.describe()
+    got = error(r)
+    assert (r.status_code, got["code"], got["stage"], got.get("sqlstate")) == (
+        status,
+        code,
+        stage,
+        sqlstate,
+    )
+    assert str(exc) not in r.text
+    assert again.status_code == status, "a failed description is not kept"
+
+
+async def test_a_description_past_its_time_limit_is_ended(tmp_path: Path) -> None:
+    connector = FakeConnector(hold=asyncio.Event())
+    async with running(
+        tmp_path, connector=connector, grace=0.0, grant_limits={"timeout_ms": 20}
+    ) as w:
+        r = await w.describe()
+    assert (r.status_code, error(r)["code"]) == (408, "QUERY_TIMEOUT")
+    assert (connector.described, connector.cancelled) == ([20], 1)
+
+
+async def test_a_schema_for_a_connection_without_a_connector_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    async with running(tmp_path, connectors={}) as w:
+        r = await w.describe()
+    assert (r.status_code, error(r)["code"]) == (503, "CONNECTION_UNAVAILABLE")

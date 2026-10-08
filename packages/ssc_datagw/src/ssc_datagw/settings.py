@@ -19,6 +19,8 @@ _PROJECT = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]")
 DATA_ACCOUNT: Final = "ssc-data"
 CONNECTION_PREFIX: Final = "SSC_CONNECTION_"
 _CONNECTION = re.compile(r"CON_[A-Z0-9]{20}")
+_ACCOUNT_ID = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]")
+APP_ACCOUNT_PREFIX: Final = "ssc-a-"
 
 
 class SettingsError(ValueError):
@@ -30,7 +32,10 @@ class Settings:
     """``audience`` is the URL apps mint their workload token for: the service's own
     ``run.app`` URL. ``project_id`` is the cell project, whose ``ssc-a-*`` accounts are apps.
     ``jwks`` is the cell's public identity JWKS, which signs the identity notes apps forward.
-    ``connections`` maps a ``con_`` id to where it points."""
+    ``connections`` maps a ``con_`` id to where it points. ``agent_account`` is the cell
+    agent's service account (``SSC_DATAGW_AGENT_ACCOUNT``, ``ssc-cell-agent@<cell
+    project>.iam.gserviceaccount.com``), which may call the schema route for an environment
+    (GA-5.8); without it only apps call the gateway."""
 
     org_id: str
     cell_label: str
@@ -41,6 +46,7 @@ class Settings:
     issuer: str
     apps_domain: str
     max_stale: float = MAX_STALE_SECONDS
+    agent_account: str | None = None
     connections: Mapping[str, Target] = field(default_factory=dict[str, Target], repr=False)
 
     @property
@@ -87,6 +93,26 @@ def _connections(env: Mapping[str, str]) -> dict[str, Target]:
     return found
 
 
+def _agent_account(env: Mapping[str, str], project_id: str) -> str | None:
+    """``SSC_DATAGW_AGENT_ACCOUNT``: a service account of the cell project that is not an
+    app's; unset or empty is none."""
+    value = env.get("SSC_DATAGW_AGENT_ACCOUNT", "")
+    if not value:
+        return None
+    account_id, at, domain = value.partition("@")
+    if (
+        not at
+        or domain != f"{project_id}.iam.gserviceaccount.com"
+        or _ACCOUNT_ID.fullmatch(account_id) is None
+        or account_id.startswith(APP_ACCOUNT_PREFIX)
+    ):
+        raise SettingsError(
+            "SSC_DATAGW_AGENT_ACCOUNT must be a service account of SSC_PROJECT_ID that is not "
+            "an app's"
+        )
+    return value
+
+
 def settings_from_env(env: Mapping[str, str]) -> Settings:
     org_id = _need(env, "SSC_ORG_ID")
     if _ORG.fullmatch(org_id) is None:
@@ -115,5 +141,6 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         issuer=env.get("SSC_IDENTITY_ISSUER", f"https://keys.delimitus.com/{label}"),
         apps_domain=apps_domain,
         max_stale=max_stale,
+        agent_account=_agent_account(env, project_id),
         connections=_connections(env),
     )

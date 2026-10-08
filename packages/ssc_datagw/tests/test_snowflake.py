@@ -49,6 +49,7 @@ from ssc_datagw.connectors import (
     jsonable,
 )
 from ssc_datagw.snowflake import (
+    DESCRIBE,
     NOT_A_KEY,
     POLL_SECONDS,
     TOKEN_SECONDS,
@@ -158,7 +159,30 @@ class Answer:
     error: tuple[int, str, str] | None = None
 
 
+DESCRIBE_TYPE: list[dict[str, Any]] = [
+    {"name": "TABLE_NAME", "type": "text", "nullable": False},
+    {"name": "COLUMN_NAME", "type": "text", "nullable": False},
+    {"name": "DATA_TYPE", "type": "text", "nullable": False},
+    {"name": "NUMERIC_SCALE", "type": "fixed", "scale": 0, "nullable": True},
+]
+DESCRIPTION: list[list[str | None]] = [
+    ["ORDERS", name, kind, scale]
+    for name, kind, scale in (
+        ("ID", "NUMBER", "0"),
+        ("AMOUNT", "NUMBER", "2"),
+        ("RATIO", "FLOAT", None),
+        ("NOTE", "TEXT", None),
+        ("OK", "BOOLEAN", None),
+        ("PLACED_ON", "DATE", None),
+        ("AT", "TIME", "9"),
+        ("PLACED", "TIMESTAMP_NTZ", "9"),
+        ("PLACED_TZ", "TIMESTAMP_TZ", "9"),
+        ("RAW", "BINARY", None),
+        ("META", "VARIANT", None),
+    )
+]
 ANSWERS: dict[str, Answer] = {
+    DESCRIBE: Answer(DESCRIBE_TYPE, DESCRIPTION),
     READ: Answer(ORDERS_TYPE, ORDERS),
     MANY: Answer(rows=_xs(6), partition=2),
     POLLED: Answer(rows=_xs(2), running=2),
@@ -469,6 +493,7 @@ def subject(s: Source) -> Subject:
         bad=MISSING,
         slow=SLOW,
         params=(PARAMS, (1,), FIRST_ROW),
+        table="ORDERS",
     )
 
 
@@ -477,6 +502,46 @@ async def test_the_snowflake_connector_conforms(
     source: Source, check: Callable[[Subject], Awaitable[None]]
 ) -> None:
     await conform(check, subject(source))
+
+
+async def test_a_description_types_the_schemas_columns_as_a_read_types_them(
+    source: Source,
+) -> None:
+    (table,) = await source.connector().describe(schemas=["OTHER"], timeout_ms=4_000)
+    columns, _ = await read(source.connector(), ask(READ))
+    assert table.name == "ORDERS"
+    assert [(c.name, c.type) for c in table.columns] == [(c.name, c.type) for c in columns]
+    assert [c.db_type for c in table.columns][:3] == ["fixed", "fixed", "real"]
+    body = source.seen.bodies[0]
+    assert "information_schema.columns WHERE table_schema = CURRENT_SCHEMA()" in body["statement"]
+    assert (body["database"], body["schema"], body["parameters"]["query_tag"]) == (
+        DATABASE,
+        SCHEMA,
+        "ssc:describe",
+    )
+    assert source.seen.claims, "the fake verified the JWT"
+
+
+async def test_a_description_stops_at_500_tables_of_500_columns(
+    source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wide: list[list[str | None]] = [["T000", f"C{i}", "NUMBER", "0"] for i in range(1, 502)]
+    narrow: list[list[str | None]] = [[f"T{i:03}", "X", "TEXT", None] for i in range(1, 503)]
+    rows = [*wide, *narrow]
+    monkeypatch.setitem(ANSWERS, DESCRIBE, Answer(DESCRIBE_TYPE, rows, partition=400))
+    tables = await source.connector().describe(schemas=None, timeout_ms=10_000)
+    assert len(tables) == 500
+    assert (tables[0].name, len(tables[0].columns)) == ("T000", 500)
+    assert tables[-1].name == "T499"
+
+
+async def test_a_description_past_its_timeout_cancels_its_statement(
+    source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(ANSWERS, DESCRIBE, Answer(slow=True))
+    with pytest.raises(TimeoutError):
+        await source.connector().describe(schemas=None, timeout_ms=1_000)
+    assert source.seen.cancels == list(source.seen.statements)
 
 
 async def test_a_read_types_every_column(source: Source) -> None:

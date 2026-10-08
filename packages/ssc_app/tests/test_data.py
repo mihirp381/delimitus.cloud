@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from ssc_app import data
-from ssc_app.data import Data, DataError
+from ssc_app.data import Data, DataError, Schema, Table
 from ssc_app.files import REGION_PATH
 from ssc_app.workload import IDENTITY_PATH
 
@@ -27,6 +27,19 @@ RESULT = {
     "request_id": "req-1",
     "elapsed_ms": 3,
 }
+SCHEMA = {
+    "connection": "finance",
+    "kind": "postgres",
+    "tables": [
+        {
+            "name": "public.invoices",
+            "columns": [{"name": "total", "type": "decimal", "db_type": "numeric"}],
+        },
+        {"name": "public.empty", "columns": []},
+    ],
+    "snapshot_version": 4,
+    "request_id": "req-2",
+}
 
 
 def _token(audience: str) -> str:
@@ -39,7 +52,7 @@ def _token(audience: str) -> str:
 
 @dataclass
 class Cell:
-    """What the stand-in was asked and what it answers next."""
+    """What the stand-in was asked (a GET's body is ``{}``) and what it answers next."""
 
     url: str = ""
     audiences: list[str] = field(default_factory=list[str])
@@ -73,6 +86,10 @@ def cell() -> Iterator[Cell]:
                 audience = parse_qs(url.query)["audience"][0]
                 state.audiences.append(audience)
                 self._answer(200, _token(audience).encode())
+            elif url.path.startswith("/v1/connections/") and url.path.endswith("/schema"):
+                headers = {k.lower(): v for k, v in self.headers.items()}
+                state.asked.append((self.path, headers, {}))
+                self._next(SCHEMA)
             else:
                 self._answer(404)
 
@@ -80,10 +97,13 @@ def cell() -> Iterator[Cell]:
             body = json.loads(self.rfile.read(int(self.headers["content-length"])))
             headers = {k.lower(): v for k, v in self.headers.items()}
             state.asked.append((self.path, headers, body))
+            self._next(RESULT)
+
+        def _next(self, otherwise: dict[str, object]) -> None:
             if state.answers:
                 self._answer(*state.answers.pop(0))
             else:
-                self._answer(200, json.dumps(RESULT).encode())
+                self._answer(200, json.dumps(otherwise).encode())
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             return
@@ -202,3 +222,44 @@ def test_the_variable_names_the_gateway_for_the_module_function(
     assert data.query("finance", "select 1", [1], max_rows=5).row_count == 2
     assert cell.asked[0][2]["max_rows"] == 5
     assert cell.audiences == [cell.url]
+
+
+def test_a_description_names_the_tables_and_their_columns(cell: Cell) -> None:
+    schema = helper(cell).describe("finance")
+    assert schema == Schema(
+        connection="finance",
+        kind="postgres",
+        tables=[
+            Table("public.invoices", [{"name": "total", "type": "decimal", "db_type": "numeric"}]),
+            Table("public.empty", []),
+        ],
+    )
+    ((path, headers, body),) = cell.asked
+    assert (path, body) == ("/v1/connections/finance/schema", {})
+    assert headers["authorization"].startswith("Bearer ")
+    assert "x-ssc-identity" not in headers
+    assert "content-type" not in headers
+
+
+def test_a_refused_description_is_a_data_error(cell: Cell) -> None:
+    cell.answers = [refusal("CONNECTION_NOT_GRANTED", 403)]
+    with pytest.raises(DataError) as e:
+        helper(cell).describe("finance")
+    assert (e.value.code, e.value.status, len(cell.asked)) == ("CONNECTION_NOT_GRANTED", 403, 1)
+    cell.answers = [refusal("QUERY_FAILED", 422, sqlstate="42501")]
+    with pytest.raises(DataError) as e:
+        helper(cell).describe("finance")
+    assert (e.value.code, e.value.sqlstate) == ("QUERY_FAILED", "42501")
+
+
+def test_a_description_is_asked_once_more_while_the_gateway_starts(cell: Cell) -> None:
+    cell.answers = [(503, b"starting")]
+    assert helper(cell).describe("finance").kind == "postgres"
+    assert len(cell.asked) == 2
+
+
+def test_the_module_function_describes_on_this_cell(
+    cell: Cell, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(data, "_default", Data(url=cell.url, metadata=cell.url))
+    assert [t.name for t in data.describe("finance").tables] == ["public.invoices", "public.empty"]

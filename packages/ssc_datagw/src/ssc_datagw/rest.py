@@ -14,6 +14,9 @@ records sit at the target's ``items`` path (the body itself without one): an arr
 per element, an object one record. The first record's keys name the columns; a record that is
 not an object is one column, ``value``.
 
+A REST source has no schema to discover: :meth:`RestConnector.describe` answers no tables and
+sends nothing (GA-5.8).
+
 The token is a ``SecretStr`` and travels only in its header: every error names a status or an
 exception class, never the URL's query, a header or the body.
 """
@@ -35,6 +38,7 @@ from ssc_datagw.connectors import (
     Query,
     QueryFailedError,
     QueryRefusedError,
+    Table,
     UpstreamUnavailableError,
 )
 from ssc_datagw.tls import tls_context
@@ -353,3 +357,8 @@ class RestConnector:
         records = records_at(parsed, self._target.items)
         columns = columns_for(records)
         yield _Cursor(columns, rows_for(records, columns, query.max_rows + 1))
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """No tables: a REST source names none."""
+        del schemas, timeout_ms
+        return []

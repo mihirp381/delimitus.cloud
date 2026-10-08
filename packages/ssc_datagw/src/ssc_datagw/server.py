@@ -15,6 +15,12 @@ goes through these steps, and the first that refuses answers:
 6. the connector runs the read under a deadline, watched by the kill watch, and the gateway
    keeps at most ``max_rows`` rows and ``max_bytes`` bytes, saying when it cut the result.
 
+A schema request, ``GET /v1/connections/{name}/schema`` (GA-5.8), goes through steps 1, 2
+and 4 and then asks the connector to describe its tables under the composed ``timeout_ms``; it
+counts against neither the daily budget nor the slots, reads no identity note, and its answer is
+kept per connection for :data:`SCHEMA_SECONDS`, until the snapshot version changes. Besides an
+app, the cell agent may call it for an environment it names (``ssc_datagw.workload``).
+
 A file request goes through steps 1 and 2, and the kill switch refuses it there like a query:
 a disabled or quarantined app gets no link. Its name, which may say who a file is about, is
 never logged.
@@ -68,6 +74,7 @@ from ssc_datagw.connectors import (
     Query,
     QueryFailedError,
     QueryRefusedError,
+    Table,
     UpstreamUnavailableError,
     encoded_size,
     jsonable,
@@ -109,6 +116,11 @@ log = logging.getLogger(__name__)
 STARTED_AT: Final = time.time()
 """When this process started: the start of a cold start."""
 QUERY_PATH: Final = "/v1/connections/{name}/query"
+SCHEMA_PATH: Final = "/v1/connections/{name}/schema"
+SCHEMA_SECONDS: Final = 300.0
+"""How long a connection's description is kept, unless the snapshot version changes first."""
+ENVIRONMENT_HEADER: Final = "x-ssc-environment"
+"""The environment the cell agent describes a connection for, on the schema route alone."""
 FILES_PATH: Final = "/v1/files/{op}"
 FILE_OPS: Final = ("put", "get", "delete")
 MAX_BODY: Final = 1024 * 1024
@@ -241,7 +253,9 @@ class RefusedError(Exception):
 
 
 class Workloads(Protocol):
-    async def verify(self, authorization: str | None) -> Workload: ...
+    async def verify(
+        self, authorization: str | None, *, agent: bool = False, environment: str | None = None
+    ) -> Workload: ...
 
 
 class Snapshot(Protocol):
@@ -272,6 +286,14 @@ class Result:
     rows: list[list[JsonValue]]
     size: int
     truncated_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class Described:
+    """A connection's description as the schema route answers it, and when it was made."""
+
+    at: float
+    tables: list[dict[str, Any]]
 
 
 @dataclass(eq=False, slots=True)
@@ -358,6 +380,7 @@ class DataGateway:
         slots: Slots | None = None,
         watch_seconds: float = WATCH_SECONDS,
         grace: float = TIMEOUT_GRACE_SECONDS,
+        schema_seconds: float = SCHEMA_SECONDS,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._settings = settings
@@ -371,6 +394,9 @@ class DataGateway:
         self._slots = slots or Slots()
         self._watch = KillWatch(snapshot, every=watch_seconds)
         self._grace = grace
+        self._schema_seconds = schema_seconds
+        self._schemas: dict[str, Described] = {}
+        self._schemas_version: int | None = None
         self._clock = clock
 
     async def query(self, name: str, request: Request) -> JSONResponse:
@@ -397,6 +423,84 @@ class DataGateway:
             body["elapsed_ms"] = elapsed
         self._record(record, received, elapsed)
         return JSONResponse(body, status_code=status, headers={"x-request-id": request_id})
+
+    async def schema(self, name: str, request: Request) -> JSONResponse:
+        """The tables of one connection the caller is granted, for an app or the cell agent."""
+        received = self._clock()
+        started = time.monotonic()
+        request_id = _request_id(request.headers.get("x-request-id"))
+        record: dict[str, Any] = {"request_id": request_id, "connection": name}
+        try:
+            body, status = await self._schema(name, request, record), 200
+            body["request_id"] = request_id
+            record["outcome"] = "served"
+        except RefusedError as refused:
+            body = error_body(
+                refused.code, request_id, stage=refused.stage, sqlstate=refused.sqlstate
+            )
+            status = ERRORS[refused.code].status
+            record.update(outcome=refused.code, reason=refused.reason)
+        except Exception:
+            log.exception("schema failed: %s", request_id)
+            body, status = error_body("UNAVAILABLE", request_id, stage="execute"), 503
+            record["outcome"] = "UNAVAILABLE"
+        self._record(record, received, round((time.monotonic() - started) * 1000), "schema")
+        return JSONResponse(body, status_code=status, headers={"x-request-id": request_id})
+
+    async def _schema(self, name: str, request: Request, record: dict[str, Any]) -> dict[str, Any]:
+        workload = await self._workload(
+            request.headers.get("authorization"),
+            agent=True,
+            environment=request.headers.get(ENVIRONMENT_HEADER),
+        )
+        record.update(env_id=workload.env_id, caller="agent" if workload.agent else "app")
+        await self._snapshot.refresh()
+        view = self._snapshot.view()
+        if view is not None:
+            record["snapshot_version"] = view.version
+        refused = environment_refusal(view, workload.env_id)
+        if refused is not None or view is None:
+            raise RefusedError(refused or "DATA_SNAPSHOT_STALE")
+        admitted = admit(view, workload.env_id, name)
+        if isinstance(admitted, str):
+            raise RefusedError(admitted)
+        connection = admitted.connection
+        if self._schemas_version != view.version:
+            self._schemas.clear()
+            self._schemas_version = view.version
+        now = self._clock()
+        kept = self._schemas.get(connection.connection_id)
+        if kept is None or now - kept.at >= self._schema_seconds:
+            connector = self._connectors.get(connection.connection_id)
+            if connector is None:
+                raise RefusedError(
+                    "CONNECTION_UNAVAILABLE", reason="no connector for the connection"
+                )
+            timeout_ms = compose(connection.limits, admitted.grant.limits).timeout_ms
+            tables = await self._described(connector, timeout_ms)
+            kept = Described(now, [_table(t) for t in tables])
+            self._schemas[connection.connection_id] = kept
+        record["tables"] = len(kept.tables)
+        return {
+            "connection": name,
+            "kind": connection.kind,
+            "tables": kept.tables,
+            "snapshot_version": view.version,
+        }
+
+    async def _described(self, connector: Connector, timeout_ms: int) -> list[Table]:
+        """The connector's tables under ``timeout_ms`` plus the grace; its errors as a query's."""
+        try:
+            async with asyncio.timeout(timeout_ms / 1000 + self._grace):
+                return list(await connector.describe(schemas=None, timeout_ms=timeout_ms))
+        except TimeoutError as exc:
+            raise RefusedError("QUERY_TIMEOUT") from exc
+        except QueryRefusedError as exc:
+            raise RefusedError("QUERY_REFUSED", reason=str(exc)) from exc
+        except QueryFailedError as exc:
+            raise RefusedError("QUERY_FAILED", reason=str(exc), sqlstate=exc.sqlstate) from exc
+        except UpstreamUnavailableError as exc:
+            raise RefusedError("CONNECTION_UNAVAILABLE", reason=str(exc)) from exc
 
     async def file(self, op: str, request: Request) -> JSONResponse:
         """A link to put or get one file of the calling environment, or its deletion."""
@@ -545,8 +649,14 @@ class DataGateway:
             "snapshot_version": view.version,
         }
 
-    async def _workload(self, authorization: str | None) -> Workload:
+    async def _workload(
+        self, authorization: str | None, *, agent: bool = False, environment: str | None = None
+    ) -> Workload:
         try:
+            if agent:
+                return await self._workloads.verify(
+                    authorization, agent=True, environment=environment
+                )
             return await self._workloads.verify(authorization)
         except WorkloadRefusedError as exc:
             raise RefusedError("UNAUTHENTICATED", reason=str(exc)) from exc
@@ -663,6 +773,13 @@ class DataGateway:
         await self._watch.aclose()
 
 
+def _table(table: Table) -> dict[str, Any]:
+    return {
+        "name": table.name,
+        "columns": [{"name": c.name, "type": c.type, "db_type": c.db_type} for c in table.columns],
+    }
+
+
 def create_app(
     gateway: DataGateway,
     *,
@@ -679,6 +796,10 @@ def create_app(
     @app.post(QUERY_PATH)
     async def query(name: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         return await gateway.query(name, request)
+
+    @app.get(SCHEMA_PATH)
+    async def schema(name: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        return await gateway.schema(name, request)
 
     @app.post(FILES_PATH)
     async def file(op: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
@@ -710,7 +831,11 @@ def production_app(
         files = files or FileBroker(bucket, IamSigner(settings.signer))
     feed = SnapshotFeed(store, holder)
     snapshot = OnDemandSnapshot(feed, holder, max_stale=settings.max_stale)
-    google = GoogleWorkloads(audience=settings.audience, project_id=settings.project_id)
+    google = GoogleWorkloads(
+        audience=settings.audience,
+        project_id=settings.project_id,
+        agent_account=settings.agent_account,
+    )
     gateway = DataGateway(
         settings=settings,
         workloads=workloads or google,

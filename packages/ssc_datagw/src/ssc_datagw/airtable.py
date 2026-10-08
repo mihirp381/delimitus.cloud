@@ -14,6 +14,12 @@ read ends at ``timeout_ms``.
 A record is a row: its ``id``, its ``createdTime`` and one column per field, in the order fields
 first appear (:func:`table_of`), typed as the REST connector types JSON.
 
+A description (:meth:`AirtableConnector.describe`, GA-5.8) is one GET of the base's schema,
+``/v0/meta/bases/{base}/tables``, which the token's ``schema.bases:read`` scope allows (without
+it Airtable answers 403, 42501): one table per Airtable table (the connection's alone when it
+names one), ``id`` and ``created_time`` then each field, typed by its Airtable type
+(:data:`FIELD_TYPES`).
+
 The token is a ``SecretStr`` and travels only in ``Authorization``: every error names a status
 and Airtable's error type, never the body's message, a header or the URL.
 """
@@ -33,11 +39,15 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from ssc_datagw.connectors import (
+    DESCRIBE_TAG,
+    MAX_COLUMNS,
+    MAX_TABLES,
     Column,
     JsonValue,
     Query,
     QueryFailedError,
     QueryRefusedError,
+    Table,
     UpstreamUnavailableError,
 )
 from ssc_datagw.gsheets import header_names
@@ -82,6 +92,30 @@ CREATED_TIME: Final = "created_time"
 NOT_A_READ: Final = "the query is not <table>[ view <view>][ where <formula>]"
 OTHER_TABLE: Final = "the query's table is not the connection's table"
 NOT_RECORDS: Final = "the body is not an Airtable record list"
+NOT_TABLES: Final = "the body is not an Airtable table list"
+FIELD_TYPES: Final = {
+    **dict.fromkeys(
+        (
+            "singleLineText",
+            "multilineText",
+            "email",
+            "url",
+            "phoneNumber",
+            "richText",
+            "singleSelect",
+            "barcode",
+        ),
+        "string",
+    ),
+    **dict.fromkeys(
+        ("number", "currency", "percent", "duration", "rating", "count", "autoNumber"), "float"
+    ),
+    "checkbox": "boolean",
+    "date": "date",
+    **dict.fromkeys(("dateTime", "createdTime", "lastModifiedTime"), "timestamp"),
+}
+"""A field's portable type by its Airtable type; a ``number`` of precision 0 is ``integer``,
+any other type ``json``."""
 
 _REQUEST = re.compile(
     r"(?P<table>.+?)(?: view (?P<view>.+?))?(?: where (?P<formula>.+))?",
@@ -244,6 +278,50 @@ def table_of(records: Sequence[Record]) -> tuple[list[Column], list[list[object]
     return columns, [[r.id, r.created, *row] for r, row in zip(records, cells, strict=True)]
 
 
+def _field_type(field: dict[str, JsonValue]) -> str:
+    kind = field.get("type")
+    options = field.get("options")
+    if kind == "number" and isinstance(options, dict) and options.get("precision") == 0:
+        return "integer"
+    return FIELD_TYPES.get(kind, "json") if isinstance(kind, str) else "json"
+
+
+def tables_in(body: bytes, table: str | None) -> list[Table]:
+    """The tables of a base schema answer, at most 500 of 500 columns; with ``table`` only the
+    one so named or so identified."""
+    try:
+        parsed = cast("JsonValue", json.loads(body))
+    except ValueError, RecursionError:
+        raise QueryFailedError("the body is not JSON", sqlstate="22P02") from None
+    found = parsed.get("tables") if isinstance(parsed, dict) else None
+    if not isinstance(found, list):
+        raise QueryFailedError(NOT_TABLES, sqlstate="22P02")
+    tables: list[Table] = []
+    for raw in found:
+        name = raw.get("name") if isinstance(raw, dict) else None
+        fields = raw.get("fields", []) if isinstance(raw, dict) else None
+        if not isinstance(raw, dict) or not isinstance(name, str) or not isinstance(fields, list):
+            raise QueryFailedError(NOT_TABLES, sqlstate="22P02")
+        if table is not None and table not in (name, raw.get("id")):
+            continue
+        if not all(isinstance(f, dict) and isinstance(f.get("name"), str) for f in fields):
+            raise QueryFailedError(NOT_TABLES, sqlstate="22P02")
+        kept = cast("list[dict[str, JsonValue]]", fields)
+        names = header_names([ID, CREATED_TIME, *(cast("str", f["name"]) for f in kept)])
+        columns = [
+            Column(names[0], "string", "string"),
+            Column(names[1], "timestamp", "timestamp"),
+            *(
+                Column(n, _field_type(f), str(f.get("type", "")))
+                for n, f in zip(names[2:], kept, strict=True)
+            ),
+        ]
+        tables.append(Table(name, columns[:MAX_COLUMNS]))
+        if len(tables) >= MAX_TABLES:
+            break
+    return tables
+
+
 def _read_on(_: int) -> None:
     """Every answer's body is read: an error's type is named with its status."""
     return
@@ -357,3 +435,39 @@ class AirtableConnector:
             await client.aclose()
         columns, rows = table_of(records)
         yield _Cursor(columns, rows)
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """One GET of the base's schema; ``schemas`` does not apply."""
+        del schemas
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": user_agent(DESCRIBE_TAG),
+            "Authorization": f"Bearer {self._target.token.get_secret_value()}",
+        }
+        seconds = max(1, timeout_ms) / 1000
+        url = httpx2.URL(f"{self._base}/v0/meta/bases/{self._target.base_id}/tables")
+        client = httpx2.AsyncClient(
+            verify=self._tls,
+            transport=self._transport,
+            follow_redirects=False,
+            trust_env=False,
+        )
+        try:
+            async with asyncio.timeout(seconds):
+                status, body = await get(
+                    client,
+                    url,
+                    headers,
+                    seconds=seconds,
+                    connect_seconds=self._connect_seconds,
+                    warmup=self._warmup,
+                    failure=_read_on,
+                )
+        finally:
+            await client.aclose()
+        refused = airtable_failure(status, error_type(body) if status >= 300 else None)  # noqa: PLR2004
+        if refused is not None:
+            raise refused
+        tables = tables_in(body, self._target.table)
+        log.info("airtable describe: status=%s bytes=%s tables=%s", status, len(body), len(tables))
+        return tables

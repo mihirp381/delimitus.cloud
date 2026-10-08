@@ -4,7 +4,8 @@ Two subjects run the connector suite. The fake is a FastAPI app under ``uvicorn`
 over TLS from the test PKI, as for REST: it recomputes each request's AWS Signature Version 4
 with the same secret (its own code, not the connector's), answers in S3's XML shape, pages a list
 20 keys at a time, refuses what the IAM policy would (anything outside ``exports/``) with
-``AccessDenied``, and serves a slow object for the time-out and cancel checks. S3Mock (in a
+``AccessDenied``, and serves a slow object for the time-out and cancel checks and a slow list
+under ``exports/slowlist/``. S3Mock (in a
 container, HTTPS from a PKCS12 keystore made from the same PKI, seeded with signed PUTs) ignores
 credentials, so it proves the wire protocol, the paths, the XML and the encoding, not the
 signature; the time-out and cancel checks run on the fake only. The grammar, the target, the
@@ -247,6 +248,8 @@ def fake_s3(seen: Seen) -> FastAPI:  # noqa: C901  (one fake, each answer)
         if bucket != BUCKET:
             return xml(error_xml("NoSuchBucket"), 404)
         if not key:
+            if request.query_params.get("prefix") == "exports/slowlist/":
+                await asyncio.sleep(20)
             return listing(request)
         if not key.startswith(PREFIX):
             return xml(error_xml("AccessDenied"), 403)
@@ -411,6 +414,7 @@ def subject(s: Source, *, slow: str = "get exports/slow.csv") -> Subject:
         bad="get exports/missing.csv",
         slow=slow,
         params=None,
+        table="exports/orders.csv",
     )
 
 
@@ -460,6 +464,40 @@ async def test_a_list_pages_to_max_rows_plus_one(source: Source) -> None:
     assert modified.tzinfo is not None
     assert etag == hashlib.md5(OBJECTS[keys[0]]).hexdigest()  # noqa: S324  (S3's ETag)
     assert key == keys[0]
+
+
+async def test_a_description_names_each_readable_object_by_its_key(source: Source) -> None:
+    tables = await source.connector().describe(schemas=["x"], timeout_ms=10_000)
+    readable = sorted(k for k in OBJECTS if k.startswith(PREFIX) and k.rpartition(".")[2] != "txt")
+    assert [t.name for t in tables] == readable
+    assert all(t.columns == [] for t in tables)
+
+
+async def test_a_description_lists_the_first_500_objects_readable_or_not(
+    fake: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    objects = {f"exports/k{i:03}.{'csv' if i % 2 else 'txt'}": b"a\n1\n" for i in range(600)}
+    monkeypatch.setattr(f"{__name__}.OBJECTS", objects)
+    tables = await fake.connector().describe(schemas=None, timeout_ms=10_000)
+    assert len(tables) == 250
+    assert (tables[0].name, tables[-1].name) == ("exports/k001.csv", "exports/k499.csv")
+    assert len(fake.seen.requests) == 500 // FAKE_PAGE
+    assert set(fake.seen.agents) == {"ssc-datagw (ssc:describe)"}
+
+
+async def test_a_description_past_its_timeout_times_out(fake: Source) -> None:
+    connector = fake.connector(prefix="exports/slowlist/")
+    with pytest.raises(TimeoutError):
+        await connector.describe(schemas=None, timeout_ms=500)
+
+
+async def test_a_description_the_fake_refuses_hides_the_secret(fake: Source) -> None:
+    with pytest.raises(QueryFailedError) as refused:
+        await fake.connector(secret_access_key="fake/" + "other-secret").describe(
+            schemas=None, timeout_ms=5_000
+        )
+    assert refused.value.sqlstate == "42501"
+    assert SECRET not in "".join(traceback.format_exception(refused.value))
 
 
 async def test_the_fake_list_follows_continuation_tokens(fake: Source) -> None:

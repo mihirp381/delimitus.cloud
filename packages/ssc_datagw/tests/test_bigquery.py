@@ -41,6 +41,7 @@ from pydantic import ValidationError
 
 from ssc_datagw.bigquery import (
     AUDIENCE,
+    DESCRIBE,
     BigQueryConnector,
     BigQueryTarget,
     SchemaField,
@@ -83,6 +84,7 @@ INVALID = "SELECT 'invalid' AS x"
 NOT_FOUND = "SELECT * FROM reporting.nope"
 DENIED = "SELECT * FROM secret.t"
 BILLED = "SELECT 'billed' AS x"
+DESCRIBED = DESCRIBE.format(project=PROJECT, dataset=DATASET)
 
 ORDERS_SCHEMA: list[dict[str, Any]] = [
     {"name": "id", "type": "INTEGER", "mode": "NULLABLE"},
@@ -181,7 +183,26 @@ class Answer:
     late: str | None = None
 
 
+DESCRIBE_SCHEMA: list[dict[str, Any]] = [
+    {"name": n, "type": "STRING"} for n in ("table_name", "column_name", "data_type")
+]
+
+
+def _columns(*rows: tuple[str, str, str]) -> list[dict[str, Any]]:
+    return [{"f": [{"v": cell} for cell in row]} for row in rows]
+
+
+DESCRIPTION = _columns(
+    ("events", "tags", "ARRAY<STRING>"),
+    ("events", "who", "STRUCT<id INT64, name STRING>"),
+    ("orders", "id", "INT64"),
+    ("orders", "amount", "NUMERIC(10, 2)"),
+    ("orders", "ok", "BOOL"),
+    ("orders", "note", "STRING(20)"),
+    ("orders", "placed", "TIMESTAMP"),
+)
 ANSWERS: dict[str, Answer] = {
+    DESCRIBED: Answer(DESCRIBE_SCHEMA, DESCRIPTION),
     READ: Answer(ORDERS_SCHEMA, ORDERS),
     POLLED: Answer(rows=_xs(2), polls=2),
     PAGED: Answer(rows=_xs(5), page_size=2),
@@ -509,6 +530,7 @@ def subject(s: Source) -> Subject:
         bad=NOT_FOUND,
         slow=SLOW,
         params=(PARAMS, (2,), [2, "note 2"]),
+        table="orders",
     )
 
 
@@ -517,6 +539,68 @@ async def test_the_bigquery_connector_conforms(
     source: Source, check: Callable[[Subject], Awaitable[None]]
 ) -> None:
     await conform(check, subject(source))
+
+
+async def test_a_description_reads_the_datasets_information_schema(source: Source) -> None:
+    tables = await source.connector().describe(schemas=["other"], timeout_ms=4_000)
+    assert [(t.name, [(c.name, c.type, c.db_type) for c in t.columns]) for t in tables] == [
+        (
+            "events",
+            [
+                ("tags", "json", "ARRAY<STRING>"),
+                ("who", "json", "STRUCT"),
+            ],
+        ),
+        (
+            "orders",
+            [
+                ("id", "integer", "INT64"),
+                ("amount", "decimal", "NUMERIC"),
+                ("ok", "boolean", "BOOL"),
+                ("note", "string", "STRING"),
+                ("placed", "timestamp", "TIMESTAMP"),
+            ],
+        ),
+    ]
+    (body,) = source.seen.bodies
+    assert "`fake-project.reporting`.INFORMATION_SCHEMA.COLUMNS" in body["query"]
+    assert (body["location"], body["labels"]) == (LOCATION, {"ssc-tag": "ssc_describe"})
+    assert source.seen.claims, "the fake verified the JWT"
+
+
+async def test_a_description_stops_at_500_tables_of_500_columns(
+    source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wide = [("t000", f"c{i}", "INT64") for i in range(1, 502)]
+    narrow = [(f"t{i:03}", "x", "INT64") for i in range(1, 503)]
+    monkeypatch.setitem(
+        ANSWERS, DESCRIBED, Answer(DESCRIBE_SCHEMA, _columns(*wide, *narrow), page_size=5_000)
+    )
+    tables = await source.connector().describe(schemas=None, timeout_ms=10_000)
+    assert len(tables) == 500
+    assert (tables[0].name, len(tables[0].columns)) == ("t000", 500)
+    assert tables[-1].name == "t499"
+
+
+async def test_a_description_past_its_timeout_cancels_its_job(
+    source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(ANSWERS, DESCRIBED, Answer(DESCRIBE_SCHEMA, polls=1, sleep=20))
+    with pytest.raises(TimeoutError):
+        await source.connector().describe(schemas=None, timeout_ms=1_000)
+    assert source.seen.cancels == list(source.seen.jobs)
+
+
+async def test_a_description_below_the_10_mb_minimum_bill_is_53400(
+    source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(ANSWERS, DESCRIBED, Answer(error=(400, "bytesBilledLimitExceeded")))
+    with pytest.raises(QueryFailedError) as failed:
+        await source.connector(max_bytes_billed=2**20).describe(schemas=None, timeout_ms=4_000)
+    assert failed.value.sqlstate == "53400"
+    shown = repr(failed.value) + str(failed.value)
+    assert BODY_MARK not in shown
+    assert all(secret not in shown for secret in source.secrets())
 
 
 async def test_a_read_types_every_column(source: Source) -> None:

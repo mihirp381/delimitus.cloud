@@ -17,6 +17,10 @@ safe because ``sql_mode`` is set here and read back, so ``NO_BACKSLASH_ESCAPES``
 because the text the classifier approved had the placeholder where a value may stand. ``%`` in
 the statement is never a format directive.
 
+A description (:meth:`MySqlConnector.describe`, GA-5.8) is one fixed statement of ours on
+``information_schema.columns`` for the session's database, run in the same checked session as a
+read, without the classifier, which is for the app's text.
+
 What the database refuses on its own, with the classifier off (``tests/test_mysql.py``): a
 write (``1142``, the user has ``SELECT`` only), a temporary table (``1792``, the transaction is
 read-only), a change of the transaction (``1568``), a locking read (``1142``), a file
@@ -45,12 +49,17 @@ from sqlglot.tokens import TokenType
 
 from ssc_datagw.classify import mysql_refusal
 from ssc_datagw.connectors import (
+    DESCRIBE_TAG,
+    MAX_COLUMNS,
+    MAX_TABLES,
     Column,
     Query,
     QueryFailedError,
     QueryRefusedError,
     Scalar,
+    Table,
     UpstreamUnavailableError,
+    grouped,
 )
 from ssc_datagw.tls import tls_context
 from ssc_datagw.warmup import CONNECT_SECONDS, Warmup, connect_with_warmup
@@ -159,6 +168,39 @@ _BINARY: Final = {
     253: "varbinary",
     254: "binary",
 }
+BY_NAME: Final = {
+    **{db_type: portable for portable, db_type in SIMPLE.values()},
+    **dict.fromkeys(_TEXT.values(), "string"),
+    **dict.fromkeys(_BINARY.values(), "bytes"),
+    "tinyint": "integer",
+    "enum": "string",
+    "set": "string",
+    **dict.fromkeys(
+        (
+            "point",
+            "linestring",
+            "polygon",
+            "multipoint",
+            "multilinestring",
+            "multipolygon",
+            "geomcollection",
+            "geometrycollection",
+        ),
+        "bytes",
+    ),
+}
+"""Portable type by ``information_schema``'s ``DATA_TYPE``: the names :func:`column` gives a
+read's columns, and the spatial types a read answers as ``geometry`` bytes."""
+DESCRIBE: Final = f"""
+SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE
+FROM (SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE,
+             DENSE_RANK() OVER (ORDER BY TABLE_NAME) AS t,
+             ROW_NUMBER() OVER (PARTITION BY TABLE_NAME ORDER BY ORDINAL_POSITION) AS n
+      FROM information_schema.columns WHERE TABLE_SCHEMA = DATABASE()) d
+WHERE t <= {MAX_TABLES} AND n <= {MAX_COLUMNS}
+ORDER BY t, n
+"""  # noqa: S608  (built from constants only)
+"""Every column the user may read in the session's database, at most 500 tables of 500."""
 _CONNECT: Final = cast("Callable[..., Any]", asyncmy.connect)  # pyright: ignore[reportUnknownMemberType]
 
 
@@ -252,6 +294,19 @@ def column(f: FieldInfo) -> Column:
     if f.type_code in _STRING:
         return _string_column(f)
     return Column(f.name, "string", f"type {f.type_code}")
+
+
+def described(name: str, data_type: str, column_type: str) -> Column:
+    """The portable column for an ``information_schema.columns`` row, as :func:`column` types
+    the same column in a read. ``TINYINT(1)`` is a boolean there too."""
+    kind, full = data_type.lower(), column_type.lower()
+    if kind == "tinyint" and full.startswith("tinyint(1)"):
+        return Column(name, "boolean", "tinyint(1)")
+    return Column(name, BY_NAME.get(kind, "string"), kind)
+
+
+def _text(value: object) -> str:
+    return value.decode() if isinstance(value, bytes) else str(value)
 
 
 def _value(value: object, col: Column) -> object:
@@ -423,6 +478,31 @@ class MySqlConnector:
         reason = self._classify(query.sql)
         if reason is not None:
             raise QueryRefusedError(reason)
+        async with self._read(query) as cursor:
+            yield cursor
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """``information_schema.columns`` of the connection's database through :meth:`_read`;
+        ``schemas`` does not apply (the database is the connection's)."""
+        del schemas
+        query = Query(
+            sql=DESCRIBE,
+            params=(),
+            max_rows=MAX_TABLES * MAX_COLUMNS,
+            timeout_ms=timeout_ms,
+            tag=DESCRIBE_TAG,
+        )
+        async with asyncio.timeout(max(1, timeout_ms) / 1000):
+            async with self._read(query) as cursor:
+                rows = [row async for row in cursor.rows()]
+        return grouped(
+            (_text(table), described(_text(name), _text(kind), _text(full)))
+            for table, name, kind, full in rows
+        )
+
+    @asynccontextmanager
+    async def _read(self, query: Query) -> AsyncGenerator[_Cursor]:
+        """One statement in a checked read-only session, bound and tagged."""
         conn = await self._connect()
         thread_id: int | None = None
         try:
@@ -463,6 +543,7 @@ __all__ = [
     "Readback",
     "bind",
     "column",
+    "described",
     "placeholders",
     "session_problem",
     "tagged",

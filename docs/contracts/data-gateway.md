@@ -1,6 +1,6 @@
 # Data gateway v1 (`POST /v1/connections/{name}/query`)
 
-How an app reads a database its org connected, through the cell's data gateway `ssc-datagw` (SSC-050, C19), and keeps files through its file broker ([Files](#files), SSC-046). One service per customer, in the cell, on Cloud Run at minimum 0 and request-billed; it leaves through Direct VPC egress and the cell NAT, so the customer's database sees the cell's one fixed address. Implementations: `ssc_datagw.server` (the pipeline), `ssc_datagw.workload` (the caller), `ssc_datagw.note` (the identity note), `ssc_datagw.admission` (the snapshot), `ssc_datagw.limits` (limits, budget, slots), `ssc_datagw.connectors` (the connector seam), `ssc_datagw.kinds` (which connector serves each kind, GA-5), `ssc_datagw.postgres` and `ssc_datagw.classify` (the Postgres connector, SSC-051), `ssc_datagw.mysql` (the MySQL connector, GA-5), `ssc_datagw.sqlserver` (the SQL Server connector, GA-5), `ssc_datagw.airtable` (the Airtable connector, GA-5), `ssc_datagw.snowflake` (the Snowflake connector, GA-5) and `ssc_datagw.rest` (the REST connector, GA-5) and `ssc_datagw.gsheets` (the Google Sheets connector, GA-5) and `ssc_datagw.s3` (the S3 connector, GA-5), `ssc_datagw.gcs` (the GCS connector, GA-5) and `ssc_datagw.bigquery` with `ssc_datagw.google` (the BigQuery connector and the service-account signer, GA-5). Cell wiring: `infra/README.md`, "Data gateway".
+How an app reads a database its org connected, through the cell's data gateway `ssc-datagw` (SSC-050, C19), and keeps files through its file broker ([Files](#files), SSC-046). One service per customer, in the cell, on Cloud Run at minimum 0 and request-billed; it leaves through Direct VPC egress and the cell NAT, so the customer's database sees the cell's one fixed address. Implementations: `ssc_datagw.server` (the pipeline), `ssc_datagw.workload` (the caller), `ssc_datagw.note` (the identity note), `ssc_datagw.admission` (the snapshot), `ssc_datagw.limits` (limits, budget, slots), `ssc_datagw.connectors` (the connector seam), `ssc_datagw.kinds` (which connector serves each kind, GA-5), `ssc_datagw.postgres` and `ssc_datagw.classify` (the Postgres connector, SSC-051), `ssc_datagw.mysql` (the MySQL connector, GA-5), `ssc_datagw.sqlserver` (the SQL Server connector, GA-5), `ssc_datagw.airtable` (the Airtable connector, GA-5), `ssc_datagw.snowflake` (the Snowflake connector, GA-5) and `ssc_datagw.rest` (the REST connector, GA-5) and `ssc_datagw.gsheets` (the Google Sheets connector, GA-5) and `ssc_datagw.s3` (the S3 connector, GA-5), `ssc_datagw.gcs` (the GCS connector, GA-5) and `ssc_datagw.bigquery` with `ssc_datagw.google` (the BigQuery connector and the service-account signer, GA-5). It also names a connection's tables and their columns, for an app or the cell agent ([Schema discovery](#schema-discovery), GA-5.8). Cell wiring: `infra/README.md`, "Data gateway".
 
 ## Request
 
@@ -26,7 +26,7 @@ The three asks only narrow what the platform, the connection and the grant allow
 
 ## Calling it from an app
 
-`ssc_app.data.query(name, sql, params=(), *, max_rows=None, max_bytes=None, timeout_ms=None, identity=None)` (Python) and `query(name, sql, params, { maxRows, maxBytes, timeoutMs, identity })` of `@delimitus/ssc-data` (Node, SSC-052) make this request: they find the gateway from the metadata server (`SSC_DATAGW_URL` replaces it), send the app's workload token, forward `identity` as `X-SSC-Identity` when given, and return `columns`, `rows`, `row_count`, `truncated`, `truncated_reason` and `request_id`. A refusal is a `DataError` carrying the code below and, for `QUERY_FAILED`, the `sqlstate`. A call is tried once more on a lost connection or a 502, 503 or 504, not on a timeout. Which environments may call which connection is the grants of `ssc.connection_grant` (`docs/runbooks/ssc-052-first-connection.md`): the snapshot admits only `ready` connections.
+`ssc_app.data.query(name, sql, params=(), *, max_rows=None, max_bytes=None, timeout_ms=None, identity=None)` (Python) and `query(name, sql, params, { maxRows, maxBytes, timeoutMs, identity })` of `@delimitus/ssc-data` (Node, SSC-052) make this request: they find the gateway from the metadata server (`SSC_DATAGW_URL` replaces it), send the app's workload token, forward `identity` as `X-SSC-Identity` when given, and return `columns`, `rows`, `row_count`, `truncated`, `truncated_reason` and `request_id`. A refusal is a `DataError` carrying the code below and, for `QUERY_FAILED`, the `sqlstate`. A call is tried once more on a lost connection or a 502, 503 or 504, not on a timeout. `ssc_app.data.describe(name)` (Python only for now) asks [Schema discovery](#schema-discovery) and returns a `Schema(connection, kind, tables)`, each `Table(name, columns)` with columns as a query's; a refusal is a `DataError` as for a query. Which environments may call which connection is the grants of `ssc.connection_grant` (`docs/runbooks/ssc-052-first-connection.md`): the snapshot admits only `ready` connections.
 
 ## Response
 
@@ -58,7 +58,7 @@ Every refusal has one body, and the first check that refuses answers:
 | Code | Status | Stage | Fix owner | When |
 |---|---|---|---|---|
 | `BODY_TOO_LARGE` | 413 | request | app | The body is over 1 MB. |
-| `UNAUTHENTICATED` | 401 | workload | app | No token, or not a Google-signed token for this audience from an app account of this cell. Checked before the body is read. |
+| `UNAUTHENTICATED` | 401 | workload | app | No token, or not a Google-signed token for this audience from an app account of this cell (on the schema route also the cell agent's, with a well-formed `X-SSC-Environment`). Checked before the body is read. |
 | `UNAVAILABLE` | 503 | workload | platform | Google's keys could not be fetched and none are cached; also any unexpected failure (stage `execute`). |
 | `DATA_SNAPSHOT_STALE` | 503 | admission | platform | No snapshot read confirmed in the last 120 s. |
 | `UNKNOWN_ENVIRONMENT` | 403 | admission | platform | The caller's environment is not in the snapshot. |
@@ -79,6 +79,8 @@ When a running query is ended because a newer snapshot no longer admits it, the 
 ## The workload token
 
 A Google ID token (RS256, keys from `https://www.googleapis.com/oauth2/v3/certs`, cached for an hour and fetched again at most every 30 s for an unknown `kid`) with `iss` `https://accounts.google.com` or `accounts.google.com`, `aud` exactly `SSC_DATAGW_AUDIENCE`, `exp`, `iat`, `sub`, `email_verified` true, and `email` `ssc-a-<20>@<cell project>.iam.gserviceaccount.com`, which names the environment `env_<20>`. The metadata server leaves `email` and `email_verified` out unless the app asks with `format=full` (`/computeMetadata/v1/instance/service-accounts/default/identity?audience=...&format=full`), and such a token is refused; `ssc_app.workload.WorkloadToken` asks correctly and caches the token until 5 minutes before it expires. Any service account anywhere can mint a token for the audience, so a token from another project, another account of the cell or a person is refused.
+
+**The cell agent.** `SSC_DATAGW_AGENT_ACCOUNT` names the cell agent's own service account (`ssc-cell-agent@<cell project>.iam.gserviceaccount.com`; it must be an account of `SSC_PROJECT_ID` and not an app's, or the service does not start; unset, no agent is accepted). A token from that account, otherwise checked as above, is accepted on the schema route alone, and names no environment of its own: it says which in `X-SSC-Environment: env_<20>`, and is then admitted exactly as that environment's app would be. A missing or malformed header is `UNAUTHENTICATED`, with the reason logged. On a query or a file request the agent's token is `UNAUTHENTICATED`, as any account that is not an app's; an app's `X-SSC-Environment` is ignored, so an app describes only as itself.
 
 ## The identity note
 
@@ -113,6 +115,8 @@ What stops each attack, tested on Postgres 17 and 18 (`packages/ssc_datagw/tests
 | `NOTIFY` | refused | runs, never delivered: the transaction rolls back |
 | `pg_terminate_backend(pid)` | refused | 42501 for another role's session; the role's own sessions only by the classifier |
 
+**What `describe` returns.** One table per table or view of `information_schema.columns` the role may read, outside the system schemas, named `schema.table`; `schemas`, when given, keeps to those. Columns in their order, typed as a read types them, `db_type` the `udt_name`. One fixed statement of ours, run from step 2 on (the session checks hold; the classifier is for the app's text).
+
 ## The MySQL connector
 
 `{kind: "mysql", host, port, database, user, password, ca}` (`ssc_datagw.mysql.MySqlTarget`; `port` defaults to 3306). `database` is the schema the session starts in, and the user must be able to read it: MySQL refuses the connection (1044) otherwise. The value is held, tagged and pinned as for Postgres. Each query gets its own connection and runs in this order; the first step that refuses answers:
@@ -141,6 +145,8 @@ What stops each attack: local-proven on MySQL 8.4 and 9 (`tests/test_mysql.py`, 
 | `GET_LOCK`, `SLEEP`, `DO`, `SHOW` | refused | run; the lock is the session's and ends with it, a sleep ends at `max_execution_time`, `SHOW` lists only what the user may read |
 | a schema not granted (`secret.payroll`) | passes (a read) | 42000 (1142) |
 | a role granted to the user | `SET ROLE` refused | the read-back refuses an active role; `mysql_setup.sql` revokes every role |
+
+**What `describe` returns.** One table per table or view of the session's database the user may read (`information_schema.columns`), named by the bare table name; `schemas` does not apply. Columns typed as a read types them, `db_type` the column's `DATA_TYPE` (`tinyint(1)` a `boolean`). One fixed statement of ours in the same checked session as a read, without the classifier.
 
 <!-- rest -->
 ## The REST connector
@@ -179,6 +185,8 @@ What stops each attack: local-proven on MySQL 8.4 and 9 (`tests/test_mysql.py`, 
 **Records and columns.** The value at `items` (each key into an object; a missing key or a value that is not an object on the way is `QUERY_FAILED` 42P01) is the records: an array is one record per element, an object one record, anything else `QUERY_FAILED` 22P02. When the first record is an object its keys, in order, are the columns; a later record's missing key is `null`, a key that is not a column is dropped, and a later record that is not an object is a row of `null`. When the first record is not an object there is one column, `value`, holding each record as it is. No records is no columns and no rows. A column's type is that of its first non-null value in the first 100 records: boolean `boolean`, integer `integer`, other number `float`, string `string`, array or object `json`, none `string`; `db_type` is the JSON type (`boolean`, `number`, `string`, `array`, `object`, `null`). A value of another type than its column's is kept as it is. At most `max_rows` plus one rows are read, as for every connector.
 
 The connector logs one line per read, `rest read: status=<status> bytes=<body bytes>`, with no URL. Local-proven against a TLS server in-process (`packages/ssc_datagw/tests/test_rest.py`), which also runs the connector suite.
+
+**What `describe` returns.** Nothing: a REST source has no schema to discover. No request is sent.
 
 <!-- gsheets -->
 ## The Google Sheets connector
@@ -227,6 +235,8 @@ The request is `GET https://sheets.googleapis.com/v4/spreadsheets/<spreadsheet_i
 **Records and columns.** Values are unformatted: a number is a JSON number, a date or time Google's serial number (days since 1899-12-30), a formula its result. The first row of `values` is the header: a cell's text names its column (a number or boolean its JSON text), an empty cell `col<n>` by its 1-based position, and a name already taken gets `_2`, `_3`, ... The rows after it are the records: a short row is padded with `null`, a longer one cut at the column count, and an empty cell (Google's `""`) is `null`. No `values` (an empty tab or range) is no columns and no rows; a header alone is columns and no rows. A column's type is that of its first non-null value in the first 100 rows after the header: boolean `boolean`, integer `integer`, other number `float`, string `string`, none `string`; `db_type` is `boolean`, `number` or `string`. A value of another type than its column's is kept as it is. At most `max_rows` plus one rows are read, as for every connector; the answer itself is one request, so Google's own limits (a request's size and the per-minute quota) apply first.
 
 The connector logs one line per read, `gsheets read: status=<status> bytes=<body bytes>`, with no id, range or URL. Contract-fake-proven: a fake Sheets API that checks the JWT (`packages/ssc_datagw/tests/test_gsheets.py`, over TLS in-process, which also runs the connector suite); live proof is a GA-5 C step.
+
+**What `describe` returns.** One table per tab, named by its title (the connection's tab alone when it names one; otherwise one GET of the titles, the first 500). Its columns are the header and types of the tab's first 100 rows after it, as a read names and types them, through `values:batchGet`, 50 tabs a request, all within `timeout_ms`. Logged as `gsheets describe: tables=<n>`.
 
 <!-- s3 -->
 ## The S3 connector
@@ -290,6 +300,8 @@ At most `max_rows` plus one rows are kept, as for every connector; a CSV or JSON
 
 The connector logs one line per read, `s3 read: op=<list|get> status=<status> bytes=<body bytes> pages=<requests>`, with no bucket, key or URL. Local-proven on S3Mock 4.9.1 over TLS (wire protocol) and on a contract fake that verifies SigV4 (signing, timeout, cancel); live proof against a real bucket is a GA-5 C step (`packages/ssc_datagw/tests/test_s3.py`, which runs the connector suite against both).
 
+**What `describe` returns.** The first 500 objects under the prefix (one list, readable ones listed): each `.csv`, `.json`, `.jsonl` or `.ndjson` object is a table named by its full key, without columns (only a read can tell them). Logged as a `list` read.
+
 <!-- gcs -->
 ## The GCS connector
 
@@ -344,6 +356,8 @@ Each request has `Authorization`, `User-Agent: ssc-datagw (<tag>)` (as for S3: t
 **Limits.** An object larger than 32 MiB (decoded) is not read. A list reads at most 1,000 objects a page and stops at `max_rows` plus one. Google's own request quotas apply first (a 429 is `CONNECTION_UNAVAILABLE`).
 
 The connector logs one line per read, `gcs read: op=<list|get> status=<status> bytes=<body bytes> pages=<requests>`, with no bucket, key or URL. Contract-fake-proven (an in-process fake of the JSON API that verifies the service-account JWT, `packages/ssc_datagw/tests/test_gcs.py`, over TLS, which also runs the connector suite); live proof on a bucket in our GCP sandbox project is a GA-5 C step, and it also settles that Cloud Storage takes the self-signed JWT with `aud` `https://storage.googleapis.com/`, which only the live API can show.
+
+**What `describe` returns.** As for S3: the first 500 objects under the prefix, readable ones listed by full key, without columns.
 
 <!-- bigquery -->
 ## The BigQuery connector
@@ -416,6 +430,8 @@ The connector logs one line per read, `gcs read: op=<list|get> status=<status> b
 At most `max_rows` plus one rows are read, as for every connector.
 
 The connector logs one line per read, `bigquery read: pages=<n> polls=<n> bytes=<body bytes>`, and `could not cancel the job: <error class>` when a cancel fails, with no project, job id or query text. Contract-fake-proven: a fake BigQuery API that checks the JWT (`packages/ssc_datagw/tests/test_bigquery.py`, over TLS in-process, which also runs the connector suite); live proof on the BigQuery sandbox is a GA-5 C step.
+**What `describe` returns.** One table per table or view of the connection's dataset (`INFORMATION_SCHEMA.COLUMNS`), named by the bare table name; `schemas` does not apply. Columns typed as a read types them, `db_type` BigQuery's type without its parameters. It is a query job like a read and BigQuery bills it at least 10 MB, so a `max_bytes_billed` under 10 MB refuses it: `QUERY_FAILED` 53400.
+
 <!-- sqlserver -->
 ## The SQL Server connector
 
@@ -479,6 +495,8 @@ What stops each attack: local-proven on SQL Server 2022 in a container; no 2025 
 | a schema not granted (`secret.payroll`) | passes (a read) | 42501 (229) |
 | `EXEC`, `WAITFOR`, `OPENROWSET`, a second statement | refused | not tested with the classifier off |
 | a login in `db_datawriter`, or `sa` | passes (a read) | the read-back refuses it before any read; `sqlserver_setup.sql` takes the login out of every role |
+
+**What `describe` returns.** One table per table or view of `INFORMATION_SCHEMA.COLUMNS` of the connection's database the login may read, named `schema.table`, outside `sys` and `INFORMATION_SCHEMA`; `schemas`, when given, keeps to those. Columns typed as a read types them, `db_type` as a read gives it. One fixed statement of ours in the same checked session as a read, without the classifier.
 
 <!-- snowflake -->
 ## The Snowflake connector
@@ -557,6 +575,8 @@ Fractions of a second past the microsecond are cut, toward the past. At most `ma
 **Limits.** One statement a read (`MULTI_STATEMENT_COUNT` 1). No stage, no session variable, no other database, no `SNOWFLAKE` database, no result of an earlier statement. The warehouse bills for the time each read runs; `timeout_ms` bounds it. Only key-pair sign-in: no password, no OAuth, no encrypted key.
 
 The connector logs one line per read, `snowflake read: partitions=<n> polls=<n> bytes=<body bytes>`, and `could not cancel the statement: <error class>` when a cancel fails, with no account, handle or statement text. Contract-fake-proven (an in-process fake of the SQL API v2 that verifies the key-pair JWT; `packages/ssc_datagw/tests/test_snowflake.py`, over TLS in-process, which also runs the connector suite); live proof on a real account is a GA-5 C step with the founder's trial account.
+**What `describe` returns.** One table per table or view of `information_schema.columns` in the connection's schema, named by the bare table name; `schemas` does not apply. Columns typed as a read types them (a `NUMBER` of scale 0 `integer`, of another scale `decimal`), `db_type` as a read gives it. One fixed statement of ours, run with the same checks as a read.
+
 <!-- airtable -->
 ## The Airtable connector
 
@@ -566,7 +586,7 @@ The connector logs one line per read, `snowflake read: partitions=<n> polls=<n> 
 |---|---|
 | `base_id` | `^app[A-Za-z0-9]{14}$`. |
 | `table` | Optional; `^[^\x00-\x1f]{1,100}$`, a table name or id. When set, every query must read exactly this table, as written (a name and its `tbl…` id are not the same). |
-| `token` | A personal access token with the scope `data.records:read`, its access limited to this base and nothing else: `pat`, then the rest, 20 to 200 visible ASCII characters in all (`!` to `~`). Never shown in a repr, an error or a log line, not even the error that refuses it. |
+| `token` | A personal access token with the scope `data.records:read` (and `schema.bases:read` for `describe`), its access limited to this base and nothing else: `pat`, then the rest, 20 to 200 visible ASCII characters in all (`!` to `~`). Never shown in a repr, an error or a log line, not even the error that refuses it. |
 
 The connector reaches `https://api.airtable.com` with the system trust store and the host name checked; the address of the API and the trust are not members of the target (only tests replace them).
 
@@ -602,6 +622,42 @@ Anything else is `QUERY_REFUSED` ("the query is not <table>[ view <view>][ where
 **Records and columns.** One row per record, in Airtable's order (the view's, or the table's default). The columns are `id` (`string`, `db_type` `string`), `created_time` (`timestamp`, `db_type` `timestamp`, UTC, from `createdTime`), then one column per field name, in the order names first appear across the records read. Airtable leaves an empty field out of a record, so a record without a field is `null` there. A field column's type and `db_type` are the REST connector's: its first non-null value in the first 100 records, boolean `boolean`, integer `integer`, other number `float`, string `string`, array or object `json` (attachments, linked records, lookups, collaborators: as Airtable sends them), none `string`; a date or date-time field is Airtable's ISO text, a `string`. A field named like a column already taken (`id`, `created_time`, or a repeat) gets `_2`, `_3`, ..., as Google Sheets header names do. No records is the two fixed columns and no rows. At most `max_rows` plus one rows are read, as for every connector.
 
 The connector logs one line per read, `airtable read: status=<status> bytes=<body bytes> pages=<requests>`, with no base, table, formula or URL. Contract-fake-proven (an in-process fake of the Airtable REST API that checks the token); live proof on a real base is a GA-5 C step with the founder's free-plan base (`packages/ssc_datagw/tests/test_airtable.py`, which runs the connector suite against the fake).
+
+**What `describe` returns.** One table per Airtable table, named as Airtable names it (the connection's table alone when it names one, by name or id), through one GET of `/v0/meta/bases/<base>/tables`. That needs the token's `schema.bases:read` scope; without it Airtable answers 403 and `describe` is `QUERY_FAILED` 42501 (reads still work). Columns are `id` and `created_time`, then each field, typed by its Airtable type (text and select fields `string`; a `number` of precision 0 `integer` and the other numeric fields `float`; `checkbox` `boolean`; `date` `date`; `dateTime` and the record times `timestamp`; any other `json`), `db_type` the Airtable type. Logged as `airtable describe: status=<status> bytes=<body bytes> tables=<n>`.
+
+## Schema discovery
+
+`GET /v1/connections/{name}/schema` names a connection's tables and their columns, for the app an admin granted the connection and for the cell agent (`ssc_datagw.server`, GA-5.8). Two callers: an app, with its workload token as for a query; and the cell agent, with its own token and `X-SSC-Environment: env_<20>` naming the environment it asks for ([The workload token](#the-workload-token)). `Authorization` and `X-Request-Id` are as for a query; there is no body and no identity note (`X-SSC-Identity` is not read).
+
+Admission is a query's: the workload, the snapshot, the environment, the grant. A description spends no daily budget and takes no slot. It runs under the composed `timeout_ms` of the platform, the connection and the grant (plus the 2 s grace), and describes every schema the credential may read. `200`:
+
+| Member | Meaning |
+|---|---|
+| `connection` | The connection's name. |
+| `kind` | Its kind. |
+| `tables` | List of `{name, columns}`, each column `{name, type, db_type}` as in [Response](#response); `columns` is empty when only a read can tell (an object in S3 or GCS). |
+| `snapshot_version` | The snapshot that admitted the request. |
+| `request_id` | As in `X-Request-Id`. |
+
+Errors are a query's, with the same bodies and codes: `UNAUTHENTICATED`, `UNAVAILABLE`, `DATA_SNAPSHOT_STALE`, `UNKNOWN_ENVIRONMENT`, `APP_NOT_ACTIVE`, `CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`, then `QUERY_FAILED` (with `sqlstate`), `QUERY_TIMEOUT` and `CONNECTION_UNAVAILABLE` from the source.
+
+**The cache.** A description is kept per connection for 300 s and dropped as soon as a newer snapshot is read, so a suspension, a revoked grant or a changed connection is never answered from it (admission runs on every request first). A failure is not kept. Two requests for the same connection at once may both ask the source.
+
+| Kind | Tables | Named | The connector's `schemas` argument (the route passes none) |
+|---|---|---|---|
+| `postgres` | Tables and views the role may read, outside the system schemas | `schema.table` | honoured |
+| `sqlserver` | Tables and views of the database the login may read | `schema.table` | honoured |
+| `mysql` | The connection's database | `table` | fixed to it |
+| `bigquery` | The connection's dataset | `table` | fixed to it |
+| `snowflake` | The connection's schema | `table` | fixed to it |
+| `gsheets` | Each tab, or the connection's tab | the tab's title | none |
+| `airtable` | Each table, or the connection's table | Airtable's table name | none |
+| `s3`, `gcs` | Readable objects among the first 500 under the prefix | the full key | none |
+| `rest` | None | | none |
+
+**Caps.** At most 500 tables and 500 columns a table; the rest are left out without a mark. Every name and type is the source's, typed as a read types it.
+
+The snapshot does not carry a connection's allowed schemas yet, so a description shows what the credential may read, which is what the setup scripts bound (`postgres_setup.sql` grants the named schemas, `mysql_setup.sql` the database, and so on).
 
 ## Limits
 
@@ -668,4 +724,4 @@ What v1 does not do, and says so:
 
 ## Logs
 
-One `datagw query` line per answer, JSON: `request_id`, `connection`, `env_id`, `snapshot_version`, `user`, `user_context` (`verified`, `schedule`, `app_only`), `outcome` (`served` or the code), `reason` (for refusals), `rows`, `bytes`, `truncated_reason`, `received_at`, `elapsed_ms`, `instance_started_at`, `cold` (the instance's first answer) and, on that first answer, `ready_ms` (process start to ready). One `datagw ready` line at start. The SQL text, parameters and rows are never logged. One `datagw file` line per file request: `request_id`, `file_op`, `env_id`, `snapshot_version`, `outcome`, `reason`, and the timing members as above. A file's name, which may say who it is about, and its link are never logged.
+One `datagw query` line per answer, JSON: `request_id`, `connection`, `env_id`, `snapshot_version`, `user`, `user_context` (`verified`, `schedule`, `app_only`), `outcome` (`served` or the code), `reason` (for refusals), `rows`, `bytes`, `truncated_reason`, `received_at`, `elapsed_ms`, `instance_started_at`, `cold` (the instance's first answer) and, on that first answer, `ready_ms` (process start to ready). One `datagw ready` line at start. The SQL text, parameters and rows are never logged. One `datagw file` line per file request: `request_id`, `file_op`, `env_id`, `snapshot_version`, `outcome`, `reason`, and the timing members as above. A file's name, which may say who it is about, and its link are never logged. One `datagw schema` line per description: `request_id`, `connection`, `env_id`, `caller` (`app` or `agent`), `snapshot_version`, `outcome`, `reason`, `tables` (the number of tables answered), and the timing members as above; no table or column name is logged.

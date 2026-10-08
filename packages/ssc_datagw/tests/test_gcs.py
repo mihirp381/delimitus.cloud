@@ -1,16 +1,16 @@
 """The GCS connector against a fake Cloud Storage JSON API over TLS in-process (GA-5 B6).
 
-Each test that reads starts a FastAPI app under ``uvicorn`` on 127.0.0.1 with a server
-certificate for ``localhost`` from the test PKI, so every read crosses a real TLS socket. The app
-answers ``objects.list`` and ``objects.get?alt=media`` as Google does: it verifies the bearer JWT
-against the test service account's public key (RS256, ``kid``, ``iss`` = ``sub`` = the email,
-``aud`` exact, at most an hour) and answers 401 otherwise; it serves bucket ``corp-exports`` with
-the S3 fake's objects, pages a list 20 objects at a time, lists any prefix (the binding's
-bucket-level clause allows that), refuses an object read outside ``exports/`` with 403 (the
-binding's condition), and answers 404 for a missing object or an unknown bucket, every error in
-Google's JSON shape. The service account's key is made here, never read from disk. The connector
-suite runs against it; the target, the error table and the list parsing are unit-tested without
-it."""
+Each test that reads starts a FastAPI app under ``uvicorn`` on 127.0.0.1 with a server certificate
+for ``localhost`` from the test PKI, so every read crosses a real TLS socket. The app answers
+``objects.list`` and ``objects.get?alt=media`` as Google does: it verifies the bearer JWT against
+the test service account's public key (RS256, ``kid``, ``iss`` = ``sub`` = the email, ``aud``
+exact, at most an hour) and answers 401 otherwise; it serves bucket ``corp-exports`` with the S3
+fake's objects, pages a list 20 objects at a time, lists any prefix (the binding's bucket-level
+clause allows that), refuses an object read outside ``exports/`` with 403 (the binding's
+condition), and answers 404 for a missing object or an unknown bucket, every error in Google's JSON
+shape; a list under ``exports/slowlist/`` is slow. The service account's key is made here, never
+read from disk. The connector suite runs against it; the target, the error table and the list
+parsing are unit-tested without it."""
 
 import asyncio
 import base64
@@ -253,6 +253,8 @@ def app(account: Account, seen: Seen) -> FastAPI:  # noqa: C901  (one fake, each
         if parts[4] != BUCKET:
             return google_error(404, "notFound")
         if len(parts) == 6:
+            if request.query_params.get("prefix") == "exports/slowlist/":
+                await asyncio.sleep(20)
             return listing(request)
         if request.query_params.get("alt") != "media":
             return google_error(400, "invalid")
@@ -369,6 +371,7 @@ def subject(s: Source) -> Subject:
         bad="get exports/missing.csv",
         slow="get exports/slow.csv",
         params=None,
+        table="exports/orders.csv",
     )
 
 
@@ -459,6 +462,37 @@ async def test_the_jwt_is_self_signed_for_the_storage_api(source: Source) -> Non
     assert claims["exp"] - claims["iat"] == 3600
     assert before - 5 <= claims["iat"] <= int(time.time()) + 5
     assert set(claims) == {"iss", "sub", "aud", "iat", "exp"}
+
+
+async def test_a_description_names_each_readable_object_by_its_key(source: Source) -> None:
+    tables = await source.connector().describe(schemas=["x"], timeout_ms=10_000)
+    readable = sorted(k for k in OBJECTS if k.startswith(PREFIX) and k.rpartition(".")[2] != "txt")
+    assert [t.name for t in tables] == readable
+    assert all(t.columns == [] for t in tables)
+    assert set(source.seen.agents) == {"ssc-datagw (ssc:describe)"}
+
+
+async def test_a_description_lists_the_first_500_objects_readable_or_not(
+    source: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    objects = {f"exports/k{i:03}.{'csv' if i % 2 else 'txt'}": b"a\n1\n" for i in range(600)}
+    monkeypatch.setattr(f"{__name__}.OBJECTS", objects)
+    tables = await source.connector().describe(schemas=None, timeout_ms=10_000)
+    assert len(tables) == 250
+    assert (tables[0].name, tables[-1].name) == ("exports/k001.csv", "exports/k499.csv")
+    assert len(source.seen.requests) == 500 // FAKE_PAGE
+
+
+async def test_a_description_past_its_timeout_times_out(source: Source) -> None:
+    with pytest.raises(TimeoutError):
+        await source.connector(prefix="exports/slowlist/").describe(schemas=None, timeout_ms=500)
+
+
+async def test_a_description_with_another_key_is_28000(source: Source) -> None:
+    connector = source.connector(service_account=make_account(kid=source.account.kid).json())
+    with pytest.raises(QueryFailedError) as refused:
+        await connector.describe(schemas=None, timeout_ms=5_000)
+    assert refused.value.sqlstate == "28000"
 
 
 async def test_another_key_or_email_is_28000(source: Source) -> None:

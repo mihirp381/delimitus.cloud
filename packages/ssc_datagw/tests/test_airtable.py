@@ -7,8 +7,10 @@ one, an attachment list, a linked-record list, a checkbox, a number, a date stri
 (250 records, paged by ``offset``), ``Slow`` (20 s), ``Busy`` (429 once), ``Boom`` (500),
 ``Text`` and ``Odd`` (bodies that are not a record list). A formula holding ``bad(`` is 422
 ``INVALID_FILTER_BY_FORMULA``; another table is 403 ``INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND`` and
-another base 404 ``NOT_FOUND``, as live Airtable answers them. The connector suite runs against
-it; the grammar, the target, the records and the error mapping are unit-tested without it."""
+another base 404 ``NOT_FOUND``, as live Airtable answers them. The base's schema
+(``/v0/meta/bases/{base}/tables``) lists ``Orders`` and ``Many``, or answers 403 as for a token
+without ``schema.bases:read``. The connector suite runs against it; the grammar, the target, the
+records and the error mapping are unit-tested without it."""
 
 import asyncio
 import logging
@@ -105,6 +107,64 @@ FIRST_ROW = [
     ["recC0000000000001"],
     None,
 ]
+SCHEMA: list[dict[str, Any]] = [
+    {
+        "id": "tblOrders00000001",
+        "name": "Orders",
+        "primaryFieldId": "fldName0000000001",
+        "fields": [
+            {"id": "fldName0000000001", "name": "Name", "type": "singleLineText"},
+            {
+                "id": "fldAmnt0000000001",
+                "name": "Amount",
+                "type": "currency",
+                "options": {"precision": 2, "symbol": "$"},
+            },
+            {
+                "id": "fldQty00000000001",
+                "name": "Qty",
+                "type": "number",
+                "options": {"precision": 0},
+            },
+            {
+                "id": "fldRate0000000001",
+                "name": "Rate",
+                "type": "number",
+                "options": {"precision": 2},
+            },
+            {"id": "fldPaid0000000001", "name": "Paid", "type": "checkbox"},
+            {"id": "fldPlcd0000000001", "name": "Placed", "type": "date"},
+            {"id": "fldAt000000000001", "name": "At", "type": "dateTime"},
+            {"id": "fldPhto0000000001", "name": "Photos", "type": "multipleAttachments"},
+            {"id": "fldCust0000000001", "name": "Customer", "type": "multipleRecordLinks"},
+            {"id": "fldNote0000000001", "name": "Notes", "type": "multilineText"},
+            {"id": "fldId000000000001", "name": "id", "type": "autoNumber"},
+        ],
+        "views": [{"id": "viwGrid0000000001", "name": "Grid view", "type": "grid"}],
+    },
+    {
+        "id": "tblMany0000000001",
+        "name": "Many",
+        "primaryFieldId": "fldN0000000000001",
+        "fields": [{"id": "fldN0000000000001", "name": "n", "type": "count"}],
+        "views": [],
+    },
+]
+SCHEMA_COLUMNS = [
+    Column("id", "string", "string"),
+    Column("created_time", "timestamp", "timestamp"),
+    Column("Name", "string", "singleLineText"),
+    Column("Amount", "float", "currency"),
+    Column("Qty", "integer", "number"),
+    Column("Rate", "float", "number"),
+    Column("Paid", "boolean", "checkbox"),
+    Column("Placed", "date", "date"),
+    Column("At", "timestamp", "dateTime"),
+    Column("Photos", "json", "multipleAttachments"),
+    Column("Customer", "json", "multipleRecordLinks"),
+    Column("Notes", "string", "multilineText"),
+    Column("id_2", "float", "autoNumber"),
+]
 MANY = [
     {
         "id": f"rec{i:014}",
@@ -123,6 +183,8 @@ class Seen:
     authorizations: list[str] = field(default_factory=list[str])
     agents: list[str] = field(default_factory=list[str])
     busy: int = 0
+    no_schema_scope: bool = False
+    slow_schema: bool = False
 
 
 def _error(status: int, kind: str, message: str) -> JSONResponse:
@@ -146,6 +208,23 @@ def _page(records: list[dict[str, Any]], request: Request) -> JSONResponse:
 
 def fake_airtable(seen: Seen) -> FastAPI:
     api = FastAPI()
+
+    @api.get("/v0/meta/bases/{base}/tables")
+    async def schema(base: str, request: Request) -> Any:
+        seen.requests.append(
+            (request.scope["raw_path"].decode(), request.scope["query_string"].decode())
+        )
+        seen.authorizations.append(request.headers.get("authorization", ""))
+        seen.agents.append(request.headers.get("user-agent", ""))
+        if request.headers.get("authorization") != f"Bearer {TOKEN}":
+            return _error(401, "AUTHENTICATION_REQUIRED", "Authentication required")
+        if base != BASE_ID:
+            return JSONResponse({"error": "NOT_FOUND"}, status_code=404)
+        if seen.no_schema_scope:
+            return _error(403, "INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND", "Invalid permissions")
+        if seen.slow_schema:
+            await asyncio.sleep(20)
+        return {"tables": SCHEMA}
 
     @api.get("/v0/{base}/{table:path}")
     async def records(base: str, table: str, request: Request) -> Any:
@@ -264,6 +343,7 @@ def subject(s: Source) -> Subject:
         bad="Missing",
         slow="Slow",
         params=None,
+        table="Orders",
     )
 
 
@@ -272,6 +352,61 @@ async def test_the_airtable_connector_conforms_on_the_fake(
     fake: Source, check: Callable[[Subject], Awaitable[None]]
 ) -> None:
     await conform(check, subject(fake))
+
+
+async def test_a_description_types_each_field_by_its_airtable_type(fake: Source) -> None:
+    tables = await fake.connector().describe(schemas=["x"], timeout_ms=5_000)
+    assert [t.name for t in tables] == ["Orders", "Many"]
+    assert list(tables[0].columns) == SCHEMA_COLUMNS
+    assert list(tables[1].columns)[2:] == [Column("n", "float", "count")]
+    assert fake.seen.requests == [(f"/v0/meta/bases/{BASE_ID}/tables", "")]
+    assert fake.seen.authorizations == [f"Bearer {TOKEN}"]
+    assert fake.seen.agents == ["ssc-datagw (ssc:describe)"]
+
+
+@pytest.mark.parametrize("table", ["Many", "tblMany0000000001"])
+async def test_a_description_of_a_connection_with_a_table_names_it_alone(
+    fake: Source, table: str
+) -> None:
+    (found,) = await fake.connector(table=table).describe(schemas=None, timeout_ms=5_000)
+    assert found.name == "Many"
+
+
+async def test_a_description_stops_at_500_tables_of_500_columns(
+    fake: Source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def table(n: int, fields: int) -> dict[str, Any]:
+        return {
+            "id": f"tbl{n:014}",
+            "name": f"T{n:03}",
+            "fields": [
+                {"id": f"fld{i:014}", "name": f"f{i}", "type": "rating"} for i in range(fields)
+            ],
+        }
+
+    monkeypatch.setattr(
+        f"{__name__}.SCHEMA", [table(0, 600), *(table(n, 1) for n in range(1, 503))]
+    )
+    tables = await fake.connector().describe(schemas=None, timeout_ms=5_000)
+    assert len(tables) == 500
+    assert (tables[0].name, len(tables[0].columns)) == ("T000", 500)
+    assert tables[0].columns[-1] == Column("f497", "float", "rating")
+    assert tables[-1].name == "T499"
+
+
+async def test_a_description_past_its_timeout_times_out(fake: Source) -> None:
+    fake.seen.slow_schema = True
+    with pytest.raises(TimeoutError):
+        await fake.connector().describe(schemas=None, timeout_ms=500)
+
+
+async def test_a_token_without_schema_bases_read_is_42501_without_the_token(fake: Source) -> None:
+    fake.seen.no_schema_scope = True
+    with pytest.raises(QueryFailedError) as denied:
+        await fake.connector().describe(schemas=None, timeout_ms=5_000)
+    assert denied.value.sqlstate == "42501"
+    assert str(denied.value) == "the source answered 403 INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND"
+    assert TOKEN not in "".join(traceback.format_exception(denied.value))
 
 
 async def test_records_are_rows_with_fields_in_order_of_first_appearance(fake: Source) -> None:

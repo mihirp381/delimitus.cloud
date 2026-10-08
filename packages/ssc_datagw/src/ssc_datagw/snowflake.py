@@ -18,6 +18,9 @@ Each read runs in this order; the first step that refuses answers:
 4. while Snowflake answers 202 the statement is polled; further partitions follow until
    ``max_rows`` plus one rows.
 
+A description (:meth:`SnowflakeConnector.describe`, GA-5.8) is one fixed statement of ours on
+``information_schema.columns`` for the connection's schema, run from step 3 on.
+
 Every request goes through :func:`ssc_datagw.rest.get`: TLS against the system trust store, the
 warm-up retry, the 32 MiB cap. The whole read ends at the query's ``timeout_ms``; past it, and
 when the gateway cancels the read, the statement is cancelled (5 s at most, from a client of its
@@ -55,12 +58,17 @@ from sqlglot.tokens import TokenType
 
 from ssc_datagw.classify import snowflake_refusal
 from ssc_datagw.connectors import (
+    DESCRIBE_TAG,
+    MAX_COLUMNS,
+    MAX_TABLES,
     Column,
     JsonValue,
     Query,
     QueryFailedError,
     QueryRefusedError,
+    Table,
     UpstreamUnavailableError,
+    grouped,
 )
 from ssc_datagw.rest import USER_AGENT, get
 from ssc_datagw.tls import tls_context
@@ -113,6 +121,20 @@ TZ_BASE: Final = 1440
 _EPOCH: Final = datetime(1970, 1, 1)  # noqa: DTZ001  (TIMESTAMP_NTZ is naive)
 _EPOCH_UTC: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _EPOCH_DAY: Final = date(1970, 1, 1)
+DESCRIBE: Final = f"""
+SELECT table_name, column_name, data_type, numeric_scale
+FROM (SELECT table_name, column_name, data_type, numeric_scale,
+             DENSE_RANK() OVER (ORDER BY table_name) AS t,
+             ROW_NUMBER() OVER (PARTITION BY table_name ORDER BY ordinal_position) AS n
+      FROM information_schema.columns WHERE table_schema = CURRENT_SCHEMA())
+WHERE t <= {MAX_TABLES} AND n <= {MAX_COLUMNS}
+ORDER BY t, n
+"""  # noqa: S608  (built from constants only)
+"""Every column the role may read in the session's database and schema, at most 500 tables of
+500 columns."""
+ROW_TYPE: Final = {"number": "fixed", "float": "real"}
+"""``information_schema``'s ``DATA_TYPE`` (lower case) as ``rowType`` names it, where they
+differ."""
 
 
 def _loaded(pem: str) -> rsa.RSAPrivateKey | None:
@@ -319,6 +341,13 @@ def row_types(raw: object) -> tuple[RowType, ...]:
             raise _bad()
         found.append(RowType(name, kind.lower(), scale))
     return tuple(found)
+
+
+def described(name: str, data_type: str, scale: object) -> Column:
+    """The portable column for an ``information_schema.columns`` row, as a read types it."""
+    kind = data_type.lower()
+    found = RowType(name, ROW_TYPE.get(kind, kind), scale if isinstance(scale, int) else 0)
+    return Column(name, found.portable, found.type)
 
 
 def _seconds(text: str) -> int:
@@ -627,6 +656,30 @@ class SnowflakeConnector:
                 f"{len(query.params)} parameters for {count} placeholders", sqlstate="07001"
             )
         bindings(query.params)  # a parameter Snowflake cannot take fails before a request
+        columns, rows = await self._run(query)
+        yield _Cursor(columns, rows)
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """``information_schema.columns`` of the session's database and schema through
+        :meth:`_run`; ``schemas`` does not apply (the schema is the connection's)."""
+        del schemas
+        query = Query(
+            sql=DESCRIBE,
+            params=(),
+            max_rows=MAX_TABLES * MAX_COLUMNS,
+            timeout_ms=timeout_ms,
+            tag=DESCRIBE_TAG,
+        )
+        _, rows = await self._run(query)
+        return grouped(
+            (str(table), described(str(name), str(kind), scale))
+            for table, name, kind, scale in rows
+        )
+
+    async def _run(self, query: Query) -> tuple[list[Column], list[list[object]]]:
+        """Steps 3 and 4 of the module's order, under ``timeout_ms``, the statement cancelled
+        past it or when the caller is."""
+        t = self._target
         token = self._key.token(t.account, t.user, int(self._clock()))
         headers = {
             "Accept": "application/json",
@@ -654,4 +707,4 @@ class SnowflakeConnector:
             read.polls,
             read.bytes,
         )
-        yield _Cursor(columns, rows)
+        return columns, rows

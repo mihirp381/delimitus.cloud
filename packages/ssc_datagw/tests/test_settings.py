@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from datagw_world import ENV, NOTE_JWKS, SALES, SETTINGS
+from datagw_world import AGENT, ENV, NOTE_JWKS, PROJECT, SALES, SETTINGS, account
 
 from ssc_datagw import kinds
 from ssc_datagw.postgres import PostgresTarget
@@ -26,6 +26,12 @@ def test_the_defaults() -> None:
     assert got.issuer == f"https://keys.delimitus.com/{SETTINGS.cell_label}"
     assert got.max_stale == MAX_STALE_SECONDS
     assert settings_from_env({**ENV, "SSC_SNAPSHOT_MAX_AGE": "30"}).max_stale == 30
+
+
+def test_the_cell_agent_account_is_read_when_set() -> None:
+    assert SETTINGS.agent_account is None
+    assert settings_from_env({**ENV, "SSC_DATAGW_AGENT_ACCOUNT": ""}).agent_account is None
+    assert settings_from_env({**ENV, "SSC_DATAGW_AGENT_ACCOUNT": AGENT}).agent_account == AGENT
 
 
 def test_file_links_are_signed_as_the_gateway_s_own_account() -> None:
@@ -57,6 +63,14 @@ BAD = {
     "a connection with a bad port": {CONNECTION_VAR: json.dumps({**TARGET, "port": 0})},
     "a connection of no kind at all": {CONNECTION_VAR: json.dumps({**TARGET, "kind": "oracle"})},
     "a connection with a bad id": {"SSC_CONNECTION_SALES": json.dumps(TARGET)},
+    "an agent that is not an account": {"SSC_DATAGW_AGENT_ACCOUNT": "ssc-cell-agent"},
+    "an agent of another project": {
+        "SSC_DATAGW_AGENT_ACCOUNT": "ssc-cell-agent@ssc-c-other.iam.gserviceaccount.com"
+    },
+    "an agent that is an app": {"SSC_DATAGW_AGENT_ACCOUNT": account("env_" + "p" * 20)},
+    "an agent with a bad id": {
+        "SSC_DATAGW_AGENT_ACCOUNT": f"Cell_Agent@{PROJECT}.iam.gserviceaccount.com"
+    },
 }
 
 

@@ -11,7 +11,8 @@ check wrote and fails if the credential appears in one. The promises, from
 - what the source refuses is a query failure, what it cannot reach is unavailable;
 - a read past ``timeout_ms`` ends with ``TimeoutError``, a cancelled read stops;
 - the credential appears in no repr, no error and no log line;
-- a parameter binds.
+- a parameter binds;
+- a description names the tables, every column type portable, within the caps (GA-5.8).
 """
 
 import asyncio
@@ -22,6 +23,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from ssc_datagw.connectors import (
+    MAX_COLUMNS,
+    MAX_TABLES,
     PORTABLE_TYPES,
     Column,
     Connector,
@@ -47,7 +50,8 @@ class Subject:
     read that runs for at least :data:`SLOW_SECONDS` unless stopped. ``unreachable`` is the same
     connector pointed where nothing answers, with the same ``credential``, which must appear in
     no repr of ``secrets``, no error and no log line. ``params`` is a read with one placeholder,
-    its parameters, and the first row it answers, as JSON."""
+    its parameters, and the first row it answers, as JSON. ``table`` is a table the
+    connector's description names; with ``describes`` false the description is empty."""
 
     connector: Connector
     unreachable: Connector
@@ -60,6 +64,8 @@ class Subject:
     bad: str
     slow: str
     params: tuple[str, Sequence[Scalar], Sequence[object]] | None = None
+    table: str = ""
+    describes: bool = True
 
 
 def ask(
@@ -164,6 +170,26 @@ async def check_a_parameter_binds(s: Subject) -> None:
     assert jsonable(list(rows[0])) == list(first)
 
 
+async def check_a_description_names_the_tables(s: Subject) -> None:
+    tables = list(await s.connector.describe(schemas=None, timeout_ms=10_000))
+    if not s.describes:
+        assert tables == [], "this kind names no tables"
+        return
+    assert len(tables) <= MAX_TABLES
+    assert s.table in [t.name for t in tables], (s.table, [t.name for t in tables])
+    for table in tables:
+        assert len(table.columns) <= MAX_COLUMNS
+        assert all(c.type in PORTABLE_TYPES for c in table.columns), table
+        assert all(c.db_type for c in table.columns), table
+    try:
+        async with asyncio.timeout(SLOW_SECONDS):
+            await s.unreachable.describe(schemas=None, timeout_ms=10_000)
+    except UpstreamUnavailableError as exc:
+        _hidden(s.credential, exc)
+    else:
+        raise AssertionError("the unreachable source answered a description")
+
+
 CHECKS: Sequence[Callable[[Subject], Awaitable[None]]] = (
     check_a_read_returns_typed_columns_and_one_row_past_the_cap,
     check_a_read_of_fewer_rows_than_the_cap_returns_them_all,
@@ -174,6 +200,7 @@ CHECKS: Sequence[Callable[[Subject], Awaitable[None]]] = (
     check_a_cancelled_read_stops,
     check_the_credential_is_hidden,
     check_a_parameter_binds,
+    check_a_description_names_the_tables,
 )
 
 

@@ -11,6 +11,11 @@ service account, no token endpoint) and sends one GET of the range's values, thr
 cap, and the whole read, connect included, ending at the query's ``timeout_ms``. The first row of
 values names the columns; the rows after it are the records.
 
+A description (:meth:`GsheetsConnector.describe`, GA-5.8) is one table per tab (the
+connection's tab alone when it names one): one GET of the tab titles, then ``values:batchGet``
+of each tab's header and the :data:`~ssc_datagw.rest.TYPE_SAMPLE` rows after it, typed as a read
+types them, :data:`DESCRIBE_CHUNK` tabs a request, all under one ``timeout_ms``.
+
 The key, the email, the JSON and each JWT are never in a repr, an error or a log line: every
 error names a status or an exception class.
 """
@@ -28,11 +33,14 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, Field
 
 from ssc_datagw.connectors import (
+    MAX_COLUMNS,
+    MAX_TABLES,
     Column,
     JsonValue,
     Query,
     QueryFailedError,
     QueryRefusedError,
+    Table,
 )
 from ssc_datagw.google import ServiceAccount, signer
 from ssc_datagw.rest import TYPE_SAMPLE, USER_AGENT, get, status_failure
@@ -59,6 +67,11 @@ RENDER: Final = {
 NOT_A_RANGE: Final = "the query is not an A1 range"
 OTHER_SHEET: Final = "the range names another sheet than the connection's"
 NOT_VALUES: Final = "the body is not a Sheets value range"
+NOT_SHEETS: Final = "the body is not a Sheets spreadsheet"
+TITLES: Final = {"fields": "sheets.properties.title"}
+"""The spreadsheet GET's field mask: each tab's title, nothing else."""
+DESCRIBE_CHUNK: Final = 50
+"""Tabs one ``values:batchGet`` of a description reads."""
 
 _COL = r"[A-Za-z]{1,3}"
 _ROW = r"[1-9][0-9]{0,6}"
@@ -128,6 +141,31 @@ def sheets_failure(status: int) -> Exception | None:
             "the service account may not read this spreadsheet", sqlstate="42501"
         )
     return status_failure(status)
+
+
+def titles_in(body: JsonValue) -> list[str]:
+    """The tab titles of a spreadsheet GET under :data:`TITLES`, in the spreadsheet's order."""
+    if not isinstance(body, dict):
+        raise QueryFailedError(NOT_SHEETS, sqlstate="22P02")
+    sheets = body.get("sheets", [])
+    if not isinstance(sheets, list):
+        raise QueryFailedError(NOT_SHEETS, sqlstate="22P02")
+    titles: list[str] = []
+    for sheet in sheets:
+        properties = sheet.get("properties") if isinstance(sheet, dict) else None
+        title = properties.get("title") if isinstance(properties, dict) else None
+        if not isinstance(title, str):
+            raise QueryFailedError(NOT_SHEETS, sqlstate="22P02")
+        titles.append(title)
+    return titles
+
+
+def value_ranges(body: JsonValue, count: int) -> list[JsonValue]:
+    """The ``count`` value ranges of a ``values:batchGet``, in the order asked."""
+    found = body.get("valueRanges") if isinstance(body, dict) else None
+    if not isinstance(found, list) or len(found) != count:
+        raise QueryFailedError(NOT_VALUES, sqlstate="22P02")
+    return found
 
 
 def _is_cell(value: object) -> bool:
@@ -234,40 +272,82 @@ class GsheetsConnector:
         path = f"/v4/spreadsheets/{self._target.spreadsheet_id}/values/{quote(cells, safe='')}"
         return httpx2.URL(self._base + path, params=RENDER)
 
-    @asynccontextmanager
-    async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
-        cells = a1_range(query.sql, self._target.sheet)
-        if query.params:
-            raise QueryRefusedError("a Google Sheets read takes no parameters")
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": USER_AGENT,
-            "Authorization": f"Bearer {self._signer.token(AUDIENCE)}",
-        }
-        seconds = max(1, query.timeout_ms) / 1000
-        client = httpx2.AsyncClient(
+    def _client(self) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(
             verify=self._tls,
             transport=self._transport,
             follow_redirects=False,
             trust_env=False,
         )
+
+    async def _json(
+        self, client: httpx2.AsyncClient, url: httpx2.URL, headers: dict[str, str], seconds: float
+    ) -> tuple[int, int, JsonValue]:
+        """One GET through :func:`ssc_datagw.rest.get`: its status, its size and the body
+        parsed."""
+        status, body = await get(
+            client,
+            url,
+            headers,
+            seconds=seconds,
+            connect_seconds=self._connect_seconds,
+            warmup=self._warmup,
+            failure=sheets_failure,
+        )
         try:
-            async with asyncio.timeout(seconds):
-                status, body = await get(
-                    client,
-                    self._url(cells),
-                    headers,
-                    seconds=seconds,
-                    connect_seconds=self._connect_seconds,
-                    warmup=self._warmup,
-                    failure=sheets_failure,
-                )
-        finally:
-            await client.aclose()
-        log.info("gsheets read: status=%s bytes=%s", status, len(body))
-        try:
-            parsed = cast("JsonValue", json.loads(body))
+            return status, len(body), cast("JsonValue", json.loads(body))
         except ValueError, RecursionError:
             raise QueryFailedError("the body is not JSON", sqlstate="22P02") from None
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+            "Authorization": f"Bearer {self._signer.token(AUDIENCE)}",
+        }
+
+    @asynccontextmanager
+    async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
+        cells = a1_range(query.sql, self._target.sheet)
+        if query.params:
+            raise QueryRefusedError("a Google Sheets read takes no parameters")
+        headers = self._headers()
+        seconds = max(1, query.timeout_ms) / 1000
+        client = self._client()
+        try:
+            async with asyncio.timeout(seconds):
+                status, size, parsed = await self._json(client, self._url(cells), headers, seconds)
+        finally:
+            await client.aclose()
+        log.info("gsheets read: status=%s bytes=%s", status, size)
         columns, rows = table(values_in(parsed), query.max_rows + 1)
         yield _Cursor(columns, rows)
+
+    async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> list[Table]:
+        """One :class:`~ssc_datagw.connectors.Table` per tab, at most 500: its header names
+        the columns, the rows after it type them; ``schemas`` does not apply."""
+        del schemas
+        headers = self._headers()
+        seconds = max(1, timeout_ms) / 1000
+        root = f"{self._base}/v4/spreadsheets/{self._target.spreadsheet_id}"
+        client = self._client()
+        tables: list[Table] = []
+        try:
+            async with asyncio.timeout(seconds):
+                titles = [self._target.sheet] if self._target.sheet is not None else []
+                if not titles:
+                    url = httpx2.URL(root, params=TITLES)
+                    _, _, body = await self._json(client, url, headers, seconds)
+                    titles = titles_in(body)[:MAX_TABLES]
+                for start in range(0, len(titles), DESCRIBE_CHUNK):
+                    chunk = titles[start : start + DESCRIBE_CHUNK]
+                    ranges = [("ranges", f"{_quoted(t)}!1:{1 + TYPE_SAMPLE}") for t in chunk]
+                    url = httpx2.URL(root + "/values:batchGet", params=[*ranges, *RENDER.items()])
+                    _, _, body = await self._json(client, url, headers, seconds)
+                    for title, found in zip(chunk, value_ranges(body, len(chunk)), strict=True):
+                        columns, _ = table(values_in(found), 0)
+                        tables.append(Table(title, columns[:MAX_COLUMNS]))
+        finally:
+            await client.aclose()
+        log.info("gsheets describe: tables=%s", len(tables))
+        return tables

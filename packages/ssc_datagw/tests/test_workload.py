@@ -1,12 +1,15 @@
 """The workload token (SSC-050): only a Google-signed ID token for this gateway, from an app
 account of this cell's project, names an environment. Any service account anywhere can mint a
-token naming the gateway, so a forged or foreign token is refused here, not by Cloud Run."""
+token naming the gateway, so a forged or foreign token is refused here, not by Cloud Run. The
+cell agent's account names no environment of its own: it says which in a header, and only when
+the caller asks for an agent (the schema route, GA-5.8)."""
 
 import time
 
 import jwt
 import pytest
 from datagw_world import (
+    AGENT,
     AUDIENCE,
     CERTS,
     FORGED_KEY,
@@ -28,12 +31,17 @@ from ssc_datagw.workload import (
 
 
 def workloads(
-    fetches: list[str] | None = None, *, fail: bool = False, clock: list[float] | None = None
+    fetches: list[str] | None = None,
+    *,
+    fail: bool = False,
+    clock: list[float] | None = None,
+    agent_account: str | None = AGENT,
 ) -> GoogleWorkloads:
     now = clock or [1000.0]
     return GoogleWorkloads(
         audience=AUDIENCE,
         project_id=PROJECT,
+        agent_account=agent_account,
         transport=certs_transport(fetches, fail=fail),
         certs_url=CERTS,
         clock=lambda: now[0],
@@ -114,3 +122,46 @@ async def test_an_unknown_kid_refetches_google_keys_at_most_every_thirty_seconds
 async def test_no_google_keys_is_unavailable_not_refused() -> None:
     with pytest.raises(WorkloadKeysUnavailableError):
         await workloads(fail=True).verify(f"Bearer {google_token(key=GOOGLE_KEY)}")
+
+
+AGENT_TOKEN = f"Bearer {google_token(email=AGENT)}"
+
+
+async def test_the_cell_agent_names_the_environment_it_asks_for() -> None:
+    w = await workloads().verify(AGENT_TOKEN, agent=True, environment=PREVIEW)
+    assert (w.env_id, w.account, w.agent) == (PREVIEW, AGENT, True)
+
+
+async def test_an_app_asked_as_an_agent_is_still_its_own_environment() -> None:
+    w = await workloads().verify(f"Bearer {google_token(PROD)}", agent=True, environment=PREVIEW)
+    assert (w.env_id, w.agent) == (PROD, False)
+
+
+@pytest.mark.parametrize(
+    ("environment", "reason"),
+    [
+        (None, "the cell agent sent no X-SSC-Environment"),
+        ("", "the cell agent sent no X-SSC-Environment"),
+        ("env_short", "the cell agent's X-SSC-Environment is malformed"),
+        ("ENV_" + "P" * 20, "the cell agent's X-SSC-Environment is malformed"),
+        ("app_" + "l" * 20, "the cell agent's X-SSC-Environment is malformed"),
+    ],
+)
+async def test_the_cell_agent_without_a_well_formed_environment_is_refused(
+    environment: str | None, reason: str
+) -> None:
+    with pytest.raises(WorkloadRefusedError, match=reason):
+        await workloads().verify(AGENT_TOKEN, agent=True, environment=environment)
+
+
+async def test_the_cell_agent_is_refused_where_no_agent_is_asked_for() -> None:
+    with pytest.raises(WorkloadRefusedError):
+        await workloads().verify(AGENT_TOKEN, environment=PREVIEW)
+
+
+async def test_no_agent_account_or_another_one_is_refused() -> None:
+    other = f"Bearer {google_token(email=f'ssc-cell-agent@{PROJECT}x.iam.gserviceaccount.com')}"
+    with pytest.raises(WorkloadRefusedError):
+        await workloads(agent_account=None).verify(AGENT_TOKEN, agent=True, environment=PREVIEW)
+    with pytest.raises(WorkloadRefusedError):
+        await workloads().verify(other, agent=True, environment=PREVIEW)

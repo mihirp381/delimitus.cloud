@@ -14,10 +14,14 @@ grant allow, and ``truncated`` says the gateway stopped reading before the resul
 the signed-in user, pass the ``X-SSC-Identity`` value of the request being answered as
 ``identity``; without it the app acts for itself (``docs/contracts/data-gateway.md``).
 
+``data.describe("finance")`` names the tables of a granted connection and their typed columns
+(GA-5.8): a ``Schema`` of ``Table`` s, each ``{name, type, db_type}`` column as a query types it,
+none for a file not yet read. The data gateway keeps a description five minutes.
+
 The data gateway's address comes from the metadata server, as for ``ssc_app.files``, and
 ``SSC_DATAGW_URL`` or ``url=`` replaces it. A query only reads, so it is tried once more when the
 data gateway cannot be reached or answers 502, 503 or 504; a query that timed out is not. Same
-names and behaviour as the Node helper ``@delimitus/ssc-data``.
+names and behaviour as the Node helper ``@delimitus/ssc-data``, which has no ``describe`` yet.
 """
 
 import json
@@ -64,8 +68,28 @@ class QueryResult:
     request_id: str
 
 
-def _send(url: str, headers: Mapping[str, str], body: bytes) -> tuple[int, bytes]:
-    request = urllib.request.Request(url, data=body, method="POST", headers=dict(headers))  # noqa: S310
+@dataclass(frozen=True, slots=True)
+class Table:
+    """One table of a connection as its reads name it. ``columns`` are ``{name, type,
+    db_type}``, typed as a query types them; none when only a read can tell (a file)."""
+
+    name: str
+    columns: list[dict[str, str]]
+
+
+@dataclass(frozen=True, slots=True)
+class Schema:
+    """What ``describe`` returned: the connection's name, its kind and its tables."""
+
+    connection: str
+    kind: str
+    tables: list[Table]
+
+
+def _send(url: str, headers: Mapping[str, str], body: bytes | None) -> tuple[int, bytes]:
+    """POST ``body``, or GET when it is None."""
+    method = "GET" if body is None else "POST"
+    request = urllib.request.Request(url, data=body, method=method, headers=dict(headers))  # noqa: S310
     try:
         with urllib.request.urlopen(request, timeout=QUERY_TIMEOUT_SECONDS) as response:  # noqa: S310
             return response.status, response.read()
@@ -106,17 +130,37 @@ class Data:
         asks = {"max_rows": max_rows, "max_bytes": max_bytes, "timeout_ms": timeout_ms}
         body: dict[str, Any] = {"sql": sql, "params": list(params)}
         body.update({k: v for k, v in asks.items() if v is not None})
-        raw_body = json.dumps(body).encode()
+        answer = self._ask(f"{name}/query", json.dumps(body).encode(), identity)
+        return QueryResult(
+            columns=answer["columns"],
+            rows=answer["rows"],
+            row_count=answer["row_count"],
+            truncated=answer["truncated"],
+            truncated_reason=answer["truncated_reason"],
+            request_id=answer["request_id"],
+        )
+
+    def describe(self, name: str) -> Schema:
+        """The tables of connection ``name`` and their columns. ``DataError`` for a refusal."""
+        answer = self._ask(f"{name}/schema", None, None)
+        return Schema(
+            connection=answer["connection"],
+            kind=answer["kind"],
+            tables=[Table(name=t["name"], columns=t["columns"]) for t in answer["tables"]],
+        )
+
+    def _ask(self, path: str, body: bytes | None, identity: str | None) -> dict[str, Any]:
+        """The data gateway's answer to ``/v1/connections/<path>``, asked once more while it
+        cannot be reached or starts."""
         url, tokens = self._target()
         for attempt in (1, 2):
-            headers = {
-                "authorization": f"Bearer {tokens.get()}",
-                "content-type": "application/json",
-            }
+            headers = {"authorization": f"Bearer {tokens.get()}"}
+            if body is not None:
+                headers["content-type"] = "application/json"
             if identity is not None:
                 headers[IDENTITY_HEADER] = identity
             try:
-                status, raw = _send(f"{url}/v1/connections/{name}/query", headers, raw_body)
+                status, raw = _send(f"{url}/v1/connections/{path}", headers, body)
             except TimeoutError:
                 raise DataError("UNREACHABLE", "data gateway: TimeoutError") from None
             except (urllib.error.URLError, OSError) as exc:
@@ -127,15 +171,7 @@ class Data:
                 continue
             if status != 200:  # noqa: PLR2004
                 raise _refusal(status, raw)
-            answer = json.loads(raw)
-            return QueryResult(
-                columns=answer["columns"],
-                rows=answer["rows"],
-                row_count=answer["row_count"],
-                truncated=answer["truncated"],
-                truncated_reason=answer["truncated_reason"],
-                request_id=answer["request_id"],
-            )
+            return json.loads(raw)
         raise AssertionError
 
     def _target(self) -> tuple[str, WorkloadToken]:
@@ -165,11 +201,7 @@ def query(  # noqa: PLR0913  (keyword-only)
     identity: str | None = None,
 ) -> QueryResult:
     """``Data.query`` on this app's cell."""
-    global _default  # noqa: PLW0603
-    with _default_lock:
-        if _default is None:
-            _default = Data()
-    return _default.query(
+    return _data().query(
         name,
         sql,
         params,
@@ -178,3 +210,16 @@ def query(  # noqa: PLR0913  (keyword-only)
         timeout_ms=timeout_ms,
         identity=identity,
     )
+
+
+def describe(name: str) -> Schema:
+    """``Data.describe`` on this app's cell."""
+    return _data().describe(name)
+
+
+def _data() -> Data:
+    global _default  # noqa: PLW0603
+    with _default_lock:
+        if _default is None:
+            _default = Data()
+        return _default
