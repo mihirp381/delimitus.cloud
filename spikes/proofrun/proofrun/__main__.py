@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
-from proofrun import instances, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, timers
+from proofrun import files, instances, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, timers
 from proofrun.common import (
     KIT,
     CommandError,
@@ -44,6 +44,7 @@ PROOFS: dict[str, ModuleType] = {
     "t11": t11,
     "t12": t12,
     "timers": timers,
+    "files": files,
     "instances": instances,
 }
 

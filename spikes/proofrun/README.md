@@ -385,6 +385,33 @@ It lists the schedules (it stops at once unless `minute` is `active`), then read
 
 Pass: every check that ran passed. The schedules and runs read, and the check results, go to `results/ga-4.1.json` and to `results/timers-<app>-<UTC stamp>.json`. Copy the final line into the GA-4.1 record.
 
+### Files (GA-4.2)
+
+The app is `apps/files`: a FastAPI app with `[files]` in its `ssc.toml` that puts, gets, links and deletes through `ssc_app.files` (a vendored copy of `packages/ssc_app`'s `files.py` and `workload.py`), and a `/files/loop` that asks for a `put` link every second. It needs a cell with `connections` on (the first such deploy creates the data gateway, a few minutes). Deploy it to preview, with `uv run ssc deploy --app <slug> spikes/proofrun/apps/files --wait`, give the signed-in person preview access, and put the host's session cookie in the jar (Setup). Then, from `spikes/proofrun`:
+
+```sh
+uv run python -m proofrun files --app <slug> --label $L2 [--env preview] [--wait-expiry] [--disable]
+```
+
+It puts 4 KiB of random bytes as `ga42/<UTC stamp>.bin` and reaches Cloud Storage from the laptop with the signed link alone, no cookie. The checks:
+
+| # | Check |
+| --- | --- |
+| 1 | put: `POST /files/put` answers `ok: true` with the right size. |
+| 2 | get by link: the `get` link answers 200 with the same bytes and a `Content-Disposition` that starts with `attachment`, and its `X-Goog-Credential` starts with `ssc-data@ssc-c-<label>.iam.gserviceaccount.com`. `expires_at` is printed. |
+| 3 | prefix isolation: the same link with `files/<this env id>/` in its path changed to `files/<the other env id>/` answers 403 `SignatureDoesNotMatch`. The other environment need not be deployed; only its id is used. |
+| 4 | With `--wait-expiry`: 30 s after the link's `X-Goog-Date` plus `X-Goog-Expires`, the link answers 400 `ExpiredToken`. This takes about 11 minutes. Without the flag it is "not run". |
+| 5 | With `--disable` **[real]**: see below. Without the flag it is "not run". |
+| 6 | clean-up: `POST /files/delete` answers `ok: true`. |
+
+`--disable` **[real]** gets a fresh `get` link, starts `/files/loop?seconds=90`, runs `ssc disable <slug>` and, always, `ssc enable <slug>` (if that fails it prints `undo: ssc enable <slug>`). The loop runs in a thread on the app, so it keeps writing `LOOP at=<time> result=<ok|CODE>` lines to the log even if the gateway cuts the stream; the kit holds at least 20 s after the disable before it enables, so the log has lines from the suspended spell. Its sub-checks:
+
+- 5a: at least one `LOOP ... result=APP_NOT_ACTIVE` line is in the stream, else in `ssc logs --source app` (read up to three times, 15 s apart, after enable). It prints that line's time, the disable command's start and the difference, which includes clock skew between the laptop and Cloud Run. If no loop line is found anywhere the proof ends INCOMPLETE; if lines were found but none was refused it fails.
+- 5b: the disclosure. The link fetched before the disable still answers 200 afterwards; links live up to 10 minutes after a disable. It is printed either way and passes on 200.
+- 5c: a new put after `ssc enable` answers `ok: true` (up to five tries, 5 s apart, while the snapshot catches up and the app starts).
+
+Pass: every check that ran passed. The checks, the link's path, credential, date and lifetime (never its signature or the operator login), the loop lines and the timings go to `results/ga-4.2.json` and to `results/files-<app>-<UTC stamp>.json`. Copy the final line into the GA-4.2 record. This covers `infra/README.md`, File storage, live checks 3, 4, 6 and 8.
+
 ## What feeds what
 
 | Result | Feeds |
