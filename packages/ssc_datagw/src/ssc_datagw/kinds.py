@@ -19,11 +19,12 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ssc_contracts.connections import Kind
 from ssc_datagw.connectors import Connector
+from ssc_datagw.gsheets import GsheetsConnector, GsheetsTarget
 from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 from ssc_datagw.rest import RestConnector, RestTarget
 
-type Target = PostgresTarget | MySqlTarget | RestTarget
+type Target = PostgresTarget | MySqlTarget | RestTarget | GsheetsTarget
 """Every target model a kind may validate to; grows with each connector."""
 
 
@@ -47,6 +48,7 @@ REGISTRY: Final[Mapping[Kind, Registered]] = {
     "postgres": Registered(PostgresTarget, PostgresConnector),
     "mysql": Registered(MySqlTarget, MySqlConnector),
     "rest": Registered(RestTarget, RestConnector),
+    "gsheets": Registered(GsheetsTarget, GsheetsConnector),
 }
 
 AVAILABLE: Final[frozenset[Kind]] = frozenset(REGISTRY)

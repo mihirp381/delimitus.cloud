@@ -5,7 +5,15 @@ import json
 import pytest
 
 from ssc_contracts import connections as contract
-from ssc_datagw.kinds import AVAILABLE, REGISTRY, TargetError, connector_for, parse_target
+from ssc_datagw.gsheets import GsheetsConnector, GsheetsTarget
+from ssc_datagw.kinds import (
+    AVAILABLE,
+    REGISTRY,
+    Registered,
+    TargetError,
+    connector_for,
+    parse_target,
+)
 from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 from ssc_datagw.rest import RestConnector, RestTarget
@@ -41,6 +49,19 @@ def test_a_rest_connection_parses_to_a_rest_target_and_its_connector() -> None:
     assert isinstance(target, RestTarget)
     assert target.token is not None and target.token.get_secret_value() == PASSWORD
     assert isinstance(connector_for(target), RestConnector)
+
+
+def test_a_gsheets_connection_names_the_key_field_and_never_its_text() -> None:
+    raw = {
+        "kind": "gsheets",
+        "spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+        "service_account": '{"client_email": "x", "private_key": "' + PASSWORD + '"}',
+    }
+    with pytest.raises(TargetError) as caught:
+        parse_target(json.dumps(raw))
+    assert caught.value.fields == ("service_account",)
+    assert PASSWORD not in str(caught.value)
+    assert REGISTRY["gsheets"] == Registered(GsheetsTarget, GsheetsConnector)
 
 
 def test_a_rest_connection_with_a_database_address_names_the_field() -> None:

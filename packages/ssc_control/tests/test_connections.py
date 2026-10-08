@@ -848,7 +848,7 @@ def test_a_connection_has_a_kind_and_only_an_available_kind_is_created(
     assert made.json()["kind"] == "postgres"
     for kind, address in [
         ("sqlserver", {"host": "sql.corp.internal", "database": "shop"}),
-        ("gsheets", {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"}),
+        ("bigquery", {"project": "corp-analytics", "dataset": "warehouse"}),
         ("s3", {"bucket": "corp-exports", "region": "eu-west-1"}),
     ]:
         body = {
