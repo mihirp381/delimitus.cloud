@@ -22,20 +22,28 @@ export type Login = {
   okta: 'identity-engine' | 'classic';
 };
 
-/** The fields of Okta's sign-in forms. Identity Engine asks for the name, then the password; the
- * classic page has both on one form. */
+/** The fields of Okta's sign-in forms. Identity Engine asks for the name, then, when the person has
+ * more than one security method, which one (`chooser` picks Password; live on org 2's Okta,
+ * 2026-10-08), then the password; the classic page has both on one form. `methods` is the list of
+ * security methods: met once the password is answered, it means Okta wants a second one. */
 export const OKTA = {
   'identity-engine': {
     username: 'input[name="identifier"]',
     password: 'input[name="credentials.passcode"]',
     submit: 'input[type="submit"]',
+    chooser: '[data-se="okta_password"] [data-se="button"]',
+    methods: '.authenticator-verify-list',
   },
   classic: {
     username: '#okta-signin-username',
     password: '#okta-signin-password',
     submit: '#okta-signin-submit',
+    chooser: '',
+    methods: '',
   },
 } as const;
+
+const PASSWORD_ONLY = 'the identity provider wants a security method other than the password; the test user must sign in with a password alone';
 
 export type Device = {
   deviceCode: string;
@@ -125,8 +133,16 @@ export async function completeIdp(page: Page, login: Login, done: (address: URL)
   const fields = OKTA[login.okta];
   const answered = { username: 0, password: 0 };
   const deadline = Date.now() + timeout;
+  let chosen = 0;
   while (Date.now() < deadline) {
     if (done(new URL(page.url()))) return;
+    if (fields.methods && (await shown(page, fields.methods))) {
+      if (answered.password > 0 || !(await shown(page, fields.chooser))) throw new Error(PASSWORD_ONLY);
+      if (++chosen > TRIES) throw new Error(`the identity provider offered its security methods ${TRIES} times`);
+      await page.locator(fields.chooser).first().click({ timeout: 5_000 }).catch(() => undefined);
+      await sleep(STEP_MS);
+      continue;
+    }
     const [asksName, asksPassword] = [await shown(page, fields.username), await shown(page, fields.password)];
     const submit = page.locator(fields.submit).first();
     // Okta disables its button while it handles an answer; the old field is still on the page then.

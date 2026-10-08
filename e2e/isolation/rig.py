@@ -237,10 +237,11 @@ def auth_app(secret: str, password: str) -> FastAPI:  # noqa: PLR0915  (one host
     nonce whose hash it carries.
 
     For the nightly sign-in (SSC-056) it also stands in for WorkOS and Okta: a person with no
-    ``iso-person`` cookie is sent to ``/idp``, the identity provider's two-step form (the name,
-    then the password, with Okta Identity Engine's field names), which sets ``iso-idp`` as Okta's
-    own session would. ``/device/authorize``, ``/device`` and ``/token`` run the device flow
-    through it, and ``/callback`` approves the grant, as the real host's does."""
+    ``iso-person`` cookie is sent to ``/idp``, the identity provider's form in steps (the name,
+    the security method, then the password, with Okta Identity Engine's field names), which sets
+    ``iso-idp`` as Okta's own session would. ``/device/authorize``, ``/device`` and ``/token``
+    run the device flow through it, and ``/callback`` approves the grant, as the real host's
+    does."""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     codes: dict[str, Issued] = {}
     grants: dict[str, DeviceGrant] = {}
@@ -328,6 +329,22 @@ def auth_app(secret: str, password: str) -> FastAPI:  # noqa: PLR0915  (one host
             "<input name=identifier autocomplete=off> <input type=submit value=Next></form>",
         )
 
+    def methods(back: str, name: str) -> str:
+        """Okta Identity Engine's list of security methods, as org 2's Okta shows it to a person
+        with Okta Verify and a password: one Select per method."""
+        rows = []
+        for se, label in (("okta_verify-totp", "Okta Verify"), ("okta_password", "Password")):
+            method = "password" if se == "okta_password" else "okta_verify"
+            rows.append(
+                "<div class='authenticator-row'><form method=post action='/idp'>"
+                f"<input type=hidden name=next value='{escape(back)}'>"
+                f"<input type=hidden name=identifier value='{escape(name)}'>"
+                f"<input type=hidden name=method value={method}>{label} "
+                f"<div class=authenticator-button data-se={se}>"
+                "<button data-se=button>Select</button></div></form></div>"
+            )
+        return f"<div class='authenticator-verify-list authenticator-list'>{''.join(rows)}</div>"
+
     @app.post("/idp")
     async def idp_answer(request: Request) -> Response:
         form = parse_qs((await request.body()).decode())
@@ -335,6 +352,8 @@ def auth_app(secret: str, password: str) -> FastAPI:  # noqa: PLR0915  (one host
         if name not in logins:
             return page("Sign-in refused", status=403)
         typed = form.get("credentials.passcode")
+        if typed is None and form.get("method") != ["password"]:
+            return page("Verify it's you with a security method", methods(back, name))
         if typed is None:
             return page(
                 "Verify",
