@@ -17,6 +17,7 @@ from ssc_datagw.kinds import (
 from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 from ssc_datagw.rest import RestConnector, RestTarget
+from ssc_datagw.s3 import S3Connector, S3Target
 
 PASSWORD = "fake-" + "registry-" + "password"
 TARGET = {"host": "10.0.0.5", "database": "sales", "user": "ssc_datagw", "password": PASSWORD}
@@ -62,6 +63,22 @@ def test_a_gsheets_connection_names_the_key_field_and_never_its_text() -> None:
     assert caught.value.fields == ("service_account",)
     assert PASSWORD not in str(caught.value)
     assert REGISTRY["gsheets"] == Registered(GsheetsTarget, GsheetsConnector)
+
+
+def test_an_s3_connection_parses_to_an_s3_target_and_its_connector() -> None:
+    raw = {
+        "kind": "s3",
+        "bucket": "corp-exports",
+        "region": "eu-west-1",
+        "prefix": "exports/",
+        "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+        "secret_access_key": PASSWORD,
+    }
+    target = parse_target(json.dumps(raw))
+    assert target == S3Target.model_validate(raw)
+    assert isinstance(target, S3Target)
+    assert isinstance(connector_for(target), S3Connector)
+    assert PASSWORD not in repr(target)
 
 
 def test_a_rest_connection_with_a_database_address_names_the_field() -> None:

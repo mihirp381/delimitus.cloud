@@ -849,7 +849,7 @@ def test_a_connection_has_a_kind_and_only_an_available_kind_is_created(
     for kind, address in [
         ("sqlserver", {"host": "sql.corp.internal", "database": "shop"}),
         ("bigquery", {"project": "corp-analytics", "dataset": "warehouse"}),
-        ("s3", {"bucket": "corp-exports", "region": "eu-west-1"}),
+        ("airtable", {"base_id": "appA1b2C3d4E5f6G7"}),
     ]:
         body = {
             "name": f"src-{kind}",

@@ -23,8 +23,9 @@ from ssc_datagw.gsheets import GsheetsConnector, GsheetsTarget
 from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 from ssc_datagw.rest import RestConnector, RestTarget
+from ssc_datagw.s3 import S3Connector, S3Target
 
-type Target = PostgresTarget | MySqlTarget | RestTarget | GsheetsTarget
+type Target = PostgresTarget | MySqlTarget | RestTarget | GsheetsTarget | S3Target
 """Every target model a kind may validate to; grows with each connector."""
 
 
@@ -49,6 +50,7 @@ REGISTRY: Final[Mapping[Kind, Registered]] = {
     "mysql": Registered(MySqlTarget, MySqlConnector),
     "rest": Registered(RestTarget, RestConnector),
     "gsheets": Registered(GsheetsTarget, GsheetsConnector),
+    "s3": Registered(S3Target, S3Connector),
 }
 
 AVAILABLE: Final[frozenset[Kind]] = frozenset(REGISTRY)
