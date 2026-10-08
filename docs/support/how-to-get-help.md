@@ -10,7 +10,7 @@ You need Python 3.14 and [uv](https://docs.astral.sh/uv/) (or pipx).
 
 1. Install the CLI: `uv tool install ssc-cli` (or `pipx install ssc-cli`). Until it is on PyPI, your org admin gives you the four wheel files (`ssc_contracts`, `ssc_shared`, `ssc_bundle`, `ssc_cli`); put them in one folder and run `uv tool install --find-links <that folder> ssc-cli`.
 2. Check it: `ssc --version`.
-3. Sign in with your work account: `ssc login`.
+3. Sign in with your work account: `ssc login --org <org id>`. Your org admin gives you the org id (`org_` and 20 characters).
 4. Create the app once: `ssc apps create <name>` (lower-case; it becomes part of the address).
 5. In your app's folder: `ssc init` (it writes the notes your coding agent reads), then `ssc doctor`.
 6. Deploy: `ssc deploy --app <name> --wait`. It prints the preview address when the app is live. This takes under ten minutes from a fresh install.
