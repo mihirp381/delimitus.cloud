@@ -228,6 +228,68 @@ The request is `GET https://sheets.googleapis.com/v4/spreadsheets/<spreadsheet_i
 
 The connector logs one line per read, `gsheets read: status=<status> bytes=<body bytes>`, with no id, range or URL. Contract-fake-proven: a fake Sheets API that checks the JWT (`packages/ssc_datagw/tests/test_gsheets.py`, over TLS in-process, which also runs the connector suite); live proof is a GA-5 C step.
 
+<!-- s3 -->
+## The S3 connector
+
+`{kind: "s3", bucket, region, prefix?, access_key_id, secret_access_key, endpoint?, ca?}` (`ssc_datagw.s3.S3Target`; unknown members are refused), the value of an `s3` connection's `SSC_CONNECTION_*` variable ([Connectors by kind](#connectors-by-kind)). The address is the control plane's (`ssc_contracts.connections.S3Address`), with the same patterns.
+
+| Member | Rule |
+|---|---|
+| `bucket` | `^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`. |
+| `region` | `^[a-z]{2}(-[a-z]+)+-\d$`, the bucket's region (`eu-west-2`). |
+| `prefix` | Default `""`; `^[^\x00-\x1f]{0,512}$`. Every key read or listed starts with it, as text: `exports` also covers `exports-old/`, so end it with `/` to mean a folder. |
+| `access_key_id` | `^[A-Z0-9]{16,128}$`, the IAM user's access key id. |
+| `secret_access_key` | The access key's secret. Never shown in a repr, an error or a log line, not even the error that refuses the target; nor is the signing key or any `Authorization` value made from it. |
+| `endpoint` | Optional. `https://<host>[:<port>]`, no path, for an S3-compatible store, addressed path-style (`<endpoint>/<bucket>/<key>`). Left out, AWS: `https://<bucket>.s3.<region>.amazonaws.com/<key>` (virtual-hosted), or `https://s3.<region>.amazonaws.com/<bucket>/<key>` (path-style) when the bucket's name holds a `.`, which the wildcard certificate `*.s3.<region>.amazonaws.com` does not cover. |
+| `ca` | As for Postgres: with it the chain must lead to it and the host name is not checked; without it the system trust store and the host name decide. There is no plain `http` and no unverified mode. |
+
+**The policy.** `packages/ssc_datagw/src/ssc_datagw/s3_policy.json` is the IAM policy the customer attaches to the IAM user whose access key the connection holds, with `<bucket>` and `<prefix>` replaced by the connection's (an empty prefix is removed, leaving `*`). It allows `s3:ListBucket` on `arn:aws:s3:::<bucket>` when the request's `s3:prefix` is like `<prefix>*`, and `s3:GetObject` on `arn:aws:s3:::<bucket>/<prefix>*`; nothing else, and no write. The user needs no other policy, no console access and no other key. With `s3:ListBucket` limited by prefix, S3 may answer a missing key with 403 (`AccessDenied`, 42501) rather than 404 (`NoSuchKey`, 42P01); the live proof settles which.
+
+**The signing.** Each request is signed with AWS Signature Version 4 (`ssc_datagw.s3.sign`, written on `hmac` and `hashlib`): `AWS4-HMAC-SHA256`, service `s3`, the connection's region, signed headers `host;x-amz-content-sha256;x-amz-date`, the payload hash of the empty body, the canonical URI with each path segment URI-encoded once (S3's rule: not twice), the canonical query sorted by name. The signing key is derived for each request and kept nowhere. `sign` reproduces the AWS test suite's `get-vanilla` and `get-vanilla-query-order-key-case` vectors.
+
+**The query.** For this kind `sql` is not SQL: it is one of two requests, the keyword in any case, then one space, then the argument:
+
+| Query | Request |
+|---|---|
+| `list <prefix>` | the keys under `<prefix>`: ListObjectsV2, `?list-type=2&prefix=<prefix>&max-keys=<min(1000, rows left)>`, following `continuation-token` until `max_rows` plus one keys are read or the list ends. A bare `list` is `list` of the empty prefix. |
+| `get <key>` | one object, read as records by its extension. |
+
+The argument must start with the connection's `prefix`, be at most 1,024 bytes of UTF-8, not start with `/`, hold no control character (`\x00` to `\x1f`, `\x7f`) and no `.` or `..` segment between `/`s. A `get` key must end in `.csv`, `.json`, `.jsonl` or `.ndjson` (any case); another is `QUERY_REFUSED` ("only .csv, .json, .jsonl and .ndjson objects are read"). Anything else is `QUERY_REFUSED` ("the query is not list <prefix> or get <key> under the connection's prefix"), and so are `params`, which an S3 read does not take; all are refused before anything is sent. Each request is a `GET` with `x-amz-content-sha256`, `x-amz-date`, `Authorization` and `User-Agent: ssc-datagw (<tag>)` (the query's tag kept to printable ASCII without `(` and `)`, at most 128 characters; CloudTrail data events record the user agent). It follows no redirect and ignores the process environment's proxy and CA settings.
+
+**Time.** As for the REST connector (the same request code, `ssc_datagw.rest.get`): 10 s to connect with the warm-up retry, each read of an answer has `timeout_ms`, and the whole read, every list page included, ends at `timeout_ms`: past it is `QUERY_TIMEOUT`. When the gateway cancels a read the request is dropped and its connection closed.
+
+**The answer.** Every answer's body is read (at most 32 MiB) and an error's XML `Code` is read with its status:
+
+| Answer | Result |
+|---|---|
+| 2xx | read on |
+| 301, or `PermanentRedirect` | `CONNECTION_UNAVAILABLE` ("the bucket is in another region") |
+| 400 `AuthorizationHeaderMalformed` | `CONNECTION_UNAVAILABLE` ("the bucket is in another region": the request was signed for the connection's region) |
+| other 3xx | `QUERY_FAILED`, no `sqlstate` (no redirect is followed) |
+| 400 | `QUERY_FAILED`, no `sqlstate` |
+| 403 (`AccessDenied`, `InvalidAccessKeyId`, `SignatureDoesNotMatch`, ...) | `QUERY_FAILED` 42501 (the key is wrong or revoked, or the policy does not allow the read) |
+| 404 (`NoSuchKey`, `NoSuchBucket`) | `QUERY_FAILED` 42P01 |
+| other 4xx | `QUERY_FAILED`, no `sqlstate` |
+| 429, 5xx (`SlowDown`, `InternalError`, ...) | `CONNECTION_UNAVAILABLE` |
+| no connection, a TLS failure | `CONNECTION_UNAVAILABLE` |
+| a body over 32 MiB (decoded) | `QUERY_FAILED`, no `sqlstate`; reading stops at the cap |
+| a body that does not parse: XML, CSV, JSON, or not UTF-8 | `QUERY_FAILED` 22P02 |
+
+An error message names the status and the S3 error code when it is one of a fixed list (`ssc_datagw.s3.KNOWN_CODES`), never the body, a header or the URL. XML is read with Python's `xml.etree.ElementTree`, which expands no external entity; Python 3.14's expat carries its limits on entity amplification, and a body with a `<!DOCTYPE` (S3 never sends one) is 22P02 before it is parsed.
+
+**Records and columns.**
+
+| Read | Columns and rows |
+|---|---|
+| `list` | `key` (`string`, `db_type` `string`), `size` (`integer`, `integer`), `last_modified` (`timestamp`, `timestamp`, UTC), `etag` (`string`, `string`, without S3's quotes), one row per key in S3's order (UTF-8 binary). |
+| `.csv` | UTF-8, a leading BOM dropped, RFC 4180 quoting (a malformed quote is 22P02). The first row is the header, named as for Google Sheets (an empty name `col<n>`, a repeat `_2`, `_3`, ...); each later row is a record, a short one padded with `null`, a longer one cut, a blank line no row. An empty field is `null`; `true` and `false` are booleans; an integer (`-?(0\|[1-9][0-9]*)`, within 64 bits) a number; a number with a fraction or an exponent (JSON's form, finite) a float; anything else (`007`, `+1`, `1_000`, `NaN`) the text. A column's type is that of its first non-null value in the first 100 records: `boolean`, `integer`, `float` or `string`, `db_type` `boolean`, `number` or `string`. A field over 128 KiB (Python's `csv` limit) is 22P02. |
+| `.json` | As for the REST connector without `items`: an array is one record per element, an object one record, anything else 22P02; columns and types are the REST connector's. |
+| `.jsonl`, `.ndjson` | UTF-8, a leading BOM dropped; each line that is not blank is one JSON record, then as for `.json`. |
+
+At most `max_rows` plus one rows are kept, as for every connector; a CSV or JSON Lines object is parsed only that far (or 100 records, which decide the types), within the 32 MiB cap.
+
+The connector logs one line per read, `s3 read: op=<list|get> status=<status> bytes=<body bytes> pages=<requests>`, with no bucket, key or URL. Local-proven on S3Mock 4.9.1 over TLS (wire protocol) and on a contract fake that verifies SigV4 (signing, timeout, cancel); live proof against a real bucket is a GA-5 C step (`packages/ssc_datagw/tests/test_s3.py`, which runs the connector suite against both).
+
 ## Limits
 
 Each limit is the minimum of the platform, the connection's `limits`, the grant's `limits` and the request's ask (`docs/contracts/access-snapshot.md`, amendment SSC-050). A cap a layer leaves out puts no cap at that layer; `0` is a cap of zero.

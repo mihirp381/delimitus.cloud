@@ -10,6 +10,7 @@ Connects one customer database (Postgres) so apps can read it through the cell's
 - The customer ran `packages/ssc_datagw/src/ssc_datagw/postgres_setup.sql` on the database (`docs/contracts/data-gateway.md`, "The Postgres connector") and gave you the host, port, database, the role's password and the server CA.
 - For a MySQL connection the customer ran `packages/ssc_datagw/src/ssc_datagw/mysql_setup.sql` instead (`docs/contracts/data-gateway.md`, "The MySQL connector") and gave you the host, port, a database the user may read, the user's password and the server CA.
 - For a `gsheets` connection, the customer shared the spreadsheet with the service account's email as a viewer and gave you the service-account JSON key and the spreadsheet id (`docs/contracts/data-gateway.md`, "The Google Sheets connector").
+- For an `s3` connection, the customer created an IAM user with the policy from `packages/ssc_datagw/src/ssc_datagw/s3_policy.json` attached (`<bucket>` and `<prefix>` filled in) and gave you its access key id and secret access key, the bucket, its region and the prefix (`docs/contracts/data-gateway.md`, "The S3 connector").
 - The ids of the groups (`GET /v1/groups?name=`) and users (`GET /v1/users?email=`) for the ceiling.
 
 ## 1. Create the connection
