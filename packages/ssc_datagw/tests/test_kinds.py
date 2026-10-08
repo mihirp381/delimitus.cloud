@@ -5,6 +5,7 @@ import json
 import pytest
 
 from ssc_contracts import connections as contract
+from ssc_datagw.bigquery import BigQueryConnector, BigQueryTarget
 from ssc_datagw.gsheets import GsheetsConnector, GsheetsTarget
 from ssc_datagw.kinds import (
     AVAILABLE,
@@ -79,6 +80,20 @@ def test_an_s3_connection_parses_to_an_s3_target_and_its_connector() -> None:
     assert isinstance(target, S3Target)
     assert isinstance(connector_for(target), S3Connector)
     assert PASSWORD not in repr(target)
+
+
+def test_a_bigquery_connection_names_the_key_field_and_never_its_text() -> None:
+    raw = {
+        "kind": "bigquery",
+        "project": "corp-analytics",
+        "dataset": "warehouse",
+        "service_account": '{"client_email": "x", "private_key": "' + PASSWORD + '"}',
+    }
+    with pytest.raises(TargetError) as caught:
+        parse_target(json.dumps(raw))
+    assert caught.value.fields == ("service_account",)
+    assert PASSWORD not in str(caught.value)
+    assert REGISTRY["bigquery"] == Registered(BigQueryTarget, BigQueryConnector)
 
 
 def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
