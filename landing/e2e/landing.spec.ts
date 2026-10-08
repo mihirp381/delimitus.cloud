@@ -28,10 +28,12 @@ test('loads only from its own origin, sets no cookie and breaks no policy', asyn
   const res = await page.goto('/');
   expect(res?.status()).toBe(200);
   expect(res?.headers()['content-security-policy']).toContain("default-src 'none'");
+  // A timer, not requestAnimationFrame: headless WebKit on Linux can draw no frame, and the
+  // loop then never ends.
   await page.evaluate(async () => {
     for (let y = 0; y < document.body.scrollHeight; y += 400) {
       window.scrollTo(0, y);
-      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      await new Promise((r) => setTimeout(r, 16));
     }
   });
   await page.locator('#pilot').scrollIntoViewIfNeeded();
