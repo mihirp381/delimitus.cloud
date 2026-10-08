@@ -298,3 +298,7 @@ These are the checks earlier tickets left to this run, one line each with where 
 | Certificate issue time and `entry_probe` | `infra/README.md`, Public entry; kit `t2` | Certificate FAIL (87.9 and 21.7 min); `entry_probe` PASS |
 | `deny_probe` and `snapshot_rtt` on cell 1 | `infra/README.md`, Done-when checks | `deny_probe` PASS (T11). `snapshot_rtt` measured on cell 2: worst 3.71 s; cell 1 in pass 2 |
 | Control plane done-when a to f | SSC-064 runbook, 11 | Done (SSC-064 step 11, 2026-10-05) |
+
+## GA-5 extra cost
+
+The founder accepted on 2026-10-07 that GA-5 work may add to the proof-run bill, recorded here apart from T9. So far: **$0.00**. Every GA-5 connector was built and proven locally (Docker engines, in-process fakes); no command ran against a cloud account. Lines are added here when the GA-5 C steps start (the sandbox Cloud SQL, NAT and proxy on cell 2, BigQuery and GCS reads in our sandbox project).
