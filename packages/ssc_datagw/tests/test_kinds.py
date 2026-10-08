@@ -7,6 +7,7 @@ from pki import make_pki
 
 from ssc_contracts import connections as contract
 from ssc_datagw.bigquery import BigQueryConnector, BigQueryTarget
+from ssc_datagw.gcs import GcsConnector, GcsTarget
 from ssc_datagw.gsheets import GsheetsConnector, GsheetsTarget
 from ssc_datagw.kinds import (
     AVAILABLE,
@@ -106,6 +107,20 @@ def test_a_sqlserver_connection_parses_to_its_target_and_connector() -> None:
     assert target.port == 1433
     assert isinstance(connector_for(target), SqlServerConnector)
     assert PASSWORD not in repr(target)
+
+
+def test_a_gcs_connection_names_the_key_field_and_never_its_text() -> None:
+    raw = {
+        "kind": "gcs",
+        "bucket": "corp-exports",
+        "prefix": "exports/",
+        "service_account": '{"client_email": "x", "private_key": "' + PASSWORD + '"}',
+    }
+    with pytest.raises(TargetError) as caught:
+        parse_target(json.dumps(raw))
+    assert caught.value.fields == ("service_account",)
+    assert PASSWORD not in str(caught.value)
+    assert REGISTRY["gcs"] == Registered(GcsTarget, GcsConnector)
 
 
 def test_a_rest_connection_with_a_database_address_names_the_field() -> None:
