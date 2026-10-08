@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { A, answerTo, B, canLogin, mark, NO_LOGIN, reached, sentToLogin, target, url, useSession, whoami } from './support';
+import { A, answerTo, B, canLogin, fast, mark, NO_LOGIN, reached, sentToLogin, target, url, useSession, whoami } from './support';
 
 /** A page on another site altogether, served by the test itself (`page.route`), never fetched. */
 const ELSEWHERE = 'https://elsewhere.example';
@@ -167,6 +167,9 @@ test.describe('one app cannot act on another in the same cell', () => {
     expect(fromA.status(), 'a link from A to B /.ssc/logout').toBe(404);
     expect((await whoami(page, B)).sub, 'still signed in to B').toBe(target.user);
 
+    // B's own logout ends the person's browser session at the auth host. Live, every case shares
+    // the one session the night signed in, so only the rig signs out for real.
+    if (!fast) return;
     await page.evaluate(() => {
       const a = document.createElement('a');
       a.href = '/.ssc/logout';
