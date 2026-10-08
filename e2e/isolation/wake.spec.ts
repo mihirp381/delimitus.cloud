@@ -7,6 +7,8 @@ test.describe('a sleeping app wakes', () => {
 
   test.beforeEach(async ({ context }) => {
     await useSession(context, A, target.user);
+    // Live, the sign-in itself lands on the app, whose answer sets the wake cookie: start cold.
+    await context.clearCookies({ name: WAKE });
   });
 
   test('a page load gets the waking page, then the app by itself', async ({ page }) => {
