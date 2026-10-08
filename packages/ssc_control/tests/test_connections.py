@@ -847,7 +847,7 @@ def test_a_connection_has_a_kind_and_only_an_available_kind_is_created(
     assert made.status_code == 201
     assert made.json()["kind"] == "postgres"
     for kind, address in [
-        ("mysql", {"host": "mysql.corp.internal", "database": "shop"}),
+        ("sqlserver", {"host": "sql.corp.internal", "database": "shop"}),
         ("gsheets", {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"}),
         ("rest", {"base_url": "https://api.corp.example/v2"}),
     ]:

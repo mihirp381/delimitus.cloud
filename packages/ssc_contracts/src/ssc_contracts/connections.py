@@ -43,7 +43,7 @@ KINDS: Final[tuple[Kind, ...]] = (
 SQL_KINDS: Final[frozenset[Kind]] = frozenset({"postgres", "mysql", "sqlserver"})
 """Kinds with a host, a port and a database, whose statements the classifier reads as SQL."""
 DEFAULT_PORT: Final[dict[Kind, int]] = {"postgres": 5432, "mysql": 3306, "sqlserver": 1433}
-AVAILABLE: Final[frozenset[Kind]] = frozenset({"postgres"})
+AVAILABLE: Final[frozenset[Kind]] = frozenset({"postgres", "mysql"})
 """The kinds a connector exists for. Grows one kind per connector commit."""
 
 TITLE: Final[dict[Kind, str]] = {

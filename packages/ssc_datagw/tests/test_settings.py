@@ -55,7 +55,7 @@ BAD = {
     },
     "a connection with a bad port": {CONNECTION_VAR: json.dumps({**TARGET, "port": 0})},
     "a connection of a kind this build lacks": {
-        CONNECTION_VAR: json.dumps({**TARGET, "kind": "mysql"})
+        CONNECTION_VAR: json.dumps({**TARGET, "kind": "sqlserver"})
     },
     "a connection of no kind at all": {CONNECTION_VAR: json.dumps({**TARGET, "kind": "oracle"})},
     "a connection with a bad id": {"SSC_CONNECTION_SALES": json.dumps(TARGET)},

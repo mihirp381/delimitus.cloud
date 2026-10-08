@@ -6,6 +6,7 @@ import pytest
 
 from ssc_contracts import connections as contract
 from ssc_datagw.kinds import AVAILABLE, REGISTRY, TargetError, connector_for, parse_target
+from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 
 PASSWORD = "fake-" + "registry-" + "password"
@@ -24,12 +25,19 @@ def test_a_connection_without_a_kind_is_postgres_as_before_ga_5() -> None:
     assert isinstance(connector_for(target), PostgresConnector)
 
 
+def test_a_mysql_connection_parses_to_a_mysql_target_and_its_connector() -> None:
+    target = parse_target(json.dumps({**TARGET, "kind": "mysql"}))
+    assert target == MySqlTarget.model_validate({**TARGET, "kind": "mysql"})
+    assert (target.port, target.database) == (3306, "sales")
+    assert isinstance(connector_for(target), MySqlConnector)
+
+
 @pytest.mark.parametrize(
     ("raw", "field"),
     [
         ("{" + PASSWORD, "(the JSON)"),
         (json.dumps({**TARGET, "kind": "oracle"}), "kind"),
-        (json.dumps({**TARGET, "kind": "mysql"}), "kind"),  # a kind with no connector yet
+        (json.dumps({**TARGET, "kind": "sqlserver"}), "kind"),  # a kind with no connector yet
         (json.dumps({k: v for k, v in TARGET.items() if k != "host"}), "host"),
         (json.dumps({**TARGET, "sslmode": "disable"}), "sslmode"),
     ],

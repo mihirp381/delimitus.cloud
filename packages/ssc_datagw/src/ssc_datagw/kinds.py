@@ -19,9 +19,10 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ssc_contracts.connections import Kind
 from ssc_datagw.connectors import Connector
+from ssc_datagw.mysql import MySqlConnector, MySqlTarget
 from ssc_datagw.postgres import PostgresConnector, PostgresTarget
 
-type Target = PostgresTarget
+type Target = PostgresTarget | MySqlTarget
 """Every target model a kind may validate to; grows with each connector."""
 
 
@@ -43,6 +44,7 @@ class Registered:
 
 REGISTRY: Final[Mapping[Kind, Registered]] = {
     "postgres": Registered(PostgresTarget, PostgresConnector),
+    "mysql": Registered(MySqlTarget, MySqlConnector),
 }
 
 AVAILABLE: Final[frozenset[Kind]] = frozenset(REGISTRY)

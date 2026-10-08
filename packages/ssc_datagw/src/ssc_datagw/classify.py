@@ -19,9 +19,10 @@ with ``SELECT`` only (``postgres_setup.sql``, ``mysql_setup.sql``) and ends in `
 
 MySQL's denied names are the functions that read server files (``LOAD_FILE``), hold locks other
 sessions wait on (``GET_LOCK`` and kin), wait on replication, burn time on purpose
-(``BENCHMARK``) or reach outside the server through the ``sys_*`` UDFs; ``SLEEP`` is allowed, as
-``max_execution_time`` and the gateway's deadline end it. sqlglot and MySQL read backslash
-escapes alike, so no string form is refused.
+(``BENCHMARK``, ``SLEEP``) or reach outside the server through the ``sys_*`` UDFs. ``SLEEP`` is
+refused because it returns 1 when ``max_execution_time`` or ``KILL QUERY`` interrupts it: the
+read would end quietly with a row instead of as ``QUERY_TIMEOUT``. sqlglot and MySQL read
+backslash escapes alike, so no string form is refused.
 """
 
 import re
@@ -86,6 +87,7 @@ MYSQL_DENIED: Final = frozenset(
     {
         "load_file",
         "benchmark",
+        "sleep",
         "get_lock",
         "release_lock",
         "release_all_locks",

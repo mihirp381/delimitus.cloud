@@ -8,6 +8,7 @@ Connects one customer database (Postgres) so apps can read it through the cell's
 - The owner is an active user of the org. They decide, with the org admins, when an app wants a wider audience than the ceiling (`exceed_ceiling`, SSC-045).
 - You are an active org admin in a person session. An agent session is refused (`AGENT_SESSION_REFUSED`).
 - The customer ran `packages/ssc_datagw/src/ssc_datagw/postgres_setup.sql` on the database (`docs/contracts/data-gateway.md`, "The Postgres connector") and gave you the host, port, database, the role's password and the server CA.
+- For a MySQL connection the customer ran `packages/ssc_datagw/src/ssc_datagw/mysql_setup.sql` instead (`docs/contracts/data-gateway.md`, "The MySQL connector") and gave you the host, port, a database the user may read, the user's password and the server CA.
 - The ids of the groups (`GET /v1/groups?name=`) and users (`GET /v1/users?email=`) for the ceiling.
 
 ## 1. Create the connection
@@ -63,6 +64,7 @@ From the granted environment, run one real query with `ssc_app.data.query("finan
 | `DATA_SNAPSHOT_STALE` | the data gateway has not read a snapshot for 120 s | platform: `infra/README.md`, "Data gateway", snapshot |
 | `CONNECTION_UNAVAILABLE` | the credentials, the CA, the address or the network are wrong, or a pooler sits between (`a pooler is between` in the gateway log) | `infra/README.md`, "Data gateway" checks 6, 7 and 9; re-enter the secret (step 2) |
 | `QUERY_FAILED` 42501 | the role may not read that schema or table | the customer runs `postgres_setup.sql` again with the schema named |
+| `QUERY_FAILED` 42000 (MySQL) | the user may not read that schema or table (MySQL answers 42000 where Postgres answers 42501) | the customer runs `mysql_setup.sql` again with the schema named in `@schemas` |
 | `QUERY_FAILED` 42P01 | no such table | the query |
 | `QUERY_REFUSED` | the text is not one plain read | the query; `docs/contracts/data-gateway.md`, "The Postgres connector", step 1 |
 

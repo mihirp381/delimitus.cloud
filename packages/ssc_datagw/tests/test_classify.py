@@ -3,7 +3,7 @@ else is refused, including the forms where sqlglot and Postgres would read the t
 
 import pytest
 
-from ssc_datagw.classify import refusal
+from ssc_datagw.classify import mysql_refusal, refusal
 
 READS = [
     "SELECT 1",
@@ -105,3 +105,8 @@ def test_the_reason_names_the_construct_and_never_quotes_the_statement() -> None
     assert refusal("SELECT $$x$$") == "the statement uses a dollar-quoted string"
     assert (refusal("NOTIFY ssc") or "").startswith("the statement is not a SELECT")
     assert refusal("SELECT ts_stat('x')") == "the statement calls a function that is refused"
+
+
+def test_mysql_refuses_a_sleep_which_would_end_quietly_instead_of_timing_out() -> None:
+    assert mysql_refusal("SELECT SLEEP(1)") == "the statement calls a function that is refused"
+    assert mysql_refusal("SELECT id FROM reporting.orders WHERE id = ?") is None
