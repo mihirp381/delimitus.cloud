@@ -19,6 +19,7 @@ from proofrun import (
     files,
     instances,
     rollback,
+    secret_proof,
     t1,
     t2,
     t3,
@@ -63,6 +64,7 @@ PROOFS: dict[str, ModuleType] = {
     "timers": timers,
     "files": files,
     "rollback": rollback,
+    "secrets": secret_proof,
     "instances": instances,
 }
 

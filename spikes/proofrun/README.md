@@ -445,6 +445,47 @@ The kit prints the app and the four **[real]** steps, then goes on without askin
 
 Pass: every automatic check (1 to 9) passed; check 10 never sets the verdict. The kit never reads the operator's token. The checks, the MCP reply, the audit row and the note go to `results/ga-4.5.json` and to `results/rollback-<app>-<UTC stamp>.json`. Copy the final line, and what check 10 showed, into the GA-4.5 record.
 
+### Secrets (GA-4.6)
+
+The app is `apps/secrets`: a FastAPI app with no database whose `/secret` answers only a fingerprint of the environment variable `GA46_TOKEN` (the first 12 hex digits of the SHA-256 of its bytes, and its length), never the value. A secret's name is the environment variable the app reads, and no manifest key is needed. The kit makes two random values in memory, hands each to `ssc secret set` on stdin only (the CLI takes no value on the command line), and keeps only their fingerprints. Only preview is used (`ssc deploy` always targets preview), so `--env` accepts `preview` alone.
+
+Before the first run:
+
+1. Create the app once: `uv run ssc apps create <slug>` (at the repository root). It needs no deploy first: `ssc secret set` before any deployment only stores the version (`operation_id` null), and the kit then runs `ssc deploy` of `apps/secrets`. With a live deployment already, `ssc secret set` starts the deployment itself.
+2. Give the signed-in person preview access, and put the host's session cookie in the jar (Setup). A login redirect on `/secret` fails check 3 with the `cookie set <host>` line.
+3. For checks 9 and 10, be logged in to `gcloud` as an operator who can read the cell's deny policy and the secret's IAM policy. Both are read-only. If they are refused the checks are "not read" and the kit prints the command to run by hand.
+
+From `spikes/proofrun`:
+
+```sh
+uv run python -m proofrun secrets --app <slug> --label $L2 [--env preview] [--control-sa <SSC_CONTROL_SA>]
+```
+
+The kit prints the **[real]** steps and goes on without asking. Expect 5 to 20 minutes.
+
+| # | Check |
+| --- | --- |
+| 1 | **[real]** `ssc secret set GA46_TOKEN --wait --timeout 900` with v1 on stdin: `changed`, a numbered version. |
+| 2 | **[real]** v1 is live: the set's own deployment (when something was live) or `ssc deploy --wait --timeout 1200` ended healthy. |
+| 3 | `GET /secret` through the app's host with the cookie (up to 6 tries, 10 s apart): v1's fingerprint and length, and no value in the answer. |
+| 4 | `ssc secret list --json`: one `GA46_TOKEN` row with exactly `name`, `version`, `live_version`, `updated_at`; `version` and `live_version` are v1's; neither the value nor its fingerprint appears in anything the `ssc` commands printed (text and JSON). |
+| 5 | `ssc secret --help` lists only `set` and `list`: no command reads a value back. |
+| 6 | **[real]** `ssc secret set` with v2 on stdin and no `--wait`: a newer version and an `operation_id`. Rotation redeploys by itself (`api/routes/v1/secrets.py`, `set_secret` starts a deployment of the live release); the kit runs no `ssc deploy` for it. |
+| 7 | Right after: `version` is v2, `live_version` is still v1, and the app still answers v1's fingerprint: the running deployment keeps its pin. If the deployment had already landed this is "not read". |
+| 8 | **[real]** `secret list` is polled every 10 s for up to 600 s until `live_version` is v2; then the app answers v2's fingerprint and no output held a value or fingerprint. |
+| 9 | Read-only: `gcloud iam policies get ssc-deny-secret-read --attachment-point=cloudresourcemanager.googleapis.com/projects/ssc-c-<label> --kind=denypolicies` has a rule with no condition denying `secretmanager.googleapis.com/versions.access` to `ssc-secret-intake`. The control plane's account is reported as named or not (only when `--control-sa` is given) and never fails the check: it holds no role in the cell, so its absence from the rule is expected. |
+| 10 | Read-only: `gcloud secrets get-iam-policy ssc-a-<env>-GA46_TOKEN --project=ssc-c-<label>` gives read (`secretAccessor`, admin, owner, editor) to exactly one service account, and names neither the intake, the control plane (`--control-sa`) nor a public member. |
+| 11 | Manual (`infra/README.md` Secrets, live check 2): the printed `gcloud secrets versions access` and `gcloud secrets create`, impersonating `ssc-secret-intake`, must be refused. |
+| 12 | Manual (live check 3): the printed `gcloud secrets versions add`, impersonating the control plane's account, must be refused. If it succeeds it adds a junk version: stop. |
+
+Checks 11 and 12 need `roles/iam.serviceAccountTokenCreator` on the account named, for the operator, while they run; on 2026-10-08 the founder's account could not impersonate (GA-5.6, `infra/README.md`). Do not run 11 or 12 while a deployment is pending. Live check 4 of that list (the IAM condition matches `:addVersion`) is shown by check 1 passing, since the intake added the version under it.
+
+The gap, as the kit prints it: a deployment's pinned versions are visible only as `live_version` in `secret list` (`routes/v1/secrets.py` `SecretOut`, `_SELECT_SECRETS`); no deployment record exposes `secret_refs`.
+
+Leaves behind: the secret `GA46_TOKEN` in the app's preview with two more versions per run (there is no `ssc secret delete`).
+
+Pass: every automatic check (1 to 10) passed; 11 and 12 never set the verdict. The kit never prints or saves a value, the operator's token or the cookie; the results hold the fingerprints and lengths, the versions, the checks and the notes, in `results/ga-4.6.json` and `results/secrets-<app>-<UTC stamp>.json`. Copy the final line, and what 11 and 12 showed, into the GA-4.6 record.
+
 ## What feeds what
 
 | Result | Feeds |
