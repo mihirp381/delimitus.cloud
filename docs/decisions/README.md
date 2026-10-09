@@ -812,6 +812,8 @@ Not built: `ssc` commands and console pages for connecting (decision 017 registe
 
 Live checks: register the App with these permissions and the push event, set `SSC_GITHUB_APP_ID`, `SSC_GITHUB_PRIVATE_KEY` and `SSC_GITHUB_WEBHOOK_SECRET` on the API and the worker, bind an installation, connect a repository, push, and time the check run's preview address against the five minutes; a fork pull request; promote with a red and a green required check; a delivery with a wrong signature.
 
+Wiring (GA-7.2): the platform stack's `github` flag makes `SSC_GITHUB_APP_ID` and `SSC_GITHUB_PRIVATE_KEY`, read by the API and the worker, and `SSC_GITHUB_WEBHOOK_SECRET`, read by the API alone, as empty secrets in the public stage; the operator adds each version. Other stages get none.
+
 Reverse if: checking every org on each webhook is measurably slow at pilot scale (then an unscoped installation-to-org table beside `ssc.org_index`, amending 009); or GitHub's permissions model changes so a token cannot be limited to one repository.
 
 ## 028 delimitus.com

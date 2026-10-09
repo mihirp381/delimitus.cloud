@@ -23,7 +23,8 @@ Ticket "done when" checks:
 Plus: the SSC-015 secret scan on a pushed commit, an older push never deployed over a newer
 one, connecting and disconnecting (audited, never naming the repository, a builder on prod
 only), the operator's binding CLI, the installation token cache and JWT, and the source
-unpacker's refusals. The migration is tested in test_control_db.
+unpacker's refusals, and the worker's composition logging whether GitHub is ready (GA-7.2).
+The migration is tested in test_control_db.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ from typing import Any, cast
 import jwt
 import pytest
 import test_deploy
-from fake_github import _PUBLIC, APP_ID, FakeGitHub, Json, files_of, tarball_of
+from fake_github import _PEM, _PUBLIC, APP_ID, BASE, FakeGitHub, Json, files_of, tarball_of
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -94,7 +95,7 @@ from ssc_control.metrics import metrics_port
 from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
-from ssc_control.worker import Ports
+from ssc_control.worker import CompositionError, Ports, github_from_env
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
 from ssc_shared.hosts import app_origin
@@ -775,6 +776,31 @@ def test_the_app_jwt_lasts_under_ten_minutes_and_names_the_app() -> None:
     assert claims["iss"] == APP_ID
     assert claims["iat"] < now < claims["exp"] <= now + 600
     asyncio.run(github.aclose())
+
+
+async def test_the_worker_says_whether_github_is_ready(caplog: pytest.LogCaptureFixture) -> None:
+    """GA-7.2: the worker logs ``github ready`` once the App's id and key are set, a warning
+    when neither is, and never the key. Composing the App calls nothing."""
+    with caplog.at_level(logging.INFO, logger="ssc_control.worker"):
+        assert github_from_env({}) is None
+    assert "SSC_GITHUB_APP_ID is not set: GitHub push jobs will do nothing" in caplog.text
+    assert "github ready" not in caplog.text
+    caplog.clear()
+    env = {"SSC_GITHUB_APP_ID": APP_ID, "SSC_GITHUB_PRIVATE_KEY": _PEM, "SSC_GITHUB_API_BASE": BASE}
+    with caplog.at_level(logging.INFO, logger="ssc_control.worker"):
+        github = github_from_env(env)
+    assert github is not None
+    try:
+        (ready,) = [r for r in caplog.records if r.getMessage() == "github ready"]
+        assert ready.levelno == logging.INFO
+        assert ready.__dict__["app_id"] == APP_ID
+        assert "is not set" not in caplog.text
+        assert _PEM.splitlines()[1] not in caplog.text and _PEM[-40:] not in caplog.text
+    finally:
+        await github.aclose()
+    for alone in ({"SSC_GITHUB_APP_ID": APP_ID}, {"SSC_GITHUB_PRIVATE_KEY": _PEM}):
+        with pytest.raises(CompositionError, match="set both"):
+            github_from_env(alone)
 
 
 def test_the_gate_binds_a_check_to_its_workflow_and_branch() -> None:

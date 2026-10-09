@@ -388,13 +388,17 @@ def directory_from_env(env: Mapping[str, str]) -> WorkOSClient | None:
 def github_from_env(env: Mapping[str, str]) -> GitHubApp | None:
     """``SSC_GITHUB_APP_ID`` and ``SSC_GITHUB_PRIVATE_KEY`` (the App's PEM), both or neither,
     and optionally ``SSC_GITHUB_API_BASE``: the App push jobs call GitHub as. None: a push job
-    does nothing."""
+    does nothing. Logs ``github ready`` with the App's id, or a warning when neither is set;
+    never the key."""
     app_id, key = env.get(GITHUB_APP_ID_ENV, ""), env.get(GITHUB_KEY_ENV, "")
     if not app_id and not key:
+        log.warning("%s is not set: GitHub push jobs will do nothing", GITHUB_APP_ID_ENV)
         return None
     if not (app_id and key):
         raise CompositionError(f"set both {GITHUB_APP_ID_ENV} and {GITHUB_KEY_ENV}, or neither")
-    return GitHubApp(app_id=app_id, private_key=key, base=env.get(GITHUB_BASE_ENV, GITHUB_BASE))
+    app = GitHubApp(app_id=app_id, private_key=key, base=env.get(GITHUB_BASE_ENV, GITHUB_BASE))
+    log.info("github ready", extra={"app_id": app_id})
+    return app
 
 
 def console_url_from_env(env: Mapping[str, str]) -> str:

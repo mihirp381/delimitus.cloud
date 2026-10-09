@@ -22,6 +22,9 @@ Ticket "done when" checks:
   * every cell the control plane serves, as SSC_CELLS (decision 030)
         -> test_the_cells_are_one_compact_setting, test_the_legacy_cell_is_a_one_cell_list,
         test_the_cells_are_validated, test_the_control_plane_names_cell_hosts_as_the_cells_do
+  * the GitHub App's three secrets for the public stage's API and worker (GA-7.2)
+        -> test_github_wiring_goes_to_the_public_stage_only,
+        test_without_github_no_github_secret_is_made, test_github_needs_a_control_stage
 """
 
 import json
@@ -108,6 +111,11 @@ def timed() -> list[Declared]:
 
 
 @pytest.fixture(scope="module")
+def connected() -> list[Declared]:
+    return run(naming.PLATFORM_STACK, RELEASE | {"github": "true"})
+
+
+@pytest.fixture(scope="module")
 def bare() -> list[Declared]:
     return run(
         naming.PLATFORM_STACK,
@@ -189,14 +197,14 @@ def test_each_process_runs_as_its_own_account(released: list[Declared]) -> None:
         assert len(set(runs_as.values())) == len(runs_as)
 
 
-@pytest.mark.parametrize("stack", ["released", "timed"])
+@pytest.mark.parametrize("stack", ["released", "timed", "connected"])
 def test_no_account_can_read_a_secret_it_does_not_use(
     stack: str, request: pytest.FixtureRequest
 ) -> None:
     """Use is what the declared containers take by ``secretKeyRef``. Every grant is the
     accessor role on one secret to an account whose workload takes it, every secret a
     workload takes is granted to its account, and no account holds a secret role on a
-    project. Also with the worker's timer key (``timed``)."""
+    project. Also with the worker's timer key (``timed``) and the GitHub App (``connected``)."""
     released: list[Declared] = request.getfixturevalue(stack)
     for stage in naming.STAGES:
         uses: set[tuple[str, str]] = set()
@@ -376,6 +384,83 @@ def test_a_timer_key_id_gives_the_worker_its_timer_key_alone(timed: list[Declare
         assert readers == {f"serviceAccount:{email(naming.CONTROL_WORKER_SA, stage)}"}
         for name in ("ssc-api", "ssc-auth"):
             assert control.TIMER_KEY not in _env(_workload(timed, SERVICE, stage, name))[1]
+
+
+def _github_secrets(declared: list[Declared], stage: naming.Stage) -> set[str]:
+    made = {d.inputs["secretId"] for d in _of(declared, "gcp:secretmanager/secret:Secret", stage)}
+    return made & set(control.GITHUB_SECRETS)
+
+
+def _github_readers(declared: list[Declared], stage: naming.Stage) -> dict[str, set[str]]:
+    readers: dict[str, set[str]] = {}
+    for g in _of(declared, SECRET_GRANT, stage):
+        if g.inputs["secretId"] in control.GITHUB_SECRETS:
+            readers.setdefault(g.inputs["secretId"], set()).add(g.inputs["member"])
+    return readers
+
+
+def test_github_wiring_goes_to_the_public_stage_only(connected: list[Declared]) -> None:
+    """GitHub calls ``api.delimitus.com``, held by the public stage (``prod`` here): there the
+    API takes the App's id, key and webhook secret, the worker the id and key, by
+    ``secretKeyRef``; staging gets none of them."""
+    api, worker = (
+        f"serviceAccount:{email(naming.CONTROL_SA, 'prod')}",
+        f"serviceAccount:{email(naming.CONTROL_WORKER_SA, 'prod')}",
+    )
+    assert _github_secrets(connected, "prod") == {
+        "SSC_GITHUB_APP_ID",
+        "SSC_GITHUB_PRIVATE_KEY",
+        "SSC_GITHUB_WEBHOOK_SECRET",
+    }
+    assert _github_readers(connected, "prod") == {
+        "SSC_GITHUB_APP_ID": {api, worker},
+        "SSC_GITHUB_PRIVATE_KEY": {api, worker},
+        "SSC_GITHUB_WEBHOOK_SECRET": {api},
+    }
+    api_plain, api_secrets = _env(_workload(connected, SERVICE, "prod", "ssc-api"))
+    worker_plain, worker_secrets = _env(_workload(connected, POOL, "prod", "ssc-worker"))
+    assert api_secrets & set(control.GITHUB_SECRETS) == set(control.GITHUB_SECRETS)
+    assert worker_secrets & set(control.GITHUB_SECRETS) == {
+        "SSC_GITHUB_APP_ID",
+        "SSC_GITHUB_PRIVATE_KEY",
+    }
+    assert not _env(_workload(connected, SERVICE, "prod", "ssc-auth"))[1] & set(
+        control.GITHUB_SECRETS
+    )
+    assert not _env(_workload(connected, JOB, "prod", "ssc-control-migrate"))[1] & set(
+        control.GITHUB_SECRETS
+    )
+    assert not {k for k in {**api_plain, **worker_plain} if "GITHUB" in k}
+    assert not _github_secrets(connected, "staging")
+    assert not _github_readers(connected, "staging")
+    for type_ in (SERVICE, POOL, JOB):
+        for d in _of(connected, type_, "staging"):
+            plain, secrets = _env(d)
+            assert not secrets & set(control.GITHUB_SECRETS)
+            assert not {k for k in plain if "GITHUB" in k}
+
+
+def test_without_github_no_github_secret_is_made(released: list[Declared]) -> None:
+    for stage in naming.STAGES:
+        assert not _github_secrets(released, stage)
+        assert not _github_readers(released, stage)
+        for type_ in (SERVICE, POOL, JOB):
+            for d in _of(released, type_, stage):
+                plain, secrets = _env(d)
+                assert not secrets & set(control.GITHUB_SECRETS)
+                assert not {k for k in plain if "GITHUB" in k}
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"platform_folder_id": PLATFORM_FOLDER},
+        {"platform_folder_id": PLATFORM_FOLDER, "control_stages": "[]"},
+    ],
+)
+def test_github_needs_a_control_stage(settings: dict[str, str]) -> None:
+    with pytest.raises(Exception, match="github needs a control stage"):
+        run(naming.PLATFORM_STACK, settings | {"github": "true"})
 
 
 @pytest.mark.parametrize("kid", ["a b", "-lead", "x" * 65, "kid/1"])

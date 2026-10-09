@@ -58,6 +58,13 @@ TIMER_KEY: Final = "SSC_TIMER_SIGNING_KEY"  # noqa: S105  (a secret's name)
 TIMER_KEY_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 MAIL_PASSWORD: Final = "SSC_SMTP_PASSWORD"  # noqa: S105  (a secret's name)
 """Made, and given to the worker, only with ``mail`` in the console's stage (decision 033)."""
+GITHUB_APP_ID: Final = "SSC_GITHUB_APP_ID"  # noqa: S105  (a secret's name)
+"""The GitHub App's id, for the API and the worker, only with ``github`` (decision 027)."""
+GITHUB_KEY: Final = "SSC_GITHUB_PRIVATE_KEY"  # noqa: S105  (a secret's name)
+"""The GitHub App's PEM, for the API and the worker, only with ``github`` (decision 027)."""
+GITHUB_WEBHOOK_SECRET: Final = "SSC_GITHUB_WEBHOOK_SECRET"  # noqa: S105  (a secret's name)
+"""What GitHub signs deliveries with, for the API alone, only with ``github`` (decision 027)."""
+GITHUB_SECRETS: Final = (GITHUB_APP_ID, GITHUB_KEY, GITHUB_WEBHOOK_SECRET)
 MAIL_SECURITY: Final = ("starttls", "tls")
 MAIL_RECORD_TYPES: Final = ("TXT", "CNAME", "MX")
 TXT_CHUNK: Final = 255
@@ -73,6 +80,9 @@ SECRET_READERS: Final[Mapping[str, tuple[str, ...]]] = {
     "SSC_AUTH_STATE_KEY": (AUTH,),
     TIMER_KEY: (WORKER,),
     MAIL_PASSWORD: (WORKER,),
+    GITHUB_APP_ID: (API, WORKER),
+    GITHUB_KEY: (API, WORKER),
+    GITHUB_WEBHOOK_SECRET: (API,),
 }
 SECRET_ACCESSOR: Final = "roles/secretmanager.secretAccessor"  # noqa: S105
 SQL_INSTANCE: Final = "ssc-control"
@@ -243,7 +253,8 @@ class ControlConfig:
     (SSC-065); ``landing_image`` then puts the page behind the entry load balancer.
     ``console_image`` puts the console host behind it at ``console.delimitus.com`` (SSC gap 1).
     ``mail`` gives that stage's worker an SMTP relay, and ``mail_records`` are the provider's
-    SPF, DKIM and DMARC records in the ``delimitus`` zone (decision 033)."""
+    SPF, DKIM and DMARC records in the ``delimitus`` zone (decision 033). ``github`` makes the
+    GitHub App's secrets for the public stage's API and worker (decision 027)."""
 
     stages: tuple[n.Stage, ...] = ()
     public: n.Stage | None = None
@@ -260,6 +271,7 @@ class ControlConfig:
     console_image: str | None = None
     mail: MailConfig | None = None
     mail_records: tuple[MailRecord, ...] = ()
+    github: bool = False
 
     @property
     def released(self) -> bool:
@@ -271,6 +283,10 @@ class ControlConfig:
     def sends_mail(self, stage: n.Stage) -> bool:
         """The worker's mail goes by SMTP only where its links can name the console."""
         return self.mail is not None and self.serves_console(stage)
+
+    def serves_github(self, stage: n.Stage) -> bool:
+        """GitHub calls ``api.delimitus.com``, which only the public stage holds."""
+        return self.github and self.public == stage
 
     def serves_cells(self, stage: n.Stage) -> bool:
         """Whether ``stage``'s control plane is the one the cells trust (``cell.control_for``):
@@ -392,6 +408,9 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
     if console_image is not None and not PINNED_IMAGE.fullmatch(console_image):
         raise ValueError(f"console_image must be {n.platform_registry()}/<image>@sha256:<digest>")
     mail, records = mail_config(config, console_image, public)
+    github = bool(config.get_bool("github"))
+    if github and public is None:
+        raise ValueError("github needs a control stage (control_stages)")
     return ControlConfig(
         stages=stages,
         public=public,
@@ -408,6 +427,7 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         console_image=console_image,
         mail=mail,
         mail_records=records,
+        github=github,
     )
 
 
@@ -491,12 +511,14 @@ def _blob_env(stage: n.Stage, signer: pulumi.Input[str]) -> dict[str, pulumi.Inp
 
 def secrets_in(cfg: ControlConfig, stage: n.Stage) -> dict[str, tuple[str, ...]]:
     """``SECRET_READERS`` as this config uses it in ``stage``: the timer key only with
-    ``timer_key_id``, the SMTP password only where the worker sends mail."""
+    ``timer_key_id``, the SMTP password only where the worker sends mail, the GitHub App's
+    secrets only in the stage GitHub calls."""
     return {
         secret: readers
         for secret, readers in SECRET_READERS.items()
         if (secret != TIMER_KEY or cfg.timer_key_id)
         and (secret != MAIL_PASSWORD or cfg.sends_mail(stage))
+        and (secret not in GITHUB_SECRETS or cfg.serves_github(stage))
     }
 
 
