@@ -377,3 +377,19 @@ Decision for the founder (one of):
 Either way the first step, `pulumi up --stack c-proofcell02`, is needed to give the staging nightly its probe role back.
 
 The same trap waits for the next lazy resource on cell 2. `GET /v1/cell` for org 2 (about 23:18 UTC): `database` `off`, `egress` `off`, `connections` `failed`; 34 environments, none with a database; cell 2 has no Cloud SQL instance (its stack has `database` `false`; the `ga1pg*` apps have no database). A deploy with `[state] postgres = true` (GA-4.3, GA-4.5) would insert a `database` row and run `ssc-cell-deployer proofcell02 database`, and the warm option (GA-4.8) runs `proofcell02 warm=true`.
+
+## GA-6.5 live proof, 2026-10-09 (cell 1)
+
+### GA-6.5 build network: gitleaks still blocks secrets
+
+`ssc apps create ga6secret` (`app_reypwn8d72k5x5z691vj`), then `buildsecret --app ga6secret` at 00:58 UTC, with the founder's admin CLI login. The kit deployed a temporary copy of `apps/static` with `config.js` holding a GitHub token shape made at run time from random letters and digits (fingerprint `273d5ca730ce`). `ssc_bundle.secrets`, which the CLI and the control plane both run, does not know that shape; the build's gitleaks rule `github-pat` does.
+
+**GA-6.5 bld_fb108ihg4ex2qgxyl5ye: 5 of 5 checks PASS**, and manual check 5 passed.
+- 0: no release, no preview deployment before.
+- 1: `ssc deploy --json` exit 1 (not 4: the CLI's scan passed and the bundle was uploaded), `SECRET_IN_BUNDLE`, instance `/v1/builds/bld_fb108ihg4ex2qgxyl5ye`.
+- 2: the build log (49 lines) has `RuleID: github-pat` and `leaks found: 1`; the value appeared in no command output, log line or audit row.
+- 3: audit `bundle.stored` for `bdl_zvol7sv2m88uf4ivmhbg` (the control plane's re-scan accepted it), then `build.failed` with `failure_code` `SECRET_IN_BUNDLE`.
+- 4: still no release (so no image digest) and no preview deployment.
+- 5 (manual, read-only `gcloud builds list --project=ssc-c-proofcell01 --region=us-central1 --filter='tags=bld_fb108ihg4ex2qgxyl5ye'`): Cloud Build `0d25dd4d-34f4-4be5-821d-70382ace962e` `FAILURE`, "step exited with non-zero status: 10"; steps `fetch` SUCCESS, `scan` FAILURE, `plan`, `build`, `harden` still `QUEUED` (never ran); no `results.images`. Created 00:58:43, finished 00:59:02 UTC (19 s).
+
+Open egress itself was not run again: `build_config` sets no worker pool (`cloud_build.py:279-287`), decision 014 says so, and every Python build on the cells installs from PyPI. Disclosed in `docs/trust/build-limits.md`. Leaves behind: the app `ga6secret` (apps cannot be deleted), its failed build, and its stored bundle holding the random value.

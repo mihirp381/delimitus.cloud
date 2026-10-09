@@ -29,6 +29,12 @@ by the founder, 2026-10-08 (GA-6.5).
   is public) plus SSC's rules for Supabase keys and database URLs with a password. A finding stops
   the build before anything is built: no image, no release, no deployment. Findings are printed
   redacted. All three refuse with `SECRET_IN_BUNDLE`. [cloud_build.py:79, 123-127, 200-247]
+- Measured on cell 1, 2026-10-09 00:58 UTC: a GitHub token shape made of random characters (no
+  live token) passed the CLI's scan and the control plane's re-scan, and the build refused it:
+  gitleaks rule `github-pat`, `SECRET_IN_BUNDLE`. The scan step failed 19 s after the build was
+  created, the later steps never ran, no image was pushed, and no release or deployment was made.
+  The value appeared in no command output, build log line or audit row. The stored bundle that
+  holds the random value stays in the cell's bundle store. [GA-6.5, `proofrun buildsecret`]
 - Limits: the first two scans skip files over 1 MiB, binary files, lockfiles and `ssc.toml`.
   Public build values are never flagged. A secret with a shape none of these rules knows passes
   all three. [secrets.py:3-5, 101-107]
