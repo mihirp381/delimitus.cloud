@@ -404,7 +404,7 @@ async def test_requirements_come_first_and_need_no_call(fake_api):
 
 
 def test_the_agent_pack_names_every_tool_and_the_package_list():
-    text = " ".join(guide([]).split())
+    text = " ".join(guide([], "https://api.delimitus.com/mcp").split())
     for tool in TOOLS:
         assert f"`{tool}`" in text, tool
     assert "Call `get_platform_requirements` first" in text

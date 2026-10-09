@@ -7,7 +7,7 @@ import typer
 from typer.core import TyperCommand, TyperGroup
 
 from ssc_cli.agentpack import write_agent_pack
-from ssc_cli.commands._common import JsonOpt
+from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.errors import ExitCode
 from ssc_cli.output import print_json, say
 from ssc_cli.shapes import FileAction, InitResult
@@ -24,12 +24,19 @@ def init(
     ctx: typer.Context,
     path: PathArg = Path(),
     force: Annotated[
-        bool, typer.Option("--force", help="Replace the ssc block and skill file if they differ.")
+        bool,
+        typer.Option(
+            "--force",
+            help="Replace the ssc block, the skill file and the ssc MCP server if they differ.",
+        ),
     ] = False,
     json_mode: JsonOpt = False,
 ) -> None:
-    """Write the agent pack: an AGENTS.md block, a Claude Code skill and a starter ssc.toml."""
-    written = write_agent_pack(path, command_lines(ctx), force=force)
+    """Write the agent pack: an AGENTS.md block, a Claude Code skill, MCP settings for Claude Code
+    and Cursor, and a starter ssc.toml."""
+    with handled(json_mode):
+        mcp_url = f"{session(ctx).config().api_url}/mcp"
+    written = write_agent_pack(path, command_lines(ctx), mcp_url, force=force)
     result = InitResult(
         path=str(path),
         files=[FileAction(path=w.path, action=w.action, note=w.note) for w in written],

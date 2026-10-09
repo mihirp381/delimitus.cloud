@@ -1,15 +1,18 @@
 """``ssc init``: write the agent pack that teaches coding agents how to build for SSC.
 
 Files ssc shares with the person (``AGENTS.md``, ``CLAUDE.md``) get a marked block, and text
-outside the markers is never touched. The skill file belongs to ssc. The starter ``ssc.toml`` and
-``.sscignore`` are written only when absent.
+outside the markers is never touched. The skill file belongs to ssc. The MCP settings for Claude
+Code (``.mcp.json``) and Cursor (``.cursor/mcp.json``) are shared too: only the ``ssc`` server is
+added or replaced, and a file ssc cannot read as a JSON object is left alone. The starter
+``ssc.toml`` and ``.sscignore`` are written only when absent.
 """
 
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 from ssc_cli.agentpack.content import (
     BEGIN,
@@ -29,6 +32,9 @@ CLAUDE: Final = "CLAUDE.md"
 SKILL: Final = ".claude/skills/ssc/SKILL.md"
 MANIFEST: Final = "ssc.toml"
 IGNORE: Final = ".sscignore"
+MCP_CLAUDE: Final = ".mcp.json"
+MCP_CURSOR: Final = ".cursor/mcp.json"
+SERVER: Final = "ssc"
 _BLOCK = re.compile(r"<!-- ssc:begin v\d+ -->.*?<!-- ssc:end -->\n?", re.DOTALL)
 
 
@@ -40,16 +46,22 @@ class Written:
     failed: bool = False
 
 
-def guide(command_lines: list[str]) -> str:
-    return GUIDE.format(commands="\n".join(command_lines), **ENV_NAMES)
+def guide(command_lines: list[str], mcp_url: str) -> str:
+    return GUIDE.format(commands="\n".join(command_lines), mcp_url=mcp_url, **ENV_NAMES)
 
 
-def write_agent_pack(root: Path, command_lines: list[str], *, force: bool) -> list[Written]:
-    text = guide(command_lines)
+def write_agent_pack(
+    root: Path, command_lines: list[str], mcp_url: str, *, force: bool
+) -> list[Written]:
+    text = guide(command_lines, mcp_url)
+    claude_server = {"type": "http", "url": mcp_url}
+    cursor_server = {"url": mcp_url}
     steps: list[tuple[str, Callable[[], Written]]] = [
         (AGENTS, lambda: _block(root / AGENTS, AGENTS, text, force=force, create=True)),
         (SKILL, lambda: _owned(root / SKILL, SKILL, f"{SKILL_FRONTMATTER}\n{text}", force=force)),
         (CLAUDE, lambda: _block(root / CLAUDE, CLAUDE, CLAUDE_IMPORT, force=force, create=False)),
+        (MCP_CLAUDE, lambda: _mcp_json(root / MCP_CLAUDE, MCP_CLAUDE, claude_server, force=force)),
+        (MCP_CURSOR, lambda: _mcp_json(root / MCP_CURSOR, MCP_CURSOR, cursor_server, force=force)),
         (MANIFEST, lambda: _starter(root / MANIFEST, MANIFEST, STARTER_MANIFEST)),
         (IGNORE, lambda: _starter(root / IGNORE, IGNORE, STARTER_IGNORE)),
     ]
@@ -119,6 +131,44 @@ def _owned(path: Path, rel: str, text: str, *, force: bool) -> Written:
         return Written(rel, "skipped", "the file differs; run `ssc init --force` to replace it")
     _write(path, text)
     return Written(rel, "updated")
+
+
+def _mcp_json(path: Path, rel: str, server: dict[str, str], *, force: bool) -> Written:
+    if not path.exists():
+        _write(path, _dump({"mcpServers": {SERVER: server}}))
+        return Written(rel, "created")
+    action, note, text = _merge_json(_read(path), server, force=force)
+    if text is not None:
+        _write(path, text)
+    return Written(rel, action, note)
+
+
+def _merge_json(
+    current: str, server: dict[str, str], *, force: bool
+) -> tuple[Action, str | None, str | None]:
+    """What to do with an existing MCP settings file: the action, a note, and the new text."""
+    try:
+        data: object = json.loads(current)
+    except json.JSONDecodeError:
+        return "skipped", "the file is not valid JSON; fix it by hand", None
+    if not isinstance(data, dict):
+        return "skipped", "the file is not a JSON object; fix it by hand", None
+    top = cast(dict[str, object], data)
+    servers = top.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        return "skipped", "`mcpServers` is not a JSON object; fix it by hand", None
+    named = cast(dict[str, object], servers)
+    if SERVER in named:
+        if named[SERVER] == server:
+            return "unchanged", None, None
+        if not force:
+            return "skipped", "the ssc server differs; run `ssc init --force` to replace it", None
+    named[SERVER] = server
+    return "updated", None, _dump(top)
+
+
+def _dump(data: object) -> str:
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
 def _starter(path: Path, rel: str, text: str) -> Written:
