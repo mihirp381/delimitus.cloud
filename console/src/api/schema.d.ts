@@ -1090,6 +1090,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ci-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Ci Tokens
+         * @description The caller's CI tokens, or every one in the org for an active org admin, revoked and
+         *     expired ones included, newest first, at most 200. Never a token itself.
+         */
+        get: operations["list_ci_tokens_v1_ci_tokens_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ci-tokens/{ci_token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Ci Token
+         * @description Revoke a CI token: its next call is ``UNAUTHENTICATED``. Its owner or an active org admin,
+         *     never in an agent session and never with a ``preview``-scoped credential (``FORBIDDEN``);
+         *     ``NOT_FOUND`` for anyone else's. A token already revoked is answered as it is. Audited as
+         *     ``token.revoked``.
+         */
+        delete: operations["revoke_ci_token_v1_ci_tokens__ci_token_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/connections": {
         parameters: {
             query?: never;
@@ -2208,6 +2252,32 @@ export interface components {
             fixed_resources: components["schemas"]["FixedResourceOut"][];
             /** Month */
             month: string;
+        };
+        /** CiToken */
+        CiToken: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Revoked At */
+            revoked_at: string | null;
+            /** User Id */
+            user_id: string;
+        };
+        /** CiTokens */
+        CiTokens: {
+            /** Ci Tokens */
+            ci_tokens: components["schemas"]["CiToken"][];
         };
         /** ColumnOut */
         ColumnOut: {
@@ -8459,6 +8529,120 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_ci_tokens_v1_ci_tokens_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CiTokens"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    revoke_ci_token_v1_ci_tokens__ci_token_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ci_token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CiToken"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;

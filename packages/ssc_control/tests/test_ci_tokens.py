@@ -2,22 +2,30 @@
 access token backed by a ``ci`` session, for a repository secret.
 
 The auth host mints it (only it holds the signing key) and refuses agents, scoped credentials and
-sessions that are not a person's own live command-line login.
+sessions that are not a person's own live command-line login. The API deploys preview with it and
+never prod, lists and revokes it, and refuses it once revoked, expired or its person deactivated.
 """
 
-from collections.abc import AsyncIterator
+import hashlib
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx2
 import jwt
 import pytest
-from ssc_testkit import Dsns
+from fastapi.testclient import TestClient
+from ssc_testkit import Dsns, assert_problem, auth, new_key
 from test_auth_host import AUTH, SECRET, Rig, client_for, device_login, settings
 from test_identity import new_world
 
 from ssc_contracts.audit import ActorKind, AuditAction
+from ssc_contracts.errors import ErrorCode
+from ssc_contracts.ids import new_id
+from ssc_control.api import Settings, create_app
 from ssc_control.api.auth import CredentialScope, Verifier
+from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.settings import USER_AUDIENCE
 from ssc_control.audit.chain import Actor
 from ssc_control.db import bound_org
@@ -306,3 +314,199 @@ async def test_the_route_answers_no_cross_origin_call(rig: Rig) -> None:
     sid = await open_session(rig)
     r = await create(rig, access(rig, sid), origin=rig.host.settings.console_url)
     assert r.status_code == 200 and "access-control-allow-origin" not in r.headers
+
+
+# ── the API ─────────────────────────────────────────────────────────────────
+
+
+@contextmanager
+def api(rig: Rig) -> Iterator[TestClient]:
+    settings = Settings(
+        database_dsn=rig.host.settings.database_dsn,
+        jwks=rig.signer.jwks(),
+        issuer=AUTH,
+        rate_capacity=1000,
+        rate_refill_per_second=1000.0,
+        environment="test",
+    )
+    with TestClient(create_app(settings)) as client:
+        yield client
+
+
+def post(client: TestClient, path: str, token: str, body: object = None) -> Any:
+    return client.post(path, json=body, headers=auth(token, **{IDEMPOTENCY_HEADER: new_key()}))
+
+
+async def member(rig: Rig) -> str:
+    uid = new_id("usr")
+    await rig.w.rows(
+        "insert into ssc.user_account (id, org_id, display_name, email, role, status) "
+        "values (:id, :org, 'Bo Member', 'bo@example.com', 'member', 'active')",
+        id=uid,
+    )
+    return uid
+
+
+async def ci_token(rig: Rig, user: str | None = None, label: str = "acme/ledger") -> dict[str, Any]:
+    sid = await open_session(rig, user=user)
+    r = await create(rig, access(rig, sid, user=user), {"label": label})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def add_release(rig: Rig, app_id: str) -> str:
+    rid = new_id("rel")
+    d = "sha256:" + hashlib.sha256(rid.encode()).hexdigest()
+    await rig.w.rows(
+        "insert into ssc.release (id, org_id, app_id, number, image_digest, manifest_digest, "
+        "source_digest, actor_kind, actor_id) values (:id, :org, :app, "
+        "(select coalesce(max(number), 0) + 1 from ssc.release where app_id = :app), "
+        ":d, :d, :d, 'user', :user)",
+        id=rid,
+        app=app_id,
+        d=d,
+        user=rig.w.founder,
+    )
+    return rid
+
+
+async def test_a_ci_token_deploys_preview_and_never_touches_prod(rig: Rig) -> None:
+    full = access(rig, await open_session(rig))
+    made = await ci_token(rig)
+    ci = made["token"]
+    with api(rig) as client:
+        created = post(client, "/v1/apps", full, {"slug": "ledger"})
+        assert created.status_code == 201, created.text
+        app = created.json()
+        env = {e["name"]: e["id"] for e in app["environments"]}
+        base = f"/v1/apps/{app['id']}/environments"
+        me = client.get("/v1/whoami", headers=auth(ci))
+        assert me.status_code == 200 and me.json()["credential_id"] == made["id"]
+        release = await add_release(rig, app["id"])
+        deployed = post(client, f"{base}/{env['preview']}/deployments", ci, {"release_id": release})
+        assert deployed.status_code == 202, deployed.text
+        assert client.get(deployed.headers["Location"], headers=auth(ci)).status_code == 200
+        for refused in (
+            post(client, f"/v1/apps/{app['id']}/promote", ci, {}),
+            post(client, f"{base}/{env['prod']}/deployments", ci, {"release_id": release}),
+            post(client, f"{base}/{env['prod']}/builds", ci, {"bundle_id": new_id("bdl")}),
+            client.get(f"{base}/{env['prod']}/grants", headers=auth(ci)),
+            client.delete(f"/v1/ci-tokens/{made['id']}", headers=auth(ci)),
+        ):
+            assert_problem(refused, ErrorCode.FORBIDDEN)
+    prod = await rig.w.rows(
+        "select count(*) from ssc.deployment where org_id = :org and environment_id = :env",
+        env=env["prod"],
+    )
+    assert prod == [(0,)]
+
+
+async def test_people_list_their_own_ci_tokens_and_admins_list_all(rig: Rig) -> None:
+    bo = await member(rig)
+    mine, theirs = await ci_token(rig, label="ada's"), await ci_token(rig, bo, label="bo's")
+    agent = access(rig, await open_session(rig, agent="claude-code"), agent_client_id="claude-code")
+    with api(rig) as client:
+
+        def listed(token: str) -> list[dict[str, Any]]:
+            r = client.get("/v1/ci-tokens", headers=auth(token))
+            assert r.status_code == 200, r.text
+            assert mine["token"] not in r.text and theirs["token"] not in r.text
+            return r.json()["ci_tokens"]
+
+        as_bo = listed(access(rig, await open_session(rig, user=bo), user=bo))
+        assert [(t["id"], t["user_id"], t["label"]) for t in as_bo] == [(theirs["id"], bo, "bo's")]
+        assert set(as_bo[0]) == {"id", "user_id", "label", "created_at", "expires_at", "revoked_at"}
+        assert as_bo[0]["revoked_at"] is None
+        everyone = listed(access(rig, await open_session(rig)))
+        assert [t["id"] for t in everyone] == [theirs["id"], mine["id"]]
+        assert [t["id"] for t in listed(agent)] == [theirs["id"], mine["id"]]
+        assert [t["id"] for t in listed(mine["token"])] == [theirs["id"], mine["id"]]
+        assert [t["id"] for t in listed(theirs["token"])] == [theirs["id"]]
+
+
+async def test_an_owner_or_an_admin_revokes_a_ci_token(rig: Rig) -> None:
+    bo = await member(rig)
+    ada = access(rig, await open_session(rig))
+    bo_full = access(rig, await open_session(rig, user=bo), user=bo)
+    adas, bos, bos_second = await ci_token(rig), await ci_token(rig, bo), await ci_token(rig, bo)
+    agent = access(rig, await open_session(rig, agent="claude-code"), agent_client_id="claude-code")
+    with api(rig) as client:
+
+        def revoke(token: str, ci_id: str) -> Any:
+            return client.delete(f"/v1/ci-tokens/{ci_id}", headers=auth(token))
+
+        assert_problem(revoke(bo_full, adas["id"]), ErrorCode.NOT_FOUND)
+        assert_problem(revoke(agent, adas["id"]), ErrorCode.AGENT_SESSION_REFUSED)
+        assert_problem(revoke(ada, new_id("ses")), ErrorCode.NOT_FOUND)
+        cli_session = await open_session(rig)
+        assert_problem(revoke(ada, cli_session), ErrorCode.NOT_FOUND)
+        assert await rig.w.live(cli_session) is not None
+
+        done = revoke(bo_full, bos["id"])
+        assert done.status_code == 200, done.text
+        assert done.json()["id"] == bos["id"] and done.json()["revoked_at"] is not None
+        again = revoke(bo_full, bos["id"])
+        assert again.status_code == 200 and again.json() == done.json()
+        by_admin = revoke(ada, bos_second["id"])
+        assert by_admin.status_code == 200 and by_admin.json()["revoked_at"] is not None
+        assert await rig.w.live(adas["id"]) is not None
+
+    reasons = await rig.w.rows(
+        "select revoke_reason from ssc.auth_session where org_id = :org and kind = 'ci' "
+        "and revoked_at is not null"
+    )
+    assert reasons == [("revoked",), ("revoked",)]
+    revoked = await rig.w.rows(
+        "select target_id, actor_id, after from ssc.audit_event where org_id = :org "
+        "and action = 'token.revoked' order by seq"
+    )
+    assert revoked == [
+        (bos["id"], bo, {"reason": "revoked"}),
+        (bos_second["id"], rig.w.founder, {"reason": "revoked"}),
+    ]
+
+
+async def test_a_revoked_ci_token_is_refused_on_its_next_call(rig: Rig) -> None:
+    made = await ci_token(rig)
+    full = access(rig, await open_session(rig))
+    with api(rig) as client:
+        assert client.get("/v1/whoami", headers=auth(made["token"])).status_code == 200
+        assert client.delete(f"/v1/ci-tokens/{made['id']}", headers=auth(full)).status_code == 200
+        r = client.get("/v1/whoami", headers=auth(made["token"]))
+        assert_problem(r, ErrorCode.UNAUTHENTICATED)
+
+
+async def test_an_expired_ci_session_is_refused(rig: Rig) -> None:
+    made = await ci_token(rig)
+    await rig.w.rows(
+        "update ssc.auth_session set created_at = now() - interval '2 days', "
+        "expires_at = now() - interval '1 second' where org_id = :org and id = :id",
+        id=made["id"],
+    )
+    with api(rig) as client:
+        assert_problem(
+            client.get("/v1/whoami", headers=auth(made["token"])), ErrorCode.UNAUTHENTICATED
+        )
+
+
+async def test_deactivating_the_person_ends_their_ci_token(rig: Rig) -> None:
+    bo = await member(rig)
+    made = await ci_token(rig, bo)
+    with api(rig) as client:
+        assert client.get("/v1/whoami", headers=auth(made["token"])).status_code == 200
+        await rig.w.rows(
+            "update ssc.user_account set status = 'deactivated', deactivated_at = now() "
+            "where org_id = :org and id = :id",
+            id=bo,
+        )
+        r = client.get("/v1/whoami", headers=auth(made["token"]))
+        assert_problem(r, ErrorCode.UNAUTHENTICATED)
+
+
+async def test_a_ci_session_takes_only_a_preview_scoped_credential(rig: Rig) -> None:
+    made = await ci_token(rig)
+    expires_at = datetime.fromisoformat(made["expires_at"])
+    unscoped = access(rig, made["id"], expires_at=expires_at)
+    with api(rig) as client:
+        assert_problem(client.get("/v1/whoami", headers=auth(unscoped)), ErrorCode.UNAUTHENTICATED)
+        assert client.get("/v1/whoami", headers=auth(made["token"])).status_code == 200

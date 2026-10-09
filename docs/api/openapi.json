@@ -2006,6 +2006,72 @@
         "title": "CellUsageOut",
         "type": "object"
       },
+      "CiToken": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "label",
+          "created_at",
+          "expires_at",
+          "revoked_at"
+        ],
+        "title": "CiToken",
+        "type": "object"
+      },
+      "CiTokens": {
+        "additionalProperties": false,
+        "properties": {
+          "ci_tokens": {
+            "items": {
+              "$ref": "#/components/schemas/CiToken"
+            },
+            "title": "Ci Tokens",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ci_tokens"
+        ],
+        "title": "CiTokens",
+        "type": "object"
+      },
       "ColumnOut": {
         "additionalProperties": false,
         "properties": {
@@ -13066,6 +13132,142 @@
           }
         },
         "summary": "Enable Resource",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/ci-tokens": {
+      "get": {
+        "description": "The caller's CI tokens, or every one in the org for an active org admin, revoked and\nexpired ones included, newest first, at most 200. Never a token itself.",
+        "operationId": "list_ci_tokens_v1_ci_tokens_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CiTokens"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "List Ci Tokens",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/ci-tokens/{ci_token_id}": {
+      "delete": {
+        "description": "Revoke a CI token: its next call is ``UNAUTHENTICATED``. Its owner or an active org admin,\nnever in an agent session and never with a ``preview``-scoped credential (``FORBIDDEN``);\n``NOT_FOUND`` for anyone else's. A token already revoked is answered as it is. Audited as\n``token.revoked``.",
+        "operationId": "revoke_ci_token_v1_ci_tokens__ci_token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ci_token_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Ci Token Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CiToken"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Revoke Ci Token",
         "tags": [
           "v1"
         ]

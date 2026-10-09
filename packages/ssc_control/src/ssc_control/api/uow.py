@@ -168,12 +168,14 @@ async def check_scope(request: Request, conn: AsyncConnection, principal: Princi
 
 async def check_session(conn: AsyncConnection, principal: Principal) -> None:
     """A credential issued from an auth-host session is good only while that session is live
-    and belongs to the subject."""
+    and belongs to the subject. A CI session's credential is ``preview``-scoped (GA-7.7)."""
     if principal.session_id is None:
         return
     live = await live_session(conn, principal.org_id, principal.session_id)
     if live is None or live.user_id != principal.subject:
         raise Refusal(ErrorCode.UNAUTHENTICATED, evidence={"reason": "session_not_live"})
+    if live.kind == "ci" and principal.scope is not CredentialScope.PREVIEW:
+        raise Refusal(ErrorCode.UNAUTHENTICATED, evidence={"reason": "ci_session_unscoped"})
 
 
 async def _share_environment(request: Request) -> str | None:
