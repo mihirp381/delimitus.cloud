@@ -32,8 +32,7 @@ def init(
     ] = False,
     json_mode: JsonOpt = False,
 ) -> None:
-    """Write the agent pack: an AGENTS.md block, a Claude Code skill, MCP settings for Claude Code
-    and Cursor, and a starter ssc.toml."""
+    """Write the agent pack: AGENTS.md, a Claude Code skill, MCP settings and a starter ssc.toml."""
     with handled(json_mode):
         mcp_url = f"{session(ctx).config().api_url}/mcp"
     written = write_agent_pack(path, command_lines(ctx), mcp_url, force=force)
