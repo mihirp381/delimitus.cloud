@@ -1,12 +1,20 @@
 # Remote MCP: connecting a coding agent with OAuth
 
-How a person connects a remote MCP client (Claude Code, Cursor, any client that speaks the MCP authorization spec) to `https://api.delimitus.com/mcp`, and what to check when it does not work (decision 029). Nothing here hands anyone a token: the client registers itself, the person signs in with their work account in a browser, and the client gets a credential that only the agent interface takes.
+How a person connects a remote MCP client (Claude Code, Codex, Cursor, any client that speaks the MCP authorization spec) to `https://api.delimitus.com/mcp`, and what to check when it does not work (decision 029). Nothing here hands anyone a token: the client registers itself, the person signs in with their work account in a browser, and the client gets a credential that only the agent interface takes.
 
 ## For the person connecting
 
 ```sh
 claude mcp add --transport http ssc https://api.delimitus.com/mcp
 ```
+
+In Codex:
+
+```sh
+codex mcp add ssc --url https://api.delimitus.com/mcp --oauth-resource https://api.delimitus.com/mcp
+```
+
+It opens the browser to sign in the same way. In an app folder, `ssc init` writes the Claude Code (`.mcp.json`) and Cursor (`.cursor/mcp.json`) settings for this server, at the CLI's API address plus `/mcp`; Claude Code asks to approve the project's `ssc` server the first time.
 
 Then use the server once (in Claude Code, `/mcp` and pick `ssc`). The client:
 
