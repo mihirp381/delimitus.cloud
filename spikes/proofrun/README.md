@@ -53,6 +53,7 @@ Everything under `apps/` deploys through `ssc deploy`. Create each app once with
 | `pstream` | `apps/streamlit` (the bake-off's workload) | T7, T9 |
 | `pg01` to `pg10` | `apps/pg` (`[state] postgres = true`) | T5 |
 | `pegress` | `apps/egress` (`/egress?host=&credentials=` and `/hold?host=&seconds=&run=`, through the app's own `HTTPS_PROXY`) | T6, GA-6.1 |
+| `ga6secret` (new, never deployed) | none by hand: `uv run python -m proofrun buildsecret --app ga6secret` deploys a temporary copy of `apps/static` with a random GitHub token shape in `config.js`, made at run time; the build's gitleaks must refuse it (`SECRET_IN_BUNDLE`, no release). Results in `results/ga-6.5.json` | GA-6.5 |
 
 The kit bypasses `ssc deploy` in two places:
 
