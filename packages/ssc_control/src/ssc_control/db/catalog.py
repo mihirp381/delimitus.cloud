@@ -54,6 +54,8 @@ id: digests of authorization codes, never a code. It also adds ``oauth_client``,
 in ``GLOBAL_TABLES``: self-registered OAuth clients, which belong to no org (a client registers
 before anyone signs in), so it has no ``org_id`` and no RLS and holds nothing of any org. And it
 adds ``org_for_workos_organization``, the single function in ``SECURITY_DEFINER_FUNCTIONS``.
+Revision 0036 adds columns only (GA-7.7): ``auth_session.scope`` and ``auth_session.label``, a CI
+token's scope and the name its person gave it, never a token.
 """
 
 from collections.abc import Mapping

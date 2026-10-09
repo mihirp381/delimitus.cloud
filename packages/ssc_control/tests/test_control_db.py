@@ -1784,3 +1784,117 @@ def test_queue_schema_privileges_match_the_declared_matrix(dsns: Dsns) -> None:
         (APP_ROLE, catalog.QUEUE_SCHEMA, APP_ROLE, catalog.QUEUE_SCHEMA),
     )
     assert (create, usage) == (False, True)
+
+
+# ── CI tokens (revision 0036) ───────────────────────────────────────────────────────────────
+
+_SESSION = (
+    "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, created_at, "
+    "expires_at, scope, label, agent_client_id, token_audience) values "
+    "(%s, %s, %s, %s, 'conn_x', now(), now() + %s::interval, %s, %s, %s, %s) returning id"
+)
+
+
+def test_a_ci_session_lives_up_to_90_days_with_a_scope_and_a_label(dsns: Dsns) -> None:
+    created = make_org(dsns.app, "CI sessions")
+    org, user = created.org_id, created.admin_user_id
+
+    def row(kind: str, lifetime: str, **kw: object) -> tuple[object, ...]:
+        scope = kw.get("scope", "preview" if kind == "ci" else None)
+        label = kw.get("label", "acme/ledger" if kind == "ci" else None)
+        extra = (kw.get("agent"), kw.get("audience"))
+        return (new_id("ses"), org, user, kind, lifetime, scope, label, *extra)
+
+    ci = row("ci", "90 days")
+    assert run(dsns.app, org, _SESSION, ci) == [(ci[0],)]
+    cli = row("cli", "12 hours")
+    assert run(dsns.app, org, _SESSION, cli) == [(cli[0],)]
+    for bad in (
+        row("ci", "90 days 1 second"),
+        row("cli", "12 hours 1 second"),
+        row("browser", "13 hours"),
+        row("ci", "1 day", label=None),
+        row("ci", "1 day", scope=None),
+        row("ci", "1 day", scope="prod"),
+        row("ci", "1 day", label=""),
+        row("ci", "1 day", label="x" * 101),
+        row("ci", "1 day", label="two\nlines"),
+        row("ci", "1 day", agent="claude-code"),
+        row("ci", "1 day", audience="https://api.example.com/mcp"),
+        row("cli", "1 hour", scope="preview"),
+        row("cli", "1 hour", label="laptop"),
+        row("ci", "0 seconds"),
+    ):
+        assert refused(dsns.app, org, _SESSION, bad) == CHECK_VIOLATION, bad
+    revoke = (
+        "update ssc.auth_session set revoked_at = now(), revoke_reason = %s where id = %s "
+        "returning id"
+    )
+    assert run(dsns.app, org, revoke, ("revoked", ci[0])) == [(ci[0],)]
+    assert refused(dsns.app, org, revoke, ("forgotten", cli[0])) == CHECK_VIOLATION
+
+
+def _constraints(dsn: str) -> dict[str, tuple[str, bool]]:
+    rows = run(
+        dsn,
+        None,
+        "select conname, pg_get_constraintdef(oid), convalidated from pg_constraint "
+        "where conrelid = 'ssc.auth_session'::regclass and contype = 'c'",
+    )
+    return {name: (definition, valid) for name, definition, valid in rows}
+
+
+def test_0036_downgrades_with_a_ci_row_and_upgrades(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database citokens owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="citokens").render_as_string(hide_password=False)
+    admin = make_url(dsns.superuser).set(database="citokens").render_as_string(hide_password=False)
+    upgrade(dsn, "0035_app_database_host")
+    before = _constraints(dsn)
+    assert "'12:00:00'::interval" in before["auth_session_check"][0]
+    upgrade(dsn, "0036_ci_tokens")
+    after = _constraints(dsn)
+    assert "auth_session_check" not in after
+    assert "'90 days'::interval" in after["auth_session_lifetime_check"][0]
+    assert {"auth_session_ci_check", "auth_session_scope_check", "auth_session_label_check"} <= set(
+        after
+    )
+    assert all(valid for _, valid in after.values())
+    with psycopg.connect(admin) as conn:  # no foreign keys: org_x and usr_x do not exist
+        conn.execute("set session_replication_role = replica")
+        conn.execute(
+            _SESSION,
+            (new_id("ses"), "org_x", "usr_x", "ci", "90 days", "preview", "acme", None, None),
+        )
+        conn.execute("update ssc.auth_session set revoked_at = now(), revoke_reason = 'revoked'")
+    downgrade(dsn, "0035_app_database_host")  # the ci row does not stop it
+    restored = _constraints(dsn)
+    for name in (
+        "auth_session_check",
+        "auth_session_kind_check",
+        "auth_session_revoke_reason_check",
+    ):
+        assert restored[name] == (f"{before[name][0]} NOT VALID", False), name
+    assert "auth_session_lifetime_check" not in restored
+    columns = (
+        "select count(*) from information_schema.columns where table_schema = 'ssc' "
+        "and table_name = 'auth_session' and column_name in ('scope', 'label')"
+    )
+    assert run(dsn, None, columns) == [(0,)]
+    with psycopg.connect(admin) as conn:
+        conn.execute("set session_replication_role = replica")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, "
+                "expires_at) values (%s, 'org_x', 'usr_x', 'ci', 'c', now() + interval '1 day')",
+                (new_id("ses"),),
+            )
+    # A ci row kept through the downgrade lost its scope and label, so upgrading again refuses
+    # it until it is removed (development databases only).
+    with pytest.raises(psycopg.errors.CheckViolation, match="auth_session_ci_check"):
+        upgrade(dsn, "0036_ci_tokens")
+    with psycopg.connect(admin) as conn:
+        conn.execute("delete from ssc.auth_session where kind = 'ci'")
+    upgrade(dsn, "0036_ci_tokens")
+    assert _constraints(dsn) == after
+    assert run(dsn, None, columns) == [(2,)]
