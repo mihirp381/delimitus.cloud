@@ -354,7 +354,22 @@ Seen, disclosed: the first slot after the promote (22:42:00) failed `http_error 
 
 ### GA-4.2 files
 
-**GA-4.2 BLOCKED: the data gateway the files broker needs is `failed` for org 2, after three runs of a stale cell deployer that partly applied an older cell program to cell 2.** Nothing of the files proof ran.
+**GA-4.2 1 PASS, 2 PASS, 3 PASS, 4 PASS, 5a PASS, 5b PASS, 5c PASS, 6 PASS PASS** (run 3, `files --app ga4files --label proofcell02 --wait-expiry --disable`, 2026-10-09 17:51:56 to 18:03:15 UTC, as admin2 on `ga4files` preview, `results/ga-4.2-run3.log`).
+- 1 put: 4096 bytes as `ga42/20261009T175156Z.bin`.
+- 2 get by link: same bytes, credential `ssc-data@ssc-c-proofcell02.iam.gserviceaccount.com/20261009/auto/storage/goog4_request`, `X-Goog-Date` 20261009T175207Z, lifetime 600 s, `expires_at` 2026-10-09T18:02:07Z, path `/ssc-c-proofcell02-cell/files/env_yz20psv5wmu47zia2ym2/...`.
+- 3 prefix isolation: the link with the other environment's prefix answered 403.
+- 4 expiry: after waiting 629 s the link answered 400.
+- 5a: `ssc disable` started 18:02:38Z (took 8.8 s); the app's loop logged `ok` through 18:02:43Z and `APP_NOT_ACTIVE` from 18:02:44Z on, 5.3 s after the disable started (includes laptop/Cloud Run clock skew). `ssc enable` took 1.7 s.
+- 5b (the disclosure): the link handed out before the disable still answered 200 after it; links live up to 10 minutes after a disable.
+- 5c: a new put after `ssc enable` was ok on try 2. 6 clean-up: delete answered 200.
+
+Runs 1 and 2 failed every check for a setup gap, not a product defect. Run 1 (2026-10-09 04:29:30 UTC, the finish script, `results/ga-4.2-run.log`) and run 2 (17:02:40 UTC, `ga-4.2-run2.log`) both ended `GA-4.2 1 FAIL, 2 FAIL, 3 FAIL, 4 FAIL, 5a INCOMPLETE, 5b FAIL, 5c FAIL, 6 FAIL FAIL` (put "answer {}", clean-up 404). admin2 had no grant on the `ga4files` preview: `ssc access explain ga4files usr_3a09jlt33nno98rgmrku --env preview` said "no grant names them", the gateway sent every request to login, and the app's own logs show no request between its 00:30 UTC deploy and the fix. Fixed with `ssc share ga4files usr_3a09jlt33nno98rgmrku --env preview` before run 3. The kit's precheck could check access first (kit gap).
+
+The redeploy that unblocked it (2026-10-09, after the founder converged cell 2 and set a fresh deployer image, option A below). The deployer job was on `sha256:442bd99b…` (generation 7) at 00:23:00 UTC. `ssc deploy --app ga4files spikes/proofrun/apps/files --wait` built R2 and started one deployer run, `ssc-cell-deployer-m4ccq` (00:25:16 UTC, args `proofcell02 connections`, on the new image), which succeeded at 00:29:54. Org 2's `connections` went `ready` at 00:30:18 (attempts 1) and "R2 is live in preview of ga4files" at about 00:30:46 (`results/ga-4.2-redeploy.log`).
+
+Left behind: the app `ga4files` (preview R2, shared with admin2). Check 6 deleted the test object.
+
+Run 0, 2026-10-08, kept for the record: **BLOCKED: the data gateway the files broker needs is `failed` for org 2, after three runs of a stale cell deployer that partly applied an older cell program to cell 2.** Nothing of the files proof ran.
 
 What happened. `ssc apps create ga4files` and `ssc deploy spikes/proofrun/apps/files --app ga4files --wait` at 22:45 UTC: the manifest has `[files]`, so `hold_deployment` needs `connections`. Org 2 had no `ssc.cell_resource` row for it (the founder turned `connections` on for cell 2 by hand for GA-5, outside the control plane), so the control plane inserted one (`cell.resource_requested`, cause `file_use`, deployment `dep_m4pexlybnw6bptgevagq`) and started `ssc-cell-deployer proofcell02 connections` three times: executions `2v57g` (22:45:21), `7txvp` (22:52:03), `v6zk5` (23:01:16), each failing `pulumi up` on `c-proofcell02` (stack history 22:49:56, 22:54:52, 23:04:45, all `failed`). At 23:05:53 the row went `failed` (`CELL_DEPLOYER_FAILED`, attempts 3) and the deployment failed `CELL_RESOURCE_FAILED`. These were the deployer's first runs on cell 2; its earlier runs were on cell 1 (2026-10-05/06).
 
@@ -377,6 +392,102 @@ Decision for the founder (one of):
 Either way the first step, `pulumi up --stack c-proofcell02`, is needed to give the staging nightly its probe role back.
 
 The same trap waits for the next lazy resource on cell 2. `GET /v1/cell` for org 2 (about 23:18 UTC): `database` `off`, `egress` `off`, `connections` `failed`; 34 environments, none with a database; cell 2 has no Cloud SQL instance (its stack has `database` `false`; the `ga1pg*` apps have no database). A deploy with `[state] postgres = true` (GA-4.3, GA-4.5) would insert a `database` row and run `ssc-cell-deployer proofcell02 database`, and the warm option (GA-4.8) runs `proofcell02 warm=true`.
+
+### GA-4.3 app Postgres
+
+**GA-4.3 PASS** (the founder's finish script, 2026-10-09 04:30 to 04:40 UTC, as admin2 on cell 2; `results/ga-4.3-*.log`). No kit command; each step's output is kept.
+- Rotate on a live app: `ssc database rotate` on `ga4rb` preview (healthy on R5, 1 of 10 places used). "Rotated the preview database password of ga4rb; deployment dep_mrfv36kwrscdw6hferdq puts it live." and "ROTATE TOOK 3.39 seconds: PASS (limit 5 s)". The rotation's deployment `dep_mrfv36kwrscdw6hferdq` went `healthy` and current at 04:31:10 UTC: "APP HEALTHY AFTER ROTATE: newest preview deployment is healthy".
+- Recovery point on a prod deploy: `ssc promote ga4rb` gave "prod of ga4rb runs R6." (build `bld_vgymnd1zp70xu15a7bp6`, deployment `dep_x8bhupsltb65ei0700su` healthy at 04:33:55 UTC). "recovery point: at 2026-10-09T04:33:35.239819Z lsn 0/5C464EA0  (a real WAL position)". **Gap:** the finish script's `ga4_read.py` read `recovery_at` and `recovery_lsn` from the control API's deployment record; neither the CLI (`ssc status`, `ssc releases`) nor the console shows the recovery point today.
+- Eleventh environment: 8 fillers `ga4db01` to `ga4db08` (Postgres fixture), each "R1 is live in preview" (04:36 to 04:38 UTC). With `ga4rb` preview and prod that is "Database places on your company's instance (db-f1-micro): 10 of 10, previews included." The eleventh, `ga4db09`, was refused (04:40 UTC, exit 1): "Deployment dep_50t0slvul74wt6hqb8do failed with DB_TIER_FULL; the environment is unchanged." with `Code: DB_TIER_FULL` and the hint "Fix: Your company's database (db-f1-micro) holds ten app environments, previews included, and all are taken; nothing was created. An org admin can move to the bigger database (db-g1-small, about $26 a month), or remove an environment that has a database."
+
+Left behind: apps `ga4db01` to `ga4db09` (01 to 08 each hold a database place; 09 has none), and `ga4rb` prod on R6 with its database.
+
+### GA-4.4 restore rehearsal
+
+Skipped (founder 2026-10-08: no runbook walks for V1).
+
+### GA-4.5 rollback warning
+
+**GA-4.5 R4/R5, 9 of 9 automatic checks passed, console manual PASS** (run 3, `rollback --app ga4rb`, ended 2026-10-09 04:25:58 UTC, as admin2 with the `ga45` agent login; `results/ga-4.5-run3.log`, `rollback-ga4rb-20261009T042558Z.json`). On control `497aca04` (228b7f3).
+- 1, 2: R4 (0001 only, built 04:22:28 UTC) and R5 (0001 and 0002, 04:24:59 UTC) deployed to preview, both healthy.
+- 3: `ssc rollback ga4rb R4` refused, exit 1: "Fix: The preview database may have run migrations R4 does not have (alembic: 0002_ga45_second). If R4 works with them, run `ssc rollback ga4rb R4 --env preview --confirm`; otherwise deploy a fix forward."
+- 4: with `--json`, exit 1, `error.code` `SCHEMA_AHEAD`. "note: names absent from --json (CliError.fix is text-only, errors.py:104-106)".
+- 5: `ssc mcp`, `tools/call rollback` without confirm: `isError` true, `structuredContent.error.code` `SCHEMA_AHEAD`; the text ends "The database may have run: alembic 0002_ga45_second. If the release works with them, call rollback again with confirm=true; otherwise deploy a fix forward."
+- 6: the refusals started nothing: exactly one `rollback.started` row for R4 (`dep_ygrgy6p6ds7rfuyxfye7`).
+- 7, 8: `ssc rollback ga4rb R4 --confirm --wait` healthy; its audit row (seq 453, 04:25:29 UTC): `rollback.started` by user `usr_3a09jlt33nno98rgmrku`, `via_agent` false, `confirmed` true, `migrations_ahead` `['alembic:0002_ga45_second']`.
+- 9: `ssc rollback ga4rb R5 --wait` needed no `--confirm` and was healthy.
+- 10, console (the user's screenshot `results/ga-4.5-console.png`, saved 14:23 UTC): `ga4rb`'s Preview card, Roll back. The "Roll back preview" dialog lists R6 ("built for production") to R1, with R5 "live now". R1 picked (run 1's R1, which also lacks 0002), `ga4rb` typed. The box says "The database may have run migrations R1 does not have. A rollback does not undo them, so R1 may not work against the database as it is now." with the list item "0002_ga45_second (alembic)", the checkbox "R1 works with these migrations" unticked, and the buttons Cancel and "Roll back anyway". Cancelled. On the Production card only R6 can be picked: preview builds are greyed out ("built for preview, not production"), which is correct.
+
+Runs before the pass (all on `ga4rb` preview):
+- 2026-10-09 00:43:30 and 00:47:24 UTC: check 1 FAIL "No app with slug or id 'ga4rb' is visible to you": the CLI's person login was in org 1, not org 2. Nothing deployed.
+- **Run 1** (ended 02:49:52 UTC, `rollback-ga4rb-20261009T024952Z.json`; its console log `results/ga-4.5-run.log` is empty, kept as `ga-4.5-run1.log`): check 1 FAIL "Stopped waiting for the deployment. It was still running after 1200 seconds". R1 (02:30:50 UTC) was the first `[state] postgres` deploy on cell 2, so it asked for `database` and ran the cell deployer twice: `ssc-cell-deployer-xqm88` (02:30:53 to 02:49:20 UTC, args `proofcell02 database`) failed: Cloud Run refused its `UpdateService` on `ssc-cell-agent` because the deployer has no `artifactregistry.repositories.downloadArtifacts` on the platform registry. The retry `ssc-cell-deployer-m7444` (02:50:31 to 02:54:58 UTC) reported success without updating the agent, and the control plane marked org 2's `database` ready at 02:55:03 (attempts 2) while the agent had no `SSC_SQL_INSTANCE` and answered 503 on `/v1/databases/ensure`. The deployment `dep_p1z55arei2i5gvzwbs04` then failed `DATABASE_UNAVAILABLE` (02:55:04 UTC). A later attempt at about 03:01 UTC left no kit record (release R2, 03:04:13 UTC).
+- The founder's hand fix of cell 2: the local stack file `Pulumi.c-proofcell02.yaml` still had `database: false`, so a plain `pulumi up` would have deleted the Cloud SQL instance the deployer had just made. Fixed with `pulumi config set database true` and `pulumi up --stack c-proofcell02 --refresh`. Read-only at 03:21 UTC: agent on `ssc-cell-agent-00008-j5r` with `SSC_SQL_INSTANCE` set; Cloud SQL `ssc-cell` RUNNABLE (POSTGRES_18, db-f1-micro); deployer still on `sha256:442bd99b…`.
+- **Run 2** (03:23 to 03:35:01 UTC, `results/ga-4.5-run2.log`, `rollback-ga4rb-20261009T033501Z.json`): `GA-4.5 no releases, 0 of 9 automatic checks passed, console manual FAIL`. Check 1: "Deployment dep_8v2xkl5yi4b886qx5sls failed with DEPLOYMENT_STALLED; the environment is unchanged." No deployer run. The agent's `POST /v1/databases/ensure` answered 200 at 03:24:24, 03:25:04 and 03:30:04 UTC, and each time the control worker's `deploy:run_deployment` failed in `record_database` (`runtime/app_databases.py:286`, from `_make_database`, `deploy/deployments.py:394`): `psycopg.errors.CheckViolation: new row for relation "app_database" violates check constraint "app_database_host_check"`. The host was `d2e35b7494d3.6r67h6xemu0g.us-central1.sql-psa.goog.`: the agent keeps Cloud SQL's private DNS name with its trailing dot (d89ea6b, `ssc_agent/cloud_sql.py` `endpoint()`, for libpq `verify-full`), and the check from migration 0022 (`^[a-z0-9]([a-z0-9.:-]{0,251}[a-z0-9])?$`) refuses a name ending in a dot. Fixed by migration `0035_app_database_host` (one trailing dot allowed) in 228b7f3, built as control `sha256:497aca04`, migration run `ssc-control-migrate-m8jfk` succeeded 04:03:37 UTC. Run 2 left release R3 (`rel_djzq7gu95b6y0jc0js6h`), the failed deployment, and the secrets `ssc-a-qu3jmj36zamo6yjr09z1-{DATABASE_URL,PGPASSWORD,DATABASE_CA}` in `ssc-c-proofcell02`, which run 3's ensure reused.
+
+**Open platform defects (from run 1):** the cell deployer cannot read the `ssc-platform` registry, so any run that updates a cell service fails; and a retry that changes nothing reports success, so the control plane marks a resource `ready` that is not. Neither is fixed; the next lazy resource on either cell can hit them.
+
+Left behind: `ga4rb` (preview R5 live, prod R6 from GA-4.3, releases R1 to R6, its database places), the `ga45` agent login on this machine.
+
+### GA-4.6 secrets
+
+**GA-4.6 v5/v6, 10 of 10 automatic checks passed** (run 3, `secrets --app ga4secret --label proofcell02`, ended 2026-10-09 16:33:28 UTC, as admin2; `results/ga-4.6-run3.log`, `secrets-ga4secret-20261009T163328Z.json`). The kit's last line reads "GA-4.6 v5/v6, 10 of 10 automatic checks passed, 11 and 12 manual PASS"; "11 and 12 manual" there is a label only: **checks 11 and 12 were not run** (skipped: they need a temporary `roles/iam.serviceAccountTokenCreator` grant on cell 2; checks 9 and 10 show the deny rule and the read policy).
+- 1, 2: `ssc secret set GA46_TOKEN` (v1 on stdin) made version 5 and its own deployment `dep_e4lagppkv4e13kh50xu1`, healthy.
+- 3: `/secret` through the host answered v1's fingerprint and length 43, and no value.
+- 4: `secret list` fields exactly `live_version`, `name`, `updated_at`, `version`; version 5, live 5; no value or fingerprint in any `ssc` output.
+- 5: `ssc secret` has only `list` and `set`.
+- 6, 7: set v2 (no `--wait`) made version 6 and deployment `dep_ulbjj0inns5j8hq9qjc2` (pending); right after, `version` 6, `live_version` 5, and the app still answered v1: the running deployment keeps its pin.
+- 8: `live_version` became 6 and the app answered v2's fingerprint; no leak in any output.
+- 9: `ssc-deny-secret-read` denies `secretmanager.googleapis.com/versions.access` with no condition to `ssc-build`, `ssc-cell-agent`, `ssc-deny-probe`, `ssc-gateway`, `ssc-proxy`, `ssc-secret-intake`.
+- 10: `ssc-a-na8u9fjvvvbf1supvslf-GA46_TOKEN` lets exactly one account read it, `ssc-a-na8u9fjvvvbf1supvslf@ssc-c-proofcell02.iam.gserviceaccount.com`; it names neither the intake nor the control plane nor a public member.
+
+Disclosed gap: a deployment's pinned versions are visible only as `live_version` in `secret list`; no deployment record exposes `secret_refs`.
+
+Runs 1 and 2 failed on the session cookie, not the product. Run 1 (04:29:29 UTC): `GA-4.6 v1/v2, 8 of 10 automatic checks passed, 11 and 12 manual FAIL` (check 3 HTTP 403, check 7 not read). Run 2 (14:27:03 UTC): `GA-4.6 v3/v4, 7 of 10 automatic checks passed, 11 and 12 manual FAIL` (checks 3, 7, 8: HTTP 302 to the login page, "the cookie is not accepted").
+
+Left behind: `ga4secret` preview live on version 6 of `GA46_TOKEN`, which now has versions 1 to 6 (there is no `ssc secret delete`).
+
+### GA-4.7 session apps
+
+**GA-4.7 8 of 8 automatic checks passed; prcpy 1012 at 59.7 min, prcnode 1012 at 59.7 min; screenshot absent PASS** (`sessions --minutes 70` on `prcpy--preview` and `prcnode--preview.proofcell02.delimitusapps.com`, 2026-10-09 03:36:11 to 04:46:14 UTC, run by agent L; `results/ga-4.7-run.log`, `sessions-20261009T044614Z.json`).
+- `prcpy` (Python, `ssc_app.reconnect`): first connection held 59.7 min and ended with the helper's 1012 at 04:35:54 UTC, last number 3558; the client reconnected with no user action and the numbers went on to 4176. "PASS: 70.0 min, 1 restart(s) on 1012, 0 other end(s), 0 gap(s), last number 4176".
+- `prcnode` (`@delimitus/ssc-reconnect`): the same at 04:35:54 UTC, last number 3557, on to 4174. "PASS: 70.0 min, 1 restart(s) on 1012, 0 other end(s), 0 gap(s), last number 4174".
+- The 1012 is the helper's own close about 30 s before the deadline the gateway announces, not a gateway cut; the client reconnects. `check.py`'s own lines print the laptop's local time (CDT, "23:35:54"); the kit's checks carry UTC.
+- The control plane restarted between about 03:55 and 04:03 UTC (control `497aca04` rolled out); both first connections spanned it (03:36 to 04:35:54) with no drop and no gap.
+
+Check 9, the Streamlit screenshot: the kit reported "absent" because it checked at 04:46, before the shot existed. The user took it afterwards in their own Chrome, `results/ga-4.7-streamlit.png` (file saved 05:10:57 UTC): the page "SSC proof run: Streamlit + pandas", "rows: 100,000, built in 57 ms", the four-region table, the caption "page served at 04:13:35 UTC", and no "Connecting" banner. The image is cropped to the page, so it shows no URL bar or clock, and the caption is still the first serve time: it shows the page held about 57 minutes without a banner, not the rerun after the 60-minute reconnect (due about 05:13). Agent L could not take the shot: pstream in the extension's Chrome redirected to the Okta sign-in, which timed out.
+
+Left behind: `prcpy`, `prcnode`, `pstream` (preview R1 each, shared with admin2).
+
+### GA-4.8 warm option
+
+**GA-4.8 passes on behaviour across two runs**, on `ga4warm` prod (`ssc-a-x9frupy4zjxmheq6xvfm`, revision `-00001-caec4d` throughout; `environment_monthly_usd` 10). Only the environment part of the warm option was proven: the kit never sends `gateway: true` (the gateway part runs the cell deployer) and checked that the gateway's `state` stayed `off`. The gateway is at minimum 0, so the GET to the cell's `www` host before each page load pays its cold start (the gateway's own 404); the page load's first byte then measures the app hop.
+
+Run 2 (2026-10-09 04:21:00 to 05:04:50 UTC, `results/ga-4.8-run2.log`, `warm-20261009T050450Z.json`): "GA-4.8 on: min 1 after 6.9 s; warm load 0.3 s, waking page False; off: min 0 after 13.7 s; cold load waking page True, app after 20.2 s; warm left off: yes FAIL".
+- 1 PASS: nothing warm, `monthly_usd` 0, gateway warm False / `off`, service at min 0.
+- 2 PASS: the cost off by one and the preview environment each answered 422 `VALIDATION_FAILED`; nothing changed.
+- 3 PASS: warm on at 04:21:02 UTC: 200, `monthly_usd` 10, gateway `off`.
+- 4 PASS: min 1 after 6.9 s, ready after 137.1 s, same revision.
+- 5 PASS: audit seq 441 at 04:21:02.77 UTC, `org.updated` on `warm`, before [], after [`env_x9frupy4zjxmheq6xvfm`], gateway False, `monthly_usd_shown` 10.
+- 6 FAIL, only on the kit's same-instance comparison ("matches no read"). After the 20-minute hold (04:24:07 to 04:44:07 UTC): `www` 404 in 0.66 s; the page answered 200 with first byte 0.30 s, no waking page, from the instance started 04:23:07.85 UTC (after warm on, before the hold), and `/health` after showed the same. Check 4's three `/health` reads (04:23:56 to 04:24:06) had been answered by a second instance, started 04:23:54.73, which was gone after the hold; so the page did come from the kept instance. Run 1 passed check 6 in full.
+- 7 PASS: warm off at 04:44:09 UTC: 200, `monthly_usd` 0, gateway `off`; min 0 and ready after 13.7 s.
+- 8 PASS: audit seq 571 at 04:44:09.28 UTC, before [`env_x9frupy4zjxmheq6xvfm`], after [], `monthly_usd_shown` 0.
+- 9 PASS: after the second hold (to 05:04:23 UTC): `www` 404 in 0.21 s; the page answered the waking page (503 in 2.23 s, wake cookie set), and after 1 retry the app answered at 20.2 s from a new process (started_at 05:04:43.17 UTC, other than 04:23:07).
+- 10: the console screenshot was not taken in either run (never part of the verdict).
+- Warm left off at the end.
+
+Run 1 (03:36 to about 04:07 UTC, run by agent L, `results/ga-4.8-run.log`, `warm-20261009T040013Z.json`): "GA-4.8 on: min 1 after 6.8 s; warm load 0.3 s, waking page False; off: min 0 after n/a; cold load waking page None, app after n/a; warm left off: NO FAIL". Checks 1 to 4 and 6 PASS: min 1 after 6.8 s and ready after 163.0 s; after the 20-minute hold (to 04:00:12 UTC) `www` 404 in 0.38 s and the page 200 with first byte 0.26 s, no waking page, `started_at` 03:39:21.33 UTC matching `/health` read 1 of 3. Check 5 (audit) and check 7 (warm off) got 401, and so did the kit's `finally` off. Cause: the kit read the CLI's token once at start and reused it, and the token lasts 5 minutes; fixed in 84030d7. Those calls fell after 04:00, inside the control restart window, which was not the cause. **`ga4warm` prod was left warm (min 1, $10 a month as shown) from 03:37 to about 04:15 UTC**, when the user unticked it in the console's Warm option and saved; afterwards the service had no `minScale` (min 0) on revision `-00001-caec4d`. Agent L's own undo (the `PUT` the kit prints) was refused by its permission settings.
+
+The monthly figures are what the setting is said to cost, not a bill.
+
+Left behind: `ga4warm` (prod R2, preview R1, shared with admin2), warm off.
+
+### GA-4.9 doctor codes
+
+**GA-4.9 PASS** (the founder's finish script, 2026-10-09 about 04:40 to 04:42 UTC; `results/ga-4.9-run.log`).
+- SQLite on disk: `ssc doctor` on the SQLite fixture: "BLOCK  STATE_SQLITE_EPHEMERAL  main.py" ("1 blocking, 0 warnings.", exit 4). `ssc deploy` of it into `ga4sqlite` was refused before any upload: "Error: The app keeps SQLite on disk, so nothing was uploaded." with `Code: STATE_SQLITE_EPHEMERAL` (exit 4). "SQLITE FIXTURE REFUSED WITH STATE_SQLITE_EPHEMERAL: PASS".
+- Writes outside memory: `ssc doctor` on the home-folder fixture gives "WARN   WRITES_HOME  main.py:8" only ("0 blocking, 1 warning.", exit 0), and its deploy into `ga4diskw` went through ("R1 is live in preview of ga4diskw", exit 0). There is no deploy-time refusal for writes outside memory: `WRITES_HOME` is a doctor warning, and the app runs with `HOME=/tmp` (memory). That is the honest result for that half of 4.9.
+
+Left behind: `ga4sqlite` (no release) and `ga4diskw` (preview R1).
 
 ## GA-6.1 live proof, 2026-10-09 (cell 1)
 
