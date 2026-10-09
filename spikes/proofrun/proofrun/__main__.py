@@ -16,6 +16,7 @@ from pathlib import Path
 from types import ModuleType
 
 from proofrun import (
+    drain,
     files,
     instances,
     rollback,
@@ -69,6 +70,7 @@ PROOFS: dict[str, ModuleType] = {
     "secrets": secret_proof,
     "sessions": sessions,
     "warm": warm,
+    "drain": drain,
     "instances": instances,
 }
 
