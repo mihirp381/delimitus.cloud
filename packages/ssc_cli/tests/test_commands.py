@@ -86,6 +86,7 @@ ALLOWED = {
     "policy",
     "connections",
     "approvals",
+    "repo",
 }
 
 
@@ -160,6 +161,9 @@ def test_help_lists_exact_set(cli):
         ("approvals", "show"),
         ("approvals", "approve"),
         ("approvals", "reject"),
+        ("repo", "connect"),
+        ("repo", "show"),
+        ("repo", "disconnect"),
     }
     for group, subs in (
         ("token", {"set", "clear"}),
@@ -170,6 +174,7 @@ def test_help_lists_exact_set(cli):
         ("approvals", {"list", "show", "approve", "reject"}),
         ("logins", {"list", "link"}),
         ("audit", {"export", "verify"}),
+        ("repo", {"connect", "show", "disconnect"}),
     ):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
         assert {line.split()[0] for line in text.splitlines() if line.startswith("  ")} == subs
@@ -1204,14 +1209,19 @@ def test_every_command_has_json(on_live, live, tmp_path):
     # needs an auth host and a browser; test_login.py covers its --json. `secret set` needs a
     # cell's secret intake; test_secret.py covers its --json. `approvals show`, `approve` and
     # `reject` need a request to decide; test_approvals.py covers their --json. `logins link`
-    # needs an unlinked login; test_logins.py covers its --json.
-    expected = {
-        ("mcp",),
-        ("login",),
-        ("secret", "set"),
-        ("database", "rotate"),
-        ("logins", "link"),
-    } | {("approvals", name) for name in ("show", "approve", "reject")}
+    # needs an unlinked login; test_logins.py covers its --json. `repo connect`, `show` and
+    # `disconnect` need a GitHub App the dev stack does not have; test_repo.py covers their --json.
+    expected = (
+        {
+            ("mcp",),
+            ("login",),
+            ("secret", "set"),
+            ("database", "rotate"),
+            ("logins", "link"),
+        }
+        | {("approvals", name) for name in ("show", "approve", "reject")}
+        | {("repo", name) for name in ("connect", "show", "disconnect")}
+    )
     assert set(cases) | expected == _paths()
     for path, (args, shape, stdin) in cases.items():
         r = on_live(*path, *args, "--json", input=stdin)

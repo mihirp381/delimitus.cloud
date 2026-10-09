@@ -10,7 +10,7 @@ import pytest
 from pydantic import BaseModel
 
 from ssc_cli import models
-from ssc_cli.commands import access, deploy, lifecycle, logs, releases, rollback, share
+from ssc_cli.commands import access, deploy, lifecycle, logs, releases, repo, rollback, share
 from ssc_cli.commands.share import DEFAULT_ROLE, SUBJECT_KINDS, Env, Role
 from ssc_cli.shapes import SHAPES
 
@@ -78,6 +78,8 @@ RESPONSES = (
     models.ApprovalConnection,
     models.ApprovalDetail,
     models.ApprovalDecided,
+    models.RequiredCheckIn,
+    models.RepoLinkOut,
 )
 REQUESTS = (
     models.AppCreate,
@@ -91,6 +93,7 @@ REQUESTS = (
     models.SecretSet,
     models.PersonDecisionIn,
     models.LinkIn,
+    models.RepoLinkIn,
 )
 
 
@@ -196,6 +199,23 @@ def test_log_queries_are_checked_as_the_api_checks_them(server):
     assert params["since"]["maximum"] == logs.since_seconds("7d")
     assert params["wait"]["maximum"] >= logs.FOLLOW_WAIT
     assert {s.value for s in logs.Source} == set(server["LogSource"]["enum"])
+
+
+def test_repo_values_are_checked_as_the_api_checks_them(server):
+    link = server["RepoLinkIn"]["properties"]
+    assert link["repository"]["pattern"] == repo.REPOSITORY.pattern
+    assert link["branch"]["anyOf"][0]["pattern"] == repo.BRANCH.pattern
+    assert link["required_checks"]["maxItems"] == repo.MAX_CHECKS
+    check = server["RequiredCheckIn"]["properties"]
+    assert (check["workflow"]["pattern"], check["workflow"]["maxLength"]) == (
+        repo.WORKFLOW.pattern,
+        repo.MAX_WORKFLOW,
+    )
+    assert (check["name"]["pattern"], check["name"]["minLength"], check["name"]["maxLength"]) == (
+        repo.CHECK_NAME.pattern,
+        1,
+        repo.MAX_NAME,
+    )
 
 
 # ── --json shapes: append-only ───────────────────────────────────────────────

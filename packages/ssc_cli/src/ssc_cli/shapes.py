@@ -392,6 +392,34 @@ class SecretsResult(Shape):
     secrets: list[SecretRow]
 
 
+class RequiredCheckRow(Shape):
+    workflow: str
+    name: str
+
+
+class RepoResult(Shape):
+    """``repo connect`` and ``repo show``: the connected repository. Every push to ``branch``
+    deploys preview and reports on its commit as ``check_name``; promote needs every
+    ``required_checks`` entry green on the commit."""
+
+    app_id: str
+    slug: str
+    repository: str
+    repository_id: int
+    branch: str
+    required_checks: list[RequiredCheckRow]
+    check_name: str
+    updated_at: str
+
+
+class RepoDisconnected(Shape):
+    """``repo disconnect``: pushes no longer deploy preview; what is deployed stays."""
+
+    app_id: str
+    slug: str
+    disconnected: Literal[True]
+
+
 class LogLineRow(Shape):
     """``logs``: one redacted line. ``logs --follow --json`` prints one per line as it comes."""
 
@@ -641,6 +669,9 @@ SHAPES: dict[str, type[BaseModel]] = {
         SecretSetResult,
         SecretRow,
         SecretsResult,
+        RequiredCheckRow,
+        RepoResult,
+        RepoDisconnected,
         DatabaseRotateResult,
         LogLineRow,
         LogsResult,

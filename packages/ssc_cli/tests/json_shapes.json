@@ -371,6 +371,25 @@
     "releases": "array<ReleaseRow>",
     "slug": "string"
   },
+  "RepoDisconnected": {
+    "app_id": "string",
+    "disconnected": "boolean",
+    "slug": "string"
+  },
+  "RepoResult": {
+    "app_id": "string",
+    "branch": "string",
+    "check_name": "string",
+    "repository": "string",
+    "repository_id": "integer",
+    "required_checks": "array<RequiredCheckRow>",
+    "slug": "string",
+    "updated_at": "string"
+  },
+  "RequiredCheckRow": {
+    "name": "string",
+    "workflow": "string"
+  },
   "ResourceSize": {
     "max_instances": "integer",
     "memory_mib": "integer",

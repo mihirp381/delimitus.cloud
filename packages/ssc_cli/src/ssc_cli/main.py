@@ -23,6 +23,7 @@ from ssc_cli.commands.mcp import mcp
 from ssc_cli.commands.policy import policy
 from ssc_cli.commands.promote import promote
 from ssc_cli.commands.releases import releases
+from ssc_cli.commands.repo import repo_app
 from ssc_cli.commands.requirements import requirements
 from ssc_cli.commands.rollback import rollback
 from ssc_cli.commands.secret import secret_app
@@ -94,4 +95,5 @@ app.command()(disable)
 app.command()(enable)
 app.add_typer(access_app)
 app.add_typer(secret_app)
+app.add_typer(repo_app)
 app.add_typer(database_app)

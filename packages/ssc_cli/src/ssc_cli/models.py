@@ -491,6 +491,26 @@ class DeploymentPolicy(Wire):
     how_to_ask_for_a_package: str
 
 
+class RequiredCheckIn(Wire):
+    """A check promote requires: its name and the workflow file it must come from. Sent in
+    ``RepoLinkIn`` and read back in ``RepoLinkOut``."""
+
+    name: str
+    workflow: str
+
+
+class RepoLinkOut(Wire):
+    """The GitHub repository an app is connected to (``/v1/apps/{app_id}/github``)."""
+
+    app_id: str
+    repository: str
+    repository_id: int
+    branch: str
+    required_checks: list[RequiredCheckIn]
+    check_name: str
+    updated_at: str
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -535,3 +555,9 @@ class KillSwitchCreate(Body):
 
 class SecretSet(Body):
     version: str
+
+
+class RepoLinkIn(Body):
+    repository: str
+    branch: str | None = None
+    required_checks: list[RequiredCheckIn] = Field(default_factory=list[RequiredCheckIn])

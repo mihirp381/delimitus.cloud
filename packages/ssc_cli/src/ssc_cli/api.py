@@ -79,6 +79,8 @@ from ssc_cli.models import (
     PromoteIn,
     ReleaseList,
     ReleaseOut,
+    RepoLinkIn,
+    RepoLinkOut,
     SecretGrantOut,
     SecretList,
     SecretSet,
@@ -374,6 +376,18 @@ class ApiClient:
         path = f"{_environment_path(app_id, environment_id)}/secrets"
         return _parse(self._send("GET", path), SecretList)
 
+    def get_repository(self, app_id: str) -> RepoLinkOut:
+        """The connected GitHub repository; ``NOT_FOUND`` when none is."""
+        return _parse(self._send("GET", _github_path(app_id)), RepoLinkOut)
+
+    def connect_repository(self, app_id: str, body: RepoLinkIn) -> RepoLinkOut:
+        """Connect the app to a repository, replacing the whole link: branch and checks."""
+        return _parse(self._send("PUT", _github_path(app_id), body=body), RepoLinkOut)
+
+    def disconnect_repository(self, app_id: str) -> None:
+        """Pushes stop deploying preview; what is deployed stays."""
+        self._send("DELETE", _github_path(app_id))
+
     def get_database(self, app_id: str, environment_id: str) -> DatabaseOut:
         path = f"{_environment_path(app_id, environment_id)}/database"
         return _parse(self._send("GET", path), DatabaseOut)
@@ -520,6 +534,10 @@ class ApiClient:
 
 def _environment_path(app_id: str, environment_id: str) -> str:
     return f"/v1/apps/{_seg(app_id)}/environments/{_seg(environment_id)}"
+
+
+def _github_path(app_id: str) -> str:
+    return f"/v1/apps/{_seg(app_id)}/github"
 
 
 def _secret_path(app_id: str, environment_id: str, name: str) -> str:
