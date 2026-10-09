@@ -187,3 +187,121 @@ def test_parse_response_reads_the_status_and_the_ip_line() -> None:
     assert tunnel.parse_response(chunked) == (200, "34.1.2.3")
     assert tunnel.parse_response(b"HTTP/1.1 503 Service Unavailable\r\n\r\nbusy") == (503, None)
     assert tunnel.parse_response(b"") == (None, None)
+
+
+class HoldingProxy:
+    """Answers ``CONNECT`` with 200, then plays the far host in plain TCP: one short answer to
+    each request, until ``cut`` is set, when it closes the tunnel."""
+
+    ANSWER = b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nip=34.1.2.3\n"
+
+    def __init__(self) -> None:
+        self.cut = threading.Event()
+        self.requests: list[bytes] = []
+        self.server = socket.create_server(("127.0.0.1", 0))
+        self.port = self.server.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self) -> None:
+        try:
+            conn, _ = self.server.accept()
+        except OSError:
+            return
+        with conn:
+            head = b""
+            while b"\r\n\r\n" not in head:
+                head += conn.recv(1024)
+            self.requests.append(head)
+            conn.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            conn.settimeout(0.02)
+            while not self.cut.is_set():
+                try:
+                    if not conn.recv(4096):
+                        return
+                except TimeoutError:
+                    continue
+                conn.sendall(self.ANSWER)
+
+    def url(self) -> str:
+        return f"http://{USER}:{PASSWORD}@127.0.0.1:{self.port}"
+
+    def close(self) -> None:
+        self.cut.set()
+        self.server.close()
+
+
+@pytest.fixture
+def holding():
+    proxy = HoldingProxy()
+    yield proxy
+    proxy.close()
+
+
+def plain(sock: socket.socket, _host: str) -> socket.socket:
+    return sock
+
+
+def test_a_hold_opens_stays_alive_and_ends_when_the_tunnel_is_cut(holding: HoldingProxy) -> None:
+    events = []
+    for event in tunnel.hold(
+        "www.cloudflare.com", holding.url(), seconds=10.0, tick=0.1, wrap=plain
+    ):
+        events.append(event)
+        if event["event"] == "alive" and event["n"] == 3:
+            holding.cut.set()
+    opened, *alive, end = events
+    assert opened["event"] == "open" and opened["proxy_status"] == 200
+    assert [a["event"] for a in alive] == ["alive"] * len(alive)
+    assert [a["n"] for a in alive] == list(range(1, len(alive) + 1))
+    assert len(alive) >= 3 and all(a["bytes"] > 0 for a in alive[:3])
+    assert end["event"] == "end"
+    assert end["reason"] in {"closed", "ConnectionResetError", "BrokenPipeError"}
+    assert end["alive"] == len(alive)
+    assert end["opened_at"] == opened["at"]
+    times = [e["at"] for e in events]
+    assert times == sorted(times)
+    (request,) = holding.requests
+    assert request.startswith(b"CONNECT www.cloudflare.com:443 HTTP/1.1\r\n")
+    assert b"Proxy-Authorization: Basic " in request
+
+
+def test_a_hold_that_is_never_cut_ends_with_max(holding: HoldingProxy) -> None:
+    events = list(
+        tunnel.hold("www.cloudflare.com", holding.url(), seconds=0.35, tick=0.1, wrap=plain)
+    )
+    assert events[0]["event"] == "open"
+    assert events[-1]["event"] == "end" and events[-1]["reason"] == "max"
+    assert events[-1]["alive"] >= 2
+
+
+def test_a_refused_hold_ends_at_once_with_the_proxy_status(proxy_407: FakeProxy) -> None:
+    (end,) = tunnel.hold("www.cloudflare.com", proxy_407.url(), seconds=5.0, wrap=plain)
+    assert end["event"] == "end"
+    assert end["reason"] == "proxy_407"
+    assert end["alive"] == 0
+    assert end["opened_at"] is None
+
+
+def test_a_hold_without_a_proxy_or_with_none_reachable_says_why() -> None:
+    (end,) = tunnel.hold("www.cloudflare.com", None, seconds=5.0)
+    assert end["reason"] == "no HTTPS_PROXY"
+    free = socket.create_server(("127.0.0.1", 0))
+    port = free.getsockname()[1]
+    free.close()
+    url = f"http://{USER}:{PASSWORD}@127.0.0.1:{port}"
+    (end,) = tunnel.hold("www.cloudflare.com", url, seconds=5.0)
+    assert end["reason"] == "ConnectionRefusedError"
+
+
+def test_no_hold_event_holds_the_password_the_user_or_the_proxy(
+    holding: HoldingProxy, proxy_407: FakeProxy
+) -> None:
+    events = list(
+        tunnel.hold("www.cloudflare.com", holding.url(), seconds=0.25, tick=0.1, wrap=plain)
+    )
+    events += list(tunnel.hold("www.cloudflare.com", proxy_407.url(), seconds=1.0))
+    events += list(tunnel.hold("www.cloudflare.com", f"http://{USER}:{PASSWORD}@[bad", seconds=1))
+    text = "".join(show(e) for e in events)
+    assert PASSWORD not in text
+    assert USER not in text
+    assert "127.0.0.1" not in text

@@ -1,6 +1,7 @@
 """The egress probe's tunnel, standard library only: ``CONNECT`` through the proxy, then a TLS
-request to the host inside it. Nothing here keeps or returns the proxy's address, user or
-password; a failure is reported as the exception's class name."""
+request to the host inside it (``probe``), or a tunnel held open with a request a second until
+it ends (``hold``, GA-6.1). Nothing here keeps or returns the proxy's address, user or password;
+a failure is reported as the exception's class name."""
 
 import base64
 import re
@@ -8,6 +9,7 @@ import socket
 import ssl
 import time
 import urllib.parse
+from collections.abc import Callable, Iterator
 
 PROXY_PORT = 3128
 TUNNEL_PORT = 443
@@ -15,6 +17,8 @@ TIMEOUT_S = 15.0
 TUNNELLED = 200
 HEAD_LIMIT = 8192
 BODY_LIMIT = 65536
+TICK_S = 1.0
+Wrap = Callable[[socket.socket, str], socket.socket]
 LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 IP_LINE = re.compile(r"^ip=(\S+)\s*$", re.MULTILINE)
 
@@ -59,6 +63,26 @@ def _authorization(proxy: urllib.parse.SplitResult) -> str:
     return base64.b64encode(f"{user}:{password}".encode()).decode()
 
 
+def _connect(
+    host: str, credentials: bool, proxy_url: str, deadline: float, timeout: float
+) -> tuple[int | None, socket.socket]:
+    """``CONNECT host:443`` through the proxy; the proxy's status and the open socket, which the
+    caller closes."""
+    proxy = urllib.parse.urlsplit(proxy_url)
+    request = f"CONNECT {host}:{TUNNEL_PORT} HTTP/1.1\r\nHost: {host}:{TUNNEL_PORT}\r\n"
+    if credentials:
+        request += f"Proxy-Authorization: Basic {_authorization(proxy)}\r\n"
+    address = (proxy.hostname or "", proxy.port or PROXY_PORT)
+    sock = socket.create_connection(address, timeout=timeout)
+    try:
+        sock.sendall(f"{request}\r\n".encode())
+        status, _ = parse_response(_read(sock, deadline, until_head=True))
+    except BaseException:
+        sock.close()
+        raise
+    return status, sock
+
+
 def probe(
     host: str,
     credentials: bool,
@@ -83,15 +107,8 @@ def probe(
         return out
     deadline = time.monotonic() + timeout
     try:
-        proxy = urllib.parse.urlsplit(proxy_url)
-        request = f"CONNECT {host}:{TUNNEL_PORT} HTTP/1.1\r\nHost: {host}:{TUNNEL_PORT}\r\n"
-        if credentials:
-            request += f"Proxy-Authorization: Basic {_authorization(proxy)}\r\n"
-        with socket.create_connection(
-            (proxy.hostname or "", proxy.port or PROXY_PORT), timeout=timeout
-        ) as sock:
-            sock.sendall(f"{request}\r\n".encode())
-            out["proxy_status"], _ = parse_response(_read(sock, deadline, until_head=True))
+        out["proxy_status"], sock = _connect(host, credentials, proxy_url, deadline, timeout)
+        with sock:
             if out["proxy_status"] != TUNNELLED:
                 return out
             sock.settimeout(max(deadline - time.monotonic(), 0.001))
@@ -105,3 +122,89 @@ def probe(
     except Exception as exc:
         out["error"] = type(exc).__name__
     return out
+
+
+def tls_wrap(sock: socket.socket, host: str) -> socket.socket:
+    """TLS to ``host`` over the tunnel, verified against the system's roots."""
+    return ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+
+
+def _keepalive(host: str) -> bytes:
+    return (
+        f"GET /cdn-cgi/trace HTTP/1.1\r\nHost: {host}\r\nUser-Agent: ssc-proofrun-hold\r\n\r\n"
+    ).encode()
+
+
+def hold(  # noqa: PLR0913  (keyword-only)
+    host: str,
+    proxy_url: str | None,
+    *,
+    seconds: float,
+    tick: float = TICK_S,
+    timeout: float = TIMEOUT_S,
+    wrap: Wrap = tls_wrap,
+    clock: Callable[[], float] = time.time,
+) -> Iterator[dict[str, object]]:
+    """Open a tunnel to ``host:443`` with the app's credential and hold it for up to ``seconds``,
+    sending a keep-alive ``GET /cdn-cgi/trace`` every ``tick`` and reading the answers until the
+    next. Yields ``open`` (the proxy said 200 and TLS is up), one ``alive`` per tick the tunnel
+    survived (``bytes`` read in it), and always one ``end`` last: ``reason`` is ``closed`` (the
+    tunnel was closed under it), an exception's class name, ``proxy_<status>`` (refused),
+    ``no HTTPS_PROXY`` or ``max`` (held to the end). ``at`` is seconds since the epoch."""
+    alive = 0
+    opened_at: float | None = None
+
+    def end(reason: str) -> dict[str, object]:
+        return {
+            "event": "end",
+            "reason": reason,
+            "alive": alive,
+            "opened_at": opened_at,
+            "at": clock(),
+        }
+
+    if proxy_url is None:
+        yield end("no HTTPS_PROXY")
+        return
+    try:
+        status, sock = _connect(host, True, proxy_url, time.monotonic() + timeout, timeout)
+    except Exception as exc:
+        yield end(type(exc).__name__)
+        return
+    if status != TUNNELLED:
+        sock.close()
+        yield end(f"proxy_{status}")
+        return
+    try:
+        sock.settimeout(timeout)
+        tunnel = wrap(sock, host)
+    except Exception as exc:
+        sock.close()
+        yield end(type(exc).__name__)
+        return
+    with tunnel:
+        opened_at = clock()
+        yield {"event": "open", "proxy_status": status, "at": opened_at}
+        reason = "max"
+        stop = time.monotonic() + seconds
+        while reason == "max" and time.monotonic() < stop:
+            tick_end = min(time.monotonic() + tick, stop)
+            got = 0
+            try:
+                tunnel.sendall(_keepalive(host))
+                while (left := tick_end - time.monotonic()) > 0:
+                    tunnel.settimeout(left)
+                    try:
+                        chunk = tunnel.recv(65536)
+                    except TimeoutError:
+                        break
+                    if not chunk:
+                        reason = "closed"
+                        break
+                    got += len(chunk)
+            except OSError as exc:
+                reason = type(exc).__name__
+            if reason == "max":
+                alive += 1
+                yield {"event": "alive", "n": alive, "bytes": got, "at": clock()}
+        yield end(reason)
