@@ -3,20 +3,51 @@ break-glass one); people sign in with ``ssc login`` (SSC-019).
 
 The token is read from stdin, never from the command line, so it stays out of shell history
 and process listings. It is checked against the API before it is kept.
+
+``ssc token create-ci``, ``list-ci`` and ``revoke-ci`` (GA-7.7): a CI token is a ``preview``-scoped
+token for a repository secret (the ``ssc-deploy`` Action), made at the auth host from the
+person's own login, up to 90 days. It is printed once and never kept.
 """
 
 import os
-from typing import Final
+from datetime import UTC, datetime
+from typing import Annotated, Final
 
 import typer
 
 from ssc_cli.commands._common import JsonOpt, handled, session
-from ssc_cli.credentials import ENV_TOKEN, clear_token, store_token
-from ssc_cli.errors import BAD_TOKEN_INPUT, CliError, ExitCode, local_error
-from ssc_cli.output import print_json, say
-from ssc_cli.shapes import TokenClearResult, TokenSetResult
+from ssc_cli.credentials import ENV_TOKEN, bearer, clear_token, store_token
+from ssc_cli.errors import BAD_TOKEN_INPUT, CI_TOKEN_REFUSED, CliError, ExitCode, local_error
+from ssc_cli.login import AuthClient, auth_url_for
+from ssc_cli.output import print_json, say, table
+from ssc_cli.shapes import (
+    CiTokenCreated,
+    CiTokenRevoked,
+    CiTokenRow,
+    CiTokensResult,
+    TokenClearResult,
+    TokenSetResult,
+)
 
 MAX_TOKEN_CHARS: Final = 16 * 1024
+CI_MAX_DAYS: Final = 90
+
+LabelOpt = Annotated[
+    str,
+    typer.Option("--label", metavar="TEXT", help="What it is for, such as the repository name."),
+]
+DaysOpt = Annotated[
+    int,
+    typer.Option("--days", min=1, max=CI_MAX_DAYS, help="Days until it ends, 1 to 90."),
+]
+AuthOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--auth-url",
+        metavar="URL",
+        help="Auth host. Default: SSC_AUTH_URL, then the API address with api. made auth.",
+    ),
+]
 
 token_app = typer.Typer(
     name="token",
@@ -59,6 +90,115 @@ def clear(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
         say(f"Removed the token for {api_url}.")
     else:
         say(f"No token was stored for {api_url}.")
+
+
+@token_app.command("create-ci")
+def create_ci(
+    ctx: typer.Context,
+    label: LabelOpt,
+    days: DaysOpt = CI_MAX_DAYS,
+    auth_url: AuthOpt = None,
+    json_mode: JsonOpt = False,
+) -> None:
+    """Create a preview-only CI token for a repository secret; it is shown once."""
+    s = session(ctx)
+    with handled(json_mode):
+        api_url = s.config().api_url
+        found = bearer(api_url, transport=s.transport)
+        access = found if isinstance(found, str) else found()
+        with s.client(token=access) as client:
+            me = client.whoami()
+        if me.is_agent:
+            raise local_error(
+                CI_TOKEN_REFUSED,
+                "This login cannot create CI tokens.",
+                "It is an agent's. Run it with your own `ssc login`.",
+                ExitCode.AUTH,
+            )
+        auth = auth_url_for(api_url, auth_url)
+        with AuthClient(auth, transport=s.transport, sleep=s.sleep) as host:
+            issued = host.create_ci_token(access, label, days)
+        result = CiTokenCreated(
+            api_url=api_url,
+            auth_url=auth,
+            id=issued.id,
+            label=issued.label,
+            expires_at=issued.expires_at,
+            token=issued.token,
+        )
+    if json_mode:
+        print_json(result)
+        return
+    say(result.token)
+    typer.echo(
+        f"This token is shown once. Store it as a repository secret (for example "
+        f"SSC_PREVIEW_TOKEN). It can deploy preview of any app you can build and never touches "
+        f"prod. It ends {result.expires_at}; revoke it sooner with "
+        f"`ssc token revoke-ci {result.id}`.",
+        err=True,
+    )
+
+
+def _state(row: CiTokenRow, now: datetime) -> str:
+    if row.revoked_at is not None:
+        return "revoked"
+    expires = datetime.fromisoformat(row.expires_at)
+    return "expired" if expires <= now else "live"
+
+
+@token_app.command("list-ci")
+def list_ci(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
+    """List CI tokens: yours, or the whole org's for an org admin."""
+    with handled(json_mode), session(ctx).client() as client:
+        listed = client.list_ci_tokens()
+        result = CiTokensResult(
+            api_url=client.api_url,
+            ci_tokens=[
+                CiTokenRow(
+                    id=t.id,
+                    user_id=t.user_id,
+                    label=t.label,
+                    created_at=t.created_at,
+                    expires_at=t.expires_at,
+                    revoked_at=t.revoked_at,
+                )
+                for t in listed.ci_tokens
+            ],
+        )
+    if json_mode:
+        print_json(result)
+        return
+    if not result.ci_tokens:
+        say("No CI tokens. Create one with `ssc token create-ci --label TEXT`.")
+        return
+    now = datetime.now(UTC)
+    say(
+        table(
+            ("ID", "LABEL", "OWNER", "CREATED", "EXPIRES", "STATE"),
+            [
+                (t.id, t.label, t.user_id, t.created_at, t.expires_at, _state(t, now))
+                for t in result.ci_tokens
+            ],
+        )
+    )
+
+
+@token_app.command("revoke-ci")
+def revoke_ci(
+    ctx: typer.Context,
+    ci_token_id: Annotated[str, typer.Argument(metavar="ID", help="From `ssc token list-ci`.")],
+    json_mode: JsonOpt = False,
+) -> None:
+    """Revoke a CI token; its next call is refused."""
+    with handled(json_mode), session(ctx).client() as client:
+        done = client.revoke_ci_token(ci_token_id)
+        result = CiTokenRevoked(
+            api_url=client.api_url, id=done.id, revoked_at=done.revoked_at or ""
+        )
+    if json_mode:
+        print_json(result)
+    else:
+        say(f"Revoked {result.id}. Its next call is refused.")
 
 
 def _read_token_input() -> str:

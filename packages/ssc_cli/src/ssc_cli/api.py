@@ -54,6 +54,8 @@ from ssc_cli.models import (
     BuildOut,
     BundleCreate,
     BundleOut,
+    CiToken,
+    CiTokens,
     ConnectionsOut,
     DatabaseOut,
     DatabaseRotateOut,
@@ -334,6 +336,14 @@ class ApiClient:
         """Tie the login to an active person; their next login with it signs them in."""
         path = f"/v1/unlinked-logins/{_seg(unlinked_login_id)}/link"
         return _parse(self._send("POST", path, body=LinkIn(user_id=user_id)), Linked)
+
+    def list_ci_tokens(self) -> CiTokens:
+        """The caller's CI tokens, or every one in the org for an org admin, newest first."""
+        return _parse(self._send("GET", "/v1/ci-tokens"), CiTokens)
+
+    def revoke_ci_token(self, ci_token_id: str) -> CiToken:
+        """Revoke a CI token (its owner or an org admin); its next call is refused."""
+        return _parse(self._send("DELETE", f"/v1/ci-tokens/{_seg(ci_token_id)}"), CiToken)
 
     def export_audit(
         self, fmt: str, *, since: str | None = None, until: str | None = None

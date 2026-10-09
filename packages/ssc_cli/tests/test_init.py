@@ -381,7 +381,7 @@ def test_pack_mentions_only_real_commands(cli, tmp_path):
 def test_pack_lists_every_command(cli, tmp_path):
     init(cli, tmp_path)
     agents = (tmp_path / "AGENTS.md").read_text()
-    listed = set(re.findall(r"(?m)^- `ssc ([a-z]+(?: [a-z]+)?)", agents))
+    listed = set(re.findall(r"(?m)^- `ssc ([a-z]+(?: [a-z-]+)?)", agents))
     expected = set()
     for name, subs in _registered().items():
         if subs is None or name == "apps":

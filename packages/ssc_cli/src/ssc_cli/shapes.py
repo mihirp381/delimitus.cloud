@@ -603,6 +603,44 @@ class LoginLinkedResult(Shape):
     identity_link_id: str
 
 
+class CiTokenCreated(Shape):
+    """``token create-ci``: the CI token, shown once, for a repository secret. It deploys preview
+    of any app its person can build and never touches prod."""
+
+    api_url: str
+    auth_url: str
+    id: str
+    label: str
+    expires_at: str
+    token: str
+
+
+class CiTokenRow(Shape):
+    """One CI token, never the token itself. ``revoked_at`` is null until it is revoked."""
+
+    id: str
+    user_id: str
+    label: str
+    created_at: str
+    expires_at: str
+    revoked_at: str | None
+
+
+class CiTokensResult(Shape):
+    """``token list-ci``: yours, or every one in the org for an org admin, newest first."""
+
+    api_url: str
+    ci_tokens: list[CiTokenRow]
+
+
+class CiTokenRevoked(Shape):
+    """``token revoke-ci``: the token's next call is refused."""
+
+    api_url: str
+    id: str
+    revoked_at: str
+
+
 class AuditExportResult(Shape):
     """``audit export``: where the export was written. ``events`` counts its rows."""
 
@@ -697,5 +735,9 @@ SHAPES: dict[str, type[BaseModel]] = {
         LoginLinkedResult,
         AuditExportResult,
         AuditVerifyResult,
+        CiTokenCreated,
+        CiTokenRow,
+        CiTokensResult,
+        CiTokenRevoked,
     )
 }

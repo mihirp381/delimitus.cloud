@@ -43,6 +43,8 @@ RESPONSES = (
     models.UnlinkedLogin,
     models.UnlinkedLogins,
     models.Linked,
+    models.CiToken,
+    models.CiTokens,
     models.GroupMatch,
     models.GroupMatches,
     models.KillSwitchAccepted,

@@ -119,6 +119,31 @@
     "severity": "string",
     "subject": "string"
   },
+  "CiTokenCreated": {
+    "api_url": "string",
+    "auth_url": "string",
+    "expires_at": "string",
+    "id": "string",
+    "label": "string",
+    "token": "string"
+  },
+  "CiTokenRevoked": {
+    "api_url": "string",
+    "id": "string",
+    "revoked_at": "string"
+  },
+  "CiTokenRow": {
+    "created_at": "string",
+    "expires_at": "string",
+    "id": "string",
+    "label": "string",
+    "revoked_at": "string|null",
+    "user_id": "string"
+  },
+  "CiTokensResult": {
+    "api_url": "string",
+    "ci_tokens": "array<CiTokenRow>"
+  },
   "ConnectionRow": {
     "ceiling": "array<string>",
     "classification": "string",

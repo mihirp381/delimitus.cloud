@@ -208,6 +208,19 @@ class LinkIn(Wire):
     user_id: str
 
 
+class CiToken(Wire):
+    id: str
+    user_id: str
+    label: str
+    created_at: str
+    expires_at: str
+    revoked_at: str | None
+
+
+class CiTokens(Wire):
+    ci_tokens: list[CiToken]
+
+
 class Linked(Wire):
     identity_link_id: str
     user_id: str

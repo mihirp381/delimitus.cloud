@@ -28,6 +28,7 @@ from ssc_cli.shapes import (
     AppsResult,
     AuditExportResult,
     AuditVerifyResult,
+    CiTokensResult,
     ConnectionsResult,
     DeployResult,
     DisableResult,
@@ -135,6 +136,9 @@ def test_help_lists_exact_set(cli):
         ("audit", "verify"),
         ("token", "set"),
         ("token", "clear"),
+        ("token", "create-ci"),
+        ("token", "list-ci"),
+        ("token", "revoke-ci"),
         ("apps",),
         ("apps", "create"),
         ("status",),
@@ -166,7 +170,7 @@ def test_help_lists_exact_set(cli):
         ("repo", "disconnect"),
     }
     for group, subs in (
-        ("token", {"set", "clear"}),
+        ("token", {"set", "clear", "create-ci", "list-ci", "revoke-ci"}),
         ("apps", {"create"}),
         ("access", {"explain"}),
         ("secret", {"set", "list"}),
@@ -1199,6 +1203,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("connections",): ([], ConnectionsResult, None),
         ("approvals", "list"): ([], ApprovalsResult, None),
         ("logins", "list"): ([], UnlinkedLoginsResult, None),
+        ("token", "list-ci"): ([], CiTokensResult, None),
         ("audit", "export"): (["--out", str(tmp_path / "audit.jsonl")], AuditExportResult, None),
         ("audit", "verify"): ([str(tmp_path / "audit.jsonl")], AuditVerifyResult, None),
         ("init",): ([str(tmp_path)], InitResult, None),
@@ -1211,6 +1216,8 @@ def test_every_command_has_json(on_live, live, tmp_path):
     # `reject` need a request to decide; test_approvals.py covers their --json. `logins link`
     # needs an unlinked login; test_logins.py covers its --json. `repo connect`, `show` and
     # `disconnect` need a GitHub App the dev stack does not have; test_repo.py covers their --json.
+    # `token create-ci` needs a login at an auth host, and `token revoke-ci` a CI token;
+    # test_ci_tokens.py covers their --json.
     expected = (
         {
             ("mcp",),
@@ -1218,6 +1225,8 @@ def test_every_command_has_json(on_live, live, tmp_path):
             ("secret", "set"),
             ("database", "rotate"),
             ("logins", "link"),
+            ("token", "create-ci"),
+            ("token", "revoke-ci"),
         }
         | {("approvals", name) for name in ("show", "approve", "reject")}
         | {("repo", name) for name in ("connect", "show", "disconnect")}
