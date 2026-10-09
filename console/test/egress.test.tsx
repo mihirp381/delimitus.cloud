@@ -61,6 +61,17 @@ describe('internet access', () => {
     expect(document.body.textContent).not.toContain('10.0.0.5');
   });
 
+  it('names the approval that added a host, and the admin who approved it', async () => {
+    const approved = { ...host('api.twilio.com'), approval_request_id: 'apr_x1' };
+    await egressPage({ 'GET /v1/egress': () => json(200, { hosts: [host('api.stripe.com'), approved], outbound_ip: IP, proxy_address: null }) });
+    const hosts = screen.getByRole('table', { name: 'Hosts apps may reach' });
+    const row = within(hosts).getByText('api.twilio.com').closest('tr');
+    expect(row?.textContent).toContain(`Approval apr_x1 (approved by ${OWNER})`);
+    const direct = within(hosts).getByText('api.stripe.com').closest('tr');
+    expect(direct?.textContent).not.toContain('Approval');
+    expect(direct?.textContent).toContain(OWNER);
+  });
+
   it('says when the cell has no fixed IP yet', async () => {
     start('/egress', routes({ 'GET /v1/egress': () => json(200, { hosts: [], outbound_ip: null, proxy_address: null }) }), signedIn());
     expect(await screen.findByText(/has not told us its fixed outbound IP yet/, undefined, { timeout: FIRST_RENDER_MS })).toBeTruthy();

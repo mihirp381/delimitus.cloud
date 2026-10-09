@@ -131,12 +131,18 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
     {
       header: 'Added by',
       cell: (h) =>
-        h.added_by_user_id ? (
-          <code>{h.added_by_user_id}</code>
-        ) : h.approval_request_id ? (
+        h.approval_request_id ? (
           <>
             Approval <code>{h.approval_request_id}</code>
+            {h.added_by_user_id ? (
+              <>
+                {' '}
+                (approved by <code>{h.added_by_user_id}</code>)
+              </>
+            ) : null}
           </>
+        ) : h.added_by_user_id ? (
+          <code>{h.added_by_user_id}</code>
         ) : (
           'SSC'
         ),
