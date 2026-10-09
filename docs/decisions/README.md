@@ -855,6 +855,8 @@ Not yet: deploying it (revision `0033_oauth`, the three auth-host settings, `doc
 
 Reverse if: the MCP spec moves to Client ID Metadata Documents or another registration scheme that the major clients adopt; the org lookup becomes slow (then the route table above); or a client needs a confidential flow.
 
+Amendment (2026-10-09, GA-9.3): first-app bootstrap stays the `create_app` tool, unchanged, on both servers (remote `/mcp` and local `ssc mcp`). The human-visible step is the MCP client's own per-call approval plus the agent pack's instruction to ask first (say the slug, wait for a yes); there is no `confirm` argument. The founder chose this, option A, over a confirm flag or a CLI-only step. Every creation is audited with `via_agent` and the client id, as every agent call is.
+
 ## 030 Placement: each org's cell
 
 Choice: an org lives in one cell, the one its `ssc.org.cell_label` names (revision 0011; set by `create-org --cell-label`, else the generated label of an org with no cell yet). One control plane serves many cells and reaches each org only in its own.
