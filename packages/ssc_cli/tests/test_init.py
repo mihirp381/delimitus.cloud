@@ -267,6 +267,8 @@ def test_mcp_url_follows_api_option(cli, tmp_path):
     r = cli("--api", "https://ssc.example.com/", "init", str(tmp_path), "--json")
     assert r.code == 0, r.stdout + r.stderr
     assert _mcp_urls(tmp_path) == {"https://ssc.example.com/mcp"}
+    agents = " ".join((tmp_path / "AGENTS.md").read_text().split())
+    assert "`claude mcp add --transport http ssc https://ssc.example.com/mcp`" in agents
 
 
 def test_mcp_url_follows_env(cli, tmp_path, monkeypatch):
@@ -301,6 +303,23 @@ def test_init_needs_no_login_and_sends_nothing(cli, tmp_path):
     r = cli("init", str(tmp_path), "--json", session=Session(transport=_NoNetwork()))
     assert r.code == 0, r.stdout + r.stderr
     assert _mcp_urls(tmp_path) == {MCP_URL}
+
+
+def test_guide_gives_the_remote_server():
+    url = "https://x.test/mcp"
+    text = " ".join(guide([], url).split())
+    assert f"SSC's agent tools (MCP) are served at `{url}`" in text
+    assert f"`codex mcp add ssc --url {url} --oauth-resource {url}`" in text
+    assert f"`claude mcp add --transport http ssc {url}`" in text
+    assert "`ssc init` wrote `.mcp.json`" in text
+    assert "`ssc init` wrote `.cursor/mcp.json`" in text
+    assert "`tool_timeout_sec = 1500`" in text
+    assert "`ssc logout --agent`" in text
+    assert "(`AGENT_LOGS_OFF`)" in text
+    assert text.index("served at") < text.index("#### The local server: `ssc mcp`")
+    assert re.search(r"\{[a-z_]+\}", text) is None
+    (local,) = re.findall(r"(?s)```json\n(.*?)```", guide([], url))
+    assert json.loads(local) == {"mcpServers": {"ssc": {"command": "ssc", "args": ["mcp"]}}}
 
 
 # ── only real commands ──────────────────────────────────────────────────────
