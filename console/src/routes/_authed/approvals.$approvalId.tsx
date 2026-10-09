@@ -223,8 +223,8 @@ function Change({ approval: a }: { readonly approval: ApprovalDetail }) {
   if (a.kind === 'enable_internet_hosts') {
     return (
       <p>
-        Allow the internet host <code>{a.subject_key}</code>. Approving records the decision; it
-        changes nothing by itself.
+        Allow the internet host <code>{a.subject_key}</code>. Approving adds{' '}
+        <code>{a.subject_key}</code> to your org&apos;s allowlist.
       </p>
     );
   }

@@ -349,6 +349,14 @@ describe('approval detail', () => {
     start(path, getRoute(detail(approval(EXCEED.id, { can_decide: true }), { can_decide: true })), signedIn());
     expect(await screen.findByText(/changes nothing by itself/)).toBeTruthy();
   });
+
+  it('says approving an internet host adds it to the allowlist', async () => {
+    const asked = approval(EXCEED.id, { kind: 'enable_internet_hosts', subject_key: 'api.twilio.com', payload: {} });
+    start(path, getRoute(detail(asked, { can_decide: true })), signedIn());
+    const text = await screen.findByText(/to your org's allowlist/);
+    expect(text.textContent).toBe("Allow the internet host api.twilio.com. Approving adds api.twilio.com to your org's allowlist.");
+    expect(screen.queryByText(/changes nothing by itself/)).toBeNull();
+  });
 });
 
 describe('approval helpers', () => {
