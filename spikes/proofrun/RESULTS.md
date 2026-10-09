@@ -428,3 +428,61 @@ Seen:
 - 5 (manual, read-only `gcloud builds list --project=ssc-c-proofcell01 --region=us-central1 --filter='tags=bld_fb108ihg4ex2qgxyl5ye'`): Cloud Build `0d25dd4d-34f4-4be5-821d-70382ace962e` `FAILURE`, "step exited with non-zero status: 10"; steps `fetch` SUCCESS, `scan` FAILURE, `plan`, `build`, `harden` still `QUEUED` (never ran); no `results.images`. Created 00:58:43, finished 00:59:02 UTC (19 s).
 
 Open egress itself was not run again: `build_config` sets no worker pool (`cloud_build.py:279-287`), decision 014 says so, and every Python build on the cells installs from PyPI. Disclosed in `docs/trust/build-limits.md`. Leaves behind: the app `ga6secret` (apps cannot be deleted), its failed build, and its stored bundle holding the random value.
+
+## GA-6.6 live proof, 2026-10-09 (cell 1)
+
+### GA-6.6 console egress screen round trip
+
+Run in the founder's Chrome, profile "SSC cell 1", in one console tab, from 03:01:02 UTC. The founder signed in as `usr_t2ery0hinsclyj940jqw`, org admin of `org_i5w2ocw7nnealxbl7wsh`. Live console image is `695149fc…`.
+
+| # | Proof | Result |
+| --- | --- | --- |
+| GA-6.6 console egress round trip | console.delimitus.com, cell 1, `api.sendgrid.com` | **Leg 1 PASS** 2026-10-09 03:01 UTC: added in the console, listed, removed, gone. Audit seq 750 (added) and 751 (removed). **Leg 2 (approval) skipped by founder decision (B)** |
+
+**Pre-flight.**
+- **Identity and egress.** The console header said "Signed in as usr_t2ery0hinsclyj940jqw". Your environment showed:
+  - fixed outbound IP `35.222.140.145`;
+  - Egress proxy `ready` (created 2026-10-06 04:33 UTC, asked for by an org admin).
+  
+  So adding a host could not start the cell deployer.
+- **Allowlist.** It held only `www.cloudflare.com`, and that host was untouched throughout.
+
+**Leg 1, admin direct: PASS.** All steps were in the console.
+1. Under Internet access › Common hosts, "Pick api.sendgrid.com". It is not high risk, so no acknowledgement was asked for.
+2. "Allow host". The notice read "Allowed api.sendgrid.com." and the row showed Added by `usr_t2ery0hinsclyj940jqw`, added 03:01:26 UTC.
+3. Re-read: Your environment, then back to Internet access. The host was still listed.
+4. "Remove api.sendgrid.com". The in-page dialog asked for the host name to be typed, then "Remove host". The notice read "Removed api.sendgrid.com." and the row was gone.
+5. Re-read the same way. Only `www.cloudflare.com` was left.
+
+**Audit rows.** Read on the console Audit log screen, target kind `egress_host`:
+
+| Seq | When (UTC) | Action | Actor | Target | Details |
+| --- | --- | --- | --- | --- | --- |
+| 750 | 03:01:27 | `org.updated` | user `usr_t2ery0hinsclyj940jqw` | `egress_host` `api.sendgrid.com` | after `{"host": "api.sendgrid.com", "high_risk": false, "approval_request_id": null}` |
+| 751 | 03:01:52 | `org.updated` | user `usr_t2ery0hinsclyj940jqw` | `egress_host` `api.sendgrid.com` | before `{"host": "api.sendgrid.com", "high_risk": false, "approval_request_id": null}` |
+
+- **The unfiltered log.** After the founder's sign-in rows (747 to 749) the log holds only these two rows. In particular there is no `cell.resource_requested`.
+- **No CLI export.** The hash-chained export (`ssc audit export`, then `verify`) was not taken, because the CLI is signed in to cell 2 for GA-4 and had to stay that way. The rows above are read from the console. The console's Export button was not used, since it downloads a file.
+
+**Leg 2, approval: skipped by founder decision (B), for V1.** That leg is: a builder files `enable_internet_hosts`, another admin approves it, and the host is listed with the request id. It was not run live. Covered by unit tests:
+- `packages/ssc_control/tests/test_egress.py::test_an_approved_internet_host_is_listed`. An approved request adds the host, with `added_by_user_id` set to the approver and `approval_request_id` set to the request. Egress is requested with cause `egress_approved`, and the `egress_host` audit row's `after.approval_request_id` names the request. A denied request adds nothing, and neither does an approved request for a host that is not a valid entry.
+- `packages/ssc_control/tests/test_approvals.py::test_self_approval_is_refused_by_the_api_and_database`.
+- Console:
+  - `console/test/egress.test.tsx` "names the approval that added a host, and the admin who approved it";
+  - `console/test/approvals.test.tsx` "says approving an internet host adds it to the allowlist".
+
+  These are the G1 and G2 fixes below.
+
+There is no CLI command that files an `enable_internet_hosts` request. A request comes from `POST /v1/approvals`, or from the production gate during `ssc promote` of an app that declares `[egress] hosts`.
+
+**Fixed on round-2 during this proof (console only), not yet live.** The live console `695149fc` shows the old behaviour until the next console release.
+- **G1, 6f83a43.** For a host an approval added, the "Added by" column showed only the approving admin. The API stores both the admin and the request id, and the column hid the approval. It now shows "Approval apr_… (approved by usr_…)".
+- **G2, 4745d08.** The approval detail page told the approver that approving an internet host "changes nothing by itself". Approving adds the host to the org's allowlist (`approvals/service._allow_host`). The page now says "Approving adds <host> to your org's allowlist."
+
+Seen:
+- **Console sign-in is per tab.** The console keeps its tokens only in that tab's page memory (`console/src/auth/session.ts`). A new tab or a reload shows "Sign in", so the re-reads above used in-app navigation, not reloads.
+- **Remove dialog styling (cosmetic).** The Remove dialog's text is right-aligned.
+
+**Evidence.**
+- GIF: `spikes/proofrun/results/ga-6.6-console-egress.gif`. It has 32 frames and is 4,798,296 bytes. It is ignored by git (`spikes/proofrun/.gitignore`), so it is not committed.
+- Left behind: nothing. The allowlist is as it was, and no app was created.
