@@ -33,6 +33,7 @@ import pytest
 import test_deploy
 from fastapi import FastAPI
 from httpx import Response
+from psycopg.sql import SQL, Identifier
 from sqlalchemy.engine import make_url
 from ssc_testkit import (
     CloudSqlLike,
@@ -85,7 +86,7 @@ from ssc_contracts.app_env import (
 )
 from ssc_contracts.errors import CATALOGUE, ErrorCode
 from ssc_contracts.ids import new_id
-from ssc_control.db import MIGRATE_ROLE, downgrade, upgrade
+from ssc_control.db import MIGRATE_ROLE, bind_org_sync, downgrade, upgrade
 from ssc_control.deploy.deployments import HEALTH_POLL_SECONDS, HealthWait, run_deployment
 from ssc_control.runtime.app_databases import CellAppDatabases, FakeAppDatabases
 from ssc_control.runtime.cell_agent import CellAgentDriver
@@ -374,6 +375,52 @@ async def test_a_fake_database_is_recorded_and_pinned_once(b: Bench, dsns: Dsns)
     assert fake.calls == [("ensure", service_name(b.w.preview))]
 
 
+PSA_HOST = "d2e35b7494d3.6r67h6xemu0g.us-central1.sql-psa.goog."
+
+
+async def test_a_host_with_a_trailing_dot_is_recorded_as_the_agent_answered_it(
+    b: Bench, dsns: Dsns
+) -> None:
+    """GA-4.5: Cloud SQL's private DNS name keeps its dot (verify-full compares names exactly),
+    and migration 0035 lets ``ssc.app_database`` hold it."""
+    database_ready(dsns, b.w.org)
+    ports = with_cell(b.ports, app_databases=FakeAppDatabases(host=PSA_HOST))
+    release = await build_release(b, b.w.preview, manifest_of(**STATEFUL))
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    assert await run(b, op, ports) == "healthy"
+    (row,) = rows_of(b.dsn, b.w.org, "select host, port from ssc.app_database")
+    assert (row["host"], row["port"]) == (PSA_HOST, 5432)
+
+
+async def test_the_host_check_allows_one_trailing_dot_and_nothing_else(
+    b: Bench, dsns: Dsns
+) -> None:
+    """Through the app role, which may update ``host``: a leading dot, a double trailing dot,
+    upper case, a lone dot and an empty host are still refused (23514)."""
+    database_ready(dsns, b.w.org)
+    ports = with_cell(b.ports, app_databases=FakeAppDatabases())
+    release = await build_release(b, b.w.preview, manifest_of(**STATEFUL))
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    assert await run(b, op, ports) == "healthy"
+    update = "update ssc.app_database set host = %s"
+
+    def attempt(host: str) -> str | None:
+        with psycopg.connect(b.dsn) as conn:
+            bind_org_sync(conn, b.w.org)
+            try:
+                conn.execute(update, (host,))
+            except psycopg.Error as e:
+                conn.rollback()
+                return e.sqlstate
+            conn.rollback()
+            return None
+
+    for host in (PSA_HOST, "10.0.0.5", "db.internal", "a."):
+        assert attempt(host) is None, host
+    for host in (".a.b", "a.b..", "A.B.", "a.B", ".", "", "a-.", "a b."):
+        assert attempt(host) == "23514", host
+
+
 # ── refusals ─────────────────────────────────────────────────────────────────
 
 
@@ -460,3 +507,50 @@ def test_0022_downgrades_and_upgrades(dsns: Dsns) -> None:
     assert not present()
     upgrade(dsn)
     assert present()
+
+
+def test_0035_downgrades_with_a_dotted_row_and_upgrades(dsns: Dsns) -> None:
+    rev = importlib.import_module("ssc_control.db.migrations.versions.0035_app_database_host")
+    name = f"m{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(
+            SQL("create database {} owner {}").format(Identifier(name), Identifier(MIGRATE_ROLE))
+        )
+    dsn = make_url(dsns.migrate).set(database=name).render_as_string(hide_password=False)
+    admin = make_url(dsns.superuser).set(database=name).render_as_string(hide_password=False)
+    insert = (
+        "insert into ssc.app_database (org_id, environment_id, host, port, connection_limit) "
+        "values ('org_x', %s, %s, 5432, 25)"
+    )
+    check = (
+        "select pg_get_constraintdef(oid), convalidated from pg_constraint "
+        "where conname = 'app_database_host_check'"
+    )
+
+    def put(env: str, host: str, *, keep: bool = True) -> None:
+        with psycopg.connect(admin) as conn:  # no foreign keys: org_x and env_x do not exist
+            conn.execute("set session_replication_role = replica")
+            conn.execute(insert, (env, host))
+            if not keep:
+                conn.rollback()
+
+    def refuses(host: str) -> bool:
+        try:
+            put("env_probe", host, keep=False)
+        except psycopg.errors.CheckViolation:
+            return True
+        return False
+
+    upgrade(dsn)
+    assert not refuses("a.sql-psa.goog.")
+    assert refuses(".a") and refuses("a..")
+    put("env_dotted", PSA_HOST)
+    downgrade(dsn, rev.down_revision)  # the dotted row does not stop it
+    with psycopg.connect(dsn) as conn:
+        definition, valid = conn.execute(check).fetchone() or ("", True)
+    assert "\\.?$" not in definition and valid is False
+    assert refuses("b.sql-psa.goog.")
+    upgrade(dsn)
+    with psycopg.connect(dsn) as conn:
+        definition, valid = conn.execute(check).fetchone() or ("", False)
+    assert "\\.?$" in definition and valid is True
