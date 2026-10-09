@@ -107,6 +107,10 @@ the `ssc secret set` command for the person to run. When a deploy says it waits 
 creation, follow it with `get_status` and do not deploy again. An org admin can stop agents
 reading logs (`AGENT_LOGS_OFF`) with `PUT /v1/org/agent-policy`.
 
+Call `create_app` only when the person asks for a new app: tell them the slug you will use and
+wait for their yes. Their MCP client also asks them to approve the call. The new app runs nothing
+until a deploy.
+
 Run `ssc doctor` after every change that affects how the app installs or starts, and fix every
 finding marked `block`.
 
