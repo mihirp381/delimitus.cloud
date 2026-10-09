@@ -621,6 +621,16 @@ Envoy only closes an open tunnel when the old listener's drain ends. Envoy runs 
 
 **Leaves behind nothing.** The host is off the org's allowlist for about 15 to 30 s, for every app in the org. The last line says `host back on the allowlist: yes` or `NO`. On `NO` it says how to put it back by hand, and the command exits 1 whatever the verdict. The last lines also hold a markdown row for `RESULTS.md`. Results go to `results/ga-6.1.json`. Neither the operator's token, the cookie nor the proxy's user is ever printed or saved.
 
+### Finishing GA-4 (one script)
+
+```sh
+bash spikes/proofrun/finish_ga4.sh
+```
+
+Run it once, from your own Terminal, logged in to the CLI as admin2 on cell 2 (`org_xbtt2c4ulcxztq6s0518`, label `proofcell02`). It stops at once if the login is for another org or if `ga4warm`, `ga4rb`, `ga4secret` or `ga4files` is missing. It prints the two console checks you do by hand (the 4.5 rollback dialog, the 4.8 Warm option panel) and then runs: 4.8 warm in the background, 4.5 rollback, 4.6 secrets, 4.2 files with `--wait-expiry --disable`, 4.3 (rotate timed against 5 s, promote and the recovery point, filler apps up to the database tier, the eleventh app refused with `DB_TIER_FULL`), and 4.9 (`apps/sqlite_disk` and `apps/disk_write` through `ssc doctor` and `ssc deploy`). Each step's output is in `results/<step>.log` and the script ends with each step's exit code and last line. Expect 1.5 to 2.5 hours.
+
+It leaves behind: filler apps `ga4db01` and up (as many as the instance has free places, normally 8, each with a preview database), `ga4db09` or the next number up (created, its deploy refused), `ga4sqlite` (created, its deploy refused) and `ga4diskw` (live in preview), a prod environment for `ga4rb` with its own database (so 10 app databases on cell 2's Cloud SQL in all), new secret versions on `ga4secret`, `ga42/...` objects in `ga4files`' bucket (the put is deleted again), and a few rotated passwords. The recovery point is read by `ga4_read.py` through the control API, because neither the CLI nor the console shows it.
+
 ## What feeds what
 
 | Result | Feeds |
