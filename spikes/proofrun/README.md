@@ -52,7 +52,7 @@ Everything under `apps/` deploys through `ssc deploy`. Create each app once with
 | `papi` | `apps/api` (`/vpc`, `/ws`, `/deny`) | T7, T8, T10, T11 |
 | `pstream` | `apps/streamlit` (the bake-off's workload) | T7, T9 |
 | `pg01` to `pg10` | `apps/pg` (`[state] postgres = true`) | T5 |
-| `pegress` | `apps/egress` (`/egress?host=&credentials=`, through the app's own `HTTPS_PROXY`) | T6 |
+| `pegress` | `apps/egress` (`/egress?host=&credentials=` and `/hold?host=&seconds=&run=`, through the app's own `HTTPS_PROXY`) | T6, GA-6.1 |
 
 The kit bypasses `ssc deploy` in two places:
 
@@ -567,6 +567,58 @@ Verdict: any FAIL is FAIL, else any "not read" is INCOMPLETE, else PASS. If a ch
 - The monthly figures (API and console) are what the setting is said to cost, not a bill. Nothing charges for the option (A6).
 
 Wall time: about 2 × `--idle-minutes` plus up to 2 × `--settle-seconds`, plus a few minutes. That is about 45 minutes with the defaults. Keep the machine awake. Results go to `results/ga-4.8.json` and to `results/warm-<UTC stamp>.json` (the checks, the timeline of every change, read and page load, and the timings). Neither ever holds the operator's token or the cookie. Copy the final line, and the screenshot, into the GA-4.8 record.
+
+### Live revoke and drain (GA-6.1)
+
+The app is `pegress` (`apps/egress`), deployed in preview with its `/hold` route. `/hold?host=&seconds=&run=` opens a tunnel to `host:443` through the app's own `HTTPS_PROXY`, with its credential. It sends a keep-alive `GET /cdn-cgi/trace` every second and streams one JSON line per event while the request is in flight: `open`, one `alive` per second the tunnel survived, and `end` last. `end` carries the reason (`closed`, an exception's class name, `proxy_<status>` or `max`) and `at`, the app's clock when the tunnel closed. A background thread would not work here. Apps are billed per request, so once the request has answered, Cloud Run gives the instance almost no CPU. The app also logs `egress hold end` with the run id. Nothing returns or logs the proxy's address or credential. Before the first run, at the repository root:
+
+1. **[real]** `uv run ssc deploy --app pegress spikes/proofrun/apps/egress --wait`, which redeploys it with `/hold`. Preview needs no approval.
+2. The host (`www.cloudflare.com`) is on the org's allowlist, as in T6's allowlist step.
+3. Put the preview host's session cookie in the jar: `uv run python -m proofrun cookie set pegress--preview.<label>.delimitusapps.com`.
+4. Be logged in with `ssc login` as an org admin, not an agent session. Be logged in to `gcloud` with read access to the cell's bucket and logs.
+
+Then, from `spikes/proofrun`:
+
+```sh
+uv run python -m proofrun drain --app pegress --label proofcell01 [--env preview] [--host www.cloudflare.com] [--org <org id>] [--project ssc-c-<label>] [--hold-seconds 90]
+```
+
+The org is the CLI login's (`ssc whoami`). `--org` must name the same one, or the kit stops before any change. The steps:
+
+1. Read only: the host is on the allowlist (`GET /v1/egress`) and `/egress?host=` tunnels (proxy 200). If not, the kit stops and nothing is changed.
+2. `/hold` streams; the kit waits for `open` and three answered keep-alive ticks.
+3. **[real]** `DELETE /v1/egress/hosts/<host>`, timed from just before it is sent (t0).
+4. Up to 30 s for the hold's `end` line.
+5. A new `/egress?host=`: the proxy must answer 403.
+6. The update time of `gs://ssc-c-<label>-cell/snapshots/<org>/latest.json`, read before the host is put back.
+7. **[real]** Always, also on an error or Ctrl-C, once the host is off the list: `PUT /v1/egress/hosts/<host>` with body `{}`, then `GET /v1/egress` to see it back.
+8. Evidence, read for up to 120 s:
+   - from Cloud Logging in the cell's project: the proxy's first `egress listener written` line after t0; the proxy's access line for the held tunnel (the longest 200 to `host:443` naming the environment; only its start, status, flags and duration are shown, never its `user`); the app's `egress hold end` line;
+   - from `GET /v1/audit`: the `org.updated` rows on `egress_host` for the removal (`before`, no `after`) and the re-add.
+
+The numbers:
+
+| Number | From | To | Judged |
+| --- | --- | --- | --- |
+| compile | t0 | `latest.json` updated | no |
+| poll | `latest.json` | the proxy's listener written | no |
+| drain | the listener | the cut (the app's `end.at`) | no |
+| proxy | `latest.json` | the cut | at most `POLL_SECONDS + DRAIN_SECONDS + 1` = 8 s |
+| end to end | t0 | the kit receiving the `end` line (the kit's clock) | no |
+
+Pass needs all five checks:
+
+- The tunnel was cut. `max` (held to the end) or a `proxy_` refusal is a FAIL.
+- The cut came from the first listener written after the change: `latest.json` <= listener <= cut.
+- The proxy number is within 8 s.
+- The new `CONNECT` got 403.
+- The removal's audit row is there.
+
+Verdict: any FAIL is FAIL, else anything not read is INCOMPLETE, else PASS. If the stream breaks without an `end` line, the cut is taken from the app's log line, and end to end is not measured.
+
+Envoy only closes an open tunnel when the old listener's drain ends. Envoy runs with `--drain-time-s` = `DRAIN_SECONDS` = 5 and `--drain-strategy immediate`. The proxy also reads the snapshot every `POLL_SECONDS` = 2 s. So the cut lands about 5 to 8 s after `latest.json`, and about 3 s more after the command. The ticket's "within one snapshot (≤5 s)" is read as "the cut comes from the first listener written after the change", with the 8 s line. That reading goes to the founder.
+
+**Leaves behind nothing.** The host is off the org's allowlist for about 15 to 30 s, for every app in the org. The last line says `host back on the allowlist: yes` or `NO`. On `NO` it says how to put it back by hand, and the command exits 1 whatever the verdict. The last lines also hold a markdown row for `RESULTS.md`. Results go to `results/ga-6.1.json`. Neither the operator's token, the cookie nor the proxy's user is ever printed or saved.
 
 ## What feeds what
 
