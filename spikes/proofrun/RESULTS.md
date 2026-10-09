@@ -378,6 +378,41 @@ Either way the first step, `pulumi up --stack c-proofcell02`, is needed to give 
 
 The same trap waits for the next lazy resource on cell 2. `GET /v1/cell` for org 2 (about 23:18 UTC): `database` `off`, `egress` `off`, `connections` `failed`; 34 environments, none with a database; cell 2 has no Cloud SQL instance (its stack has `database` `false`; the `ga1pg*` apps have no database). A deploy with `[state] postgres = true` (GA-4.3, GA-4.5) would insert a `database` row and run `ssc-cell-deployer proofcell02 database`, and the warm option (GA-4.8) runs `proofcell02 warm=true`.
 
+## GA-6.1 live proof, 2026-10-09 (cell 1)
+
+### GA-6.1 live revoke and drain
+
+Setup: `pegress` was redeployed to preview with `/hold` (R3, `ssc deploy --app pegress spikes/proofrun/apps/egress --wait`). Then `drain --app pegress --label proofcell01` ran at 00:58:53 UTC with the founder's admin CLI login (usr_t2ery0hinsclyj940jqw, org org_i5w2ocw7nnealxbl7wsh). The kit code is 3800d6d, 713ba72 and 06738e2. The proxy image is the live one (991c83bf…). The app held a tunnel to `www.cloudflare.com` with a keep-alive request every second while the host was removed from the org's allowlist.
+
+| # | Proof | Result |
+| --- | --- | --- |
+| GA-6.1 live revoke and drain | proofcell01, `pegress` preview, www.cloudflare.com | **PASS** 2026-10-09T00:58:53.506+00:00: latest.json +0.49 s after the delete, listener +2.27 s, tunnel cut +5.00 s (closed); cut 7.27 s after the snapshot (line 8 s), end to end 7.88 s (not judged); new CONNECT 403; audit seq 741 (removed), 742 (re-added); host back: yes |
+
+**GA-6.1 5 of 5 checks PASS.**
+- **Cut.** The hold ended `closed` after 10 answered ticks.
+- **Cause.** The cut came from the first listener written after the change:
+  - `latest.json` updated 00:58:54.000;
+  - the proxy logged `egress listener written` at 00:58:56.268;
+  - the tunnel closed at 00:59:01.265, by the app's clock;
+  - the proxy's access line agrees: CONNECT 200, flags `DC`, 10716 ms, ended 00:59:01.265.
+- **Timing.** The cut came 7.27 s after the snapshot, within the 8 s line (`POLL_SECONDS` 2 + `DRAIN_SECONDS` 5 + 1). Split: poll 2.27 s, drain 5.00 s. End to end from the delete it was 7.88 s; the delete itself answered in 0.19 s.
+- **Refusal.** A new tunnel to the host got 403 from the proxy.
+- **Audit.** `org.updated` on `egress_host` `www.cloudflare.com`: seq 741 for the removal, seq 742 for the re-add. The host was back on the allowlist after about 15 s.
+
+**First run, 00:55:12 UTC: INCOMPLETE, for evidence only.** The run's own numbers were in line:
+- the hold was cut (`closed`);
+- the new CONNECT got 403;
+- the audit rows were seq 736 and 737;
+- the host was put back.
+
+The kit's two free-text Cloud Logging searches on the proxy machine (`"egress listener written"`, and `"www.cloudflare.com:443"` with the environment id) found nothing in its 120 s window. The same queries found both lines a minute later, and their `receiveTimestamp` was within 0.2 s of being written, so the free-text search seems to lag well behind ingestion. Read by hand from those lines, the run had a cut 5.79 s after the snapshot: listener 00:55:13.788, then the cut 00:55:18.787, so drain 5.00 s. The rerun found the lines in time.
+
+Seen:
+- **Drain timing.** The drain is Envoy's whole drain time both times (5.00 s): a tunnel on the old listener is closed when the drain ends, not sooner.
+- **latest.json timing is in whole seconds.** `latest.json`'s update time comes back from `gcloud storage objects describe` in whole seconds (`.000` both times). Compile can therefore be up to 1 s more than shown, and poll and the proxy number up to 1 s less than shown.
+
+**Open for the founder: the ticket's "≤5 s".** The ticket's line is "cut within one snapshot (≤5 s)". With `DRAIN_SECONDS` = 5 and a 2 s snapshot poll, the cut cannot land within 5 s of `latest.json`, so the kit judges it against 8 s. The kit reads "within one snapshot" as "the cut comes from the first listener written after the change", which held. Whether 7.27 s from the snapshot, 7.88 s from the command, is accepted, or `DRAIN_SECONDS` is shortened, is the founder's decision.
+
 ## GA-6.5 live proof, 2026-10-09 (cell 1)
 
 ### GA-6.5 build network: gitleaks still blocks secrets
