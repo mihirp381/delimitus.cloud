@@ -12,3 +12,11 @@ Deploys a folder to an app's preview environment on Small Software Cloud and pri
 - Outputs: `preview-url`, `release-id`, `operation-id`.
 - There is no environment input: the Action only deploys to preview. Give it a token with scope `preview`, which the API never lets touch production. Production changes only through `ssc promote`.
 - Runs on Linux and macOS runners. It installs uv 0.12.19 with `astral-sh/setup-uv` and Python 3.14 through uv.
+
+## The token
+
+- Create it with your own login: `ssc login --org <org id>`, then `ssc token create-ci --label <owner/repo>`. Store what it prints as a repository secret, `SSC_PREVIEW_TOKEN` in the example above. It is shown once and never kept. An agent's login cannot create one.
+- It lasts 90 days at most: `--days N` for less (1 to 90), never more, and there is no refresh. Create a new one and replace the secret before it ends.
+- It can do what you can do on preview and nothing on production: deploy preview of any app you can build, read what you can read, and ask to share preview. Promote, any request naming prod and any `DELETE` are refused. It acts as you and is audited as you.
+- It ends when you revoke it (`ssc token list-ci`, then `ssc token revoke-ci <id>`; an org admin can revoke anyone's), when it expires, or when your account is deactivated. Logging out does not end it.
+- A repository connected through the GitHub App (`ssc repo connect`) needs no token: SSC deploys its pushes itself.

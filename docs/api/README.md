@@ -17,8 +17,8 @@ compared in CI. Decision record: `docs/decisions/README.md` 011.
 A credential is a bearer JWT, `typ: ssc-api+jwt`, ES256, signed by a key in the configured JWKS,
 with claims `iss`, `aud`, `sub`, `iat`, `exp`, `jti`, `org`, `kind` (`user`, `workload` or
 `operator`), and optionally `agent` (bool), `client_id` and `scope` (`preview` only, below). The
-`jti` is the credential id: rate limits and idempotency keys are scoped to it. Issuing credentials is SSC-020/SSC-022's job; this
-layer only verifies them.
+`jti` is the credential id: rate limits and idempotency keys are scoped to it. Issuing credentials is the auth host's job
+(`ssc_control.identity.authhost`); this layer only verifies them.
 
 ## Conventions every endpoint follows
 
@@ -137,6 +137,20 @@ environment, whatever the method, and on any other change except those in
 `POST /v1/approvals` of kind `agent_share` or `widen_audience` whose body names an environment
 that is not prod. Preview changes and reads stay open. Any other `scope` value is
 `401 UNAUTHENTICATED`.
+
+**CI tokens are issued `preview` credentials** (GA-7.7, decision 011 amendment). The auth
+host's `POST /ci-tokens` (bearer: the person's own login, JSON `{label, days}`, `days` 1 to 90,
+default 90) answers `{token, id, label, expires_at}` once, with `Cache-Control: no-store`; it
+refuses with OAuth-style errors: `401 invalid_token`, `403 access_denied` (an agent's, scoped,
+`ci`, browser or audience-bound login), `400 invalid_request` and `429` (ten an hour per person,
+`Retry-After: 3600`). The token is the one access token of an `auth_session` of kind `ci`, so
+it ends on its next call once the session is revoked, expired or its person deactivated, and a
+`ci` session presented without `scope: preview` is `401 UNAUTHENTICATED`.
+`GET /v1/ci-tokens` lists the caller's, or every one in the org for an active org admin,
+revoked and expired included, newest first, at most 200, never the token itself.
+`DELETE /v1/ci-tokens/{ci_token_id}` revokes one and answers it (`200`, the same answer again
+once revoked, audited once as `token.revoked`): its owner or an active org admin, else
+`404 NOT_FOUND`; an agent credential is `AGENT_SESSION_REFUSED` and a `preview` one `FORBIDDEN`.
 
 **Every environment has an address** (decision 004). `EnvironmentOut.url` is
 `https://<slug>.<cell label>.<apps domain>` for prod and `https://<slug>--preview.<cell
