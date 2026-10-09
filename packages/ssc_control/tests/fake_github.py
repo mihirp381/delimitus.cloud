@@ -222,15 +222,23 @@ class FakeGitHub:
         if m and method == "GET":
             if perms.get("checks") != "read":
                 return httpx2.Response(403)
-            runs = self.check_runs.get(m.group(1), [])
-            return httpx2.Response(200, json={"total_count": len(runs), "check_runs": runs})
+            return _page(request, "check_runs", self.check_runs.get(m.group(1), []))
         if rest == "/actions/runs" and method == "GET":
             if perms.get("actions") != "read":
                 return httpx2.Response(403)
             sha = parse_qs(request.url.query.decode())["head_sha"][0]
-            runs = self.workflow_runs.get(sha, [])
-            return httpx2.Response(200, json={"total_count": len(runs), "workflow_runs": runs})
+            return _page(request, "workflow_runs", self.workflow_runs.get(sha, []))
         return httpx2.Response(404)
+
+
+def _page(request: httpx2.Request, key: str, runs: list[Json]) -> httpx2.Response:
+    """One page of ``runs`` as GitHub pages a list: ``per_page`` (30 by default) items of the
+    1-based ``page``, with ``total_count`` the whole list's length."""
+    query = parse_qs(request.url.query.decode())
+    per_page = int(query.get("per_page", ["30"])[0])
+    page = int(query.get("page", ["1"])[0])
+    items = runs[(page - 1) * per_page : page * per_page]
+    return httpx2.Response(200, json={"total_count": len(runs), key: items})
 
 
 def tarball_of(

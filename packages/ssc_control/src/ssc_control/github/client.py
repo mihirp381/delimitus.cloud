@@ -28,6 +28,7 @@ TOKEN_MARGIN: Final = timedelta(minutes=5)
 JWT_LIFETIME_SECONDS: Final = 540
 JWT_BACKDATE_SECONDS: Final = 60
 PAGE: Final = 100
+MAX_PAGES: Final = 10
 CHECK_NAME: Final = "SSC / preview"
 CHUNK_BYTES: Final = 64 * 1024
 
@@ -51,6 +52,18 @@ class GitHubError(RuntimeError):
 
 class SourceTooLargeError(GitHubError):
     """The tarball is larger than the caller's cap; nothing past it was kept."""
+
+
+class TooManyResultsError(GitHubError):
+    """A list has more than :data:`MAX_PAGES` pages of :data:`PAGE` items; GitHub answered
+    every page it was asked for, SSC reads no further."""
+
+    def __init__(self, path: str) -> None:
+        RuntimeError.__init__(
+            self, f"GitHub lists more than {MAX_PAGES * PAGE} items at {path}; SSC reads no more"
+        )
+        self.status = 200
+        self.path = path
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,20 +244,36 @@ class GitHubApp:
         if await self._call("PATCH", path, token, json=report.body()) is None:
             raise GitHubError(404, path)
 
+    async def _pages(
+        self, path: str, token: str, key: str, params: Mapping[str, str | int]
+    ) -> list[Json]:
+        """Every item under ``key`` of a paged list, :data:`PAGE` at a time from page 1. Stops
+        at an empty or short page or once ``total_count`` items are read; raises
+        :class:`TooManyResultsError` when :data:`MAX_PAGES` full pages did not reach the end."""
+        out: list[Json] = []
+        for page in range(1, MAX_PAGES + 1):
+            raw = await self._call(
+                "GET", path, token, params={**params, "per_page": PAGE, "page": page}
+            )
+            if raw is None:
+                raise GitHubError(404, path)
+            items = cast(list[Json], raw.get(key) or [])
+            out.extend(items)
+            total = raw.get("total_count")
+            if len(items) < PAGE or (isinstance(total, int) and len(out) >= total):
+                return out
+        raise TooManyResultsError(path)
+
     async def check_runs(self, repo: RepoRef, sha: str) -> list[Json]:
-        """The commit's check runs, up to :data:`PAGE`, every app's."""
+        """The commit's check runs, every app's, read page by page up to :data:`MAX_PAGES` of
+        :data:`PAGE`; raises :class:`TooManyResultsError` past that."""
         token = await self.installation_token(repo.installation_id, GATE_READ, repo.id)
         path = f"/repos/{repo.name}/commits/{sha}/check-runs"
-        raw = await self._call("GET", path, token, params={"per_page": PAGE, "filter": "all"})
-        if raw is None:
-            raise GitHubError(404, path)
-        return cast(list[Json], raw.get("check_runs") or [])
+        return await self._pages(path, token, "check_runs", {"filter": "all"})
 
     async def workflow_runs(self, repo: RepoRef, sha: str) -> list[Json]:
-        """The Actions workflow runs of the commit, up to :data:`PAGE`."""
+        """The Actions workflow runs of the commit, read page by page up to :data:`MAX_PAGES`
+        of :data:`PAGE`; raises :class:`TooManyResultsError` past that."""
         token = await self.installation_token(repo.installation_id, GATE_READ, repo.id)
         path = f"/repos/{repo.name}/actions/runs"
-        raw = await self._call("GET", path, token, params={"per_page": PAGE, "head_sha": sha})
-        if raw is None:
-            raise GitHubError(404, path)
-        return cast(list[Json], raw.get("workflow_runs") or [])
+        return await self._pages(path, token, "workflow_runs", {"head_sha": sha})
