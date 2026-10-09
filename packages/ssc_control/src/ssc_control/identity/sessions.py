@@ -5,6 +5,11 @@ A session lives at most 12 hours from sign-in and is never extended. A login cod
 bits, kept only as its SHA-256, valid for one minute, for one app host and for the browser that
 holds the gateway's login nonce; it works once, and a wrong host or nonce uses it up.
 
+A CI session (GA-7.7) backs one ``preview``-scoped access token kept in a repository secret: it
+is opened from a person's command-line session, carries a label, lives 1 to 90 days, never has a
+refresh token and ends when its person or an org admin revokes it (``revoked``), at its expiry
+or when its person is deactivated.
+
 Revoking a person (:func:`revoke_user`) revokes every live session, which ends their refresh
 tokens and their API tokens' ``sid``, and sets ``sessions_not_before``, which the snapshot carries
 to the gateway so every app-host cookie issued earlier is refused, even after reactivation.
@@ -27,8 +32,13 @@ from ssc_control.snapshot.service import mark_dirty
 
 SESSION_SECONDS: Final = 12 * 3600
 CODE_SECONDS: Final = 60
-SessionKind = Literal["browser", "cli", "console"]
-RevokeReason = Literal["logout", "user_deactivated", "refresh_reuse", "operator", "code_reuse"]
+CI_MAX_DAYS: Final = 90
+CI_LABEL_MAX: Final = 100
+CI_SCOPE: Final = "preview"
+SessionKind = Literal["browser", "cli", "console", "ci"]
+RevokeReason = Literal[
+    "logout", "user_deactivated", "refresh_reuse", "operator", "code_reuse", "revoked"
+]
 
 
 def digest(secret: str) -> bytes:
@@ -67,6 +77,13 @@ _OPEN = text(
     "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, created_at, "
     "expires_at, agent_client_id, token_audience) values (:id, :org, :user, :kind, :conn, now(), "
     "now() + make_interval(secs => :secs), :agent, :audience)"
+)
+# A CI session copies the connection its person signed in through from the session opening it.
+_OPEN_CI = text(
+    "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, created_at, "
+    "expires_at, scope, label) select :id, org_id, user_id, 'ci', connection_id, now(), "
+    "now() + make_interval(days => :days), :scope, :label from ssc.auth_session "
+    "where org_id = :org and id = :parent and user_id = :user returning expires_at"
 )
 # Live: not revoked, not expired, the person active and not revoked since the session began.
 _LIVE = text(
@@ -157,6 +174,54 @@ async def open_session(  # noqa: PLR0913  (keyword-only)
         ),
     )
     return session_id
+
+
+async def open_ci_session(  # noqa: PLR0913  (keyword-only)
+    conn: AsyncConnection,
+    org_id: str,
+    *,
+    parent_id: str,
+    user_id: str,
+    label: str,
+    days: int,
+    actor: Actor,
+) -> tuple[str, datetime] | None:
+    """A CI session for ``user_id`` opened from their session ``parent_id``: its id and expiry,
+    or None when there is no such parent. Audited as ``token.issued``; the label is not."""
+    session_id = new_id("ses")
+    expires_at = (
+        await conn.execute(
+            _OPEN_CI,
+            {
+                "id": session_id,
+                "org": org_id,
+                "parent": parent_id,
+                "user": user_id,
+                "days": days,
+                "scope": CI_SCOPE,
+                "label": label,
+            },
+        )
+    ).scalar_one_or_none()
+    if expires_at is None:
+        return None
+    await append_event(
+        conn,
+        NewEvent(
+            org_id=org_id,
+            action=AuditAction.TOKEN_ISSUED,
+            actor=actor,
+            target_kind="auth_session",
+            target_id=session_id,
+            after={
+                "kind": "ci",
+                "scope": CI_SCOPE,
+                "user_id": user_id,
+                "expires_at": expires_at.isoformat(),
+            },
+        ),
+    )
+    return session_id, expires_at
 
 
 async def live_session(conn: AsyncConnection, org_id: str, session_id: str) -> LiveSession | None:

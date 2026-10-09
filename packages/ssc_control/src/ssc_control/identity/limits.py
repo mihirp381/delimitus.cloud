@@ -1,8 +1,10 @@
-"""Abuse limits on the auth host's unauthenticated OAuth steps, counted in this instance.
+"""Abuse limits on the auth host's unauthenticated OAuth steps and on CI tokens, counted in this
+instance.
 
 ``/register`` takes ten clients an hour per address. The work-email step of ``/authorize`` takes
 twenty tries an hour per address and twenty per email domain, because each try asks WorkOS and
-looks the organisation up across every org (decision 029).
+looks the organisation up across every org (decision 029). ``/ci-tokens`` takes ten CI tokens an
+hour per person (GA-7.7).
 
 Cloud Run may run more than one instance, so a limit is per instance. The address is the
 client's, as the control load balancer appends it to ``X-Forwarded-For``: ``<anything the client
@@ -21,6 +23,8 @@ LOAD_BALANCER_HOPS: Final = 2
 """The client is the second entry from the right of ``X-Forwarded-For``."""
 REGISTER_PER_HOUR: Final = 10
 EMAIL_PER_HOUR: Final = 20
+CI_TOKENS_PER_HOUR: Final = 10
+"""CI tokens a person may create an hour (GA-7.7), counted per person, not per address."""
 
 
 def client_address(forwarded_for: str | None, peer: str | None, hops: int) -> str:

@@ -3,7 +3,8 @@
 Access tokens: ES256 ``ssc-api+jwt`` the API verifies, five minutes, with ``sid`` naming the
 session; ``jti`` is the session id, so rate limits and idempotency keys follow the session. A
 session approved for a coding agent (SSC-048) adds ``agent: true`` and ``client_id``, so the API
-records every call as the agent's.
+records every call as the agent's. A CI token (GA-7.7) is the one access token of a ``ci``
+session: ``scope: preview`` and ``exp`` the session's expiry, up to 90 days.
 Refresh tokens (the command line, MCP clients and the console, never a browser session):
 ``ssc_rt.<org id>.<secret>``, used once; presenting a used one
 revokes the session (``refresh_reuse``). Device grants (RFC 8628): the device code is
@@ -66,13 +67,18 @@ class Signer:
         audience: str,
         now: datetime,
         agent_client_id: str | None = None,
+        expires_at: datetime | None = None,
+        scope: Literal["preview"] | None = None,
     ) -> str:
+        """Five minutes unless ``expires_at`` says otherwise (a CI token: its session's
+        expiry); ``scope`` narrows the credential (decision 011)."""
+        exp = now + timedelta(seconds=ACCESS_SECONDS) if expires_at is None else expires_at
         claims: dict[str, Any] = {
             "iss": self.issuer,
             "aud": audience,
             "sub": user_id,
             "iat": now,
-            "exp": now + timedelta(seconds=ACCESS_SECONDS),
+            "exp": exp,
             "jti": session_id,
             "org": org_id,
             "kind": "user",
@@ -80,6 +86,8 @@ class Signer:
         }
         if agent_client_id is not None:
             claims.update(agent=True, client_id=agent_client_id)
+        if scope is not None:
+            claims["scope"] = scope
         return jwt.encode(
             claims, self._pem, algorithm=ALGORITHM, headers={"kid": self.kid, "typ": API_TOKEN_TYP}
         )

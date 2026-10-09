@@ -19,6 +19,11 @@ rides the same ``/callback`` with ``flow: oauth``, and ``/token`` takes its
 console, on its own origin, may call ``/token`` and ``/revoke`` cross-origin (CORS for exactly
 ``console_url``, no credentials); nothing else on this host answers CORS.
 
+CI tokens (GA-7.7): ``POST /ci-tokens`` takes a person's own API access token from a command-line
+session (not an agent's, not a scoped one) and answers one ``preview``-scoped access token
+backed by a new ``ci`` session, for a repository secret. Only this host holds the signing key;
+the API lists and revokes them.
+
 Every refused sign-in shows the same page (``pages.REFUSED``); the reason is logged and audited
 as ``login.failed``. Login state lives in a signed, ten-minute cookie; the WorkOS ``state`` is only
 its random check value.
@@ -33,22 +38,28 @@ import logging
 import re
 import secrets
 import time
+import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC
 from typing import Any, Final, Literal, cast
 from urllib.parse import parse_qs, urlencode
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from ssc_contracts.audit import ActorKind, AuditAction
+from ssc_control.api.auth import Principal, PrincipalKind, Verifier
+from ssc_control.api.problems import Refusal
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.db import bound_org, check_org_id
 from ssc_control.identity import connections, join, pages, sessions, tokens
 from ssc_control.identity.authorize import DEVICE_GRANT, Kit, OAuthFlow
 from ssc_control.identity.cell_callers import CallerCheck
+from ssc_control.identity.limits import CI_TOKENS_PER_HOUR, RateLimit
 from ssc_control.identity.rules import LoginRefusal, ProfileError, parse_return_to
 from ssc_control.identity.settings import AuthSettings
 from ssc_control.identity.workos import WorkOSClient, WorkOSError
@@ -62,6 +73,8 @@ _WORKOS_ERROR: Final = re.compile(r"[a-z_]{1,64}")
 CORS_PATHS: Final = frozenset({"/token", "/revoke"})
 """The only paths the console calls cross-origin."""
 _ORG_CELL = text("select cell_label from ssc.org where id = :org")
+MAX_CI_BODY: Final = 4096
+NO_STORE: Final = {"cache-control": "no-store", "pragma": "no-cache"}
 
 Flow = Literal["browser", "device", "oauth"]
 
@@ -139,6 +152,40 @@ def _form(body: bytes) -> dict[str, str]:
 
 def _oauth_error(error: str, status: int = 400) -> JSONResponse:
     return JSONResponse({"error": error}, status_code=status, headers={"cache-control": "no-store"})
+
+
+def _ci_parent_refusal(live: sessions.LiveSession | None, user_id: str) -> JSONResponse | None:
+    """Only a person's own live command-line session, not an agent's or an MCP client's, may
+    open a CI session."""
+    if live is None or live.user_id != user_id:
+        return _oauth_error("invalid_token", 401)
+    if live.kind != "cli" or live.agent_client_id is not None or live.token_audience is not None:
+        return _oauth_error("access_denied", 403)
+    return None
+
+
+class CiTokenIn(BaseModel):
+    """``POST /ci-tokens``: a label of 1 to 100 characters (no control characters) and 1 to 90
+    days."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    label: str
+    days: int = Field(default=sessions.CI_MAX_DAYS, ge=1, le=sessions.CI_MAX_DAYS)
+
+
+def _ci_token_in(body: bytes) -> CiTokenIn | None:
+    if len(body) > MAX_CI_BODY:
+        return None
+    try:
+        asked = CiTokenIn.model_validate_json(body)
+    except ValidationError:
+        return None
+    label = asked.label.strip()
+    if not 1 <= len(label) <= sessions.CI_LABEL_MAX or any(
+        unicodedata.category(c) == "Cc" for c in label
+    ):
+        return None
+    return CiTokenIn(label=label, days=asked.days)
 
 
 def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one route table)
@@ -550,6 +597,84 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                         actor=Actor(ActorKind.USER, done.user_id),
                     )
         return Response(status_code=200, headers={"cache-control": "no-store"})
+
+    # ── CI tokens (GA-7.7) ────────────────────────────────────────────────────
+
+    ci_limit = RateLimit(host.clock, CI_TOKENS_PER_HOUR)
+    caller_check = Verifier(host.signer.jwks(), s.auth_url)
+
+    def ci_caller(request: Request) -> Principal | JSONResponse:
+        """The person asking for a CI token, or the refusal; counted against their limit."""
+        scheme, _, bearer = request.headers.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not bearer.strip():
+            return _oauth_error("invalid_token", 401)
+        try:
+            caller = caller_check.verify(bearer.strip(), s.api_audience)
+        except Refusal:
+            return _oauth_error("invalid_token", 401)
+        if (
+            caller.kind is not PrincipalKind.USER
+            or caller.is_agent
+            or caller.scope is not None
+            or caller.session_id is None
+        ):
+            return _oauth_error("access_denied", 403)
+        if not ci_limit.allow(f"{caller.org_id}:{caller.subject}"):
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": "too many CI tokens"},
+                status_code=429,
+                headers={"retry-after": "3600", "cache-control": "no-store"},
+            )
+        return caller
+
+    @app.post("/ci-tokens")
+    async def create_ci_token(request: Request) -> JSONResponse:
+        """A ``preview``-scoped access token for a repository secret, valid ``days`` days and
+        shown once. The caller is a person's own access token for this API from a live
+        command-line session: 401 ``invalid_token`` when it is not valid or its session has
+        ended, 403 ``access_denied`` for an agent's, a scoped one or any other session's."""
+        caller = ci_caller(request)
+        if isinstance(caller, JSONResponse):
+            return caller
+        asked = _ci_token_in(await request.body())
+        if asked is None:
+            return _oauth_error("invalid_request")
+        org_id, user_id = caller.org_id, caller.subject
+        async with bound_org(host.engine, org_id) as conn:
+            live = await sessions.live_session(conn, org_id, str(caller.session_id))
+            refusal = _ci_parent_refusal(live, user_id)
+            opened = None
+            if refusal is None and live is not None:
+                opened = await sessions.open_ci_session(
+                    conn,
+                    org_id,
+                    parent_id=live.id,
+                    user_id=user_id,
+                    label=asked.label,
+                    days=asked.days,
+                    actor=Actor(ActorKind.USER, user_id),
+                )
+        if opened is None:
+            return refusal or _oauth_error("invalid_token", 401)
+        ci_id, expires_at = opened
+        token = host.signer.access_token(
+            org_id=org_id,
+            user_id=user_id,
+            session_id=ci_id,
+            audience=s.api_audience,
+            now=tokens.utcnow(),
+            expires_at=expires_at,
+            scope="preview",
+        )
+        return JSONResponse(
+            {
+                "token": token,
+                "id": ci_id,
+                "label": asked.label,
+                "expires_at": expires_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            },
+            headers=NO_STORE,
+        )
 
     # ── the gateway (SSC-018) ─────────────────────────────────────────────────
 

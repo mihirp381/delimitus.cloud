@@ -70,7 +70,9 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "audit": frozenset({"format", "filters"}),
     "audit_anchor": frozenset({"restored_to", "prior_anchor_seq", "head_seq", "ref"}),
     "org": frozenset({"name", "agent_logs", "cell_label"}),  # cell_label: SSC-097
-    "auth_session": frozenset({"kind", "user_id", "reason", "via", "client_id"}),  # SSC-019
+    # SSC-019; scope and expires_at: a CI token (GA-7.7), whose label is not recorded.
+    "auth_session": frozenset({"kind", "user_id", "reason", "via", "client_id"})
+    | frozenset({"scope", "expires_at"}),
     "directory_connection": frozenset(
         {"state", "reason", "join_rule", "connection_type", "workos_directory_id"}
     ),  # SSC-019
