@@ -84,6 +84,8 @@ TARGET_KIND: Final = "warm"
 WAKING_MARKER: Final = "<title>Waking up</title>"
 """In ``ssc_edge.pages.WAKING``, the gateway's 503 when the app did not answer in 2 s."""
 WAKE_COOKIE: Final = "__Host-ssc-wake"
+NOT_FOUND_MARKER: Final = "<title>Not found</title>"
+"""In ``ssc_edge.pages.NOT_FOUND``: the gateway's answer for ``www``, a reserved label."""
 PAGE_TITLE: Final = "SSC proof run: warm"
 PAGE_ACCEPT: Final = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 SCREENSHOT: Final = "ga-4.8-console.png"
@@ -169,19 +171,53 @@ class Observed:
 
 @dataclass
 class ControlApi:
-    """The control API with the CLI's login; the token stays in the header."""
+    """The control API with the CLI's login. The login's access token lives five minutes
+    (``ssc_cli.credentials``), so it is read again through the CLI, which refreshes it, before
+    every call, and once more on a 401 for one retry of that call. It stays in the header and is
+    never kept, printed or saved."""
 
     send: Send
+    run: Run
     url: str
-    token: str
+    retries: int = 0
+
+    def token(self) -> str:
+        url, token = t8.control_api(self.run)
+        fence(url)
+        return token
+
+    def _send(  # noqa: PLR0913  (keyword-only)
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        data: bytes | None,
+        timeout: float,
+        token: str,
+    ) -> Fetched:
+        sent = dict(headers) | {"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT}
+        answer = self.send(method, url, sent, data, timeout)
+        if answer.status == 401:
+            self.retries += 1
+            sent["Authorization"] = f"Bearer {self.token()}"
+            answer = self.send(method, url, sent, data, timeout)
+        return answer
 
     def call(self, method: str, path: str, body: Mapping[str, Any] | None = None) -> Fetched:
-        headers = {"Authorization": f"Bearer {self.token}", "User-Agent": USER_AGENT}
+        headers: dict[str, str] = {}
         data = None
         if body is not None:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode()
-        return self.send(method, self.url + path, headers, data, 30.0)
+        return self._send(
+            method=method,
+            url=self.url + path,
+            headers=headers,
+            data=data,
+            timeout=30.0,
+            token=self.token(),
+        )
 
     def get_warm(self) -> dict[str, Any]:
         answer = self.call("GET", "/v1/warm")
@@ -201,12 +237,17 @@ class ControlApi:
     def get(
         self, url: str, headers: Mapping[str, str] | None = None, timeout: float = 90.0
     ) -> Fetched:
-        return self.send("GET", url, dict(headers or {}), None, timeout)
+        """A GET with the token ``search_audit`` put in ``headers``, retried once on a 401."""
+        given = dict(headers or {})
+        token = given.pop("Authorization", "").removeprefix("Bearer ") or self.token()
+        return self._send(
+            method="GET", url=url, headers=given, data=None, timeout=timeout, token=token
+        )
 
     def audit(self, since: datetime) -> list[dict[str, Any]]:
         stamp = since.astimezone(UTC).isoformat().replace("+00:00", "Z")
         filters = {"action": ACTION, "target_kind": TARGET_KIND, "since": stamp, "limit": 50}
-        return t8.search_audit(self.get, self.url, self.token, filters)
+        return t8.search_audit(self.get, self.url, self.token(), filters)
 
 
 @dataclass
@@ -537,8 +578,14 @@ def warm_gateway(world: World) -> str:
     """One GET to the cell's ``www`` host, which the gateway answers itself: its cold start is
     paid here, not by the page load. The app is not asked."""
     answer = world.http(f"https://{world.www}/", {"User-Agent": USER_AGENT}, 120.0)
-    world.mark("gateway warm-up", status=answer.status, seconds=round(answer.seconds, 3))
-    return f"www warm-up HTTP {answer.status or answer.error} in {answer.seconds:.2f} s"
+    own = answer.status == 404 and NOT_FOUND_MARKER.encode() in answer.body
+    world.mark(
+        "gateway warm-up", status=answer.status, seconds=round(answer.seconds, 3), own_404=own
+    )
+    return (
+        f"www warm-up HTTP {answer.status or answer.error} in {answer.seconds:.2f} s, "
+        f"the gateway's own 404 page {own}"
+    )
 
 
 def page_load(world: World, label: str) -> Fetched:
@@ -669,25 +716,48 @@ def prove(world: World) -> None:
     world.checks.append(check_cold_load(world))
 
 
+UNDO_BODY: Final = '{"environment_ids": [], "gateway": false, "monthly_usd_shown": 0}'
+
+
+def undo_lines(world: World, why: str) -> list[str]:
+    """What a person does when the kit could not set warm off: the console, or the PUT."""
+    return [
+        f"finally: setting warm off failed ({why}); WARM IS STILL ON for {world.args.app} prod "
+        f"({world.env_id}). Undo by hand, either way:",
+        "  console: sign in as an org admin (admin2), open the environment screen, Warm option "
+        f"panel; untick {world.args.app}; the monthly add shows $0; press Save warm option.",
+        f"  API: as an org admin, PUT {world.api.url}/v1/warm with the body {UNDO_BODY} "
+        "(and your own bearer token).",
+        "  then check: GET /v1/warm shows monthly_usd 0.",
+    ]
+
+
 def restore(world: World, *, loud: bool) -> None:
-    """Set warm off again if the kit set it on and has not yet set it off."""
+    """Set warm off again if the kit set it on and has not yet set it off. ``put_warm`` reads a
+    fresh token first and retries once on a 401."""
     if not world.warm_by_kit:
         return
-    answer = world.api.put_warm([], 0)
-    world.mark("restore warm off", status=answer.status)
-    if answer.status == 200 and warm_of(_json(answer), world.env_id) is False:
+    try:
+        answer = world.api.put_warm([], 0)
+    except CommandError as exc:
+        answer, why = None, str(exc)
+    else:
+        why = f"HTTP {answer.status or answer.error}"
+    world.mark("restore warm off", status=answer and answer.status)
+    if (
+        answer is not None
+        and answer.status == 200
+        and warm_of(_json(answer), world.env_id) is False
+    ):
         world.warm_by_kit, world.left_off = False, True
-        line = f"finally: warm set off again for {world.env_id} (HTTP 200)"
+        lines = [f"finally: warm set off again for {world.env_id} (HTTP 200)"]
     else:
         world.left_off = False
-        line = (
-            f"finally: setting warm off answered {answer.status or answer.error}; undo by hand: "
-            "untick it in the console's Warm option and save, or PUT /v1/warm "
-            '{"environment_ids": [], "gateway": false, "monthly_usd_shown": 0}'
-        )
-    world.lines.append(line)
+        lines = undo_lines(world, why)
+    world.lines.extend(lines)
     if loud:
-        world.say(line)
+        for line in lines:
+            world.say(line)
 
 
 def verdict(checks: Sequence[Check]) -> bool | None:
@@ -734,6 +804,7 @@ def finish(world: World) -> Outcome:
     checks = fill(world)
     lines = [c.line() for c in checks] + world.lines + console_lines(world)
     world.data.update(checks=[c.data() for c in checks], left_off=world.left_off)
+    world.data["control_401_retries"] = world.api.retries
     outcome = Outcome(PROOF, number(world), verdict(checks), lines, world.data)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     folder = results_dir()
@@ -770,9 +841,9 @@ def prepare(  # noqa: PLR0913, PLR0917  (the run's seams)
     except CookieError as exc:
         line = f"stopped: {exc}"
         return Outcome(PROOF, f"no session cookie for {host}", False, [line], {"app": args.app})
-    url, token = t8.control_api(run)
+    url, _ = t8.control_api(run)
     fence(url)
-    api = ControlApi(send, url.rstrip("/"), token)
+    api = ControlApi(send, run, url.rstrip("/"))
     world = World(
         args=args,
         run=run,

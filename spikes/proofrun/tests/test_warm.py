@@ -49,6 +49,9 @@ class ControlPlane:
         self.accept_wrong_cost = False
         self.preview_code = "VALIDATION_FAILED"
         self.refuse_off = False
+        self.refuse_off_status = 503
+        self.valid: Callable[[], str] = lambda: ""
+        self.unauthorized_next = 0
         self.on_change: Callable[[list[str]], None] = lambda _ids: None
         self.headers: list[Mapping[str, str]] = []
 
@@ -74,7 +77,7 @@ class ControlPlane:
         if body["monthly_usd_shown"] != COST * len(ids) and not self.accept_wrong_cost:
             return Fetched(422, 0.1, None, problem("VALIDATION_FAILED"))
         if self.refuse_off and not ids:
-            return Fetched(503, 0.1, None, b"{}")
+            return Fetched(self.refuse_off_status, 0.1, None, b"{}")
         if ids != self.warm:
             self.events.insert(
                 0,
@@ -100,6 +103,12 @@ class ControlPlane:
     ) -> Fetched:
         assert url.startswith(API)
         self.headers.append(headers)
+        latest = self.valid()
+        if self.unauthorized_next > 0:
+            self.unauthorized_next -= 1
+            return Fetched(401, 0.1, None, b"{}")
+        if latest and headers.get("Authorization") != f"Bearer {latest}":
+            return Fetched(401, 0.1, None, b"{}")
         if method == "PUT" and url.endswith("/v1/warm"):
             return self.put(json.loads(body or b"{}"))
         if url.endswith("/v1/warm"):
@@ -119,6 +128,12 @@ class Cell:
         self.revision = REVISION
         self.revision_after = REVISION
         self.calls: list[list[str]] = []
+        self.issued = 0
+        self.login_gone = False
+
+    @property
+    def latest(self) -> str:
+        return f"{TOKEN}-{self.issued}"
 
     def describe(self) -> dict[str, Any]:
         on = PROD in self.plane.warm and not self.never_min
@@ -156,7 +171,10 @@ class Cell:
             ]
             return Done(0, json.dumps({"slug": SLUG, "environments": envs}), "")
         if "-c" in argv:
-            return Done(0, f"{API}\n{TOKEN}", "")
+            if self.login_gone:
+                return Done(1, "", "no login")
+            self.issued += 1  # each read hands out a new token; the old one is refused after
+            return Done(0, f"{API}\n{self.latest}", "")
         if "describe" in argv:
             assert SERVICE in argv and f"--project=ssc-c-{LABEL}" in argv
             return Done(0, json.dumps(self.describe()), "")
@@ -192,7 +210,7 @@ class App:
         self.calls.append((url, headers))
         h = headers or {}
         if url == f"https://{WWW}/":
-            return Fetched(404, 1.5, None, b"")
+            return Fetched(404, 1.5, None, b"<title>Not found</title><h1>Not found</h1>")
         cookie = {"Set-Cookie": "__Host-ssc-wake=1; Path=/"}
         if url == f"https://{HOST}/":
             assert h.get("Sec-Fetch-Mode") == "navigate" and h.get("Sec-Fetch-Dest") == "document"
@@ -220,6 +238,7 @@ class Rig:
         self.app = App()
         self.clock = Clock()
         self.plane.on_change = self.changed
+        self.plane.valid = lambda: self.cell.latest
         CookieJar().put(HOST, COOKIE, "browser")
 
     def changed(self, ids: list[str]) -> None:
@@ -257,6 +276,8 @@ def test_the_happy_path_passes_every_automatic_check() -> None:
     shown = [p["monthly_usd_shown"] for p in rig.plane.puts]
     assert shown == [COST + 1, COST, COST, 0]
     assert outcome.data["cold_waking"] is True and outcome.data["warm_waking"] is False
+    checks = {c["n"]: c for c in outcome.data["checks"]}
+    assert "www warm-up HTTP 404 in 1.50 s, the gateway's own 404 page True" in checks[6]["detail"]
     text = json.dumps(outcome.data) + "\n".join(outcome.lines)
     assert TOKEN not in text and COOKIE not in text
 
@@ -341,7 +362,7 @@ def test_a_failed_off_put_is_retried_in_finally_and_the_final_line_says_not_off(
     assert by_n(outcome)[7] == "FAIL"
     assert rig.plane.puts[-1]["environment_ids"] == [] and rig.plane.warm == [PROD]
     assert "warm left off: NO" in outcome.number
-    assert any("undo by hand" in line for line in outcome.lines)
+    assert any("Undo by hand" in line for line in outcome.lines)
 
 
 def test_an_interrupt_sets_warm_off_and_says_so(capsys: pytest.CaptureFixture[str]) -> None:
@@ -483,3 +504,87 @@ def test_the_fixture_manifest_has_the_runtime_only() -> None:
     assert set(manifest) == {"schema", "runtime"}
     assert manifest["runtime"]["health_path"] == "/health"
     assert "fastapi" in (folder / "requirements.txt").read_text()
+
+
+def api_for(rig: Rig) -> warm.ControlApi:
+    return warm.ControlApi(send=rig.plane, run=rig.cell, url=API)
+
+
+def test_every_control_call_reads_a_fresh_token_and_a_stale_one_is_refused() -> None:
+    rig = Rig()
+    outcome = rig.run()
+    assert outcome.verdict == "PASS", outcome.lines
+    used = [h["Authorization"] for h in rig.plane.headers]
+    assert len(set(used)) == len(used) == 8  # GET, two refusals, GET, on, audit, off, audit
+    assert outcome.data["control_401_retries"] == 0
+    stale = f"Bearer {TOKEN}-1"
+    refused = rig.plane("GET", f"{API}/v1/warm", {"Authorization": stale}, None, 30.0)
+    assert refused.status == 401
+
+
+def test_a_401_reads_the_token_again_and_retries_that_call_once() -> None:
+    rig = Rig()
+    api = api_for(rig)
+    rig.plane.unauthorized_next = 1
+    assert api.get_warm()["monthly_usd"] == 0
+    rig.plane.unauthorized_next = 1
+    assert api.audit(datetime(2026, 10, 9, tzinfo=UTC)) == []
+    assert api.retries == 2
+    rig.plane.unauthorized_next = 2
+    with pytest.raises(CommandError, match="answered 401"):
+        api.get_warm()
+
+
+def test_a_401_on_the_audit_search_mid_run_is_retried_and_the_run_passes() -> None:
+    rig = Rig()
+    original = rig.changed
+
+    def changed(ids: list[str]) -> None:
+        original(ids)
+        if PROD in ids:
+            rig.plane.unauthorized_next = 1  # the next control call is check 5's audit search
+
+    rig.plane.on_change = changed
+    outcome = rig.run()
+    assert by_n(outcome)[5] == "PASS"
+    assert outcome.verdict == "PASS" and outcome.data["control_401_retries"] == 1
+
+
+def test_a_finally_after_401s_prints_the_exact_undo_and_never_the_token() -> None:
+    rig = Rig()
+    rig.plane.refuse_off = True
+    rig.plane.refuse_off_status = 401
+    outcome = rig.run()
+    assert by_n(outcome)[7] == "FAIL" and rig.plane.warm == [PROD]
+    assert "warm left off: NO" in outcome.number
+    text = "\n".join(outcome.lines)
+    assert "WARM IS STILL ON" in text and "Save warm option" in text
+    assert f"PUT {API}/v1/warm with the body {warm.UNDO_BODY}" in text
+    assert TOKEN not in text and TOKEN not in json.dumps(outcome.data)
+    offs = [p for p in rig.plane.puts if p["environment_ids"] == []]
+    assert len(offs) == 4  # check 7 and the finally, each retried once on the 401
+
+
+def test_a_finally_without_a_login_prints_the_undo(capsys: pytest.CaptureFixture[str]) -> None:
+    rig = Rig()
+    calls = {"n": 0}
+
+    def sleep(seconds: float) -> None:
+        if seconds == 60.0:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                rig.cell.login_gone = True
+                raise KeyboardInterrupt
+        rig.clock.sleep(seconds)
+
+    args = parser().parse_args(["warm", "--app", SLUG, "--label", LABEL])
+    with pytest.raises(KeyboardInterrupt):
+        warm.run(args, rig.cell, rig.plane, rig.app, sleep, rig.clock, rig.wall)
+    out = capsys.readouterr().out
+    assert rig.plane.warm == [PROD]
+    assert "no ssc login" in out and "WARM IS STILL ON" in out and warm.UNDO_BODY in out
+
+
+def test_the_not_found_marker_is_in_the_gateways_page() -> None:
+    pages = pytest.importorskip("ssc_edge.pages")
+    assert warm.NOT_FOUND_MARKER.encode() in pages.NOT_FOUND
