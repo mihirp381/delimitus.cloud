@@ -35,7 +35,13 @@ from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
 from ssc_control.github import gate, links
-from ssc_control.github.client import CHECK_NAME, GitHubApp, GitHubError, Repository
+from ssc_control.github.client import (
+    CHECK_NAME,
+    GitHubApp,
+    GitHubError,
+    Repository,
+    TooManyResultsError,
+)
 from ssc_control.github.links import BRANCH_PATTERN, REPOSITORY_PATTERN
 from ssc_control.github.tasks import defer_push
 from ssc_control.github.webhook import (
@@ -272,6 +278,10 @@ async def require_green_checks(
         raise Refusal(ErrorCode.REQUIRED_CHECKS_FAILING, evidence={"reason": "no_commit"})
     try:
         red = await gate.failing_checks(_github(request), link, source_commit)
+    except TooManyResultsError:
+        raise Refusal(
+            ErrorCode.GITHUB_UNAVAILABLE, evidence={"reason": "too_many_results", "path": "checks"}
+        ) from None
     except GitHubError as e:
         raise Refusal(
             ErrorCode.GITHUB_UNAVAILABLE, evidence={"status": e.status, "path": "checks"}

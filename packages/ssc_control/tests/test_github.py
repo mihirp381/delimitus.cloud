@@ -85,7 +85,7 @@ from ssc_control.deploy.builds import run_build
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.github import gate
 from ssc_control.github.__main__ import main, run_bind
-from ssc_control.github.client import CHECK_NAME
+from ssc_control.github.client import CHECK_NAME, MAX_PAGES, PAGE, RepoRef
 from ssc_control.github.links import BindError, RequiredCheck
 from ssc_control.github.push import run_push
 from ssc_control.github.source import unpack
@@ -319,6 +319,11 @@ async def pushed_commit(g: G, sha: str) -> None:
     )
     assert await run(g.b, dep["id"], g.ports) == "healthy"
     assert await step(g, sha) == "healthy"
+
+
+def gets(hub: FakeGitHub, tail: str) -> int:
+    """How many GETs the hub answered for a path ending in ``tail``."""
+    return sum(1 for c in hub.calls if c.startswith("GET ") and c.endswith(tail))
 
 
 def set_runtime(g: G, **changes: Any) -> None:
@@ -587,6 +592,62 @@ async def test_the_gate_never_opens_without_github(g: G) -> None:
     assert prod_builds(g) == []
 
 
+async def test_the_gate_reads_a_required_check_past_the_first_page(g: G) -> None:
+    await connect(g, required_checks=[TEST])
+    sha = sha_of(15)
+    await pushed_commit(g, sha)
+    for i in range(150):
+        g.hub.ci(sha, f"other-{i}", CI, "main")
+    g.hub.ci(sha, "test", CI, "main")
+    assert len(g.hub.check_runs[sha]) > PAGE and len(g.hub.workflow_runs[sha]) > PAGE
+    g.hub.calls.clear()
+    r = promote(g)
+    assert r.status_code == 202, r.text
+    assert (gets(g.hub, "/check-runs"), gets(g.hub, "/actions/runs")) == (2, 2)
+
+
+async def test_the_latest_run_wins_across_pages(g: G) -> None:
+    await connect(g, required_checks=[TEST])
+    sha = sha_of(16)
+    await pushed_commit(g, sha)
+    green = g.hub.ci(sha, "test", CI, "main")
+    for i in range(120):
+        g.hub.ci(sha, f"other-{i}", CI, "main")
+    red = g.hub.ci(sha, "test", CI, "main", "failure")
+    assert red["id"] > green["id"] and g.hub.check_runs[sha].index(red) >= PAGE
+    assert_problem(promote(g), ErrorCode.REQUIRED_CHECKS_FAILING)
+    assert prod_builds(g) == []
+
+
+async def test_too_many_check_runs_fails_closed(g: G, caplog: pytest.LogCaptureFixture) -> None:
+    await connect(g, required_checks=[TEST])
+    sha = sha_of(17)
+    await pushed_commit(g, sha)
+    for i in range(MAX_PAGES * PAGE):
+        g.hub.ci(sha, f"other-{i}", CI, "main")
+    g.hub.ci(sha, "test", CI, "main")
+    g.hub.calls.clear()
+    with caplog.at_level(logging.WARNING, logger="ssc.api"):
+        r = promote(g)
+    assert_problem(r, ErrorCode.GITHUB_UNAVAILABLE)
+    assert logged_evidence(caplog, r) == {"reason": "too_many_results", "path": "checks"}
+    assert (gets(g.hub, "/check-runs"), gets(g.hub, "/actions/runs")) == (MAX_PAGES, 0)
+    assert prod_builds(g) == []
+
+
+async def test_a_small_commit_is_one_request_per_list(g: G) -> None:
+    await connect(g, required_checks=[TEST])
+    sha = sha_of(18)
+    await pushed_commit(g, sha)
+    for i in range(4):
+        g.hub.ci(sha, f"other-{i}", CI, "main")
+    g.hub.ci(sha, "test", CI, "main")
+    g.hub.calls.clear()
+    r = promote(g)
+    assert r.status_code == 202, r.text
+    assert (gets(g.hub, "/check-runs"), gets(g.hub, "/actions/runs")) == (1, 1)
+
+
 async def test_no_required_checks_or_no_connection_leaves_promote_as_it_was(g: G) -> None:
     await connect(g)
     await live_commit(g, None)
@@ -762,6 +823,29 @@ async def test_installation_tokens_are_cached_and_scoped() -> None:
         )
         assert len(hub.minted) == 3
         assert "PRIVATE" not in repr(github) and APP_ID in repr(github)
+    finally:
+        await github.aclose()
+
+
+async def test_paging_stops_on_an_empty_short_or_counted_page() -> None:
+    hub = FakeGitHub()
+    raw = hub.repo("acme/ledger", INSTALLATION)
+    repo = RepoRef(installation_id=INSTALLATION, id=raw["id"], name="acme/ledger")
+    github = hub.client()
+    try:
+        for n, runs, requests in [
+            (20, 0, 1),
+            (21, 150, 2),
+            (22, 2 * PAGE, 2),
+            (23, MAX_PAGES * PAGE, MAX_PAGES),
+        ]:
+            sha = sha_of(n)
+            for i in range(runs):
+                hub.ci(sha, f"check-{i}", CI, "main")
+            hub.calls.clear()
+            got = await github.check_runs(repo, sha)
+            assert [r["id"] for r in got] == [r["id"] for r in hub.check_runs.get(sha, [])]
+            assert gets(hub, f"/commits/{sha}/check-runs") == requests, runs
     finally:
         await github.aclose()
 
