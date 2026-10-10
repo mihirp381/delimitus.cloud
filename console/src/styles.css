@@ -1197,6 +1197,13 @@ details pre {
   margin-bottom: var(--ssc-space-4);
 }
 
+/* A second part of a dialog, set apart from the form above it. */
+.dialog-section {
+  margin-top: var(--ssc-space-5);
+  padding-top: var(--ssc-space-5);
+  border-top: 1px solid var(--ssc-border-subtle);
+}
+
 .dialog::backdrop {
   background: var(--ssc-scrim);
   -webkit-backdrop-filter: blur(6px);

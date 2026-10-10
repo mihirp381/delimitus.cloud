@@ -157,6 +157,96 @@ describe('connections page', () => {
     expect((await screen.findByRole('status')).textContent).toBe('Changed ledger.');
   });
 
+  it('suspends a connection only once its name is typed, and says apps lose it within seconds', async () => {
+    const { api } = await connectionsPage({
+      'PATCH /v1/connections/crm': ({ body }) => json(200, { ...CRM, ...(body as object) }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
+    // The status is not one of the form's fields: saving the form cannot suspend.
+    expect(within(dialog).queryByRole('combobox', { name: 'Status' })).toBeNull();
+    const status = within(dialog).getByRole('region', { name: 'Status' });
+    expect(status.textContent).toContain('Suspending stops every query on it, for every app');
+    expect(within(status).queryByRole('button', { name: /Resume/ })).toBeNull();
+    fireEvent.click(within(status).getByRole('button', { name: 'Suspend this connection' }));
+
+    const confirm = await screen.findByRole('dialog', { name: 'Suspend crm' });
+    expect(confirm.textContent).toContain('Every app linked to crm loses it within a few seconds');
+    const go = within(confirm).getByRole('button', { name: 'Suspend' }) as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    fireEvent.change(within(confirm).getByLabelText(/to confirm/), { target: { value: 'ledger' } });
+    expect(go.disabled).toBe(true);
+    expect(api.of('PATCH', '/v1/connections/crm')).toHaveLength(0);
+    fireEvent.change(within(confirm).getByLabelText(/to confirm/), { target: { value: 'crm' } });
+    expect(go.disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(go);
+    });
+
+    const [call] = api.of('PATCH', '/v1/connections/crm');
+    expect(call?.body).toEqual({ status: 'suspended' });
+    expect(call?.headers.get('Idempotency-Key')).toBeTruthy();
+    expect((await screen.findByRole('status')).textContent).toBe(
+      'Suspended crm. Apps linked to it lose it within a few seconds: every query on it is refused until it is resumed.',
+    );
+    // The list is read again, and both dialogs are closed.
+    await waitFor(() => expect(api.of('GET', '/v1/connections').length).toBeGreaterThan(1));
+    expect(screen.queryByRole('dialog', { name: 'Suspend crm' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Change crm' })).toBeNull();
+  });
+
+  it('shows a refused suspension in the confirmation and keeps it open', async () => {
+    await connectionsPage({
+      'PATCH /v1/connections/crm': () => problem(403, 'AGENT_SESSION_REFUSED', 'Not in an agent session'),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend this connection' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Suspend crm' });
+    fireEvent.change(within(confirm).getByLabelText(/to confirm/), { target: { value: 'crm' } });
+    await act(async () => {
+      fireEvent.click(within(confirm).getByRole('button', { name: 'Suspend' }));
+    });
+    expect((await within(confirm).findByRole('alert')).textContent).toContain('AGENT_SESSION_REFUSED');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('resumes a suspended connection with one click', async () => {
+    const suspended = connection('crm', { status: 'suspended' });
+    const { api } = await connectionsPage({
+      'GET /v1/connections': () => json(200, { connections: [LEDGER, suspended] }),
+      'PATCH /v1/connections/crm': ({ body }) => json(200, { ...suspended, ...(body as object) }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
+    const status = within(dialog).getByRole('region', { name: 'Status' });
+    expect(status.textContent).toContain('Every query on it is refused.');
+    expect(within(status).queryByRole('button', { name: /Suspend/ })).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(status).getByRole('button', { name: 'Resume this connection' }));
+    });
+    expect(api.of('PATCH', '/v1/connections/crm').map((c) => c.body)).toEqual([{ status: 'active' }]);
+    expect((await screen.findByRole('status')).textContent).toBe(
+      'Resumed crm. Apps linked to it can query it again within a few seconds.',
+    );
+    expect(screen.queryByRole('dialog', { name: 'Change crm' })).toBeNull();
+  });
+
+  it('shows a refused resume where the button is', async () => {
+    const suspended = connection('crm', { status: 'suspended' });
+    await connectionsPage({
+      'GET /v1/connections': () => json(200, { connections: [LEDGER, suspended] }),
+      'PATCH /v1/connections/crm': () => problem(403, 'FORBIDDEN', 'Org admins only'),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Resume this connection' }));
+    });
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Org admins only');
+    expect((within(dialog).getByRole('button', { name: 'Resume this connection' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('sends nothing when nothing changed', async () => {
     const { api } = await connectionsPage({});
     fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));

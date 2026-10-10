@@ -34,6 +34,7 @@ import { findPeople, type Match, USER_ID_PATTERN } from '../../api/directory';
 import { Lookup } from '../../app-detail/Lookup';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { ConfirmAction } from '../../components/ConfirmAction';
 import { Dialog } from '../../components/Dialog';
 import { PageHeader } from '../../components/PageHeader';
 import { Phrases } from '../../components/Phrases';
@@ -444,6 +445,12 @@ function EditConnection({
 }) {
   const [open, setOpen] = useState(false);
   const title = `Change ${connection.name}`;
+
+  function done(message: string) {
+    onDone(message);
+    setOpen(false);
+  }
+
   return (
     <>
       <Button onClick={() => setOpen(true)} aria-label={title}>
@@ -451,15 +458,10 @@ function EditConnection({
       </Button>
       <Dialog open={open} title={title} onClose={() => setOpen(false)}>
         {open ? (
-          <EditForm
-            connection={connection}
-            title={title}
-            onClose={() => setOpen(false)}
-            onDone={(message) => {
-              onDone(message);
-              setOpen(false);
-            }}
-          />
+          <>
+            <EditForm connection={connection} title={title} onClose={() => setOpen(false)} onDone={done} />
+            <StatusControl connection={connection} onDone={done} />
+          </>
         ) : null}
       </Dialog>
     </>
@@ -473,7 +475,10 @@ interface EditProps {
   readonly onDone: (message: string) => void;
 }
 
-/** Sends only what changed. A move to confidential or restricted carries the ceiling with it. */
+/**
+ * Sends only what changed. A move to confidential or restricted carries the ceiling with it.
+ * The status is not here: see `StatusControl`.
+ */
 function EditForm({ connection, title, onClose, onDone }: EditProps) {
   const { api } = Route.useRouteContext();
   const refresh = useRefreshList();
@@ -484,13 +489,11 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
   const [subjects, setSubjects] = useState(subjectsText(connection.ceiling));
   const [limits, setLimits] = useState<Typed>(limitsTyped(connection.limits));
   const [setup, setSetup] = useState(connection.setup_status);
-  const [status, setStatus] = useState(connection.status);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const ownerId = useId();
   const schemasId = useId();
   const setupId = useId();
-  const statusId = useId();
 
   function change(): ConnectionChange {
     const patch: ConnectionChange = {};
@@ -509,7 +512,6 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
     const parsedLimits = parseLimits(limits);
     if (!same(parsedLimits, parseLimits(limitsTyped(connection.limits)))) patch.limits = parsedLimits;
     if (setup !== connection.setup_status) patch.setup_status = setup;
-    if (status !== connection.status) patch.status = status;
     return patch;
   }
 
@@ -580,13 +582,6 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
           <option value="ready">ready: the runbook&apos;s first read worked</option>
         </select>
       </label>
-      <label className="field" htmlFor={statusId}>
-        <span>Status</span>
-        <select id={statusId} value={status} onChange={(e) => setStatus(e.target.value as Connection['status'])}>
-          <option value="active">active</option>
-          <option value="suspended">suspended: every query on it stops</option>
-        </select>
-      </label>
       {error ? <ProblemNotice error={error} /> : null}
       <div className="actions">
         <Button onClick={onClose}>Cancel</Button>
@@ -595,5 +590,85 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Suspend and resume, apart from the form's other changes because suspending cuts every linked
+ * app off: it takes typing the connection's name. Resuming takes one click. Either is sent on
+ * its own, at once.
+ */
+function StatusControl({ connection, onDone }: Pick<EditProps, 'connection' | 'onDone'>) {
+  const { api } = Route.useRouteContext();
+  const refresh = useRefreshList();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const headingId = useId();
+  const { name } = connection;
+
+  async function send(status: Connection['status'], message: string) {
+    await changeConnection(api, name, { status });
+    await refresh();
+    onDone(message);
+  }
+
+  async function resume() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await send('active', `Resumed ${name}. Apps linked to it can query it again within a few seconds.`);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="dialog-section stack" aria-labelledby={headingId}>
+      <h3 id={headingId}>Status</h3>
+      {connection.status === 'active' ? (
+        <>
+          <p>
+            <Badge tone="success">active</Badge> Linked apps can query it. Suspending stops every
+            query on it, for every app, until it is resumed; nothing is deleted.
+          </p>
+          <div className="actions">
+            <ConfirmAction
+              label="Suspend this connection"
+              title={`Suspend ${name}`}
+              confirmText={name}
+              confirmLabel="Suspend"
+              onConfirm={() =>
+                send(
+                  'suspended',
+                  `Suspended ${name}. Apps linked to it lose it within a few seconds: every query on it is refused until it is resumed.`,
+                )
+              }
+            >
+              <p>
+                Every app linked to <code>{name}</code> loses it within a few seconds: the data
+                gateway refuses their queries from its next snapshot until you resume the
+                connection. Its links, limits and credentials stay as they are.
+              </p>
+            </ConfirmAction>
+          </div>
+        </>
+      ) : (
+        <>
+          <p>
+            <Badge tone="danger">suspended</Badge> Every query on it is refused. Resuming lets the
+            apps linked to it query it again.
+          </p>
+          {error ? <ProblemNotice error={error} /> : null}
+          <div className="actions">
+            <Button variant="primary" disabled={busy} onClick={() => void resume()}>
+              {busy ? 'Resuming…' : 'Resume this connection'}
+            </Button>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
