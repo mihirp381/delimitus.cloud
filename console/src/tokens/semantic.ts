@@ -189,7 +189,7 @@ export const DARK: SemanticTokens = {
 
 export const THEME_TOKENS: Readonly<Record<Theme, SemanticTokens>> = { light: LIGHT, dark: DARK };
 
-/** Both themes ship; the console follows the system setting. */
+/** Both themes ship; the console follows the system setting unless the person chooses one. */
 export const SHIPPING_THEMES: readonly Theme[] = THEMES;
 
 /* Tokens that are not colours, the same in both themes. */
@@ -203,31 +203,33 @@ export const FONT_FAMILIES = {
 } as const;
 
 /**
- * Type: the landing's 17px body with its line height and tight tracking. Tables and controls sit
- * a step down, since a console row carries more than a landing paragraph does.
+ * Type, at a console's density (GA-10.19): a 14px body, 13px in tables and in supporting text, a
+ * page title a little over 20px. The landing's line height and tight tracking stay.
  */
 export const TYPE = {
-  sizeBody: '17px',
-  sizeControl: '15px',
-  sizeTable: '15px',
-  sizeSmall: '14px',
+  sizeBody: '14px',
+  sizeControl: '14px',
+  sizeTable: '13px',
+  sizeSmall: '13px',
   sizeMicro: '12px',
-  /* A page's `h1`, a card's `h2` and a section label, after the landing's `.h2`, `.app__title`
-     and `.label`. */
-  sizeTitle: 'clamp(1.9rem, 4vw, 2.6rem)',
-  sizeHeading: '1.4rem',
-  sizeLabel: '1rem',
+  sizeTiny: '11px',
+  /* A page's `h1`, a card's `h2`, a section label inside a card, and a stat tile's figure. */
+  sizeTitle: '21px',
+  sizeHeading: '15px',
+  sizeLabel: '13px',
+  sizeFigure: '22px',
   leadingBody: '1.52',
-  leadingTight: '1.2',
-  leadingDisplay: '1.07',
+  leadingTight: '1.25',
+  leadingDisplay: '1.2',
   trackingBody: '-0.012em',
   trackingLabel: '-0.01em',
-  trackingHeading: '-0.025em',
-  trackingDisplay: '-0.03em',
+  trackingHeading: '-0.015em',
+  trackingDisplay: '-0.02em',
+  trackingCaps: '0.04em',
 } as const;
 
-/** The landing's radii; `xl` is its card. */
-export const RADIUS = { sm: '6px', md: '12px', lg: '18px', xl: '24px', full: '999px' } as const;
+/** Radii: a control is `sm`, a card `md`, a dialog `lg`. `xl` is the landing's card. */
+export const RADIUS = { sm: '6px', md: '8px', lg: '12px', xl: '24px', full: '999px' } as const;
 
 /** The one spacing scale. Every gap, padding and margin in `styles.css` is a step of it. */
 export const SPACE = {
@@ -242,21 +244,31 @@ export const SPACE = {
   '8': '72px',
 } as const;
 
-/** Page measures: the landing's content width and nav height. */
-export const LAYOUT = { pageMax: '1200px', barHeight: '57px' } as const;
+/**
+ * Measures: the content width, the sidebar, the page bar, a table row and a control. A row and
+ * a control share a height so a button in a row does not make it taller.
+ */
+export const LAYOUT = {
+  pageMax: '1200px',
+  sidebarWidth: '232px',
+  barHeight: '48px',
+  rowHeight: '40px',
+  controlHeight: '32px',
+} as const;
 
 export const MOTION = { ease: 'cubic-bezier(0.16, 1, 0.3, 1)' } as const;
 
 /**
- * The landing's `--spectrum`, the one brand mark: the rule under the top bar and across the top
- * of the sign-in card, and nowhere else.
+ * The landing's `--spectrum`, kept as a small brand accent: a 2px line across the top of the
+ * sidebar and of the sign-in card, and nowhere else.
  */
 export const GRADIENTS = {
   spectrum: `linear-gradient(90deg, ${STOPS.blue} 0%, ${STOPS.violet} 22%, ${STOPS.purple} 44%, ${STOPS.magenta} 64%, ${STOPS.coral} 82%, ${STOPS.orange} 100%)`,
 } as const;
 
 /**
- * Shadows, the dialog backdrop and the translucent top bar, per theme. The light shadows are the
+ * Shadows, the dialog backdrop and the translucent page bar, per theme. A card has a hairline and
+ * no shadow; `shadowSoft` lifts a menu or a toast and `shadowLift` a dialog. The light shadows are the
  * landing's `--shadow-soft` and `--shadow-lift`; on dark surfaces a shadow reads poorly, so a
  * hairline of light along the top edge does the lifting.
  */

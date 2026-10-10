@@ -1,4 +1,18 @@
-import type { ReactNode } from 'react';
+import { createContext, type ReactNode, useContext } from 'react';
+import { createPortal } from 'react-dom';
+
+/**
+ * Where a page's actions go: the right-hand end of the page bar, which the shell owns. `null`
+ * until the bar has mounted; `undefined` outside the shell, where the actions stay in the header.
+ */
+export const PageActionsSlot = createContext<HTMLElement | null | undefined>(undefined);
+
+/** A page's actions, shown in the page bar beside the breadcrumbs. */
+export function PageActions({ children }: { readonly children: ReactNode }) {
+  const slot = useContext(PageActionsSlot);
+  if (slot === undefined) return <div className="page-head-actions">{children}</div>;
+  return slot ? createPortal(children, slot) : null;
+}
 
 interface Props {
   readonly title: ReactNode;
@@ -6,11 +20,11 @@ interface Props {
   readonly purpose?: ReactNode;
   /** A status pill shown beside the title. */
   readonly status?: ReactNode;
-  /** The page's primary action, or the controls that narrow its list. */
+  /** The page's actions; they are shown in the page bar. */
   readonly children?: ReactNode;
 }
 
-/** The top of every page: its title, what it is for, and what you can do from it. */
+/** The top of every page: its title and what it is for. What you can do from it sits in the page bar. */
 export function PageHeader({ title, purpose, status, children }: Props) {
   return (
     <div className="page-head">
@@ -21,7 +35,7 @@ export function PageHeader({ title, purpose, status, children }: Props) {
         </div>
         {purpose ? <p className="page-purpose">{purpose}</p> : null}
       </div>
-      {children ? <div className="page-head-actions">{children}</div> : null}
+      {children ? <PageActions>{children}</PageActions> : null}
     </div>
   );
 }

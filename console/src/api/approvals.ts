@@ -36,6 +36,32 @@ export function approvalsSearch(search: Record<string, unknown>): ApprovalsSearc
   };
 }
 
+/** The key of the inbox: the requests waiting for the caller. The shell's count and the page share it. */
+export const INBOX_KEY = ['approvals', true, null] as const;
+
+/** One page of the inbox, newest first; `before` is the cursor of the page above it. */
+export async function inboxPage(
+  api: ApiClient,
+  before: string | null,
+  signal: AbortSignal,
+): Promise<ApprovalPage> {
+  return must(
+    await api.GET('/v1/approvals', {
+      params: { query: { inbox: true, ...(before === null ? {} : { before }) } },
+      signal,
+    }),
+  );
+}
+
+/** How many of the loaded requests still wait for a decision, and whether older ones were not counted. */
+export function waitingCount(pages: readonly ApprovalPage[] | undefined): { readonly count: number; readonly more: boolean } {
+  const all = pages ?? [];
+  return {
+    count: all.flatMap((p) => p.approvals).filter((a) => a.state === 'pending').length,
+    more: all.length > 0 && all[all.length - 1]?.next_before != null,
+  };
+}
+
 /** Records the caller's decision; the reason is shown to the requester. */
 export async function decideApproval(
   api: ApiClient,

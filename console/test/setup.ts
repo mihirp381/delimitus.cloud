@@ -18,4 +18,7 @@ window.scrollTo = () => undefined;
 afterEach(() => {
   cleanup();
   window.sessionStorage.clear();
+  // The theme a test chose must not colour the next one.
+  window.localStorage.clear();
+  document.documentElement.removeAttribute('data-theme');
 });

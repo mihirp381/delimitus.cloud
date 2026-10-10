@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { approvalsSearch, requestedGrants } from '../src/api/approvals';
-import { type Handler, json, problem } from './fakeApi';
+import { type Call, type Handler, json, problem } from './fakeApi';
 import { signedIn, start } from './harness';
 
 const OWNER = 'usr_cccccccccccccccccccc';
@@ -78,6 +78,11 @@ function page(approvals: unknown[], next: string | null = null): Handler {
 
 function routes(list: Handler | Handler[]): Record<string, Handler | Handler[]> {
   return { 'GET /v1/approvals': list };
+}
+
+/** The list's own reads. The shell also reads the inbox, for the count beside "Approvals". */
+function listed(api: { of: (method: string, path: string) => Call[] }): Call[] {
+  return api.of('GET', '/v1/approvals').filter((c) => !c.query.has('inbox'));
 }
 
 function rowOf(text: string): HTMLElement {
@@ -178,7 +183,7 @@ describe('approvals inbox', () => {
     fireEvent.change(screen.getByLabelText('State'), { target: { value: 'pending' } });
     expect(await screen.findByText('No pending requests.')).toBeTruthy();
     expect(router.state.location.search).toEqual({ view: 'all', state: 'pending' });
-    expect(api.of('GET', '/v1/approvals')[1]?.query.get('state')).toBe('pending');
+    expect(listed(api)[1]?.query.get('state')).toBe('pending');
     fireEvent.click(screen.getByRole('link', { name: 'Waiting for you' }));
     await screen.findByText('2 requests waiting for you');
     expect(router.state.location.search).toEqual({});
@@ -204,9 +209,12 @@ describe('approvals inbox', () => {
   });
 
   it('loads older requests with the cursor the API returned', async () => {
+    const older = [page([DENIED], 'apr_000000000000000000d1'), page([CANCELLED])];
+    let read = 0;
     const { api } = start(
       '/approvals?view=all&state=denied',
-      routes([page([DENIED], 'apr_000000000000000000d1'), page([CANCELLED])]),
+      // The shell's count of the inbox is answered apart, so it takes neither page of the list.
+      routes((call) => (call.query.has('inbox') ? page([])(call) : older[Math.min(read++, 1)]!(call))),
       signedIn(),
     );
     await screen.findByText('1 request, more are older');
@@ -214,7 +222,7 @@ describe('approvals inbox', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Load older requests' }));
     });
     expect(await screen.findByText('2 requests')).toBeTruthy();
-    const second = api.of('GET', '/v1/approvals')[1]!.query;
+    const second = listed(api)[1]!.query;
     expect([...second.entries()].sort()).toEqual([
       ['before', 'apr_000000000000000000d1'],
       ['state', 'denied'],

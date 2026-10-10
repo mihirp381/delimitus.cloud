@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
 import {
   etagOf,
@@ -45,9 +45,6 @@ function AppDetail() {
 
   return (
     <>
-      <p className="crumbs">
-        <Link to="/">All apps</Link>
-      </p>
       {app.isPending ? (
         <p className="muted">Loading the app…</p>
       ) : app.isError ? (

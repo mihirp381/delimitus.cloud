@@ -304,7 +304,8 @@ describe('sign-in screens', () => {
     const { session, router } = mount('/', oauth);
     act(() => session.start({ accessToken: 'acc-1', refreshToken: 'ref-1', expiresIn: 300 }));
     await act(() => router.navigate({ to: '/' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^(Signed in as|Your account)/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
     await waitFor(() => expect(sent.map((s) => s.url)).toEqual([`${AUTH}/revoke`]));
     expect(Object.fromEntries(sent[0]?.form ?? [])).toEqual({ token: 'ref-1', token_type_hint: 'refresh_token' });
     expect(session.token()).toBeNull();

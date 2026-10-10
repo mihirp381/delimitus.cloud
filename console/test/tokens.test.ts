@@ -10,6 +10,7 @@ import {
   FEEDBACK,
   FONT_FAMILIES,
   GRADIENTS,
+  LAYOUT,
   RADIUS,
   SHIPPING_THEMES,
   TEXT_SURFACES,
@@ -179,7 +180,6 @@ describe('the landing page\'s colours (GA-10.18)', () => {
     expect(GRADIENTS.spectrum.toUpperCase()).toBe(
       'LINEAR-GRADIENT(90DEG, #0A84FF 0%, #6E5BFF 22%, #C24BF0 44%, #FF378C 64%, #FF5E3A 82%, #FF9F0A 100%)',
     );
-    expect(TYPE.sizeBody).toBe('17px');
     expect(TYPE.leadingBody).toBe('1.52');
     expect(TYPE.trackingBody).toBe('-0.012em');
     expect(RADIUS.xl).toBe('24px');
@@ -191,6 +191,22 @@ describe('the landing page\'s colours (GA-10.18)', () => {
     expect(EFFECTS.light.shadowLift).toBe(
       '0 2px 6px rgb(0 0 0 / 0.04), 0 34px 70px -34px rgb(29 29 31 / 0.28)',
     );
+  });
+
+  // GA-10.19: the colours are the landing's; the sizes are a console's. The landing's 17px body
+  // is for reading a page, and a console is for scanning rows.
+  it('sets a console\'s density: 14px text, 13px tables, 40px rows, 8px cards', () => {
+    expect(TYPE.sizeBody).toBe('14px');
+    expect(TYPE.sizeTable).toBe('13px');
+    expect(parseInt(TYPE.sizeTitle, 10)).toBeGreaterThanOrEqual(20);
+    expect(parseInt(TYPE.sizeTitle, 10)).toBeLessThanOrEqual(22);
+    expect(LAYOUT.rowHeight).toBe('40px');
+    expect(LAYOUT.sidebarWidth).toBe('232px');
+    expect(RADIUS.md).toBe('8px');
+    const css = readFileSync(CSS_PATH, 'utf8');
+    for (const name of ['type-size-body', 'type-size-table', 'row-height', 'sidebar-width', 'bar-height']) {
+      expect(css, name).toContain(`--ssc-${name}:`);
+    }
   });
 
   it('shows the spectrum once: one rule in styles.css, on no component', () => {

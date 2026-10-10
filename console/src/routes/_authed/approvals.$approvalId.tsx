@@ -37,9 +37,6 @@ function ApprovalPage() {
   });
   return (
     <>
-      <p className="crumbs">
-        <Link to="/approvals">Back to approvals</Link>
-      </p>
       {detail.data ? (
         <Detail approval={detail.data} />
       ) : detail.isError ? (
