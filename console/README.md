@@ -57,6 +57,10 @@ redirects only to `<SSC_CONSOLE_URL>/auth/callback`, and `/token` and `/revoke` 
 origin alone. Tokens live in memory, so a reload asks the auth host again (its own session cookie
 skips the email step). Sign-out calls `/revoke`.
 
+While a signed-in page is on show the shell asks `/v1/whoami` every 4 seconds
+(`WHOAMI_EVERY_MS` in `src/routes/_authed.tsx`). A 401 there, as for a person deactivated in the
+directory, signs the console out and opens the login page, within 5 seconds.
+
 ## End-to-end test
 
 `npm run e2e` runs `e2e/run.mjs`: it starts `e2e/compose.yaml` (Postgres 18 and the API built

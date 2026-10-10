@@ -11,10 +11,17 @@ export const Route = createFileRoute('/_authed')({
   component: AuthedLayout,
 });
 
+/**
+ * How often the shell asks the API who is signed in while the tab is on show. A person who was
+ * deactivated gets a 401 here, which signs the console out (router.tsx): under 5 seconds, with the
+ * request's own time counted.
+ */
+export const WHOAMI_EVERY_MS = 4000;
+
 function AuthedLayout() {
   const { queries, session, queryClient, isAdmin } = Route.useRouteContext();
   const navigate = useNavigate();
-  const me = queries.useQuery('get', '/v1/whoami');
+  const me = queries.useQuery('get', '/v1/whoami', {}, { refetchInterval: WHOAMI_EVERY_MS });
   // An app's own page belongs to "Apps": the link reads as current there too. Looks only; it goes where it did.
   const inApp = useLocation({ select: (location) => location.pathname.startsWith('/apps/') });
 

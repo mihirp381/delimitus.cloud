@@ -1,9 +1,9 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Grants } from '../src/api/grants';
 import { createSession, STORAGE_KEY } from '../src/auth/session';
 import { type Handler, json, problem } from './fakeApi';
-import { signedIn, start } from './harness';
+import { signedIn, start, WHOAMI } from './harness';
 
 const OWNER = 'usr_cccccccccccccccccccc';
 const OTHER = 'usr_dddddddddddddddddddd';
@@ -66,6 +66,33 @@ describe('login', () => {
     expect(alert.textContent).toContain('UNAUTHENTICATED');
     expect(session.token()).toBeNull();
     expect(router.state.location.pathname).toBe('/login');
+  });
+
+  it('sends a signed-in person to the login page within 5 s of the API refusing them', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let refused = false;
+      const { api, router, session } = start(
+        '/',
+        {
+          'GET /v1/whoami': () => (refused ? problem(401, 'UNAUTHENTICATED', 'Authentication required') : WHOAMI()),
+          'GET /v1/apps': () => json(200, { apps: [] }),
+        },
+        signedIn(),
+      );
+      await screen.findByRole('heading', { name: 'Apps' });
+      const before = api.of('GET', '/v1/whoami').length;
+      refused = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4999);
+      });
+      await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+      expect(api.of('GET', '/v1/whoami').length).toBe(before + 1);
+      expect(session.token()).toBeNull();
+      expect(router.state.location.search).toEqual({ next: '/' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('ignores a next path that leaves the site', async () => {
