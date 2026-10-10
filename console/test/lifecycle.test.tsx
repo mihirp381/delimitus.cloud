@@ -481,6 +481,9 @@ describe('admin actions', () => {
     await within(progress).findByText('completed', {}, { timeout: 3000 });
     expect(within(progress).getByText('Pause timers')).toBeTruthy();
     expect(within(progress).getByText(/in 2000 ms/)).toBeTruthy();
+    expect(within(progress).getByRole('link', { name: 'Open this run' }).getAttribute('href')).toBe(
+      `/apps/${APP_ID}/kill-switch/${RUN}`,
+    );
     expect(await screen.findByText('disabled')).toBeTruthy();
     expect(within(admin).getByRole('button', { name: 'Enable' })).toBeTruthy();
     expect(within(admin).getByRole('button', { name: 'Quarantine' })).toBeTruthy();
@@ -489,6 +492,55 @@ describe('admin actions', () => {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(api.of('GET', `${APP_PATH}/kill-switch/${RUN}`)).toHaveLength(polls);
     expect((screen.getByRole('button', { name: 'Roll back Production' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows a run on its own page with its mode, total and each step, and stops reading once it ends', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}/kill-switch/${RUN}`,
+      {
+        [`GET ${APP_PATH}`]: () => json(200, app('disabled')),
+        [`GET ${APP_PATH}/kill-switch/${RUN}`]: [() => json(200, run('running', 2)), () => json(200, run('completed', 5))],
+      },
+      signedIn(),
+    );
+    await screen.findByRole('heading', { name: 'Kill switch run', level: 1 }, { timeout: FIRST_RENDER_MS });
+    const view = await screen.findByRole('group', { name: 'Kill switch run' });
+    expect(within(view).getByText('Still running')).toBeTruthy();
+    expect(within(view).queryByRole('link', { name: 'Open this run' })).toBeNull();
+    await within(view).findByText('completed', {}, { timeout: 3000 });
+    expect(within(view).getByText('Disable')).toBeTruthy();
+    expect(within(view).getByText('2000 ms (2.0 s)')).toBeTruthy();
+    expect(within(view).getByText(RUN)).toBeTruthy();
+    const steps = within(view).getByRole('table', { name: 'Kill switch steps' });
+    expect(within(steps).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'Step',
+      'State',
+      'Started',
+      'Finished',
+      'Took',
+      'Tries',
+      'Last error',
+    ]);
+    expect(within(steps).getAllByRole('row')).toHaveLength(6);
+    expect(within(steps).getAllByText('100 ms')).toHaveLength(5);
+    expect((await screen.findByRole('link', { name: 'expenses' })).getAttribute('href')).toBe(`/apps/${APP_ID}`);
+    const polls = api.of('GET', `${APP_PATH}/kill-switch/${RUN}`).length;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(api.of('GET', `${APP_PATH}/kill-switch/${RUN}`)).toHaveLength(polls);
+  });
+
+  it('shows the refusal on a run page the caller may not read', async () => {
+    start(
+      `/apps/${APP_ID}/kill-switch/${RUN}`,
+      {
+        [`GET ${APP_PATH}`]: () => json(200, app('disabled')),
+        [`GET ${APP_PATH}/kill-switch/${RUN}`]: () => problem(403, 'FORBIDDEN', 'Only an org admin may read a kill switch run.'),
+      },
+      signedIn(),
+    );
+    const alert = await screen.findByRole('alert', {}, { timeout: FIRST_RENDER_MS });
+    expect(alert.textContent).toContain('Only an org admin may read a kill switch run.');
+    expect(alert.textContent).toContain('req_test_0001');
   });
 
   it('shows KILL_SWITCH_IN_FLIGHT from enable while a pull still runs', async () => {

@@ -1,24 +1,13 @@
 import { useRouteContext } from '@tanstack/react-router';
 import { type FormEvent, useState } from 'react';
-import {
-  type AppOut,
-  enableApp,
-  type KillSwitchMode,
-  type KillSwitchRun,
-  POLL_MS,
-  pullKillSwitch,
-  transferOwner,
-} from '../api/lifecycle';
+import { type AppOut, enableApp, type KillSwitchMode, pullKillSwitch, transferOwner } from '../api/lifecycle';
 import { findPeople, type Match, USER_ID_PATTERN } from '../api/directory';
-import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
 import { ProblemNotice } from '../components/ProblemNotice';
-import { type Column, Table } from '../components/Table';
+import { KillSwitchProgress } from './KillSwitchRun';
 import { Lookup } from './Lookup';
-
-type Step = KillSwitchRun['steps'][number];
 
 const MODE_TEXT: Readonly<Record<KillSwitchMode, { label: string; body: string }>> = {
   disable: {
@@ -30,30 +19,6 @@ const MODE_TEXT: Readonly<Record<KillSwitchMode, { label: string; body: string }
     body: 'It stops as when disabled, and its sharing rules are frozen until it is enabled again.',
   },
 };
-
-const STEP_TEXT: Readonly<Record<Step['name'], string>> = {
-  gateway_deny: 'Deny at the gateway',
-  datagw_suspend: 'Suspend data connections',
-  egress_remove: 'Remove internet access',
-  scale_to_zero: 'Stop instances',
-  pause_timers: 'Pause timers',
-};
-
-const STATE_TONE: Readonly<Record<string, Tone>> = {
-  running: 'info',
-  done: 'success',
-  completed: 'success',
-  unconfirmed: 'warning',
-  failed: 'danger',
-};
-
-const STEP_COLUMNS: readonly Column<Step>[] = [
-  { header: 'Step', cell: (s) => STEP_TEXT[s.name] },
-  { header: 'State', cell: (s) => <Badge tone={STATE_TONE[s.state] ?? 'neutral'}>{s.state}</Badge> },
-  { header: 'Took', cell: (s) => (s.elapsed_ms === null ? '…' : `${s.elapsed_ms} ms`) },
-  { header: 'Tries', cell: (s) => s.attempts },
-  { header: 'Last error', cell: (s) => (s.error ? <code>{s.error}</code> : '') },
-];
 
 /**
  * The admin-only controls: the kill switch (disable, quarantine), enable, and owner transfer.
@@ -153,35 +118,6 @@ function Controls({ app }: { readonly app: AppOut }) {
       {enableError ? <ProblemNotice error={enableError} /> : null}
       {runId ? <KillSwitchProgress appId={app.id} runId={runId} /> : null}
     </>
-  );
-}
-
-function KillSwitchProgress({ appId, runId }: { readonly appId: string; readonly runId: string }) {
-  const { queries } = useRouteContext({ from: '/_authed/apps/$appId' });
-  const run = queries.useQuery(
-    'get',
-    '/v1/apps/{app_id}/kill-switch/{run_id}',
-    { params: { path: { app_id: appId, run_id: runId } } },
-    { refetchInterval: (q) => (q.state.data?.state === 'running' ? POLL_MS : false) },
-  );
-  if (run.isPending) return <p className="muted">Reading the kill switch run…</p>;
-  if (run.isError) return <ProblemNotice error={run.error} />;
-  const r = run.data;
-  return (
-    <div className="stack" aria-label="Kill switch run" role="group">
-      <p aria-live="polite">
-        {r.mode === 'disable' ? 'Disable' : 'Quarantine'} <code className="muted">{r.run_id}</code>{' '}
-        <Badge tone={STATE_TONE[r.state] ?? 'neutral'}>{r.state}</Badge>
-        {r.total_ms === null ? null : <span className="muted"> in {r.total_ms} ms</span>}
-      </p>
-      <Table
-        caption="Kill switch steps"
-        columns={STEP_COLUMNS}
-        rows={r.steps}
-        rowKey={(s) => s.name}
-        empty="No step has started yet."
-      />
-    </div>
   );
 }
 

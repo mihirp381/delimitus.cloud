@@ -156,3 +156,15 @@ export async function exportAudit(
   const blob = must(result);
   return { blob, fileName: exportFileName(result.response.headers.get('Content-Disposition'), format) };
 }
+
+const APP_ID_PATTERN = /^app_[a-z0-9]{20}$/;
+
+/**
+ * The app of a kill switch step's row: its target is the run, and `after.app_id` names the app,
+ * which the run's own page needs. Null for any other row, or without a well-formed app id.
+ */
+export function killSwitchApp(event: AuditEvent): string | null {
+  if (event.target.kind !== 'kill_switch_run') return null;
+  const id = event.after?.['app_id'];
+  return typeof id === 'string' && APP_ID_PATTERN.test(id) ? id : null;
+}

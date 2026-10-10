@@ -9,6 +9,7 @@ import {
   auditFilters,
   type ExportFormat,
   exportAudit,
+  killSwitchApp,
 } from '../../api/audit';
 import { must } from '../../api/client';
 import { Badge } from '../../components/Badge';
@@ -324,6 +325,13 @@ const COLUMNS: readonly Column<AuditEvent>[] = [
         {e.target.kind}{' '}
         {e.target.kind === 'app' ? (
           <Link to="/apps/$appId" params={{ appId: e.target.id }}>
+            <code>{e.target.id}</code>
+          </Link>
+        ) : killSwitchApp(e) ? (
+          <Link
+            to="/apps/$appId/kill-switch/$runId"
+            params={{ appId: killSwitchApp(e) ?? '', runId: e.target.id }}
+          >
             <code>{e.target.id}</code>
           </Link>
         ) : (

@@ -20,6 +20,7 @@ import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedApprovalsIndexRouteImport } from './routes/_authed/approvals.index'
 import { Route as AuthedApprovalsApprovalIdRouteImport } from './routes/_authed/approvals.$approvalId'
 import { Route as AuthedAppsAppIdRouteImport } from './routes/_authed/apps.$appId'
+import { Route as AuthedAppsAppIdKillSwitchRunIdRouteImport } from './routes/_authed/apps.$appId_.kill-switch.$runId'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
@@ -76,6 +77,12 @@ const AuthedAppsAppIdRoute = AuthedAppsAppIdRouteImport.update({
   path: '/apps/$appId',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedAppsAppIdKillSwitchRunIdRoute =
+  AuthedAppsAppIdKillSwitchRunIdRouteImport.update({
+    id: '/apps/$appId_/kill-switch/$runId',
+    path: '/apps/$appId/kill-switch/$runId',
+    getParentRoute: () => AuthedRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
@@ -88,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
   '/approvals/': typeof AuthedApprovalsIndexRoute
+  '/apps/$appId/kill-switch/$runId': typeof AuthedAppsAppIdKillSwitchRunIdRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -100,6 +108,7 @@ export interface FileRoutesByTo {
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
   '/approvals': typeof AuthedApprovalsIndexRoute
+  '/apps/$appId/kill-switch/$runId': typeof AuthedAppsAppIdKillSwitchRunIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -114,6 +123,7 @@ export interface FileRoutesById {
   '/_authed/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/_authed/apps/$appId': typeof AuthedAppsAppIdRoute
   '/_authed/approvals/': typeof AuthedApprovalsIndexRoute
+  '/_authed/apps/$appId_/kill-switch/$runId': typeof AuthedAppsAppIdKillSwitchRunIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -128,6 +138,7 @@ export interface FileRouteTypes {
     | '/approvals/$approvalId'
     | '/apps/$appId'
     | '/approvals/'
+    | '/apps/$appId/kill-switch/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -140,6 +151,7 @@ export interface FileRouteTypes {
     | '/approvals/$approvalId'
     | '/apps/$appId'
     | '/approvals'
+    | '/apps/$appId/kill-switch/$runId'
   id:
     | '__root__'
     | '/_authed'
@@ -153,6 +165,7 @@ export interface FileRouteTypes {
     | '/_authed/approvals/$approvalId'
     | '/_authed/apps/$appId'
     | '/_authed/approvals/'
+    | '/_authed/apps/$appId_/kill-switch/$runId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -240,6 +253,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAppsAppIdRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/apps/$appId_/kill-switch/$runId': {
+      id: '/_authed/apps/$appId_/kill-switch/$runId'
+      path: '/apps/$appId/kill-switch/$runId'
+      fullPath: '/apps/$appId/kill-switch/$runId'
+      preLoaderRoute: typeof AuthedAppsAppIdKillSwitchRunIdRouteImport
+      parentRoute: typeof AuthedRoute
+    }
   }
 }
 
@@ -252,6 +272,7 @@ interface AuthedRouteChildren {
   AuthedApprovalsApprovalIdRoute: typeof AuthedApprovalsApprovalIdRoute
   AuthedAppsAppIdRoute: typeof AuthedAppsAppIdRoute
   AuthedApprovalsIndexRoute: typeof AuthedApprovalsIndexRoute
+  AuthedAppsAppIdKillSwitchRunIdRoute: typeof AuthedAppsAppIdKillSwitchRunIdRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
@@ -263,6 +284,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedApprovalsApprovalIdRoute: AuthedApprovalsApprovalIdRoute,
   AuthedAppsAppIdRoute: AuthedAppsAppIdRoute,
   AuthedApprovalsIndexRoute: AuthedApprovalsIndexRoute,
+  AuthedAppsAppIdKillSwitchRunIdRoute: AuthedAppsAppIdKillSwitchRunIdRoute,
 }
 
 const AuthedRouteWithChildren =

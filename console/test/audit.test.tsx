@@ -59,6 +59,25 @@ describe('audit log', () => {
     expect(api.of('GET', '/v1/audit')[0]?.headers.get('Authorization')).toBe('Bearer tok-admin');
   });
 
+  it('links a kill switch step to its run when the row names the app', async () => {
+    const run = 'ksr_rrrrrrrrrrrrrrrrrrrr';
+    const step = (seq: number, after: Record<string, unknown> | null) =>
+      event(seq, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run }, after });
+    start(
+      '/audit',
+      { 'GET /v1/audit': page([step(21, { app_id: APP_ID, step: 'gateway_deny' }), step(20, { app_id: '../x' }), step(19, null)]) },
+      signedIn(),
+    );
+    await screen.findByText('3 events');
+    const rows = screen.getAllByRole('row').slice(1);
+    expect(within(rows[0]!).getByRole('link', { name: run }).getAttribute('href')).toBe(
+      `/apps/${APP_ID}/kill-switch/${run}`,
+    );
+    expect(within(rows[1]!).queryByRole('link', { name: run })).toBeNull();
+    expect(within(rows[2]!).queryByRole('link', { name: run })).toBeNull();
+    expect(within(rows[2]!).getByText(run)).toBeTruthy();
+  });
+
   it('applies filters through the URL and sends only the ones that are set', async () => {
     const { api, router } = start('/audit', { 'GET /v1/audit': page([CREATED]) }, signedIn());
     const form = await screen.findByRole('form', { name: 'Filter events' });
