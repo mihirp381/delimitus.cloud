@@ -656,7 +656,10 @@ textarea {
 }
 
 .search input {
-  width: min(320px, 100%);
+  /* A set width, so that the row is measured with the field at its real size and its selects
+     stay beside it; the cap keeps it inside a narrow window. */
+  width: 320px;
+  max-width: 100%;
   border-radius: var(--ssc-radius-full);
   padding-inline: var(--ssc-space-4);
 }
