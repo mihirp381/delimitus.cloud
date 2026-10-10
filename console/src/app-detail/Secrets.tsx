@@ -7,6 +7,7 @@ import { Button } from '../components/Button';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { ENV_TITLE } from './names';
+import { Section } from './Section';
 
 type Secret = components['schemas']['SecretOut'];
 
@@ -45,17 +46,15 @@ const COLUMNS: readonly Column<Secret>[] = [
 ];
 
 /**
- * An environment's secrets, read only once the section is opened: names and versions, never a
+ * An environment's secrets, read only while its tab is open: names and versions, never a
  * value, which nothing in SSC hands back. Setting and rotating stay in the CLI, so the section
  * shows the commands. Builders of the environment and above; the API refuses anyone else.
  */
 export function Secrets({ app, env }: Props) {
-  const [open, setOpen] = useState(false);
   return (
-    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>Secrets</summary>
-      {open ? <SecretsBody app={app} env={env} /> : null}
-    </details>
+    <Section title="Secrets">
+      <SecretsBody app={app} env={env} />
+    </Section>
   );
 }
 

@@ -2,6 +2,7 @@ import { useRouteContext } from '@tanstack/react-router';
 import { type FormEvent, useState } from 'react';
 import { type AppOut, enableApp, type KillSwitchMode, pullKillSwitch, transferOwner } from '../api/lifecycle';
 import { findPeople, type Match, USER_ID_PATTERN } from '../api/directory';
+import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
@@ -30,8 +31,12 @@ export function AdminActions({ app }: { readonly app: AppOut }) {
   const me = queries.useQuery('get', '/v1/whoami');
   const headingId = `admin-${app.id}`;
   return (
-    <section className="panel tone-orange" aria-labelledby={headingId}>
-      <h2 id={headingId}>Admin actions</h2>
+    <section className="panel danger-zone" aria-labelledby={headingId}>
+      <div className="panel-head">
+        <h2 id={headingId}>Admin actions</h2>
+        <Badge tone="danger">Danger zone</Badge>
+      </div>
+      <p className="muted">These stop the app for everyone who uses it, or hand it to someone else.</p>
       {me.isPending ? (
         <p className="muted">Checking your role…</p>
       ) : me.isError ? (

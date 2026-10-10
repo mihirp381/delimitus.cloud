@@ -1,8 +1,8 @@
-import { act, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AccessExplained, accessSentence } from '../src/api/access';
 import { appended, MAX_LINES, severityTone } from '../src/api/logs';
-import { APP_ID, APP_PATH, envPanel, openSection, page, PROD } from './appPage';
+import { APP_ID, APP_PATH, envPanel, openSection, openTab, page, PROD } from './appPage';
 import { type Handler, json, problem } from './fakeApi';
 import { signedIn, start } from './harness';
 
@@ -181,7 +181,7 @@ describe('logs', () => {
     expect(log.querySelectorAll('.log-line')).toHaveLength(3);
   });
 
-  it('stops asking once the section is closed, and reads another source from its newest lines', async () => {
+  it('stops asking once its tab is left, and reads another source from its newest lines', async () => {
     const { api } = start(
       `/apps/${APP_ID}`,
       page({
@@ -201,15 +201,11 @@ describe('logs', () => {
     await within(section).findByText('step 3/9 done');
     expect(within(section).queryByText('hello')).toBeNull();
     await waitFor(() => expect(api.of('GET', LOGS).at(-1)?.query.get('after')).toBe('9.9.9'));
-    const details = section as HTMLDetailsElement;
-    await act(async () => {
-      details.open = false;
-      details.dispatchEvent(new Event('toggle'));
-    });
+    await openTab('Overview');
     const asked = api.of('GET', LOGS).length;
     await new Promise((resolve) => setTimeout(resolve, 1300));
     expect(api.of('GET', LOGS)).toHaveLength(asked);
-    expect(within(section).queryByRole('log')).toBeNull();
+    expect(screen.queryByRole('log')).toBeNull();
   });
 
   it('does not follow while the tab is hidden, and picks up when it is shown again', async () => {

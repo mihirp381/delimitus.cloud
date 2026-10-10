@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Grants } from '../src/api/grants';
 import { createSession, STORAGE_KEY } from '../src/auth/session';
 import { type Handler, json, problem } from './fakeApi';
-import { whoami } from './appPage';
+import { chooseEnv, openSection, openTab, whoami } from './appPage';
 import { signedIn, start, WHOAMI } from './harness';
 
 const OWNER = 'usr_cccccccccccccccccccc';
@@ -399,19 +399,28 @@ describe('app detail', () => {
   it('lists production before preview, with who has access to each', async () => {
     start(`/apps/${APP.id}`, routes([], () => json(200, prodGrants(3, [OWNER_BUILDER, ORG_USER]))), signedIn());
     const headings = await screen.findAllByRole('heading', { level: 2 });
-    expect(headings.map((h) => h.textContent)).toEqual(['Production prod', 'Preview preview', 'Repository', 'Admin actions']);
+    expect(headings.map((h) => h.textContent)).toEqual(['Production prod', 'Preview preview']);
     const prod = screen.getByRole('region', { name: 'Production prod' });
-    await within(prod).findByText('Everyone in the organisation');
-    expect(within(prod).getByText(OWNER)).toBeTruthy();
+    await within(prod).findByText('Everyone in the organisation, 1 person');
     expect(within(prod).getByText('dep_eeeeeeeeeeeeeeeeeeee')).toBeTruthy();
     const preview = screen.getByRole('region', { name: 'Preview preview' });
-    expect(await within(preview).findByText('Nobody has access yet.')).toBeTruthy();
+    expect(await within(preview).findByText('Nobody yet')).toBeTruthy();
     expect(within(preview).getByText('None yet')).toBeTruthy();
+
+    const access = await openSection(prod, 'Who has access');
+    await within(access).findByText('Everyone in the organisation');
+    expect(within(access).getByText(OWNER)).toBeTruthy();
+    await chooseEnv('Preview');
+    expect(await screen.findByText('Nobody has access yet.')).toBeTruthy();
+
+    await openTab('Settings');
+    await screen.findByRole('region', { name: 'Admin actions' });
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Repository', 'Admin actions']);
   });
 
   it('removes access only after the slug is typed, and survives a 412 by re-reading', async () => {
     const { api } = start(
-      `/apps/${APP.id}`,
+      `/apps/${APP.id}?tab=access`,
       routes(
         [
           () => problem(412, 'PRECONDITION_STALE', 'Changed since you read it'),
@@ -425,7 +434,7 @@ describe('app detail', () => {
       ),
       signedIn(),
     );
-    const prod = await screen.findByRole('region', { name: 'Production prod' });
+    const prod = await screen.findByRole('region', { name: 'Who has access' });
     fireEvent.click(
       await within(prod).findByRole('button', {
         name: 'Remove access for Everyone in the organisation (user) in Production',
@@ -453,13 +462,13 @@ describe('app detail', () => {
 
   it('keeps the dialog open and shows the refusal when removal is refused', async () => {
     start(
-      `/apps/${APP.id}`,
+      `/apps/${APP.id}?tab=access`,
       routes(() => problem(403, 'FORBIDDEN', 'Only a builder can change sharing'), () =>
         json(200, prodGrants(3, [ORG_USER])),
       ),
       signedIn(),
     );
-    const prod = await screen.findByRole('region', { name: 'Production prod' });
+    const prod = await screen.findByRole('region', { name: 'Who has access' });
     fireEvent.click(await within(prod).findByRole('button', { name: /Remove access for/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Remove access' });
     fireEvent.change(within(dialog).getByLabelText(/Type/), { target: { value: 'expenses' } });
@@ -473,11 +482,11 @@ describe('app detail', () => {
   it('says when a removal waits for approval and keeps the grant listed', async () => {
     const pending = { environment_id: 'env_prod0000000000000000', grants_version: 3, approval_ids: ['apr_aaaaaaaaaaaaaaaaaaaa'] };
     start(
-      `/apps/${APP.id}`,
+      `/apps/${APP.id}?tab=access`,
       routes(() => json(202, pending, { ETag: '"3"' }), () => json(200, prodGrants(3, [ORG_USER]))),
       signedIn(),
     );
-    const prod = await screen.findByRole('region', { name: 'Production prod' });
+    const prod = await screen.findByRole('region', { name: 'Who has access' });
     fireEvent.click(await within(prod).findByRole('button', { name: /Remove access for/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Remove access' });
     fireEvent.change(within(dialog).getByLabelText(/Type/), { target: { value: 'expenses' } });

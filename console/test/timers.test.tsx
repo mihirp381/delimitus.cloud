@@ -53,8 +53,7 @@ function list(...items: ReturnType<typeof schedule>[]) {
 
 async function timers(routes: Parameters<typeof page>[0], status?: Parameters<typeof page>[1]) {
   const result = start(`/apps/app_aaaaaaaaaaaaaaaaaaaa`, page(routes, status), signedIn());
-  const panel = await envPanel('Production');
-  await openSection(panel, 'Timers');
+  const panel = await openSection(await envPanel('Production'), 'Timers');
   await within(panel).findByText('nightly-report');
   return { ...result, panel };
 }

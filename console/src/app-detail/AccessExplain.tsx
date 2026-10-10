@@ -9,6 +9,7 @@ import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { Lookup } from './Lookup';
 import { ENV_TITLE } from './names';
+import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -27,12 +28,10 @@ const GRANT_COLUMNS: readonly Column<ExplainedGrant>[] = [
  * picked and asked about. Builders of the environment and above; the API refuses anyone else.
  */
 export function AccessExplain({ app, env }: Props) {
-  const [open, setOpen] = useState(false);
   return (
-    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>Why can this person open it?</summary>
-      {open ? <Body app={app} env={env} /> : null}
-    </details>
+    <Section title="Why can this person open it?">
+      <Body app={app} env={env} />
+    </Section>
   );
 }
 

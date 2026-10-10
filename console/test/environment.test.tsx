@@ -365,6 +365,8 @@ describe('app detail', () => {
         [`GET ${envPath(PROD, 'usage')}`]: () => problem(403, 'FORBIDDEN', 'Not allowed'),
         [`GET ${envPath(PREVIEW, 'database')}`]: database(PREVIEW, true),
         [`GET ${envPath(PROD, 'database')}`]: database(PROD, false),
+        [`GET ${envPath(PROD, 'deployments')}`]: () =>
+          json(200, { environment_id: PROD, items: [{ release_number: 7, current: true }] }),
       },
       signedIn(),
     );
@@ -379,6 +381,9 @@ describe('app detail', () => {
     await waitFor(() => expect(preview.textContent).toContain('1 connections of 2, 8.2 MB'));
 
     await waitFor(() => expect(prod.textContent).toContain('Not deployed yet'));
+    await waitFor(() => expect(prod.textContent).toContain('ReleaseRelease 7'));
+    expect(api.of('GET', envPath(PROD, 'deployments'))[0]?.query.get('limit')).toBe('50');
+    expect(api.of('GET', envPath(PREVIEW, 'deployments'))).toHaveLength(0);
     await waitFor(() => expect(within(prod).getAllByText('Not available')).toHaveLength(1));
     await waitFor(() => expect(prod.textContent).toContain('DatabaseNone'));
     expect(screen.queryByRole('alert')).toBeNull();

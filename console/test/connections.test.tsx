@@ -272,8 +272,8 @@ describe("an environment's data connections", () => {
     const panel = await envPanel('Production');
     await within(panel).findByText('Everyone in the organisation');
     expect(api.of('GET', ENV_CONNECTIONS)).toHaveLength(0);
-    await openSection(panel, 'Data connections');
-    expect(await within(panel).findByText('ledger')).toBeTruthy();
+    const section = await openSection(panel, 'Data connections');
+    expect(await within(section).findByText('ledger')).toBeTruthy();
     expect(api.of('GET', ENV_CONNECTIONS)).toHaveLength(1);
   });
 
@@ -287,8 +287,7 @@ describe("an environment's data connections", () => {
       }),
       signedIn(),
     );
-    const panel = await envPanel('Production');
-    await openSection(panel, 'Data connections');
+    const panel = await openSection(await envPanel('Production'), 'Data connections');
     const select = (await within(panel).findByLabelText('Connection to link')) as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual(['', 'crm']);
     fireEvent.change(select, { target: { value: 'crm' } });
@@ -311,8 +310,7 @@ describe("an environment's data connections", () => {
       }),
       signedIn(),
     );
-    const panel = await envPanel('Production');
-    await openSection(panel, 'Data connections');
+    const panel = await openSection(await envPanel('Production'), 'Data connections');
     fireEvent.change(await within(panel).findByLabelText('Connection to link'), { target: { value: 'crm' } });
     await act(async () => {
       fireEvent.click(within(panel).getByRole('button', { name: 'Link connection' }));
@@ -341,8 +339,7 @@ describe("an environment's data connections", () => {
       }),
       signedIn(),
     );
-    const panel = await envPanel('Production');
-    await openSection(panel, 'Data connections');
+    const panel = await openSection(await envPanel('Production'), 'Data connections');
     fireEvent.click(await within(panel).findByRole('button', { name: 'Unlink ledger from Production' }));
     const dialog = await screen.findByRole('dialog', { name: 'Unlink ledger' });
     const confirm = within(dialog).getByRole('button', { name: 'Unlink' }) as HTMLButtonElement;
@@ -365,8 +362,7 @@ describe("an environment's data connections", () => {
       }),
       signedIn(),
     );
-    const panel = await envPanel('Production');
-    await openSection(panel, 'Data connections');
+    const panel = await openSection(await envPanel('Production'), 'Data connections');
     expect(await within(panel).findByText(/shared wider than allowed since/)).toBeTruthy();
     expect(within(panel).getByText('Only org admins can link and unlink connections.')).toBeTruthy();
     expect(within(panel).queryByRole('button', { name: /Unlink/ })).toBeNull();
@@ -397,8 +393,7 @@ describe("an environment's data connections", () => {
       }),
       signedIn(),
     );
-    const panel = await envPanel('Production');
-    await openSection(panel, 'Data connections');
+    const panel = await openSection(await envPanel('Production'), 'Data connections');
     const row = (await within(panel).findByText('ledger')).closest('tr');
     if (!row) throw new Error('no row');
     expect(api.of('GET', `${ENV_CONNECTIONS}/ledger/schema`)).toHaveLength(0);
@@ -421,8 +416,7 @@ describe("an environment's data connections", () => {
       }),
       signedIn(),
     );
-    const panel = await envPanel('Production');
-    await openSection(panel, 'Data connections');
+    const panel = await openSection(await envPanel('Production'), 'Data connections');
     const row = (await within(panel).findByText('crm')).closest('tr');
     if (!row) throw new Error('no row');
     await openSection(row, 'Columns');

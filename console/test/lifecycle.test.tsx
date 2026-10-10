@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { type Grants, withGrant } from '../src/api/grants';
+import { openTab } from './appPage';
 import { type Call, type Handler, json, problem } from './fakeApi';
 import { signedIn, start } from './harness';
 
@@ -94,8 +95,7 @@ function echoGrants(env: string, version: number): Handler {
 }
 
 async function openShare(envName: 'Production' | 'Preview') {
-  const name = envName === 'Production' ? 'Production prod' : 'Preview preview';
-  const panel = await screen.findByRole('region', { name }, { timeout: FIRST_RENDER_MS });
+  const panel = await screen.findByRole('region', { name: 'Who has access' }, { timeout: FIRST_RENDER_MS });
   await waitFor(() => expect(within(panel).queryByText('Loading access…')).toBeNull());
   fireEvent.click(within(panel).getByRole('button', { name: `Share ${envName}` }));
   const dialog = await screen.findByRole('dialog', { name: `Share ${envName.toLowerCase()}` });
@@ -111,7 +111,7 @@ async function submitShare(dialog: HTMLElement) {
 describe('share dialog', () => {
   it('finds a group by name and shares production with it through If-Match', async () => {
     const { api } = start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({
         'GET /v1/groups': () => json(200, { groups: [{ id: GROUP, name: 'Finance', member_count: 4 }] }),
         [`PUT ${PROD_GRANTS}`]: echoGrants(PROD, 4),
@@ -144,7 +144,7 @@ describe('share dialog', () => {
   it('lets an admin find a person by email and replaces the role they had', async () => {
     const had = { id: 'gnt_000000000000000000u1', role: 'user', subject_kind: 'user', subject_id: PERSON } as const;
     const { api } = start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({
         [`GET ${PROD_GRANTS}`]: () => json(200, grants(PROD, 3, [had])),
         'GET /v1/users': () =>
@@ -180,7 +180,7 @@ describe('share dialog', () => {
     ['no role (agent or deactivated)', whoami(null)],
   ])('offers a %s only a usr_ id, never the email search', async (_, me) => {
     const { api } = start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({ 'GET /v1/whoami': me, [`PUT ${PROD_GRANTS}`]: echoGrants(PROD, 4) }),
       signedIn(),
     );
@@ -204,7 +204,7 @@ describe('share dialog', () => {
   });
 
   it('waits for whoami before offering the email search', async () => {
-    start(`/apps/${APP_ID}`, page({ 'GET /v1/whoami': NEVER }), signedIn());
+    start(`/apps/${APP_ID}?tab=access`, page({ 'GET /v1/whoami': NEVER }), signedIn());
     const { dialog } = await openShare('Production');
     fireEvent.click(within(dialog).getByRole('radio', { name: 'A person' }));
     expect(within(dialog).getByText('Checking your role…')).toBeTruthy();
@@ -213,7 +213,7 @@ describe('share dialog', () => {
   });
 
   it('offers only the builder role on preview', async () => {
-    start(`/apps/${APP_ID}`, page(), signedIn());
+    start(`/apps/${APP_ID}?tab=access&env=preview`, page(), signedIn());
     const { dialog } = await openShare('Preview');
     const options = within(within(dialog).getByLabelText('Role')).getAllByRole('option');
     expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual(['builder']);
@@ -221,7 +221,7 @@ describe('share dialog', () => {
 
   it('re-reads after a 412 and applies the change to the version it read', async () => {
     const { api } = start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({
         [`GET ${PROD_GRANTS}`]: [
           () => json(200, grants(PROD, 3)),
@@ -247,7 +247,7 @@ describe('share dialog', () => {
   });
 
   it('sends nothing when the subject already has that role', async () => {
-    const { api } = start(`/apps/${APP_ID}`, page(), signedIn());
+    const { api } = start(`/apps/${APP_ID}?tab=access`, page(), signedIn());
     const { panel, dialog } = await openShare('Production');
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Everyone in the organisation' }));
     await submitShare(dialog);
@@ -257,7 +257,7 @@ describe('share dialog', () => {
 
   it('says a 202 waits for approval and changes nothing', async () => {
     start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({
         [`PUT ${PROD_GRANTS}`]: () =>
           json(202, { environment_id: PROD, grants_version: 3, approval_ids: ['apr_aaaaaaaaaaaaaaaaaaaa'] }, { ETag: '"3"' }),
@@ -275,7 +275,7 @@ describe('share dialog', () => {
 
   it('explains APPROVAL_REQUIRED and asks for approval of exactly that change', async () => {
     const { api } = start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({
         [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.'),
         'POST /v1/approvals': ({ body }) =>
@@ -308,7 +308,7 @@ describe('share dialog', () => {
   });
 
   it('asks for a whole email address before searching people', async () => {
-    const { api } = start(`/apps/${APP_ID}`, page(), signedIn());
+    const { api } = start(`/apps/${APP_ID}?tab=access`, page(), signedIn());
     const { dialog } = await openShare('Production');
     fireEvent.click(within(dialog).getByRole('radio', { name: 'A person' }));
     fireEvent.change(within(dialog).getByLabelText('Email or usr_ id'), { target: { value: 'pat' } });
@@ -329,7 +329,7 @@ describe('share dialog', () => {
     const other = 'grp_gggggggggggggggggggg';
     const search = held();
     const { api } = start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({ 'GET /v1/groups': search.handler, [`PUT ${PROD_GRANTS}`]: echoGrants(PROD, 4) }),
       signedIn(),
     );
@@ -354,7 +354,7 @@ describe('share dialog', () => {
 
   it('drops a group search that lands after switching to a person', async () => {
     const search = held();
-    const { api } = start(`/apps/${APP_ID}`, page({ 'GET /v1/groups': search.handler }), signedIn());
+    const { api } = start(`/apps/${APP_ID}?tab=access`, page({ 'GET /v1/groups': search.handler }), signedIn());
     const { dialog } = await openShare('Production');
     fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: 'finance' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
@@ -368,7 +368,7 @@ describe('share dialog', () => {
 
   it('drops a search that lands after the dialog closed', async () => {
     const search = held();
-    const { api } = start(`/apps/${APP_ID}`, page({ 'GET /v1/groups': search.handler }), signedIn());
+    const { api } = start(`/apps/${APP_ID}?tab=access`, page({ 'GET /v1/groups': search.handler }), signedIn());
     const { panel, dialog } = await openShare('Production');
     fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: 'finance' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
@@ -393,7 +393,7 @@ describe('share dialog', () => {
     ],
   ])('forgets an APPROVAL_REQUIRED refusal when %s changes', async (_, edit) => {
     const { api } = start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({ [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.') }),
       signedIn(),
     );
@@ -410,7 +410,7 @@ describe('share dialog', () => {
 
   it('keeps the dialog open on a refusal', async () => {
     start(
-      `/apps/${APP_ID}`,
+      `/apps/${APP_ID}?tab=access`,
       page({ [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APP_NOT_ACTIVE', 'This app is not active.') }),
       signedIn(),
     );
@@ -422,7 +422,8 @@ describe('share dialog', () => {
   });
 });
 
-function adminPanel() {
+async function adminPanel() {
+  await openTab('Settings');
   return screen.findByRole('region', { name: 'Admin actions' }, { timeout: FIRST_RENDER_MS });
 }
 
@@ -491,6 +492,7 @@ describe('admin actions', () => {
     const polls = api.of('GET', `${APP_PATH}/kill-switch/${RUN}`).length;
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(api.of('GET', `${APP_PATH}/kill-switch/${RUN}`)).toHaveLength(polls);
+    await openTab('Overview');
     expect((screen.getByRole('button', { name: 'Roll back Production' }) as HTMLButtonElement).disabled).toBe(true);
   });
 

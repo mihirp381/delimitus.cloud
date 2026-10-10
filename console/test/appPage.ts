@@ -1,5 +1,5 @@
 /** One app with both environments, and the routes its page reads, for the app page's tests. */
-import { act, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { type Handler, json } from './fakeApi';
 
 export const OWNER = 'usr_cccccccccccccccccccc';
@@ -54,13 +54,53 @@ export function page(extra: Record<string, Handler | Handler[]> = {}, status: St
   };
 }
 
+/** One environment's card on the app page's overview. */
 export async function envPanel(name: 'Production' | 'Preview'): Promise<HTMLElement> {
   const label = name === 'Production' ? 'Production prod' : 'Preview preview';
   return screen.findByRole('region', { name: label }, { timeout: FIRST_RENDER_MS });
 }
 
-/** Opens one of an environment panel's collapsed sections, such as "Timers". */
+/** The tab each of the app page's sections is on. */
+const TAB_OF: Readonly<Record<string, string>> = {
+  'Who has access': 'Access',
+  'Why can this person open it?': 'Access',
+  'Data connections': 'Data',
+  Secrets: 'Secrets',
+  Timers: 'Timers',
+  Logs: 'Logs',
+  Repository: 'Settings',
+  'Admin actions': 'Settings',
+};
+
+/** Follows one of the app page's tabs, as a click on it does. */
+export async function openTab(name: string): Promise<void> {
+  const tabs = await screen.findByRole('navigation', { name: 'App sections' }, { timeout: FIRST_RENDER_MS });
+  await act(async () => {
+    fireEvent.click(within(tabs).getByRole('link', { name }));
+  });
+}
+
+/** Turns the Production / Preview switch of a per-environment tab. */
+export async function chooseEnv(name: 'Production' | 'Preview'): Promise<void> {
+  const envs = await screen.findByRole('navigation', { name: 'Environment' });
+  await act(async () => {
+    fireEvent.click(within(envs).getByRole('link', { name }));
+  });
+}
+
+/**
+ * Opens one of the app page's sections, such as "Timers", and returns it. Given an overview
+ * card it goes to the section's tab for that card's environment; given anything else it opens
+ * the collapsed section of that name inside it, such as a connection's "Columns".
+ */
 export async function openSection(panel: HTMLElement, summary: string): Promise<HTMLElement> {
+  const tab = TAB_OF[summary];
+  if (tab && panel.dataset.env) {
+    const preview = panel.dataset.env === 'preview';
+    await openTab(tab);
+    if (preview && tab !== 'Settings') await chooseEnv('Preview');
+    return screen.findByRole('region', { name: summary });
+  }
   const details = within(panel).getByText(summary).closest('details');
   if (!details) throw new Error(`no section ${summary}`);
   await act(async () => {

@@ -20,12 +20,14 @@ interface Props {
   readonly purpose?: ReactNode;
   /** A status pill shown beside the title. */
   readonly status?: ReactNode;
+  /** A line of facts under the title: who owns it, its id. */
+  readonly meta?: ReactNode;
   /** The page's actions; they are shown in the page bar. */
   readonly children?: ReactNode;
 }
 
 /** The top of every page: its title and what it is for. What you can do from it sits in the page bar. */
-export function PageHeader({ title, purpose, status, children }: Props) {
+export function PageHeader({ title, purpose, status, meta, children }: Props) {
   return (
     <div className="page-head">
       <div className="page-head-main">
@@ -34,6 +36,7 @@ export function PageHeader({ title, purpose, status, children }: Props) {
           {status}
         </div>
         {purpose ? <p className="page-purpose">{purpose}</p> : null}
+        {meta}
       </div>
       {children ? <PageActions>{children}</PageActions> : null}
     </div>

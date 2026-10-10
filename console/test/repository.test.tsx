@@ -17,7 +17,7 @@ const LINK = {
 };
 
 async function repository(routes: Record<string, Handler | Handler[]>) {
-  const result = start(`/apps/${APP_ID}`, page(routes), signedIn());
+  const result = start(`/apps/${APP_ID}?tab=settings`, page(routes), signedIn());
   const panel = await screen.findByRole('region', { name: 'Repository' }, { timeout: FIRST_RENDER_MS });
   await waitFor(() => expect(within(panel).queryByText('Loading the repository…')).toBeNull());
   return { ...result, panel };

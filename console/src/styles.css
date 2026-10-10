@@ -664,10 +664,6 @@ a.brand:hover {
   border-color: var(--ssc-feedback-danger-line);
 }
 
-.danger-zone > h2 {
-  color: var(--ssc-feedback-danger);
-}
-
 /* A small mono label: an environment's short name. */
 .chip {
   display: inline-flex;
@@ -1245,7 +1241,8 @@ a.segment.current {
   border-radius: var(--ssc-radius-md);
 }
 
-.panel > .table-wrap {
+.panel > .table-wrap,
+.panel > .stack > .table-wrap {
   margin: 0 calc(var(--ssc-space-4) * -1);
   border-right: 0;
   border-left: 0;
@@ -1258,7 +1255,8 @@ a.segment.current {
   border-radius: var(--ssc-radius-md) var(--ssc-radius-md) 0 0;
 }
 
-.panel > .table-wrap:last-child {
+.panel > .table-wrap:last-child,
+.panel > .stack:last-child > .table-wrap:last-child {
   margin-bottom: calc(var(--ssc-space-4) * -1);
   border-bottom: 0;
   border-radius: 0 0 var(--ssc-radius-md) var(--ssc-radius-md);

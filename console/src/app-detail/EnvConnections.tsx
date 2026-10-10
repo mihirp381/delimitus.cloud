@@ -19,6 +19,7 @@ import { Phrases } from '../components/Phrases';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { ENV_TITLE } from './names';
+import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -29,16 +30,14 @@ const PATH = '/v1/apps/{app_id}/environments/{environment_id}/connections' as co
 const SCHEMA_PATH = '/v1/apps/{app_id}/environments/{environment_id}/connections/{name}/schema' as const;
 
 /**
- * The data connections one environment may reach, read only once the section is opened. Org
+ * The data connections one environment may reach, read only while its tab is open. Org
  * admins link and unlink them; everyone else sees the list.
  */
 export function EnvConnections({ app, env }: Props) {
-  const [open, setOpen] = useState(false);
   return (
-    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>Data connections</summary>
-      {open ? <ConnectionsBody app={app} env={env} /> : null}
-    </details>
+    <Section title="Data connections">
+      <ConnectionsBody app={app} env={env} />
+    </Section>
   );
 }
 

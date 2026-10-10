@@ -1,4 +1,5 @@
 import { useRouteContext } from '@tanstack/react-router';
+import type { ReactNode } from 'react';
 import { BILLING_TEXT, coldStarts, type Health, hours, size } from '../api/cell';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { Badge, type Tone } from '../components/Badge';
@@ -18,9 +19,18 @@ const REASON: Readonly<Record<string, string>> = {
 /**
  * How one environment is running: its state, where asleep is normal and the next request wakes
  * it; its use this month; and its database's connections and size. Each line says "not
- * available" rather than failing the page when the cell cannot answer.
+ * available" rather than failing the page when the cell cannot answer. `children` are the facts
+ * that sit between its state and its use: what it runs and where.
  */
-export function Running({ app, env }: { readonly app: AppOut; readonly env: EnvironmentOut }) {
+export function Running({
+  app,
+  env,
+  children,
+}: {
+  readonly app: AppOut;
+  readonly env: EnvironmentOut;
+  readonly children?: ReactNode;
+}) {
   const { queries } = useRouteContext({ from: '/_authed/apps/$appId' });
   const init = { params: { path: { app_id: app.id, environment_id: env.id } } };
   const health = queries.useQuery(
@@ -56,6 +66,7 @@ export function Running({ app, env }: { readonly app: AppOut; readonly env: Envi
           <span className="muted">{REASON[health.data.reason] ?? health.data.reason}</span>
         )}
       </dd>
+      {children}
       <dt>This month</dt>
       <dd>
         {usage.isPending ? (

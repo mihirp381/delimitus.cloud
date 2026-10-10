@@ -20,6 +20,7 @@ import { ApiProblem } from '../api/problem';
 import { Button } from '../components/Button';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { ENV_TITLE } from './names';
+import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -61,17 +62,15 @@ function onShow(signal: AbortSignal): Promise<void> {
 }
 
 /**
- * An environment's logs, read only once the section is opened: the newest lines of one source,
- * then the lines that follow for as long as the section is open and the tab is on show. Builders
- * of the app, its owner and org admins; the API refuses anyone else.
+ * An environment's logs, read only while its tab is open: the newest lines of one source, then
+ * the lines that follow for as long as its tab is open and the browser tab is on show. Builders of
+ * the app, its owner and org admins; the API refuses anyone else.
  */
 export function Logs({ app, env }: Props) {
-  const [open, setOpen] = useState(false);
   return (
-    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>Logs</summary>
-      {open ? <LogsBody app={app} env={env} /> : null}
-    </details>
+    <Section title="Logs">
+      <LogsBody app={app} env={env} />
+    </Section>
   );
 }
 

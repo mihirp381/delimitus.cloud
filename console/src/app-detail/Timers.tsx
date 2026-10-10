@@ -23,6 +23,7 @@ import { Dialog } from '../components/Dialog';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { ENV_TITLE } from './names';
+import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -55,17 +56,15 @@ interface Started {
 }
 
 /**
- * The timers an environment's app declared, read only once the section is opened: when each
+ * The timers an environment's app declared, read only while its tab is open: when each
  * runs next, pause and resume, its runs, and a run now. Each needs a builder of the app; the
  * API refuses anyone else.
  */
 export function Timers({ app, env }: Props) {
-  const [open, setOpen] = useState(false);
   return (
-    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>Timers</summary>
-      {open ? <TimersBody app={app} env={env} /> : null}
-    </details>
+    <Section title="Timers">
+      <TimersBody app={app} env={env} />
+    </Section>
   );
 }
 
