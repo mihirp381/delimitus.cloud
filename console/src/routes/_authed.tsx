@@ -54,6 +54,7 @@ function AuthedLayout() {
             {isAdmin(me.data) ? <Link to="/environment">Your environment</Link> : null}
             {isAdmin(me.data) ? <Link to="/people">People</Link> : null}
             {isAdmin(me.data) ? <Link to="/audit">Audit log</Link> : null}
+            <Link to="/help">Help</Link>
           </nav>
           <div className="topbar-user">
             {me.data ? (
@@ -64,8 +65,9 @@ function AuthedLayout() {
                     <path d="M2.4 14a5.6 5.6 0 0 1 11.2 0 .6.6 0 0 1-.6.6H3a.6.6 0 0 1-.6-.6Z" />
                   </svg>
                 </span>
-                <span className="muted person-name">
-                  Signed in as <code>{me.data.subject}</code>
+                <span className="muted person-name" title={me.data.subject}>
+                  <span className="person-label">Signed in as </span>
+                  <code>{me.data.subject}</code>
                 </span>
               </span>
             ) : null}

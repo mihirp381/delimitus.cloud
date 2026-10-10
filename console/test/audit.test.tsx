@@ -379,6 +379,7 @@ describe('admin gating', () => {
         'Your environment',
         'People',
         'Audit log',
+        'Help',
       ]),
     );
   });

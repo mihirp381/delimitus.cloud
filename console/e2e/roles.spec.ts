@@ -14,6 +14,7 @@ const composeFile = process.env.SSC_E2E_COMPOSE_FILE ?? '';
 
 const EVERYONE = ['Apps', 'Approvals', 'Connections', 'Internet access'];
 const ADMIN_ONLY = ['Your environment', 'People', 'Audit log'];
+const HELP = 'Help';
 const FORBIDDEN = 'Your credential is valid but does not allow this action.';
 
 interface Person {
@@ -112,9 +113,19 @@ async function signIn(page: Page, path: string, token: string) {
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' }).getByRole('link');
 
+/** Help is for every role: it reads the API on the console's own origin and says it answers. */
+async function seesHelp(page: Page) {
+  await nav(page).filter({ hasText: HELP }).click();
+  await expect(page.getByRole('heading', { name: 'Help', level: 1 })).toBeVisible();
+  const status = page.getByRole('status', { name: 'SSC status' });
+  await expect(status).toContainText('SSC is answering');
+  await expect(status.locator('time')).toHaveAttribute('datetime', /^\d{4}-\d\d-\d\dT/);
+  await expect(page.getByRole('button', { name: 'Check again' })).toBeEnabled();
+}
+
 /** What both kinds of member see: no admin screens in the nav or by address, and no admin actions. */
 async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World, person: Person) {
-  await expect(nav(page)).toHaveText(EVERYONE);
+  await expect(nav(page)).toHaveText([...EVERYONE, HELP]);
 
   // The app list is the plain one, not the admin inventory, and the shared app is in it.
   await page.goto('/');
@@ -133,7 +144,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
   await expect(page.getByText('Only org admins can look people up and link logins.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Unmatched logins' })).toHaveCount(0);
   await expect(page.getByRole('form')).toHaveCount(0);
-  await expect(nav(page)).toHaveText(EVERYONE);
+  await expect(nav(page)).toHaveText([...EVERYONE, HELP]);
   const adminReads = [
     '/v1/audit',
     '/v1/audit/export?format=csv',
@@ -147,6 +158,8 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
     const refused = await request.get(path, { headers: bearer(person.token) });
     expect(refused.status(), path).toBe(403);
   }
+
+  await seesHelp(page);
 
   // The app page has no admin action, and the API refuses the kill switch.
   await page.goto(`/apps/${w.appId}`);
@@ -163,7 +176,10 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
 test('an org admin sees every screen and the admin actions', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', adminToken);
-  await expect(nav(page)).toHaveText([...EVERYONE, ...ADMIN_ONLY]);
+  await expect(nav(page)).toHaveText([...EVERYONE, ...ADMIN_ONLY, HELP]);
+  // Eight links and a name: every link is on show, the bar does not hide one behind a sideways scroll.
+  await expect(nav(page).first()).toBeInViewport({ ratio: 1 });
+  await expect(nav(page).last()).toBeInViewport({ ratio: 1 });
 
   // The inventory, with its environment filter.
   await expect(page.getByRole('link', { name: w.slug })).toBeVisible();
@@ -189,6 +205,8 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   await group.getByLabel('Group name').fill(`No such group ${w.slug}`);
   await group.getByRole('button', { name: 'Find' }).click();
   await expect(page.getByText(`No group is named exactly No such group ${w.slug}.`)).toBeVisible();
+
+  await seesHelp(page);
 
   await page.goto(`/apps/${w.appId}`);
   const admin = page.getByRole('region', { name: 'Admin actions' });

@@ -178,7 +178,8 @@ a.brand:hover {
 
 .topbar nav {
   display: flex;
-  flex: 1;
+  /* On one row every link is on show: the name beside them gives way, never a link. */
+  flex: none;
   gap: var(--ssc-space-1);
   min-width: 0;
   overflow-x: auto;
@@ -220,11 +221,15 @@ a.brand:hover {
 
 .topbar-user {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
   align-items: center;
   gap: var(--ssc-space-3);
   min-width: 0;
   margin-left: auto;
+}
+
+.topbar-user .btn {
+  flex: none;
 }
 
 .person {
@@ -236,10 +241,20 @@ a.brand:hover {
 }
 
 .person-name {
+  min-width: 0;
   max-width: 26ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* "Signed in as": read out always, shown where the bar has two rows and so the room for it. */
+.person-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 .avatar {
@@ -1241,19 +1256,28 @@ details pre {
   backdrop-filter: blur(6px);
 }
 
-/* Narrow windows: the bar's links move to their own row and scroll sideways, lists stack, and a
-   card gives up some padding. Nothing makes the page itself scroll sideways. */
+/* Narrower than the page's full width (--ssc-page-max), an admin's eight links and a name no
+   longer share a row: the links move to their own row, and scroll sideways once that is too
+   narrow as well. Narrower still, lists stack and a card gives up some padding. Nothing makes
+   the page itself scroll sideways. */
 
-@media (max-width: 960px) {
+@media (max-width: 1199px) {
   .topbar-in {
     flex-wrap: wrap;
     padding-top: var(--ssc-space-2);
   }
 
   .topbar nav {
-    flex-basis: 100%;
+    flex: 1 1 100%;
     order: 3;
     padding-bottom: var(--ssc-space-2);
+  }
+
+  .person-label {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
   }
 }
 

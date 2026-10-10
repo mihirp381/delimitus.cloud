@@ -12,6 +12,10 @@ FROM node:24.20.0-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af0
 # VITE_SSC_DEV_LOGIN: the token login stays out of this build.
 ARG VITE_SSC_AUTH_URL=https://auth.delimitus.com
 ARG VITE_SSC_API_AUDIENCE=https://api.delimitus.com
+# What the console's Help page shows: the support address, and the trust pack's https address.
+# Neither is a secret. Left empty, the page says "Ask your SSC contact" and shows no trust link.
+ARG VITE_SSC_SUPPORT_EMAIL=
+ARG VITE_SSC_TRUST_URL=
 WORKDIR /console
 COPY console/package.json console/package-lock.json console/.npmrc ./
 RUN npm ci --no-audit --no-fund

@@ -16,6 +16,7 @@ import { Route as AuthedAuditRouteImport } from './routes/_authed/audit'
 import { Route as AuthedConnectionsRouteImport } from './routes/_authed/connections'
 import { Route as AuthedEgressRouteImport } from './routes/_authed/egress'
 import { Route as AuthedEnvironmentRouteImport } from './routes/_authed/environment'
+import { Route as AuthedHelpRouteImport } from './routes/_authed/help'
 import { Route as AuthedPeopleRouteImport } from './routes/_authed/people'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedApprovalsIndexRouteImport } from './routes/_authed/approvals.index'
@@ -55,6 +56,11 @@ const AuthedEgressRoute = AuthedEgressRouteImport.update({
 const AuthedEnvironmentRoute = AuthedEnvironmentRouteImport.update({
   id: '/environment',
   path: '/environment',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedHelpRoute = AuthedHelpRouteImport.update({
+  id: '/help',
+  path: '/help',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedPeopleRoute = AuthedPeopleRouteImport.update({
@@ -97,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/connections': typeof AuthedConnectionsRoute
   '/egress': typeof AuthedEgressRoute
   '/environment': typeof AuthedEnvironmentRoute
+  '/help': typeof AuthedHelpRoute
   '/people': typeof AuthedPeopleRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
@@ -110,6 +117,7 @@ export interface FileRoutesByTo {
   '/connections': typeof AuthedConnectionsRoute
   '/egress': typeof AuthedEgressRoute
   '/environment': typeof AuthedEnvironmentRoute
+  '/help': typeof AuthedHelpRoute
   '/people': typeof AuthedPeopleRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/': typeof AuthedIndexRoute
@@ -126,6 +134,7 @@ export interface FileRoutesById {
   '/_authed/connections': typeof AuthedConnectionsRoute
   '/_authed/egress': typeof AuthedEgressRoute
   '/_authed/environment': typeof AuthedEnvironmentRoute
+  '/_authed/help': typeof AuthedHelpRoute
   '/_authed/people': typeof AuthedPeopleRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/_authed/': typeof AuthedIndexRoute
@@ -143,6 +152,7 @@ export interface FileRouteTypes {
     | '/connections'
     | '/egress'
     | '/environment'
+    | '/help'
     | '/people'
     | '/auth/callback'
     | '/approvals/$approvalId'
@@ -156,6 +166,7 @@ export interface FileRouteTypes {
     | '/connections'
     | '/egress'
     | '/environment'
+    | '/help'
     | '/people'
     | '/auth/callback'
     | '/'
@@ -171,6 +182,7 @@ export interface FileRouteTypes {
     | '/_authed/connections'
     | '/_authed/egress'
     | '/_authed/environment'
+    | '/_authed/help'
     | '/_authed/people'
     | '/auth/callback'
     | '/_authed/'
@@ -237,6 +249,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedEnvironmentRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/help': {
+      id: '/_authed/help'
+      path: '/help'
+      fullPath: '/help'
+      preLoaderRoute: typeof AuthedHelpRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/people': {
       id: '/_authed/people'
       path: '/people'
@@ -287,6 +306,7 @@ interface AuthedRouteChildren {
   AuthedConnectionsRoute: typeof AuthedConnectionsRoute
   AuthedEgressRoute: typeof AuthedEgressRoute
   AuthedEnvironmentRoute: typeof AuthedEnvironmentRoute
+  AuthedHelpRoute: typeof AuthedHelpRoute
   AuthedPeopleRoute: typeof AuthedPeopleRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
   AuthedApprovalsApprovalIdRoute: typeof AuthedApprovalsApprovalIdRoute
@@ -300,6 +320,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedConnectionsRoute: AuthedConnectionsRoute,
   AuthedEgressRoute: AuthedEgressRoute,
   AuthedEnvironmentRoute: AuthedEnvironmentRoute,
+  AuthedHelpRoute: AuthedHelpRoute,
   AuthedPeopleRoute: AuthedPeopleRoute,
   AuthedIndexRoute: AuthedIndexRoute,
   AuthedApprovalsApprovalIdRoute: AuthedApprovalsApprovalIdRoute,
