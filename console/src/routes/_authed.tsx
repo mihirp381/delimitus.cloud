@@ -52,6 +52,7 @@ function AuthedLayout() {
             <Link to="/connections">Connections</Link>
             <Link to="/egress">Internet access</Link>
             {isAdmin(me.data) ? <Link to="/environment">Your environment</Link> : null}
+            {isAdmin(me.data) ? <Link to="/people">People</Link> : null}
             {isAdmin(me.data) ? <Link to="/audit">Audit log</Link> : null}
           </nav>
           <div className="topbar-user">

@@ -682,6 +682,19 @@ textarea {
   min-width: 0;
 }
 
+/* One text box and the button that asks about it, on a line. */
+.lookup-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ssc-space-3);
+}
+
+.lookup-form .field {
+  flex: 1 1 280px;
+  max-width: 480px;
+}
+
 .choices {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

@@ -13,7 +13,7 @@ const composeProject = process.env.SSC_E2E_COMPOSE_PROJECT ?? '';
 const composeFile = process.env.SSC_E2E_COMPOSE_FILE ?? '';
 
 const EVERYONE = ['Apps', 'Approvals', 'Connections', 'Internet access'];
-const ADMIN_ONLY = ['Your environment', 'Audit log'];
+const ADMIN_ONLY = ['Your environment', 'People', 'Audit log'];
 const FORBIDDEN = 'Your credential is valid but does not allow this action.';
 
 interface Person {
@@ -26,6 +26,7 @@ interface World {
   readonly appId: string;
   readonly grants: string;
   readonly builder: Person;
+  readonly builderEmail: string;
   readonly user: Person;
   readonly colleagueId: string;
 }
@@ -91,6 +92,7 @@ function world(request: APIRequestContext): Promise<World> {
       appId: app.id,
       grants,
       builder: { id: builderId ?? '', token: mint(builderId ?? '') },
+      builderEmail: `builder-${stamp}@example.com`,
       user: { id: userId ?? '', token: mint(userId ?? '') },
       colleagueId: colleagueId ?? '',
     };
@@ -127,8 +129,21 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
   await expect(page.getByRole('button', { name: /Export/ })).toHaveCount(0);
   await page.goto('/environment');
   await expect(page.getByText('Only org admins can see the environment.')).toBeVisible();
+  await page.goto('/people');
+  await expect(page.getByText('Only org admins can look people up and link logins.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Unmatched logins' })).toHaveCount(0);
+  await expect(page.getByRole('form')).toHaveCount(0);
   await expect(nav(page)).toHaveText(EVERYONE);
-  for (const path of ['/v1/audit', '/v1/audit/export?format=csv', '/v1/inventory', '/v1/usage', '/v1/cell']) {
+  const adminReads = [
+    '/v1/audit',
+    '/v1/audit/export?format=csv',
+    '/v1/inventory',
+    '/v1/usage',
+    '/v1/cell',
+    '/v1/unlinked-logins',
+    `/v1/users?email=${encodeURIComponent(w.builderEmail)}`,
+  ];
+  for (const path of adminReads) {
     const refused = await request.get(path, { headers: bearer(person.token) });
     expect(refused.status(), path).toBe(403);
   }
@@ -160,6 +175,20 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   await nav(page).filter({ hasText: 'Your environment' }).click();
   await expect(page.getByRole('heading', { name: 'Your environment' })).toBeVisible();
   await expect(page.getByText('Only org admins can see the environment.')).toHaveCount(0);
+
+  // People: the unmatched logins (none here, every person was pushed by the operator), and a
+  // person found by their whole email address.
+  await nav(page).filter({ hasText: 'People' }).click();
+  await expect(page.getByText('Every login so far matched a person.')).toBeVisible();
+  const person = page.getByRole('form', { name: 'Look up a person' });
+  await person.getByLabel('Email address').fill(w.builderEmail.toUpperCase());
+  await person.getByRole('button', { name: 'Find' }).click();
+  const found = page.getByRole('table', { name: /People with the email/ }).getByRole('row').nth(1);
+  await expect(found.getByRole('cell')).toHaveText(['builder E2E', w.builderEmail, 'member', 'active', w.builder.id]);
+  const group = page.getByRole('form', { name: 'Look up a group' });
+  await group.getByLabel('Group name').fill(`No such group ${w.slug}`);
+  await group.getByRole('button', { name: 'Find' }).click();
+  await expect(page.getByText(`No group is named exactly No such group ${w.slug}.`)).toBeVisible();
 
   await page.goto(`/apps/${w.appId}`);
   const admin = page.getByRole('region', { name: 'Admin actions' });

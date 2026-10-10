@@ -16,6 +16,7 @@ import { Route as AuthedAuditRouteImport } from './routes/_authed/audit'
 import { Route as AuthedConnectionsRouteImport } from './routes/_authed/connections'
 import { Route as AuthedEgressRouteImport } from './routes/_authed/egress'
 import { Route as AuthedEnvironmentRouteImport } from './routes/_authed/environment'
+import { Route as AuthedPeopleRouteImport } from './routes/_authed/people'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedApprovalsIndexRouteImport } from './routes/_authed/approvals.index'
 import { Route as AuthedApprovalsApprovalIdRouteImport } from './routes/_authed/approvals.$approvalId'
@@ -56,6 +57,11 @@ const AuthedEnvironmentRoute = AuthedEnvironmentRouteImport.update({
   path: '/environment',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedPeopleRoute = AuthedPeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
   id: '/auth/callback',
   path: '/auth/callback',
@@ -91,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/connections': typeof AuthedConnectionsRoute
   '/egress': typeof AuthedEgressRoute
   '/environment': typeof AuthedEnvironmentRoute
+  '/people': typeof AuthedPeopleRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   '/connections': typeof AuthedConnectionsRoute
   '/egress': typeof AuthedEgressRoute
   '/environment': typeof AuthedEnvironmentRoute
+  '/people': typeof AuthedPeopleRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/': typeof AuthedIndexRoute
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/_authed/connections': typeof AuthedConnectionsRoute
   '/_authed/egress': typeof AuthedEgressRoute
   '/_authed/environment': typeof AuthedEnvironmentRoute
+  '/_authed/people': typeof AuthedPeopleRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/connections'
     | '/egress'
     | '/environment'
+    | '/people'
     | '/auth/callback'
     | '/approvals/$approvalId'
     | '/apps/$appId'
@@ -146,6 +156,7 @@ export interface FileRouteTypes {
     | '/connections'
     | '/egress'
     | '/environment'
+    | '/people'
     | '/auth/callback'
     | '/'
     | '/approvals/$approvalId'
@@ -160,6 +171,7 @@ export interface FileRouteTypes {
     | '/_authed/connections'
     | '/_authed/egress'
     | '/_authed/environment'
+    | '/_authed/people'
     | '/auth/callback'
     | '/_authed/'
     | '/_authed/approvals/$approvalId'
@@ -225,6 +237,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedEnvironmentRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/people': {
+      id: '/_authed/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof AuthedPeopleRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/auth/callback': {
       id: '/auth/callback'
       path: '/auth/callback'
@@ -268,6 +287,7 @@ interface AuthedRouteChildren {
   AuthedConnectionsRoute: typeof AuthedConnectionsRoute
   AuthedEgressRoute: typeof AuthedEgressRoute
   AuthedEnvironmentRoute: typeof AuthedEnvironmentRoute
+  AuthedPeopleRoute: typeof AuthedPeopleRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
   AuthedApprovalsApprovalIdRoute: typeof AuthedApprovalsApprovalIdRoute
   AuthedAppsAppIdRoute: typeof AuthedAppsAppIdRoute
@@ -280,6 +300,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedConnectionsRoute: AuthedConnectionsRoute,
   AuthedEgressRoute: AuthedEgressRoute,
   AuthedEnvironmentRoute: AuthedEnvironmentRoute,
+  AuthedPeopleRoute: AuthedPeopleRoute,
   AuthedIndexRoute: AuthedIndexRoute,
   AuthedApprovalsApprovalIdRoute: AuthedApprovalsApprovalIdRoute,
   AuthedAppsAppIdRoute: AuthedAppsAppIdRoute,
