@@ -42,7 +42,7 @@ export function Repository({ app }: { readonly app: AppOut }) {
   }
 
   return (
-    <section className="panel" aria-labelledby="repo-heading">
+    <section className="panel tone-purple" aria-labelledby="repo-heading">
       <h2 id="repo-heading">Repository</h2>
       {notice ? (
         <p className="notice notice-success" role="status">

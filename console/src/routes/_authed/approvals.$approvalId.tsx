@@ -15,6 +15,7 @@ import {
 import { must } from '../../api/client';
 import { ApprovalBadge, Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 
 export const Route = createFileRoute('/_authed/approvals/$approvalId')({
@@ -36,7 +37,7 @@ function ApprovalPage() {
   });
   return (
     <>
-      <p>
+      <p className="crumbs">
         <Link to="/approvals">Back to approvals</Link>
       </p>
       {detail.data ? (
@@ -94,11 +95,8 @@ function Detail({ approval: a }: { readonly approval: ApprovalDetail }) {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Approval request</h1>
-        <ApprovalBadge state={a.state} />
-      </div>
-      <section className="panel">
+      <PageHeader title="Approval request" status={<ApprovalBadge state={a.state} />} />
+      <section className="panel tone-violet">
         <dl className="facts">
           <dt>App</dt>
           <dd>
@@ -128,7 +126,7 @@ function Detail({ approval: a }: { readonly approval: ApprovalDetail }) {
         </div>
       ) : null}
       {a.can_decide ? (
-        <form className="panel stack" onSubmit={submit} aria-label="Decide this request">
+        <form className="panel tone-violet" onSubmit={submit} aria-label="Decide this request">
           <label htmlFor={reasonId}>Reason</label>
           <textarea
             id={reasonId}

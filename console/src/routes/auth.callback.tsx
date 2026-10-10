@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { safeNext, signInMessage } from '../auth/oauth';
+import { Brand, BrandRule } from '../components/Brand';
 
 /**
  * Where the auth host sends the person back (decision 029): `?code&state&iss`, or `?error`. The
@@ -34,7 +35,11 @@ function Callback() {
 
   return (
     <main className="login">
-      <div className="panel stack">
+      <div className="login-card">
+        <BrandRule />
+        <span className="brand">
+          <Brand />
+        </span>
         <h1>Sign in to SSC</h1>
         {error ? (
           <>
@@ -42,11 +47,13 @@ function Callback() {
               <p>{error}</p>
             </div>
             <p>
-              <Link to="/login">Try again</Link>
+              <Link to="/login" className="btn btn-secondary">
+                Try again
+              </Link>
             </p>
           </>
         ) : (
-          <p className="muted">Finishing sign-in…</p>
+          <p className="lede">Finishing sign-in…</p>
         )}
       </div>
     </main>

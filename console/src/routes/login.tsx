@@ -1,6 +1,7 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router';
 import { lazy, Suspense, useState } from 'react';
 import { safeNext, signInMessage } from '../auth/oauth';
+import { Brand, BrandRule } from '../components/Brand';
 import { Button } from '../components/Button';
 
 // The same test as DEV_LOGIN in ../auth/flags, written out so the bundler sees a literal `false`
@@ -38,16 +39,20 @@ function LoginPage() {
 
   return (
     <main className="login">
-      <div className="panel stack">
+      <div className="login-card">
+        <BrandRule />
+        <span className="brand">
+          <Brand />
+        </span>
         <h1>Sign in to SSC</h1>
-        <p className="muted">Use your work account. You come back here when you are signed in.</p>
+        <p className="lede">Use your work account. You come back here when you are signed in.</p>
         {error ? (
           <div className="notice notice-danger" role="alert">
             <p>{error}</p>
           </div>
         ) : null}
         <div>
-          <Button variant="primary" disabled={busy} onClick={() => void signIn()}>
+          <Button variant="primary" className="btn-lg" disabled={busy} onClick={() => void signIn()}>
             Continue with your work account
           </Button>
         </div>

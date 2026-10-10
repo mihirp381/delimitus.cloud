@@ -10,6 +10,7 @@ import {
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ConfirmAction } from '../../components/ConfirmAction';
+import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
@@ -36,13 +37,15 @@ function EgressPage() {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Internet access</h1>
-      </div>
-      <p className="muted">
-        Apps reach the internet only through your cell&apos;s egress proxy, and only the hosts listed
-        here. Partners see every call come from one fixed IP.
-      </p>
+      <PageHeader
+        title="Internet access"
+        purpose={
+          <>
+            Apps reach the internet only through your cell&apos;s egress proxy, and only the hosts
+            listed here. Partners see every call come from one fixed IP.
+          </>
+        }
+      />
       {egress.isPending ? (
         <p className="muted">Loading…</p>
       ) : egress.isError ? (
@@ -80,7 +83,7 @@ function OutboundIp({ ip }: { readonly ip: string | null }) {
   }
 
   return (
-    <section className="panel" aria-labelledby="egress-ip-heading">
+    <section className="panel tone-magenta" aria-labelledby="egress-ip-heading">
       <h2 id="egress-ip-heading">Fixed outbound IP</h2>
       {ip ? (
         <>
@@ -169,7 +172,7 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
     });
   }
   return (
-    <section className="panel" aria-labelledby="egress-hosts-heading">
+    <section className="panel tone-magenta" aria-labelledby="egress-hosts-heading">
       <h2 id="egress-hosts-heading">Allowed hosts</h2>
       <Table
         caption="Hosts apps may reach"
@@ -177,6 +180,11 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
         rows={hosts}
         rowKey={(h) => h.host}
         empty="No host is allowed yet: apps cannot reach the internet."
+        emptyHint={
+          admin
+            ? 'Allow a host below, by name or from the common ones.'
+            : 'Ask an org admin to allow the hosts your app calls.'
+        }
       />
     </section>
   );
@@ -242,7 +250,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
   ];
 
   return (
-    <section className="panel" aria-labelledby="egress-add-heading">
+    <section className="panel tone-magenta" aria-labelledby="egress-add-heading">
       <h2 id="egress-add-heading">Allow a host</h2>
       <form className="stack" onSubmit={submit} aria-label="Allow a host">
         <label className="field" htmlFor={hostId}>
@@ -290,6 +298,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
           rows={catalogue.data.entries}
           rowKey={(e) => e.host}
           empty="The catalogue is empty."
+          emptyHint="Type the host you need in the field above."
         />
       )}
     </section>

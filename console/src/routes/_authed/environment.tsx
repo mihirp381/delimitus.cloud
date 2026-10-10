@@ -23,6 +23,7 @@ import {
 import { ENV_TITLE } from '../../app-detail/names';
 import { Badge, type Tone } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
@@ -46,7 +47,7 @@ function EnvironmentPage() {
   }
   return (
     <>
-      <h1>Your environment</h1>
+      <PageHeader title="Your environment" />
       {me.isPending ? (
         <p className="muted">Loading…</p>
       ) : me.isError ? (
@@ -64,11 +65,15 @@ function YourEnvironment() {
   const usage = queries.useQuery('get', '/v1/usage');
   return (
     <>
-      <h1>Your environment</h1>
-      <p className="muted">
-        What your company&apos;s cell runs and what each part adds a month. These figures are not a
-        bill: you pay a flat fee, and they show what a choice sets off.
-      </p>
+      <PageHeader
+        title="Your environment"
+        purpose={
+          <>
+            What your company&apos;s cell runs and what each part adds a month. These figures are
+            not a bill: you pay a flat fee, and they show what a choice sets off.
+          </>
+        }
+      />
       <OutboundIp />
       {cell.isPending ? (
         <p className="muted">Loading the cell…</p>
@@ -79,7 +84,7 @@ function YourEnvironment() {
           <Resources resources={cell.data.resources} />
           <WarmPanel />
           <DatabasePanel database={cell.data.database} environments={cell.data.environments} />
-          <section className="panel" aria-labelledby="usage-heading">
+          <section className="panel tone-orange" aria-labelledby="usage-heading">
             <h2 id="usage-heading">Usage this month</h2>
             {usage.isPending ? (
               <p className="muted">Loading usage…</p>
@@ -111,7 +116,7 @@ function OutboundIp() {
   }
 
   return (
-    <section className="panel" aria-labelledby="ip-heading">
+    <section className="panel tone-orange" aria-labelledby="ip-heading">
       <h2 id="ip-heading">Fixed outbound IP</h2>
       {egress.isPending ? (
         <p className="muted">Loading…</p>
@@ -184,7 +189,7 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
     { header: 'Adds', cell: (r) => monthly(r.monthly_usd) },
   ];
   return (
-    <section className="panel" aria-labelledby="resources-heading">
+    <section className="panel tone-orange" aria-labelledby="resources-heading">
       <h2 id="resources-heading">Parts created when first needed</h2>
       <p className="muted">
         Each part is created the first time an app needs it and then stays: a database for the
@@ -197,6 +202,7 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
         rows={resources}
         rowKey={(r) => r.resource}
         empty="No parts."
+        emptyHint="A part appears here the first time an app needs it."
       />
     </section>
   );
@@ -231,7 +237,7 @@ function WarmPanel() {
       q.state.data?.gateway.state.startsWith('turning') ? GATEWAY_POLL_MS : false,
   });
   return (
-    <section className="panel" aria-labelledby="warm-heading">
+    <section className="panel tone-orange" aria-labelledby="warm-heading">
       <h2 id="warm-heading">Warm option</h2>
       <p className="muted">
         Every app sleeps when nobody uses it, and its first visitor waits while it wakes. A warm
@@ -356,7 +362,7 @@ function DatabasePanel({
   const taken = database.places_used * database.connection_limit;
   const total = database.places_total * database.connection_limit;
   return (
-    <section className="panel" aria-labelledby="database-heading">
+    <section className="panel tone-orange" aria-labelledby="database-heading">
       <h2 id="database-heading">Database</h2>
       <dl className="facts">
         <dt>Tier</dt>
@@ -453,6 +459,7 @@ function UsageTable({
         rows={usage}
         rowKey={(u) => u.environment_id}
         empty="No app has run this month."
+        emptyHint="Use appears here once someone opens an app."
       />
     </>
   );

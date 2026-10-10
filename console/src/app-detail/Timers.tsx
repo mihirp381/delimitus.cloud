@@ -223,6 +223,7 @@ function TimersBody({ app, env }: Props) {
           rows={schedules.data.items}
           rowKey={(s) => s.schedule_id}
           empty="This environment's app declares no timers."
+          emptyHint="A timer appears here once the app declares one and is deployed."
         />
       )}
       {env.name === 'preview' ? (

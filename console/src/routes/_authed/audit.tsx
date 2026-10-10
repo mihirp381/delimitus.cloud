@@ -13,6 +13,7 @@ import {
 import { must } from '../../api/client';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { saveBlob } from '../../download';
@@ -35,7 +36,7 @@ function AuditPage() {
   }
   return (
     <>
-      <h1>Audit log</h1>
+      <PageHeader title="Audit log" />
       {me.isPending ? (
         <p className="muted">Loading…</p>
       ) : me.isError ? (
@@ -88,20 +89,21 @@ function AuditLog() {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Audit log</h1>
-        <div className="actions">
-          {FORMATS.map(({ format, label }) => (
-            <Button key={format} disabled={exporting !== null} onClick={() => void download(format)}>
-              {exporting === format ? 'Exporting…' : label}
-            </Button>
-          ))}
-        </div>
-      </div>
-      <p className="muted">
-        Newest first. An export holds every event matching the applied filters, oldest first, and is
-        itself recorded as <code>audit.exported</code>.
-      </p>
+      <PageHeader
+        title="Audit log"
+        purpose={
+          <>
+            Newest first. An export holds every event matching the applied filters, oldest first,
+            and is itself recorded as <code>audit.exported</code>.
+          </>
+        }
+      >
+        {FORMATS.map(({ format, label }) => (
+          <Button key={format} disabled={exporting !== null} onClick={() => void download(format)}>
+            {exporting === format ? 'Exporting…' : label}
+          </Button>
+        ))}
+      </PageHeader>
       {saved ? (
         <p className="notice notice-success" role="status">
           Saved {saved}.
@@ -121,6 +123,11 @@ function AuditLog() {
             rows={rows}
             rowKey={(e) => String(e.seq)}
             empty={Object.keys(filters).length ? 'No event matches the filters.' : 'No events yet.'}
+            emptyHint={
+              Object.keys(filters).length
+                ? 'Widen or clear the filters to see more.'
+                : 'Every change made in your organisation is recorded here as it happens.'
+            }
           />
           <div className="more">
             <p className="muted count" aria-live="polite">

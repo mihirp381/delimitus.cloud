@@ -7,7 +7,7 @@ import {
   detachConnection,
   type EnvironmentConnection,
   type EnvironmentConnections,
-  limitsText,
+  limitPhrases,
 } from '../api/connections';
 import type { Approval } from '../api/grants';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
@@ -15,6 +15,7 @@ import { ApiProblem } from '../api/problem';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
+import { Phrases } from '../components/Phrases';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { ENV_TITLE } from './names';
@@ -77,7 +78,7 @@ function ConnectionsBody({ app, env }: Props) {
         </>
       ),
     },
-    { header: 'Limits here', cell: (l) => limitsText(l.limits) },
+    { header: 'Limits here', cell: (l) => <Phrases items={limitPhrases(l.limits)} /> },
     { header: 'Columns', cell: (l) => <ConnectionColumns app={app} env={env} name={l.connection.name} /> },
     {
       header: 'Linked',
@@ -130,6 +131,11 @@ function ConnectionsBody({ app, env }: Props) {
             rows={linked.data.connections}
             rowKey={(l) => l.connection.id}
             empty="This environment reaches no data connection."
+            emptyHint={
+              admin
+                ? 'Link one below when the app needs one of your databases.'
+                : 'An org admin links a connection here when the app needs one of your databases.'
+            }
           />
           {me.isPending ? null : admin ? (
             <LinkForm

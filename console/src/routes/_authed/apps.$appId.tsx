@@ -20,6 +20,7 @@ import { ShareDialog } from '../../app-detail/ShareDialog';
 import { Timers } from '../../app-detail/Timers';
 import { StatusBadge } from '../../components/Badge';
 import { ConfirmAction } from '../../components/ConfirmAction';
+import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
@@ -59,10 +60,7 @@ function AppView({ app }: { readonly app: AppOut }) {
   const environments = [...app.environments].sort((a, b) => ENV_ORDER[a.name] - ENV_ORDER[b.name]);
   return (
     <>
-      <div className="page-head">
-        <h1>{app.slug}</h1>
-        <StatusBadge status={app.status} />
-      </div>
+      <PageHeader title={app.slug} status={<StatusBadge status={app.status} />} />
       <section className="panel">
         <dl className="facts">
           <dt>Owner</dt>
@@ -156,9 +154,9 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
   ];
 
   return (
-    <section className="panel" aria-labelledby={headingId}>
+    <section className={env.name === 'prod' ? 'panel' : 'panel tone-violet'} aria-labelledby={headingId}>
       <h2 id={headingId}>
-        {ENV_TITLE[env.name]} <code className="muted">{env.name}</code>
+        {ENV_TITLE[env.name]} <code className="chip">{env.name}</code>
       </h2>
       <dl className="facts">
         <Running app={app} env={env} />
@@ -199,6 +197,7 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
           rows={grants.data.grants}
           rowKey={grantKey}
           empty="Nobody has access yet."
+          emptyHint={`Use Share to give a person, a group or everyone in the organisation access to ${ENV_TITLE[env.name].toLowerCase()}.`}
         />
       )}
       <EnvConnections app={app} env={env} />

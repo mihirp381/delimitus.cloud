@@ -20,7 +20,7 @@ import {
   ADVISORY_LIMITS,
   ADVISORY_NOTE,
   type Limits,
-  limitsText,
+  limitPhrases,
   limitsTyped,
   needsCeiling,
   parseLimits,
@@ -35,6 +35,8 @@ import { Lookup } from '../../app-detail/Lookup';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
+import { PageHeader } from '../../components/PageHeader';
+import { Phrases } from '../../components/Phrases';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
@@ -57,7 +59,7 @@ function ConnectionsPage() {
     { header: 'Classification', cell: (c) => c.classification },
     { header: 'Apps may be shared with', cell: (c) => ceilingText(c.ceiling) },
     { header: 'Schemas', cell: (c) => c.allowed_schemas.join(', ') },
-    { header: 'Limits', cell: (c) => limitsText(c.limits) },
+    { header: 'Limits', cell: (c) => <Phrases items={limitPhrases(c.limits)} /> },
     {
       header: 'State',
       cell: (c) => (
@@ -69,7 +71,14 @@ function ConnectionsPage() {
     },
     {
       header: 'Owner',
-      cell: (c) => (c.owner_user_id ? <code>{c.owner_user_id}</code> : 'None'),
+      cell: (c) =>
+        c.owner_user_id ? (
+          <code className="truncate" title={c.owner_user_id}>
+            {c.owner_user_id}
+          </code>
+        ) : (
+          'None'
+        ),
     },
   ];
   if (admin) {
@@ -82,19 +91,19 @@ function ConnectionsPage() {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Connections</h1>
-      </div>
-      <p className="muted">
-        Your company&apos;s databases that apps may read through the data gateway. A connection&apos;s
-        address is stored when it is added and never shown again; its credentials are set up with
-        your operator.
-      </p>
-      {me.isPending ? null : admin ? (
-        <div className="toolbar">
-          <AddConnection onDone={setNotice} />
-        </div>
-      ) : (
+      <PageHeader
+        title="Connections"
+        purpose={
+          <>
+            Your company&apos;s databases that apps may read through the data gateway. A
+            connection&apos;s address is stored when it is added and never shown again; its
+            credentials are set up with your operator.
+          </>
+        }
+      >
+        {!me.isPending && admin ? <AddConnection onDone={setNotice} /> : null}
+      </PageHeader>
+      {me.isPending || admin ? null : (
         <p className="muted">
           Only org admins can add or change connections. You see the ones your approved requests
           name.
@@ -105,18 +114,24 @@ function ConnectionsPage() {
           {notice}
         </p>
       ) : null}
-      <section className="panel" aria-label="Connections">
+      <section className="panel tone-purple" aria-label="Connections">
         {list.isPending ? (
           <p className="muted">Loading connections…</p>
         ) : list.isError ? (
           <ProblemNotice error={list.error} />
         ) : (
           <Table
+            dense
             caption="Connections"
             columns={columns}
             rows={list.data.connections}
             rowKey={(c) => c.id}
             empty="No connections yet."
+            emptyHint={
+              admin
+                ? 'Add a connection to let apps read one of your databases through the data gateway.'
+                : 'An org admin adds connections. Ask one for the database your app needs.'
+            }
           />
         )}
       </section>

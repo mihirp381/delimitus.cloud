@@ -65,7 +65,7 @@ export function AdminActions({ app }: { readonly app: AppOut }) {
   const me = queries.useQuery('get', '/v1/whoami');
   const headingId = `admin-${app.id}`;
   return (
-    <section className="panel" aria-labelledby={headingId}>
+    <section className="panel tone-orange" aria-labelledby={headingId}>
       <h2 id={headingId}>Admin actions</h2>
       {me.isPending ? (
         <p className="muted">Checking your role…</p>

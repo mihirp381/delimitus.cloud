@@ -2,7 +2,10 @@ import type { ReactNode } from 'react';
 
 export type Tone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 
-/** A label with a tone. The text always carries the meaning; the colour only repeats it. */
+/**
+ * A status pill: a label on a tint of its tone. The text always carries the meaning; the colour
+ * only repeats it.
+ */
 export function Badge({ tone, children }: { readonly tone: Tone; readonly children: ReactNode }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }

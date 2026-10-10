@@ -1,5 +1,7 @@
-/* Layout and components. Colours, fonts, radii and shadows come only from tokens.css
-   (`--ssc-*`); test/tokens.test.ts refuses a literal colour here. */
+/* Layout and components. Colours, fonts, type sizes, radii, spacing and shadows come only from
+   tokens.css (`--ssc-*`); test/tokens.test.ts refuses a literal colour here. The look follows
+   the landing page (landing/index.html): the same greys, one action blue, tinted pills, pill
+   buttons, soft shadows, and the spectrum as the one brand mark. */
 
 *,
 *::before,
@@ -7,55 +9,91 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
-  font-family: var(--ssc-font-ui);
-  font-size: 15px;
-  line-height: 1.5;
+  font-family: var(--ssc-font-sans);
+  font-size: var(--ssc-type-size-body);
+  line-height: var(--ssc-type-leading-body);
+  letter-spacing: var(--ssc-type-tracking-body);
   color: var(--ssc-text-primary);
-  background: var(--ssc-surface);
+  background: var(--ssc-surface-sunken);
+  -webkit-font-smoothing: antialiased;
 }
 
 h1,
 h2,
 h3 {
-  line-height: 1.25;
   margin: 0;
+  color: var(--ssc-text-primary);
+}
+
+h1,
+h2 {
+  font-family: var(--ssc-font-display);
+  font-weight: 700;
+  text-wrap: balance;
 }
 
 h1 {
-  font-size: 24px;
+  font-size: var(--ssc-type-size-title);
+  line-height: var(--ssc-type-leading-display);
+  letter-spacing: var(--ssc-type-tracking-display);
 }
 
 h2 {
-  font-size: 18px;
+  font-size: var(--ssc-type-size-heading);
+  line-height: var(--ssc-type-leading-tight);
+  letter-spacing: var(--ssc-type-tracking-heading);
 }
 
+/* A section label inside a card, in the card's tone: the landing's `.label`. */
 h3 {
-  font-size: 15px;
-  margin-top: 16px;
+  margin-top: var(--ssc-space-2);
+  font-size: var(--ssc-type-size-label);
+  font-weight: 600;
+  line-height: var(--ssc-type-leading-tight);
+  letter-spacing: var(--ssc-type-tracking-label);
+  color: var(--ssc-tone-blue);
 }
 
 p {
   margin: 0;
 }
 
-code {
+code,
+pre {
   font-family: var(--ssc-font-mono);
-  font-size: 0.9em;
+  letter-spacing: 0;
+}
+
+code {
+  font-size: 0.86em;
 }
 
 a {
-  color: var(--ssc-accent);
+  color: var(--ssc-accent-ink);
+  text-decoration: none;
+  text-underline-offset: 0.18em;
 }
 
 a:hover {
-  color: var(--ssc-accent-hover);
+  color: var(--ssc-accent-ink-hover);
+  text-decoration: underline;
+}
+
+button {
+  letter-spacing: inherit;
 }
 
 :focus-visible {
   outline: 2px solid var(--ssc-focus-ring);
   outline-offset: 2px;
+  border-radius: var(--ssc-radius-sm);
 }
 
 .visually-hidden {
@@ -73,126 +111,416 @@ a:hover {
 
 .stack {
   display: grid;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ssc-space-4);
 }
 
 .spacer {
   flex: 1;
 }
 
-/* Frame */
+/* Brand: the mark and the word, and the spectrum rule that goes with them. The rule is the one
+   place the spectrum appears: under the top bar, and across the top of a sign-in card. */
 
-.topbar {
-  display: flex;
+.brand {
+  display: inline-flex;
   align-items: center;
-  gap: 16px;
-  padding: 12px 24px;
-  background: var(--ssc-surface);
-  border-bottom: 1px solid var(--ssc-border-subtle);
-}
-
-.topbar .brand {
-  font-weight: 600;
+  gap: var(--ssc-space-2);
+  flex: none;
+  font-family: var(--ssc-font-display);
+  font-size: var(--ssc-type-size-body);
+  font-weight: 700;
+  letter-spacing: var(--ssc-type-tracking-heading);
+  line-height: 1;
+  white-space: nowrap;
   color: var(--ssc-text-primary);
   text-decoration: none;
 }
 
-.topbar nav {
-  display: flex;
-  gap: 16px;
-}
-
-.topbar nav a {
+a.brand:hover {
+  color: var(--ssc-text-primary);
   text-decoration: none;
 }
 
-.topbar nav a[data-status='active'] {
+.brand-mark {
+  display: block;
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+.brand-rule {
+  display: block;
+  height: var(--ssc-space-0);
+  background: var(--ssc-spectrum);
+}
+
+/* Frame: the landing's nav, sticky and translucent, over a centred page. */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--ssc-bar-surface);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+.topbar-in {
+  display: flex;
+  align-items: center;
+  gap: var(--ssc-space-2) var(--ssc-space-5);
+  max-width: var(--ssc-page-max);
+  min-height: calc(var(--ssc-bar-height) - var(--ssc-space-0));
+  margin: 0 auto;
+  padding: 0 clamp(var(--ssc-space-4), 4vw, var(--ssc-space-6));
+}
+
+.topbar nav {
+  display: flex;
+  flex: 1;
+  gap: var(--ssc-space-1);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* Room for the links' focus rings, which the scroll box would otherwise clip. */
+  padding: var(--ssc-space-1);
+  margin: 0 calc(var(--ssc-space-1) * -1);
+}
+
+.topbar nav::-webkit-scrollbar {
+  display: none;
+}
+
+.topbar nav a {
+  flex: none;
+  padding: var(--ssc-space-2) var(--ssc-space-3);
+  border-radius: var(--ssc-radius-full);
+  font-size: var(--ssc-type-size-small);
+  line-height: var(--ssc-type-leading-tight);
+  white-space: nowrap;
+  color: var(--ssc-text-secondary);
+  text-decoration: none;
+  transition:
+    background 160ms var(--ssc-ease),
+    color 160ms var(--ssc-ease);
+}
+
+.topbar nav a:hover {
+  color: var(--ssc-text-primary);
+  background: var(--ssc-surface-hover);
+}
+
+.topbar nav a[data-status='active'],
+.topbar nav a.active {
   font-weight: 600;
+  color: var(--ssc-accent-soft-contrast);
+  background: var(--ssc-accent-soft);
+}
+
+.topbar-user {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--ssc-space-3);
+  min-width: 0;
+  margin-left: auto;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: var(--ssc-space-2);
+  min-width: 0;
+  font-size: var(--ssc-type-size-small);
+}
+
+.person-name {
+  max-width: 26ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--ssc-tone-violet);
+  background: var(--ssc-tone-violet-soft);
+}
+
+.avatar svg {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .page {
   display: grid;
-  gap: 16px;
-  max-width: 1080px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ssc-space-5);
+  max-width: var(--ssc-page-max);
   margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding: var(--ssc-space-6) clamp(var(--ssc-space-4), 4vw, var(--ssc-space-6)) var(--ssc-space-8);
 }
+
+/* Page header: title, one line saying what the page is for, and the primary action. */
 
 .page-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 12px 16px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ssc-space-4) var(--ssc-space-5);
+  padding-top: var(--ssc-space-2);
 }
 
-.page-head h1 {
-  margin-right: auto;
+.page-head-main {
+  display: grid;
+  flex: 1 1 26rem;
+  gap: var(--ssc-space-3);
+  min-width: 0;
 }
+
+.page-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ssc-space-2) var(--ssc-space-4);
+  min-width: 0;
+}
+
+.page-title h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.page-purpose {
+  max-width: 72ch;
+  color: var(--ssc-text-muted);
+  text-wrap: pretty;
+}
+
+.page-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ssc-space-2) var(--ssc-space-3);
+  min-width: 0;
+}
+
+.crumbs {
+  margin-bottom: calc(var(--ssc-space-3) * -1);
+  font-size: var(--ssc-type-size-small);
+}
+
+.crumbs a::before {
+  content: '\2190\00a0';
+  content: '\2190\00a0' / '';
+}
+
+/* Card */
+
+.panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ssc-space-4);
+  padding: var(--ssc-space-5);
+  background: var(--ssc-surface-raised);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-xl);
+  box-shadow: var(--ssc-shadow-soft);
+}
+
+.panel > h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ssc-space-2) var(--ssc-space-3);
+}
+
+/* The landing's tones name a topic: a card takes one, and its section labels and chip wear it. */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--ssc-space-0) var(--ssc-space-2);
+  border-radius: var(--ssc-radius-full);
+  font-family: var(--ssc-font-mono);
+  font-size: var(--ssc-type-size-micro);
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: var(--ssc-tone-blue);
+  background: var(--ssc-tone-blue-soft);
+}
+
+.tone-violet h3 {
+  color: var(--ssc-tone-violet);
+}
+
+.tone-violet .chip {
+  color: var(--ssc-tone-violet);
+  background: var(--ssc-tone-violet-soft);
+}
+
+.tone-purple h3 {
+  color: var(--ssc-tone-purple);
+}
+
+.tone-purple .chip {
+  color: var(--ssc-tone-purple);
+  background: var(--ssc-tone-purple-soft);
+}
+
+.tone-magenta h3 {
+  color: var(--ssc-tone-magenta);
+}
+
+.tone-magenta .chip {
+  color: var(--ssc-tone-magenta);
+  background: var(--ssc-tone-magenta-soft);
+}
+
+.tone-orange h3 {
+  color: var(--ssc-tone-orange);
+}
+
+.tone-orange .chip {
+  color: var(--ssc-tone-orange);
+  background: var(--ssc-tone-orange-soft);
+}
+
+/* Definition list */
+
+.facts {
+  display: grid;
+  grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr);
+  gap: var(--ssc-space-2) var(--ssc-space-5);
+  margin: 0;
+  font-size: var(--ssc-type-size-control);
+}
+
+.facts dt {
+  font-weight: 500;
+  color: var(--ssc-text-muted);
+}
+
+.facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Sign-in, the callback and the not-found page: one centred card, as the landing would. */
 
 .login {
   display: grid;
   place-items: center;
   min-height: 100vh;
-  padding: 16px;
+  min-height: 100dvh;
+  padding: var(--ssc-space-5) var(--ssc-space-4);
   background: var(--ssc-surface-sunken);
 }
 
-.login .panel {
-  width: min(480px, 100%);
-}
-
-.panel {
+.login-card {
+  position: relative;
   display: grid;
-  gap: 12px;
-  padding: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ssc-space-5);
+  width: min(460px, 100%);
+  padding: var(--ssc-space-7) clamp(var(--ssc-space-5), 7vw, var(--ssc-space-7))
+    clamp(var(--ssc-space-5), 7vw, var(--ssc-space-7));
+  overflow: hidden;
   background: var(--ssc-surface-raised);
   border: 1px solid var(--ssc-border-subtle);
-  border-radius: var(--ssc-radius-md);
-  box-shadow: var(--ssc-shadow-raised);
+  border-radius: var(--ssc-radius-xl);
+  box-shadow: var(--ssc-shadow-lift);
 }
 
-.facts {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 16px;
-  margin: 0;
+.login-card > .brand-rule {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--ssc-space-1);
 }
 
-.facts dt {
-  color: var(--ssc-text-secondary);
+.login-card .lede {
+  color: var(--ssc-text-muted);
+  text-wrap: pretty;
 }
 
-.facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
+.login-card .btn-lg {
+  width: 100%;
 }
 
-/* Controls */
+.login-card form {
+  padding-top: var(--ssc-space-5);
+  border-top: 1px solid var(--ssc-border-subtle);
+  font-size: var(--ssc-type-size-control);
+}
+
+/* Controls: the landing's pill buttons. */
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ssc-space-2);
+  padding: var(--ssc-space-2) var(--ssc-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--ssc-radius-full);
   font: inherit;
-  padding: 6px 14px;
-  border-radius: var(--ssc-radius-sm);
-  border: 1px solid var(--ssc-border-strong);
-  background: var(--ssc-surface-raised);
-  color: var(--ssc-text-primary);
+  font-size: var(--ssc-type-size-control);
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: var(--ssc-type-tracking-body);
+  white-space: nowrap;
+  text-decoration: none;
+  color: var(--ssc-accent-ink);
+  background: transparent;
   cursor: pointer;
+  transition:
+    background 160ms var(--ssc-ease),
+    border-color 160ms var(--ssc-ease),
+    color 160ms var(--ssc-ease),
+    transform 160ms var(--ssc-ease);
+}
+
+.btn:focus-visible {
+  border-radius: var(--ssc-radius-full);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .btn:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.45;
+}
+
+.btn-secondary {
+  border-color: var(--ssc-accent-ink);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--ssc-accent-soft);
 }
 
 .btn-primary {
-  background: var(--ssc-accent);
-  border-color: var(--ssc-accent);
   color: var(--ssc-accent-contrast);
+  background: var(--ssc-accent);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--ssc-accent-hover);
-  border-color: var(--ssc-accent-hover);
 }
 
 .btn-danger {
@@ -200,51 +528,128 @@ a:hover {
   border-color: var(--ssc-feedback-danger);
 }
 
-.field {
-  display: grid;
-  gap: 4px;
+.btn-danger:hover:not(:disabled) {
+  background: var(--ssc-feedback-danger-soft);
 }
 
-.field > span {
+.btn-lg {
+  padding: var(--ssc-space-3) var(--ssc-space-5);
+  font-size: var(--ssc-type-size-body);
+}
+
+.btn-sm {
+  padding: var(--ssc-space-1) var(--ssc-space-3);
+  font-size: var(--ssc-type-size-small);
+}
+
+a.btn:hover {
+  text-decoration: none;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ssc-space-2);
+}
+
+.field > span,
+.field > label,
+form > label:not(.field, .check),
+.choices legend {
+  font-size: var(--ssc-type-size-small);
+  font-weight: 600;
   color: var(--ssc-text-secondary);
 }
 
 input,
 select,
 textarea {
+  max-width: 100%;
+  padding: var(--ssc-space-2) var(--ssc-space-3);
+  border: 1px solid var(--ssc-border-strong);
+  border-radius: var(--ssc-radius-md);
   font: inherit;
+  font-size: var(--ssc-type-size-control);
+  letter-spacing: inherit;
   color: var(--ssc-text-primary);
   background: var(--ssc-surface-raised);
-  border: 1px solid var(--ssc-border-strong);
-  border-radius: var(--ssc-radius-sm);
-  padding: 6px 10px;
+  transition: border-color 160ms var(--ssc-ease);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ssc-text-muted);
+  opacity: 1;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-offset: 0;
+  border-color: var(--ssc-focus-ring);
+  border-radius: var(--ssc-radius-md);
+}
+
+.field > input,
+.field > select,
+.field > textarea,
+form > textarea {
+  width: 100%;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ssc-accent);
 }
 
 textarea {
   font-family: var(--ssc-font-mono);
+  font-size: var(--ssc-type-size-small);
+  letter-spacing: 0;
   resize: vertical;
 }
 
 .check {
   display: flex;
-  gap: 8px;
-  align-items: center;
+  gap: var(--ssc-space-3);
+  align-items: flex-start;
+  font-size: var(--ssc-type-size-control);
+}
+
+.check > input {
+  margin-top: var(--ssc-space-0);
+}
+
+.check > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .search input {
   width: min(320px, 100%);
+  border-radius: var(--ssc-radius-full);
+  padding-inline: var(--ssc-space-4);
+}
+
+.search input:focus-visible {
+  border-radius: var(--ssc-radius-full);
 }
 
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--ssc-space-2) var(--ssc-space-3);
 }
 
 .lookup {
   display: flex;
-  gap: 8px;
+  gap: var(--ssc-space-2);
 }
 
 .lookup input {
@@ -252,13 +657,11 @@ textarea {
   min-width: 0;
 }
 
-.field > label {
-  color: var(--ssc-text-secondary);
-}
-
 .choices {
   display: grid;
-  gap: 6px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ssc-space-2);
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
@@ -266,60 +669,242 @@ textarea {
 
 .choices legend {
   padding: 0;
-  margin-bottom: 4px;
-  color: var(--ssc-text-secondary);
+  margin-bottom: var(--ssc-space-2);
 }
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--ssc-space-2) var(--ssc-space-3);
 }
 
-/* Table */
+/* The two views of a list, as the landing's tabs. */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ssc-space-2);
+}
+
+.tabs a {
+  padding: var(--ssc-space-2) var(--ssc-space-4);
+  border: 1px solid var(--ssc-border-strong);
+  border-radius: var(--ssc-radius-full);
+  font-size: var(--ssc-type-size-control);
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: nowrap;
+  color: var(--ssc-text-secondary);
+  text-decoration: none;
+  transition:
+    background 160ms var(--ssc-ease),
+    border-color 160ms var(--ssc-ease),
+    color 160ms var(--ssc-ease);
+}
+
+.tabs a:hover {
+  color: var(--ssc-text-primary);
+  background: var(--ssc-surface-hover);
+}
+
+.tabs a.current {
+  color: var(--ssc-accent-contrast);
+  background: var(--ssc-accent);
+  border-color: var(--ssc-accent);
+}
+
+.tabs a:focus-visible {
+  border-radius: var(--ssc-radius-full);
+}
+
+.tabs select {
+  border-radius: var(--ssc-radius-full);
+  padding: var(--ssc-space-2) var(--ssc-space-3);
+}
+
+/* Table: a card of rows. Inside a card it runs edge to edge, as the landing's table does. */
 
 .table-wrap {
   overflow-x: auto;
+  background: var(--ssc-surface-raised);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-lg);
+}
+
+.panel > .table-wrap {
+  margin-inline: calc(var(--ssc-space-5) * -1);
+  border-inline: 0;
+  border-radius: 0;
+}
+
+.panel > .table-wrap:first-child {
+  margin-top: calc(var(--ssc-space-5) * -1);
+  border-top: 0;
+  border-radius: calc(var(--ssc-radius-xl) - 1px) calc(var(--ssc-radius-xl) - 1px) 0 0;
+}
+
+.panel > .table-wrap:last-child {
+  margin-bottom: calc(var(--ssc-space-5) * -1);
+  border-bottom: 0;
+  border-radius: 0 0 calc(var(--ssc-radius-xl) - 1px) calc(var(--ssc-radius-xl) - 1px);
+}
+
+.panel > .table-wrap:only-child {
+  border-radius: calc(var(--ssc-radius-xl) - 1px);
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
+  font-size: var(--ssc-type-size-table);
 }
 
 .table th,
 .table td {
+  padding: var(--ssc-space-3) var(--ssc-space-4);
   text-align: left;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ssc-border-subtle);
   vertical-align: middle;
+  border-bottom: 1px solid var(--ssc-border-subtle);
 }
 
 .table th {
+  padding-block: var(--ssc-space-2);
+  font-size: var(--ssc-type-size-micro);
   font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: var(--ssc-text-muted);
+  background: var(--ssc-surface-subtle);
+}
+
+.table td {
   color: var(--ssc-text-secondary);
+  transition: background 120ms var(--ssc-ease);
+}
+
+.table td:first-child {
+  font-weight: 500;
+  color: var(--ssc-text-primary);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr:hover td {
+  background: var(--ssc-surface-hover);
+}
+
+.panel > .table-wrap th:first-child,
+.panel > .table-wrap td:first-child {
+  padding-left: var(--ssc-space-5);
+}
+
+.panel > .table-wrap th:last-child,
+.panel > .table-wrap td:last-child {
+  padding-right: var(--ssc-space-5);
+}
+
+.table time,
+.table td a,
+.table td:first-child code {
+  white-space: nowrap;
 }
 
 .table .actions-cell {
   text-align: right;
 }
 
-.empty,
+/* Many columns: tighter cells, so the page-width card holds them all. */
+
+.table-dense th,
+.table-dense td {
+  padding-inline: var(--ssc-space-3);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* A long id that may give way to its neighbours; the element's title carries all of it. */
+
+.truncate {
+  display: inline-block;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.table .actions-cell .toolbar {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+/* Empty state: what is missing, then what to do about it. */
+
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: var(--ssc-space-2);
+  padding: var(--ssc-space-6) var(--ssc-space-4);
+  text-align: center;
+}
+
+.empty-mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: var(--ssc-space-1);
+  border-radius: 50%;
+  color: var(--ssc-text-secondary);
+  background: var(--ssc-surface-hover);
+}
+
+.empty-mark svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
+.empty-state .empty {
+  padding: 0;
+  font-weight: 600;
+  color: var(--ssc-text-primary);
+  text-wrap: balance;
+}
+
+.empty-hint {
+  max-width: 52ch;
+  font-size: var(--ssc-type-size-control);
+  color: var(--ssc-text-muted);
+  text-wrap: pretty;
+}
+
+.empty {
+  color: var(--ssc-text-muted);
+}
+
 .count {
-  padding: 4px 0;
+  font-size: var(--ssc-type-size-small);
 }
 
 .more {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
+  justify-content: space-between;
+  gap: var(--ssc-space-2) var(--ssc-space-4);
 }
 
 /* Filters and details */
 
 .filters {
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
   align-items: end;
 }
 
@@ -328,104 +913,313 @@ textarea {
   justify-content: flex-start;
 }
 
-details summary {
+summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ssc-space-2);
+  border-radius: var(--ssc-radius-sm);
+  font-size: var(--ssc-type-size-control);
+  font-weight: 500;
+  color: var(--ssc-accent-ink);
   cursor: pointer;
-  color: var(--ssc-accent);
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The chevron: two sides of a small square, turned. Its offsets draw the glyph; they are not
+   spacing. */
+summary::after {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 2px 3px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 160ms var(--ssc-ease);
+}
+
+details[open] > summary::after {
+  margin-bottom: -3px;
+  transform: rotate(-135deg);
+}
+
+details[open] > summary {
+  margin-bottom: var(--ssc-space-3);
+}
+
+/* A card's own sections that open: a full-width row under a hairline, like the landing's FAQ. */
+
+.panel > details {
+  padding-top: var(--ssc-space-4);
+  border-top: 1px solid var(--ssc-border-subtle);
+}
+
+/* Straight after a table the table's own last line is the hairline. */
+.panel > .table-wrap + details {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.panel > details > summary {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--ssc-type-size-label);
+  font-weight: 600;
+  letter-spacing: var(--ssc-type-tracking-label);
+  color: var(--ssc-text-primary);
+}
+
+.panel > details > summary::after {
+  color: var(--ssc-accent-ink);
+}
+
+.panel > details[open] > summary {
+  margin-bottom: var(--ssc-space-4);
 }
 
 details pre {
-  margin: 0;
   max-width: 420px;
-  padding: 8px;
+  margin: 0;
+  padding: var(--ssc-space-2) var(--ssc-space-3);
   overflow-x: auto;
-  font-family: var(--ssc-font-mono);
-  font-size: 13px;
+  font-size: var(--ssc-type-size-micro);
+  line-height: 1.45;
   background: var(--ssc-surface-sunken);
   border-radius: var(--ssc-radius-sm);
 }
 
 .plain-list {
-  margin: 4px 0 0;
-  padding-left: 18px;
+  margin: var(--ssc-space-1) 0 0;
+  padding-left: var(--ssc-space-5);
+  font-size: var(--ssc-type-size-control);
 }
 
-/* Badge */
+/* Badge: a tinted pill, the landing's chip. The text carries the state; the colour repeats it. */
 
 .badge {
-  display: inline-block;
-  padding: 1px 10px;
+  display: inline-flex;
+  align-items: center;
+  padding: var(--ssc-space-0) var(--ssc-space-2);
+  border: 1px solid transparent;
   border-radius: var(--ssc-radius-full);
-  border: 1px solid currentColor;
-  font-size: 13px;
+  font-family: var(--ssc-font-sans);
+  font-size: var(--ssc-type-size-micro);
   font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .badge-success {
   color: var(--ssc-feedback-success);
+  background: var(--ssc-feedback-success-soft);
+  border-color: var(--ssc-feedback-success-line);
 }
 
 .badge-warning {
   color: var(--ssc-feedback-warning);
+  background: var(--ssc-feedback-warning-soft);
+  border-color: var(--ssc-feedback-warning-line);
 }
 
 .badge-danger {
   color: var(--ssc-feedback-danger);
+  background: var(--ssc-feedback-danger-soft);
+  border-color: var(--ssc-feedback-danger-line);
 }
 
 .badge-info {
   color: var(--ssc-feedback-info);
+  background: var(--ssc-feedback-info-soft);
+  border-color: var(--ssc-feedback-info-line);
 }
 
 .badge-neutral {
   color: var(--ssc-text-secondary);
+  background: var(--ssc-surface-hover);
+  border-color: var(--ssc-border-subtle);
 }
 
 /* Notices */
 
 .notice {
   display: grid;
-  gap: 4px;
-  padding: 8px 12px;
-  border-radius: var(--ssc-radius-sm);
-  border: 1px solid currentColor;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ssc-space-1);
+  padding: var(--ssc-space-3) var(--ssc-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--ssc-radius-md);
+  font-size: var(--ssc-type-size-control);
+  overflow-wrap: anywhere;
+}
+
+.notice .muted {
+  color: var(--ssc-text-secondary);
+}
+
+.notice a {
+  color: inherit;
+  text-decoration: underline;
 }
 
 .notice-danger {
   color: var(--ssc-feedback-danger);
+  background: var(--ssc-feedback-danger-soft);
+  border-color: var(--ssc-feedback-danger-line);
 }
 
 .notice-success {
   color: var(--ssc-feedback-success);
+  background: var(--ssc-feedback-success-soft);
+  border-color: var(--ssc-feedback-success-line);
 }
 
 .notice-info {
   color: var(--ssc-feedback-info);
+  background: var(--ssc-feedback-info-soft);
+  border-color: var(--ssc-feedback-info-line);
 }
 
 .notice-warning {
   color: var(--ssc-feedback-warning);
+  background: var(--ssc-feedback-warning-soft);
+  border-color: var(--ssc-feedback-warning-line);
 }
 
 /* Dialog */
 
 .dialog {
-  width: min(520px, calc(100vw - 32px));
-  padding: 20px;
+  width: min(560px, calc(100vw - var(--ssc-space-6)));
+  max-height: calc(100vh - var(--ssc-space-6));
+  max-height: calc(100dvh - var(--ssc-space-6));
+  padding: clamp(var(--ssc-space-5), 5vw, var(--ssc-space-6));
+  overflow-y: auto;
+  font-size: var(--ssc-type-size-control);
   color: var(--ssc-text-primary);
   background: var(--ssc-surface-overlay);
   border: 1px solid var(--ssc-border-subtle);
-  border-radius: var(--ssc-radius-lg);
-  box-shadow: var(--ssc-shadow-overlay);
+  border-radius: var(--ssc-radius-xl);
+  box-shadow: var(--ssc-shadow-lift);
+  /* A dialog opened from a table's action column must not take that cell's alignment. */
+  text-align: left;
+  white-space: normal;
+}
+
+.dialog:has(.table) {
+  width: min(760px, calc(100vw - var(--ssc-space-6)));
 }
 
 .dialog h2 {
-  margin-bottom: 12px;
+  margin-bottom: var(--ssc-space-4);
 }
 
 .dialog::backdrop {
   background: var(--ssc-scrim);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
 }
 
-.crumbs {
-  font-size: 14px;
+/* Narrow windows: the bar's links move to their own row and scroll sideways, lists stack, and a
+   card gives up some padding. Nothing makes the page itself scroll sideways. */
+
+@media (max-width: 960px) {
+  .topbar-in {
+    flex-wrap: wrap;
+    padding-top: var(--ssc-space-2);
+  }
+
+  .topbar nav {
+    flex-basis: 100%;
+    order: 3;
+    padding-bottom: var(--ssc-space-2);
+  }
+}
+
+@media (max-width: 640px) {
+  .person-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .page {
+    padding-top: var(--ssc-space-5);
+    gap: var(--ssc-space-4);
+  }
+
+  .panel {
+    padding: var(--ssc-space-4);
+    border-radius: var(--ssc-radius-lg);
+  }
+
+  .panel > .table-wrap {
+    margin-inline: calc(var(--ssc-space-4) * -1);
+  }
+
+  .panel > .table-wrap:first-child {
+    margin-top: calc(var(--ssc-space-4) * -1);
+    border-radius: calc(var(--ssc-radius-lg) - 1px) calc(var(--ssc-radius-lg) - 1px) 0 0;
+  }
+
+  .panel > .table-wrap:last-child {
+    margin-bottom: calc(var(--ssc-space-4) * -1);
+    border-radius: 0 0 calc(var(--ssc-radius-lg) - 1px) calc(var(--ssc-radius-lg) - 1px);
+  }
+
+  .panel > .table-wrap:only-child {
+    border-radius: calc(var(--ssc-radius-lg) - 1px);
+  }
+
+  .panel > .table-wrap th:first-child,
+  .panel > .table-wrap td:first-child {
+    padding-left: var(--ssc-space-4);
+  }
+
+  .panel > .table-wrap th:last-child,
+  .panel > .table-wrap td:last-child {
+    padding-right: var(--ssc-space-4);
+  }
+
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ssc-space-0);
+  }
+
+  .facts dd {
+    margin-bottom: var(--ssc-space-3);
+  }
+
+  .facts dd:last-child {
+    margin-bottom: 0;
+  }
+
+  .page-head-actions,
+  .search,
+  .search input {
+    width: 100%;
+  }
+
+  .actions {
+    justify-content: stretch;
+  }
+
+  .actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
 }

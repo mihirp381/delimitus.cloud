@@ -13,6 +13,7 @@ import {
 import { must } from '../../api/client';
 import { ApprovalBadge, Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
@@ -49,13 +50,31 @@ function ApprovalsPage() {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Approvals</h1>
-        <div className="search">
-          <Link to="/approvals" search={{}} aria-current={inbox ? 'page' : undefined}>
+      <PageHeader
+        title="Approvals"
+        purpose={
+          inbox
+            ? 'Requests you may approve or reject: org admins see every one, and a connection owner sees the sharing requests that go beyond their connection’s audience ceiling. Open one to see what it changes.'
+            : 'Every request you may see, and how it was decided. Org admins see every request; others see their own.'
+        }
+      >
+        <div className="tabs">
+          {/* The class marks the view on show. aria-current cannot: the router also sets it on the
+              first link under ?view=all, since both links lead to this path. */}
+          <Link
+            to="/approvals"
+            search={{}}
+            className={inbox ? 'current' : undefined}
+            aria-current={inbox ? 'page' : undefined}
+          >
             Waiting for you
           </Link>{' '}
-          <Link to="/approvals" search={{ view: 'all' }} aria-current={inbox ? undefined : 'page'}>
+          <Link
+            to="/approvals"
+            search={{ view: 'all' }}
+            className={inbox ? undefined : 'current'}
+            aria-current={inbox ? undefined : 'page'}
+          >
             All requests
           </Link>
           {inbox ? null : (
@@ -81,14 +100,9 @@ function ApprovalsPage() {
             </>
           )}
         </div>
-      </div>
-      <p className="muted">
-        {inbox
-          ? 'Requests you may approve or reject: org admins see every one, and a connection owner sees the sharing requests that go beyond their connection’s audience ceiling. Open one to see what it changes.'
-          : 'Every request you may see, and how it was decided. Org admins see every request; others see their own.'}
-      </p>
+      </PageHeader>
       {list.data ? (
-        <section className="panel">
+        <section className="panel tone-violet">
           <Table
             caption="Approval requests"
             columns={COLUMNS}
@@ -100,6 +114,13 @@ function ApprovalsPage() {
                 : state
                   ? `No ${state} requests.`
                   : 'No approval requests yet.'
+            }
+            emptyHint={
+              inbox
+                ? 'A request appears here when it needs your decision. All requests shows the ones already decided.'
+                : state
+                  ? 'Choose another state, or Every state, to see the rest.'
+                  : 'A request is opened when someone asks to widen sharing, connect a data source or allow an internet host.'
             }
           />
           <div className="more">

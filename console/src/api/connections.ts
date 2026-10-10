@@ -143,11 +143,10 @@ export const ADVISORY_NOTE =
 
 export const LIMIT_KEYS = Object.keys(LIMIT_TITLE) as readonly (keyof Limits)[];
 
-/** The limits that are set, as "Rows per query 1000, Queries at once 4"; "None" otherwise. */
-export function limitsText(limits: Limits): string {
+/** The limits that are set, one phrase each: "Rows per query 1000", "Queries at once 4". Empty when none is. */
+export function limitPhrases(limits: Limits): string[] {
   const set = LIMIT_KEYS.filter((k) => limits[k] !== undefined && limits[k] !== null);
-  if (set.length === 0) return 'None';
-  return set.map((k) => `${LIMIT_TITLE[k]} ${String(limits[k])}`).join(', ');
+  return set.map((k) => `${LIMIT_TITLE[k]} ${String(limits[k])}`);
 }
 
 /** Who may use an app on the connection, in words. */

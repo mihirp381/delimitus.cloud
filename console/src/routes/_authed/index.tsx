@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { useId, useState } from 'react';
 import type { components } from '../../api/schema';
 import { StatusBadge } from '../../components/Badge';
+import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
@@ -41,8 +42,10 @@ function Inventory() {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Apps</h1>
+      <PageHeader
+        title="Apps"
+        purpose="The apps in your organisation. Open one to see how it is running and who can use it."
+      >
         <div className="search">
           <label htmlFor={filterId} className="visually-hidden">
             Filter apps
@@ -55,7 +58,7 @@ function Inventory() {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
-      </div>
+      </PageHeader>
       {apps.isPending ? (
         <p className="muted">Loading apps…</p>
       ) : apps.isError ? (
@@ -68,6 +71,11 @@ function Inventory() {
             rows={shown}
             rowKey={(app) => app.id}
             empty={all.length ? 'No app matches the filter.' : 'No apps yet. An app appears here once it is created.'}
+            emptyHint={
+              all.length
+                ? 'Clear the filter to see every app.'
+                : 'Ask your coding agent to create one, or create it with the ssc command line.'
+            }
           />
           <p className="muted count" aria-live="polite">
             {shown.length === all.length
