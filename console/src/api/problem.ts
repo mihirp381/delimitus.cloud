@@ -21,8 +21,10 @@ export class ApiProblem extends Error {
   readonly title: string;
   readonly detail: string;
   readonly requestId: string | null;
+  /** The `Retry-After` header in seconds, when the refusal carried a whole number of them. */
+  readonly retryAfter: number | null;
 
-  constructor(status: number, problem: Problem | null, statusText = '') {
+  constructor(status: number, problem: Problem | null, statusText = '', retryAfter: number | null = null) {
     const title = problem?.title ?? (statusText || `HTTP ${status}`);
     super(problem ? `${problem.code}: ${problem.title}` : title);
     this.name = 'ApiProblem';
@@ -31,6 +33,7 @@ export class ApiProblem extends Error {
     this.title = title;
     this.detail = problem?.detail ?? '';
     this.requestId = problem?.request_id ?? null;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -45,5 +48,11 @@ export async function toProblem(response: Response): Promise<ApiProblem> {
       body = null;
     }
   }
-  return new ApiProblem(response.status, isProblem(body) ? body : null, response.statusText);
+  const after = response.headers.get('Retry-After') ?? '';
+  return new ApiProblem(
+    response.status,
+    isProblem(body) ? body : null,
+    response.statusText,
+    /^[0-9]{1,6}$/.test(after) ? Number(after) : null,
+  );
 }

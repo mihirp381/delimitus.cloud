@@ -9,8 +9,10 @@ import {
   withoutGrant,
 } from '../../api/grants';
 import type { AppOut, EnvironmentOut } from '../../api/lifecycle';
+import { AccessExplain } from '../../app-detail/AccessExplain';
 import { AdminActions } from '../../app-detail/AdminActions';
 import { EnvConnections } from '../../app-detail/EnvConnections';
+import { Logs } from '../../app-detail/Logs';
 import { ENV_TITLE } from '../../app-detail/names';
 import { Promote } from '../../app-detail/Promote';
 import { Repository } from '../../app-detail/Repository';
@@ -200,8 +202,10 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
           emptyHint={`Use Share to give a person, a group or everyone in the organisation access to ${ENV_TITLE[env.name].toLowerCase()}.`}
         />
       )}
+      <AccessExplain app={app} env={env} />
       <EnvConnections app={app} env={env} />
       <Timers app={app} env={env} />
+      <Logs app={app} env={env} />
     </section>
   );
 }

@@ -33,3 +33,17 @@ export async function findPeople(api: ApiClient, email: string): Promise<readonl
     unavailable: u.status === 'active' ? undefined : 'deactivated',
   }));
 }
+
+/**
+ * As `findPeople`, with a deactivated person still open to pick: for questions about a person,
+ * such as why they can or cannot open an app, rather than for giving them something.
+ */
+export async function findAnyone(api: ApiClient, email: string): Promise<readonly Match[]> {
+  if (!EMAIL_PATTERN.test(email)) throw new Error('Type a whole email address, or a usr_ id.');
+  const found = must(await api.GET('/v1/users', { params: { query: { email } } }));
+  return found.users.map((u) => ({
+    id: u.id,
+    label: u.display_name,
+    detail: u.status === 'active' ? u.email : `${u.email} · deactivated`,
+  }));
+}

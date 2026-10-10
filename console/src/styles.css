@@ -982,6 +982,49 @@ details[open] > summary {
   margin-bottom: var(--ssc-space-4);
 }
 
+/* Logs: what the app wrote, in the mono face, each line with its time and severity. The box
+   scrolls by itself, so a long line never widens the page. */
+
+.logs {
+  max-height: 26rem;
+  padding: var(--ssc-space-3) var(--ssc-space-4);
+  overflow: auto;
+  font-family: var(--ssc-font-mono);
+  font-size: var(--ssc-type-size-micro);
+  line-height: var(--ssc-type-leading-body);
+  letter-spacing: 0;
+  color: var(--ssc-text-primary);
+  background: var(--ssc-surface-sunken);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-md);
+}
+
+.log-line {
+  display: grid;
+  grid-template-columns: max-content 8ch minmax(0, 1fr);
+  gap: var(--ssc-space-3);
+}
+
+.log-line time,
+.log-severity {
+  color: var(--ssc-text-secondary);
+  white-space: nowrap;
+}
+
+.log-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log-danger .log-severity,
+.log-danger .log-text {
+  color: var(--ssc-feedback-danger);
+}
+
+.log-warning .log-severity {
+  color: var(--ssc-feedback-warning);
+}
+
 details pre {
   max-width: 420px;
   margin: 0;
