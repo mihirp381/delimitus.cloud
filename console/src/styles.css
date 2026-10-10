@@ -1251,6 +1251,11 @@ a.segment.current {
   flex: 0 1 480px;
 }
 
+/* The same for a box with its Find button, when it sits in a card and not in a dialog. */
+.panel > form > .stack > .field > .lookup {
+  max-width: 560px;
+}
+
 /* Table: a card of rows, each a control's height. Inside a card it runs edge to edge. */
 .table-wrap {
   /* Positioned, so that text hidden for screen readers inside a wide table scrolls with it and
