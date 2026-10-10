@@ -506,6 +506,18 @@ a.brand:hover {
   opacity: 0.45;
 }
 
+/* A file picker drawn as a button: the label is what is seen, and the input inside it is what
+   the keyboard and assistive technology reach. */
+.file-btn {
+  position: relative;
+  cursor: pointer;
+}
+
+.file-btn:focus-within {
+  outline: 2px solid var(--ssc-focus-ring);
+  outline-offset: 2px;
+}
+
 .btn-secondary {
   border-color: var(--ssc-accent-ink);
 }

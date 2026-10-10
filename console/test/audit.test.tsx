@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditFilters, exportFileName } from '../src/api/audit';
 import { isAdmin } from '../src/auth/admin';
 import { type Handler, json, problem } from './fakeApi';
+import { VECTORS, vectorBytes } from './fixtures/auditChain';
 import { signedIn, start } from './harness';
 
 const USER = 'usr_cccccccccccccccccccc';
@@ -197,6 +198,133 @@ describe('audit export', () => {
     expect(await blobs[0]?.text()).toBe(csv);
     // The export is itself an audit event, so the log is read again.
     await waitFor(() => expect(api.of('GET', '/v1/audit')).toHaveLength(2));
+  });
+
+  /** The API's answer to a JSON Lines export: one of the Python-made files, byte for byte. */
+  function jsonl(vector: string): Handler {
+    return () =>
+      new Response(vectorBytes(vector), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/x-ndjson',
+          'Content-Disposition': 'attachment; filename="audit-org_0123456789abcdefghij.jsonl"',
+        },
+      });
+  }
+
+  /** The chain notice once it says `text`: it reads "Checking…" until the check is done. */
+  function chainNotice(role: 'status' | 'alert', text: string): Promise<HTMLElement> {
+    return waitFor(() => {
+      const notice = screen.getByRole(role, { name: 'Hash chain check' });
+      expect(notice.textContent).toContain(text);
+      return notice;
+    });
+  }
+
+  async function exportJsonLines() {
+    await screen.findByText('1 event');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export JSON Lines' }));
+    });
+  }
+
+  it('checks the hash chain of a JSON Lines export and saves the bytes the API sent', async () => {
+    start('/audit', { 'GET /v1/audit': page([CREATED]), 'GET /v1/audit/export': jsonl('good') }, signedIn());
+    await exportJsonLines();
+    const check = await chainNotice('status', 'Chain intact');
+    expect(check.textContent).toContain('Chain intact: 5 events of org_0123456789abcdefghij, seq 1 to 5.');
+    expect(check.textContent).toContain('The file starts at seq 1, so every link from the first event was checked.');
+    expect(check.textContent).toContain(`Last hash ${VECTORS['good']?.report.last_hash}`);
+    expect(saved).toEqual([{ name: 'audit-org_0123456789abcdefghij.jsonl', href: 'blob:console.test/1' }]);
+    expect(new Uint8Array(await blobs[0]!.arrayBuffer())).toEqual(vectorBytes('good'));
+    expect(screen.getByText('Saved audit-org_0123456789abcdefghij.jsonl.')).toBeDefined();
+  });
+
+  it('says from which seq an export narrowed by time was checked', async () => {
+    start(
+      '/audit?since=2026-10-01T09:30:10Z',
+      { 'GET /v1/audit': page([CREATED]), 'GET /v1/audit/export': jsonl('starts at seq 3') },
+      signedIn(),
+    );
+    await exportJsonLines();
+    const check = await chainNotice('status', 'Chain intact: 3 events');
+    expect(check.textContent).toContain(
+      'The file starts at seq 3, so the links before it were not checked. Export with no From or Until to check the whole chain.',
+    );
+  });
+
+  it('names the first broken link of an export that does not check out, and still saves it', async () => {
+    start(
+      '/audit',
+      { 'GET /v1/audit': page([CREATED]), 'GET /v1/audit/export': jsonl('tampered action') },
+      signedIn(),
+    );
+    await exportJsonLines();
+    const check = await chainNotice('alert', 'Chain broken');
+    expect(check.textContent).toContain(
+      'Chain broken at line 2 (seq 2): its canonical bytes do not say what the row says.',
+    );
+    expect(check.textContent).toContain('The 1 event before it checks out.');
+    expect(saved).toHaveLength(1);
+    expect(new Uint8Array(await blobs[0]!.arrayBuffer())).toEqual(vectorBytes('tampered action'));
+  });
+
+  it('does not call an export filtered by action broken for the events the filter left out', async () => {
+    start(
+      '/audit?action=app.created',
+      { 'GET /v1/audit': page([CREATED]), 'GET /v1/audit/export': jsonl('gap') },
+      signedIn(),
+    );
+    await exportJsonLines();
+    const check = await chainNotice('status', 'filtered by action');
+    expect(check.textContent).toContain(
+      'This export is filtered by action, actor or target, so it leaves events out and its chain cannot be checked.',
+    );
+    expect(check.textContent).toContain('The check stopped at line 3 (seq 3): an event is missing before this line.');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('does not check a CSV export, which carries no canonical bytes', async () => {
+    start(
+      '/audit',
+      {
+        'GET /v1/audit': page([CREATED]),
+        'GET /v1/audit/export': () => new Response(csv, { status: 200, headers: { 'Content-Type': 'text/csv' } }),
+      },
+      signedIn(),
+    );
+    await screen.findByText('1 event');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+    });
+    expect((await screen.findByRole('status')).textContent).toBe('Saved audit.csv.');
+    expect(screen.queryByRole('status', { name: 'Hash chain check' })).toBeNull();
+  });
+
+  it('checks a file saved earlier without calling the API or saving anything', async () => {
+    const { api } = start('/audit', { 'GET /v1/audit': page([CREATED]) }, signedIn());
+    await screen.findByText('1 event');
+    const input = screen.getByLabelText('Verify a file');
+    const choose = async (vector: string, name: string) => {
+      await act(async () => {
+        fireEvent.change(input, { target: { files: [new File([vectorBytes(vector)], name)] } });
+      });
+    };
+
+    await choose('gap', 'last-month.jsonl');
+    const broken = await chainNotice('alert', 'Chain broken');
+    expect(broken.textContent).toContain('Chain broken at line 3 (seq 3): an event is missing before this line.');
+    expect(broken.textContent).toContain('The 2 events before it check out.');
+    expect(broken.textContent).toContain('last-month.jsonl');
+
+    await choose('good', 'whole.jsonl');
+    await chainNotice('status', 'Chain intact: 5 events');
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    await choose('empty', 'nothing.jsonl');
+    await chainNotice('status', 'nothing.jsonl has no events.');
+    expect(api.of('GET', '/v1/audit/export')).toHaveLength(0);
+    expect(saved).toEqual([]);
   });
 
   it('shows a refused export and saves nothing', async () => {

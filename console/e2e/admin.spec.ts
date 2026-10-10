@@ -69,4 +69,19 @@ test('the requester sees their request but cannot decide it; the audit log filte
   await filters.getByLabel('Target id').fill('');
   await filters.getByRole('button', { name: 'Search' }).click();
   await expect(page.getByRole('row').filter({ hasText: 'audit.exported' }).first()).toBeVisible();
+
+  // A JSON Lines export of the whole log: its hash chain, as the real API wrote it, checks out in
+  // the browser from the first event to the last row of the file that was saved.
+  await filters.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page).not.toHaveURL(/action=/);
+  const chainDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export JSON Lines' }).click();
+  const chainFile = await chainDownload;
+  expect(chainFile.suggestedFilename()).toMatch(/^audit-org_[a-z0-9]+\.jsonl$/);
+  const check = page.getByRole('status', { name: 'Hash chain check' });
+  await expect(check).toContainText(/Chain intact: \d+ events of org_[a-z0-9]+, seq 1 to \d+\./);
+  await expect(check).toContainText('every link from the first event was checked');
+  const rows = (await readFile(await chainFile.path(), 'utf8')).trimEnd().split('\n');
+  expect(JSON.parse(rows[0] ?? '{}').seq).toBe(1);
+  await expect(check).toContainText(`Last hash ${JSON.parse(rows.at(-1) ?? '{}').hash}`);
 });

@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { type FormEvent, useId, useState } from 'react';
+import { type ChangeEvent, type FormEvent, useId, useState } from 'react';
 import {
   ACTOR_KINDS,
   AUDIT_ACTIONS,
@@ -12,6 +12,7 @@ import {
   killSwitchApp,
 } from '../../api/audit';
 import { must } from '../../api/client';
+import { type ChainReport, chainVerdict, checkChain } from '../../auditChain';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/PageHeader';
@@ -23,6 +24,15 @@ export const Route = createFileRoute('/_authed/audit')({
   validateSearch: auditFilters,
   component: AuditPage,
 });
+
+/** Filters that leave events out of the middle of an export, so its seqs skip. */
+const ROW_FILTERS = ['action', 'actor_kind', 'actor_id', 'target_kind', 'target_id'] as const;
+
+/** One file's chain check: running, done, or failed to run. */
+type Check =
+  | { readonly fileName: string; readonly state: 'checking' }
+  | { readonly fileName: string; readonly state: 'done'; readonly report: ChainReport; readonly rowFilters: boolean }
+  | { readonly fileName: string; readonly state: 'failed'; readonly error: unknown };
 
 const FORMATS: readonly { readonly format: ExportFormat; readonly label: string }[] = [
   { format: 'csv', label: 'Export CSV' },
@@ -69,15 +79,32 @@ function AuditLog() {
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
   const [exportError, setExportError] = useState<unknown>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [check, setCheck] = useState<Check | null>(null);
+
+  /** Checks the hash chain of `file`'s bytes here in the browser; the file itself is only read. */
+  async function verify(file: Blob, fileName: string, rowFilters: boolean) {
+    setCheck({ fileName, state: 'checking' });
+    try {
+      const report = await checkChain(new Uint8Array(await file.arrayBuffer()));
+      setCheck({ fileName, state: 'done', report, rowFilters });
+    } catch (error) {
+      setCheck({ fileName, state: 'failed', error });
+    }
+  }
 
   async function download(format: ExportFormat) {
     setExporting(format);
     setExportError(null);
     setSaved(null);
+    setCheck(null);
     try {
       const { blob, fileName } = await exportAudit(api, filters, format);
+      // The browser saves the API's bytes as they came; the check below reads the same bytes.
       saveBlob(blob, fileName);
       setSaved(fileName);
+      if (format === 'jsonl') {
+        await verify(blob, fileName, ROW_FILTERS.some((name) => filters[name] !== undefined));
+      }
       await queryClient.invalidateQueries({ queryKey: ['audit'] });
     } catch (error) {
       setExportError(error);
@@ -86,7 +113,18 @@ function AuditLog() {
     }
   }
 
+  function verifyFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    // Emptied so that choosing the same file again checks it again.
+    event.currentTarget.value = '';
+    if (!file) return;
+    setSaved(null);
+    setExportError(null);
+    void verify(file, file.name, false);
+  }
+
   const rows = events.data?.pages.flatMap((p) => p.events) ?? [];
+  const hint = useId();
 
   return (
     <>
@@ -95,7 +133,8 @@ function AuditLog() {
         purpose={
           <>
             Newest first. An export holds every event matching the applied filters, oldest first,
-            and is itself recorded as <code>audit.exported</code>.
+            and is itself recorded as <code>audit.exported</code>. A JSON Lines export carries the
+            log's hash chain, which is checked here in your browser once it is saved.
           </>
         }
       >
@@ -104,6 +143,20 @@ function AuditLog() {
             {exporting === format ? 'Exporting…' : label}
           </Button>
         ))}
+        <label className="btn btn-secondary file-btn">
+          Verify a file
+          <input
+            type="file"
+            className="visually-hidden"
+            accept=".jsonl,.ndjson,application/x-ndjson"
+            aria-describedby={hint}
+            onChange={verifyFile}
+          />
+        </label>
+        <span id={hint} className="visually-hidden">
+          Checks the hash chain of a JSON Lines export you saved earlier. The file stays on this
+          computer.
+        </span>
       </PageHeader>
       {saved ? (
         <p className="notice notice-success" role="status">
@@ -111,6 +164,7 @@ function AuditLog() {
         </p>
       ) : null}
       {exportError ? <ProblemNotice error={exportError} /> : null}
+      {check ? <ChainNotice check={check} /> : null}
       <FilterForm
         key={JSON.stringify(filters)}
         filters={filters}
@@ -149,6 +203,51 @@ function AuditLog() {
         <p className="muted">Loading events…</p>
       )}
     </>
+  );
+}
+
+/** What the chain check found in one file, in the words `ssc audit verify` uses. */
+function ChainNotice({ check }: { readonly check: Check }) {
+  if (check.state === 'checking') {
+    return (
+      <p className="notice notice-info" role="status" aria-label="Hash chain check">
+        Checking the hash chain of {check.fileName}…
+      </p>
+    );
+  }
+  if (check.state === 'failed') {
+    return (
+      <div className="notice notice-danger" role="alert" aria-label="Hash chain check">
+        <p>
+          <strong>The hash chain of {check.fileName} could not be checked.</strong>
+        </p>
+        <p>{check.error instanceof Error ? check.error.message : 'The file could not be read.'}</p>
+      </div>
+    );
+  }
+  const verdict = chainVerdict(check.fileName, check.report, check.rowFilters);
+  return (
+    <div
+      className={`notice notice-${verdict.tone}`}
+      role={verdict.tone === 'danger' ? 'alert' : 'status'}
+      aria-label="Hash chain check"
+    >
+      <p>
+        <strong>{verdict.headline}</strong>
+      </p>
+      {verdict.lines.map((line) => (
+        <p key={line}>{line}</p>
+      ))}
+      {verdict.lastHash ? (
+        <p>
+          Last hash <code>{verdict.lastHash}</code>
+        </p>
+      ) : null}
+      <p className="muted">
+        Checked in this browser, in {check.fileName} as saved. <code>ssc audit verify</code> makes the same
+        check.
+      </p>
+    </div>
   );
 }
 
