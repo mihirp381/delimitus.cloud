@@ -165,7 +165,8 @@ describe('your environment', () => {
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     start('/environment', environmentRoutes(), signedIn());
 
-    expect(await screen.findByText(IP)).toBeTruthy();
+    await screen.findByRole('heading', { name: 'Fixed outbound IP' });
+    expect(await within(section('Fixed outbound IP')).findByText(IP)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy IP' }));
     expect(await screen.findByText('Copied.')).toBeTruthy();
     expect(writeText).toHaveBeenCalledWith(IP);
@@ -203,6 +204,49 @@ describe('your environment', () => {
 
     expect(screen.getByText(/These figures are not a bill/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/\$50|200 apps|gateway instance/i);
+  });
+
+  it('opens with the figures at a glance: what is added a month, places, the IP and the warm option', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    start('/environment', environmentRoutes(), signedIn());
+    const tiles = await screen.findByRole('region', { name: 'At a glance' });
+    await within(tiles).findByText('$20');
+    const text = [...tiles.querySelectorAll('.tile')].map((t) => t.textContent ?? '');
+    expect(text[0]).toBe('Added a month$20By the parts asked for and the warm option. Not a bill.');
+    expect(text[1]).toBe('Database places1 of 109 left.');
+    expect(text[2]).toContain(IP);
+    expect(text[3]).toBe('Warm optionOffNo app is kept warm; the gateway sleeps when idle.');
+    const meter = within(tiles).getByRole('img', { name: '1 of 10 database places used' });
+    expect(meter.getAttribute('class')).toBe('meter');
+    expect(meter.querySelector('rect')?.getAttribute('width')).toBe('10%');
+    expect(meter.getAttribute('style')).toBeNull();
+    fireEvent.click(within(tiles).getByRole('button', { name: 'Copy fixed outbound IP' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(IP));
+  });
+
+  it('shows the places meter in the warning tone when every place is taken', async () => {
+    start(
+      '/environment',
+      {
+        ...environmentRoutes(null, { places_used: 10, nearly_full: true }),
+        'GET /v1/warm': () =>
+          json(200, {
+            ...warm({ monthly_usd: 20, gateway: { warm: true, state: 'on', failure_code: null } }),
+            environments: warm().environments.map((e) => ({ ...e, warm: true })),
+          }),
+      },
+      signedIn(),
+    );
+    const tiles = await screen.findByRole('region', { name: 'At a glance' });
+    await within(tiles).findByText('$40');
+    const text = [...tiles.querySelectorAll('.tile')].map((t) => t.textContent ?? '');
+    expect(text[1]).toBe('Database places10 of 10Every place is taken.');
+    expect(text[2]).toContain('Not set yet');
+    expect(text[3]).toBe('Warm option1 appKept warm; the gateway kept warm.');
+    const meter = within(tiles).getByRole('img', { name: '10 of 10 database places used' });
+    expect(meter.getAttribute('class')).toBe('meter meter-warning');
+    expect(meter.querySelector('rect')?.getAttribute('width')).toBe('100%');
   });
 
   it('says when there is no fixed IP yet and offers the bigger database when nearly full', async () => {

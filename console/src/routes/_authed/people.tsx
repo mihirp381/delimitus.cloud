@@ -13,6 +13,7 @@ import {
 } from '../../api/people';
 import { Lookup } from '../../app-detail/Lookup';
 import { Badge } from '../../components/Badge';
+import { Ago } from '../../components/Ago';
 import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { PageHeader } from '../../components/PageHeader';
@@ -64,7 +65,7 @@ function People() {
 }
 
 function when(iso: string): ReactNode {
-  return <time dateTime={iso}>{new Date(iso).toLocaleString()}</time>;
+  return <Ago at={iso} />;
 }
 
 /**

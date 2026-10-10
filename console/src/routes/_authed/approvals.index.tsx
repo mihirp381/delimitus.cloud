@@ -11,8 +11,10 @@ import {
   requestedGrants,
 } from '../../api/approvals';
 import { must } from '../../api/client';
+import { Ago } from '../../components/Ago';
 import { ApprovalBadge, Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
@@ -57,55 +59,55 @@ function ApprovalsPage() {
             ? 'Requests you may approve or reject: org admins see every one, and a connection owner sees the sharing requests that go beyond their connection’s audience ceiling. Open one to see what it changes.'
             : 'Every request you may see, and how it was decided. Org admins see every request; others see their own.'
         }
-      >
-        <div className="tabs">
-          {/* Both links lead to this path, so the first matches only an empty search: without that the
-              router would mark it as the current page under ?view=all as well. */}
-          <Link
-            to="/approvals"
-            search={{}}
-            activeOptions={{ exact: true }}
-            className={inbox ? 'current' : undefined}
-            aria-current={inbox ? 'page' : undefined}
+      />
+      <nav className="tabs" aria-label="Requests shown">
+        {/* Both links lead to this path, so the first matches only an empty search: without that the
+            router would mark it as the current page under ?view=all as well. */}
+        <Link
+          to="/approvals"
+          search={{}}
+          activeOptions={{ exact: true }}
+          className={inbox ? 'current' : undefined}
+          aria-current={inbox ? 'page' : undefined}
+        >
+          Waiting for you
+        </Link>
+        <Link
+          to="/approvals"
+          search={{ view: 'all' }}
+          className={inbox ? undefined : 'current'}
+          aria-current={inbox ? undefined : 'page'}
+        >
+          All requests
+        </Link>
+      </nav>
+      {inbox ? null : (
+        <div className="toolbar">
+          <label htmlFor={stateId} className="visually-hidden">
+            State
+          </label>
+          <select
+            id={stateId}
+            value={state ?? ''}
+            onChange={(e) => {
+              const next = approvalsSearch({ view: 'all', state: e.target.value });
+              void navigate({ search: next });
+            }}
           >
-            Waiting for you
-          </Link>{' '}
-          <Link
-            to="/approvals"
-            search={{ view: 'all' }}
-            className={inbox ? undefined : 'current'}
-            aria-current={inbox ? undefined : 'page'}
-          >
-            All requests
-          </Link>
-          {inbox ? null : (
-            <>
-              <label htmlFor={stateId} className="visually-hidden">
-                State
-              </label>
-              <select
-                id={stateId}
-                value={state ?? ''}
-                onChange={(e) => {
-                  const next = approvalsSearch({ view: 'all', state: e.target.value });
-                  void navigate({ search: next });
-                }}
-              >
-                <option value="">Every state</option>
-                {APPROVAL_STATES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
+            <option value="">Every state</option>
+            {APPROVAL_STATES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
         </div>
-      </PageHeader>
+      )}
       {list.data ? (
-        <section className="panel tone-violet">
+        <section className="panel">
           <Table
             caption="Approval requests"
+            onOpen={(a) => void navigate({ to: '/approvals/$approvalId', params: { approvalId: a.id } })}
             columns={COLUMNS}
             rows={rows}
             rowKey={(a) => a.id}
@@ -141,7 +143,7 @@ function ApprovalsPage() {
       ) : list.isError ? (
         <ProblemNotice error={list.error} />
       ) : (
-        <p className="muted">Loading approval requests…</p>
+        <Loading label="Loading approval requests…" />
       )}
     </>
   );
@@ -244,7 +246,8 @@ function Decision({ approval: a }: { readonly approval: Approval }) {
 const COLUMNS: readonly Column<Approval>[] = [
   {
     header: 'Requested',
-    cell: (a) => <time dateTime={a.created_at}>{new Date(a.created_at).toLocaleString()}</time>,
+    className: 'nowrap',
+    cell: (a) => <Ago at={a.created_at} />,
   },
   { header: 'App', cell: (a) => <Where approval={a} /> },
   { header: 'Change', cell: (a) => <Change approval={a} /> },

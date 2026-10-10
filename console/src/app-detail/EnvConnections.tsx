@@ -12,6 +12,7 @@ import {
 import type { Approval } from '../api/grants';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { ApiProblem } from '../api/problem';
+import { Ago } from '../components/Ago';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
@@ -81,7 +82,7 @@ function ConnectionsBody({ app, env }: Props) {
     { header: 'Columns', cell: (l) => <ConnectionColumns app={app} env={env} name={l.connection.name} /> },
     {
       header: 'Linked',
-      cell: (l) => <time dateTime={l.granted_at}>{new Date(l.granted_at).toLocaleString()}</time>,
+      cell: (l) => <Ago at={l.granted_at} />,
     },
   ];
   if (admin) {

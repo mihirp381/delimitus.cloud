@@ -1230,6 +1230,27 @@ a.segment.current {
   gap: var(--ssc-space-2) var(--ssc-space-3);
 }
 
+/* In the page bar a button is a size down, so the bar keeps its height. */
+.pagebar-actions .btn,
+.pagebar-actions .file-btn {
+  min-height: 28px;
+  padding: 0 var(--ssc-space-3);
+}
+
+/* A field in a card is as wide as what is typed into it, not as wide as the card. */
+.panel > .field > input,
+.panel > .field > select,
+.panel > form > .field > input,
+.panel > form > .field > select,
+.panel > .stack > .field > select,
+.panel > form.stack > .field > select {
+  max-width: 480px;
+}
+
+.panel .lookup-form > .field {
+  flex: 0 1 480px;
+}
+
 /* Table: a card of rows, each a control's height. Inside a card it runs edge to edge. */
 .table-wrap {
   /* Positioned, so that text hidden for screen readers inside a wide table scrolls with it and

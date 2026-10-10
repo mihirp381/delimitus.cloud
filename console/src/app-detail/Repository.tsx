@@ -13,6 +13,7 @@ import {
 } from '../api/github';
 import type { AppOut } from '../api/lifecycle';
 import { ApiProblem } from '../api/problem';
+import { Ago } from '../components/Ago';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
@@ -96,9 +97,7 @@ export function Repository({ app }: { readonly app: AppOut }) {
             <dd>{link.data.check_name}</dd>
             <dt>Changed</dt>
             <dd>
-              <time dateTime={link.data.updated_at}>
-                {new Date(link.data.updated_at).toLocaleString()}
-              </time>
+              <Ago at={link.data.updated_at} />
             </dd>
           </dl>
           <div className="toolbar">

@@ -7,6 +7,7 @@ import {
   type EgressHosts,
   removeHost,
 } from '../../api/egress';
+import { Ago } from '../../components/Ago';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ConfirmAction } from '../../components/ConfirmAction';
@@ -129,7 +130,7 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
     },
     {
       header: 'Added',
-      cell: (h) => <time dateTime={h.created_at}>{new Date(h.created_at).toLocaleString()}</time>,
+      cell: (h) => <Ago at={h.created_at} />,
     },
     {
       header: 'Added by',

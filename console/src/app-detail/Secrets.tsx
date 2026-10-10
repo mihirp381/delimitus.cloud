@@ -2,6 +2,7 @@ import { useRouteContext } from '@tanstack/react-router';
 import { useState } from 'react';
 import type { components } from '../api/schema';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
+import { Ago } from '../components/Ago';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ProblemNotice } from '../components/ProblemNotice';
@@ -42,7 +43,7 @@ const COLUMNS: readonly Column<Secret>[] = [
         </>
       ),
   },
-  { header: 'Updated', cell: (s) => <time dateTime={s.updated_at}>{new Date(s.updated_at).toLocaleString()}</time> },
+  { header: 'Updated', cell: (s) => <Ago at={s.updated_at} /> },
 ];
 
 /**
