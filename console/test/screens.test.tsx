@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Grants } from '../src/api/grants';
 import { createSession, STORAGE_KEY } from '../src/auth/session';
 import { type Handler, json, problem } from './fakeApi';
+import { whoami } from './appPage';
 import { signedIn, start, WHOAMI } from './harness';
 
 const OWNER = 'usr_cccccccccccccccccccc';
@@ -110,8 +111,11 @@ describe('inventory', () => {
     { id: APP.id, slug: 'expenses', owner_user_id: OWNER, status: 'active' },
   ];
 
+  // Anyone but an org admin reads the plain list; an admin reads the inventory (below).
+  const member = { 'GET /v1/whoami': whoami('member') };
+
   it('lists every app by slug with status and owner, and filters by slug or owner', async () => {
-    start('/', { 'GET /v1/apps': () => json(200, { apps }) }, signedIn());
+    const { api } = start('/', { ...member, 'GET /v1/apps': () => json(200, { apps }) }, signedIn());
     await screen.findByRole('link', { name: 'expenses' });
     const rows = screen.getAllByRole('row').slice(1);
     expect(rows.map((r) => within(r).getAllByRole('cell')[0]?.textContent)).toEqual(['expenses', 'timesheets']);
@@ -122,15 +126,21 @@ describe('inventory', () => {
     expect(screen.getByText('1 of 2 apps')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: 'nothing' } });
     expect(screen.getByText('No app matches the filter.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'quarantined' } });
+    expect(screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0]?.textContent)).toEqual(['timesheets']);
+    expect(screen.queryByLabelText('Environment')).toBeNull();
+    expect(api.of('GET', '/v1/inventory')).toHaveLength(0);
+    expect(api.of('GET', '/v1/usage')).toHaveLength(0);
   });
 
   it('says so when there are no apps', async () => {
-    start('/', { 'GET /v1/apps': () => json(200, { apps: [] }) }, signedIn());
+    start('/', { ...member, 'GET /v1/apps': () => json(200, { apps: [] }) }, signedIn());
     expect(await screen.findByText(/No apps yet/)).toBeTruthy();
   });
 
   it('shows the refusal and its request id', async () => {
-    start('/', { 'GET /v1/apps': () => problem(403, 'FORBIDDEN', 'Not allowed') }, signedIn());
+    start('/', { ...member, 'GET /v1/apps': () => problem(403, 'FORBIDDEN', 'Not allowed') }, signedIn());
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Not allowed');
     expect(alert.textContent).toContain('req_test_0001');
@@ -138,10 +148,169 @@ describe('inventory', () => {
 
   it('returns to the login page when the token stops working', async () => {
     const session = signedIn();
-    const { router } = start('/', { 'GET /v1/apps': () => problem(401, 'UNAUTHENTICATED', 'Expired') }, session);
+    const { router } = start('/', { ...member, 'GET /v1/apps': () => problem(401, 'UNAUTHENTICATED', 'Expired') }, session);
     await screen.findByLabelText('API token');
     expect(session.token()).toBeNull();
     expect(router.state.location.pathname).toBe('/login');
+  });
+});
+
+describe('inventory for an org admin', () => {
+  const PROD_ENV = 'env_prod0000000000000000';
+  const PREVIEW_ENV = 'env_preview0000000000000';
+  function item(slug: string, overrides: Record<string, unknown> = {}) {
+    return {
+      app_id: `app_${slug.padEnd(20, '0').slice(0, 20)}`,
+      slug,
+      status: 'active',
+      created_at: '2026-09-28T10:00:00Z',
+      owner: { user_id: OWNER, display_name: 'Olivia Owner' },
+      last_used_at: null,
+      environments: [
+        {
+          environment_id: `env_${slug.padEnd(16, '0').slice(0, 16)}prod`,
+          name: 'prod',
+          current_release: null,
+          last_deploy: null,
+          sharing: { org_wide: false, users: 0, groups: 0 },
+        },
+      ],
+      ...overrides,
+    };
+  }
+  const EXPENSES = item('expenses', {
+    app_id: APP.id,
+    last_used_at: '2026-10-08T09:00:00Z',
+    environments: [
+      {
+        environment_id: PROD_ENV,
+        name: 'prod',
+        current_release: { release_id: 'rel_rrrrrrrrrrrrrrrrrrrr', number: 12 },
+        last_deploy: { operation_id: 'op_oooooooooooooooooooo', kind: 'deploy', state: 'healthy', at: '2026-10-07T10:00:00Z' },
+        sharing: { org_wide: true, users: 2, groups: 1 },
+      },
+      {
+        environment_id: PREVIEW_ENV,
+        name: 'preview',
+        current_release: { release_id: 'rel_ssssssssssssssssssss', number: 13 },
+        last_deploy: { operation_id: 'op_pppppppppppppppppppp', kind: 'rollback', state: 'failed', at: '2026-10-08T10:00:00Z' },
+        sharing: { org_wide: false, users: 1, groups: 0 },
+      },
+    ],
+  });
+  const TIMESHEETS = item('timesheets', { status: 'quarantined', owner: { user_id: OTHER, display_name: 'Dan Other' } });
+  const usage = () =>
+    json(200, {
+      month: '2026-10',
+      fixed_resources: [],
+      environments: [{ environment_id: PROD_ENV, app_id: APP.id, billing: 'instance' }, { environment_id: PREVIEW_ENV, app_id: APP.id, billing: null }],
+    });
+  const cells = (row: HTMLElement) => within(row).getAllByRole('cell').map((c) => c.textContent);
+
+  it('shows each app with its owner, last use and, per environment, release, last deploy, sharing and billing', async () => {
+    const { api } = start(
+      '/',
+      { 'GET /v1/inventory': () => json(200, { items: [EXPENSES, TIMESHEETS], next_cursor: null }), 'GET /v1/usage': usage },
+      signedIn(),
+    );
+    await screen.findByRole('link', { name: 'expenses' });
+    expect(api.of('GET', '/v1/apps')).toHaveLength(0);
+    const table = screen.getByRole('table', { name: 'Apps in this organisation' });
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'App',
+      'Status',
+      'Owner',
+      'Last used',
+      'Production',
+      'Preview',
+    ]);
+    const [expenses, timesheets] = within(table).getAllByRole('row').slice(1) as [HTMLElement, HTMLElement];
+    expect(within(expenses).getByRole('link', { name: 'expenses' }).getAttribute('href')).toBe(`/apps/${APP.id}`);
+    expect(within(expenses).getByText(/Olivia Owner/)).toBeTruthy();
+    expect(within(expenses).getByTitle(OWNER).textContent).toBe(OWNER);
+    const prod = cells(expenses)[4]!;
+    expect(prod).toContain('Release 12');
+    expect(prod).toContain('healthy');
+    expect(prod).toContain(`Last deploy ${new Date('2026-10-07T10:00:00Z').toLocaleString()}`);
+    expect(prod).toContain('Everyone in the organisation, 2 people, 1 group');
+    await waitFor(() => expect(cells(expenses)[4]).toContain('Instance-billed'));
+    const preview = cells(expenses)[5]!;
+    expect(preview).toContain('Release 13');
+    expect(preview).toContain('rollback failed');
+    expect(preview).toContain('1 person');
+    expect(preview).toContain('Billing —');
+    expect(cells(expenses)[3]).toBe(new Date('2026-10-08T09:00:00Z').toLocaleString());
+    expect(cells(timesheets)[3]).toBe('Not yet');
+    expect(cells(timesheets)[4]).toContain('Not deployed yet');
+    expect(cells(timesheets)[4]).toContain('Nobody yet');
+    expect(cells(timesheets)[5]).toBe('None');
+    expect(screen.getByText('2 apps')).toBeTruthy();
+    expect(api.of('GET', '/v1/usage')).toHaveLength(1);
+  });
+
+  it('filters the loaded apps by owner name, status and environment', async () => {
+    start('/', { 'GET /v1/inventory': () => json(200, { items: [EXPENSES, TIMESHEETS], next_cursor: null }), 'GET /v1/usage': usage }, signedIn());
+    await screen.findByRole('link', { name: 'expenses' });
+    const slugs = () => screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0]?.textContent);
+    fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: 'dan oth' } });
+    expect(slugs()).toEqual(['timesheets']);
+    expect(screen.getByText('1 of 2 apps')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'active' } });
+    expect(slugs()).toEqual(['expenses']);
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'disabled' } });
+    expect(screen.getByText('No app matches the filter.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'preview' } });
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['App', 'Status', 'Owner', 'Last used', 'Preview']);
+    expect(slugs()).toEqual(['expenses', 'timesheets']);
+  });
+
+  it('loads the next page with the cursor the API returned', async () => {
+    const { api } = start(
+      '/',
+      {
+        'GET /v1/inventory': [
+          () => json(200, { items: [EXPENSES], next_cursor: 'expenses' }),
+          () => json(200, { items: [TIMESHEETS], next_cursor: null }),
+        ],
+        'GET /v1/usage': usage,
+      },
+      signedIn(),
+    );
+    await screen.findByText('1 app, more to load');
+    expect(api.of('GET', '/v1/inventory')[0]?.query.has('cursor')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Load more apps' }));
+    await screen.findByRole('link', { name: 'timesheets' });
+    expect(api.of('GET', '/v1/inventory')[1]?.query.get('cursor')).toBe('expenses');
+    expect(screen.getByText('2 apps')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Load more apps' })).toBeNull();
+  });
+
+  it('still lists the apps, with a dash for billing, when usage cannot be read', async () => {
+    start(
+      '/',
+      {
+        'GET /v1/inventory': () => json(200, { items: [EXPENSES], next_cursor: null }),
+        'GET /v1/usage': () => problem(503, 'CELL_UNAVAILABLE', 'The cell is not answering.'),
+      },
+      signedIn(),
+    );
+    const row = (await screen.findByRole('link', { name: 'expenses' })).closest('tr')!;
+    await waitFor(() => expect(cells(row)[4]).toContain('Billing —'));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('says so when there are no apps in the inventory', async () => {
+    start('/', { 'GET /v1/inventory': [() => json(200, { items: [], next_cursor: null })], 'GET /v1/usage': usage }, signedIn());
+    expect(await screen.findByText(/No apps yet/)).toBeTruthy();
+  });
+
+  it('shows the refusal of the inventory and its request id', async () => {
+    start('/', { 'GET /v1/inventory': () => problem(403, 'FORBIDDEN', 'Org admins only') }, signedIn());
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Org admins only');
+    expect(alert.textContent).toContain('req_test_0001');
   });
 });
 

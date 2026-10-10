@@ -630,6 +630,19 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ssc-space-2);
+}
+
+.search select {
+  width: auto;
+  border-radius: var(--ssc-radius-full);
+  padding: var(--ssc-space-2) var(--ssc-space-3);
+}
+
 .search input {
   width: min(320px, 100%);
   border-radius: var(--ssc-radius-full);
@@ -815,6 +828,16 @@ textarea {
 
 .table .actions-cell {
   text-align: right;
+}
+
+/* The inventory's cell for one environment: a few short lines, one fact each. */
+
+.env-summary {
+  display: grid;
+  gap: var(--ssc-space-0);
+  min-width: 13rem;
+  font-size: var(--ssc-type-size-small);
+  color: var(--ssc-text-primary);
 }
 
 /* Many columns: tighter cells, so the page-width card holds them all. */
