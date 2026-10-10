@@ -1084,6 +1084,21 @@ details pre {
   border-radius: var(--ssc-radius-sm);
 }
 
+/* A command to paste into a terminal, and the button that copies it. */
+.command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ssc-space-2) var(--ssc-space-3);
+}
+
+.command pre {
+  max-width: 100%;
+  padding: var(--ssc-space-2) var(--ssc-space-3);
+  font-size: var(--ssc-type-size-small);
+  white-space: pre;
+}
+
 .plain-list {
   margin: var(--ssc-space-1) 0 0;
   padding-left: var(--ssc-space-5);

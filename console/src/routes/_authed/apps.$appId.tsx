@@ -18,6 +18,7 @@ import { Promote } from '../../app-detail/Promote';
 import { Repository } from '../../app-detail/Repository';
 import { Rollback } from '../../app-detail/Rollback';
 import { Running } from '../../app-detail/Running';
+import { Secrets } from '../../app-detail/Secrets';
 import { ShareDialog } from '../../app-detail/ShareDialog';
 import { Timers } from '../../app-detail/Timers';
 import { StatusBadge } from '../../components/Badge';
@@ -204,6 +205,7 @@ function EnvironmentPanel({ app, env }: { readonly app: AppOut; readonly env: En
       )}
       <AccessExplain app={app} env={env} />
       <EnvConnections app={app} env={env} />
+      <Secrets app={app} env={env} />
       <Timers app={app} env={env} />
       <Logs app={app} env={env} />
     </section>

@@ -223,6 +223,14 @@ test('a builder sees nothing admin, and can share and open rollback on their app
   await expect(rollback).toBeVisible();
   await expect(rollback.getByRole('alert')).toHaveCount(0);
   await expect(rollback.getByText(/release/i).first()).toBeVisible();
+  await rollback.getByRole('button', { name: 'Cancel' }).click();
+
+  // Secrets: a builder may read the names and versions, and is shown the command to set one.
+  await prod.getByText('Secrets', { exact: true }).click();
+  await expect(prod.getByText(`Production of ${w.slug} has no secrets.`)).toBeVisible();
+  await expect(prod.getByLabel('Set a secret in production', { exact: true })).toHaveText(
+    `ssc secret set ${w.slug} NAME --env prod`,
+  );
 });
 
 test('a user sees nothing admin, and the API refuses the actions shown to everyone', async ({ page, request }) => {
@@ -248,4 +256,11 @@ test('a user sees nothing admin, and the API refuses the actions shown to everyo
   await prod.getByRole('button', { name: 'Roll back Production' }).click();
   const rollback = page.getByRole('dialog', { name: 'Roll back production' });
   await expect(rollback.getByRole('alert').first()).toContainText(FORBIDDEN);
+  await rollback.getByRole('button', { name: 'Cancel' }).click();
+
+  // And the secrets' names: the section opens for everyone, and the API refuses a user.
+  await prod.getByText('Secrets', { exact: true }).click();
+  await expect(prod.locator('details', { hasText: 'Set or rotate a secret' }).getByRole('alert')).toContainText(
+    FORBIDDEN,
+  );
 });
