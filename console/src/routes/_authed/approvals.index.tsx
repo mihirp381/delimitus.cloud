@@ -59,11 +59,12 @@ function ApprovalsPage() {
         }
       >
         <div className="tabs">
-          {/* The class marks the view on show. aria-current cannot: the router also sets it on the
-              first link under ?view=all, since both links lead to this path. */}
+          {/* Both links lead to this path, so the first matches only an empty search: without that the
+              router would mark it as the current page under ?view=all as well. */}
           <Link
             to="/approvals"
             search={{}}
+            activeOptions={{ exact: true }}
             className={inbox ? 'current' : undefined}
             aria-current={inbox ? 'page' : undefined}
           >

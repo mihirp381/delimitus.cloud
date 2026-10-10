@@ -184,6 +184,19 @@ describe('approvals inbox', () => {
     expect(router.state.location.search).toEqual({});
   });
 
+  it('marks only the view being shown as the current page', async () => {
+    const current = () =>
+      ['Waiting for you', 'All requests'].filter(
+        (name) => screen.getByRole('link', { name }).getAttribute('aria-current') === 'page',
+      );
+    start('/approvals?view=all', routes(page([WIDEN, DENIED])), signedIn());
+    await screen.findByText('2 requests');
+    expect(current()).toEqual(['All requests']);
+    fireEvent.click(screen.getByRole('link', { name: 'Waiting for you' }));
+    await screen.findByText('2 requests waiting for you');
+    expect(current()).toEqual(['Waiting for you']);
+  });
+
   it('drops search values from the URL that the API would refuse', async () => {
     const { api } = start('/approvals?view=mine&state=open&limit=5&before=apr_x', routes(page([WIDEN])), signedIn());
     await screen.findByText('1 request waiting for you');
