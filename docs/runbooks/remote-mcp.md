@@ -11,7 +11,7 @@ claude mcp add --transport http ssc https://api.delimitus.com/mcp
 In Codex:
 
 ```sh
-codex mcp add ssc --url https://api.delimitus.com/mcp --oauth-resource https://api.delimitus.com/mcp
+codex mcp add ssc --url https://api.delimitus.com/mcp
 ```
 
 It opens the browser to sign in the same way. In an app folder, `ssc init` writes the Claude Code (`.mcp.json`) and Cursor (`.cursor/mcp.json`) settings for this server, at the CLI's API address plus `/mcp`; Claude Code asks to approve the project's `ssc` server the first time.
@@ -39,7 +39,7 @@ Credentials do not cross over:
 | "We couldn't find a sign-in for that email" | One page for every miss, so it says nothing about which orgs exist. The domain is not a **verified** domain of a WorkOS organisation; or that organisation is not connected to an SSC org; or the org's directory connection is frozen. | Operator: in the WorkOS dashboard check the organisation's domains are verified (`legacy_verified` also counts). Check the org's `directory_connection` is `active` (`docs/runbooks/ssc-019-login.md`). |
 | "Too many tries" (429) | Twenty work-email tries an hour from one address, or for one domain, per auth-host instance. | Wait an hour. Counted per instance, so the real bound is twenty times the instance count. |
 | "Sign-in is unavailable" (503) | WorkOS did not answer the domain lookup. | Retry; check WorkOS status. The log has `WorkOS organisation lookup failed`. |
-| "This sign-in request is not valid" (400) | The client id is unknown (clients unused for 30 days are deleted daily) or the redirect URI is not one the client registered. Never redirected, so a wrong redirect cannot leak a code. | Remove and add the server again so the client registers afresh. |
+| "This sign-in request is not valid" (400) | The client id is unknown (clients unused for 30 days are deleted daily), the redirect URI is not one the client registered, or a query parameter was sent twice (Codex with `--oauth-resource` sends `resource` twice). Never redirected, so a wrong redirect cannot leak a code. | Remove and add the server again so the client registers afresh. In Codex: `codex mcp remove ssc`, then add it again without `--oauth-resource`. |
 | The client reports `invalid_target` | It asked for a resource other than `https://api.delimitus.com/mcp`. | Check the URL given to `claude mcp add`: exactly `https://api.delimitus.com/mcp`. |
 | The client reports `invalid_grant` on `/token` | The code was over a minute old, used already, or sent with another verifier, client or redirect. A code presented twice also ends the session it opened (`auth.code_reused` in the audit log, a `WARNING` in the auth host log). | Connect again. Repeated `auth.code_reused` for one client means its codes are being intercepted: tell the person. |
 | `401` from `/mcp` with a token that works on `/v1` | Expected: that is a `/v1` credential (see above). | Use the OAuth flow, or `ssc mcp` locally. |

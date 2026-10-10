@@ -309,7 +309,8 @@ def test_guide_gives_the_remote_server():
     url = "https://x.test/mcp"
     text = " ".join(guide([], url).split())
     assert f"SSC's agent tools (MCP) are served at `{url}`" in text
-    assert f"`codex mcp add ssc --url {url} --oauth-resource {url}`" in text
+    assert f"`codex mcp add ssc --url {url}`, which signs in in the browser." in text
+    assert "--oauth-resource" not in text
     assert f"`claude mcp add --transport http ssc {url}`" in text
     assert "`ssc init` wrote `.mcp.json`" in text
     assert "`ssc init` wrote `.cursor/mcp.json`" in text

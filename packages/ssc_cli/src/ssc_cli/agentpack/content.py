@@ -88,8 +88,7 @@ agent's on the person's behalf. Connect once:
 - Claude Code: `ssc init` wrote `.mcp.json`; open Claude Code in this folder, approve the `ssc`
   server, then run `/mcp` and sign in. Without `ssc init`:
   `claude mcp add --transport http ssc {mcp_url}`
-- Codex: `codex mcp add ssc --url {mcp_url} --oauth-resource {mcp_url}`, which signs in in the
-  browser.
+- Codex: `codex mcp add ssc --url {mcp_url}`, which signs in in the browser.
 - Cursor: `ssc init` wrote `.cursor/mcp.json`.
 
 The tools: `get_platform_requirements`, `get_org_deployment_policy`, `preflight`, `list_apps`,
