@@ -974,6 +974,25 @@ textarea {
   align-items: end;
 }
 
+/* A select, a text field and a date field each come out a different height, so fields lined up
+   by their bottom edges had labels on different lines. Each field takes a label row and a control
+   row of the form's own grid instead: along a line of fields the labels share one line and the
+   controls one height. */
+@supports (grid-template-rows: subgrid) {
+  .filters {
+    align-items: stretch;
+  }
+
+  .filters .field {
+    grid-row: span 2;
+    grid-template-rows: subgrid;
+  }
+
+  .filters .field > span {
+    align-self: end;
+  }
+}
+
 .filters .actions {
   grid-column: 1 / -1;
   justify-content: flex-start;
