@@ -19,7 +19,7 @@ Update a row's status when its ticket closes; reword the page if a ticket is cut
 | `deploy` | Deploy from a folder (`ssc deploy`) or a GitHub push; Lovable and Replit apps come in through GitHub, each push to preview | SSC-014, SSC-015, SSC-016, SSC-022, SSC-023, SSC-047 | 2026-10-07: SSC-015 live on cell 1 (19 fixtures); SSC-047 code on `round-2`, not deployed |
 | `agent` | A coding agent deploys from the editor, to preview, and can ask for a share or a data connection; the hero's chat (create, request Snowflake access, ask to share, deploy), its first step and the agent column | SSC-048, SSC-093 | 2026-10-07: control-plane half done (deploy to preview, request share, request connection); agent login, `get_logs` and `set_secret` on `round-2`, not deployed |
 | `langs` | Python and Node apps | SSC-003 (20 apps run), SSC-015 | SSC-003 done; SSC-015 not started |
-| `tools` | Claude Code, Codex and Cursor deploy directly; Lovable and Replit through GitHub | SSC-003 corpus: Cursor, Lovable, Replit; SSC-048 for the direct path, SSC-047 for GitHub | Not yet recorded for Claude Code and Codex, and no agent-driven deploy recorded for any of the three; runs in backlog SSC-099. Published by the founder's choice (2026-10-06) |
+| `tools` | Claude Code, Codex and Cursor deploy directly; Lovable and Replit through GitHub | SSC-003 corpus: Cursor, Lovable, Replit; SSC-048 for the direct path, SSC-047 for GitHub | 2026-10-10: Claude Code and Codex each built and deployed an app to preview through the agent tools (`spikes/corpus20/SSC-099.md`). Cursor: corpus app only (SSC-003), no agent-driven deploy recorded. |
 | `preview` | Preview, then production, each at its own address; a person promotes | SSC-042, decision 004 | 2026-10-07: code on `round-2` |
 | `cloud` | Runs on Google Cloud | Decision 001 (SSC-001) | Decided |
 | `account` | In the US, each company in a cloud account of its own | Decisions 001 and 021, assumption A2 (SSC-013) | Done for the cell layout; region us-central1 |
@@ -88,7 +88,7 @@ The calculator's formula and its test vectors are in `calculator_vectors.json`.
 
 ## Before publishing
 
-1. Record one Claude Code and one Codex app through the SSC-003 harness (`tools`). Moved to backlog SSC-099; the founder chose to publish first (2026-10-06).
+1. Record one Claude Code and one Codex app through the SSC-003 harness (`tools`). Moved to backlog SSC-099; the founder chose to publish first (2026-10-06). Done 2026-10-10 for Claude Code and Codex (`spikes/corpus20/SSC-099.md`).
 2. Fetch the 2026-09-29 prices again and update the dates on the page and above (`econ-cloud`). Done 2026-10-07: no price changed.
 3. Make `privacy@delimitus.com` receive mail (`retention`). Done 2026-10-07 (founder).
 4. Founder sign-off on the copy and the calculator's default inputs. Given 2026-10-06 ("publish the page").
