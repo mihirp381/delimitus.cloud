@@ -735,7 +735,9 @@ def _org_tools(
     async def create_app(
         slug: NewSlug, ctx: Context, idempotency_key: IdempotencyKey | None = None
     ) -> CallToolResult:
-        """Create an app owned by you, with its `prod` and `preview` environments, as `ssc apps
+        """Only when the person asks for a new app: tell them the slug you will use and wait for
+        their yes before calling this.
+        Create an app owned by you, with its `prod` and `preview` environments, as `ssc apps
         create` does. Nothing runs until you deploy. To retry after an error, send the same
         idempotency_key: the same app comes back and nothing is created twice."""
         key = idempotency_key or fresh_key()

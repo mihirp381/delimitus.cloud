@@ -26,7 +26,8 @@ from ssc_control.api.runtime import Runtime
 MCP_PATH: Final = "/mcp"
 INSTRUCTIONS: Final = (
     "Small Software Cloud: see the apps in your org, their releases, what each environment "
-    "runs and its logs; create an app; deploy a folder to preview (call deploy with the same "
+    "runs and its logs; create an app (only when the person asks, after telling them the slug); "
+    "deploy a folder to preview (call deploy with the same "
     "arguments after each step until it is live); roll an environment back; see the data "
     "connections you may use; ask for sharing or a data connection; and have the person set a "
     "secret. Asking only opens an approval request: "

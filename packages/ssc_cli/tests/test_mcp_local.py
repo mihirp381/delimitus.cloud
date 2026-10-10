@@ -21,6 +21,7 @@ from ssc_cli.commands.deploy import prepare_folder
 from ssc_cli.credentials import Login, store_login
 from ssc_cli.mcp_local import INSTRUCTIONS, TOOLS, agent_opener, build_server
 from ssc_control.api.mcp import tools as server_tools
+from ssc_control.api.mcp.server import INSTRUCTIONS as SERVER_INSTRUCTIONS
 from ssc_control.api.settings import Settings
 from ssc_shared.fence import CLOSE, OPEN
 from ssc_shared.requirements import platform_requirements
@@ -28,6 +29,11 @@ from ssc_shared.requirements import platform_requirements
 ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 USR = "usr_aaaaaaaaaaaaaaaaaaaa"
 APP_ID = "app_" + "a" * 20
+ASK_FIRST = (
+    "Only when the person asks for a new app: tell them the slug you will use and wait for their "
+    "yes before calling this."
+)
+ASK_CLAUSE = "create an app (only when the person asks, after telling them the slug)"
 ENV_ID = "env_" + "p" * 20
 PLANTED = (
     "password=hunter2-planted-0001",
@@ -171,6 +177,10 @@ async def test_tools_mirror_the_api_server(fake_api):
     assert deploy["required"] == ["app"]
     assert set(mine["preflight"].input_schema["properties"]) == {"path"}
     assert set(theirs["preflight"].input_schema.get("properties", {})) == set()
+    assert mine["create_app"].description == theirs["create_app"].description
+    assert " ".join((mine["create_app"].description or "").split()).startswith(ASK_FIRST)
+    for instructions in (INSTRUCTIONS, SERVER_INSTRUCTIONS):
+        assert ASK_CLAUSE in instructions
 
 
 async def test_refusals_are_tool_errors(fake_api, fake_problem):

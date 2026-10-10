@@ -90,7 +90,8 @@ INSTRUCTIONS: Final = (
     "data connections and system packages the org allows you. Run preflight on the folder and "
     "fix every finding marked block before you deploy. You can also see the apps in your org, "
     "their releases and what "
-    "each environment runs; deploy a folder to preview (deploy packs, uploads and builds it and "
+    "each environment runs; create an app (only when the person asks, after telling them the "
+    "slug); deploy a folder to preview (deploy packs, uploads and builds it and "
     "answers with preview's url); roll an environment back; read an environment's logs; see the "
     "tables and columns a data connection shows an environment; have a secret set; and ask for "
     "sharing or a data connection. Asking only opens an approval request: "
@@ -667,7 +668,9 @@ def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
     )
 
     def create_app(slug: NewSlug, idempotency_key: IdempotencyKey | None = None) -> CallToolResult:
-        """Create an app owned by you, with its `prod` and `preview` environments, as `ssc apps
+        """Only when the person asks for a new app: tell them the slug you will use and wait for
+        their yes before calling this.
+        Create an app owned by you, with its `prod` and `preview` environments, as `ssc apps
         create` does. Nothing runs until you deploy. To retry after an error, send the same
         idempotency_key: the same app comes back and nothing is created twice."""
         key = idempotency_key or fresh_key()

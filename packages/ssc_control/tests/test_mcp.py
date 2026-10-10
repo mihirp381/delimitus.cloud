@@ -62,6 +62,7 @@ from ssc_contracts.cells import NOTICE, CellResource
 from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
 from ssc_control.api.mcp import tools
+from ssc_control.api.mcp.server import INSTRUCTIONS
 from ssc_control.api.mcp.tools import TOOLS
 from ssc_control.api.openapi import build_spec, spec_json
 from ssc_control.api.settings import INTERNAL_AUDIENCE, USER_AUDIENCE
@@ -77,6 +78,11 @@ from ssc_shared.logs import Health, LogLine, LogPage, LogQuery
 from ssc_shared.requirements import platform_requirements
 
 SPEC = Path(__file__).resolve().parents[3] / "docs" / "api" / "openapi.json"
+ASK_FIRST = (
+    "Only when the person asks for a new app: tell them the slug you will use and wait for their "
+    "yes before calling this."
+)
+ASK_CLAUSE = "create an app (only when the person asks, after telling them the slug)"
 ALLOWLIST = {
     "get_platform_requirements",
     "get_org_deployment_policy",
@@ -348,6 +354,8 @@ async def test_tool_set_is_the_allowlist(world: World) -> None:
     for name in ("rollback", "deploy"):
         assert tools[name].annotations is not None
         assert tools[name].annotations.destructive_hint is True
+    assert " ".join((tools["create_app"].description or "").split()).startswith(ASK_FIRST)
+    assert ASK_CLAUSE in INSTRUCTIONS
 
 
 @pytest.mark.parametrize("mode", ["auto", "2026-07-28", "legacy"])
