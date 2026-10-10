@@ -15,9 +15,11 @@ import { must } from '../../api/client';
 import { type ChainReport, chainVerdict, checkChain } from '../../auditChain';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
+import { useToast } from '../../components/Toast';
 import { saveBlob } from '../../download';
 
 export const Route = createFileRoute('/_authed/audit')({
@@ -78,7 +80,7 @@ function AuditLog() {
   });
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
   const [exportError, setExportError] = useState<unknown>(null);
-  const [saved, setSaved] = useState<string | null>(null);
+  const toast = useToast();
   const [check, setCheck] = useState<Check | null>(null);
 
   /** Checks the hash chain of `file`'s bytes here in the browser; the file itself is only read. */
@@ -95,13 +97,12 @@ function AuditLog() {
   async function download(format: ExportFormat) {
     setExporting(format);
     setExportError(null);
-    setSaved(null);
     setCheck(null);
     try {
       const { blob, fileName } = await exportAudit(api, filters, format);
       // The browser saves the API's bytes as they came; the check below reads the same bytes.
       saveBlob(blob, fileName);
-      setSaved(fileName);
+      toast(`Saved ${fileName}.`);
       if (format === 'jsonl') {
         await verify(blob, fileName, ROW_FILTERS.some((name) => filters[name] !== undefined));
       }
@@ -118,7 +119,6 @@ function AuditLog() {
     // Emptied so that choosing the same file again checks it again.
     event.currentTarget.value = '';
     if (!file) return;
-    setSaved(null);
     setExportError(null);
     void verify(file, file.name, false);
   }
@@ -158,11 +158,6 @@ function AuditLog() {
           computer.
         </span>
       </PageHeader>
-      {saved ? (
-        <p className="notice notice-success" role="status">
-          Saved {saved}.
-        </p>
-      ) : null}
       {exportError ? <ProblemNotice error={exportError} /> : null}
       {check ? <ChainNotice check={check} /> : null}
       <FilterForm
@@ -200,7 +195,7 @@ function AuditLog() {
       ) : events.isError ? (
         <ProblemNotice error={events.error} />
       ) : (
-        <p className="muted">Loading events…</p>
+        <Loading label="Loading events…" rows={3} />
       )}
     </>
   );

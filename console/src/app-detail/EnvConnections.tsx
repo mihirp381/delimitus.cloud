@@ -17,8 +17,10 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Phrases } from '../components/Phrases';
+import { Loading } from '../components/Loading';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
+import { useToast } from '../components/Toast';
 import { ENV_TITLE } from './names';
 import { Section } from './Section';
 
@@ -47,14 +49,14 @@ function ConnectionsBody({ app, env }: Props) {
   const me = queries.useQuery('get', '/v1/whoami');
   const init = { params: { path: { app_id: app.id, environment_id: env.id } } };
   const linked = queries.useQuery('get', PATH, init);
-  const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
   const admin = isAdmin(me.data);
   const target = { appId: app.id, environmentId: env.id };
   const where = ENV_TITLE[env.name];
 
   function saved(update: EnvironmentConnections, message: string) {
     queryClient.setQueryData(queries.queryOptions('get', PATH, init).queryKey, update);
-    setNotice(message);
+    toast(message);
   }
 
   const columns: Column<EnvironmentConnection>[] = [
@@ -114,13 +116,8 @@ function ConnectionsBody({ app, env }: Props) {
 
   return (
     <div className="stack">
-      {notice ? (
-        <p className="notice notice-success" role="status">
-          {notice}
-        </p>
-      ) : null}
       {linked.isPending ? (
-        <p className="muted">Loading connections…</p>
+        <Loading label="Loading connections…" rows={3} />
       ) : linked.isError ? (
         <ProblemNotice error={linked.error} />
       ) : (

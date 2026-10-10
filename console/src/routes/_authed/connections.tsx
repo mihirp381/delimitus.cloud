@@ -38,8 +38,10 @@ import { ConfirmAction } from '../../components/ConfirmAction';
 import { Dialog } from '../../components/Dialog';
 import { PageHeader } from '../../components/PageHeader';
 import { Phrases } from '../../components/Phrases';
+import { Loading } from '../../components/Loading';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
+import { useToast } from '../../components/Toast';
 
 export const Route = createFileRoute('/_authed/connections')({
   component: ConnectionsPage,
@@ -51,7 +53,7 @@ function ConnectionsPage() {
   const { queries, isAdmin } = Route.useRouteContext();
   const me = queries.useQuery('get', '/v1/whoami');
   const list = queries.useQuery('get', '/v1/connections');
-  const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
   const admin = isAdmin(me.data);
 
   const columns: Column<Connection>[] = [
@@ -86,7 +88,7 @@ function ConnectionsPage() {
     columns.push({
       header: 'Action',
       className: 'actions-cell',
-      cell: (c) => <EditConnection connection={c} onDone={setNotice} />,
+      cell: (c) => <EditConnection connection={c} onDone={toast} />,
     });
   }
 
@@ -102,7 +104,7 @@ function ConnectionsPage() {
           </>
         }
       >
-        {!me.isPending && admin ? <AddConnection onDone={setNotice} /> : null}
+        {!me.isPending && admin ? <AddConnection onDone={toast} /> : null}
       </PageHeader>
       {me.isPending || admin ? null : (
         <p className="muted">
@@ -110,14 +112,9 @@ function ConnectionsPage() {
           name.
         </p>
       )}
-      {notice ? (
-        <p className="notice notice-success" role="status">
-          {notice}
-        </p>
-      ) : null}
       <section className="panel tone-purple" aria-label="Connections">
         {list.isPending ? (
-          <p className="muted">Loading connections…</p>
+          <Loading label="Loading connections…" rows={3} />
         ) : list.isError ? (
           <ProblemNotice error={list.error} />
         ) : (

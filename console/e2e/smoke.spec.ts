@@ -54,6 +54,12 @@ test('sign in, find an app, and remove access through a stale version', async ({
   await expect(page.getByRole('region', { name: 'Preview preview' })).toBeVisible();
   await expect(prodPanel.getByText('Everyone in the organisation')).toBeVisible();
 
+  // Who has access is its own tab, which reads production's sharing as it opens.
+  await page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name: 'Access' }).click();
+  await expect(page).toHaveURL(/tab=access/);
+  const access = page.getByRole('region', { name: 'Who has access' });
+  await expect(access.getByRole('table')).toContainText('Everyone in the organisation');
+
   // Someone else changes prod's sharing after the page read it.
   const current = await grantsOf(request, grantsPath);
   expect(current.etag).toBe(seenByPage);
@@ -72,14 +78,14 @@ test('sign in, find an app, and remove access through a stale version', async ({
       puts.push({ ifMatch: req.headers()['if-match'], status: response.status() });
     }
   });
-  await prodPanel.getByRole('button', { name: /Remove access for Everyone in the organisation/ }).click();
+  await access.getByRole('button', { name: /Remove access for Everyone in the organisation/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Remove access' });
   const confirm = dialog.getByRole('button', { name: 'Remove access' });
   await expect(confirm).toBeDisabled();
   await dialog.getByLabel(/Type/).fill(slug);
   await confirm.click();
-  await expect(prodPanel.getByRole('status')).toContainText('Removed access');
-  await expect(prodPanel.getByText('Nobody has access yet.')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Notifications' })).toContainText('Removed access');
+  await expect(access.getByText('Nobody has access yet.')).toBeVisible();
   expect(puts).toEqual([
     { ifMatch: seenByPage, status: 412 },
     { ifMatch: latest, status: 200 },

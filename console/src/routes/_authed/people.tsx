@@ -16,9 +16,11 @@ import { Badge } from '../../components/Badge';
 import { Ago } from '../../components/Ago';
 import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
+import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
+import { useToast } from '../../components/Toast';
 
 export const Route = createFileRoute('/_authed/people')({
   component: PeoplePage,
@@ -75,7 +77,7 @@ function when(iso: string): ReactNode {
 function UnmatchedLogins() {
   const { queries } = Route.useRouteContext();
   const list = queries.useQuery('get', '/v1/unlinked-logins');
-  const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
   const headingId = useId();
 
   const columns: readonly Column<UnlinkedLogin>[] = [
@@ -92,7 +94,7 @@ function UnmatchedLogins() {
           <LinkLogin
             login={u}
             onDone={(message) => {
-              setNotice(message);
+              toast(message);
               void list.refetch();
             }}
           />
@@ -111,13 +113,8 @@ function UnmatchedLogins() {
         person&apos;s next login with it signs them in. A login whose subject is an address
         cannot be linked: fix the person in the directory instead.
       </p>
-      {notice ? (
-        <p className="notice notice-success" role="status">
-          {notice}
-        </p>
-      ) : null}
       {list.isPending ? (
-        <p className="muted">Loading logins…</p>
+        <Loading label="Loading logins…" rows={3} />
       ) : list.isError ? (
         <ProblemNotice error={list.error} />
       ) : (

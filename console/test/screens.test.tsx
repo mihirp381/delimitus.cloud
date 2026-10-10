@@ -4,7 +4,7 @@ import type { Grants } from '../src/api/grants';
 import { createSession, STORAGE_KEY } from '../src/auth/session';
 import { type Handler, json, problem } from './fakeApi';
 import { chooseEnv, openSection, openTab, whoami } from './appPage';
-import { signedIn, start, WHOAMI } from './harness';
+import { signedIn, start, toast, WHOAMI } from './harness';
 
 const OWNER = 'usr_cccccccccccccccccccc';
 const OTHER = 'usr_dddddddddddddddddddd';
@@ -451,7 +451,7 @@ describe('app detail', () => {
     await act(async () => {
       fireEvent.click(confirm);
     });
-    expect(await within(prod).findByRole('status')).toBeTruthy();
+    expect(await toast()).toBe('Removed access for Everyone in the organisation (user).');
     const puts = api.of('PUT', PROD_GRANTS);
     expect(puts.map((p) => p.headers.get('If-Match'))).toEqual(['"3"', '"4"']);
     expect(puts[1]?.body).toEqual({ grants: [{ role: 'builder', subject_kind: 'user', subject_id: OWNER }] });

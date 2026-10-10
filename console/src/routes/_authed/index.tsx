@@ -280,7 +280,7 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
       className: 'nowrap',
       cell: (app) => (app.last_used_at ? <Ago at={app.last_used_at} /> : <span className="muted">Not yet</span>),
     },
-    { header: 'Sharing', cell: (app) => <Sharing app={app} names={names} /> },
+    { header: 'Sharing', className: 'fill', cell: (app) => <Sharing app={app} names={names} /> },
   ];
 
   return (

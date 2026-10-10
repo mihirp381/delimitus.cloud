@@ -7,6 +7,7 @@ import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
 import { ProblemNotice } from '../components/ProblemNotice';
+import { useToast } from '../components/Toast';
 import { KillSwitchProgress } from './KillSwitchRun';
 import { Lookup } from './Lookup';
 
@@ -53,7 +54,7 @@ export function AdminActions({ app }: { readonly app: AppOut }) {
 function Controls({ app }: { readonly app: AppOut }) {
   const { api, queries, queryClient } = useRouteContext({ from: '/_authed/apps/$appId' });
   const [runId, setRunId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
   const [enableError, setEnableError] = useState<unknown>(null);
   const [enabling, setEnabling] = useState(false);
   const appKey = queries.queryOptions('get', '/v1/apps/{app_id}', {
@@ -64,7 +65,6 @@ function Controls({ app }: { readonly app: AppOut }) {
   async function pull(mode: KillSwitchMode) {
     try {
       const id = await pullKillSwitch(api, app.id, mode);
-      setNotice(null);
       setEnableError(null);
       setRunId(id);
     } finally {
@@ -75,11 +75,10 @@ function Controls({ app }: { readonly app: AppOut }) {
   async function enable() {
     setEnabling(true);
     setEnableError(null);
-    setNotice(null);
     try {
       queryClient.setQueryData(appKey, await enableApp(api, app.id));
       setRunId(null);
-      setNotice(`${app.slug} is active again. Serving comes back once it restarts.`);
+      toast(`${app.slug} is active again. Serving comes back once it restarts.`);
     } catch (e) {
       setEnableError(e);
       await queryClient.invalidateQueries({ queryKey: appKey });
@@ -93,11 +92,6 @@ function Controls({ app }: { readonly app: AppOut }) {
 
   return (
     <>
-      {notice ? (
-        <p className="notice notice-success" role="status">
-          {notice}
-        </p>
-      ) : null}
       <div className="toolbar">
         {modes.map((mode) => (
           <ConfirmAction
@@ -132,7 +126,7 @@ function TransferOwner({ app }: { readonly app: AppOut }) {
   const [picked, setPicked] = useState<Match | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [done, setDone] = useState<string | null>(null);
+  const toast = useToast();
 
   function show() {
     setPicked(null);
@@ -158,7 +152,7 @@ function TransferOwner({ app }: { readonly app: AppOut }) {
           .queryKey,
         updated,
       );
-      setDone(`${app.slug} now belongs to ${picked.label}.`);
+      toast(`${app.slug} now belongs to ${picked.label}.`);
       close();
     } catch (e) {
       setError(e);
@@ -170,11 +164,6 @@ function TransferOwner({ app }: { readonly app: AppOut }) {
   return (
     <>
       <Button onClick={show}>Transfer ownership</Button>
-      {done ? (
-        <p className="notice notice-success" role="status">
-          {done}
-        </p>
-      ) : null}
       <Dialog open={open} title={`Transfer ${app.slug}`} onClose={close}>
         <form className="stack" onSubmit={submit} aria-label={`Transfer ${app.slug}`}>
           <p>

@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest';
 import { APP_ID, APP_PATH, FIRST_RENDER_MS, page } from './appPage';
 import { type Handler, json, problem } from './fakeApi';
-import { signedIn, start } from './harness';
+import { signedIn, start, toast } from './harness';
 
 const GITHUB = `${APP_PATH}/github`;
 
@@ -57,7 +57,7 @@ describe('repository', () => {
         { workflow: '.github/workflows/lint.yaml', name: 'lint all' },
       ],
     });
-    expect((await within(panel).findByRole('status')).textContent).toBe(
+    expect(await toast()).toBe(
       'Connected acme/expenses; pushes to main deploy preview.',
     );
     expect(within(panel).getByText('ssc/preview')).toBeTruthy();
@@ -124,7 +124,7 @@ describe('repository', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
     });
     expect(api.of('DELETE', GITHUB)).toHaveLength(1);
-    expect((await within(panel).findByRole('status')).textContent).toBe('Disconnected acme/expenses.');
+    expect(await toast()).toBe('Disconnected acme/expenses.');
     expect(within(panel).getByText(/No repository is connected/)).toBeTruthy();
   });
 

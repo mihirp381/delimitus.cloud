@@ -1277,7 +1277,8 @@ a.segment.current {
 }
 
 .panel > .table-wrap:last-child,
-.panel > .stack:last-child > .table-wrap:last-child {
+.panel > .stack:last-child > .table-wrap:last-child,
+.panel > .stack:last-child > .table-wrap:has(+ dialog:last-child) {
   margin-bottom: calc(var(--ssc-space-4) * -1);
   border-bottom: 0;
   border-radius: 0 0 var(--ssc-radius-md) var(--ssc-radius-md);
@@ -1448,6 +1449,18 @@ a.segment.current {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The one column of a table that takes the width the others leave, and gives way before the
+   table scrolls sideways. What does not fit is cut short; the title of what is in it carries all. */
+.table td.fill {
+  width: 100%;
+  min-width: 12rem;
+  max-width: 0;
+}
+
+.table td.fill > .clip {
+  max-width: none;
 }
 
 /* A long id that may give way to its neighbours; the element's title carries all of it. */

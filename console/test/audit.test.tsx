@@ -4,7 +4,7 @@ import { auditFilters, exportFileName } from '../src/api/audit';
 import { isAdmin } from '../src/auth/admin';
 import { type Handler, json, problem } from './fakeApi';
 import { VECTORS, vectorBytes } from './fixtures/auditChain';
-import { signedIn, start } from './harness';
+import { signedIn, start, toast } from './harness';
 
 const USER = 'usr_cccccccccccccccccccc';
 const APP_ID = 'app_aaaaaaaaaaaaaaaaaaaa';
@@ -187,7 +187,7 @@ describe('audit export', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
     });
-    expect((await screen.findByRole('status')).textContent).toBe('Saved audit-org_ffffffffffffffffffff.csv.');
+    expect(await toast()).toBe('Saved audit-org_ffffffffffffffffffff.csv.');
     const [call] = api.of('GET', '/v1/audit/export');
     expect(entries(call!.query)).toEqual([
       ['action', 'app.created'],
@@ -297,7 +297,7 @@ describe('audit export', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
     });
-    expect((await screen.findByRole('status')).textContent).toBe('Saved audit.csv.');
+    expect(await toast()).toBe('Saved audit.csv.');
     expect(screen.queryByRole('status', { name: 'Hash chain check' })).toBeNull();
   });
 

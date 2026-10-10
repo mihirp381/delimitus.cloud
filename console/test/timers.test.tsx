@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest';
 import { APP_PATH, envPanel, openSection, OWNER, page, PREVIEW, PROD } from './appPage';
 import { json, problem } from './fakeApi';
-import { signedIn, start } from './harness';
+import { signedIn, start, toast } from './harness';
 
 const SCHEDULES = `${APP_PATH}/environments/${PROD}/schedules`;
 const SCHEDULE_ID = 'sch_ssssssssssssssssssss';
@@ -80,13 +80,13 @@ describe('timers', () => {
       fireEvent.click(within(panel).getByRole('button', { name: 'Pause nightly-report in Production' }));
     });
     expect(api.of('POST', `${ONE}/pause`)[0]?.headers.get('Idempotency-Key')).toBeTruthy();
-    expect((await within(panel).findByRole('status')).textContent).toContain('Paused nightly-report');
+    expect(await toast()).toContain('Paused nightly-report');
     expect(await within(panel).findByText('paused by hand')).toBeTruthy();
     await act(async () => {
       fireEvent.click(within(panel).getByRole('button', { name: 'Resume nightly-report in Production' }));
     });
     expect(api.of('POST', `${ONE}/resume`)).toHaveLength(1);
-    expect((await within(panel).findByRole('status')).textContent).toContain('it now runs on your authority');
+    expect(await toast()).toContain('it now runs on your authority');
   });
 
   it('shows why a timer cannot be resumed', async () => {

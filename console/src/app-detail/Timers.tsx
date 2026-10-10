@@ -20,8 +20,10 @@ import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
+import { Loading } from '../components/Loading';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
+import { useToast } from '../components/Toast';
 import { ENV_TITLE } from './names';
 import { Section } from './Section';
 
@@ -72,7 +74,7 @@ function TimersBody({ app, env }: Props) {
   const { api, queries, queryClient } = useRouteContext({ from: '/_authed/apps/$appId' });
   const init = { params: { path: { app_id: app.id, environment_id: env.id } } };
   const schedules = queries.useQuery('get', PATH, init);
-  const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [started, setStarted] = useState<Started | null>(null);
@@ -91,12 +93,11 @@ function TimersBody({ app, env }: Props) {
     if (busy) return;
     setBusy(s.schedule_id);
     setError(null);
-    setNotice(null);
     try {
       const pausing = s.state === 'active';
       const after = pausing ? await pauseSchedule(api, targetOf(s)) : await resumeSchedule(api, targetOf(s));
       await refresh();
-      setNotice(
+      toast(
         pausing
           ? `Paused ${after.name}; it runs again only once someone resumes it.`
           : `Resumed ${after.name}; it now runs on your authority.`,
@@ -182,7 +183,6 @@ function TimersBody({ app, env }: Props) {
             disabled={app.status !== 'active' || s.state === 'deleted'}
             onConfirm={async () => {
               const target = targetOf(s);
-              setNotice(null);
               setStarted({ target, name: s.name, runId: await runNow(api, target) });
             }}
           >
@@ -204,15 +204,10 @@ function TimersBody({ app, env }: Props) {
 
   return (
     <div className="stack">
-      {notice ? (
-        <p className="notice notice-success" role="status">
-          {notice}
-        </p>
-      ) : null}
       {error ? <ProblemNotice error={error} /> : null}
       {started ? <RunProgress key={started.runId} started={started} onFinished={refresh} /> : null}
       {schedules.isPending ? (
-        <p className="muted">Loading timers…</p>
+        <Loading label="Loading timers…" rows={3} />
       ) : schedules.isError ? (
         <ProblemNotice error={schedules.error} />
       ) : (
@@ -300,7 +295,7 @@ function RunHistory({ target, onClose }: { readonly target: ScheduleTarget; read
   return (
     <div className="stack">
       {runs.isPending ? (
-        <p className="muted">Loading runs…</p>
+        <Loading label="Loading runs…" rows={3} />
       ) : runs.isError && items.length === 0 ? (
         <ProblemNotice error={runs.error} />
       ) : (

@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FIRST_RENDER_MS, OWNER, whoami } from './appPage';
 import { type Call, type Handler, json, problem } from './fakeApi';
-import { signedIn, start } from './harness';
+import { signedIn, start, toast } from './harness';
 
 const IP = '34.120.10.20';
 
@@ -90,7 +90,7 @@ describe('internet access', () => {
       fireEvent.click(within(form).getByRole('button', { name: 'Allow host' }));
     });
     expect(api.of('PUT', '/v1/egress/hosts/api.openai.com')[0]?.body).toEqual({ acknowledge_high_risk: false });
-    expect((await screen.findByRole('status')).textContent).toBe('Allowed api.openai.com.');
+    expect(await toast()).toBe('Allowed api.openai.com.');
     const hosts = screen.getByRole('table', { name: 'Hosts apps may reach' });
     expect(within(hosts).getByText('api.openai.com')).toBeTruthy();
     expect(screen.getByText(IP)).toBeTruthy();

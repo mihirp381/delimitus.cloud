@@ -219,7 +219,7 @@ interface CardProps {
  */
 function EnvironmentCard({ app, env, preview }: CardProps) {
   const { queries } = Route.useRouteContext();
-  const { grants, seen, notice, applied } = useGrants(app, env);
+  const { grants, seen, waiting, applied } = useGrants(app, env);
   const headingId = `env-${env.id}`;
   const current = env.current_deployment_id;
   const deployments = queries.useQuery(
@@ -300,9 +300,9 @@ function EnvironmentCard({ app, env, preview }: CardProps) {
         <Rollback app={app} env={env} />
         {env.name === 'prod' && preview ? <Promote app={app} prod={env} preview={preview} /> : null}
       </div>
-      {notice ? (
-        <p className="notice notice-success" role="status">
-          {notice}
+      {waiting ? (
+        <p className="notice notice-info" role="status">
+          {waiting}
         </p>
       ) : null}
     </section>
@@ -311,7 +311,7 @@ function EnvironmentCard({ app, env, preview }: CardProps) {
 
 /** Who has access to one environment, each rule with the button that removes it. */
 function Access({ app, env }: { readonly app: AppOut; readonly env: EnvironmentOut }) {
-  const { grants, seen, notice, applied, remove } = useGrants(app, env);
+  const { grants, seen, waiting, applied, remove } = useGrants(app, env);
   const columns: readonly Column<Grant>[] = [
     { header: 'Role', cell: (g) => g.role },
     {
@@ -351,13 +351,13 @@ function Access({ app, env }: { readonly app: AppOut; readonly env: EnvironmentO
       title="Who has access"
       actions={<ShareDialog app={app} env={env} seen={seen} onDone={(u, m) => void applied(u, m)} />}
     >
-      {notice ? (
-        <p className="notice notice-success" role="status">
-          {notice}
+      {waiting ? (
+        <p className="notice notice-info" role="status">
+          {waiting}
         </p>
       ) : null}
       {grants.isPending ? (
-        <p className="muted">Loading access…</p>
+        <Loading label="Loading access…" rows={3} />
       ) : grants.isError ? (
         <ProblemNotice error={grants.error} />
       ) : (

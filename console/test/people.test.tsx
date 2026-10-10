@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest';
 import { FIRST_RENDER_MS, whoami } from './appPage';
 import { type Handler, json, problem } from './fakeApi';
-import { signedIn, start } from './harness';
+import { signedIn, start, toast } from './harness';
 
 const PAT = 'usr_pppppppppppppppppppp';
 const SAM = 'usr_ssssssssssssssssssss';
@@ -119,7 +119,7 @@ describe('people page', () => {
     const [call] = api.of('POST', `/v1/unlinked-logins/${PAT_LOGIN.id}/link`);
     expect(call?.body).toEqual({ user_id: PAT });
     expect(call?.headers.get('Idempotency-Key')).toBeTruthy();
-    expect((await screen.findByRole('status')).textContent).toBe(
+    expect(await toast()).toBe(
       `Linked pat@example.com to Pat (${PAT}). Their next login signs them in.`,
     );
     // The list is read again and the linked login is gone from it.
@@ -138,7 +138,7 @@ describe('people page', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Link' }));
     });
     expect(api.of('GET', '/v1/users')).toHaveLength(0);
-    expect((await screen.findByRole('status')).textContent).toBe(
+    expect(await toast()).toBe(
       `Linked pat@example.com to ${PAT}. Their next login signs them in.`,
     );
   });

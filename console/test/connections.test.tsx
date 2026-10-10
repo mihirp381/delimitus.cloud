@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest';
 import { APP_PATH, envPanel, FIRST_RENDER_MS, OWNER, openSection, ORG_USER, page, PROD, whoami } from './appPage';
 import { type Call, json, problem } from './fakeApi';
-import { signedIn, start } from './harness';
+import { signedIn, start, toast } from './harness';
 
 const GROUP = 'grp_ffffffffffffffffffff';
 const HOST = 'db.internal.example.com';
@@ -104,7 +104,7 @@ describe('connections page', () => {
       port: 6432,
       database: DATABASE,
     });
-    expect((await screen.findByRole('status')).textContent).toContain('Added warehouse.');
+    expect(await toast()).toContain('Added warehouse.');
     expect(screen.queryByRole('dialog')).toBeNull();
     // The address reached nothing but that one request body.
     for (const call of api.calls) expect(`${call.path}?${call.query.toString()}`).not.toContain(HOST);
@@ -154,7 +154,7 @@ describe('connections page', () => {
       ceiling: { audience: 'org' },
       setup_status: 'pending',
     });
-    expect((await screen.findByRole('status')).textContent).toBe('Changed ledger.');
+    expect(await toast()).toBe('Changed ledger.');
   });
 
   it('suspends a connection only once its name is typed, and says apps lose it within seconds', async () => {
@@ -186,7 +186,7 @@ describe('connections page', () => {
     const [call] = api.of('PATCH', '/v1/connections/crm');
     expect(call?.body).toEqual({ status: 'suspended' });
     expect(call?.headers.get('Idempotency-Key')).toBeTruthy();
-    expect((await screen.findByRole('status')).textContent).toBe(
+    expect(await toast()).toBe(
       'Suspended crm. Apps linked to it lose it within a few seconds: every query on it is refused until it is resumed.',
     );
     // The list is read again, and both dialogs are closed.
@@ -226,7 +226,7 @@ describe('connections page', () => {
       fireEvent.click(within(status).getByRole('button', { name: 'Resume this connection' }));
     });
     expect(api.of('PATCH', '/v1/connections/crm').map((c) => c.body)).toEqual([{ status: 'active' }]);
-    expect((await screen.findByRole('status')).textContent).toBe(
+    expect(await toast()).toBe(
       'Resumed crm. Apps linked to it can query it again within a few seconds.',
     );
     expect(screen.queryByRole('dialog', { name: 'Change crm' })).toBeNull();
@@ -295,7 +295,7 @@ describe("an environment's data connections", () => {
       fireEvent.click(within(panel).getByRole('button', { name: 'Link connection' }));
     });
     expect(api.of('PUT', `${ENV_CONNECTIONS}/crm`)[0]?.body).toEqual({});
-    expect((await within(panel).findByRole('status')).textContent).toBe('Linked crm.');
+    expect(await toast()).toBe('Linked crm.');
     expect(within(panel).getByRole('table', { name: 'Data connections of Production' }).textContent).toContain('crm');
   });
 

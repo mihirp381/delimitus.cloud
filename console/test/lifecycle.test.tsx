@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { type Grants, withGrant } from '../src/api/grants';
 import { openTab } from './appPage';
 import { type Call, type Handler, json, problem } from './fakeApi';
-import { signedIn, start } from './harness';
+import { signedIn, start, toast } from './harness';
 
 const OWNER = 'usr_cccccccccccccccccccc';
 const PERSON = 'usr_pppppppppppppppppppp';
@@ -136,7 +136,7 @@ describe('share dialog', () => {
         { role: 'user', subject_kind: 'group', subject_id: GROUP },
       ],
     });
-    expect((await within(panel).findByRole('status')).textContent).toBe('Shared production with Finance (user).');
+    expect(await toast()).toBe('Shared production with Finance (user).');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(within(panel).getByText(GROUP)).toBeTruthy();
   });
@@ -231,7 +231,7 @@ describe('share dialog', () => {
       }),
       signedIn(),
     );
-    const { panel, dialog } = await openShare('Production');
+    const { dialog } = await openShare('Production');
     fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: GROUP } });
     await submitShare(dialog);
     const puts = api.of('PUT', PROD_GRANTS);
@@ -243,16 +243,16 @@ describe('share dialog', () => {
         { role: 'user', subject_kind: 'group', subject_id: GROUP },
       ],
     });
-    expect((await within(panel).findByRole('status')).textContent).toBe(`Shared production with ${GROUP} (user).`);
+    expect(await toast()).toBe(`Shared production with ${GROUP} (user).`);
   });
 
   it('sends nothing when the subject already has that role', async () => {
     const { api } = start(`/apps/${APP_ID}?tab=access`, page(), signedIn());
-    const { panel, dialog } = await openShare('Production');
+    const { dialog } = await openShare('Production');
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Everyone in the organisation' }));
     await submitShare(dialog);
     expect(api.of('PUT', PROD_GRANTS)).toHaveLength(0);
-    expect(await within(panel).findByRole('status')).toBeTruthy();
+    expect(await toast()).toBeTruthy();
   });
 
   it('says a 202 waits for approval and changes nothing', async () => {
@@ -594,7 +594,7 @@ describe('admin actions', () => {
       fireEvent.click(await within(admin).findByRole('button', { name: 'Enable' }));
     });
     expect(api.of('POST', `${APP_PATH}/enable`)[0]?.headers.get('Idempotency-Key')).toBeTruthy();
-    expect((await within(admin).findByRole('status')).textContent).toContain('expenses is active again');
+    expect(await toast()).toContain('expenses is active again');
     expect(await within(admin).findByRole('button', { name: 'Disable' })).toBeTruthy();
   });
 
@@ -664,7 +664,7 @@ describe('admin actions', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Transfer' }));
     });
     expect(api.of('PUT', `${APP_PATH}/owner`)[0]?.body).toEqual({ user_id: PERSON });
-    expect((await within(admin).findByRole('status')).textContent).toBe('expenses now belongs to Pat.');
+    expect(await toast()).toBe('expenses now belongs to Pat.');
     expect(screen.getAllByText(PERSON).length).toBeGreaterThan(0);
   });
 

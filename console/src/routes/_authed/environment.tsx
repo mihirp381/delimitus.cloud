@@ -25,6 +25,7 @@ import { Badge, type Tone } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Id } from '../../components/Copy';
 import { Meter } from '../../components/Meter';
+import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
@@ -79,7 +80,7 @@ function YourEnvironment() {
       <Tiles />
       <OutboundIp />
       {cell.isPending ? (
-        <p className="muted">Loading the cell…</p>
+        <Loading label="Loading the cell…" rows={3} />
       ) : cell.isError ? (
         <ProblemNotice error={cell.error} />
       ) : (
@@ -90,7 +91,7 @@ function YourEnvironment() {
           <section className="panel" aria-labelledby="usage-heading">
             <h2 id="usage-heading">Usage this month</h2>
             {usage.isPending ? (
-              <p className="muted">Loading usage…</p>
+              <Loading label="Loading usage…" rows={3} />
             ) : usage.isError ? (
               <ProblemNotice error={usage.error} />
             ) : (

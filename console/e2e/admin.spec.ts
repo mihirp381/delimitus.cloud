@@ -62,7 +62,9 @@ test('the requester sees their request but cannot decide it; the audit log filte
   const csv = await readFile(await file.path(), 'utf8');
   expect(csv).toContain('approval.requested');
   expect(csv).toContain(approval.id);
-  await expect(page.getByRole('status')).toHaveText(`Saved ${file.suggestedFilename()}.`);
+  await expect(
+    page.getByRole('region', { name: 'Notifications' }).getByText(`Saved ${file.suggestedFilename()}.`, { exact: true }),
+  ).toBeVisible();
 
   // The export is itself in the log.
   await filters.getByLabel('Action').selectOption('audit.exported');

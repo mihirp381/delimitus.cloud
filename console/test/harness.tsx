@@ -1,5 +1,5 @@
 import { createMemoryHistory } from '@tanstack/react-router';
-import { render } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import type { RouterContext } from '../src/context';
 import { createSession, type Session } from '../src/auth/session';
 import { App, createConsole } from '../src/router';
@@ -40,4 +40,15 @@ export function signedIn(): Session {
   const s = createSession(null);
   s.set('tok-admin', false);
   return s;
+}
+
+/** What the toast region last said, once it has said something: where a finished action reports. */
+export async function toast(): Promise<string> {
+  const region = await screen.findByRole('region', { name: 'Notifications' });
+  return waitFor(() => {
+    const said = region.querySelectorAll('.toast p');
+    const last = said[said.length - 1];
+    if (!last) throw new Error('nothing was said in the toast region');
+    return last.textContent ?? '';
+  });
 }

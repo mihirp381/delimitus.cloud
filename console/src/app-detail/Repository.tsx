@@ -18,6 +18,7 @@ import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
 import { ProblemNotice } from '../components/ProblemNotice';
+import { useToast } from '../components/Toast';
 
 export function repositoryKey(appId: string) {
   return ['github', appId] as const;
@@ -35,21 +36,16 @@ export function Repository({ app }: { readonly app: AppOut }) {
     queryKey: repositoryKey(app.id),
     queryFn: ({ signal }) => readRepository(api, app.id, signal),
   });
-  const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
 
   function saved(next: RepoLink | null, message: string) {
     queryClient.setQueryData(repositoryKey(app.id), next);
-    setNotice(message);
+    toast(message);
   }
 
   return (
     <section className="panel" aria-labelledby="repo-heading">
       <h2 id="repo-heading">Repository</h2>
-      {notice ? (
-        <p className="notice notice-success" role="status">
-          {notice}
-        </p>
-      ) : null}
       {link.isPending ? (
         <p className="muted">Loading the repository…</p>
       ) : link.isError ? (

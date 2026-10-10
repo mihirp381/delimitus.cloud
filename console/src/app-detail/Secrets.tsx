@@ -5,6 +5,7 @@ import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { Ago } from '../components/Ago';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
+import { Loading } from '../components/Loading';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { ENV_TITLE } from './names';
@@ -67,7 +68,7 @@ function SecretsBody({ app, env }: Props) {
   return (
     <div className="stack">
       {list.isPending ? (
-        <p className="muted">Loading secrets…</p>
+        <Loading label="Loading secrets…" rows={3} />
       ) : list.isError ? (
         <ProblemNotice error={list.error} />
       ) : (

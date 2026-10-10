@@ -113,6 +113,13 @@ async function signIn(page: Page, path: string, token: string) {
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' }).getByRole('link');
 
+/** What a finished action said: the toast region, which every page of the shell has. */
+const said = (page: Page) => page.getByRole('region', { name: 'Notifications' });
+
+/** Opens one tab of the app page that is on show. */
+const openTab = (page: Page, name: string) =>
+  page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name, exact: true }).click();
+
 /** Help is for every role: it reads the API on the console's own origin and says it answers. */
 async function seesHelp(page: Page) {
   await nav(page).filter({ hasText: HELP }).click();
@@ -130,7 +137,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
   // The app list is the plain one, not the admin inventory, and the shared app is in it.
   await page.goto('/');
   await expect(page.getByRole('link', { name: w.slug })).toBeVisible();
-  await expect(page.getByRole('columnheader')).toHaveText(['App', 'Status', 'Owner', 'App id']);
+  await expect(page.getByRole('columnheader')).toHaveText(['App', 'Owner', 'App id']);
   await expect(page.getByLabel('Environment')).toHaveCount(0);
 
   // Typing an admin screen's address shows a line, not the screen, and the API refuses the read.
@@ -162,7 +169,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
   await seesHelp(page);
 
   // The app page has no admin action, and the API refuses the kill switch.
-  await page.goto(`/apps/${w.appId}`);
+  await page.goto(`/apps/${w.appId}?tab=settings`);
   const admin = page.getByRole('region', { name: 'Admin actions' });
   await expect(admin).toContainText('Only an org admin can disable, quarantine, enable or transfer this app.');
   await expect(admin.getByRole('button')).toHaveCount(0);
@@ -171,13 +178,14 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
     data: { mode: 'disable' },
   });
   expect(pulled.status()).toBe(403);
+  await openTab(page, 'Overview');
 }
 
 test('an org admin sees every screen and the admin actions', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', adminToken);
   await expect(nav(page)).toHaveText([...EVERYONE, ...ADMIN_ONLY, HELP]);
-  // Eight links and a name: every link is on show, the bar does not hide one behind a sideways scroll.
+  // Eight links: every one is on show, the sidebar does not hide one below the fold.
   await expect(nav(page).first()).toBeInViewport({ ratio: 1 });
   await expect(nav(page).last()).toBeInViewport({ ratio: 1 });
 
@@ -208,10 +216,11 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
 
   await seesHelp(page);
 
-  await page.goto(`/apps/${w.appId}`);
+  await page.goto(`/apps/${w.appId}?tab=settings`);
   const admin = page.getByRole('region', { name: 'Admin actions' });
   await expect(admin.getByRole('button', { name: 'Disable' })).toBeVisible();
   await expect(admin.getByRole('button', { name: 'Quarantine' })).toBeVisible();
+  await openTab(page, 'Overview');
   const prod = page.getByRole('region', { name: 'Production prod' });
   await expect(prod.getByRole('button', { name: 'Share Production' })).toBeVisible();
   await expect(prod.getByRole('button', { name: 'Roll back Production' })).toBeEnabled();
@@ -231,7 +240,7 @@ test('a builder sees nothing admin, and can share and open rollback on their app
   // A member cannot look people up by email, so the person is named by id.
   await share.getByLabel('User id').fill(w.colleagueId);
   await share.getByRole('button', { name: 'Share', exact: true }).click();
-  await expect(prod.getByRole('status')).toHaveText(`Shared production with ${w.colleagueId} (user).`);
+  await expect(said(page).getByText(`Shared production with ${w.colleagueId} (user).`, { exact: true })).toBeVisible();
   const after = await (await request.get(w.grants, { headers: bearer(adminToken) })).json();
   expect(after.grants.map((g: { subject_id: string | null }) => g.subject_id)).toContain(w.colleagueId);
 
@@ -244,9 +253,10 @@ test('a builder sees nothing admin, and can share and open rollback on their app
   await rollback.getByRole('button', { name: 'Cancel' }).click();
 
   // Secrets: a builder may read the names and versions, and is shown the command to set one.
-  await prod.getByText('Secrets', { exact: true }).click();
-  await expect(prod.getByText(`Production of ${w.slug} has no secrets.`)).toBeVisible();
-  await expect(prod.getByLabel('Set a secret in production', { exact: true })).toHaveText(
+  await openTab(page, 'Secrets');
+  const secrets = page.getByRole('region', { name: 'Secrets' });
+  await expect(secrets.getByText(`Production of ${w.slug} has no secrets.`)).toBeVisible();
+  await expect(secrets.getByLabel('Set a secret in production', { exact: true })).toHaveText(
     `ssc secret set ${w.slug} NAME --env prod`,
   );
 });
@@ -276,9 +286,9 @@ test('a user sees nothing admin, and the API refuses the actions shown to everyo
   await expect(rollback.getByRole('alert').first()).toContainText(FORBIDDEN);
   await rollback.getByRole('button', { name: 'Cancel' }).click();
 
-  // And the secrets' names: the section opens for everyone, and the API refuses a user.
-  await prod.getByText('Secrets', { exact: true }).click();
-  await expect(prod.locator('details', { hasText: 'Set or rotate a secret' }).getByRole('alert')).toContainText(
-    FORBIDDEN,
-  );
+  // And the secrets' names: the tab opens for everyone, and the API refuses a user.
+  await openTab(page, 'Secrets');
+  const secrets = page.getByRole('region', { name: 'Secrets' });
+  await expect(secrets.getByRole('heading', { name: 'Set or rotate a secret' })).toBeVisible();
+  await expect(secrets.getByRole('alert')).toContainText(FORBIDDEN);
 });

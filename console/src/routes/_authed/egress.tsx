@@ -11,9 +11,11 @@ import { Ago } from '../../components/Ago';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ConfirmAction } from '../../components/ConfirmAction';
+import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
+import { useToast } from '../../components/Toast';
 
 export const Route = createFileRoute('/_authed/egress')({
   component: EgressPage,
@@ -23,14 +25,14 @@ function EgressPage() {
   const { queries, queryClient, isAdmin } = Route.useRouteContext();
   const me = queries.useQuery('get', '/v1/whoami');
   const egress = queries.useQuery('get', '/v1/egress');
-  const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
   const admin = isAdmin(me.data);
 
   /** Puts the list the API answered with in place, keeping the IP and proxy as they were. */
   async function saved(update: EgressHosts, message: string) {
     const key = queries.queryOptions('get', '/v1/egress').queryKey;
     if (egress.data) queryClient.setQueryData(key, { ...egress.data, hosts: update.hosts });
-    setNotice(message);
+    toast(message);
     await queryClient.invalidateQueries({
       queryKey: queries.queryOptions('get', '/v1/egress/catalogue').queryKey,
     });
@@ -54,11 +56,6 @@ function EgressPage() {
       ) : (
         <>
           <OutboundIp ip={egress.data.outbound_ip} />
-          {notice ? (
-            <p className="notice notice-success" role="status">
-              {notice}
-            </p>
-          ) : null}
           <Hosts hosts={egress.data.hosts} admin={admin} onSaved={saved} />
           {me.isPending ? null : admin ? (
             <AddHost onSaved={saved} />
@@ -289,7 +286,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
       </form>
       <h3>Common hosts</h3>
       {catalogue.isPending ? (
-        <p className="muted">Loading the catalogue…</p>
+        <Loading label="Loading the catalogue…" rows={3} />
       ) : catalogue.isError ? (
         <ProblemNotice error={catalogue.error} />
       ) : (
