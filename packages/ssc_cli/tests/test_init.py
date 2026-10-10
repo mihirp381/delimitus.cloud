@@ -319,7 +319,7 @@ def test_guide_gives_the_remote_server():
     assert "(`AGENT_LOGS_OFF`)" in text
     assert (
         "Call `create_app` only when the person asks for a new app: tell them the slug you will "
-        "use and wait for their yes. Their MCP client also asks them to approve the call."
+        "use and wait for their yes. Their MCP client may also ask them to approve the call."
     ) in text
     assert text.index("served at") < text.index("#### The local server: `ssc mcp`")
     assert re.search(r"\{[a-z_]+\}", text) is None
