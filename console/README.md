@@ -14,7 +14,7 @@ or 26+ (jsdom's range); CI uses Node 24.
 | `src/app-detail/` | The app page's share dialog, rollback, admin-only actions, and each environment's state (asleep is normal), use this month and database (`Running.tsx`); each environment's data connections and timers, read only when their section is opened (`EnvConnections.tsx`, `Timers.tsx`); the connected repository (`Repository.tsx`); one kill switch run, shared by the admin actions and the run's own page (`KillSwitchRun.tsx`); why one person can or cannot open an environment, with the grants that decided it (`AccessExplain.tsx`); an environment's logs, read once opened and then followed with a long poll while the section is open and the tab is on show, with log text shown as text only (`Logs.tsx`); and promote to production, which builds what preview runs and then offers to deploy the release it made (`Promote.tsx`). Builder-only actions are shown to everyone and the API's refusal is shown; admin-only ones are hidden from others. |
 | `src/components/` | Button, Badge (the status pill), Table (a card with an empty state that says what to do next), Dialog, ConfirmAction (type the slug to confirm, or one click for what is not destructive), ProblemNotice, Phrases (short phrases that each stay on one line), Brand (the mark, the product name and the spectrum rule), PageHeader (title, status, one line of purpose, the page's actions), EmptyState. |
 | `test/` | Vitest: tokens and contrast, the client, the screens against a fake API, sign-in (PKCE, the callback's checks, refresh scheduling, sign-out), and the dev login's absence from production builds. `test/fixtures/audit-chain.json` holds export files and what the CLI's own check says of each (an intact chain, changed rows, gaps, rows that are not rows); `test/audit-chain.test.ts` holds the browser's check to every one. Write it again with `uv run python console/test/fixtures/audit_chain_vectors.py` from the repo root when the CLI's check or the canonical form changes. |
-| `e2e/` | Playwright tests against Postgres and the real API in Docker: sharing (`smoke.spec.ts`), approvals, the audit log and the hash chain check of a real export (`admin.spec.ts`), the share dialog and the kill switch (`lifecycle.spec.ts`). |
+| `e2e/` | Playwright tests against Postgres and the real API in Docker: sharing (`smoke.spec.ts`), approvals, the audit log and the hash chain check of a real export (`admin.spec.ts`), the share dialog and the kill switch (`lifecycle.spec.ts`), and the role matrix (`roles.spec.ts`: what an org admin, a builder and a plain user each see, what is hidden from them, and that the API refuses what is hidden). |
 
 ## Commands
 
@@ -67,7 +67,10 @@ directory, signs the console out and opens the login page, within 5 seconds.
 `npm run e2e` runs `e2e/run.mjs`: it starts `e2e/compose.yaml` (Postgres 18 and the API built
 from `e2e/api.Dockerfile`) under a random project name and host port, mints a token with
 `dev_stack.py token` and an operator token for the directory, builds the console with the dev
-login, runs Playwright, and removes the containers. Install the browser once into `node_modules`:
+login, runs Playwright, and removes the containers. `roles.spec.ts` adds its own people to the
+directory and mints a token for each with `dev_stack.py token --sub <user id>` inside the API's
+container; `run.mjs` hands it the compose project and file to do so. Install the browser once
+into `node_modules`:
 
 ```
 PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium

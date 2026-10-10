@@ -49,6 +49,9 @@ try {
     SSC_CONSOLE_PORT: String(await freePort()),
     SSC_E2E_TOKEN: token,
     SSC_E2E_OPERATOR_TOKEN: operatorToken,
+    // roles.spec.ts mints tokens for the people it adds: `dev_stack.py token --sub <user id>`.
+    SSC_E2E_COMPOSE_PROJECT: project,
+    SSC_E2E_COMPOSE_FILE: join(here, 'compose.yaml'),
   };
   const playwright = join(root, 'node_modules', '@playwright', 'test', 'cli.js');
   const config = join(here, 'playwright.config.ts');
