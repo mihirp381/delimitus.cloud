@@ -24,7 +24,7 @@ inputs:
   cli-spec:
     description: What `uv tool install` installs. The default is the ssc-cli release this Action belongs to. Its dependencies are held to constraints.txt, the versions in uv.lock.
     required: false
-    default: "ssc-cli==0.0.1"
+    default: "ssc-cli==0.0.2"
 
 outputs:
   preview-url:

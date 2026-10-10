@@ -1592,7 +1592,7 @@ requires-dist = [
 
 [[package]]
 name = "ssc-bundle"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "packages/ssc_bundle" }
 dependencies = [
     { name = "pathspec" },
@@ -1609,7 +1609,7 @@ requires-dist = [
 
 [[package]]
 name = "ssc-cli"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "packages/ssc_cli" }
 dependencies = [
     { name = "httpx2" },
@@ -1691,7 +1691,7 @@ requires-dist = [
 
 [[package]]
 name = "ssc-contracts"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "packages/ssc_contracts" }
 dependencies = [
     { name = "pydantic" },
@@ -1843,7 +1843,7 @@ requires-dist = [
 
 [[package]]
 name = "ssc-shared"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "packages/ssc_shared" }
 dependencies = [
     { name = "httpx2" },

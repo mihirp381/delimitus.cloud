@@ -790,7 +790,7 @@ wheels = [
 
 [[package]]
 name = "ssc-contracts"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "../packages/ssc_contracts" }
 dependencies = [
     { name = "pydantic" },
@@ -832,7 +832,7 @@ dev = [
 
 [[package]]
 name = "ssc-shared"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "../packages/ssc_shared" }
 dependencies = [
     { name = "httpx2" },
