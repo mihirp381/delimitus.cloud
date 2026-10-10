@@ -1088,6 +1088,7 @@ textarea {
   background: var(--ssc-surface-hover);
   border: 0;
   border-radius: var(--ssc-radius-md);
+  box-shadow: inset 0 0 0 1px var(--ssc-border-subtle);
 }
 
 .segment {
@@ -1235,6 +1236,9 @@ a.segment.current {
 
 /* Table: a card of rows, each a control's height. Inside a card it runs edge to edge. */
 .table-wrap {
+  /* Positioned, so that text hidden for screen readers inside a wide table scrolls with it and
+     does not widen the page. */
+  position: relative;
   overflow-x: auto;
   background: var(--ssc-surface-raised);
   border: 1px solid var(--ssc-border-subtle);
@@ -1396,12 +1400,15 @@ a.segment.current {
   max-width: 100%;
 }
 
-/* The inventory's cell for one environment (the plain list and narrow tables). */
-.env-summary {
-  display: grid;
-  gap: var(--ssc-space-0);
-  min-width: 13rem;
-  color: var(--ssc-text-primary);
+/* One environment of an app in the list: its release, in the tone of its last deploy. */
+.env-chip {
+  display: inline-flex;
+  white-space: nowrap;
+}
+
+.badge > .dot {
+  width: 6px;
+  height: 6px;
 }
 
 /* Many columns: tighter cells, so the page-width card holds them all. */
@@ -1412,6 +1419,15 @@ a.segment.current {
 }
 
 .nowrap {
+  white-space: nowrap;
+}
+
+/* One line of a cell that may be long; the element's title carries all of it. */
+.clip {
+  display: block;
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

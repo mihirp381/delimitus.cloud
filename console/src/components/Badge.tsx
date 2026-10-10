@@ -10,14 +10,15 @@ export function Badge({ tone, children }: { readonly tone: Tone; readonly childr
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
-const APP_STATUS_TONE: Readonly<Record<string, Tone>> = {
+/** The tone of an app's status; a list's status dot and the badge agree on it. */
+export const STATUS_TONE: Readonly<Record<string, Tone>> = {
   active: 'success',
   disabled: 'neutral',
   quarantined: 'danger',
 };
 
 export function StatusBadge({ status }: { readonly status: string }) {
-  return <Badge tone={APP_STATUS_TONE[status] ?? 'warning'}>{status}</Badge>;
+  return <Badge tone={STATUS_TONE[status] ?? 'warning'}>{status}</Badge>;
 }
 
 const APPROVAL_TONE: Readonly<Record<string, Tone>> = {

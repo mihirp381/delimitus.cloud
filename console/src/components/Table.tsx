@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import { EmptyState } from './EmptyState';
 
 export interface Column<T> {
@@ -18,10 +18,25 @@ interface Props<T> {
   readonly emptyHint?: ReactNode;
   /** Tighter cells, for a table with many columns. */
   readonly dense?: boolean;
+  /**
+   * Opens what a row names when the row is clicked anywhere. The row still holds a real link: that
+   * is the way in by keyboard, and what a middle click or "open in a new tab" acts on.
+   */
+  readonly onOpen?: (row: T) => void;
+}
+
+const CONTROLS = 'a, button, input, select, textarea, label, summary';
+
+/** A plain click on the row itself: not on a control inside it, and not the end of a text selection. */
+function isRowClick(event: MouseEvent<HTMLTableRowElement>): boolean {
+  if (event.defaultPrevented || event.button !== 0) return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+  if (event.target instanceof Element && event.target.closest(CONTROLS)) return false;
+  return !window.getSelection()?.toString();
 }
 
 /** Rows as a card: a quiet heading row, a hairline between rows, and the row under the pointer lit. */
-export function Table<T>({ caption, columns, rows, rowKey, empty, emptyHint, dense }: Props<T>) {
+export function Table<T>({ caption, columns, rows, rowKey, empty, emptyHint, dense, onOpen }: Props<T>) {
   if (rows.length === 0) return <EmptyState hint={emptyHint}>{empty}</EmptyState>;
   return (
     <div className="table-wrap">
@@ -38,7 +53,11 @@ export function Table<T>({ caption, columns, rows, rowKey, empty, emptyHint, den
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={rowKey(row)}>
+            <tr
+              key={rowKey(row)}
+              className={onOpen ? 'row-link' : undefined}
+              onClick={onOpen ? (event) => (isRowClick(event) ? onOpen(row) : undefined) : undefined}
+            >
               {columns.map((c) => (
                 <td key={c.header} className={c.className}>
                   {c.cell(row)}

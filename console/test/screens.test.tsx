@@ -105,6 +105,19 @@ describe('login', () => {
   });
 });
 
+/** The status filter: one of a few, as radio buttons. */
+function chooseStatus(name: 'All' | 'Active' | 'Disabled' | 'Quarantined') {
+  fireEvent.click(within(screen.getByRole('group', { name: 'Status' })).getByRole('radio', { name }));
+}
+
+/** The slug of each app listed, in order: the text of the link that opens it. */
+function listedSlugs(): (string | null)[] {
+  return screen
+    .getAllByRole('row')
+    .slice(1)
+    .map((r) => within(r).getByRole('link').textContent);
+}
+
 describe('inventory', () => {
   const apps = [
     { id: 'app_zzzzzzzzzzzzzzzzzzzz', slug: 'timesheets', owner_user_id: OTHER, status: 'quarantined' },
@@ -118,8 +131,14 @@ describe('inventory', () => {
     const { api } = start('/', { ...member, 'GET /v1/apps': () => json(200, { apps }) }, signedIn());
     await screen.findByRole('link', { name: 'expenses' });
     const rows = screen.getAllByRole('row').slice(1);
-    expect(rows.map((r) => within(r).getAllByRole('cell')[0]?.textContent)).toEqual(['expenses', 'timesheets']);
+    expect(listedSlugs()).toEqual(['expenses', 'timesheets']);
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['App', 'Owner', 'App id']);
+    // The status is a dot beside the slug; an app that is not active says so in words too.
+    expect(within(rows[0]!).getByRole('img', { name: 'active' })).toBeTruthy();
     expect(within(rows[1]!).getByText('quarantined')).toBeTruthy();
+    expect(within(rows[0]!).getByText(OWNER)).toBeTruthy();
+    expect(within(rows[0]!).getByText(APP.id)).toBeTruthy();
+    expect(within(rows[0]!).getByRole('button', { name: 'Copy app id' })).toBeTruthy();
     expect(screen.getByText('2 apps')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: OTHER.slice(0, 10) + 'ddd' } });
     expect(screen.queryByRole('link', { name: 'expenses' })).toBeNull();
@@ -127,11 +146,37 @@ describe('inventory', () => {
     fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: 'nothing' } });
     expect(screen.getByText('No app matches the filter.')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'quarantined' } });
-    expect(screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0]?.textContent)).toEqual(['timesheets']);
+    expect(
+      within(screen.getByRole('group', { name: 'Status' }))
+        .getAllByRole('radio')
+        .map((r) => r.closest('label')?.textContent),
+    ).toEqual(['All', 'Active', 'Disabled', 'Quarantined']);
+    chooseStatus('Quarantined');
+    expect(listedSlugs()).toEqual(['timesheets']);
+    chooseStatus('All');
+    expect(listedSlugs()).toEqual(['expenses', 'timesheets']);
     expect(screen.queryByLabelText('Environment')).toBeNull();
     expect(api.of('GET', '/v1/inventory')).toHaveLength(0);
     expect(api.of('GET', '/v1/usage')).toHaveLength(0);
+  });
+
+  it('opens an app from anywhere on its row, and keeps a real link in it', async () => {
+    const { router } = start(
+      '/',
+      { ...member, 'GET /v1/apps': () => json(200, { apps }), [`GET /v1/apps/${APP.id}`]: () => json(200, APP) },
+      signedIn(),
+    );
+    const link = await screen.findByRole('link', { name: 'expenses' });
+    expect(link.getAttribute('href')).toBe(`/apps/${APP.id}`);
+    const row = link.closest('tr')!;
+    // A control in the row keeps its own click, and a click with a modifier is left to the link.
+    fireEvent.click(within(row).getByRole('button', { name: 'Copy app id' }));
+    fireEvent.click(within(row).getAllByRole('cell')[1]!, { metaKey: true });
+    expect(router.state.location.pathname).toBe('/');
+    await act(async () => {
+      fireEvent.click(within(row).getAllByRole('cell')[1]!);
+    });
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/apps/${APP.id}`));
   });
 
   it('says so when there are no apps', async () => {
@@ -207,7 +252,7 @@ describe('inventory for an org admin', () => {
     });
   const cells = (row: HTMLElement) => within(row).getAllByRole('cell').map((c) => c.textContent);
 
-  it('shows each app with its owner, last use and, per environment, release, last deploy, sharing and billing', async () => {
+  it('shows each app on one row: owner, a chip per environment, last use and sharing', async () => {
     const { api } = start(
       '/',
       { 'GET /v1/inventory': () => json(200, { items: [EXPENSES, TIMESHEETS], next_cursor: null }), 'GET /v1/usage': usage },
@@ -218,32 +263,53 @@ describe('inventory for an org admin', () => {
     const table = screen.getByRole('table', { name: 'Apps in this organisation' });
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
       'App',
-      'Status',
       'Owner',
-      'Last used',
       'Production',
       'Preview',
+      'Last used',
+      'Sharing',
     ]);
     const [expenses, timesheets] = within(table).getAllByRole('row').slice(1) as [HTMLElement, HTMLElement];
     expect(within(expenses).getByRole('link', { name: 'expenses' }).getAttribute('href')).toBe(`/apps/${APP.id}`);
     expect(within(expenses).getByText(/Olivia Owner/)).toBeTruthy();
     expect(within(expenses).getByTitle(OWNER).textContent).toBe(OWNER);
-    const prod = cells(expenses)[4]!;
+    expect(within(expenses).getByRole('img', { name: 'active' })).toBeTruthy();
+    expect(within(timesheets).getByText('quarantined')).toBeTruthy();
+    const deployed = `Last deploy ${new Date('2026-10-07T10:00:00Z').toLocaleString()}`;
+    const prod = cells(expenses)[2]!;
     expect(prod).toContain('Release 12');
     expect(prod).toContain('healthy');
-    expect(prod).toContain(`Last deploy ${new Date('2026-10-07T10:00:00Z').toLocaleString()}`);
-    expect(prod).toContain('Everyone in the organisation, 2 people, 1 group');
-    await waitFor(() => expect(cells(expenses)[4]).toContain('Instance-billed'));
-    const preview = cells(expenses)[5]!;
+    expect(prod).toContain(deployed);
+    await waitFor(() => expect(cells(expenses)[2]).toContain('Instance-billed'));
+    // The chip shows the release in the tone of its deploy; the rest is its title, and read out.
+    const chip = within(expenses).getByTitle(`${deployed} · Instance-billed`);
+    expect(chip.querySelector('.badge-success')?.textContent).toBe('Release 12 healthy');
+    expect(within(chip).getByText('healthy').classList.contains('visually-hidden')).toBe(true);
+    const preview = cells(expenses)[3]!;
     expect(preview).toContain('Release 13');
     expect(preview).toContain('rollback failed');
-    expect(preview).toContain('1 person');
     expect(preview).toContain('Billing —');
-    expect(cells(expenses)[3]).toBe(new Date('2026-10-08T09:00:00Z').toLocaleString());
-    expect(cells(timesheets)[3]).toBe('Not yet');
-    expect(cells(timesheets)[4]).toContain('Not deployed yet');
-    expect(cells(timesheets)[4]).toContain('Nobody yet');
-    expect(cells(timesheets)[5]).toBe('None');
+    // A deploy that is not healthy says so where it can be seen.
+    const failed = within(expenses).getByText('rollback failed');
+    expect(failed.classList.contains('visually-hidden')).toBe(false);
+    expect(failed.closest('.badge-danger')).not.toBeNull();
+    // Sharing is production's, with preview's in the title and read out after it.
+    const sharing = cells(expenses)[5]!;
+    expect(sharing).toContain('Everyone in the organisation, 2 people, 1 group');
+    expect(sharing).toContain('Preview: 1 person');
+    expect(
+      within(expenses).getByTitle('Production: Everyone in the organisation, 2 people, 1 group · Preview: 1 person'),
+    ).toBeTruthy();
+    // Last use is how long ago; the exact time is its title.
+    const used = within(expenses).getByTitle(new Date('2026-10-08T09:00:00Z').toLocaleString());
+    expect(used.tagName).toBe('TIME');
+    expect(used.getAttribute('datetime')).toBe('2026-10-08T09:00:00Z');
+    expect(used.textContent).toMatch(/ ago$/);
+    expect(cells(expenses)[4]).toBe(used.textContent);
+    expect(cells(timesheets)[4]).toBe('Not yet');
+    expect(cells(timesheets)[2]).toContain('Not deployed yet');
+    expect(cells(timesheets)[5]).toContain('Nobody yet');
+    expect(cells(timesheets)[3]).toBe('None');
     expect(screen.getByText('2 apps')).toBeTruthy();
     expect(api.of('GET', '/v1/usage')).toHaveLength(1);
   });
@@ -251,19 +317,24 @@ describe('inventory for an org admin', () => {
   it('filters the loaded apps by owner name, status and environment', async () => {
     start('/', { 'GET /v1/inventory': () => json(200, { items: [EXPENSES, TIMESHEETS], next_cursor: null }), 'GET /v1/usage': usage }, signedIn());
     await screen.findByRole('link', { name: 'expenses' });
-    const slugs = () => screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0]?.textContent);
+    const slugs = listedSlugs;
     fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: 'dan oth' } });
     expect(slugs()).toEqual(['timesheets']);
     expect(screen.getByText('1 of 2 apps')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'active' } });
+    chooseStatus('Active');
     expect(slugs()).toEqual(['expenses']);
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'disabled' } });
+    chooseStatus('Quarantined');
+    expect(slugs()).toEqual(['timesheets']);
+    chooseStatus('Disabled');
     expect(screen.getByText('No app matches the filter.')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
+    chooseStatus('All');
     fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'preview' } });
-    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['App', 'Status', 'Owner', 'Last used', 'Preview']);
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['App', 'Owner', 'Preview', 'Last used', 'Sharing']);
     expect(slugs()).toEqual(['expenses', 'timesheets']);
+    // With one environment on show, the sharing is that environment's.
+    const expenses = screen.getByRole('link', { name: 'expenses' }).closest('tr')!;
+    expect(within(expenses).getAllByRole('cell')[4]?.textContent).toBe('1 person');
   });
 
   it('loads the next page with the cursor the API returned', async () => {
@@ -297,7 +368,7 @@ describe('inventory for an org admin', () => {
       signedIn(),
     );
     const row = (await screen.findByRole('link', { name: 'expenses' })).closest('tr')!;
-    await waitFor(() => expect(cells(row)[4]).toContain('Billing —'));
+    await waitFor(() => expect(cells(row)[2]).toContain('Billing —'));
     expect(screen.queryByRole('alert')).toBeNull();
   });
 

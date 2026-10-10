@@ -1,10 +1,9 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useId, useState } from 'react';
 import { BILLING_TEXT, type Usage, when } from '../../api/cell';
 import { must } from '../../api/client';
 import {
-  APP_STATUSES,
   type AppFilter,
   type AppStatus,
   type AppSummary,
@@ -16,10 +15,14 @@ import {
   sharingSummary,
 } from '../../api/inventory';
 import { ENV_TITLE } from '../../app-detail/names';
-import { Badge, StatusBadge } from '../../components/Badge';
+import { Ago } from '../../components/Ago';
+import { Badge, STATUS_TONE, StatusBadge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { Id } from '../../components/Copy';
+import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
+import { Segmented } from '../../components/Segmented';
 import { type Column, Table } from '../../components/Table';
 
 export const Route = createFileRoute('/_authed/')({
@@ -31,25 +34,51 @@ const ENV_NAMES: readonly EnvName[] = ['prod', 'preview'];
 const EMPTY = 'No apps yet. An app appears here once it is created.';
 const EMPTY_HINT = 'Ask your coding agent to create one, or create it with the ssc command line.';
 
-function appLink(id: string, slug: string) {
+// Keyed by the generated union: a status the API adds or removes fails the typecheck.
+const STATUS_CHOICE: Readonly<Record<AppStatus | '', string>> = {
+  '': 'All',
+  active: 'Active',
+  disabled: 'Disabled',
+  quarantined: 'Quarantined',
+};
+const STATUS_OPTIONS = (Object.keys(STATUS_CHOICE) as (AppStatus | '')[]).map((value) => ({
+  value,
+  label: STATUS_CHOICE[value],
+}));
+
+/**
+ * An app in a list: a dot for its status, then its slug, which is the link that opens it. An app
+ * that is not active says so in words as well; for an active one the dot's name carries it.
+ */
+function AppName({ id, slug, status }: { readonly id: string; readonly slug: string; readonly status: AppStatus }) {
+  const active = status === 'active';
   return (
-    <Link to="/apps/$appId" params={{ appId: id }}>
-      {slug}
-    </Link>
+    <span className="app-name">
+      <span
+        className={`dot dot-${STATUS_TONE[status] ?? 'warning'}`}
+        role={active ? 'img' : undefined}
+        aria-label={active ? status : undefined}
+        aria-hidden={active ? undefined : true}
+        title={status}
+      />
+      <Link to="/apps/$appId" params={{ appId: id }}>
+        {slug}
+      </Link>
+      {active ? null : <StatusBadge status={status} />}
+    </span>
   );
 }
 
 const COLUMNS: readonly Column<AppSummary>[] = [
-  { header: 'App', cell: (app) => appLink(app.id, app.slug) },
-  { header: 'Status', cell: (app) => <StatusBadge status={app.status} /> },
-  { header: 'Owner', cell: (app) => <code>{app.owner_user_id}</code> },
-  { header: 'App id', cell: (app) => <code>{app.id}</code> },
+  { header: 'App', cell: (app) => <AppName id={app.id} slug={app.slug} status={app.status} /> },
+  { header: 'Owner', cell: (app) => <Id value={app.owner_user_id} label="owner id" /> },
+  { header: 'App id', cell: (app) => <Id value={app.id} label="app id" /> },
 ];
 
 /**
- * The apps the caller may see. An org admin gets the inventory: each app's owner, last use and,
- * per environment, its release, last deploy, sharing and how it is billed. Anyone else gets the
- * plain list. Whether an app is asleep is not here: that is read live, on the app's own page.
+ * The apps the caller may see. An org admin gets the inventory: each app's owner, what each
+ * environment runs, when it was last used and who it is shared with. Anyone else gets the plain
+ * list. Whether an app is asleep is not here: that is read live, on the app's own page.
  */
 function Inventory() {
   const { queries, isAdmin } = Route.useRouteContext();
@@ -58,7 +87,6 @@ function Inventory() {
   const [status, setStatus] = useState<AppStatus | ''>('');
   const [env, setEnv] = useState<EnvName | ''>('');
   const textId = useId();
-  const statusId = useId();
   const envId = useId();
   const admin = isAdmin(me.data);
   const filter: AppFilter = { text, status };
@@ -68,48 +96,38 @@ function Inventory() {
       <PageHeader
         title="Apps"
         purpose="The apps in your organisation. Open one to see how it is running and who can use it."
-      >
-        <div className="search">
-          <label htmlFor={textId} className="visually-hidden">
-            Filter apps
-          </label>
-          <input
-            id={textId}
-            type="search"
-            placeholder="Filter by slug or owner"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <label htmlFor={statusId} className="visually-hidden">
-            Status
-          </label>
-          <select id={statusId} value={status} onChange={(e) => setStatus(e.target.value as AppStatus | '')}>
-            <option value="">Any status</option>
-            {APP_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          {admin ? (
-            <>
-              <label htmlFor={envId} className="visually-hidden">
-                Environment
-              </label>
-              <select id={envId} value={env} onChange={(e) => setEnv(e.target.value as EnvName | '')}>
-                <option value="">Both environments</option>
-                {ENV_NAMES.map((name) => (
-                  <option key={name} value={name}>
-                    {ENV_TITLE[name]}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : null}
-        </div>
-      </PageHeader>
+      />
+      <div className="search">
+        <label htmlFor={textId} className="visually-hidden">
+          Filter apps
+        </label>
+        <input
+          id={textId}
+          type="search"
+          placeholder="Filter by slug or owner"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <Segmented label="Status" options={STATUS_OPTIONS} value={status} onChange={setStatus} />
+        {admin ? (
+          <>
+            <span className="spacer" />
+            <label htmlFor={envId} className="visually-hidden">
+              Environment
+            </label>
+            <select id={envId} value={env} onChange={(e) => setEnv(e.target.value as EnvName | '')}>
+              <option value="">Both environments</option>
+              {ENV_NAMES.map((name) => (
+                <option key={name} value={name}>
+                  {ENV_TITLE[name]}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : null}
+      </div>
       {me.isPending ? (
-        <p className="muted">Loading apps…</p>
+        <Loading label="Loading apps…" />
       ) : admin ? (
         <AdminInventory filter={filter} env={env} />
       ) : (
@@ -126,8 +144,9 @@ function countText(shown: number, all: number, more = false): string {
 
 function AppList({ filter }: { readonly filter: AppFilter }) {
   const { queries } = Route.useRouteContext();
+  const navigate = useNavigate();
   const apps = queries.useQuery('get', '/v1/apps');
-  if (apps.isPending) return <p className="muted">Loading apps…</p>;
+  if (apps.isPending) return <Loading label="Loading apps…" />;
   if (apps.isError) return <ProblemNotice error={apps.error} />;
   const all = [...apps.data.apps].sort((a, b) => a.slug.localeCompare(b.slug));
   const shown = all.filter((app) => matchesFilter({ ...app, owner: [app.owner_user_id] }, filter));
@@ -138,6 +157,7 @@ function AppList({ filter }: { readonly filter: AppFilter }) {
         columns={COLUMNS}
         rows={shown}
         rowKey={(app) => app.id}
+        onOpen={(app) => void navigate({ to: '/apps/$appId', params: { appId: app.id } })}
         empty={all.length ? 'No app matches the filter.' : EMPTY}
         emptyHint={all.length ? 'Clear the filter to see every app.' : EMPTY_HINT}
       />
@@ -148,36 +168,68 @@ function AppList({ filter }: { readonly filter: AppFilter }) {
   );
 }
 
-/** One environment of one app: its release and last deploy, who it is shared with, how it is billed. */
-function EnvSummary({ env, usage }: { readonly env: InventoryEnvironment | undefined; readonly usage: Usage | undefined }) {
+/**
+ * One environment of one app, as a chip: its release, in the tone of its last deploy. A deploy
+ * that is not healthy says so in words. When it was deployed and how it is billed are in the
+ * chip's title, and read out with it.
+ */
+function EnvChip({ env, usage }: { readonly env: InventoryEnvironment | undefined; readonly usage: Usage | undefined }) {
   if (!env) return <span className="muted">None</span>;
   const deploy = env.last_deploy;
+  const billing = usage?.billing ? BILLING_TEXT[usage.billing] : 'Billing —';
+  if (!env.current_release && !deploy) {
+    return (
+      <span className="muted" title={billing}>
+        Not deployed yet<span className="visually-hidden">. {billing}</span>
+      </span>
+    );
+  }
+  const state = deploy ? (deploy.kind === 'rollback' ? `rollback ${deploy.state}` : deploy.state) : null;
+  const quiet = deploy?.state === 'healthy' && deploy.kind !== 'rollback';
+  const deployed = deploy ? `Last deploy ${when(deploy.at)}` : null;
   return (
-    <div className="env-summary">
-      <span>
+    <span className="env-chip" title={[deployed, billing].filter(Boolean).join(' · ')}>
+      <Badge tone={deploy ? DEPLOY_TONE[deploy.state] : 'neutral'}>
+        <span className="dot" aria-hidden="true" />
         {env.current_release ? `Release ${env.current_release.number}` : 'Not deployed yet'}
+        {state ? <span className={quiet ? 'visually-hidden' : undefined}> {state}</span> : null}
+      </Badge>
+      <span className="visually-hidden">
         {deploy ? (
           <>
-            {' '}
-            <Badge tone={DEPLOY_TONE[deploy.state]}>
-              {deploy.kind === 'rollback' ? `rollback ${deploy.state}` : deploy.state}
-            </Badge>
+            . Last deploy <time dateTime={deploy.at}>{when(deploy.at)}</time>
           </>
         ) : null}
+        . {billing}
       </span>
-      {deploy ? (
-        <span className="muted">
-          Last deploy <time dateTime={deploy.at}>{when(deploy.at)}</time>
+    </span>
+  );
+}
+
+/**
+ * Who an app is shared with, in a line. With both environments on show it is production's, the
+ * one people use; preview's is in the title and read out after it.
+ */
+function Sharing({ app, names }: { readonly app: InventoryApp; readonly names: readonly EnvName[] }) {
+  const found = names.flatMap((name) => app.environments.filter((e) => e.name === name));
+  const [first, ...rest] = found;
+  if (!first) return <span className="muted">None</span>;
+  const line = (e: InventoryEnvironment) => `${ENV_TITLE[e.name]}: ${sharingSummary(e.sharing)}`;
+  return (
+    <span className="clip" title={found.map(line).join(' · ')}>
+      {sharingSummary(first.sharing)}
+      {rest.map((e) => (
+        <span key={e.environment_id} className="visually-hidden">
+          ; {line(e)}
         </span>
-      ) : null}
-      <span>{sharingSummary(env.sharing)}</span>
-      <span className="muted">{usage?.billing ? BILLING_TEXT[usage.billing] : 'Billing —'}</span>
-    </div>
+      ))}
+    </span>
   );
 }
 
 function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly env: EnvName | '' }) {
   const { api, queries } = Route.useRouteContext();
+  const navigate = useNavigate();
   const pages = useInfiniteQuery({
     queryKey: ['inventory'],
     queryFn: async ({ pageParam, signal }) =>
@@ -192,7 +244,7 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
   });
   // How each environment was billed this month. The list does not wait for it or fail with it.
   const usage = queries.useQuery('get', '/v1/usage', {}, { retry: false });
-  if (pages.isPending) return <p className="muted">Loading apps…</p>;
+  if (pages.isPending) return <Loading label="Loading apps…" rows={6} />;
   // A refused first page is the whole answer; a refused later page leaves the loaded apps on show.
   if (!pages.data) return <ProblemNotice error={pages.error} />;
 
@@ -201,43 +253,44 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
     matchesFilter({ slug: app.slug, status: app.status, owner: [app.owner.user_id, app.owner.display_name] }, filter),
   );
   const billed = new Map((usage.data?.environments ?? []).map((u) => [u.environment_id, u]));
+  const names = ENV_NAMES.filter((name) => !env || name === env);
   const envColumn = (name: EnvName): Column<InventoryApp> => ({
     header: ENV_TITLE[name],
     cell: (app) => {
       const found = app.environments.find((e) => e.name === name);
-      return <EnvSummary env={found} usage={found ? billed.get(found.environment_id) : undefined} />;
+      return <EnvChip env={found} usage={found ? billed.get(found.environment_id) : undefined} />;
     },
   });
   const columns: Column<InventoryApp>[] = [
-    { header: 'App', cell: (app) => appLink(app.app_id, app.slug) },
-    { header: 'Status', cell: (app) => <StatusBadge status={app.status} /> },
+    { header: 'App', cell: (app) => <AppName id={app.app_id} slug={app.slug} status={app.status} /> },
     {
       header: 'Owner',
       cell: (app) => (
-        <>
-          {app.owner.display_name}{' '}
+        <span className="owner">
+          <span className="nowrap">{app.owner.display_name}</span>{' '}
           <code className="truncate muted" title={app.owner.user_id}>
             {app.owner.user_id}
           </code>
-        </>
+        </span>
       ),
     },
+    ...names.map(envColumn),
     {
       header: 'Last used',
-      cell: (app) =>
-        app.last_used_at ? <time dateTime={app.last_used_at}>{when(app.last_used_at)}</time> : 'Not yet',
+      className: 'nowrap',
+      cell: (app) => (app.last_used_at ? <Ago at={app.last_used_at} /> : <span className="muted">Not yet</span>),
     },
-    ...ENV_NAMES.filter((name) => !env || name === env).map(envColumn),
+    { header: 'Sharing', cell: (app) => <Sharing app={app} names={names} /> },
   ];
 
   return (
     <section className="panel">
       <Table
-        dense
         caption="Apps in this organisation"
         columns={columns}
         rows={shown}
         rowKey={(app) => app.app_id}
+        onOpen={(app) => void navigate({ to: '/apps/$appId', params: { appId: app.app_id } })}
         empty={all.length ? 'No app matches the filter.' : EMPTY}
         emptyHint={
           all.length
