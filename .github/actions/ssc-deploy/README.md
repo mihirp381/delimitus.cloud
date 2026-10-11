@@ -2,11 +2,18 @@
 
 Deploys a folder to an app's preview environment on Small Software Cloud and prints `Preview: <url>`.
 
+In this repository:
+
 ```yaml
 - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-- uses: $/.github/actions/ssc-deploy # elsewhere: delimitus/ssc-deploy-action@<sha>, once it exists
+- uses: $/.github/actions/ssc-deploy
   with: { token: "${{ secrets.SSC_PREVIEW_TOKEN }}", app: my-app }
 ```
+
+The `$/` reference uses GitHub's [self-repository syntax](https://github.blog/changelog/2026-07-30-reference-same-repository-actions-with-self-repository-syntax/)
+and resolves the action at the workflow's commit. From another repository, use
+`mihirp381/delimitus.cloud/.github/actions/ssc-deploy@<full-commit-sha>` after checking out the
+app's source; replace the placeholder with the reviewed commit's full SHA.
 
 - Inputs: `token` and `app` (a slug or an `app_` id) are required. Optional: `path` (default `.`), `api-url`, `commit` (default the workflow's commit, recorded on the release; empty records none) and `cli-spec` (what `uv tool install` installs; default the matching `ssc-cli` release). Every dependency is held to `constraints.txt`, the versions in `uv.lock`; after a lock change, regenerate it with `uv export -q --package ssc-cli --all-extras --no-dev --no-emit-workspace --no-hashes --frozen --no-header --no-annotate -o .github/actions/ssc-deploy/constraints.txt`.
 - Outputs: `preview-url`, `release-id`, `operation-id`.

@@ -1,4 +1,4 @@
-# console
+# SSC admin console
 
 The SSC admin console (SSC-057), decision 018. React 19, Vite 8, TanStack Router (file routes) and
 TanStack Query, with an API client generated from `docs/api/openapi.json`. Node 22.22.2+, 24.15+
@@ -32,12 +32,15 @@ npm run e2e          # needs Docker; see below
 
 ## Against a local API
 
-```
-uv run python tools/dev_stack.py up --dsn postgresql://postgres@127.0.0.1:5432/postgres
-uv run python tools/dev_stack.py serve --port 8000
-uv run python tools/dev_stack.py token          # paste this into the console's sign-in page
+Start the API and database from the repository root using the
+[local control plane walkthrough](../CONTRIBUTING.md#local-control-plane). Then, from `console/`:
+
+```sh
 SSC_API_URL=http://127.0.0.1:8000 npm run dev
 ```
+
+From the repository root, run `uv run python tools/dev_stack.py token` and paste the result
+into the console's sign-in page.
 
 The token sign-in form exists only in `npm run dev` and in builds made with
 `VITE_SSC_DEV_LOGIN=1`; `test/devlogin-absent.test.ts` checks the build output.

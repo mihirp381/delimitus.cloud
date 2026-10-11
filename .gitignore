@@ -1,15 +1,31 @@
+# Python environments and generated files
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
+
+# Tool caches
 .pytest_cache/
 .ruff_cache/
 .hypothesis/
+.import_linter_cache/
+
+# JavaScript dependencies and build output
 node_modules/
 dist/
-*.egg-info/
+
+# Local environment and development state
 .env
 .env.*
+.ssc-dev/
+.DS_Store
+
+# Generated operator scratch files (see the signing-key runbooks)
+auth-jwks.json
+timer-jwks.json
+timer-key.pem
+
+# Local planning material and experiment output
 spikes/appdb/docker/certs/
 spikes/bakeoff/results/
 Cloud_for_small_soft/
-.ssc-dev/
