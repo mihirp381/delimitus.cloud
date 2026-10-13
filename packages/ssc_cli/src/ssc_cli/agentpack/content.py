@@ -172,9 +172,9 @@ own; its calls are recorded the same way. Set it up once:
   to its dependency list and its lock file, like any other package.
 - Python: `ssc-app` on PyPI (`pip install ssc-app`), imported as `ssc_app`, for Python 3.11 or
   newer. It asks only for ranges of `pydantic` and `pyjwt[crypto]`, so the app keeps its own pins.
-- Node: `@delimitus/ssc-identity`, `@delimitus/ssc-reconnect` and `@delimitus/ssc-files` on npm
-  (`npm install @delimitus/ssc-identity`, and so on), for Node 22 or newer. They are ES modules;
-  a CommonJS app can `require()` them on Node 22.12 or newer.
+- Node: `@delimitus/ssc-identity`, `@delimitus/ssc-reconnect`, `@delimitus/ssc-files` and
+  `@delimitus/ssc-data` on npm (`npm install @delimitus/ssc-identity`, and so on), for Node 22
+  or newer. They are ES modules; a CommonJS app can `require()` them on Node 22.12 or newer.
 
 ### Sleeping, sessions and limits
 
@@ -238,8 +238,32 @@ own; its calls are recorded the same way. Set it up once:
   Storage directly. A file is at most 25 MB and a download always arrives as an attachment;
   for a browser download, redirect to `files.link("get", name)["url"]`. Upload from the server,
   not from the browser. The first deploy that asks sets up file storage once, in a few minutes.
-- Company data connections are not live yet. Do not write code against them until SSC documents
-  the API.
+- Company data (a database, warehouse, spreadsheet, file store or REST API the company
+  connected) is read through a data connection. `list_connections` (`ssc connections`) names
+  the ones you may see and their `kind`; `describe_connection` gives the tables and columns an
+  environment sees through one. List each one the app reads under `[connections]` `names` in
+  `ssc.toml`. An environment can read a connection only after an org admin links it, preview
+  and production each, on the app's Data tab in the console
+  (`ssc connections <app> --env <env>` shows the links); production also waits for an approved
+  request, which `request_connection` opens and another admin decides. You never link or
+  approve: when a connection is missing or a read answers `CONNECTION_NOT_GRANTED`, tell the
+  person which connection and environment an org admin has to link or approve.
+- Read a connection with the data helper: Python `from ssc_app import data`, then
+  `data.query("sales-db", "select id, total from orders where year = $1", [2026])`; Node
+  `import {{ query }} from '@delimitus/ssc-data'`, then
+  `await query('sales-db', 'select id, total from orders where year = $1', [2026])`. The
+  result has `columns`, `rows` (each a list in column order) and `truncated`, true when a cap
+  cut it short: 5,000 rows and 10 MB unless `max_rows` and `max_bytes` (Node: `maxRows`,
+  `maxBytes`) ask for more, at most 50,000 rows, 50 MB and 30 seconds, or less where an admin
+  set less. A refusal is a `DataError` with a `code`. Python also has
+  `data.describe("sales-db")` for the tables; the Node helper does not yet.
+- A call sends one read, and nothing can write. The statement follows the connection's `kind`:
+  one `SELECT` for `postgres` (placeholders `$1`, `$2`) and for `mysql`, `sqlserver`, `bigquery`
+  and `snowflake` (placeholders `?`); and, with no parameters, an A1 range for `gsheets`,
+  `list <prefix>` or `get <key>` for `s3` and `gcs`, `<table>[ view <view>][ where <formula>]`
+  for `airtable` and a GET path for `rest`. Where the kind takes parameters, pass values as
+  parameters, never built into the statement. Never connect to the source yourself, and never
+  ask for, store or pass on its address or credentials: the app holds none.
 
 ### ssc.toml
 
