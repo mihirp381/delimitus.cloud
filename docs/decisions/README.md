@@ -599,6 +599,8 @@ Reverse if: a customer needs data in another region (then add `ssc-cells/<region
 
 ## 022 Cell bootstrap
 
+**Amendment 2026-10-13 (GA-12 step 0.4; found live in GA-4.5 run 1, `spikes/proofrun/RESULTS.md`).** The deployer of the SSC-087 amendment below gains one role, built and not yet applied: `artifactregistry.reader` on the repository `ssc-platform` in `ssc-platform-0`, that repository only. Cloud Run refuses an update of a service by a caller that cannot read its image, a cell's agent, gateway and data gateway run images from that repository, and the `database`, `connections` and `warm` runs update those services. Each cell's Cloud Run service agent already read it.
+
 **Amendment 2026-10-06 (decision 025; SSC-086, `spikes/proofrun/RESULTS.md`).** The cell's contents below are proved. Its cost is not yet proved.
 - T1: one cell with every flag on and one with every flag off, applied from the same stack. 0 differences outside the flags over 1,604 resources, and no policy override.
 - T5: `db-f1-micro` was ready in 8.0 min, the ten app databases took 0.5 s each at most, and cross-connects were refused 9 of 9 times.
