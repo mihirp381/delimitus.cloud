@@ -56,6 +56,9 @@ before anyone signs in), so it has no ``org_id`` and no RLS and holds nothing of
 adds ``org_for_workos_organization``, the single function in ``SECURITY_DEFINER_FUNCTIONS``.
 Revision 0036 adds columns only (GA-7.7): ``auth_session.scope`` and ``auth_session.label``, a CI
 token's scope and the name its person gave it, never a token.
+Revision 0037 adds no table (GA-12): an app's status gains ``deleting`` and ``deleted``, a deleted
+app's slug is free again, a kill-switch run gains the ``delete`` mode, and the app role may delete
+an ``app_database`` row, which removing an app does once its database is dropped.
 """
 
 from collections.abc import Mapping
@@ -197,7 +200,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "unlinked_login": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "cell_resource": frozenset({"SELECT", "INSERT", "UPDATE"}),  # never turned off, never DELETE
     "cell_resource_waiter": frozenset({"SELECT", "INSERT", "DELETE"}),
-    "app_database": frozenset({"SELECT", "INSERT", "UPDATE"}),  # never removed by the app
+    "app_database": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # with its app
     "usage_collection": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "github_installation": frozenset({"SELECT", "INSERT"}),
     "repo_link": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
