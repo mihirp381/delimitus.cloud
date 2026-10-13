@@ -140,8 +140,7 @@ Who = Annotated[
 ConnectionName = Annotated[
     str,
     Field(
-        min_length=1,
-        max_length=300,
+        pattern=r"^[a-z][a-z0-9-]{0,62}$",
         description="The data connection's name, as the app's `ssc.toml` names it.",
     ),
 ]

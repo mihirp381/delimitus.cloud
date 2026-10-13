@@ -183,6 +183,17 @@ async def test_tools_mirror_the_api_server(fake_api):
         assert ASK_CLAUSE in instructions
 
 
+async def test_a_connection_name_never_leaves_the_schema_route(fake_api):
+    names = ["../../../../../../v1/audit?limit=2#", "nothing?x=", "nothing#", ".."]
+    async with Client(local_server(fake_api), cache=None) as client:
+        for name in names:
+            args = {"app": "app_" + "0" * 20, "environment": "prod", "connection": name}
+            described = await client.call_tool("describe_connection", args)
+            assert described.is_error, name
+            assert described.structured_content is None, name  # the argument's pattern
+    assert fake_api.seen == []
+
+
 async def test_refusals_are_tool_errors(fake_api, fake_problem):
     app_id = "app_" + "0" * 20
     fake_api.add("GET", "/v1/apps", httpx2.Response(200, json={"apps": []}))
