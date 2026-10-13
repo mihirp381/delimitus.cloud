@@ -22,7 +22,8 @@ sessions wait on (``GET_LOCK`` and kin), wait on replication, burn time on purpo
 (``BENCHMARK``, ``SLEEP``) or reach outside the server through the ``sys_*`` UDFs. ``SLEEP`` is
 refused because it returns 1 when ``max_execution_time`` or ``KILL QUERY`` interrupts it: the
 read would end quietly with a row instead of as ``QUERY_TIMEOUT``. sqlglot and MySQL read
-backslash escapes alike, so no string form is refused.
+backslash escapes alike, so no string form is refused. A ``/*! ... */`` comment, which MySQL
+runs as SQL and sqlglot keeps as a comment, is refused.
 """
 
 import re
@@ -148,6 +149,9 @@ class Dialect:
     """Qualifiers whose functions are refused (BigQuery's ``ML.``), in lower case."""
     denied_paths: re.Pattern[str] | None = None
     """Tables refused by their dotted path, matched in lower case."""
+    executable_comments: bool = False
+    """Whether the engine runs ``/*! ... */`` (and MariaDB's ``/*M! ... */``) as SQL, which
+    sqlglot keeps as a comment the rest of this check never sees."""
 
     def refuses(self, name: str) -> bool:
         low = name.lower()
@@ -165,7 +169,12 @@ POSTGRES: Final = Dialect(
     denied_suffixes=DENIED_SUFFIXES,
     unsafe_strings=_UNSAFE_STRINGS,
 )
-MYSQL: Final = Dialect(read="mysql", denied=MYSQL_DENIED, denied_prefixes=MYSQL_DENIED_PREFIXES)
+MYSQL: Final = Dialect(
+    read="mysql",
+    denied=MYSQL_DENIED,
+    denied_prefixes=MYSQL_DENIED_PREFIXES,
+    executable_comments=True,
+)
 
 
 def _names(node: exp.Func) -> set[str]:
@@ -189,6 +198,8 @@ def refusal(  # noqa: PLR0911  (one return per refusal)
     for token in tokens:
         if token.token_type in unsafe:
             return f"the statement uses {unsafe[token.token_type]}"
+        if dialect.executable_comments and any(c.startswith(("!", "M!")) for c in token.comments):
+            return "the statement uses an executable comment"
     found = [s for s in statements if s is not None]
     if len(found) != 1 or len(statements) > 1:
         return "the text is not exactly one statement"

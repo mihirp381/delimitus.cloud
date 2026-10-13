@@ -119,6 +119,28 @@ def test_mysql_refuses_a_sleep_which_would_end_quietly_instead_of_timing_out() -
     assert mysql_refusal("SELECT id FROM reporting.orders WHERE id = ?") is None
 
 
+MYSQL_EXECUTABLE_COMMENTS = [
+    "SELECT id /*!50000 , SLEEP(3) */ FROM reporting.orders",
+    "SELECT id FROM reporting.orders WHERE id = 1 /*!50000 OR BENCHMARK(1e9, 1) */",
+    "SELECT 1 /*! ; DELETE FROM reporting.orders */",
+    "/*!50000 DELETE FROM reporting.orders */ SELECT 1",
+    "SELECT(/*!GET_LOCK('x', 1)*/)",
+    "SELECT 1 /*M!100000 , SLEEP(1) */",
+    "SELECT 1 /*!*/",
+]
+
+
+@pytest.mark.parametrize("sql", MYSQL_EXECUTABLE_COMMENTS)
+def test_mysql_refuses_an_executable_comment(sql: str) -> None:
+    assert mysql_refusal(sql) == "the statement uses an executable comment"
+
+
+def test_a_comment_that_mysql_does_not_run_passes() -> None:
+    assert mysql_refusal("SELECT 1 /* ! a note */ -- !x") is None
+    assert mysql_refusal("SELECT '/*!50000 x */'") is None
+    assert refusal("SELECT 1 /*! a note */") is None
+
+
 BIGQUERY_READS = [
     "SELECT 1",
     "SELECT id, amount FROM reporting.orders WHERE id = ?",
