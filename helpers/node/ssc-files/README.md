@@ -2,6 +2,10 @@
 
 Keep files from an SSC app: photos, uploads, exports. Zero dependencies; Node 22 or newer. An ES module; a CommonJS app can `require()` it on Node 22.12 or newer.
 
+```
+npm install @delimitus/ssc-files
+```
+
 Ask for file storage in `ssc.toml`:
 
 ```toml

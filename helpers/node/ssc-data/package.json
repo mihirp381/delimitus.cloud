@@ -1,6 +1,6 @@
 {
   "name": "@delimitus/ssc-data",
-  "version": "0.1.0",
+  "version": "0.0.2",
   "description": "Read a database your org connected through the SSC cell's data gateway: no database credentials. Zero dependencies.",
   "type": "module",
   "main": "./index.js",
@@ -16,6 +16,11 @@
   "scripts": {
     "test": "node --test test/*.test.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mihirp381/delimitus.cloud.git",
+    "directory": "helpers/node/ssc-data"
+  },
   "license": "UNLICENSED",
-  "private": true
+  "publishConfig": { "access": "public" }
 }
