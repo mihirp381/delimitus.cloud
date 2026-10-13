@@ -18,7 +18,8 @@ environments cannot both take the last place. ``ensure`` and ``rotate`` then set
 deployment records before it starts so a restore can go back to it (SSC-043); it reads only
 server functions on ``postgres``, never the app's database. ``drop`` frees the place again
 (SSC-042): it stops the login, ends the sessions the login role still holds (a database with a
-session open cannot be dropped), drops the database and both roles,
+session open cannot be dropped), gives the database back to ``cloudsqlsuperuser`` (the Admin API
+drops no database another role owns), drops the database and both roles,
 and deletes the database secrets. It is safe to re-run, and the agent's route refuses it while
 the environment's service still runs.
 
@@ -75,8 +76,9 @@ class DatabaseMissingError(AppDatabaseError):
 class AdminSql(Protocol):
     """The instance as the cell agent reaches it, with ``cloudsqlsuperuser``'s privileges after
     ``SET ROLE``. ``run`` executes every statement in one transaction and returns the rows of the
-    last; ``create_database`` makes a database and succeeds when it already exists;
-    ``drop_database`` drops one and succeeds when it is already gone."""
+    last; ``create_database`` makes a database ``cloudsqlsuperuser`` owns and succeeds when it
+    already exists; ``drop_database`` drops one ``cloudsqlsuperuser`` owns and succeeds when it is
+    already gone."""
 
     async def run(self, database: str, statements: Sequence[str]) -> Rows: ...
 
@@ -221,6 +223,19 @@ class CellAppDatabases:
                     f"SELECT pg_terminate_backend(pid, {TERMINATE_WAIT_MS}) "  # noqa: S608  (constant SQL fragments; names are validated)
                     f"FROM pg_stat_activity WHERE usename = '{name}'",
                     f"REVOKE {name} FROM {ADMIN_ROLE}",
+                ],
+            )
+        if state["finished"]:
+            # ``databases.delete`` drops only a database the admin owns, so the admin takes it
+            # back the way ``ensure`` gave it away. Taking needs the owner's privileges, which
+            # a membership gives only with ``INHERIT``.
+            await self._sql.run(
+                "postgres",
+                [
+                    f"SET ROLE {ADMIN_ROLE}",
+                    f"GRANT {owner} TO {ADMIN_ROLE} WITH INHERIT TRUE",
+                    f"ALTER DATABASE {name} OWNER TO {ADMIN_ROLE}",
+                    f"REVOKE {owner} FROM {ADMIN_ROLE}",
                 ],
             )
         if state["has_database"]:

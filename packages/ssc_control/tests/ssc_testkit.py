@@ -176,6 +176,8 @@ def wait_for_a_lock_wait(dsn: str, *, seconds: float = 10.0, blocker: int | None
 CLOUD_SQL_ADMIN = "cloudsqlsuperuser"
 CLOUD_SQL_AGENT = "ssc_cell_agent"
 CLOUD_SQL_AGENT_PASSWORD = "fake-agent-password-for-tests"
+CLOUD_SQL_OWN_AGENT = "cloudsqlagent"
+CLOUD_SQL_OWN_AGENT_PASSWORD = "fake-own-agent-password-for-tests"
 FAKE_SERVER_CA = "-----BEGIN CERTIFICATE-----\nZmFrZSBDQQ==\n-----END CERTIFICATE-----\n"
 
 
@@ -200,8 +202,9 @@ class CloudSqlLike:
 @contextmanager
 def cloud_sql_like(max_connections: int = 25) -> Iterator[CloudSqlLike]:
     """A postgres:18 with ``db-f1-micro``'s 25 connections, a ``cloudsqlsuperuser`` that is no
-    superuser but may create roles and databases and read activity, and the cell agent's own
-    login in it, as Cloud SQL sets them up."""
+    superuser but may create roles and databases and read activity, and in it the cell agent's
+    own login and ``cloudsqlagent``, the login Cloud SQL's own API calls run as, as Cloud SQL sets
+    them up."""
     container = PostgresContainer("postgres:18", driver=None).with_command(
         f"postgres -c max_connections={max_connections}"
     )
@@ -214,6 +217,10 @@ def cloud_sql_like(max_connections: int = 25) -> Iterator[CloudSqlLike]:
                 f"create role {CLOUD_SQL_AGENT} login password '{CLOUD_SQL_AGENT_PASSWORD}' "
                 f"in role {CLOUD_SQL_ADMIN}"
             )
+            conn.execute(
+                f"create role {CLOUD_SQL_OWN_AGENT} login "
+                f"password '{CLOUD_SQL_OWN_AGENT_PASSWORD}' in role {CLOUD_SQL_ADMIN}"
+            )
         yield CloudSqlLike(pg.get_container_host_ip(), int(pg.get_exposed_port(5432)), su)
 
 
@@ -221,12 +228,13 @@ class LocalAdminSql:
     """The cell agent's ``AdminSql`` on a :func:`cloud_sql_like` instance, as ``executeSql``
     runs it: as the agent's own login, one transaction per batch, values back as text.
     ``statements`` keeps every statement run; ``fail_creates`` fails that many database
-    creations first."""
+    creations first, and ``fail_drops`` that many drops."""
 
     def __init__(self, db: CloudSqlLike) -> None:
         self.db = db
         self.statements: list[str] = []
         self.fail_creates = 0
+        self.fail_drops = 0
 
     def _agent(self, database: str) -> str:
         return self.db.dsn(CLOUD_SQL_AGENT, CLOUD_SQL_AGENT_PASSWORD, database)
@@ -267,11 +275,17 @@ class LocalAdminSql:
                 pass
 
     async def drop_database(self, name: str) -> None:
-        """As ``databases.delete`` runs it: as Cloud SQL's own superuser."""
-        async with await psycopg.AsyncConnection.connect(
-            self.db.superuser, autocommit=True
-        ) as conn:
-            await conn.execute(f"DROP DATABASE IF EXISTS {name}".encode())
+        """As ``databases.delete`` runs it: as ``cloudsqlagent``, which is no superuser, so it
+        drops only a database that ``cloudsqlsuperuser`` owns."""
+        if self.fail_drops:
+            self.fail_drops -= 1
+            raise AdminSqlError("databases.delete: injected failure")
+        own_agent = self.db.dsn(CLOUD_SQL_OWN_AGENT, CLOUD_SQL_OWN_AGENT_PASSWORD, "postgres")
+        try:
+            async with await psycopg.AsyncConnection.connect(own_agent, autocommit=True) as conn:
+                await conn.execute(f"DROP DATABASE IF EXISTS {name}".encode())
+        except psycopg.Error as exc:
+            raise AdminSqlError(f"databases.delete: {exc}", 400) from None
 
     async def endpoint(self) -> tuple[str, int]:
         return self.db.host, self.db.port
