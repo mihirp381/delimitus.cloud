@@ -12,6 +12,11 @@ A new target kind needs an entry here before its first ``uow.audit()`` call.
 from collections.abc import Mapping
 from typing import Any, Final, cast
 
+_LIMITS: Final = frozenset(
+    {"max_rows", "max_bytes", "timeout_ms", "concurrency", "daily_rows", "daily_bytes"}
+)
+"""A connection's or a grant's caps, one integer or null each (review A-11)."""
+
 VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "app": frozenset({"slug", "owner_user_id", "status"}),
     "app_grant": frozenset({"environment_id", "role", "subject_kind", "subject_id"}),
@@ -92,9 +97,11 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "connection": frozenset(
         {"name", "kind", "classification", "ceiling", "setup_status", "status", "owner_user_id"}
         | {"allowed_schemas"}
+        | _LIMITS
     ),  # SSC-052: ceiling is "org" or "group:<id>" and "user:<id>" entries, never an object;
     # GA-5: kind is one of ssc_contracts.connections.KINDS, never the address
-    "connection_grant": frozenset({"connection_id", "environment_id", "over_ceiling_since"}),
+    "connection_grant": frozenset({"connection_id", "environment_id", "over_ceiling_since"})
+    | _LIMITS,
     "warm": frozenset({"environment_ids", "gateway", "monthly_usd_shown"}),
 }
 
