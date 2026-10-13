@@ -18,6 +18,11 @@ SSC-046: the first app in a cell that asks for files gets a working broker with 
                                             -> test_the_job_is_started_with_exactly_two_arguments
 SSC-028: creating a cell's database writes exactly one fixed-resource event
                                             -> test_creating_the_cells_database_writes_exactly_...
+GA-12 step 0.4: a run that ends well is not believed until the cell answers for the resource
+                                            -> test_a_run_that_ends_well_over_a_database_the_...,
+                                               test_a_database_the_cell_never_has_fails_as_...,
+                                               test_a_resource_the_cell_does_not_answer_for_...,
+                                               test_a_cell_that_cannot_be_asked_has_not_answered
 SSC-057: the "Your environment" screen reads which deploy or approval asked for each resource,
 the cell's environments and the database's places
                                             -> test_the_cell_view_says_who_asked_for_each_...,
@@ -61,7 +66,7 @@ from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.routes.v1 import cell as cell_api
 from ssc_control.approvals import service
 from ssc_control.audit import Actor
-from ssc_control.cell import create, tasks
+from ssc_control.cell import create, tasks, verify
 from ssc_control.cell.deployer import (
     DEPLOYER_ENV,
     DEPLOYER_JOB_ENV,
@@ -77,8 +82,12 @@ from ssc_control.db import bound_org
 from ssc_control.domain.approval_rules import Requirement, RequirementKind
 from ssc_control.metrics import record_once
 from ssc_control.ports import MetricKind
-from ssc_control.runtime.app_databases import FakeAppDatabases
+from ssc_control.runtime.app_databases import AppDatabaseError, DatabaseUsage, FakeAppDatabases
+from ssc_control.runtime.cell_datagw import CellSchemaError, FakeCellSchemas, Schema, SchemaRefusal
+from ssc_control.runtime.cell_egress import CellEgressError, EgressInfo, FakeCellEgress
+from ssc_control.runtime.cells import CellUnavailableError, OrgCell
 from ssc_control.worker import CompositionError, Ports, build_app, compose_ports
+from ssc_shared.runtime import RuntimeDriverError
 
 world = test_deploy.world
 tokens = test_deploy.tokens
@@ -108,7 +117,12 @@ def cell(b: Bench) -> Cell:
     fake = FakeCellDeployer()
     set_prod_gate(b, SpyGate("clear"))
     ports = replace(
-        with_cell(b.ports, app_databases=FakeAppDatabases()),
+        with_cell(
+            b.ports,
+            app_databases=FakeAppDatabases(),
+            egress=FakeCellEgress(),
+            datagw=FakeCellSchemas(),
+        ),
         cell_deployer=fake,
         prod_gate=SpyGate("clear"),
     )
@@ -488,6 +502,223 @@ async def test_a_deployer_that_will_not_start_is_retried(cell: Cell) -> None:
     assert len(cell.fake.runs) == 1
 
 
+# ── a run that ends well is not believed ─────────────────────────────────────
+
+
+class NoInstance(FakeAppDatabases):
+    """The agent of 2026-10-09: its run ended well and it had never been told of the instance."""
+
+    async def usage(self, service: str) -> DatabaseUsage:
+        raise AppDatabaseError("DATABASE_UNAVAILABLE", "cell agent usage: HTTP 503")
+
+
+class NoProxy(FakeCellEgress):
+    async def info(self) -> EgressInfo:
+        raise CellEgressError("cell agent egress info: HTTP 503")
+
+
+def gateway(answer: Schema | Exception) -> FakeCellSchemas:
+    return FakeCellSchemas(answers={verify.PROBE_CONNECTION: answer})
+
+
+async def ask_for(cell: Cell, resource: CellResource) -> None:
+    """``resource`` asked for the way it is in use: a deploy for the database, an approval for
+    the other two."""
+    if resource is DB:
+        op = await stateful_deploy(cell, cell.b.w.preview)
+        assert await run(cell.b, op, cell.ports) == "running"
+    elif resource is CONNECTIONS:
+        await approve(cell.b, RequirementKind.CONNECT_DATA_SOURCE, "finance")
+    else:
+        await approve(cell.b, RequirementKind.ENABLE_INTERNET_HOSTS, "api.stripe.com")
+
+
+async def test_a_run_that_ends_well_over_a_database_the_agent_cannot_use_is_not_ready(
+    cell: Cell,
+) -> None:
+    """GA-12 step 0.4: the deployer says the run succeeded, the agent says there is no database.
+    The resource is not ``ready``, nothing that follows from ``ready`` happens, and the next
+    step starts the deployer again; when the agent then answers, it is ``ready``."""
+    b = cell.b
+    op = await stateful_deploy(cell, b.w.preview)
+    there = cell.ports
+    cell.ports = with_cell(there, app_databases=NoInstance())
+    assert await run(b, op, cell.ports) == "running"
+    assert await cell.step() == "creating"
+    cell.fake.finish()
+    assert await cell.fake.status(next(iter(cell.fake.outcomes))) == "succeeded"
+    assert await cell.step() == "creating"
+    row = resources_of(b)["database"]
+    assert (row["state"], row["attempts"], row["execution"]) == ("creating", 1, None)
+    assert (row["ready_at"], row["failure_code"]) == (None, None)
+    assert row["last_error"] == "the instance did not answer the agent: cell agent usage: HTTP 503"
+    assert [a["action"] for a in cell_audit(b)] == ["cell.resource_requested"]
+    assert fixed_resource_events(b) == []
+    assert jobs(b, f"dep:{op}") == []
+    assert await run(b, op, cell.ports) == "running"
+    assert b.runtime.calls == []
+    (retry,) = jobs(b, create_lock(b))
+    assert retry["task_name"] == tasks.CREATE_RESOURCE
+
+    cell.ports = there
+    assert await cell.step() == "creating"
+    assert cell.fake.runs == [(cell.label, DB)] * 2
+    cell.fake.finish()
+    assert await cell.step() == "ready"
+    row = resources_of(b)["database"]
+    assert (row["state"], row["attempts"], row["last_error"]) == ("ready", 2, None)
+    assert [a["action"] for a in cell_audit(b)] == [
+        "cell.resource_requested",
+        "cell.resource_ready",
+    ]
+    assert len(fixed_resource_events(b)) == 1
+    assert await run(b, op, cell.ports) == "healthy"
+
+
+async def test_a_database_the_cell_never_has_fails_as_unverified_and_fails_its_waiters(
+    cell: Cell,
+) -> None:
+    b = cell.b
+    op = await stateful_deploy(cell, b.w.preview)
+    cell.ports = with_cell(cell.ports, app_databases=NoInstance())
+    assert await run(b, op, cell.ports) == "running"
+    for _ in range(create.MAX_ATTEMPTS):
+        assert await cell.step() == "creating"
+        cell.fake.finish()
+        await cell.step()
+    assert cell.fake.runs == [(cell.label, DB)] * create.MAX_ATTEMPTS
+    assert set(cell.fake.outcomes.values()) == {"succeeded"}
+    row = resources_of(b)["database"]
+    assert (row["state"], row["failure_code"]) == ("failed", create.CELL_RESOURCE_UNVERIFIED)
+    assert row["last_error"].startswith("the instance did not answer the agent")
+    assert row["ready_at"] is None
+    failed = cell_audit(b)[-1]
+    assert (failed["action"], failed["after"]["failure_code"]) == (
+        "cell.resource_failed",
+        create.CELL_RESOURCE_UNVERIFIED,
+    )
+    assert "cell.resource_ready" not in [a["action"] for a in cell_audit(b)]
+    assert fixed_resource_events(b) == []
+    assert await run(b, op, cell.ports) == "failed"
+    assert operation(b, op)["failure_code"] == CELL_RESOURCE_FAILED
+    assert b.runtime.calls == []
+
+    # A later deploy asks again, and a cell that now answers gets its database.
+    cell.ports = with_cell(cell.ports, app_databases=FakeAppDatabases())
+    again = await stateful_deploy(cell, b.w.preview)
+    assert await run(b, again, cell.ports) == "running"
+    assert cell_audit(b)[-1]["before"] == {
+        "state": "failed",
+        "failure_code": create.CELL_RESOURCE_UNVERIFIED,
+    }
+    await finish_creation(cell)
+    assert await run(b, again, cell.ports) == "healthy"
+
+
+NOT_CONFIGURED = "cell agent datagw schema: HTTP 503 DATAGW_NOT_CONFIGURED"
+
+
+@pytest.mark.parametrize(
+    ("resource", "port", "reason"),
+    [
+        (DB, {"app_databases": None}, "no app database port is configured"),
+        (CONNECTIONS, {"datagw": None}, "no data gateway port is configured"),
+        (
+            CONNECTIONS,
+            {"datagw": gateway(CellSchemaError(NOT_CONFIGURED))},
+            f"the agent could not ask the data gateway: {NOT_CONFIGURED}",
+        ),
+        (
+            CONNECTIONS,
+            {"datagw": gateway(SchemaRefusal(503, "DATA_SNAPSHOT_STALE"))},
+            "the data gateway did not answer as one in use: data gateway: HTTP 503 "
+            "DATA_SNAPSHOT_STALE",
+        ),
+        (
+            CONNECTIONS,
+            {"datagw": gateway(SchemaRefusal(401, ""))},
+            "the data gateway did not answer as one in use: data gateway: HTTP 401",
+        ),
+        (CellResource.EGRESS, {"egress": None}, "no egress port is configured"),
+        (
+            CellResource.EGRESS,
+            {"egress": FakeCellEgress(proxy_address=None)},
+            "the agent names no proxy address",
+        ),
+        (
+            CellResource.EGRESS,
+            {"egress": NoProxy()},
+            "the agent could not say where the proxy is: cell agent egress info: HTTP 503",
+        ),
+    ],
+)
+async def test_a_resource_the_cell_does_not_answer_for_is_not_ready(
+    cell: Cell, resource: CellResource, port: dict[str, Any], reason: str
+) -> None:
+    b = cell.b
+    await ask_for(cell, resource)
+    there = cell.ports
+    cell.ports = with_cell(there, **port)
+    assert await cell.step(resource) == "creating"
+    cell.fake.finish()
+    assert await cell.step(resource) == "creating"
+    row = resources_of(b)[resource.value]
+    assert (row["state"], row["execution"], row["ready_at"]) == ("creating", None, None)
+    assert row["last_error"].startswith(reason)
+    assert await verify.unverified(cell.ports, b.w.org, resource) == row["last_error"]
+    assert [a["action"] for a in cell_audit(b)] == ["cell.resource_requested"]
+
+    cell.ports = there
+    assert await verify.unverified(cell.ports, b.w.org, resource) is None
+    assert await cell.step(resource) == "creating"
+    cell.fake.finish()
+    assert await cell.step(resource) == "ready"
+    assert cell.fake.runs == [(cell.label, resource)] * 2
+
+
+async def test_the_cell_is_asked_without_naming_an_app_or_changing_anything(cell: Cell) -> None:
+    b = cell.b
+    databases, egress, schemas = FakeAppDatabases(), FakeCellEgress(), FakeCellSchemas()
+    ports = with_cell(cell.ports, app_databases=databases, egress=egress, datagw=schemas)
+    for resource in CellResource:
+        assert await verify.unverified(ports, b.w.org, resource) is None
+    assert (databases.calls, egress.calls) == ([], [])
+    assert schemas.calls == [(verify.PROBE_CONNECTION, verify.PROBE_ENVIRONMENT)]
+    assert verify.PROBE_ENVIRONMENT != b.w.preview
+    assert len(verify.PROBE_ENVIRONMENT) == len(b.w.preview)
+    # A gateway that shows the connection is as much in use as one that refuses the stranger.
+    shown = gateway(Schema(connection="c", kind="postgres", tables=(), snapshot_version=1))
+    assert await verify.unverified(with_cell(ports, datagw=shown), b.w.org, CONNECTIONS) is None
+
+
+async def test_a_cell_that_cannot_be_asked_has_not_answered(cell: Cell) -> None:
+    b = cell.b
+
+    class Unplaced:
+        async def for_org(self, org_id: str) -> OrgCell:
+            raise CellUnavailableError(org_id, None)
+
+    class NoToken:
+        async def for_org(self, org_id: str) -> OrgCell:
+            raise RuntimeDriverError("id token: metadata server HTTP 500")
+
+    for resource in CellResource:
+        for cells, reason in (
+            (None, "no cell is configured, so nothing could be asked"),
+            (Unplaced(), "the org's cell is not configured, so nothing could be asked"),
+            (NoToken(), "the cell agent could not be asked: id token: metadata server HTTP 500"),
+        ):
+            ports = replace(cell.ports, cells=cells)
+            assert await verify.unverified(ports, b.w.org, resource) == reason
+
+    await ask_for(cell, CellResource.EGRESS)
+    cell.ports = replace(cell.ports, cells=None)
+    assert await cell.step(CellResource.EGRESS) == "creating"
+    cell.fake.finish()
+    assert await cell.step(CellResource.EGRESS) == "creating"
+    assert resources_of(b)["egress"]["last_error"].startswith("no cell is configured")
+
+
 # ── approval triggers ────────────────────────────────────────────────────────
 
 
@@ -756,6 +987,10 @@ def test_the_worker_registers_the_cell_task_and_its_deployer() -> None:
         compose_ports({**base, DEPLOYER_ENV: "fake"})
     fake = compose_ports({**base, DEPLOYER_ENV: "fake", "SSC_ENV": "test"})
     assert isinstance(fake.cell_deployer, FakeCellDeployer)
+    # A local worker's fake cell answers for all three, or nothing it runs would become ready.
+    local = compose_ports({**base, "SSC_RUNTIME_DRIVER": "fake", "SSC_ENV": "test"})
+    for resource in CellResource:
+        assert asyncio.run(verify.unverified(local, "org_" + "a" * 20, resource)) is None
     real = compose_ports({**base, DEPLOYER_ENV: "cloud_run", DEPLOYER_JOB_ENV: JOB})
     assert isinstance(real.cell_deployer, CloudRunCellDeployer)
     for job in ("", "jobs/x", f"{JOB}/extra", "projects//locations/r/jobs/j"):
