@@ -226,6 +226,15 @@
       }
     },
     {
+      "name": "note from another cell, verified with the issuer pinned",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLW90aGVyIiwiYXVkIjoiaHR0cHM6Ly9xdWlldC1yaXZlci03ZjNrLmRlbGltaXR1c2FwcHMuY29tIiwic3ViIjoidXNyXzExMTExMTExMTExMTExMTExMTExIiwiaWF0IjoxNzg5OTk5OTkwLCJleHAiOjE3OTAwMDAyOTAsIm9yZyI6Im9yZ18wMTIzNDU2Nzg5YWJjZGVmZ2hpaiIsImFwcCI6ImFwcF9hYWFhYWFhYWFhYWFhYWFhYWFhYSIsImVudiI6InByb2QiLCJyb2xlIjoidXNlciIsImdyb3VwcyI6WyJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDIiLCJncnBfMDAwMDAwMDAwMDAwMDAwMDAwMDMiXSwibmFtZSI6IkFkYSBMb3ZlbGFjZSIsImVtYWlsIjoiYWRhQGV4YW1wbGUuY29tIn0.OBIFbOzqKKS37H-8bULrNJJ3muuYn7she1QBVSFC-eSfqcBjPDONv5qjNi2k_iSz83jNyLaRRs9v7OYSLSN6Nw",
+      "audience": "https://quiet-river-7f3k.delimitusapps.com",
+      "issuer": "https://keys.delimitus.com/cell-test",
+      "expect": {
+        "refused": "wrong_issuer"
+      }
+    },
+    {
       "name": "expired",
       "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMjAyNi0wOS1hIiwidHlwIjoic3NjLWlkK2p3dCJ9.eyJpc3MiOiJodHRwczovL2tleXMuZGVsaW1pdHVzLmNvbS9jZWxsLXRlc3QiLCJhdWQiOiJodHRwczovL3F1aWV0LXJpdmVyLTdmM2suZGVsaW1pdHVzYXBwcy5jb20iLCJzdWIiOiJ1c3JfMTExMTExMTExMTExMTExMTExMTEiLCJpYXQiOjE3ODk5OTk2NDAsImV4cCI6MTc4OTk5OTk0MCwib3JnIjoib3JnXzAxMjM0NTY3ODlhYmNkZWZnaGlqIiwiYXBwIjoiYXBwX2FhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZW52IjoicHJvZCIsInJvbGUiOiJ1c2VyIiwiZ3JvdXBzIjpbImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMSIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMiIsImdycF8wMDAwMDAwMDAwMDAwMDAwMDAwMyJdLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.Eat1K81-KCPX6ICY2ZYmaT-NPgD6pKozqWbvNYawyl0VTbNTGx_SrywMw8sQxRU3mdfH4KEjTyGTIwZEHIIYWw",
       "audience": "https://quiet-river-7f3k.delimitusapps.com",

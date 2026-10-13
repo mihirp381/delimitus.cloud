@@ -26,6 +26,7 @@ NOW = 1_790_000_000  # 2026-09-21T09:33:20Z, fixed so the vectors never age
 ISSUER = "https://keys.delimitus.com/cell-test"
 APP_A = "https://quiet-river-7f3k.delimitusapps.com"
 APP_B = "https://brave-otter-2m9q.delimitusapps.com"
+OTHER_ISSUER = "https://keys.delimitus.com/cell-other"
 ORG = "org_0123456789abcdefghij"
 APP_A_ID = "app_aaaaaaaaaaaaaaaaaaaa"
 USER = "usr_11111111111111111111"
@@ -93,9 +94,19 @@ def build_vectors() -> dict[str, Any]:  # noqa: PLR0915
             }
         )
 
-    def refused(name: str, token: str, code: str, audience: str = APP_A) -> None:
+    def refused(
+        name: str, token: str, code: str, audience: str = APP_A, issuer: str | None = None
+    ) -> None:
+        """``issuer``, when set, is the issuer the verifier pins for this case."""
+        pinned = {"issuer": issuer} if issuer is not None else {}
         cases.append(
-            {"name": name, "token": token, "audience": audience, "expect": {"refused": code}}
+            {
+                "name": name,
+                "token": token,
+                "audience": audience,
+                **pinned,
+                "expect": {"refused": code},
+            }
         )
 
     user = _user_note()
@@ -134,6 +145,12 @@ def build_vectors() -> dict[str, Any]:  # noqa: PLR0915
         sign_note(user, private_key=key_a, kid=KID_A),
         "wrong_audience",
         APP_B,
+    )
+    refused(
+        "note from another cell, verified with the issuer pinned",
+        sign_note(_user_note(issuer=OTHER_ISSUER), private_key=key_a, kid=KID_A),
+        "wrong_issuer",
+        issuer=ISSUER,
     )
     refused(
         "expired",
