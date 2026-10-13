@@ -1153,6 +1153,7 @@ def test_the_columns_follow_the_approvals_rule(
         ("DATA_SNAPSHOT_STALE", 503, ErrorCode.DATA_SNAPSHOT_STALE),
         ("CONNECTION_UNAVAILABLE", 503, ErrorCode.CONNECTION_UNAVAILABLE),
         ("QUERY_TIMEOUT", 408, ErrorCode.QUERY_TIMEOUT),
+        ("QUERY_FAILED", 422, ErrorCode.CONNECTION_UNAVAILABLE),  # the source refused the read
         ("UNAUTHENTICATED", 401, ErrorCode.CELL_UNAVAILABLE),
         ("UNAVAILABLE", 503, ErrorCode.CELL_UNAVAILABLE),
         ("SOMETHING_NEW", 500, ErrorCode.CELL_UNAVAILABLE),
