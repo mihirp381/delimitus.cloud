@@ -54,8 +54,17 @@ def _same(a: object, b: object) -> bool:
     return type(a) is type(b) and a == b
 
 
+def _canonical(fields: dict[str, Any]) -> bytes | None:
+    """``canonical_bytes``, or None when the text holds what UTF-8 cannot (a lone surrogate)."""
+    try:
+        return canonical_bytes(fields)
+    except UnicodeEncodeError:
+        return None
+
+
 def _same_json(a: object, b: object) -> bool:
-    return canonical_bytes({"v": a}) == canonical_bytes({"v": b})
+    left = _canonical({"v": a})
+    return left is not None and left == _canonical({"v": b})
 
 
 def _same_at(a: object, b: object) -> bool:
@@ -82,7 +91,7 @@ def _fields_match(raw: bytes, row: dict[str, Any]) -> str | None:
     except ValueError:
         return None
     doc = _object(parsed, V1_KEYS)
-    if doc is None or canonical_bytes(doc) != raw:
+    if doc is None or _canonical(doc) != raw:
         return None
     actor = _object(doc["actor"], _ACTOR_KEYS)
     target = _object(doc["target"], _TARGET_KEYS)
