@@ -1,4 +1,5 @@
-"""``ssc disable``, ``ssc enable``, ``ssc access explain`` and ``ssc apps --mine``."""
+"""``ssc disable``, ``ssc enable``, ``ssc apps delete``, ``ssc access explain`` and
+``ssc apps --mine``."""
 
 import json
 import time
@@ -7,10 +8,19 @@ import uuid
 import httpx2
 import pytest
 
+from ssc_cli.agentpack import guide
 from ssc_cli.credentials import SERVICE
 from ssc_cli.errors import ExitCode
+from ssc_cli.mcp_local import INSTRUCTIONS, TOOLS
 from ssc_cli.session import Session
-from ssc_cli.shapes import AccessResult, AppResult, AppsResult, DisableResult
+from ssc_cli.shapes import (
+    AccessResult,
+    AppDeleteResult,
+    AppDeleteRunResult,
+    AppResult,
+    AppsResult,
+    DisableResult,
+)
 
 APP_ID = "app_aaaaaaaaaaaaaaaaaaaa"
 USR = "usr_aaaaaaaaaaaaaaaaaaaa"
@@ -20,6 +30,7 @@ PROD = "env_prodprodprodprodprod"
 PREVIEW = "env_prevprevprevprevprev"
 RUN = "kil_aaaaaaaaaaaaaaaaaaaa"
 KILL = f"/v1/apps/{APP_ID}/kill-switch"
+DELETE = f"/v1/apps/{APP_ID}/delete"
 AT = "2026-09-29T00:00:00Z"
 
 
@@ -348,6 +359,165 @@ def test_access_explain_takes_only_a_person(cli, fake_api, who):
     assert fake_api.seen == []
 
 
+# ── apps delete ─────────────────────────────────────────────────────────────
+
+
+def _removed(name: str, removed: int | None = None, **kw: str) -> dict[str, object]:
+    return _step(name, **kw) | {"removed": removed}
+
+
+def _delete_run(state: str, *steps: dict[str, object]) -> httpx2.Response:
+    body = json.loads(_run(state, *steps).content)
+    del body["mode"]
+    return httpx2.Response(200, json=body)
+
+
+def test_delete_sends_the_slug_typed_again_and_follows_the_run(cli, scripted):
+    scripted.add("POST", DELETE, _accepted())
+    scripted.add(
+        "GET",
+        f"{DELETE}/{RUN}",
+        _delete_run("running", _removed("gateway_deny", state="running")),
+        _delete_run(
+            "completed", _removed("gateway_deny"), _removed("drop_databases", 2), _removed("x", 0)
+        ),
+    )
+    r = cli("apps", "delete", "demo", "--confirm", "demo", "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    result = AppDeleteResult.model_validate(r.json())
+    assert (result.app_id, result.slug, result.status) == (APP_ID, "demo", "deleted")
+    assert (result.state, result.run_id, result.total_ms) == ("completed", RUN, 40)
+    assert [(s.name, s.removed) for s in result.steps] == [
+        ("gateway_deny", None),
+        ("drop_databases", 2),
+        ("x", 0),
+    ]
+    (post,) = [q for q in scripted.seen if q.method == "POST"]
+    assert (post.url.path, json.loads(post.content)) == (DELETE, {"confirm": "demo"})
+    assert post.headers["idempotency-key"]
+    assert len([q for q in scripted.seen if q.url.path == f"{DELETE}/{RUN}"]) == 2
+
+
+def test_delete_says_what_is_gone_and_how_to_read_the_run_again(cli, scripted):
+    scripted.add("POST", DELETE, _accepted())
+    scripted.add("GET", f"{DELETE}/{RUN}", _delete_run("completed", _removed("delete_files", 7)))
+    r = cli("apps", "delete", APP_ID, "--confirm", "demo", session=scripted.session())
+    assert r.code == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert lines[0].startswith("demo is deleted: ")
+    assert lines[1].split() == ["STEP", "STATE", "REMOVED", "MS", "TRIES", "ERROR"]
+    assert lines[2].split() == ["delete_files", "done", "7", "12", "1", "-"]
+    assert f"Delete run {RUN} completed in 40 ms." in lines
+    assert f"`ssc apps delete-status {APP_ID} {RUN}`" in lines[-1]
+
+
+def test_delete_asks_nothing_without_the_slug_typed_again(cli, scripted):
+    r = cli("apps", "delete", "demo", session=scripted.session())
+    assert r.code == ExitCode.USAGE
+    assert "--confirm" in r.stderr
+    assert scripted.seen == []
+
+
+def test_a_failed_removal_exits_1_shows_the_steps_and_says_how_to_continue(cli, scripted):
+    scripted.add("POST", DELETE, _accepted())
+    failed = _delete_run(
+        "failed",
+        _removed("gateway_deny"),
+        _removed("drop_databases", state="failed", error="DATABASE_UNAVAILABLE"),
+    )
+    scripted.add("GET", f"{DELETE}/{RUN}", failed)
+    r = cli("apps", "delete", "demo", "--confirm", "demo", "--json", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    error = r.json()["error"]
+    assert (error["code"], error["status"]) == ("APP_DELETE_FAILED", None)
+    assert "stays stopped" in error["detail"]
+    assert "drop_databases (DATABASE_UNAVAILABLE)" in error["detail"]
+    assert error["instance"] == f"{DELETE}/{RUN}"
+    plain = cli("apps", "delete", "demo", "--confirm", "demo", session=scripted.session())
+    assert plain.code == ExitCode.FAILED
+    assert "drop_databases  failed" in plain.stdout
+    assert "DATABASE_UNAVAILABLE" in plain.stdout
+    assert "`ssc apps delete demo --confirm demo` again to continue" in _fix(plain.stderr)
+    assert f"`ssc apps delete-status {APP_ID} {RUN}`" in _fix(plain.stderr)
+
+
+def test_following_a_removal_gives_up_after_the_timeout_and_names_the_run(cli, scripted):
+    scripted.add("POST", DELETE, _accepted())
+    scripted.add(
+        "GET", f"{DELETE}/{RUN}", _delete_run("running", _removed("gateway_deny", state="running"))
+    )
+    r = cli(
+        "apps", "delete", "demo", "--confirm", "demo", "--timeout", "4", session=scripted.session()
+    )
+    assert r.code == ExitCode.FAILED
+    assert "Code: WAIT_TIMED_OUT" in r.stderr
+    assert "carries on without ssc" in r.stderr
+    assert f"`ssc apps delete-status {APP_ID} {RUN}`" in _fix(r.stderr)
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "fix"),
+    [
+        (403, "FORBIDDEN", "only an active org admin can delete an app"),
+        (403, "AGENT_SESSION_REFUSED", "from their own sign-in (`ssc login`), never an agent"),
+        (422, "CONFIRMATION_MISMATCH", "`ssc apps delete demo --confirm demo`"),
+        (409, "APP_OPERATION_IN_FLIGHT", "a deploy, promote or rollback of demo is still running"),
+        (409, "KILL_SWITCH_IN_FLIGHT", "an earlier removal of demo is still running"),
+    ],
+)
+def test_delete_refusals_say_what_to_do(cli, scripted, fake_problem, status, code, fix):
+    scripted.add("POST", DELETE, fake_problem(status, code))
+    r = cli("apps", "delete", "demo", "--confirm", "demmo", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert f"Code: {code}" in r.stderr
+    assert fix in _fix(r.stderr)
+    assert not [q for q in scripted.seen if q.url.path.startswith(f"{DELETE}/")]
+
+
+def test_delete_status_reads_a_run_of_an_app_that_is_gone(cli, fake_api, isolated):
+    """By ``app_`` id nothing is looked up first: a deleted app answers no lookup."""
+    isolated.set_password(SERVICE, "https://api.test", "tok")
+    done = _delete_run("completed", _removed("gateway_deny"), _removed("delete_secrets", 3))
+    fake_api.add("GET", f"{DELETE}/{RUN}", done)
+    r = cli("apps", "delete-status", APP_ID, RUN, "--json", session=fake_api.session())
+    assert r.code == 0, r.stdout
+    result = AppDeleteRunResult.model_validate(r.json())
+    assert (result.app_id, result.run_id, result.state) == (APP_ID, RUN, "completed")
+    assert (result.started_at, result.finished_at, result.total_ms) == (AT, AT, 40)
+    assert [(s.name, s.removed) for s in result.steps] == [
+        ("gateway_deny", None),
+        ("delete_secrets", 3),
+    ]
+    assert [q.url.path for q in fake_api.seen] == [f"{DELETE}/{RUN}"]
+    plain = cli("apps", "delete-status", APP_ID, RUN, session=fake_api.session())
+    assert plain.stdout.startswith(f"Delete run {RUN} of {APP_ID}: completed.\n")
+    assert "delete_secrets  done   3" in plain.stdout
+    fake_api.add("GET", "/v1/apps", httpx2.Response(200, json={"apps": []}))
+    by_slug = cli("apps", "delete-status", "demo", RUN, session=fake_api.session())
+    assert by_slug.code == ExitCode.FAILED
+    assert "Code: APP_NOT_FOUND" in by_slug.stderr
+    assert "give the app_ id" in _fix(by_slug.stderr)
+
+
+def test_delete_status_takes_the_slug_while_the_app_is_still_there(cli, scripted):
+    running = _delete_run("running", _removed("gateway_deny", state="running"))
+    scripted.add("GET", f"{DELETE}/{RUN}", running)
+    r = cli("apps", "delete-status", "demo", RUN, "--json", session=scripted.session())
+    assert r.code == 0, r.stdout
+    result = AppDeleteRunResult.model_validate(r.json())
+    assert (result.state, result.finished_at, result.total_ms) == ("running", None, None)
+
+
+def test_no_agent_surface_deletes_an_app():
+    """Deleting is a person's act: no tool does it, and neither the tools' instructions nor the
+    agent pack teach it."""
+    assert not [t for t in TOOLS if "delete" in t or "remove" in t]
+    pack = guide([], "https://api.delimitus.com/mcp")
+    for text in (INSTRUCTIONS, pack):
+        assert "apps delete" not in text
+        assert "delete_app" not in text
+
+
 # ── apps --mine ─────────────────────────────────────────────────────────────
 
 
@@ -411,3 +581,46 @@ def test_live_access_explain_names_the_grant(on_live, live):
     assert [g.grant_id for g in result.grants] == [grant]
     mine = on_live("apps", "--mine", "--json")
     assert name in [a["slug"] for a in mine.json()["apps"]]
+
+
+def test_live_delete_removes_the_app_and_frees_its_slug(on_live, live):
+    name = f"t{uuid.uuid4().hex[:12]}"
+    created = on_live("apps", "create", name, "--json")
+    assert created.code == 0, created.stdout
+    app_id = created.json()["id"]
+    wrong = on_live("apps", "delete", name, "--confirm", name[:-1], "--json")
+    assert wrong.json()["error"]["code"] == "CONFIRMATION_MISMATCH"
+    assert on_live("status", name, "--json").json()["status"] == "active"
+
+    gone = on_live("apps", "delete", name, "--confirm", name, "--timeout", "3600", "--json")
+    assert gone.code == 0, (gone.stdout, gone.stderr)
+    result = AppDeleteResult.model_validate(gone.json())
+    assert (result.app_id, result.status, result.state) == (app_id, "deleted", "completed")
+    assert [s.name for s in result.steps] == [
+        "gateway_deny",
+        "datagw_suspend",
+        "egress_remove",
+        "scale_to_zero",
+        "remove_timers",
+        "drop_databases",
+        "delete_files",
+        "delete_secrets",
+        "delete_services",
+        "delete_bundles",
+        "remove_records",
+    ]
+    assert not [s for s in result.steps if s.state == "failed"]
+
+    assert on_live("status", name, "--json").json()["error"]["code"] == "APP_NOT_FOUND"
+    assert on_live("status", app_id, "--json").json()["error"]["code"] == "NOT_FOUND"
+    assert app_id not in [a["id"] for a in on_live("apps", "--json").json()["apps"]]
+    read = on_live("apps", "delete-status", app_id, result.run_id, "--json")
+    assert read.code == 0, read.stdout
+    again = AppDeleteRunResult.model_validate(read.json())
+    assert (again.state, len(again.steps)) == ("completed", 11)
+    once_more = on_live("apps", "delete", app_id, "--confirm", name, "--json")
+    assert once_more.json()["error"]["code"] == "NOT_FOUND"
+
+    reused = on_live("apps", "create", name, "--json")
+    assert reused.code == 0, reused.stdout
+    assert reused.json()["id"] != app_id
