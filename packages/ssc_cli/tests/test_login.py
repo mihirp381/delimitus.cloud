@@ -188,6 +188,18 @@ def test_logout_forgets_even_when_the_auth_host_is_down(cli, isolated):
     assert "12 hours" in r.stderr
 
 
+@pytest.mark.parametrize("status", [503, 404])
+def test_logout_forgets_even_when_the_auth_host_refuses_the_revoke(cli, isolated, status):
+    store_login(API, kept(1))
+    answer = httpx2.MockTransport(lambda _: httpx2.Response(status))
+    s = Session(api_override=API, transport=answer, sleep=lambda _: None)
+    r = cli("logout", "--json", session=s)
+    assert r.code == 0, r.stderr
+    assert r.json() == {"api_url": API, "revoked": False, "cleared": True, "agent": False}
+    assert "did not end the login" in r.stderr
+    assert read_login(API) is None
+
+
 def test_logout_of_a_kept_token_only_forgets_it(cli, fake_api, isolated):
     isolated.store[(SERVICE, API)] = "plain-token"
     r = cli("logout", "--json", session=fake_api.session())
