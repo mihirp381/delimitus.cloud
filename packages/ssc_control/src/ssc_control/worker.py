@@ -52,6 +52,7 @@ from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import FakeAppDatabases
 from ssc_control.runtime.cell_agent import MetadataIdTokens
+from ssc_control.runtime.cell_datagw import FakeCellSchemas
 from ssc_control.runtime.cell_egress import FakeCellEgress
 from ssc_control.runtime.cells import (
     CELLS_ENV,
@@ -220,7 +221,8 @@ def cells_of(
     """``SSC_RUNTIME_DRIVER`` and ``SSC_BUILD_DRIVER``. Both unset: no cell (the reconciler
     defers nothing, deployments fail with ``RUNTIME_UNAVAILABLE``, builds with
     ``BUILD_DRIVER_UNAVAILABLE``). ``fake``: one in-memory cell for every org, its runtime with
-    in-memory app databases and egress, and the identity of ``SSC_IDENTITY_*``. ``cell_agent``:
+    in-memory app databases, egress and data gateway, and the identity of ``SSC_IDENTITY_*``.
+    ``cell_agent``:
     each org's own cell (``runtime.cells``), from ``SSC_CELLS``, through its agent with this
     instance's ID token; a ``cell_agent`` build also needs where the bundles are, which it signs
     the bundle's URL from and the build job analyses the bundle from (SSC-015): each cell's own
@@ -268,6 +270,7 @@ def cells_of(
             build=FakeBuildDriver() if build == "fake" else None,
             app_databases=FakeAppDatabases() if fake else None,
             egress=FakeCellEgress() if fake else None,
+            datagw=FakeCellSchemas() if fake else None,
             identity=app_identity_from_env(env),
         )
     )
@@ -482,6 +485,7 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             | FakeCellDeployer
             | FakeAppDatabases
             | FakeCellEgress
+            | FakeCellSchemas
             | LogMailer,
         )
     ]

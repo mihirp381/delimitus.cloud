@@ -59,7 +59,9 @@ class Ports:
     snapshots and audit anchors to its cell's bucket instead of ``blob_store``
     (``storage.org_store``). ``timer_dispatcher`` None fails timer runs with
     ``dispatch_unavailable``. ``cell_deployer`` None fails a lazy cell resource with
-    ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087). ``directory`` None skips the directory sync
+    ``CELL_DEPLOYER_UNAVAILABLE`` (SSC-087); so does, with ``CELL_RESOURCE_UNVERIFIED``, a cell
+    whose port for that resource is None, since it cannot be asked whether the resource is there
+    (``cell.verify``). ``directory`` None skips the directory sync
     (SSC-064). ``github`` None leaves a push job with nothing to do (SSC-047); ``apps_domain``
     makes the preview address it reports. ``mailer`` None leaves queued approval mail waiting
     (SSC-049); ``console_url`` is the link those mails carry."""

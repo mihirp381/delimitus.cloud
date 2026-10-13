@@ -8,7 +8,10 @@ Each step locks the resource's row, does one thing and, unless the resource is `
    another run next time; the deployer waits out or recovers from the first (its state lock).
 2. ``creating`` with a run: read it. Running: look again in ``POLL_SECONDS``. Failed: after
    ``MAX_ATTEMPTS`` attempts the resource is ``failed`` with ``CELL_DEPLOYER_FAILED``, before
-   that a new run after a back-off. Succeeded: ``ready``.
+   that a new run after a back-off. Succeeded: ask the cell whether the resource is there to
+   use (``verify``). It is: ``ready``. It is not: the attempt failed like a failed run, with the
+   cell's reason in ``last_error``, and ``CELL_RESOURCE_UNVERIFIED`` once the attempts are spent.
+   ``ready`` is final, so it is never written on the deployer's word alone.
 3. ``ready`` or ``failed``: one transaction audits it (only when this step made it so), in the
    name of whoever asked for the resource, and re-defers every deployment waiting for it. The
    step that makes it ``ready`` also writes its ``fixed_resource`` metrics event (SSC-028), keyed
@@ -27,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.cells import CellResource, CellResourceState
 from ssc_control.audit import NewEvent, append_event
+from ssc_control.cell import verify
 from ssc_control.cell.deployer import CellDeployerError
 from ssc_control.cell.resources import TARGET_KIND, CellResourceRow, lock
 from ssc_control.cell.tasks import defer_create
@@ -43,6 +47,7 @@ MAX_ATTEMPTS: Final = 3
 BACKOFF_SECONDS: Final = (60.0, 300.0)
 CELL_DEPLOYER_FAILED: Final = "CELL_DEPLOYER_FAILED"
 CELL_DEPLOYER_UNAVAILABLE: Final = "CELL_DEPLOYER_UNAVAILABLE"
+CELL_RESOURCE_UNVERIFIED: Final = "CELL_RESOURCE_UNVERIFIED"
 
 _LABEL = text("select cell_label from ssc.org where id = :org")
 _ATTEMPT = text(
@@ -126,6 +131,16 @@ async def _poll(ports: Ports, org_id: str, resource: CellResource, execution: st
         status = "running"
     if status == "failed":
         return await _attempt_failed(ports, org_id, resource, execution, "the deployer run failed")
+    if status == "succeeded":
+        reason = await verify.unverified(ports, org_id, resource)
+        if reason is not None:
+            log.warning(
+                "cell resource not there after its run",
+                extra={"org_id": org_id, "resource": resource.value, "error": reason},
+            )
+            return await _attempt_failed(
+                ports, org_id, resource, execution, reason, CELL_RESOURCE_UNVERIFIED
+            )
     async with bound_org(ports.engine, org_id) as conn:
         row = await lock(conn, org_id, resource)
         if row is None or row.state is not CellResourceState.CREATING:
@@ -146,10 +161,16 @@ async def _poll(ports: Ports, org_id: str, resource: CellResource, execution: st
     return CellResourceState.READY.value
 
 
-async def _attempt_failed(
-    ports: Ports, org_id: str, resource: CellResource, execution: str | None, error: str
+async def _attempt_failed(  # noqa: PLR0913, PLR0917
+    ports: Ports,
+    org_id: str,
+    resource: CellResource,
+    execution: str | None,
+    error: str,
+    code: str = CELL_DEPLOYER_FAILED,
 ) -> str:
-    """A run that failed or did not start: another after a back-off, or ``failed``."""
+    """A run that failed, did not start or left nothing the cell can use: another after a
+    back-off, or ``failed`` with ``code``."""
     async with bound_org(ports.engine, org_id) as conn:
         row = await lock(conn, org_id, resource)
         if row is None or row.state is not CellResourceState.CREATING:
@@ -157,7 +178,7 @@ async def _attempt_failed(
         if row.execution != execution:
             return row.state.value
         if row.attempts >= MAX_ATTEMPTS:
-            await _finish(conn, org_id, row, CELL_DEPLOYER_FAILED, error)
+            await _finish(conn, org_id, row, code, error)
             return CellResourceState.FAILED.value
         params = {"org": org_id, "res": resource.value, "exec": execution, "error": error[:200]}
         if execution is not None:
