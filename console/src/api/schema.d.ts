@@ -314,6 +314,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app_id}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete App
+         * @description Delete the app with everything it had, in both environments: 202 plus a ``Location`` to
+         *     follow the steps. Nothing brings it back.
+         *
+         *     ``CONFIRMATION_MISMATCH`` unless ``confirm`` is the app's slug; ``APP_OPERATION_IN_FLIGHT``
+         *     while a deploy, promote, rollback or build of the app is under way; ``KILL_SWITCH_IN_FLIGHT``
+         *     while a pull of its switch, or an earlier removal, is still running. A removal that ended
+         *     ``failed`` is finished by asking again.
+         */
+        post: operations["delete_app_v1_apps__app_id__delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/delete/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Delete Run
+         * @description One removal of the app: each step's state and timings, how many things it deleted, and
+         *     the total. Readable after the app is gone.
+         */
+        get: operations["get_app_delete_run_v1_apps__app_id__delete__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app_id}/enable": {
         parameters: {
             query?: never;
@@ -327,7 +374,7 @@ export interface paths {
          * Enable App
          * @description Make a disabled or quarantined app active again and resume the schedules the kill
          *     switch paused. The reconciler brings it back up. ``KILL_SWITCH_IN_FLIGHT`` until the
-         *     running pull has finished.
+         *     running pull has finished. An app being deleted does not come back (``APP_DELETING``).
          */
         post: operations["enable_app_v1_apps__app_id__enable_post"];
         delete?: never;
@@ -1581,6 +1628,86 @@ export interface components {
              */
             slug: string;
         };
+        /** AppDelete */
+        AppDelete: {
+            /**
+             * Confirm
+             * @description The app's slug, typed again: what is about to be deleted.
+             */
+            confirm: string;
+        };
+        /** AppDeleteAccepted */
+        AppDeleteAccepted: {
+            /** Run Id */
+            run_id: string;
+            /**
+             * State
+             * @constant
+             */
+            state: "running";
+        };
+        /** AppDeleteRun */
+        AppDeleteRun: {
+            /** App Id */
+            app_id: string;
+            /** Finished At */
+            finished_at: string | null;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "completed" | "failed";
+            /**
+             * Steps
+             * @description The steps begun so far, in order.
+             */
+            steps: components["schemas"]["AppDeleteStep"][];
+            /** Total Ms */
+            total_ms: number | null;
+        };
+        /** AppDeleteStep */
+        AppDeleteStep: {
+            /** Attempts */
+            attempts: number;
+            /** Elapsed Ms */
+            elapsed_ms: number | null;
+            /**
+             * Error
+             * @description The reason code of the last failed try, if any.
+             */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "gateway_deny" | "datagw_suspend" | "egress_remove" | "scale_to_zero" | "remove_timers" | "drop_databases" | "delete_files" | "delete_secrets" | "delete_services" | "delete_bundles" | "remove_records";
+            /**
+             * Removed
+             * @description How many things the step deleted; null for a step that deletes nothing.
+             */
+            removed: number | null;
+            /** Snapshot Version */
+            snapshot_version: number | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "done" | "unconfirmed" | "failed";
+        };
         /** AppList */
         AppList: {
             /** Apps */
@@ -1605,7 +1732,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "active" | "disabled" | "quarantined";
+            status: "active" | "disabled" | "quarantined" | "deleting";
         };
         /** AppSummary */
         AppSummary: {
@@ -1619,7 +1746,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "active" | "disabled" | "quarantined";
+            status: "active" | "disabled" | "quarantined" | "deleting";
         };
         /** @enum {string} */
         ApplyOutcome: "applied" | "waiting" | "not_applied" | "not_applicable";
@@ -3007,7 +3134,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "active" | "disabled" | "quarantined";
+            status: "active" | "disabled" | "quarantined" | "deleting";
         };
         /** InventoryEnvironment */
         InventoryEnvironment: {
@@ -4485,7 +4612,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_IN_FLIGHT` */
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_DELETING` */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5352,6 +5479,165 @@ export interface operations {
             };
         };
     };
+    delete_app_v1_apps__app_id__delete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppDelete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppDeleteAccepted"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_OPERATION_IN_FLIGHT`, `KILL_SWITCH_IN_FLIGHT` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `CONFIRMATION_MISMATCH` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_app_delete_run_v1_apps__app_id__delete__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppDeleteRun"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     enable_app_v1_apps__app_id__enable_post: {
         parameters: {
             query?: never;
@@ -5410,7 +5696,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_ALREADY_ACTIVE`, `KILL_SWITCH_IN_FLIGHT` */
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_ALREADY_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`, `APP_DELETING` */
             409: {
                 headers: {
                     [name: string]: unknown;

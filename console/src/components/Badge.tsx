@@ -15,6 +15,7 @@ export const STATUS_TONE: Readonly<Record<string, Tone>> = {
   active: 'success',
   disabled: 'neutral',
   quarantined: 'danger',
+  deleting: 'danger',
 };
 
 export function StatusBadge({ status }: { readonly status: string }) {

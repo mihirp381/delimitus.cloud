@@ -53,6 +53,7 @@ from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import FakeAppDatabases
 from ssc_control.runtime.cell_agent import MetadataIdTokens
 from ssc_control.runtime.cell_egress import FakeCellEgress
+from ssc_control.runtime.cell_removal import FakeCellRemoval
 from ssc_control.runtime.cells import (
     CELLS_ENV,
     STATIC_LABEL,
@@ -269,6 +270,7 @@ def cells_of(
             app_databases=FakeAppDatabases() if fake else None,
             egress=FakeCellEgress() if fake else None,
             identity=app_identity_from_env(env),
+            removal=FakeCellRemoval() if fake else None,
         )
     )
 
@@ -482,6 +484,7 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             | FakeCellDeployer
             | FakeAppDatabases
             | FakeCellEgress
+            | FakeCellRemoval
             | LogMailer,
         )
     ]

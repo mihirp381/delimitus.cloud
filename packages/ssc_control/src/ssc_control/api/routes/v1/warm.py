@@ -33,7 +33,7 @@ router = APIRouter()
 _PROD = text(
     "select e.id, e.app_id, a.slug from ssc.environment e "
     "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
-    "where e.org_id = :org and e.name = 'prod' order by a.slug"
+    "where e.org_id = :org and e.name = 'prod' and a.status <> 'deleted' order by a.slug"
 )
 _CHANGE: Final = (
     *AUTHENTICATED,

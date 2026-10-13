@@ -10,7 +10,8 @@ are configured, ``storage.org_bundle_store``) and deletes an object older than `
 Never an object whose digest a release of that app carries, whatever its row says (a promote
 rebuilds from it, and a rollback may), nor a key that is not a bundle key. Every deletion is
 logged with the org, app, digest and age. Offboarding deletes the cell project, and with it
-every bundle that is left.
+every bundle that is left. ``remove_app`` is not a collection: it deletes every object of an app
+that is being removed (GA-12), a release's too, since nothing can promote or roll back to it.
 
 Each decision and its delete share one transaction holding the key's advisory lock
 ``(15, hashtext(key))``, which ``create_bundle`` takes before it records a digest, and the row
@@ -62,6 +63,11 @@ _EXPIRE = text(
     "update ssc.bundle set state = 'pending', stored_at = null, manifest = null, "
     "manifest_digest = null, file_count = null "
     "where org_id = :org and id = :id and state = 'stored'"
+)
+_EXPIRE_DIGEST = text(
+    "update ssc.bundle set state = 'pending', stored_at = null, manifest = null, "
+    "manifest_digest = null, file_count = null "
+    "where org_id = :org and app_id = :app and digest = :digest and state = 'stored'"
 )
 
 type _Verdict = Literal["delete", "expire", "keep", "busy"]
@@ -153,6 +159,28 @@ async def collect_org(
                     verdict = "delete" if deleted else "keep"
         counts[verdict] += 1
     return Collected(counts["delete"], counts["keep"], counts["busy"], counts["expire"])
+
+
+async def remove_app(engine: AsyncEngine, store: BlobStore, org_id: str, app_id: str) -> int:
+    """Delete every bundle object of ``app_id``; how many. Each goes under its key's lock, with
+    its ``stored`` row back to ``pending`` in the same transaction, as an expiry does. Running it
+    again deletes what is left."""
+    try:
+        keys = [info.key async for info in store.list(f"bundles/{org_id}/{app_id}/")]
+    except BlobNotFoundError:
+        return 0
+    deleted = 0
+    for key in keys:
+        match = BUNDLE_KEY.fullmatch(key)
+        if match is None or (match[1], match[2]) != (org_id, app_id):
+            continue
+        async with bound_org(engine, org_id) as conn:
+            await lock_bundle_key(conn, key)
+            deleted += await store.delete(key)
+            params = {"org": org_id, "app": app_id, "digest": DIGEST_PREFIX + match[3]}
+            await conn.execute(_EXPIRE_DIGEST, params)
+        log.info("bundle object deleted with its app", extra={"org_id": org_id, "app_id": app_id})
+    return deleted
 
 
 async def _decide(  # noqa: PLR0911  (one return per rule, in order)

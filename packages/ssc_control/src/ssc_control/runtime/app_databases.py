@@ -11,6 +11,9 @@ database secret, audited ``secret.bound`` or ``secret.rotated`` like a secret se
 
 ``recovery_point`` asks the cell where the instance is now, its time and write-ahead log
 position, which a production deployment records before it starts (SSC-043).
+
+``drop`` has the cell drop a stopped service's database, its roles and its secrets (GA-12);
+``lifecycle.removal`` then deletes what ``record_database`` kept, which gives the place back.
 """
 
 from collections.abc import Mapping
@@ -33,6 +36,8 @@ from ssc_shared.redaction import redact
 from ssc_shared.runtime import ORG_HEADER, SECRET_VERSION, check_org
 
 CALL_TIMEOUT_SECONDS: Final = 120.0
+NO_INSTANCE: Final = "DATABASES_NOT_CONFIGURED"
+"""The agent's answer when its cell has no instance, so no app database was ever made there."""
 
 type Failure = Literal["DB_TIER_FULL", "DATABASE_NOT_FOUND", "DATABASE_UNAVAILABLE"]
 
@@ -42,9 +47,11 @@ class AppDatabaseError(Exception):
     the instance is full, ``DATABASE_NOT_FOUND`` when there is none to rotate, and
     ``DATABASE_UNAVAILABLE`` for anything else."""
 
-    def __init__(self, code: Failure, message: str) -> None:
+    def __init__(self, code: Failure, message: str, *, no_instance: bool = False) -> None:
         super().__init__(redact(message))
         self.code: Failure = code
+        self.no_instance = no_instance
+        """The cell has no instance at all (``NO_INSTANCE``)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -90,6 +97,11 @@ class AppDatabases(Protocol):
 
     async def recovery_point(self, service: str) -> RecoveryPoint:
         """Where the instance holding the service's database is now."""
+        ...
+
+    async def drop(self, service: str) -> bool:
+        """Drop the stopped service's database, roles and database secrets, ending the sessions
+        still open; one already gone is fine. False when the cell has no instance at all."""
         ...
 
 
@@ -146,6 +158,15 @@ class CellAppDatabases(AppDatabases):
             ) from None
         return RecoveryPoint(at=when, lsn=lsn)
 
+    async def drop(self, service: str) -> bool:
+        try:
+            await self._call("drop", service)
+        except AppDatabaseError as exc:
+            if exc.no_instance:
+                return False
+            raise
+        return True
+
     async def _call(self, method: str, service: str) -> dict[str, Any]:
         token = await self._id_tokens(self._url)
         try:
@@ -175,7 +196,9 @@ class CellAppDatabases(AppDatabases):
         )
         message = f"{code} {body.get('message', response.reason_phrase)}"
         raise AppDatabaseError(
-            failure, f"cell agent {method}: HTTP {response.status_code} {message}"
+            failure,
+            f"cell agent {method}: HTTP {response.status_code} {message}",
+            no_instance=code == NO_INSTANCE,
         )
 
     async def aclose(self) -> None:
@@ -223,6 +246,11 @@ class FakeAppDatabases(AppDatabases):
             raise AppDatabaseError("DATABASE_NOT_FOUND", f"{service} has no app database")
         self.lsn += 0x100
         return RecoveryPoint(at=datetime.now(UTC), lsn=f"0/{self.lsn:X}")
+
+    async def drop(self, service: str) -> bool:
+        self.calls.append(("drop", service))
+        self._versions.pop(service, None)
+        return True
 
     def _next(self, service: str) -> MadeDatabase:
         version = self._versions.get(service, 0) + 1

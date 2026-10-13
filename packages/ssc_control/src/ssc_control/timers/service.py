@@ -124,6 +124,10 @@ _ACTIVE_OF_APP = text(
     f"select {_COLUMNS} from ssc.schedule s {_ENV_AND_APP}"  # noqa: S608  (constant SQL fragments)
     "where s.org_id = :org and a.id = :app and s.state = 'active' order by s.id for update of s"
 )
+_LIVE_OF_APP = text(
+    f"select {_COLUMNS} from ssc.schedule s {_ENV_AND_APP}"  # noqa: S608  (constant SQL fragments)
+    "where s.org_id = :org and a.id = :app and s.state <> 'deleted' order by s.id for update of s"
+)
 _KILL_PAUSED_OF_APP = text(
     f"select {_COLUMNS} from ssc.schedule s {_ENV_AND_APP}"  # noqa: S608  (constant SQL fragments)
     "where s.org_id = :org and a.id = :app and s.id = any(:ids) and s.state = 'paused' "
@@ -380,6 +384,23 @@ class Timers(TimersPort):
             )
             paused.append(str(row["id"]))
         return paused
+
+    async def remove_for_app(
+        self, conn: AsyncConnection, *, org_id: str, app_id: str, actor: Actor
+    ) -> list[str]:
+        found = (await conn.execute(_LIVE_OF_APP, {"org": org_id, "app": app_id})).mappings().all()
+        for row in found:
+            await conn.execute(_DELETE, {"org": org_id, "id": row["id"]})
+        for row in found:
+            await _audit(
+                conn,
+                org_id=org_id,
+                actor=actor,
+                action=AuditAction.SCHEDULE_DELETED,
+                schedule_id=str(row["id"]),
+                before=view(row),
+            )
+        return [str(row["id"]) for row in found]
 
     async def resume_after_kill(  # noqa: PLR0913  (keyword-only)
         self,

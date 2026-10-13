@@ -65,9 +65,12 @@ _READ = text("select * from ssc.warm_gateway where org_id = :org")
 _WARM_ENVS = text(
     'select id from ssc.environment where org_id = :org and warm order by id collate "C"'
 )
+# Not those of an app that is being deleted or is gone (GA-12): nothing of it is kept warm.
 _NAMED = text(
-    "select id, name from ssc.environment where org_id = :org and id = any(cast(:ids as text[])) "
-    "for no key update"
+    "select e.id, e.name from ssc.environment e "
+    "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
+    "where e.org_id = :org and e.id = any(cast(:ids as text[])) "
+    "and a.status not in ('deleting', 'deleted') for no key update of e"
 )
 _SET_ENVS = text(
     "update ssc.environment set warm = (id = any(cast(:ids as text[]))) "

@@ -180,6 +180,222 @@
         "title": "AppCreate",
         "type": "object"
       },
+      "AppDelete": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "description": "The app's slug, typed again: what is about to be deleted.",
+            "title": "Confirm",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "title": "AppDelete",
+        "type": "object"
+      },
+      "AppDeleteAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "state": {
+            "const": "running",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "state"
+        ],
+        "title": "AppDeleteAccepted",
+        "type": "object"
+      },
+      "AppDeleteRun": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "steps": {
+            "description": "The steps begun so far, in order.",
+            "items": {
+              "$ref": "#/components/schemas/AppDeleteStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "total_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Ms"
+          }
+        },
+        "required": [
+          "run_id",
+          "app_id",
+          "state",
+          "steps",
+          "started_at",
+          "finished_at",
+          "total_ms"
+        ],
+        "title": "AppDeleteRun",
+        "type": "object"
+      },
+      "AppDeleteStep": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The reason code of the last failed try, if any.",
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "name": {
+            "enum": [
+              "gateway_deny",
+              "datagw_suspend",
+              "egress_remove",
+              "scale_to_zero",
+              "remove_timers",
+              "drop_databases",
+              "delete_files",
+              "delete_secrets",
+              "delete_services",
+              "delete_bundles",
+              "remove_records"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "removed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many things the step deleted; null for a step that deletes nothing.",
+            "title": "Removed"
+          },
+          "snapshot_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Version"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "done",
+              "unconfirmed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "state",
+          "snapshot_version",
+          "started_at",
+          "finished_at",
+          "elapsed_ms",
+          "attempts",
+          "error",
+          "removed"
+        ],
+        "title": "AppDeleteStep",
+        "type": "object"
+      },
       "AppList": {
         "additionalProperties": false,
         "properties": {
@@ -228,7 +444,8 @@
             "enum": [
               "active",
               "disabled",
-              "quarantined"
+              "quarantined",
+              "deleting"
             ],
             "title": "Status",
             "type": "string"
@@ -264,7 +481,8 @@
             "enum": [
               "active",
               "disabled",
-              "quarantined"
+              "quarantined",
+              "deleting"
             ],
             "title": "Status",
             "type": "string"
@@ -3956,7 +4174,8 @@
             "enum": [
               "active",
               "disabled",
-              "quarantined"
+              "quarantined",
+              "deleting"
             ],
             "title": "Status",
             "type": "string"
@@ -7024,7 +7243,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_DELETING`"
           },
           "412": {
             "content": {
@@ -8203,9 +8422,233 @@
         ]
       }
     },
+    "/v1/apps/{app_id}/delete": {
+      "post": {
+        "description": "Delete the app with everything it had, in both environments: 202 plus a ``Location`` to\nfollow the steps. Nothing brings it back.\n\n``CONFIRMATION_MISMATCH`` unless ``confirm`` is the app's slug; ``APP_OPERATION_IN_FLIGHT``\nwhile a deploy, promote, rollback or build of the app is under way; ``KILL_SWITCH_IN_FLIGHT``\nwhile a pull of its switch, or an earlier removal, is still running. A removal that ended\n``failed`` is finished by asking again.",
+        "operationId": "delete_app_v1_apps__app_id__delete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppDelete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppDeleteAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_OPERATION_IN_FLIGHT`, `KILL_SWITCH_IN_FLIGHT`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `CONFIRMATION_MISMATCH`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Delete App",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/delete/{run_id}": {
+      "get": {
+        "description": "One removal of the app: each step's state and timings, how many things it deleted, and\nthe total. Readable after the app is gone.",
+        "operationId": "get_app_delete_run_v1_apps__app_id__delete__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppDeleteRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Get App Delete Run",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
     "/v1/apps/{app_id}/enable": {
       "post": {
-        "description": "Make a disabled or quarantined app active again and resume the schedules the kill\nswitch paused. The reconciler brings it back up. ``KILL_SWITCH_IN_FLIGHT`` until the\nrunning pull has finished.",
+        "description": "Make a disabled or quarantined app active again and resume the schedules the kill\nswitch paused. The reconciler brings it back up. ``KILL_SWITCH_IN_FLIGHT`` until the\nrunning pull has finished. An app being deleted does not come back (``APP_DELETING``).",
         "operationId": "enable_app_v1_apps__app_id__enable_post",
         "parameters": [
           {
@@ -8294,7 +8737,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_ALREADY_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_ALREADY_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`, `APP_DELETING`"
           },
           "422": {
             "content": {

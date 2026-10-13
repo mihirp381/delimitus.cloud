@@ -67,7 +67,13 @@ _GROUP_NAMES = text(
     "select id, display_name from ssc.user_group where org_id = :org and id = any(:ids)"
 )
 CANCELLED_BY_REQUESTER: Final = "Withdrawn by the requester."
-_SELECT_ENV = text("select grants_version from ssc.environment where org_id = :org and id = :env")
+# FOR SHARE waits for a removal asked for at the same moment (GA-12), whose last step cancels
+# the requests that are open.
+_SELECT_ENV = text(
+    "select e.grants_version, a.id, a.status from ssc.environment e "
+    "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
+    "where e.org_id = :org and e.id = :env and a.status <> 'deleted' for share of a"
+)
 _SELECT_ROLE = text("select role, status from ssc.user_account where org_id = :org and id = :id")
 
 
@@ -377,7 +383,11 @@ async def _diff(uow: UnitOfWork, row: ApprovalRow) -> GrantDiff | None:
             "approved; that request is returned.",
         },
         **problem_responses(
-            *POST_COMMON, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND, ErrorCode.PRECONDITION_STALE
+            *POST_COMMON,
+            ErrorCode.FORBIDDEN,
+            ErrorCode.NOT_FOUND,
+            ErrorCode.PRECONDITION_STALE,
+            ErrorCode.APP_DELETING,
         ),
     },
 )
@@ -386,13 +396,15 @@ async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
     environment's builders, its app's owner and org admins, agent sessions included. An
     `exceed_ceiling` request is decided by the named connection's owner or an org admin."""
     require_user(uow)
-    version = (
+    env = (
         await uow.conn.execute(_SELECT_ENV, {"org": uow.org_id, "env": body.environment_id})
-    ).scalar_one_or_none()
-    if version is None:
+    ).first()
+    if env is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": body.environment_id})
+    if env.status == "deleting":
+        raise Refusal(ErrorCode.APP_DELETING, evidence={"app_id": env.id})
     by = await require_builder(uow, body.environment_id)
-    requirement, payload = _requirement(body, int(version))
+    requirement, payload = _requirement(body, int(env.grants_version))
     if requirement.kind is RequirementKind.EXCEED_CEILING:
         named = str(payload["connection"])
         if await connections.get(uow.conn, uow.org_id, named) is None:

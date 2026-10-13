@@ -35,7 +35,7 @@ from ssc_shared.runtime import (
 )
 
 EnvName = Literal["prod", "preview"]
-AppStatus = Literal["active", "disabled", "quarantined"]
+AppStatus = Literal["active", "disabled", "quarantined", "deleting", "deleted"]
 SESSION_CONCURRENCY: Final = 1000
 REQUEST_CONCURRENCY: Final = 80
 
@@ -43,10 +43,10 @@ REQUEST_CONCURRENCY: Final = 80
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Stopped:
     """The service must serve nothing and hold no instances. Beats everything, including a
-    missing service: a disabled app is never created or restarted."""
+    missing service: a disabled app is never created or restarted, nor is one being deleted."""
 
     service: str
-    reason: Literal["disabled", "quarantined"]
+    reason: Literal["disabled", "quarantined", "deleting", "deleted"]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

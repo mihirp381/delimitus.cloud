@@ -17,7 +17,7 @@ Approving the last open requirement of a change applies it (:func:`apply_approve
 Each grant a change actually adds records one ``share`` metrics event (SSC-028).
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 
 from fastapi import APIRouter, Header, Response
 from pydantic import Field, ValidationError
@@ -102,6 +102,8 @@ _LOCK_ENV = text(
     "where org_id = :org and app_id = :app and id = :env for update"
 )
 _SHARE_APP_STATUS = text("select status from ssc.app where org_id = :org and id = :app for share")
+_SHARING_FROZEN: Final = frozenset({"quarantined", "deleting", "deleted"})
+"""The statuses in which an app's sharing takes no change: quarantined (SSC-025), or going."""
 _SELECT_ENV = text(
     "select id, grants_version from ssc.environment "
     "where org_id = :org and app_id = :app and id = :env"
@@ -324,12 +326,13 @@ def _stored_grants(row: ApprovalRow) -> dict[GrantKey, GrantIn] | None:
 async def _blocked(
     uow: UnitOfWork, row: ApprovalRow, desired: dict[GrantKey, GrantIn] | None
 ) -> str | None:
-    """Why an approved change may not be written now: nothing stored to write, a quarantined
-    app's sharing is frozen, or the requester may no longer build the environment."""
+    """Why an approved change may not be written now: nothing stored to write, the sharing of
+    a quarantined app, or of one being deleted, is frozen, or the requester may no longer build
+    the environment."""
     if desired is None:
         return "payload_invalid"
     params = {"org": uow.org_id, "app": row.app_id}
-    if (await uow.conn.execute(_SHARE_APP_STATUS, params)).scalar() == "quarantined":
+    if (await uow.conn.execute(_SHARE_APP_STATUS, params)).scalar() in _SHARING_FROZEN:
         return "app_not_active"
     if not await can_build(uow.conn, uow.org_id, row.requested_by_user_id, row.environment_id):
         return "requester_cannot_build"
@@ -496,11 +499,12 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     if env is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
     await require_builder(uow, environment_id)
-    # Sharing freeze (SSC-025). FOR SHARE waits for a kill switch pulled at the same moment.
+    # Sharing freeze (SSC-025). FOR SHARE waits for a kill switch pulled at the same moment,
+    # or a removal asked for (GA-12).
     status = (
         await uow.conn.execute(_SHARE_APP_STATUS, {"org": uow.org_id, "app": app_id})
     ).scalar()
-    if status == "quarantined":
+    if status in _SHARING_FROZEN:
         raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"app_id": app_id, "status": status})
     current = int(env[1])
     if current != expected:

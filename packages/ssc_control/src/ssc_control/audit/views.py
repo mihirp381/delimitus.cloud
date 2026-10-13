@@ -42,6 +42,7 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
             "since_command_ms",
             "attempts",
             "error",
+            "removed",  # GA-12: how many things a removal's step deleted
         }
     ),
     "release": frozenset(
