@@ -30,7 +30,7 @@ from urllib.parse import unquote_to_bytes
 import jwt
 from pydantic import ValidationError
 
-from ssc_contracts.identity import (
+from ssc_app.note import (
     IDENTITY_ALG,
     IDENTITY_HEADER,
     IDENTITY_TYP,
