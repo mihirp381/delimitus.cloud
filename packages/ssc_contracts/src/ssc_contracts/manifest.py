@@ -200,7 +200,7 @@ def _timezone(value: str) -> str:
         raise ValueError("must be UTC or an IANA zone such as Europe/London")
     try:
         zoneinfo.ZoneInfo(value)
-    except ValueError, OSError, KeyError:
+    except (ValueError, OSError, KeyError):
         raise ValueError("is not a known IANA time zone") from None
     return value
 
@@ -657,7 +657,7 @@ class _Positions:
         self.at: dict[_Loc, tuple[int, int]] = {}
         try:
             self._document()
-        except _ScanError, IndexError, ValueError:
+        except (_ScanError, IndexError, ValueError):
             pass
 
     def _pos(self, index: int) -> tuple[int, int]:

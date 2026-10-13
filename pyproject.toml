@@ -59,6 +59,9 @@ ssc-conformance = { workspace = true }
 line-length = 100
 extend-exclude = ["spikes", "gates", "console", "infra/node_modules", "conformance/build_fixtures", "landing/art"]
 target-version = "py314"
+# The app helper and the contracts it imports run on the app runtime's Python (3.13), not the
+# platform's.
+per-file-target-version = { "packages/ssc_app/src/**" = "py313", "packages/ssc_contracts/src/**" = "py313" }
 src = ["packages/*/src", "conformance", "tools", "infra", "infra/tests"]
 
 [tool.ruff.lint]
