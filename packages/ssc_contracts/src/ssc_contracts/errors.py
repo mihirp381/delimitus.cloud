@@ -72,6 +72,10 @@ class ErrorCode(StrEnum):
     # kill switch (SSC-025)
     KILL_SWITCH_IN_FLIGHT = "KILL_SWITCH_IN_FLIGHT"
     APP_ALREADY_ACTIVE = "APP_ALREADY_ACTIVE"
+    # removing an app (GA-12)
+    CONFIRMATION_MISMATCH = "CONFIRMATION_MISMATCH"
+    APP_OPERATION_IN_FLIGHT = "APP_OPERATION_IN_FLIGHT"
+    APP_DELETING = "APP_DELETING"
     # timers (SSC-041)
     TIMER_RUN_IN_FLIGHT = "TIMER_RUN_IN_FLIGHT"
     SCHEDULE_CANNOT_RESUME = "SCHEDULE_CANNOT_RESUME"
@@ -321,6 +325,25 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "This app is already active.",
         "Only a disabled or quarantined app can be enabled.",
     ),
+    ErrorCode.CONFIRMATION_MISMATCH: CatalogueEntry(
+        422,
+        "The confirmation does not match the app's name.",
+        "Deleting an app cannot be undone, so the request must repeat the app's exact name. "
+        "Nothing was deleted. Send the app's name as the confirmation and retry.",
+    ),
+    ErrorCode.APP_OPERATION_IN_FLIGHT: CatalogueEntry(
+        409,
+        "This app has a build, deploy, promote or rollback in progress.",
+        "An app is deleted only while nothing is being built or deployed for it. Nothing was "
+        "deleted. Wait for the operation to finish, then delete the app again.",
+    ),
+    ErrorCode.APP_DELETING: CatalogueEntry(
+        409,
+        "This app is being deleted.",
+        "An org admin started deleting this app, so it cannot be enabled, stopped or changed. If "
+        "the deletion stopped at a failed step, an org admin can delete the app again to finish "
+        "it.",
+    ),
     ErrorCode.TIMER_RUN_IN_FLIGHT: CatalogueEntry(
         409,
         "This schedule already has a run in progress.",
@@ -363,8 +386,9 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "Your company's database has no room for another app environment.",
         "The base database (db-f1-micro) holds ten environments that use a database, preview "
         "ones included, and all ten are taken. Nothing was created. An org admin can move to the "
-        "bigger database (db-g1-small, about $26 a month), or free a place by removing an "
-        "environment that no longer needs its database.",
+        "bigger database (db-g1-small, about $26 a month), or free places by deleting an app "
+        "that is no longer needed (ssc apps delete): each of its environments that used a "
+        "database gives its place back.",
     ),
     ErrorCode.DATABASE_UNAVAILABLE: CatalogueEntry(
         503,
