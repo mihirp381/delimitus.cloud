@@ -44,6 +44,9 @@ from ssc_cli.errors import (
 from ssc_cli.models import (
     AccessExplained,
     AppCreate,
+    AppDelete,
+    AppDeleteAccepted,
+    AppDeleteRun,
     AppList,
     AppOut,
     ApprovalDecided,
@@ -368,6 +371,17 @@ class ApiClient:
     def get_kill_switch_run(self, app_id: str, run_id: str) -> KillSwitchRun:
         path = f"/v1/apps/{_seg(app_id)}/kill-switch/{_seg(run_id)}"
         return _parse(self._send("GET", path), KillSwitchRun)
+
+    def delete_app(self, app_id: str, confirm: str) -> AppDeleteAccepted:
+        """Start removing the app and everything that belongs to it. ``confirm`` is its slug,
+        typed again. Org admins only."""
+        path = f"/v1/apps/{_seg(app_id)}/delete"
+        return _parse(self._send("POST", path, body=AppDelete(confirm=confirm)), AppDeleteAccepted)
+
+    def get_app_delete_run(self, app_id: str, run_id: str) -> AppDeleteRun:
+        """One removal of the app; still readable once the app is gone."""
+        path = f"/v1/apps/{_seg(app_id)}/delete/{_seg(run_id)}"
+        return _parse(self._send("GET", path), AppDeleteRun)
 
     def enable_app(self, app_id: str) -> AppOut:
         """Make a stopped app active again. Org admins only."""

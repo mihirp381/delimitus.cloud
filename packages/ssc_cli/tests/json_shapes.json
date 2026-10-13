@@ -20,6 +20,32 @@
     "slug": "string",
     "user_id": "string"
   },
+  "AppDeleteResult": {
+    "app_id": "string",
+    "run_id": "string",
+    "slug": "string",
+    "state": "string",
+    "status": "string",
+    "steps": "array<AppDeleteStepRow>",
+    "total_ms": "integer|null"
+  },
+  "AppDeleteRunResult": {
+    "app_id": "string",
+    "finished_at": "string|null",
+    "run_id": "string",
+    "started_at": "string",
+    "state": "string",
+    "steps": "array<AppDeleteStepRow>",
+    "total_ms": "integer|null"
+  },
+  "AppDeleteStepRow": {
+    "attempts": "integer",
+    "elapsed_ms": "integer|null",
+    "error": "string|null",
+    "name": "string",
+    "removed": "integer|null",
+    "state": "string"
+  },
   "AppResult": {
     "created_at": "string",
     "environments": "array<EnvironmentRow>",

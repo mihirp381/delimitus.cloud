@@ -263,6 +263,33 @@ class KillSwitchRun(Wire):
     total_ms: int | None = None
 
 
+class AppDeleteAccepted(Wire):
+    run_id: str
+    state: str
+
+
+class AppDeleteStep(Wire):
+    name: str
+    state: str
+    snapshot_version: int | None = None
+    started_at: str
+    finished_at: str | None = None
+    elapsed_ms: int | None = None
+    attempts: int
+    error: str | None = None
+    removed: int | None = None
+
+
+class AppDeleteRun(Wire):
+    run_id: str
+    app_id: str
+    state: str
+    steps: list[AppDeleteStep]
+    started_at: str
+    finished_at: str | None = None
+    total_ms: int | None = None
+
+
 class ExplainedGrant(Wire):
     grant_id: str
     role: str
@@ -564,6 +591,10 @@ class PromoteIn(Body):
 
 class KillSwitchCreate(Body):
     mode: str
+
+
+class AppDelete(Body):
+    confirm: str
 
 
 class SecretSet(Body):

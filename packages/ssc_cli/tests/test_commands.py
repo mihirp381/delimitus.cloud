@@ -23,6 +23,7 @@ from ssc_cli.main import app
 from ssc_cli.session import Session
 from ssc_cli.shapes import (
     AccessResult,
+    AppDeleteResult,
     AppResult,
     ApprovalsResult,
     AppsResult,
@@ -141,6 +142,8 @@ def test_help_lists_exact_set(cli):
         ("token", "revoke-ci"),
         ("apps",),
         ("apps", "create"),
+        ("apps", "delete"),
+        ("apps", "delete-status"),
         ("status",),
         ("share",),
         ("unshare",),
@@ -171,7 +174,7 @@ def test_help_lists_exact_set(cli):
     }
     for group, subs in (
         ("token", {"set", "clear", "create-ci", "list-ci", "revoke-ci"}),
-        ("apps", {"create"}),
+        ("apps", {"create", "delete", "delete-status"}),
         ("access", {"explain"}),
         ("secret", {"set", "list"}),
         ("database", {"rotate"}),
@@ -1197,6 +1200,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("logs",): ([name, "--env", "preview", "--source", "deploy"], LogsResult, None),
         ("disable",): ([name, "--timeout", "3600"], DisableResult, None),
         ("enable",): ([name], AppResult, None),
+        ("apps", "delete"): ([name, "--confirm", name, "--timeout", "3600"], AppDeleteResult, None),
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
         ("requirements",): ([], PlatformRequirements, None),
         ("policy",): ([], PolicyResult, None),
@@ -1217,10 +1221,12 @@ def test_every_command_has_json(on_live, live, tmp_path):
     # needs an unlinked login; test_logins.py covers its --json. `repo connect`, `show` and
     # `disconnect` need a GitHub App the dev stack does not have; test_repo.py covers their --json.
     # `token create-ci` needs a login at an auth host, and `token revoke-ci` a CI token;
-    # test_ci_tokens.py covers their --json.
+    # test_ci_tokens.py covers their --json. `apps delete-status` needs the id of a removal;
+    # test_admin_commands.py covers its --json.
     expected = (
         {
             ("mcp",),
+            ("apps", "delete-status"),
             ("login",),
             ("secret", "set"),
             ("database", "rotate"),
