@@ -90,6 +90,14 @@ nothing but an operator turns it on."""
 GATEWAY_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{GATEWAY}"
 GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
 AGENT_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{CELL_AGENT}"
+DEPLOYER_UPDATES: Final[dict[str, frozenset[str]]] = {
+    "database": frozenset({AGENT_SERVICE}),
+    "egress": frozenset(),
+    "connections": frozenset({AGENT_SERVICE}),
+    "warm": frozenset({GATEWAY_SERVICE}),
+}
+"""What a cell already has that each flag the deployer sets changes in place: the service that
+is told about the new resource, or kept warm. The deployer reads these back before it applies."""
 SQL_INSTANCE_ENV: Final = "SSC_SQL_INSTANCE"
 
 APPS_DOMAIN: Final = "delimitusapps.com"
