@@ -101,7 +101,7 @@ def _refusal(status: int, raw: bytes) -> DataError:
     try:
         error = json.loads(raw)["error"]
         return DataError(str(error["code"]), str(error["message"]), status, error.get("sqlstate"))
-    except ValueError, KeyError, TypeError:
+    except (ValueError, KeyError, TypeError):
         return DataError("UNAVAILABLE", f"the data gateway answered HTTP {status}", status)
 
 
