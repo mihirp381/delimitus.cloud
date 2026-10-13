@@ -249,15 +249,27 @@ async def upsert_user(
 
 
 async def upsert_group(
-    conn: AsyncConnection, org_id: str, *, directory_ref: str, display_name: str, actor: Actor
+    conn: AsyncConnection,
+    org_id: str,
+    *,
+    directory_ref: str,
+    display_name: str | None,
+    actor: Actor,
 ) -> GroupResult:
-    """Create the group named by the directory's own id, or refresh its cached name.
+    """Create the group named by the directory's own id, or refresh its cached name. With no
+    ``display_name`` (an event that did not carry one) a group keeps the name it has, and a new
+    one is named by its directory id until a listing names it.
 
     A new group has no members and no grants, so it changes no access decision."""
     created = (
         await conn.execute(
             _INSERT_GROUP,
-            {"id": new_id("grp"), "org": org_id, "ref": directory_ref, "name": display_name},
+            {
+                "id": new_id("grp"),
+                "org": org_id,
+                "ref": directory_ref,
+                "name": directory_ref if display_name is None else display_name,
+            },
         )
     ).scalar_one_or_none()
     if created is not None:
@@ -274,7 +286,7 @@ async def upsert_group(
     group_id, name = (
         await conn.execute(_LOCK_GROUP_BY_REF, {"org": org_id, "ref": directory_ref})
     ).one()
-    if name != display_name:
+    if display_name is not None and name != display_name:
         await conn.execute(_RENAME_GROUP, {"org": org_id, "id": group_id, "name": display_name})
     return GroupResult(group_id=str(group_id), created=False)
 

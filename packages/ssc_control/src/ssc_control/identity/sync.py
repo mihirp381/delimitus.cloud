@@ -171,9 +171,12 @@ async def _fetch_events(  # noqa: C901, PLR0912  (one pass over the event kinds)
                     if isinstance(idp, str):
                         removed[uid] = idp
             elif kind.startswith("dsync.group."):
-                gid = (_nested(data, "group") or data).get("id")
+                group = _nested(data, "group") or data
+                gid, name = group.get("id"), group.get("name")
                 if isinstance(gid, str):
                     group_ids.add(gid)
+                    if isinstance(name, str) and name:  # the event's own, newest last
+                        out.group_names[gid] = name
         cursor = page.last_id or cursor
     if cursor != connection.event_cursor:
         out.cursor = cursor
@@ -211,6 +214,7 @@ async def fetch(
         await _fetch_events(client, connection, out)
     if full_due or out.full or first:
         incremental = dict(out.people)
+        out.group_names.clear()  # the listing's names are the truth, and say which are gone
         await _fetch_full(client, connection, out)
         out.people = {**incremental, **out.people}
     return out
@@ -313,7 +317,7 @@ async def _apply_groups(
             conn,
             org,
             directory_ref=gid,
-            display_name=got.group_names.get(gid, gid)[:200],
+            display_name=None if gid not in got.group_names else got.group_names[gid][:200],
             actor=actor,
         )
         await directory.set_group_members(conn, org, group.group_id, users, actor=actor)
