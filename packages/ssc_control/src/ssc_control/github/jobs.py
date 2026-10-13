@@ -1,16 +1,28 @@
 """The GitHub task (SSC-047). Registered by ``worker.build_app`` under the ``github`` namespace;
-the webhook defers it by name (``github.tasks``)."""
+the webhook defers it by name (``github.tasks``). A step that raises is retried (``RETRY``, as the
+snapshot compile); every step is safe to run again (``push``)."""
 
-from procrastinate import Blueprint, JobContext
+from typing import Final
+
+from procrastinate import Blueprint, JobContext, RetryStrategy
+from sqlalchemy.exc import DBAPIError
 
 from ssc_control.github import push
 from ssc_control.worker_ports import ports_of
+from ssc_shared.blobstore import BlobError
+
+RETRY: Final = RetryStrategy(
+    max_attempts=6,
+    wait=1,
+    linear_wait=2,
+    retry_exceptions=[DBAPIError, BlobError, OSError, TimeoutError],
+)
 
 
 def blueprint() -> Blueprint:
     bp = Blueprint()
 
-    @bp.task(name="run_push", pass_context=True)
+    @bp.task(name="run_push", pass_context=True, retry=RETRY)
     async def run_push(  # noqa: PLR0913  # pyright: ignore[reportUnusedFunction]
         context: JobContext,
         *,

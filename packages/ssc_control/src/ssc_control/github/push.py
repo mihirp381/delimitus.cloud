@@ -14,6 +14,11 @@ the check run, build and deployment it made. The steps are
    wins: an older commit is never deployed over it.
 3. report: the deployment's outcome. Healthy puts the preview address on the check run.
 
+The job retries a step that raises (``github.jobs.RETRY``). Every step is safe to run again:
+step 1's build and its next step commit together, so a retry after that commit ends
+``duplicate`` while the next step carries on; before it, step 1 reuses the check run it opened
+(the open ``SSC / preview`` run whose ``external_id`` is the app id) instead of opening another.
+
 Every row it writes names the actor ``integration`` / ``github:<installation id>`` and is
 audited like the API's own (``bundle.stored``, ``build.started`` with ``via: github``,
 ``deploy.started``). The job never imports API routes. A check run GitHub refuses is logged
@@ -172,7 +177,7 @@ async def _report(p: _Push, check_run_id: int | None, report: CheckReport) -> in
     """Create or update the check run; a GitHub refusal is logged and never stops the job."""
     try:
         if check_run_id is None:
-            return await p.github.create_check_run(p.repo, p.sha, report)
+            return await p.github.create_check_run(p.repo, p.sha, report, external_id=p.app_id)
         await p.github.update_check_run(p.repo, check_run_id, report)
     except GitHubError as e:
         log.warning(
@@ -180,6 +185,20 @@ async def _report(p: _Push, check_run_id: int | None, report: CheckReport) -> in
             extra={"org_id": p.org_id, "app_id": p.app_id, "status": e.status, "path": e.path},
         )
     return check_run_id
+
+
+async def _open_check_run(p: _Push) -> int | None:
+    """The check run an earlier try of this step opened for the commit and never completed (the
+    job retried after a raise, or a redelivery after a failed job), so a retry reuses it instead
+    of leaving it in progress beside a new one. None: open a new one."""
+    try:
+        return await p.github.open_check_run(p.repo, p.sha, p.app_id)
+    except GitHubError as e:
+        log.warning(
+            "check runs not read",
+            extra={"org_id": p.org_id, "app_id": p.app_id, "status": e.status, "path": e.path},
+        )
+        return None
 
 
 async def _again(  # noqa: PLR0913  (keyword-only)
@@ -271,7 +290,7 @@ async def _start(p: _Push) -> str:
             return "duplicate"
     check_run_id = await _report(
         p,
-        None,
+        await _open_check_run(p),
         CheckReport(
             status="in_progress", title="Building", summary="Building this commit for preview."
         ),

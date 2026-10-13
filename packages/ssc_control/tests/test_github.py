@@ -52,6 +52,7 @@ from fake_github import _PEM, _PUBLIC, APP_ID, BASE, FakeGitHub, Json, files_of,
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+from procrastinate.jobs import Job
 from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
 from test_app_hosts import logged_evidence
 from test_bundles import SERVICE_ROLE_ROLE, supabase_jwt
@@ -85,9 +86,10 @@ from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.builds import run_build
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.github import gate
+from ssc_control.github import jobs as github_jobs
 from ssc_control.github import push as push_module
 from ssc_control.github.__main__ import main, run_bind
-from ssc_control.github.client import CHECK_NAME, MAX_PAGES, PAGE, RepoRef
+from ssc_control.github.client import CHECK_NAME, MAX_PAGES, PAGE, CheckReport, RepoRef
 from ssc_control.github.links import BindError, RequiredCheck
 from ssc_control.github.push import run_push
 from ssc_control.github.source import unpack
@@ -555,6 +557,74 @@ async def test_a_push_step_that_raises_releases_the_commit_lock(
     assert await run_push(g.ports, **again["args"]) == "building"
 
 
+async def retried(g: G, sha: str, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """The waiting push step raises once (``name`` in ``push`` fails), then Procrastinate's retry
+    runs the same job, with the same arguments, to the end."""
+    (job,) = todo(g, sha)
+    take_job(g.b.dsn, job["queueing_lock"])
+
+    async def broken(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("the network went away")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(push_module, name, broken)
+        with pytest.raises(OSError) as raised:
+            await run_push(g.ports, **job["args"])
+    assert github_jobs.RETRY.get_retry_decision(exception=raised.value, job=attempt(0))
+    await run_push(g.ports, **job["args"])
+    done(g, sha)
+
+
+def attempt(attempts: int) -> Job:
+    return Job(
+        id=1, queue="default", lock=None, queueing_lock=None, task_name="t", attempts=attempts
+    )
+
+
+def test_the_push_job_retries_a_step_that_raises() -> None:
+    assert github_jobs.blueprint().tasks["run_push"].retry_strategy is github_jobs.RETRY
+
+
+async def test_a_step_1_retried_after_its_check_run_opened_reuses_it_and_deploys(
+    g: G, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await connect(g)
+    sha = sha_of(19)
+    publish(g, sha)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    await retried(g, sha, monkeypatch, "fetch_bundle")  # after the check run, before _store
+    (check,) = g.hub.ssc_runs(sha)
+    assert (check["status"], check["external_id"]) == ("in_progress", g.b.w.app)
+    (build,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")
+    (job,) = todo(g, sha)
+    assert job["args"]["check_run_id"] == check["id"]
+    assert await run_build(g.ports, org_id=g.b.w.org, build_id=build["id"]) == "succeeded"
+    assert await step(g, sha) == "deploying"
+    (dep,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.deployment")
+    assert await run(g.b, dep["id"], g.ports) == "healthy"
+    assert await step(g, sha) == "healthy"
+    assert len(g.hub.ssc_runs(sha)) == 1
+    assert (check["status"], check["conclusion"]) == ("completed", "success")
+
+
+async def test_a_step_2_retried_after_it_raised_deploys(
+    g: G, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await connect(g)
+    sha = sha_of(20)
+    publish(g, sha)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    assert await step(g, sha) == "building"
+    (build,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")
+    assert await run_build(g.ports, org_id=g.b.w.org, build_id=build["id"]) == "succeeded"
+    await retried(g, sha, monkeypatch, "defer_deployment")  # inside step 2's transaction
+    (dep,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.deployment")
+    assert await run(g.b, dep["id"], g.ports) == "healthy"
+    assert await step(g, sha) == "healthy"
+    (check,) = g.hub.ssc_runs(sha)
+    assert (check["status"], check["conclusion"]) == ("completed", "success")
+
+
 async def test_a_secret_in_the_pushed_source_fails_the_check_and_builds_nothing(
     g: G, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -973,6 +1043,29 @@ async def test_paging_stops_on_an_empty_short_or_counted_page() -> None:
             got = await github.check_runs(repo, sha)
             assert [r["id"] for r in got] == [r["id"] for r in hub.check_runs.get(sha, [])]
             assert gets(hub, f"/commits/{sha}/check-runs") == requests, runs
+    finally:
+        await github.aclose()
+
+
+async def test_the_open_check_run_is_this_apps_and_not_completed() -> None:
+    hub = FakeGitHub()
+    raw = hub.repo("acme/ledger", INSTALLATION)
+    repo = RepoRef(installation_id=INSTALLATION, id=raw["id"], name="acme/ledger")
+    github = hub.client()
+    sha = sha_of(24)
+    try:
+        assert await github.open_check_run(repo, sha, "app_a") is None
+        hub.ci(sha, CHECK_NAME, CI, "main", status="in_progress", conclusion=None)  # no app's id
+        for app, status in [("app_a", "completed"), ("app_b", "in_progress")]:
+            run = hub.ci(sha, CHECK_NAME, CI, "main", status=status)
+            run["external_id"] = app
+        theirs = run["id"]
+        assert await github.open_check_run(repo, sha, "app_a") is None
+        report = CheckReport(status="in_progress", title="Building", summary="Building.")
+        mine = await github.create_check_run(repo, sha, report, external_id="app_a")
+        assert await github.open_check_run(repo, sha, "app_a") == mine
+        # another app's open run on the same commit is found behind this newer one
+        assert await github.open_check_run(repo, sha, "app_b") == theirs
     finally:
         await github.aclose()
 
