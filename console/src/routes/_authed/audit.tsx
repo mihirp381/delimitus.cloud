@@ -9,6 +9,7 @@ import {
   auditFilters,
   type ExportFormat,
   exportAudit,
+  isDeleteRun,
   killSwitchApp,
 } from '../../api/audit';
 import { must } from '../../api/client';
@@ -423,7 +424,7 @@ const COLUMNS: readonly Column<AuditEvent>[] = [
           </Link>
         ) : killSwitchApp(e) ? (
           <Link
-            to="/apps/$appId/kill-switch/$runId"
+            to={isDeleteRun(e) ? '/apps/$appId/delete/$runId' : '/apps/$appId/kill-switch/$runId'}
             params={{ appId: killSwitchApp(e) ?? '', runId: e.target.id }}
           >
             <code>{e.target.id}</code>

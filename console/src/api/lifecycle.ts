@@ -5,11 +5,12 @@ export type AppOut = components['schemas']['AppOut'];
 export type EnvironmentOut = components['schemas']['EnvironmentOut'];
 export type KillSwitchMode = components['schemas']['KillSwitchCreate']['mode'];
 export type KillSwitchRun = components['schemas']['KillSwitchRun'];
+export type AppDeleteRun = components['schemas']['AppDeleteRun'];
 export type Release = components['schemas']['ReleaseOut'];
 export type Operation = components['schemas']['OperationOut'];
 export type LedgerAhead = components['schemas']['LedgerAhead'];
 
-/** How often a running kill switch or rollback is read again. */
+/** How often a running kill switch, removal or rollback is read again. */
 export const POLL_MS = 1000;
 
 /**
@@ -25,6 +26,21 @@ export async function pullKillSwitch(
     await api.POST('/v1/apps/{app_id}/kill-switch', {
       params: { path: { app_id: appId } },
       body: { mode },
+    }),
+  );
+  return body.run_id;
+}
+
+/**
+ * Starts the removal of an app and everything that belongs to it (admins only). `confirm` is the
+ * app's slug as the person typed it; the API refuses any other. The answer is 202 while the steps
+ * run. Asked again for an app whose removal stopped at a failed step, it continues.
+ */
+export async function deleteApp(api: ApiClient, appId: string, confirm: string): Promise<string> {
+  const body = must(
+    await api.POST('/v1/apps/{app_id}/delete', {
+      params: { path: { app_id: appId } },
+      body: { confirm },
     }),
   );
   return body.run_id;

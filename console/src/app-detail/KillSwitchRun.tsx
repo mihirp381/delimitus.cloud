@@ -19,7 +19,7 @@ const STEP_TEXT: Readonly<Record<Step['name'], string>> = {
   pause_timers: 'Pause timers',
 };
 
-const STATE_TONE: Readonly<Record<string, Tone>> = {
+export const STATE_TONE: Readonly<Record<string, Tone>> = {
   running: 'info',
   done: 'success',
   completed: 'success',
@@ -27,11 +27,11 @@ const STATE_TONE: Readonly<Record<string, Tone>> = {
   failed: 'danger',
 };
 
-function took(ms: number | null): string {
+export function took(ms: number | null): string {
   return ms === null ? '…' : `${ms} ms`;
 }
 
-function clock(at: string | null) {
+export function clock(at: string | null) {
   return at === null ? '…' : <time dateTime={at}>{new Date(at).toLocaleTimeString()}</time>;
 }
 

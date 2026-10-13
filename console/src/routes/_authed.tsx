@@ -259,18 +259,19 @@ function Breadcrumbs() {
   if (appId) {
     const slug = app.data?.slug ?? 'App';
     const tab = appTab((location.search as Record<string, unknown>).tab);
-    const run = sub === 'kill-switch';
+    const run = sub === 'kill-switch' ? 'Kill switch run' : sub === 'delete' ? 'Delete run' : null;
     crumbs.push({ text: 'Apps', link: <Link to="/" activeOptions={EXACT}>Apps</Link> });
     crumbs.push({
       text: slug,
+      // A deleted app has no page left to link to: only its removal can still be read.
       link:
-        run || tab !== 'overview' ? (
+        (run || tab !== 'overview') && !app.isError ? (
           <Link to="/apps/$appId" params={{ appId }} activeOptions={EXACT}>
             {slug}
           </Link>
         ) : undefined,
     });
-    if (run) crumbs.push({ text: 'Kill switch run' });
+    if (run) crumbs.push({ text: run });
     else if (tab !== 'overview') crumbs.push({ text: APP_TAB_TITLE[tab] });
   } else if (section === 'approvals' && id) {
     crumbs.push({ text: 'Approvals', link: <Link to="/approvals" activeOptions={EXACT}>Approvals</Link> });

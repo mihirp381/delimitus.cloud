@@ -1,6 +1,13 @@
 import { useRouteContext } from '@tanstack/react-router';
 import { type FormEvent, useState } from 'react';
-import { type AppOut, enableApp, type KillSwitchMode, pullKillSwitch, transferOwner } from '../api/lifecycle';
+import {
+  type AppOut,
+  deleteApp,
+  enableApp,
+  type KillSwitchMode,
+  pullKillSwitch,
+  transferOwner,
+} from '../api/lifecycle';
 import { findPeople, type Match, USER_ID_PATTERN } from '../api/directory';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
@@ -8,6 +15,7 @@ import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { useToast } from '../components/Toast';
+import { DeleteProgress } from './DeleteRun';
 import { KillSwitchProgress } from './KillSwitchRun';
 import { Lookup } from './Lookup';
 
@@ -23,9 +31,9 @@ const MODE_TEXT: Readonly<Record<KillSwitchMode, { label: string; body: string }
 };
 
 /**
- * The admin-only controls: the kill switch (disable, quarantine), enable, and owner transfer.
- * Nothing shows until `whoami` has loaded; anyone but an admin sees a line instead. The API
- * refuses a non-admin either way.
+ * The admin-only controls: the kill switch (disable, quarantine), enable, owner transfer, and
+ * deleting the app. Nothing shows until `whoami` has loaded; anyone but an admin sees a line
+ * instead. The API refuses a non-admin either way.
  */
 export function AdminActions({ app }: { readonly app: AppOut }) {
   const { queries, isAdmin } = useRouteContext({ from: '/_authed/apps/$appId' });
@@ -37,7 +45,9 @@ export function AdminActions({ app }: { readonly app: AppOut }) {
         <h2 id={headingId}>Admin actions</h2>
         <Badge tone="danger">Danger zone</Badge>
       </div>
-      <p className="muted">These stop the app for everyone who uses it, or hand it to someone else.</p>
+      <p className="muted">
+        These stop the app for everyone who uses it, hand it to someone else, or delete it for good.
+      </p>
       {me.isPending ? (
         <p className="muted">Checking your role…</p>
       ) : me.isError ? (
@@ -45,7 +55,9 @@ export function AdminActions({ app }: { readonly app: AppOut }) {
       ) : isAdmin(me.data) ? (
         <Controls app={app} />
       ) : (
-        <p className="muted">Only an org admin can disable, quarantine, enable or transfer this app.</p>
+        <p className="muted">
+          Only an org admin can disable, quarantine, enable, transfer or delete this app.
+        </p>
       )}
     </section>
   );
@@ -54,6 +66,7 @@ export function AdminActions({ app }: { readonly app: AppOut }) {
 function Controls({ app }: { readonly app: AppOut }) {
   const { api, queries, queryClient } = useRouteContext({ from: '/_authed/apps/$appId' });
   const [runId, setRunId] = useState<string | null>(null);
+  const [deleteRunId, setDeleteRunId] = useState<string | null>(null);
   const toast = useToast();
   const [enableError, setEnableError] = useState<unknown>(null);
   const [enabling, setEnabling] = useState(false);
@@ -67,6 +80,18 @@ function Controls({ app }: { readonly app: AppOut }) {
       const id = await pullKillSwitch(api, app.id, mode);
       setEnableError(null);
       setRunId(id);
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: appKey });
+    }
+  }
+
+  /** The app is `deleting` from the moment the API answers, so it is read again either way. */
+  async function remove() {
+    try {
+      const id = await deleteApp(api, app.id, app.slug);
+      setEnableError(null);
+      setRunId(null);
+      setDeleteRunId(id);
     } finally {
       await queryClient.invalidateQueries({ queryKey: appKey });
     }
@@ -89,9 +114,17 @@ function Controls({ app }: { readonly app: AppOut }) {
 
   const modes: readonly KillSwitchMode[] =
     app.status === 'active' ? ['disable', 'quarantine'] : app.status === 'disabled' ? ['quarantine'] : [];
+  // An app being deleted takes no other change; deleting it again continues a run that stopped.
+  const deleting = app.status === 'deleting';
 
   return (
     <>
+      {deleting ? (
+        <p>
+          <strong>{app.slug}</strong> is being deleted. If a step failed, delete it again to
+          continue from there.
+        </p>
+      ) : null}
       <div className="toolbar">
         {modes.map((mode) => (
           <ConfirmAction
@@ -107,15 +140,29 @@ function Controls({ app }: { readonly app: AppOut }) {
             </p>
           </ConfirmAction>
         ))}
-        {app.status === 'active' ? null : (
+        {app.status === 'active' || deleting ? null : (
           <Button variant="primary" onClick={() => void enable()} disabled={enabling}>
             Enable
           </Button>
         )}
-        <TransferOwner app={app} />
+        {deleting ? null : <TransferOwner app={app} />}
+        <ConfirmAction
+          label={deleting ? 'Continue deleting' : 'Delete app'}
+          title={`Delete ${app.slug}`}
+          confirmText={app.slug}
+          confirmLabel="Delete"
+          onConfirm={remove}
+        >
+          <p>
+            <strong>{app.slug}</strong> stops now and is removed for good, in production and
+            preview: its services and address, its databases, its files, its secrets, its timers
+            and its sharing. This cannot be undone. The audit log keeps every row about it.
+          </p>
+        </ConfirmAction>
       </div>
       {enableError ? <ProblemNotice error={enableError} /> : null}
       {runId ? <KillSwitchProgress appId={app.id} runId={runId} /> : null}
+      {deleteRunId ? <DeleteProgress appId={app.id} runId={deleteRunId} /> : null}
     </>
   );
 }

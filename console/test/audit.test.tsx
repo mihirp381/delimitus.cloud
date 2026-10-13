@@ -79,6 +79,18 @@ describe('audit log', () => {
     expect(within(rows[2]!).getByText(run)).toBeTruthy();
   });
 
+  it('links a step of an app removal to the delete run', async () => {
+    const run = 'ksr_dddddddddddddddddddd';
+    const after = { app_id: APP_ID, mode: 'delete', step: 'drop_databases', removed: 2 };
+    start(
+      '/audit',
+      { 'GET /v1/audit': page([event(22, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run }, after })]) },
+      signedIn(),
+    );
+    await screen.findByText('1 event');
+    expect(screen.getByRole('link', { name: run }).getAttribute('href')).toBe(`/apps/${APP_ID}/delete/${run}`);
+  });
+
   it('applies filters through the URL and sends only the ones that are set', async () => {
     const { api, router } = start('/audit', { 'GET /v1/audit': page([CREATED]) }, signedIn());
     const form = await screen.findByRole('form', { name: 'Filter events' });

@@ -22,6 +22,7 @@ import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedApprovalsIndexRouteImport } from './routes/_authed/approvals.index'
 import { Route as AuthedApprovalsApprovalIdRouteImport } from './routes/_authed/approvals.$approvalId'
 import { Route as AuthedAppsAppIdRouteImport } from './routes/_authed/apps.$appId'
+import { Route as AuthedAppsAppIdDeleteRunIdRouteImport } from './routes/_authed/apps.$appId_.delete.$runId'
 import { Route as AuthedAppsAppIdKillSwitchRunIdRouteImport } from './routes/_authed/apps.$appId_.kill-switch.$runId'
 
 const AuthedRoute = AuthedRouteImport.update({
@@ -89,6 +90,12 @@ const AuthedAppsAppIdRoute = AuthedAppsAppIdRouteImport.update({
   path: '/apps/$appId',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedAppsAppIdDeleteRunIdRoute =
+  AuthedAppsAppIdDeleteRunIdRouteImport.update({
+    id: '/apps/$appId_/delete/$runId',
+    path: '/apps/$appId/delete/$runId',
+    getParentRoute: () => AuthedRoute,
+  } as any)
 const AuthedAppsAppIdKillSwitchRunIdRoute =
   AuthedAppsAppIdKillSwitchRunIdRouteImport.update({
     id: '/apps/$appId_/kill-switch/$runId',
@@ -109,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
   '/approvals/': typeof AuthedApprovalsIndexRoute
+  '/apps/$appId/delete/$runId': typeof AuthedAppsAppIdDeleteRunIdRoute
   '/apps/$appId/kill-switch/$runId': typeof AuthedAppsAppIdKillSwitchRunIdRoute
 }
 export interface FileRoutesByTo {
@@ -124,6 +132,7 @@ export interface FileRoutesByTo {
   '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/apps/$appId': typeof AuthedAppsAppIdRoute
   '/approvals': typeof AuthedApprovalsIndexRoute
+  '/apps/$appId/delete/$runId': typeof AuthedAppsAppIdDeleteRunIdRoute
   '/apps/$appId/kill-switch/$runId': typeof AuthedAppsAppIdKillSwitchRunIdRoute
 }
 export interface FileRoutesById {
@@ -141,6 +150,7 @@ export interface FileRoutesById {
   '/_authed/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/_authed/apps/$appId': typeof AuthedAppsAppIdRoute
   '/_authed/approvals/': typeof AuthedApprovalsIndexRoute
+  '/_authed/apps/$appId_/delete/$runId': typeof AuthedAppsAppIdDeleteRunIdRoute
   '/_authed/apps/$appId_/kill-switch/$runId': typeof AuthedAppsAppIdKillSwitchRunIdRoute
 }
 export interface FileRouteTypes {
@@ -158,6 +168,7 @@ export interface FileRouteTypes {
     | '/approvals/$approvalId'
     | '/apps/$appId'
     | '/approvals/'
+    | '/apps/$appId/delete/$runId'
     | '/apps/$appId/kill-switch/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -173,6 +184,7 @@ export interface FileRouteTypes {
     | '/approvals/$approvalId'
     | '/apps/$appId'
     | '/approvals'
+    | '/apps/$appId/delete/$runId'
     | '/apps/$appId/kill-switch/$runId'
   id:
     | '__root__'
@@ -189,6 +201,7 @@ export interface FileRouteTypes {
     | '/_authed/approvals/$approvalId'
     | '/_authed/apps/$appId'
     | '/_authed/approvals/'
+    | '/_authed/apps/$appId_/delete/$runId'
     | '/_authed/apps/$appId_/kill-switch/$runId'
   fileRoutesById: FileRoutesById
 }
@@ -291,6 +304,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAppsAppIdRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/apps/$appId_/delete/$runId': {
+      id: '/_authed/apps/$appId_/delete/$runId'
+      path: '/apps/$appId/delete/$runId'
+      fullPath: '/apps/$appId/delete/$runId'
+      preLoaderRoute: typeof AuthedAppsAppIdDeleteRunIdRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/apps/$appId_/kill-switch/$runId': {
       id: '/_authed/apps/$appId_/kill-switch/$runId'
       path: '/apps/$appId/kill-switch/$runId'
@@ -312,6 +332,7 @@ interface AuthedRouteChildren {
   AuthedApprovalsApprovalIdRoute: typeof AuthedApprovalsApprovalIdRoute
   AuthedAppsAppIdRoute: typeof AuthedAppsAppIdRoute
   AuthedApprovalsIndexRoute: typeof AuthedApprovalsIndexRoute
+  AuthedAppsAppIdDeleteRunIdRoute: typeof AuthedAppsAppIdDeleteRunIdRoute
   AuthedAppsAppIdKillSwitchRunIdRoute: typeof AuthedAppsAppIdKillSwitchRunIdRoute
 }
 
@@ -326,6 +347,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedApprovalsApprovalIdRoute: AuthedApprovalsApprovalIdRoute,
   AuthedAppsAppIdRoute: AuthedAppsAppIdRoute,
   AuthedApprovalsIndexRoute: AuthedApprovalsIndexRoute,
+  AuthedAppsAppIdDeleteRunIdRoute: AuthedAppsAppIdDeleteRunIdRoute,
   AuthedAppsAppIdKillSwitchRunIdRoute: AuthedAppsAppIdKillSwitchRunIdRoute,
 }
 
