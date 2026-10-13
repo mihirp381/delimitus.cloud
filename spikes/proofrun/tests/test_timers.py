@@ -479,15 +479,8 @@ def test_the_fixture_vendors_the_identity_helper_unchanged() -> None:
     packages = REPO / "packages"
     pairs = [
         (app / "ssc_app" / "identity.py", packages / "ssc_app/src/ssc_app/identity.py"),
+        (app / "ssc_app" / "note.py", packages / "ssc_app/src/ssc_app/note.py"),
         (app / "ssc_app" / "__init__.py", packages / "ssc_app/src/ssc_app/__init__.py"),
-        (
-            app / "ssc_contracts" / "identity.py",
-            packages / "ssc_contracts/src/ssc_contracts/identity.py",
-        ),
-        (
-            app / "ssc_contracts" / "__init__.py",
-            packages / "ssc_contracts/src/ssc_contracts/__init__.py",
-        ),
     ]
     for copy, original in pairs:
         if not original.exists():

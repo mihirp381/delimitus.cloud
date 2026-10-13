@@ -85,7 +85,7 @@ def _refusal(status: int, raw: bytes) -> FilesError:
     try:
         error = json.loads(raw)["error"]
         return FilesError(str(error["code"]), str(error["message"]), status)
-    except ValueError, KeyError, TypeError:
+    except (ValueError, KeyError, TypeError):
         return FilesError("UNAVAILABLE", f"the data gateway answered HTTP {status}", status)
 
 
