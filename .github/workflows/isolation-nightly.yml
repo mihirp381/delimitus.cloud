@@ -77,7 +77,8 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Sign in through the auth host
         env:
-          SSC_NIGHT_PASSWORD: ${{ inputs.position == 2 && secrets.SSC_NIGHT_CELL2_PASSWORD || secrets.SSC_NIGHT_CELL1_PASSWORD }}
+          # Empty when this cell's secret is unset, so night-login.ts stops; never the other cell's.
+          SSC_NIGHT_PASSWORD: ${{ inputs.position == 2 && secrets.SSC_NIGHT_CELL2_PASSWORD || inputs.position != 2 && secrets.SSC_NIGHT_CELL1_PASSWORD || '' }}
           SSC_NIGHT_OKTA: ${{ vars.SSC_NIGHT_OKTA }}
         run: node night-login.ts
       - name: The suite against the staging cell
