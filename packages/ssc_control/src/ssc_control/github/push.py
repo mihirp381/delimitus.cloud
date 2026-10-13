@@ -190,7 +190,7 @@ async def _again(  # noqa: PLR0913  (keyword-only)
     build_id: str | None = None,
     deployment_id: str | None = None,
 ) -> None:
-    await defer_push(
+    job = await defer_push(
         conn,
         org_id=p.org_id,
         app_id=p.app_id,
@@ -200,6 +200,11 @@ async def _again(  # noqa: PLR0913  (keyword-only)
         deployment_id=deployment_id,
         schedule_at=p.ports.clock() + POLL,
     )
+    if job is None:
+        log.warning(
+            "push step not deferred: one is already waiting",
+            extra={"org_id": p.org_id, "app_id": p.app_id, "build_id": build_id},
+        )
 
 
 async def _context(

@@ -89,7 +89,7 @@ from ssc_control.github.client import CHECK_NAME, MAX_PAGES, PAGE, RepoRef
 from ssc_control.github.links import BindError, RequiredCheck
 from ssc_control.github.push import run_push
 from ssc_control.github.source import unpack
-from ssc_control.github.tasks import RUN_PUSH, push_lock
+from ssc_control.github.tasks import RUN_PUSH, next_lock, push_lock
 from ssc_control.github.webhook import MAX_BODY_BYTES
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
@@ -246,12 +246,14 @@ def push_event(
 
 
 def todo(g: G, sha: str) -> list[dict[str, Any]]:
+    """The push jobs of ``sha`` waiting: a delivery's, then a step's own next one."""
     return rows_of(
         g.b.dsn,
         g.b.w.org,
-        "select args, scheduled_at from procrastinate.procrastinate_jobs "
-        "where queueing_lock = %s and status = 'todo'",
+        "select args, scheduled_at, queueing_lock from procrastinate.procrastinate_jobs "
+        "where queueing_lock in (%s, %s) and status = 'todo' order by id",
         push_lock(g.b.w.app, sha),
+        next_lock(g.b.w.app, sha),
     )
 
 
@@ -270,7 +272,7 @@ def push_jobs(g: G) -> int:
 async def step(g: G, sha: str) -> str:
     """What the worker does with the waiting push job: fetch it, then run it."""
     (job,) = todo(g, sha)
-    take_job(g.b.dsn, push_lock(g.b.w.app, sha))
+    take_job(g.b.dsn, job["queueing_lock"])
     return await run_push(g.ports, **job["args"])
 
 
@@ -421,11 +423,25 @@ async def test_a_redelivered_push_after_the_build_builds_nothing_more(g: G) -> N
     publish(g, sha)
     deliver(g, "push", push_event(g, sha))
     assert await step(g, sha) == "building"
-    take_job(g.b.dsn, push_lock(g.b.w.app, sha))
+    (taken,) = todo(g, sha)
+    take_job(g.b.dsn, next_lock(g.b.w.app, sha))
     assert deliver(g, "push", push_event(g, sha)).status_code == 202
     (job,) = [j for j in todo(g, sha) if j["args"]["build_id"] is None]
+    # The step the worker took runs while the redelivery waits: its next step is still deferred.
+    assert await run_push(g.ports, **taken["args"]) == "building"
+    (follow,) = [j for j in todo(g, sha) if j["args"]["build_id"] is not None]
+    assert follow["args"]["build_id"] == taken["args"]["build_id"]
+    take_job(g.b.dsn, push_lock(g.b.w.app, sha))
     assert await run_push(g.ports, **job["args"]) == "duplicate"
     assert len(rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")) == 1
+    build = str(follow["args"]["build_id"])
+    assert await run_build(g.ports, org_id=g.b.w.org, build_id=build) == "succeeded"
+    assert await step(g, sha) == "deploying"
+    (dep,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.deployment")
+    assert await run(g.b, dep["id"], g.ports) == "healthy"
+    assert await step(g, sha) == "healthy"
+    (check,) = g.hub.ssc_runs(sha)
+    assert (check["status"], check["conclusion"]) == ("completed", "success")
 
 
 async def test_a_secret_in_the_pushed_source_fails_the_check_and_builds_nothing(
