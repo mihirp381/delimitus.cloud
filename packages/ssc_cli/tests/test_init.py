@@ -21,6 +21,7 @@ from ssc_cli.main import app
 from ssc_cli.session import Session
 from ssc_cli.shapes import ErrorResult, InitResult
 from ssc_contracts import app_env
+from ssc_contracts.connections import AVAILABLE
 from ssc_contracts.manifest import load_manifest
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "ssc_cli"
@@ -473,14 +474,65 @@ def test_pack_names_the_helpers_as_they_are_published(cli, tmp_path):
     assert f"`{project['name']}` on PyPI (`pip install {project['name']}`)" in agents
     assert f"Python {project['requires-python'].removeprefix('>=')} or newer" in agents
     modules = set(re.findall(r"ssc_app(?:\.| import )([a-z_]+)", agents))
-    assert modules == {"identity", "reconnect", "files"}
+    assert modules == {"identity", "reconnect", "files", "data"}
     for module in modules:
         assert (helper / "src" / "ssc_app" / f"{module}.py").is_file(), module
     packages = [json.loads(p.read_text()) for p in ROOT.glob("helpers/node/*/package.json")]
     node = {p["name"]: p for p in packages}
     named = set(re.findall(r"@delimitus/[a-z-]+", agents))
-    assert len(named) == 3 and named <= set(node)
+    assert len(named) == 4 and named == set(node)
     assert "`npm install @delimitus/ssc-identity`" in agents
     for name in named:
         assert "private" not in node[name], name
         assert f"Node {node[name]['engines']['node'].removeprefix('>=')} or newer" in agents
+
+
+def test_pack_says_how_an_app_reads_a_data_connection(cli, tmp_path):
+    init(cli, tmp_path)
+    agents = " ".join((tmp_path / "AGENTS.md").read_text().split())
+    assert "not live" not in agents
+    assert "until SSC documents" not in agents
+    statement = "select id, total from orders where year = $1"
+    for fact in (
+        "`from ssc_app import data`",
+        f'`data.query("sales-db", "{statement}", [2026])`',
+        "`import { query } from '@delimitus/ssc-data'`",
+        f"`await query('sales-db', '{statement}', [2026])`",
+        '`data.describe("sales-db")`',
+        "the Node helper does not yet",
+        "under `[connections]` `names` in `ssc.toml`",
+        "`ssc connections <app> --env <env>`",
+        "`CONNECTION_NOT_GRANTED`",
+        "You never link or approve",
+        "Never connect to the source yourself",
+    ):
+        assert fact in agents, fact
+    for tool in ("list_connections", "describe_connection", "request_connection"):
+        assert f"`{tool}`" in agents, tool
+    for kind in AVAILABLE:
+        assert f"`{kind}`" in agents, kind
+    manifest = load_manifest('schema = "ssc/v1"\n[connections]\nnames = ["sales-db"]\n')
+    assert manifest.connections.names == ("sales-db",)
+    python = (ROOT / "packages/ssc_app/src/ssc_app/data.py").read_text()
+    assert re.search(r"(?m)^def query\(.*?\n    name: str,\n    sql: str,\n    params: ", python)
+    assert re.search(r"(?m)^def describe\(name: str\)", python)
+    for member in ("columns", "rows", "truncated"):
+        assert re.search(rf"(?m)^    {member}: ", python), member
+    assert re.search(r"(?m)^class DataError\(", python)
+    node = (ROOT / "helpers/node/ssc-data/index.js").read_text()
+    assert "export function query(name, sql, params, options)" in node
+    assert "export class DataError " in node
+    assert "describe" not in node
+    limits = (ROOT / "packages/ssc_datagw/src/ssc_datagw/limits.py").read_text()
+    for fact, source in (
+        (
+            "5,000 rows and 10 MB",
+            "DEFAULT_MAX_ROWS: Final = 5_000\nDEFAULT_MAX_BYTES: Final = 10 * MB",
+        ),
+        (
+            "50,000 rows, 50 MB and 30 seconds",
+            "max_rows=50_000,\n    max_bytes=50 * MB,\n    timeout_ms=30_000,",
+        ),
+    ):
+        assert fact in agents, fact
+        assert source in limits, source
