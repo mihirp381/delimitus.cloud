@@ -359,8 +359,9 @@ def _grants_to(declared: list[Declared], member: str) -> set[tuple[str, str]]:
 def test_the_deployer_holds_exactly_what_applying_a_lazy_flag_needs(
     declared: list[Declared],
 ) -> None:
-    """State and its key, quota here, a fixed list on the cells folder, the apps zone's records
-    and the public-invoker tag. No billing, deny-rule or secret role; nothing on the org."""
+    """State and its key, quota here, a fixed list on the cells folder, the apps zone's records,
+    the public-invoker tag and reading the platform registry. No billing, deny-rule or secret
+    role; nothing on the org."""
     account = one(declared, "gcp:serviceaccount/account:Account", "deployer-sa").inputs
     assert (account["project"], account["accountId"]) == (
         naming.BOOTSTRAP_PROJECT,
@@ -373,6 +374,7 @@ def test_the_deployer_holds_exactly_what_applying_a_lazy_flag_needs(
         ("projects/iAMMember", "roles/serviceusage.serviceUsageConsumer"),
         ("dns/dnsManagedZoneIamMember", zone_role.outputs["name"]),
         ("tags/tagValueIamBinding", "roles/resourcemanager.tagUser"),
+        ("artifactregistry/repositoryIamMember", "roles/artifactregistry.reader"),
         *(("folder/iAMMember", r) for r in platform.DEPLOYER_FOLDER_ROLES),
     }
     cells = _folders(declared)["ssc-cells"].outputs["name"]
@@ -392,6 +394,31 @@ def test_the_deployer_holds_exactly_what_applying_a_lazy_flag_needs(
     assert not [
         r for _, r in _grants_to(declared, DEPLOYER_MEMBER) if any(f in r for f in forbidden)
     ]
+
+
+def test_the_deployer_may_read_the_images_a_cell_s_services_run(
+    declared: list[Declared],
+) -> None:
+    """Cloud Run refuses an update of a service by a caller that cannot read its image, and a
+    cell's agent, gateway and data gateway run images from the platform registry. The grant is
+    on that one repository, read only, and is there before the job is."""
+    kind = "gcp:artifactregistry/repositoryIamMember:RepositoryIamMember"
+    grant = one(declared, kind, "deployer-registry").inputs
+    assert (grant["project"], grant["location"], grant["repository"]) == (
+        naming.BOOTSTRAP_PROJECT,
+        naming.REGION,
+        naming.PLATFORM_REPOSITORY,
+    )
+    assert (grant["member"], grant["role"]) == (DEPLOYER_MEMBER, "roles/artifactregistry.reader")
+    assert not [d for d in declared if d.type == "gcp:cloudrunv2/job:Job"]
+    project_wide = [
+        d
+        for d in declared
+        if d.type.startswith("gcp:projects/iAM")
+        and d.inputs.get("member") == DEPLOYER_MEMBER
+        and "artifactregistry" in d.inputs["role"]
+    ]
+    assert not project_wide
 
 
 def test_the_operator_keeps_its_grants(declared: list[Declared]) -> None:
