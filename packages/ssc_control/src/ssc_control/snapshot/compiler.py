@@ -10,6 +10,7 @@ rolled-back publish is never referenced. ``point_latest`` moves ``latest.json`` 
 import asyncio
 import hashlib
 import json
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any, Final
 
@@ -51,12 +52,14 @@ _INSERT = text(
     "values (:org, :version, :digest, :content, :key, :at)"
 )
 # One statement, so one read snapshot: every grant's environment and user is in the result, and
-# every proxy credential's environment.
+# every proxy credential's environment. A deleted app's environments are left out (GA-12): its
+# slug may be another app's by now.
 _READ_ORG = text(
     "select "
     "(select coalesce(jsonb_agg(jsonb_build_array(e.id, e.app_id, e.name, a.status, a.slug, "
     "e.request_timeout_seconds) order by e.id), '[]') from ssc.environment e join ssc.app a "
-    "on a.org_id = e.org_id and a.id = e.app_id where e.org_id = :org), "
+    "on a.org_id = e.org_id and a.id = e.app_id where e.org_id = :org "
+    "and a.status <> 'deleted'), "
     "(select coalesce(jsonb_agg(jsonb_build_array(g.id, g.environment_id, g.role, "
     "g.subject_kind, coalesce(g.user_id, g.group_id)) order by g.environment_id, g.id), '[]') "
     "from ssc.app_grant g where g.org_id = :org), "
@@ -92,20 +95,25 @@ def content_digest(doc: SnapshotDoc) -> str:
     return canonical_digest(body)
 
 
-def _egress(hosts: list[str], credentials: list[list[str]]) -> dict[str, Any] | None:
+def _egress(
+    hosts: list[str], credentials: list[list[str]], known: Collection[str]
+) -> dict[str, Any] | None:
     """The proxy's member: the allowlist and each environment's newest credentials, or None
-    (left out of the document) while the org has neither."""
-    if not hosts and not credentials:
-        return None
+    (left out of the document) while the org has neither. ``known`` are the document's
+    environments; a credential of any other is left out."""
     by_env: dict[str, list[dict[str, str]]] = {}
     for env_id, credential_id, sha1 in credentials:
-        by_env.setdefault(env_id, []).append({"credential_id": credential_id, "sha1": sha1})
+        if env_id in known:
+            by_env.setdefault(env_id, []).append({"credential_id": credential_id, "sha1": sha1})
+    if not hosts and not by_env:
+        return None
     return {"hosts": hosts, "credentials": by_env}
 
 
-def _connections(linked: list[list[Any]]) -> dict[str, Any] | None:
+def _connections(linked: list[list[Any]], known: Collection[str]) -> dict[str, Any] | None:
     """The data gateway's member: each ready connection with the environments granted it, or
-    None (left out of the document) while no connection is ready."""
+    None (left out of the document) while no connection is ready. ``known`` are the document's
+    environments; a grant to any other is left out."""
     if not linked:
         return None
     return {
@@ -114,10 +122,20 @@ def _connections(linked: list[list[Any]]) -> dict[str, Any] | None:
             "kind": kind,
             "status": status,
             "limits": limits or None,
-            "grants": {env_id: {"limits": env_limits or None} for env_id, env_limits in grants},
+            "grants": {
+                env_id: {"limits": env_limits or None}
+                for env_id, env_limits in grants
+                if env_id in known
+            },
         }
         for con_id, name, kind, status, limits, grants in linked
     }
+
+
+def _status(status: str) -> str:
+    """An app being deleted is denied exactly as a disabled one is: ``ssc-snapshot/v1`` has
+    no word of its own for it, and its readers need none."""
+    return "disabled" if status == "deleting" else status
 
 
 def _longer_timeout(seconds: int | None) -> int | None:
@@ -138,7 +156,7 @@ async def compile_document(
         env_id: {
             "app_id": app_id,
             "name": name,
-            "status": status,
+            "status": _status(status),
             "floor": floor_of(name),
             "timeout_seconds": _longer_timeout(timeout),
         }
@@ -150,9 +168,10 @@ async def compile_document(
             hosts[host_label(slug, name)] = env_id
     by_env: dict[str, list[dict[str, Any]]] = {env_id: [] for env_id in environments}
     for grant_id, env_id, role, kind, subject in grants:
-        by_env[env_id].append(
-            {"grant_id": grant_id, "role": role, "subject_kind": kind, "subject_id": subject}
-        )
+        if env_id in by_env:
+            by_env[env_id].append(
+                {"grant_id": grant_id, "role": role, "subject_kind": kind, "subject_id": subject}
+            )
     groups: dict[str, list[str]] = {}
     for user_id, group_id in members:
         groups.setdefault(user_id, []).append(group_id)
@@ -171,8 +190,8 @@ async def compile_document(
                 for user_id, status, not_before in users
             },
             "ceiling": None,
-            "connections": _connections(linked),
-            "egress": _egress(egress_hosts, credentials),
+            "connections": _connections(linked, environments),
+            "egress": _egress(egress_hosts, credentials, environments),
         }
     )
 

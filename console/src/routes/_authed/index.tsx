@@ -40,6 +40,7 @@ const STATUS_CHOICE: Readonly<Record<AppStatus | '', string>> = {
   active: 'Active',
   disabled: 'Disabled',
   quarantined: 'Quarantined',
+  deleting: 'Deleting',
 };
 const STATUS_OPTIONS = (Object.keys(STATUS_CHOICE) as (AppStatus | '')[]).map((value) => ({
   value,

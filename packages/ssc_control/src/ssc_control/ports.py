@@ -139,6 +139,12 @@ class TimersPort(Protocol):
         """Resume exactly the schedules ``pause_for_kill`` returned."""
         ...
 
+    async def remove_for_app(
+        self, conn: AsyncConnection, *, org_id: str, app_id: str, actor: Actor
+    ) -> list[str]:
+        """Delete every schedule of an app that is being removed; the ``sch_`` ids."""
+        ...
+
 
 class NullTimersPort(TimersPort):
     async def sync_schedules(  # noqa: PLR0913  (keyword-only)
@@ -169,6 +175,11 @@ class NullTimersPort(TimersPort):
         actor: Actor,
     ) -> None:
         return None
+
+    async def remove_for_app(
+        self, conn: AsyncConnection, *, org_id: str, app_id: str, actor: Actor
+    ) -> list[str]:
+        return []
 
 
 # ── metrics (A2) ─────────────────────────────────────────────────────────────

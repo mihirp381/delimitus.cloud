@@ -37,6 +37,7 @@ from ssc_control.runtime.cell_agent import CellAgentDriver, IdTokens
 from ssc_control.runtime.cell_datagw import AgentCellSchemas, CellSchemas
 from ssc_control.runtime.cell_egress import AgentCellEgress, CellEgress
 from ssc_control.runtime.cell_logs import AgentCellLogs
+from ssc_control.runtime.cell_removal import AgentCellRemoval, CellRemoval
 from ssc_control.runtime.cell_usage import AgentCellUsage
 from ssc_control.runtime.driver import AppIdentity, RuntimeDriver
 from ssc_control.runtime.secret_grants import CellSecretGrants, SecretGrants
@@ -105,6 +106,8 @@ class OrgCell:
     identity: AppIdentity | None = None
     datagw: CellSchemas | None = None
     """A connection's tables and columns from the cell's data gateway (GA-5.8)."""
+    removal: CellRemoval | None = None
+    """Deletes a removed app's files and secrets (GA-12)."""
 
 
 class CellPorts(Protocol):
@@ -274,6 +277,7 @@ class CellRouter(CellPorts):
             ),
             identity=config.identity(self._domain),
             datagw=AgentCellSchemas(url, tokens, org_id=org_id, client=client),
+            removal=AgentCellRemoval(url, tokens, org_id=org_id, client=client),
         )
 
 

@@ -8,7 +8,12 @@ export type AppStatus = AppSummary['status'];
 export type EnvName = InventoryEnvironment['name'];
 
 // Keyed by the generated unions: a value the API adds or removes fails the typecheck.
-const STATUSES: Readonly<Record<AppStatus, true>> = { active: true, disabled: true, quarantined: true };
+const STATUSES: Readonly<Record<AppStatus, true>> = {
+  active: true,
+  disabled: true,
+  quarantined: true,
+  deleting: true,
+};
 export const APP_STATUSES = Object.keys(STATUSES) as readonly AppStatus[];
 
 export const DEPLOY_TONE: Readonly<Record<NonNullable<InventoryEnvironment['last_deploy']>['state'], Tone>> = {

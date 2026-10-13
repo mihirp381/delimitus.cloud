@@ -150,7 +150,7 @@ describe('inventory', () => {
       within(screen.getByRole('group', { name: 'Status' }))
         .getAllByRole('radio')
         .map((r) => r.closest('label')?.textContent),
-    ).toEqual(['All', 'Active', 'Disabled', 'Quarantined']);
+    ).toEqual(['All', 'Active', 'Disabled', 'Quarantined', 'Deleting']);
     chooseStatus('Quarantined');
     expect(listedSlugs()).toEqual(['timesheets']);
     chooseStatus('All');

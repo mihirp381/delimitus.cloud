@@ -13,6 +13,9 @@ A ``preview``-scoped credential never touches production (:func:`check_scope`), 
 that every route, and every route added later, is covered before its handler runs. So is a
 credential's auth-host session (:func:`check_session`): once it is revoked, or its person is
 deactivated, every request with it is ``UNAUTHENTICATED``.
+
+An app that was deleted is gone from every route that names it in its path, and one being deleted
+takes no change (:func:`check_app`, GA-12); only the removal's own routes are let through.
 """
 
 import json
@@ -54,6 +57,9 @@ _PREVIEW_SCOPE_CHANGES: Final = tuple(
     re.compile(re.sub(r"\{[a-z_]+\}", "[^/]+", change)) for change in PREVIEW_SCOPE_CHANGES
 )
 _SAFE_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS"})
+_APP_REMOVAL: Final = re.compile(r"/v1/apps/[^/]+/delete(/[^/]+)?")
+"""Asking for an app's removal again, and reading a removal's run."""
+_APP_STATUS: Final = text("select status from ssc.app where org_id = :org and id = :app")
 _ENVIRONMENT_NAME: Final = text(
     "select name from ssc.environment where org_id = :org and id = :environment"
 )
@@ -166,6 +172,22 @@ async def check_scope(request: Request, conn: AsyncConnection, principal: Princi
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "preview_scope", "change": change})
 
 
+async def check_app(request: Request, conn: AsyncConnection, principal: Principal) -> None:
+    """A deleted app is ``NOT_FOUND`` on every route naming it in the path, and an app being
+    deleted is ``APP_DELETING`` for every change. The removal's own routes decide for themselves;
+    an app that never existed is left to the route."""
+    app_id = request.path_params.get("app_id")
+    if app_id is None or _APP_REMOVAL.fullmatch(request.url.path):
+        return
+    status = (
+        await conn.execute(_APP_STATUS, {"org": principal.org_id, "app": app_id})
+    ).scalar_one_or_none()
+    if status == "deleted":
+        raise Refusal(ErrorCode.NOT_FOUND, evidence={"app_id": app_id})
+    if status == "deleting" and request.method not in _SAFE_METHODS:
+        raise Refusal(ErrorCode.APP_DELETING, evidence={"app_id": app_id})
+
+
 async def check_session(conn: AsyncConnection, principal: Principal) -> None:
     """A credential issued from an auth-host session is good only while that session is live
     and belongs to the subject. A CI session's credential is ``preview``-scoped (GA-7.7)."""
@@ -204,6 +226,7 @@ def _make(
         async with bound_org(rt.engine, principal.org_id) as conn:
             await check_session(conn, principal)
             await check_scope(request, conn, principal)
+            await check_app(request, conn, principal)
             yield UnitOfWork(
                 conn=conn,
                 principal=principal,

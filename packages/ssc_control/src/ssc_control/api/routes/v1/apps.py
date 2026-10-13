@@ -44,7 +44,7 @@ class AppOut(Strict):
     id: str
     slug: str
     owner_user_id: str
-    status: Literal["active", "disabled", "quarantined"]
+    status: Literal["active", "disabled", "quarantined", "deleting"]
     created_at: datetime
     environments: list[EnvironmentOut]
 
@@ -53,7 +53,7 @@ class AppSummary(Strict):
     id: str
     slug: str
     owner_user_id: str
-    status: Literal["active", "disabled", "quarantined"]
+    status: Literal["active", "disabled", "quarantined", "deleting"]
 
 
 class AppList(Strict):
@@ -69,10 +69,11 @@ _INSERT_ENV = text(
 )
 _SELECT_APP = text(
     "select id, slug, owner_user_id, status, created_at from ssc.app "
-    "where org_id = :org and id = :id"
+    "where org_id = :org and id = :id and status <> 'deleted'"
 )
 _SELECT_APPS = text(
-    "select id, slug, owner_user_id, status from ssc.app where org_id = :org order by slug"
+    "select id, slug, owner_user_id, status from ssc.app "
+    "where org_id = :org and status <> 'deleted' order by slug"
 )
 _SELECT_ENVS = text(
     "select e.id, e.name, e.config_version, e.grants_version, e.current_deployment_id, a.slug, "
