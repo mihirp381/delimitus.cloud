@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import jwt
+import psycopg
 import pytest
 import test_deploy
 from fake_github import _PEM, _PUBLIC, APP_ID, BASE, FakeGitHub, Json, files_of, tarball_of
@@ -84,6 +85,7 @@ from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.builds import run_build
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.github import gate
+from ssc_control.github import push as push_module
 from ssc_control.github.__main__ import main, run_bind
 from ssc_control.github.client import CHECK_NAME, MAX_PAGES, PAGE, RepoRef
 from ssc_control.github.links import BindError, RequiredCheck
@@ -270,10 +272,24 @@ def push_jobs(g: G) -> int:
 
 
 async def step(g: G, sha: str) -> str:
-    """What the worker does with the waiting push job: fetch it, then run it."""
+    """What the worker does with the waiting push job: fetch it, run it, then mark it done,
+    which frees the commit's ``lock`` for the next step."""
     (job,) = todo(g, sha)
     take_job(g.b.dsn, job["queueing_lock"])
-    return await run_push(g.ports, **job["args"])
+    outcome = await run_push(g.ports, **job["args"])
+    done(g, sha)
+    return outcome
+
+
+def done(g: G, sha: str) -> None:
+    """The worker marks the commit's running push job succeeded once it returns."""
+    with psycopg.connect(g.b.dsn, autocommit=True) as conn:
+        conn.execute("set search_path to procrastinate")
+        conn.execute(
+            "update procrastinate_jobs set status = 'succeeded' "
+            "where lock = %s and status = 'doing'",
+            (push_lock(g.b.w.app, sha),),
+        )
 
 
 def preview_url(g: G) -> str:
@@ -429,10 +445,12 @@ async def test_a_redelivered_push_after_the_build_builds_nothing_more(g: G) -> N
     (job,) = [j for j in todo(g, sha) if j["args"]["build_id"] is None]
     # The step the worker took runs while the redelivery waits: its next step is still deferred.
     assert await run_push(g.ports, **taken["args"]) == "building"
+    done(g, sha)
     (follow,) = [j for j in todo(g, sha) if j["args"]["build_id"] is not None]
     assert follow["args"]["build_id"] == taken["args"]["build_id"]
     take_job(g.b.dsn, push_lock(g.b.w.app, sha))
     assert await run_push(g.ports, **job["args"]) == "duplicate"
+    done(g, sha)
     assert len(rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")) == 1
     build = str(follow["args"]["build_id"])
     assert await run_build(g.ports, org_id=g.b.w.org, build_id=build) == "succeeded"
@@ -442,6 +460,99 @@ async def test_a_redelivered_push_after_the_build_builds_nothing_more(g: G) -> N
     assert await step(g, sha) == "healthy"
     (check,) = g.hub.ssc_runs(sha)
     assert (check["status"], check["conclusion"]) == ("completed", "success")
+
+
+def fetch_job(g: G, sha: str) -> dict[str, Any] | None:
+    """What a worker does to take the next job, through Procrastinate's own fetch, which honours
+    each job's ``lock``; None when nothing may run now. Every other waiting job in the shared
+    database is row-locked meanwhile, so the fetch (``SKIP LOCKED``) sees only this commit's."""
+    lock = push_lock(g.b.w.app, sha)
+    with psycopg.connect(g.b.dsn) as hold, psycopg.connect(g.b.dsn, autocommit=True) as conn:
+        hold.execute(
+            "select id from procrastinate.procrastinate_jobs "
+            "where status = 'todo' and lock is distinct from %s for update",
+            (lock,),
+        )
+        conn.execute("set search_path to procrastinate")
+        worker = conn.execute("select worker_id from procrastinate_register_worker_v1()")
+        (worker_id,) = worker.fetchone() or (None,)
+        row = conn.execute(
+            "select id, args from procrastinate_fetch_job_v2(null, %s)", (worker_id,)
+        ).fetchone()
+        hold.rollback()
+    return None if row is None or row[0] is None else {"id": row[0], "args": row[1]}
+
+
+def finish_job(g: G, job_id: int, status: str) -> None:
+    """What a worker does when a job returns (``succeeded``) or raises (``failed``)."""
+    with psycopg.connect(g.b.dsn, autocommit=True) as conn:
+        conn.execute("set search_path to procrastinate")
+        conn.execute("select procrastinate_finish_job_v1(%s, %s, false)", (job_id, status))
+
+
+async def test_a_push_redelivered_during_its_first_step_waits_and_builds_nothing_more(
+    g: G, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every step of one commit takes the lock ``push:<app>:<sha>``: a redelivery while step 1
+    runs is not fetched until it ends, then stops at ``duplicate``. One check run, one build."""
+    await connect(g)
+    sha = sha_of(5)
+    publish(g, sha)
+    real = push_module.fetch_bundle
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        await release.wait()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(push_module, "fetch_bundle", held)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    first = fetch_job(g, sha)
+    assert first is not None
+    running = asyncio.create_task(run_push(g.ports, **first["args"]))
+    await entered.wait()
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    assert fetch_job(g, sha) is None  # the redelivery waits for the running step
+    release.set()
+    assert await running == "building"
+    finish_job(g, first["id"], "succeeded")
+    again = fetch_job(g, sha)
+    assert again is not None
+    assert again["args"]["build_id"] is None  # the redelivery runs before the next step
+    assert await run_push(g.ports, **again["args"]) == "duplicate"
+    finish_job(g, again["id"], "succeeded")
+    assert len(rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")) == 1
+    (check,) = g.hub.ssc_runs(sha)
+    assert check["status"] == "in_progress"
+    (follow,) = todo(g, sha)
+    assert follow["args"]["build_id"] is not None
+
+
+async def test_a_push_step_that_raises_releases_the_commit_lock(
+    g: G, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A step that raises ends ``failed``, which frees ``push:<app>:<sha>`` for the next one."""
+    await connect(g)
+    sha = sha_of(6)
+    publish(g, sha)
+    real = push_module.fetch_bundle
+
+    async def broken(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("the network went away")
+
+    monkeypatch.setattr(push_module, "fetch_bundle", broken)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    first = fetch_job(g, sha)
+    assert first is not None
+    with pytest.raises(OSError):
+        await run_push(g.ports, **first["args"])
+    finish_job(g, first["id"], "failed")
+    monkeypatch.setattr(push_module, "fetch_bundle", real)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    again = fetch_job(g, sha)
+    assert again is not None
+    assert await run_push(g.ports, **again["args"]) == "building"
 
 
 async def test_a_secret_in_the_pushed_source_fails_the_check_and_builds_nothing(

@@ -5,6 +5,11 @@ One push job per app and commit waits for a delivery at a time (``queueing_lock`
 ``push:<app>:<sha>``), so a redelivered webhook defers nothing while one waits. The job defers
 its own next step under ``push:<app>:<sha>:next``, a queueing lock no delivery takes: a
 redelivery that lands while a step runs can never crowd that step's next one out.
+
+Every step, a delivery's or a job's own, also takes the job ``lock`` ``push:<app>:<sha>``, so the
+steps of one commit never run at once. A redelivery that lands while step 1 runs waits for it,
+then finds the commit built and ends ``duplicate``; it never opens a second check run. A step
+that raises ends ``failed`` and so releases the lock.
 """
 
 from datetime import datetime
@@ -43,6 +48,7 @@ async def defer_push(  # noqa: PLR0913  (keyword-only)
         conn,
         RUN_PUSH,
         queueing_lock=next_lock(app_id, sha) if follow_up else push_lock(app_id, sha),
+        lock=push_lock(app_id, sha),
         schedule_at=schedule_at,
         org_id=org_id,
         app_id=app_id,
