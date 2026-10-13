@@ -1,11 +1,13 @@
-"""The packages ``release-cli.yml`` publishes share one version and pin each other to it exactly,
-its publish job lists each one it builds, a ``cli-v<version>`` tag names that version, and the
-ssc-deploy Action installs that ``ssc-cli`` by default (decision 017). Exits 1 on any problem.
+"""The packages ``release-cli.yml`` publishes share one version, on PyPI and on npm: the Python
+ones pin each other to it exactly, each node helper is ready to publish, each publish job lists
+what is built for it, a ``cli-v<version>`` tag names that version, and the ssc-deploy Action
+installs that ``ssc-cli`` by default (decision 017). Exits 1 on any problem.
 
     uv run --no-project --python 3.14 python tools/release_versions.py [--tag cli-v0.0.1]
 """
 
 import argparse
+import json
 import re
 import sys
 import tomllib
@@ -15,10 +17,14 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = Path(".github") / "workflows" / "release-cli.yml"
 ACTION = Path(".github") / "actions" / "ssc-deploy" / "action.yml"
+HELPERS = Path("helpers") / "node"
+NPM_SCOPE = "@delimitus"
 TAG_PREFIX = "cli-v"
 _ACTION_CLI = re.compile(r'^    default: "ssc-cli==([^"]*)"$', re.M)
 _BUILD = re.compile(r"uv build --package ([A-Za-z0-9._-]+)")
 _PYPI_MATRIX = re.compile(r"^ +package: \[([^\]]*)\]$", re.M)
+_PACK = re.compile(r"npm pack \./helpers/node/([a-z0-9-]+)")
+_NPM_MATRIX = re.compile(r"^ +helper: \[([^\]]*)\]$", re.M)
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
@@ -29,6 +35,11 @@ def canonical(name: str) -> str:
 def published(root: Path) -> list[str]:
     """The distributions the release workflow builds, in its order."""
     return [canonical(n) for n in _BUILD.findall((root / WORKFLOW).read_text())]
+
+
+def packed(root: Path) -> list[str]:
+    """The node helpers the release workflow packs for npm, in its order."""
+    return _PACK.findall((root / WORKFLOW).read_text())
 
 
 def _listed(matrix: re.Pattern[str], root: Path) -> list[str]:
@@ -49,6 +60,32 @@ def members(root: Path) -> dict[str, dict[str, Any]]:
 def _requirements(project: dict[str, Any]) -> list[str]:
     extras = project.get("optional-dependencies", {})
     return [*project.get("dependencies", []), *(r for group in extras.values() for r in group)]
+
+
+def _helper_problems(root: Path, version: str) -> list[str]:
+    names = packed(root)
+    listed = _listed(_NPM_MATRIX, root)
+    problems: list[str] = []
+    if listed != names:
+        problems.append(
+            f"release-cli.yml packs {', '.join(names) or 'nothing'} "
+            f"but its npm job publishes {', '.join(listed) or 'nothing'}"
+        )
+    for name in names:
+        path = HELPERS / name / "package.json"
+        if not (root / path).exists():
+            problems.append(f"{name} is packed but {path} does not exist")
+            continue
+        package = json.loads((root / path).read_text())
+        if package.get("name") != f"{NPM_SCOPE}/{name}":
+            problems.append(f"{path} must be named {NPM_SCOPE}/{name}")
+        if package.get("version") != version:
+            problems.append(f"{path} must be version {version}, not {package.get('version')}")
+        if package.get("private"):
+            problems.append(f"{path} must not be private")
+        if package.get("publishConfig", {}).get("access") != "public":
+            problems.append(f"{path} must set publishConfig.access to public")
+    return problems
 
 
 def check(root: Path, tag: str | None = None) -> list[str]:
@@ -82,6 +119,7 @@ def check(root: Path, tag: str | None = None) -> list[str]:
             if spec != f"=={versions[dep]}":
                 problems.append(f"{name} must pin {dep}=={versions[dep]}, not {req!r}")
     version = versions[names[-1]]
+    problems += _helper_problems(root, version)
     if "ssc-cli" in versions:
         action = root / ACTION
         pinned = _ACTION_CLI.findall(action.read_text()) if action.exists() else []
@@ -101,7 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     for p in problems:
         print(f"release_versions: {p}", file=sys.stderr)  # noqa: T201
     if not problems:
-        print(f"release_versions: {', '.join(published(args.root))} ok")  # noqa: T201
+        names = [*published(args.root), *(f"{NPM_SCOPE}/{h}" for h in packed(args.root))]
+        print(f"release_versions: {', '.join(names)} ok")  # noqa: T201
     return 1 if problems else 0
 
 
