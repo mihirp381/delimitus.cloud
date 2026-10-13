@@ -1,6 +1,6 @@
 [project]
 name = "ssc-app"
-version = "0.0.2"
+version = "0.0.3"
 description = "The helper an app on Small Software Cloud installs: who is signed in, streams that reconnect, files and company data."
 readme = "README.md"
 # An app runs on the Python it chose and holds its own pins, so these are ranges; CI job

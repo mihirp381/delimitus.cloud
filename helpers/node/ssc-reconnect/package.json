@@ -1,6 +1,6 @@
 {
   "name": "@delimitus/ssc-reconnect",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Keep a WebSocket or an event stream going past the SSC request limit (X-SSC-Request-Deadline). Zero dependencies.",
   "type": "module",
   "main": "./index.js",
