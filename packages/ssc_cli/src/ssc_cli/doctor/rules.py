@@ -119,13 +119,7 @@ class Tree:
         return self._text[rel]
 
     def data(self, rel: str, limit: int = -1) -> bytes | None:
-        if rel not in self.files:
-            return None
-        try:
-            with (self.root / rel).open("rb") as f:
-                return f.read(limit)
-        except OSError:
-            return None
+        return _read(self.root / rel, limit) if rel in self.files else None
 
     def sources(self, suffixes: frozenset[str]) -> Iterator[tuple[str, str]]:
         for rel in sorted(self.files):
@@ -137,14 +131,37 @@ class Tree:
     def packed(self) -> list[tuple[str, bytes | None]]:
         """The files a deploy would pack, as the build reads them: content, or None if large."""
         if self._packed is None:
-            ignore = Ignore.load(self.root)
             self._packed = []
-            for rel in sorted(self.files):
-                if ignore.reason(rel, is_dir=False) is None:
-                    data = self.data(rel, MAX_ANALYZE_BYTES + 1)
-                    small = data is not None and len(data) <= MAX_ANALYZE_BYTES
-                    self._packed.append((rel, data if small else None))
+            for rel in packed_files(self.root):
+                data = _read(self.root / rel, MAX_ANALYZE_BYTES + 1)
+                small = data is not None and len(data) <= MAX_ANALYZE_BYTES
+                self._packed.append((rel, data if small else None))
         return self._packed
+
+
+def packed_files(root: Path) -> list[str]:
+    """The files ``ssc_bundle.pack`` would pack, by its own ignore rules and not ``SKIP_DIRS``:
+    ``dist/`` and ``build/`` ship, so what is in them is checked as the deploy checks it."""
+    ignore = Ignore.load(root)
+    found: list[str] = []
+    stack = [""]
+    while stack and len(found) <= MAX_FILES:
+        rel_dir = stack.pop()
+        try:
+            with os.scandir(root / rel_dir) as it:
+                children = list(it)
+        except OSError:
+            continue
+        for child in children:
+            rel = f"{rel_dir}/{child.name}" if rel_dir else child.name
+            is_dir = child.is_dir(follow_symlinks=False)
+            if child.is_symlink() or ignore.reason(rel, is_dir=is_dir) is not None:
+                continue
+            if is_dir:
+                stack.append(rel)
+            elif child.is_file(follow_symlinks=False):
+                found.append(rel)
+    return sorted(found)
 
 
 def load_tree(root: Path) -> Tree:
@@ -160,6 +177,14 @@ def load_tree(root: Path) -> Tree:
             break
     top_dirs = frozenset(e.name for e in os.scandir(root) if e.is_dir(follow_symlinks=False))
     return Tree(root=root, files=frozenset(files), top_dirs=top_dirs)
+
+
+def _read(path: Path, limit: int = -1) -> bytes | None:
+    try:
+        with path.open("rb") as f:
+            return f.read(limit)
+    except OSError:
+        return None
 
 
 def _read_text(path: Path) -> str | None:
