@@ -410,6 +410,7 @@ SNOWFLAKE_READS = [
     "WITH r AS (SELECT * FROM orders) SELECT COUNT(*) FROM r",
     "SELECT id FROM a UNION ALL SELECT id FROM b",
     "SELECT CURRENT_TIMESTAMP(), CURRENT_ROLE()",
+    "SELECT CONTAINS(note, 'ai') FROM orders",  # names with "ai" in them, not AI_
 ]
 
 SNOWFLAKE_REFUSED = {
@@ -466,6 +467,9 @@ SNOWFLAKE_REFUSED = {
     "the snowflake database quoted": 'SELECT * FROM "SNOWFLAKE".ACCOUNT_USAGE.LOGIN_HISTORY',
     "a snowflake function": "SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'p')",
     "a snowflake table function": "SELECT * FROM TABLE(snowflake.information_schema.tables())",
+    "ai_complete": "SELECT AI_COMPLETE('model', 'prompt')",
+    "ai_classify": "SELECT ai_classify(note, ['a', 'b']) FROM orders",
+    "ai_embed": "SELECT AI_EMBED('model', note) FROM orders",
     "garbage": "SELEC 1 FROM",
     "empty": "",
 }
@@ -496,6 +500,7 @@ def test_snowflake_reasons_name_the_construct() -> None:
     assert why("SELECT * FROM TABLE(RESULT_SCAN('x'))") == (
         "the statement calls a function that is refused"
     )
+    assert why("SELECT AI_COMPLETE('m', 'p')") == ("the statement calls a function that is refused")
     assert why("CALL p()") == "the statement is not a SELECT (Command)"
     assert why("USE DATABASE x") == "the statement is not a SELECT (Use)"
 

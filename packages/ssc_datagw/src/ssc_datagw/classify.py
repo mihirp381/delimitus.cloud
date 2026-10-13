@@ -429,9 +429,12 @@ SNOWFLAKE_DENIED_PREFIXES: Final = (
     "login_history",
     "task_history",
     "copy_history",
+    "ai_",
 )
 """``SYSTEM$`` functions act on the account; the history functions show other sessions'
-queries, logins, tasks and loads."""
+queries, logins, tasks and loads; the ``AI_`` functions (``AI_COMPLETE``, ``AI_CLASSIFY``,
+``AI_EMBED`` and the rest) call and bill Cortex models outside the read, without the
+``SNOWFLAKE.CORTEX`` qualifier the database rule refuses."""
 SNOWFLAKE: Final = Dialect(
     read="snowflake", denied=SNOWFLAKE_DENIED, denied_prefixes=SNOWFLAKE_DENIED_PREFIXES
 )

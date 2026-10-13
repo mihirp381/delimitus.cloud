@@ -520,7 +520,7 @@ What stops each attack: local-proven on SQL Server 2022 in a container; no 2025 
 **The statement.** `sql` is Snowflake SQL. Before anything is sent:
 
 1. **Classify.** `ssc_datagw.classify.snowflake_refusal`, sqlglot reading the text as Snowflake: exactly one plain `SELECT`, as for Postgres, and also refused (`QUERY_REFUSED`):
-   - the functions `RESULT_SCAN`, `GET_QUERY_OPERATOR_STATS` (another statement's result or plan), `VALIDATE`, `GET_DDL`, `IDENTIFIER` (a name given as text), `INFER_SCHEMA` and `GENERATE_COLUMN_DESCRIPTION` (a stage named in a string), any `SYSTEM$` function, and any function starting `QUERY_HISTORY`, `LOGIN_HISTORY`, `TASK_HISTORY` or `COPY_HISTORY`, called plainly or in `TABLE(...)`;
+   - the functions `RESULT_SCAN`, `GET_QUERY_OPERATOR_STATS` (another statement's result or plan), `VALIDATE`, `GET_DDL`, `IDENTIFIER` (a name given as text), `INFER_SCHEMA` and `GENERATE_COLUMN_DESCRIPTION` (a stage named in a string), any `SYSTEM$` function, any function starting `QUERY_HISTORY`, `LOGIN_HISTORY`, `TASK_HISTORY` or `COPY_HISTORY`, and any `AI_` function (`AI_COMPLETE`, `AI_CLASSIFY`, `AI_EMBED` and the rest, which call and bill Cortex models), called plainly or in `TABLE(...)`;
    - a stage (`@s`, `@s/path`, `@~`, `@%t`, and `@s` as a function's argument) and a session variable or positional stage column (`$v`, `$1`);
    - `TABLE(...)` over a string, a bind or a variable (`TABLE('db.s.t')`, `TABLE(?)`, `TABLE(:1)`, `TABLE($t)`), which names a table this check never sees;
    - a table or function qualified by another database than `database` (compared without case): `other.s.t`, `other.s.f()`;
