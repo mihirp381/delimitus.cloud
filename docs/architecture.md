@@ -126,7 +126,8 @@ row-level security and transaction-scoped org binding. Wire contracts are indexe
 
 Imports follow the allowed direction: services → `ssc_bundle` → `ssc_shared` → `ssc_contracts`.
 Import-linter enforces the layers. Contracts import no SSC implementations. Cell services and `ssc_app` import
-neither `ssc_control` nor its database libraries. The public page and console host remain
+neither `ssc_control` nor its database libraries. `ssc_app` is installed into customers' apps, so it imports
+no other workspace package and runs on Python 3.11 and later. The public page and console host remain
 independent of platform implementations and credentials.
 
 Cross-lane ports import no implementation. The API defers jobs by name and never imports the

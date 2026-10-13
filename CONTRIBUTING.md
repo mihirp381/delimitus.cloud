@@ -117,6 +117,11 @@ uv run python gates/run_gates.py
 The database tests use Docker. The planted violations in `gates/fixtures/` are intentional;
 `gates/run_gates.py` fails if a quality gate stops detecting its violation.
 
+`packages/ssc_app` is installed into customers' apps: ruff and pyright check it as Python 3.11,
+and CI job `python-helper` runs its tests from the built wheel on Python 3.11 to 3.14.
+`tools/release_versions.py` checks that every package the release workflow publishes, to PyPI
+and to npm, carries one version.
+
 ### Node helpers and console
 
 From the repository root:

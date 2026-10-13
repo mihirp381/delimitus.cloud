@@ -67,7 +67,7 @@ Treat every code the same way: this request is not from a signed-in user of this
 
 ## Using the helpers
 
-Python (`ssc_app`, depends on `pyjwt[crypto]` only):
+Python (`ssc-app` on PyPI, imported as `ssc_app`; depends on `pydantic` and `pyjwt[crypto]` only; Python 3.11+):
 
 ```python
 import os
@@ -88,7 +88,7 @@ def who(request):
     return note.sub, None  # key on note.sub; note.name and note.email are for display
 ```
 
-Node (`@delimitus/ssc-identity`, zero dependencies, Node 22+):
+Node (`@delimitus/ssc-identity` on npm, zero dependencies, Node 22+):
 
 ```js
 import { IdentityRefused, IdentityVerifier } from '@delimitus/ssc-identity';

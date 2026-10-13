@@ -77,7 +77,7 @@ capabilities. The [remote MCP guide](docs/runbooks/remote-mcp.md) covers coding-
 | [gates/](gates/) | Planted violations that prove the CI gates catch failures. |
 | [tools/](tools/) | Development stack, dependency checks, API checks, and release tooling. |
 | [docs/](docs/README.md) | Architecture, contracts, decisions, runbooks, pilot notes, and known limits. |
-| [.github/](.github/) | CI, nightly checks, CLI release workflow, and the preview deploy action. |
+| [.github/](.github/) | CI, nightly checks, the release workflow for the CLI and the app helpers, and the preview deploy action. |
 
 Python packages use `packages/<package>/src/<module>/` and keep tests beside each package.
 The root [pyproject.toml](pyproject.toml) defines the workspace and quality gates;
