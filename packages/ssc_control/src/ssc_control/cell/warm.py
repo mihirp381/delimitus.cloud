@@ -18,8 +18,9 @@ job) brings them together, one step per job like ``create.create_step``:
    ``MAX_ATTEMPTS`` attempts ``CELL_DEPLOYER_FAILED``, before that another run after a back-off.
    Succeeded: ``applied`` is what it set; if the admin changed ``wanted`` meanwhile, another run.
 
-With no deployer configured it fails at once with ``CELL_DEPLOYER_UNAVAILABLE``. Changing
-``wanted`` clears a failure and starts again. Charging for any of this is not built (A6).
+With no deployer configured it fails at once with ``CELL_DEPLOYER_UNAVAILABLE``; a job that runs
+out of attempts (``cell.jobs.RETRY``) fails it with ``CELL_RESOURCE_STALLED`` (``give_up``).
+Changing ``wanted`` clears a failure and starts again. Charging for any of this is not built (A6).
 """
 
 import logging
@@ -39,6 +40,7 @@ from ssc_control.cell.create import (
     BACKOFF_SECONDS,
     CELL_DEPLOYER_FAILED,
     CELL_DEPLOYER_UNAVAILABLE,
+    CELL_RESOURCE_STALLED,
     MAX_ATTEMPTS,
     POLL_SECONDS,
 )
@@ -252,6 +254,21 @@ async def gateway_step(ports: Ports, *, org_id: str) -> str:
     if row.execution is None:
         return await _start(ports, org_id, label, wants=row.wanted)
     return await _poll(ports, org_id, row.execution)
+
+
+async def give_up(ports: Ports, *, org_id: str) -> str:
+    """Fail the gateway's change when its job ran out of attempts, so it reads ``failed`` instead
+    of turning on or off for ever with no job; changing ``wanted`` starts again. Its state after
+    it (or ``missing``)."""
+    async with bound_org(ports.engine, org_id) as conn:
+        found = (await conn.execute(_LOCK, {"org": org_id})).first()
+        if found is None:
+            return "missing"
+        row = _row(found)
+        if row.execution is None and (row.wanted == row.applied or row.failure_code is not None):
+            return row.state
+        await _fail(conn, org_id, CELL_RESOURCE_STALLED, "its job ran out of attempts")
+    return "failed"
 
 
 async def _start(ports: Ports, org_id: str, label: str, *, wants: bool) -> str:

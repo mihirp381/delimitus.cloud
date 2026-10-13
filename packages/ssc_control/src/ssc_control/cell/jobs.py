@@ -4,7 +4,8 @@ namespace; callers defer them by name (``cell.tasks``).
 Both steps are safe to run twice, so a step that raises (the database out for a moment) is
 retried (``RETRY``, as the snapshot compile). When ``create_resource`` has no attempt left the
 resource fails with ``CELL_RESOURCE_STALLED`` (``create.give_up``), which re-defers the
-deployments waiting for it, instead of staying ``creating`` with no job.
+deployments waiting for it, instead of staying ``creating`` with no job; ``warm_gateway`` likewise
+fails the gateway's change (``warm.give_up``) instead of leaving it turning on or off.
 """
 
 import logging
@@ -48,6 +49,15 @@ def blueprint() -> Blueprint:
     @bp.task(name="warm_gateway", pass_context=True, retry=RETRY)
     async def warm_gateway(context: JobContext, org_id: str) -> str:  # pyright: ignore[reportUnusedFunction]
         """One step of setting the gateway's warm flag; returns its state after the step."""
-        return await warm.gateway_step(ports_of(context), org_id=org_id)
+        ports = ports_of(context)
+        try:
+            return await warm.gateway_step(ports, org_id=org_id)
+        except Exception as exc:
+            if RETRY.get_retry_decision(exception=exc, job=context.job) is None:
+                try:
+                    await warm.give_up(ports, org_id=org_id)
+                except Exception:
+                    log.exception("could not fail the warm gateway", extra={"org_id": org_id})
+            raise
 
     return bp
