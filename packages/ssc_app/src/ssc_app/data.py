@@ -1,5 +1,6 @@
 """Read a database the org connected, through the cell's data gateway (SSC-052). Name the connection
-in ``[connections] names`` in ``ssc.toml``; an admin grants the environment the connection.
+in ``[connections] names`` in ``ssc.toml``; an admin grants the environment the connection. For
+a ``postgres`` connection:
 
     from ssc_app import data
 
@@ -8,7 +9,11 @@ in ``[connections] names`` in ``ssc.toml``; an admin grants the environment the 
         ...
 
 The call carries the app's own workload token (``ssc_app.workload``), so the app holds no database
-credentials. The statement is one read-only ``SELECT`` with ``$1``, ``$2``, ... placeholders;
+credentials. The statement is one read, and nothing can write. Its form follows the connection's
+kind: one ``SELECT`` for ``postgres`` (``$1``, ``$2``, ... placeholders) and for ``mysql``,
+``sqlserver``, ``bigquery`` and ``snowflake`` (``?`` placeholders); and, with no parameters, an A1
+range for ``gsheets``, ``list <prefix>`` or ``get <key>`` for ``s3`` and ``gcs``,
+``<table>[ view <view>][ where <formula>]`` for ``airtable`` and a GET path for ``rest``.
 ``max_rows``, ``max_bytes`` and ``timeout_ms`` only narrow what the platform, the connection and the
 grant allow, and ``truncated`` says the gateway stopped reading before the result ended. To act for
 the signed-in user, pass the ``X-SSC-Identity`` value of the request being answered as

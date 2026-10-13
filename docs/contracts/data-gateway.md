@@ -16,7 +16,7 @@ The body is JSON, at most 1 MB, with no other member:
 
 | Member | Type | Meaning |
 |---|---|---|
-| `sql` | string | One read-only statement, 1 to 100,000 characters. Parameters are `$1`, `$2`, ... |
+| `sql` | string | One read-only statement, 1 to 100,000 characters, in the form the connection's kind takes (each connector, below). Parameters are `$1`, `$2`, ... for `postgres` and `?` for the other SQL kinds; the kinds that are not SQL take none. |
 | `params` | list | Up to 1,000 strings, integers, floats, booleans or nulls. Default empty. |
 | `max_rows` | int ≥ 0 | Optional. Default 5,000. |
 | `max_bytes` | int ≥ 0 | Optional. Default 10 MB. |

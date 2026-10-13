@@ -1,7 +1,7 @@
 /**
  * Read a database the org connected, through the cell's data gateway (SSC-052). Name the
  * connection in `[connections] names` in `ssc.toml`; an admin grants the environment the
- * connection.
+ * connection. For a `postgres` connection:
  *
  *   import { query } from '@delimitus/ssc-data';
  *
@@ -9,11 +9,15 @@
  *   for (const row of result.rows) { ... }   // each row is an array in column order
  *
  * The call carries the app's own workload token, so the app holds no database credentials. The
- * statement is one read-only `SELECT` with `$1`, `$2`, ... placeholders; `maxRows`, `maxBytes` and
- * `timeoutMs` only narrow what the platform, the connection and the grant allow, and `truncated`
- * says the gateway stopped reading before the result ended. To act for the signed-in user, pass
- * the `X-SSC-Identity` value of the request being answered as `identity`; without it the app acts
- * for itself (docs/contracts/data-gateway.md).
+ * statement is one read, and nothing can write. Its form follows the connection's kind: one
+ * `SELECT` for `postgres` (`$1`, `$2`, ... placeholders) and for `mysql`, `sqlserver`, `bigquery`
+ * and `snowflake` (`?` placeholders); and, with no parameters, an A1 range for `gsheets`,
+ * `list <prefix>` or `get <key>` for `s3` and `gcs`, `<table>[ view <view>][ where <formula>]`
+ * for `airtable` and a GET path for `rest`. `maxRows`, `maxBytes` and `timeoutMs` only narrow what
+ * the platform, the connection and the grant allow, and `truncated` says the gateway stopped
+ * reading before the result ended. To act for the signed-in user, pass the `X-SSC-Identity` value
+ * of the request being answered as `identity`; without it the app acts for itself
+ * (docs/contracts/data-gateway.md).
  *
  * The data gateway's address comes from the metadata server: Cloud Run's `instance/region` names
  * the project number and the region, and the gateway is `ssc-datagw` there. `SSC_DATAGW_URL` or
