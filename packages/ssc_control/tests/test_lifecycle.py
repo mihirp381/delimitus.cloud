@@ -784,9 +784,11 @@ async def test_the_gateway_waits_for_confirm_by_and_no_transaction_is_open_meanw
         )
         await asyncio.sleep(seconds)
 
+    # Each poll here also opens a connection for the count, so the window is wide enough for
+    # several polls however slow that is: at least three even at 600 ms a poll.
     timings = replace(
         FAST,
-        confirm_within=timedelta(milliseconds=400),
+        confirm_within=timedelta(seconds=2),
         confirm_every=timedelta(milliseconds=50),
         sleep=sleep,
     )
