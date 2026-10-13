@@ -1,6 +1,6 @@
 # @delimitus/ssc-identity
 
-Read the identity note the SSC gateway attaches to every request as `X-SSC-Identity`. Zero dependencies; Node 22 or newer (uses `node:crypto` webcrypto and `fetch`).
+Read the identity note the SSC gateway attaches to every request as `X-SSC-Identity`. Zero dependencies; Node 22 or newer (uses `node:crypto` webcrypto and `fetch`). An ES module; a CommonJS app can `require()` it on Node 22.12 or newer.
 
 ```js
 import { IdentityRefused, IdentityVerifier } from '@delimitus/ssc-identity';
