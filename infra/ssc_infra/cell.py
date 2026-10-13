@@ -157,7 +157,7 @@ CREATE_PERMISSIONS: Final = (
 # Cloud Run and service accounts take no resource-name IAM conditions (only Secret Manager of
 # the agent's APIs does), so these are granted on the project and the agent's code holds it to
 # ``ssc-a-`` names. Exactly what ``ssc_agent.cloud_run`` and ``ssc_agent.cloud_build`` call; no
-# delete.
+# delete, which is ``REMOVE_PERMISSIONS``.
 RUNTIME_PERMISSIONS: Final = (
     "run.services.get",
     "run.services.update",
@@ -169,6 +169,10 @@ RUNTIME_PERMISSIONS: Final = (
     "cloudbuild.builds.get",
     "cloudbuild.builds.list",
 )
+# Removing a deleted app's service and the account it ran as (GA-12): the two delete calls of
+# ``CloudRunDriver.remove``, in a role of their own so that the runtime role stays without one.
+# As above, the agent's code holds them to ``ssc-a-`` names, and to a service that is stopped.
+REMOVE_PERMISSIONS: Final = ("run.services.delete", "iam.serviceAccounts.delete")
 DATABASE_PERMISSIONS: Final = (
     "cloudsql.instances.executeSql",
     "cloudsql.instances.login",
@@ -723,6 +727,16 @@ class Cell:
             permissions=list(RUNTIME_PERMISSIONS),
             opts=self._o(),
         )
+        remove_role = gcp.projects.IAMCustomRole(
+            "agent-remove",
+            project=self.pid,
+            role_id="sscCellAgentRemove",
+            title="SSC cell agent: remove a deleted app's service",
+            description="Deletes the service and service account of an app that was deleted "
+            "(GA-12); the agent's code limits these to stopped ssc-a- services.",
+            permissions=list(REMOVE_PERMISSIONS),
+            opts=self._o(),
+        )
         database_role = gcp.projects.IAMCustomRole(
             "agent-database",
             project=self.pid,
@@ -744,6 +758,7 @@ class Cell:
         for name, role in (
             ("agent-create", create_role),
             ("agent-runtime", runtime_role),
+            ("agent-remove", remove_role),
             ("agent-database", database_role),
             ("agent-usage", usage_role),
         ):
