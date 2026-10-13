@@ -162,3 +162,73 @@ test('disable an app with the kill switch, follow the run, and enable it again',
   await expect(head.getByText('active')).toBeVisible();
   await expect(admin.getByRole('button', { name: 'Disable' })).toBeVisible();
 });
+
+test('delete an app after typing its name, follow the run, and reuse its name', async ({ page, request }) => {
+  expect(token, 'run through e2e/run.mjs, which mints the token').not.toBe('');
+  const slug = `e2e-delete-${Date.now().toString(36)}`;
+  const app = await createApp(request, slug);
+
+  await signIn(page, `/apps/${app.id}?tab=settings`);
+  const head = page.locator('.page-head');
+  await expect(head.getByText('active')).toBeVisible();
+  const admin = page.getByRole('region', { name: 'Admin actions' });
+
+  const posts: { status: number; runId: string }[] = [];
+  page.on('response', async (response) => {
+    const req = response.request();
+    if (req.method() === 'POST' && new URL(response.url()).pathname === `/v1/apps/${app.id}/delete`) {
+      posts.push({ status: response.status(), runId: (await response.json()).run_id });
+    }
+  });
+
+  await admin.getByRole('button', { name: 'Delete app' }).click();
+  const dialog = page.getByRole('dialog', { name: `Delete ${slug}` });
+  const confirm = dialog.getByRole('button', { name: 'Delete', exact: true });
+  await expect(confirm).toBeDisabled();
+  await dialog.getByLabel(/Type/).fill(slug.slice(0, -1));
+  await expect(confirm).toBeDisabled();
+  await dialog.getByLabel(/Type/).fill(slug);
+  await confirm.click();
+
+  const run = admin.getByRole('group', { name: 'Delete run' });
+  await expect(run.getByText('Deny at the gateway')).toBeVisible();
+  await expect(run.locator('p .badge')).toHaveText('completed', { timeout: 60_000 });
+  await expect(run.getByText('Remove sharing, requests and links')).toBeVisible();
+  await expect(run.getByText('The app is deleted')).toBeVisible();
+  expect(posts).toHaveLength(1);
+  expect(posts[0]?.status).toBe(202);
+  const runId = posts[0]?.runId ?? 'missing';
+
+  // The run has its own page, which outlives the app.
+  await run.getByRole('link', { name: 'Open this run' }).click();
+  await expect(page).toHaveURL(new RegExp(`/apps/${app.id}/delete/${runId}$`));
+  await expect(page.getByRole('heading', { name: 'Delete run', level: 1 })).toBeVisible();
+  const steps = page.getByRole('table', { name: 'Delete steps' });
+  await expect(steps.getByRole('row')).toHaveCount(12);
+
+  const polled = await request.get(`/v1/apps/${app.id}/delete/${runId}`, { headers: auth });
+  expect(polled.status()).toBe(200);
+  const body = await polled.json();
+  expect(body.state).toBe('completed');
+  expect(body.steps.map((s: { name: string }) => s.name)).toEqual([
+    'gateway_deny',
+    'datagw_suspend',
+    'egress_remove',
+    'scale_to_zero',
+    'remove_timers',
+    'drop_databases',
+    'delete_files',
+    'delete_secrets',
+    'delete_services',
+    'delete_bundles',
+    'remove_records',
+  ]);
+
+  // The app is gone from the API and from the list, and its name is free again.
+  expect((await request.get(`/v1/apps/${app.id}`, { headers: auth })).status()).toBe(404);
+  await page.getByRole('link', { name: 'Back to Apps' }).click();
+  await expect(page.getByRole('heading', { name: 'Apps', level: 1 })).toBeVisible();
+  await expect(page.getByRole('link', { name: slug, exact: true })).toHaveCount(0);
+  const again = await createApp(request, slug);
+  expect(again.id).not.toBe(app.id);
+});

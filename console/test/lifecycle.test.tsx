@@ -12,9 +12,10 @@ const APP_ID = 'app_aaaaaaaaaaaaaaaaaaaa';
 const PROD = 'env_prod0000000000000000';
 const PREVIEW = 'env_preview0000000000000';
 const RUN = 'kil_rrrrrrrrrrrrrrrrrrrr';
+const DELETE_RUN = 'kil_dddddddddddddddddddd';
 const OP = 'dep_oooooooooooooooooooo';
 
-type Status = 'active' | 'disabled' | 'quarantined';
+type Status = 'active' | 'disabled' | 'quarantined' | 'deleting';
 
 function app(status: Status = 'active', owner = OWNER) {
   return {
@@ -457,7 +458,192 @@ function run(state: 'running' | 'completed' | 'failed', steps: number) {
   };
 }
 
+const DELETE_STEPS = [
+  'gateway_deny',
+  'datagw_suspend',
+  'egress_remove',
+  'scale_to_zero',
+  'remove_timers',
+  'drop_databases',
+  'delete_files',
+  'delete_secrets',
+  'delete_services',
+  'delete_bundles',
+  'remove_records',
+];
+
+/** A removal with its first `steps` steps begun; a failed one failed at the last of them. */
+function deleteRun(state: 'running' | 'completed' | 'failed', steps: number) {
+  const last = (i: number) => i === steps - 1;
+  return {
+    run_id: DELETE_RUN,
+    app_id: APP_ID,
+    state,
+    started_at: '2026-09-29T10:00:00Z',
+    finished_at: state === 'running' ? null : '2026-09-29T10:00:09Z',
+    total_ms: state === 'running' ? null : 9000,
+    steps: DELETE_STEPS.slice(0, steps).map((name, i) => ({
+      name,
+      state: last(i) && state !== 'completed' ? state : 'done',
+      snapshot_version: null,
+      started_at: '2026-09-29T10:00:00Z',
+      finished_at: null,
+      elapsed_ms: last(i) && state === 'running' ? null : 100,
+      attempts: last(i) && state === 'failed' ? 5 : 1,
+      error: last(i) && state === 'failed' ? 'DATABASE_UNAVAILABLE' : null,
+      removed: name === 'drop_databases' && !(last(i) && state === 'failed') ? 2 : null,
+    })),
+  };
+}
+
 describe('admin actions', () => {
+  it('deletes after the slug is typed, sends the slug, and follows the run', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        [`GET ${APP_PATH}`]: [() => json(200, app('active')), () => json(200, app('deleting'))],
+        [`POST ${APP_PATH}/delete`]: () => json(202, { run_id: DELETE_RUN, state: 'running' }),
+        [`GET ${APP_PATH}/delete/${DELETE_RUN}`]: [
+          () => json(200, deleteRun('running', 6)),
+          () => json(200, deleteRun('completed', 11)),
+        ],
+      }),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Delete app' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete expenses' });
+    expect(dialog.textContent).toContain('This cannot be undone');
+    const confirm = within(dialog).getByRole('button', { name: 'Delete' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText(/Type/), { target: { value: 'expense' } });
+    expect(confirm.disabled).toBe(true);
+    expect(api.of('POST', `${APP_PATH}/delete`)).toHaveLength(0);
+    await confirmIn(dialog, 'Delete');
+    const post = api.of('POST', `${APP_PATH}/delete`)[0];
+    expect(post?.body).toEqual({ confirm: 'expenses' });
+    expect(post?.headers.get('Idempotency-Key')).toBeTruthy();
+    const progress = await within(admin).findByRole('group', { name: 'Delete run' });
+    await within(progress).findByText('completed', {}, { timeout: 3000 });
+    expect(within(progress).getByText('Drop databases')).toBeTruthy();
+    expect(within(progress).getByText('Remove sharing, requests and links')).toBeTruthy();
+    expect(within(progress).getByRole('status').textContent).toContain('The app is deleted');
+    expect(within(progress).getByRole('link', { name: 'Open this run' }).getAttribute('href')).toBe(
+      `/apps/${APP_ID}/delete/${DELETE_RUN}`,
+    );
+    // The app is being deleted from the moment the API answered: nothing else is offered.
+    expect(await screen.findByText('deleting')).toBeTruthy();
+    for (const name of ['Disable', 'Quarantine', 'Enable', 'Transfer ownership', 'Delete app']) {
+      expect(within(admin).queryByRole('button', { name })).toBeNull();
+    }
+    expect(within(admin).getByRole('button', { name: 'Continue deleting' })).toBeTruthy();
+    const polls = api.of('GET', `${APP_PATH}/delete/${DELETE_RUN}`).length;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(api.of('GET', `${APP_PATH}/delete/${DELETE_RUN}`)).toHaveLength(polls);
+  });
+
+  it('shows a refusal to delete in the dialog and reads the app again', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        [`POST ${APP_PATH}/delete`]: () =>
+          problem(409, 'APP_OPERATION_IN_FLIGHT', 'A deploy of this app is still running.', 'Wait for it to finish, then retry.'),
+      }),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    const reads = api.of('GET', APP_PATH).length;
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Delete app' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete expenses' });
+    await confirmIn(dialog, 'Delete');
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert.textContent).toContain('APP_OPERATION_IN_FLIGHT');
+    expect(alert.textContent).toContain('Wait for it to finish');
+    await waitFor(() => expect(api.of('GET', APP_PATH).length).toBeGreaterThan(reads));
+    expect(within(admin).queryByRole('group', { name: 'Delete run' })).toBeNull();
+  });
+
+  it('offers a member no delete', async () => {
+    start(`/apps/${APP_ID}`, page({ 'GET /v1/whoami': whoami('member') }), signedIn());
+    const admin = await adminPanel();
+    expect(await within(admin).findByText(/Only an org admin can .* delete this app/)).toBeTruthy();
+    expect(within(admin).queryByRole('button', { name: 'Delete app' })).toBeNull();
+  });
+
+  it('shows a removal on its own page after the app is gone, with what each step removed', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}/delete/${DELETE_RUN}`,
+      {
+        [`GET ${APP_PATH}`]: () => problem(404, 'NOT_FOUND', 'No such app.'),
+        [`GET ${APP_PATH}/delete/${DELETE_RUN}`]: () => json(200, deleteRun('completed', 11)),
+      },
+      signedIn(),
+    );
+    await screen.findByRole('heading', { name: 'Delete run', level: 1 }, { timeout: FIRST_RENDER_MS });
+    const view = await screen.findByRole('group', { name: 'Delete run' });
+    expect(within(view).getByText('9000 ms (9.0 s)')).toBeTruthy();
+    expect(within(view).getByText(DELETE_RUN)).toBeTruthy();
+    expect(within(view).queryByRole('link', { name: 'Open this run' })).toBeNull();
+    expect(within(view).getByRole('link', { name: 'Back to Apps' }).getAttribute('href')).toBe('/');
+    const steps = within(view).getByRole('table', { name: 'Delete steps' });
+    expect(within(steps).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'Step',
+      'State',
+      'Started',
+      'Finished',
+      'Removed',
+      'Took',
+      'Tries',
+      'Last error',
+    ]);
+    const rows = within(steps).getAllByRole('row');
+    expect(rows).toHaveLength(12);
+    expect(within(rows[6]!).getAllByRole('cell').map((c) => c.textContent)[4]).toBe('2');
+    // The app's own page is gone, so the bar names it without a link to it.
+    const crumbs = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    await waitFor(() => expect(api.of('GET', APP_PATH).length).toBeGreaterThan(0));
+    await waitFor(() => expect(within(crumbs).queryByRole('link', { name: 'App' })).toBeNull());
+    expect(within(crumbs).getByText('Delete run')).toBeTruthy();
+  });
+
+  it('says where a removal stopped and how to continue', async () => {
+    start(
+      `/apps/${APP_ID}/delete/${DELETE_RUN}`,
+      {
+        [`GET ${APP_PATH}`]: () => json(200, app('deleting')),
+        [`GET ${APP_PATH}/delete/${DELETE_RUN}`]: () => json(200, deleteRun('failed', 6)),
+      },
+      signedIn(),
+    );
+    const view = await screen.findByRole('group', { name: 'Delete run' }, { timeout: FIRST_RENDER_MS });
+    const notice = within(view).getByRole('status');
+    expect(notice.textContent).toContain('The removal stopped at "Drop databases"');
+    expect(notice.textContent).toContain('Delete the app again');
+    expect(within(view).getByText('DATABASE_UNAVAILABLE')).toBeTruthy();
+    expect((await screen.findByRole('link', { name: 'expenses' })).getAttribute('href')).toBe(`/apps/${APP_ID}`);
+  });
+
+  it('continues a removal that stopped', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page(
+        {
+          [`POST ${APP_PATH}/delete`]: () => json(202, { run_id: DELETE_RUN, state: 'running' }),
+          [`GET ${APP_PATH}/delete/${DELETE_RUN}`]: () => json(200, deleteRun('completed', 11)),
+        },
+        'deleting',
+      ),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    expect(await within(admin).findByText(/is being deleted/)).toBeTruthy();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Continue deleting' }));
+    await confirmIn(await screen.findByRole('dialog', { name: 'Delete expenses' }), 'Delete');
+    expect(api.of('POST', `${APP_PATH}/delete`)[0]?.body).toEqual({ confirm: 'expenses' });
+    const progress = await within(admin).findByRole('group', { name: 'Delete run' });
+    await within(progress).findByText('completed', {}, { timeout: 3000 });
+  });
+
   it('disables after the slug is typed and follows the run by the id in the body', async () => {
     const { api } = start(
       `/apps/${APP_ID}`,

@@ -497,6 +497,10 @@ function DatabasePanel({
             The next step is the bigger database, <code>{database.bigger_tier}</code>, at{' '}
             {monthly(database.bigger_tier_monthly_usd)}. Ask your operator to move you to it.
           </p>
+          <p>
+            Or give places back: deleting an app, from the admin actions on its Settings tab,
+            frees the places of its databases.
+          </p>
         </div>
       ) : null}
       {withDatabase.length === 0 ? (

@@ -168,16 +168,23 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
 
   await seesHelp(page);
 
-  // The app page has no admin action, and the API refuses the kill switch.
+  // The app page has no admin action, and the API refuses the kill switch and a delete.
   await page.goto(`/apps/${w.appId}?tab=settings`);
   const admin = page.getByRole('region', { name: 'Admin actions' });
-  await expect(admin).toContainText('Only an org admin can disable, quarantine, enable or transfer this app.');
+  await expect(admin).toContainText(
+    'Only an org admin can disable, quarantine, enable, transfer or delete this app.',
+  );
   await expect(admin.getByRole('button')).toHaveCount(0);
   const pulled = await request.post(`/v1/apps/${w.appId}/kill-switch`, {
     headers: { ...bearer(person.token), 'Idempotency-Key': randomUUID() },
     data: { mode: 'disable' },
   });
   expect(pulled.status()).toBe(403);
+  const deleted = await request.post(`/v1/apps/${w.appId}/delete`, {
+    headers: { ...bearer(person.token), 'Idempotency-Key': randomUUID() },
+    data: { confirm: w.slug },
+  });
+  expect(deleted.status()).toBe(403);
   await openTab(page, 'Overview');
 }
 
@@ -220,6 +227,7 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   const admin = page.getByRole('region', { name: 'Admin actions' });
   await expect(admin.getByRole('button', { name: 'Disable' })).toBeVisible();
   await expect(admin.getByRole('button', { name: 'Quarantine' })).toBeVisible();
+  await expect(admin.getByRole('button', { name: 'Delete app' })).toBeVisible();
   await openTab(page, 'Overview');
   const prod = page.getByRole('region', { name: 'Production prod' });
   await expect(prod.getByRole('button', { name: 'Share Production' })).toBeVisible();
