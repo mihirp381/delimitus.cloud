@@ -1,6 +1,6 @@
 """The packages ``release-cli.yml`` publishes share one version and pin each other to it exactly,
-a ``cli-v<version>`` tag names that version, and the ssc-deploy Action installs that ``ssc-cli``
-by default (decision 017). Exits 1 on any problem.
+its publish job lists each one it builds, a ``cli-v<version>`` tag names that version, and the
+ssc-deploy Action installs that ``ssc-cli`` by default (decision 017). Exits 1 on any problem.
 
     uv run --no-project --python 3.14 python tools/release_versions.py [--tag cli-v0.0.1]
 """
@@ -18,6 +18,7 @@ ACTION = Path(".github") / "actions" / "ssc-deploy" / "action.yml"
 TAG_PREFIX = "cli-v"
 _ACTION_CLI = re.compile(r'^    default: "ssc-cli==([^"]*)"$', re.M)
 _BUILD = re.compile(r"uv build --package ([A-Za-z0-9._-]+)")
+_PYPI_MATRIX = re.compile(r"^ +package: \[([^\]]*)\]$", re.M)
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
@@ -28,6 +29,12 @@ def canonical(name: str) -> str:
 def published(root: Path) -> list[str]:
     """The distributions the release workflow builds, in its order."""
     return [canonical(n) for n in _BUILD.findall((root / WORKFLOW).read_text())]
+
+
+def _listed(matrix: re.Pattern[str], root: Path) -> list[str]:
+    """The names one publish job of the release workflow lists, in its order."""
+    found = matrix.search((root / WORKFLOW).read_text())
+    return [n.strip() for n in found.group(1).split(",") if n.strip()] if found else []
 
 
 def members(root: Path) -> dict[str, dict[str, Any]]:
@@ -52,6 +59,12 @@ def check(root: Path, tag: str | None = None) -> list[str]:
     ]
     if problems or not names:
         return problems or ["release-cli.yml builds no package"]
+    listed = [f"ssc-{n}" for n in _listed(_PYPI_MATRIX, root)]
+    if listed != names:
+        problems.append(
+            f"release-cli.yml builds {', '.join(names)} "
+            f"but its PyPI job publishes {', '.join(listed) or 'nothing'}"
+        )
     versions = {n: str(projects[n]["version"]) for n in names}
     if len(set(versions.values())) > 1:
         shown = ", ".join(f"{n} {v}" for n, v in versions.items())
