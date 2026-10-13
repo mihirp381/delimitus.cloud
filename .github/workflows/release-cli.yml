@@ -1,6 +1,7 @@
-# Publishes ssc-cli, the three packages it depends on and the app helper ssc-app to PyPI with
-# trusted publishing.
-# Off until the founder sets the repository variable SSC_PUBLISH_ENABLED=true (decision 017).
+# Publishes ssc-cli, the three packages it depends on and the app helper ssc-app to PyPI, and
+# the node app helpers to npm, with trusted publishing.
+# Off until the founder sets the repository variable SSC_PUBLISH_ENABLED=true, and the npm job
+# until SSC_NPM_PUBLISH_ENABLED=true as well (decision 017).
 name: release-cli
 
 on:
@@ -48,6 +49,22 @@ jobs:
           name: dist
           path: dist/
           if-no-files-found: error
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Pack the node helpers
+        run: |
+          mkdir npm-dist
+          npm pack ./helpers/node/ssc-identity --pack-destination npm-dist
+          npm pack ./helpers/node/ssc-reconnect --pack-destination npm-dist
+          npm pack ./helpers/node/ssc-files --pack-destination npm-dist
+          npm pack ./helpers/node/ssc-data --pack-destination npm-dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-dist
+          path: npm-dist/
+          if-no-files-found: error
 
   # One environment per package: PyPI registers a trusted publisher once per repository, workflow
   # and environment, so each new project needs its own environment. Dependencies go first, and
@@ -77,3 +94,37 @@ jobs:
           ls dist
           test "$(ls dist | wc -l)" -eq 2
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  # npm takes a trusted publisher only for a package that exists, so the first version of each
+  # helper is published by hand and this job stays off until the founder has registered this
+  # workflow and the environment npm as each helper's publisher. No token: npm takes the job's
+  # identity and attaches provenance itself.
+  publish-npm:
+    name: Publish @delimitus/${{ matrix.helper }} to npm
+    if: vars.SSC_PUBLISH_ENABLED == 'true' && vars.SSC_NPM_PUBLISH_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      max-parallel: 1
+      matrix:
+        helper: [ssc-identity, ssc-reconnect, ssc-files, ssc-data]
+    environment: npm
+    permissions:
+      id-token: write # npm trusted publishing
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-dist
+          path: npm-dist/
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Publish this helper's tarball
+        env:
+          HELPER: ${{ matrix.helper }}
+        run: |
+          npm --version
+          test "$(ls npm-dist/delimitus-"${HELPER}"-*.tgz | wc -l)" -eq 1
+          npm publish ./npm-dist/delimitus-"${HELPER}"-*.tgz

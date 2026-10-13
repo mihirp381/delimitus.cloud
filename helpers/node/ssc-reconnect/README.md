@@ -2,6 +2,10 @@
 
 Keep a WebSocket or an event stream going past the platform's limit. Zero dependencies; Node 22 or newer. An ES module; a CommonJS app can `require()` it on Node 22.12 or newer.
 
+```
+npm install @delimitus/ssc-reconnect
+```
+
 Cloud Run ends every request at the limit the gateway reports (5 minutes for most apps, 60 for session apps), and an open WebSocket or event stream is one request. The gateway tells the app when in the `X-SSC-Request-Deadline` header. These helpers end the stream cleanly a little before then, and the browser opens a new one by itself.
 
 ```js

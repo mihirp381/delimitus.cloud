@@ -1,6 +1,7 @@
 """tools/release_versions.py: the published packages share one version and pin each other."""
 
 import importlib.util
+import json
 from pathlib import Path
 from types import ModuleType
 
@@ -8,6 +9,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 PUBLISHED = ["ssc-contracts", "ssc-app", "ssc-shared", "ssc-bundle", "ssc-cli"]
+HELPERS = ["ssc-identity", "ssc-reconnect", "ssc-files", "ssc-data"]
 
 
 @pytest.fixture(scope="module")
@@ -23,6 +25,7 @@ def tool() -> ModuleType:
 
 def test_the_repository_is_ready_to_release(tool):
     assert tool.published(ROOT) == PUBLISHED
+    assert tool.packed(ROOT) == HELPERS
     assert tool.check(ROOT) == []
     version = tool.members(ROOT)["ssc-cli"]["version"]
     assert tool.check(ROOT, f"cli-v{version}") == []
@@ -99,6 +102,48 @@ def test_the_publish_job_lists_what_is_built_in_its_order(tool, tmp_path):
     swapped = _tree(tmp_path / "swapped", packages, builds, listed=["ssc-cli", "ssc-app"])
     assert tool.check(swapped) == [
         "release-cli.yml builds ssc-app, ssc-cli but its PyPI job publishes ssc-cli, ssc-app"
+    ]
+
+
+def _helpers(root: Path, packages: dict[str, dict[str, object]], listed: list[str]) -> Path:
+    """Adds node helpers to a tree: the workflow packs each one and its npm job lists some."""
+    workflow = root / tool_workflow()
+    workflow.write_text(
+        workflow.read_text()
+        + "".join(
+            f"          npm pack ./helpers/node/{n} --pack-destination npm-dist\n" for n in packages
+        )
+        + f"      matrix:\n        helper: [{', '.join(listed)}]\n"
+    )
+    for name, package in packages.items():
+        if package:
+            folder = root / "helpers" / "node" / name
+            folder.mkdir(parents=True)
+            (folder / "package.json").write_text(json.dumps(package))
+    return root
+
+
+def test_a_node_helper_is_ready_to_publish_at_the_shared_version(tool, tmp_path):
+    cli = {"ssc-cli": ("0.0.2", [])}
+    public = {"publishConfig": {"access": "public"}}
+    good = {"name": "@delimitus/ssc-files", "version": "0.0.2", **public}
+    ok = _tree(tmp_path / "ok", cli, ["ssc-cli"], action_cli="0.0.2")
+    assert tool.check(_helpers(ok, {"ssc-files": good}, ["ssc-files"]), "cli-v0.0.2") == []
+    bad = _tree(tmp_path / "bad", cli, ["ssc-cli"], action_cli="0.0.2")
+    packages = {
+        "ssc-files": {"name": "ssc-files", "version": "0.1.0", "private": True},
+        "ssc-data": good | {"name": "@delimitus/ssc-data"},
+        "ssc-gone": {},
+    }
+    path = "helpers/node/ssc-files/package.json"
+    assert tool.check(_helpers(bad, packages, ["ssc-files", "ssc-gone"])) == [
+        "release-cli.yml packs ssc-files, ssc-data, ssc-gone "
+        "but its npm job publishes ssc-files, ssc-gone",
+        f"{path} must be named @delimitus/ssc-files",
+        f"{path} must be version 0.0.2, not 0.1.0",
+        f"{path} must not be private",
+        f"{path} must set publishConfig.access to public",
+        "ssc-gone is packed but helpers/node/ssc-gone/package.json does not exist",
     ]
 
 
