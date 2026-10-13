@@ -453,6 +453,81 @@ async def test_agent_refuses_bad_requests(cloud_run: CloudRunDriver) -> None:
         assert (await client.get("/healthz")).json() == {"status": "ok"}
 
 
+class Custody:
+    """``SecretCustody`` that keeps names only."""
+
+    def __init__(self) -> None:
+        self.secrets: set[str] = set()
+
+    async def ensure(self, secret: str) -> None:
+        self.secrets.add(secret)
+
+    async def remove(self, secret: str) -> None:
+        self.secrets.discard(secret)
+
+
+async def test_remove_deletes_the_service_and_the_account_it_ran_as_and_no_other(
+    cloud_run: CloudRunDriver, emulator: CloudRunEmulator
+) -> None:
+    spec, other = new_spec(FIRST), new_spec(SECOND)
+    await cloud_run.apply(spec)
+    await cloud_run.apply(other)
+    emulator.settle()
+    emulator.calls.clear()
+    await cloud_run.remove(spec.service)
+    assert set(emulator.services) == {other.service}
+    assert set(emulator.accounts) == {other.service}
+    path = f"/v2/projects/{PROJECT}/locations/{REGION}/services/{spec.service}"
+    account = f"{spec.service}@{PROJECT}.iam.gserviceaccount.com"
+    assert [c for c in emulator.calls if c[0] == "DELETE"] == [
+        ("DELETE", path),
+        ("DELETE", f"/v1/projects/{PROJECT}/serviceAccounts/{account}"),
+    ]
+    await cloud_run.remove(spec.service)  # both already gone
+    assert set(emulator.services) == {other.service}
+    with pytest.raises(RuntimeDriverError, match="not an SSC app service name"):
+        await cloud_run.remove("ssc-gateway")
+    emulator.settle = lambda: None  # type: ignore[method-assign]
+    with pytest.raises(RuntimeDriverError, match="not gone"):
+        await cloud_run.remove(other.service)
+    assert other.service in emulator.accounts  # the account outlives a service still there
+
+
+async def test_the_agent_removes_nothing_of_a_service_that_still_runs(
+    cloud_run: CloudRunDriver, emulator: CloudRunEmulator
+) -> None:
+    custody = Custody()
+    transport = httpx2.ASGITransport(app=create_app(cloud_run, None, custody, org_id=CONTRACT_ORG))
+    headers = {ORG_HEADER: CONTRACT_ORG}
+    spec = new_spec(FIRST)
+    secret = f"{spec.service}-API_KEY"
+    await cloud_run.apply(spec)
+    emulator.settle()
+    async with httpx2.AsyncClient(transport=transport, base_url=AGENT, headers=headers) as client:
+        assert (await client.post("/v1/secrets/ensure", json={"secret": secret})).is_success
+        for path, body in (
+            ("/v1/runtime/remove", {"service": spec.service}),
+            ("/v1/secrets/remove", {"secret": secret}),
+        ):
+            live = await client.post(path, json=body)
+            assert (live.status_code, live.json()["code"]) == (409, "SERVICE_LIVE"), path
+        assert spec.service in emulator.services and custody.secrets == {secret}
+
+        await cloud_run.scale_to_zero(spec.service)
+        for _ in range(2):  # one already gone is fine
+            gone = await client.post("/v1/secrets/remove", json={"secret": secret})
+            assert (gone.status_code, gone.json()) == (200, {"removed": secret})
+            done = await client.post("/v1/runtime/remove", json={"service": spec.service})
+            assert (done.status_code, done.json()) == (200, {"removed": spec.service})
+        assert not emulator.services and not emulator.accounts and not custody.secrets
+
+        for not_an_apps in ("ssc-conn-" + "c" * 20, "ssc-control-key", "ssc-a-short-KEY"):
+            bad = await client.post("/v1/secrets/remove", json={"secret": not_an_apps})
+            assert (bad.status_code, bad.json()["code"]) == (400, "INVALID_REQUEST")
+        bad = await client.post("/v1/runtime/remove", json={"service": "ssc-gateway"})
+        assert (bad.status_code, bad.json()["code"]) == (400, "INVALID_REQUEST")
+
+
 async def test_agent_errors_map_back_to_driver_errors(cloud_run: CloudRunDriver) -> None:
     async def id_token(_: str) -> str:
         return "id-token"
