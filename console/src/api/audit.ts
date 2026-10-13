@@ -168,3 +168,8 @@ export function killSwitchApp(event: AuditEvent): string | null {
   const id = event.after?.['app_id'];
   return typeof id === 'string' && APP_ID_PATTERN.test(id) ? id : null;
 }
+
+/** Whether a kill switch step's row belongs to the removal of an app, which has its own page. */
+export function isDeleteRun(event: AuditEvent): boolean {
+  return event.target.kind === 'kill_switch_run' && event.after?.['mode'] === 'delete';
+}

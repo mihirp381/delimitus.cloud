@@ -265,6 +265,7 @@ describe('your environment', () => {
     const notice = within(section('Database')).getByRole('status');
     expect(notice.textContent).toContain('DB_TIER_FULL');
     expect(notice.textContent).toContain('db-g1-small');
+    expect(notice.textContent).toContain('deleting an app');
   });
 
   it('shows why the cell could not be read', async () => {
