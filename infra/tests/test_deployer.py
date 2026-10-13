@@ -1,7 +1,7 @@
-"""The cell deployer (SSC-087): two arguments from fixed sets, exactly one flag set, and a run
-killed halfway converged by the next. The warm option's gateway part (SSC-092): ``warm=true`` and
-``warm=false`` set the ``warm`` flag and nothing else. Pulumi is a fake; nothing here reaches a
-cloud."""
+"""The cell deployer (SSC-087): two arguments from fixed sets, exactly one flag set, a run killed
+halfway converged by the next, and what a run changes read back from the cloud before it is
+applied. The warm option's gateway part (SSC-092): ``warm=true`` and ``warm=false`` set the
+``warm`` flag and nothing else. Pulumi is a fake; nothing here reaches a cloud."""
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -32,6 +32,17 @@ RUN_ENV = {
 }
 
 
+CELL = {
+    "agent_image": f"{naming.platform_registry()}/ssc-agent@sha256:" + "a" * 64,
+    "gateway_image": f"{naming.platform_registry()}/ssc-gateway@sha256:" + "f" * 64,
+    "gateway_keyring": "CiQAc2VhbGVkLWtleXJpbmc=",
+    "gateway_jwks": '{"keys":[{"kty":"EC","crv":"P-256","kid":"id-1","x":"AA","y":"AA"}]}',
+    "org_id": "org_" + "a" * 20,
+    "datagw_image": f"{naming.platform_registry()}/ssc-datagw@sha256:" + "c" * 64,
+    "proxy_image": f"{naming.platform_registry()}/ssc-egress@sha256:" + "9" * 64,
+}
+
+
 def _urn(key: str) -> str:
     return f"urn:pulumi:{STACK}::{naming.PROJECT}::{key}"
 
@@ -46,9 +57,15 @@ def _exported(config: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> dict[s
 class FakePulumi:
     """Answers ``stack output`` and ``stack export`` and records every call."""
 
-    def __init__(self, outputs: dict[str, Any], pending: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        outputs: dict[str, Any],
+        pending: list[str] | None = None,
+        resources: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.outputs = outputs
         self.pending = pending or []
+        self.resources = resources or []
         self.calls: list[tuple[str, ...]] = []
 
     def __call__(self, *args: str, cwd: str | None = None) -> str:
@@ -57,7 +74,8 @@ class FakePulumi:
             return json.dumps(self.outputs)
         if args[:2] == ("stack", "export"):
             ops = [{"type": "creating", "resource": {"urn": u}} for u in self.pending]
-            return json.dumps({"version": 3, "deployment": {"pending_operations": ops}})
+            deployment = {"pending_operations": ops, "resources": self.resources}
+            return json.dumps({"version": 3, "deployment": deployment})
         return ""
 
     def set_all(self) -> dict[str, str]:
@@ -269,10 +287,82 @@ def test_creates_a_killed_run_left_pending_are_imported_or_dropped(tmp_path: Pat
     assert fake.calls[-1][0] == "up"
 
 
-def test_a_clean_state_needs_no_refresh(tmp_path: Path) -> None:
+def test_a_state_with_nothing_of_the_flag_s_needs_no_refresh(tmp_path: Path) -> None:
     fake = FakePulumi({"config": {"stage": "staging"}})
     assert deployer.main([LABEL, "connections"], RUN_ENV, _deployer(fake, tmp_path)) == 0
     assert [c[0] for c in fake.calls] == ["stack", "config", "stack", "up"]
+
+
+def _state(declared: list[Declared]) -> list[dict[str, Any]]:
+    """A cell's resources as ``stack export`` lists them, each under a parent's type."""
+    parent = "pulumi:pulumi:Stack"
+    return [{"urn": _urn(f"{parent}${d.type}::{d.name}"), "type": d.type} for d in declared]
+
+
+def _reread(fake: FakePulumi) -> set[str]:
+    """The resources the one read-back names, as ``naming`` writes them."""
+    (refresh,) = [c for c in fake.calls if c[0] == "refresh"]
+    assert refresh[:4] == ("refresh", "--yes", "--stack", STACK)
+    assert set(refresh[4::2]) == {"--target"}
+    assert [c[0] for c in fake.calls].index("refresh") < [c[0] for c in fake.calls].index("up")
+    return {deployer.resource_key(u) for u in refresh[5::2]}
+
+
+@pytest.mark.parametrize("arg", [*naming.LAZY_FLAGS, *naming.WARM_ARGS])
+def test_a_run_reads_back_what_its_flag_adds_or_changes(arg: str, tmp_path: Path) -> None:
+    """A second run on a cell that already has the flag's resources: each is read from the cloud
+    before ``up``, so a state that wrongly says the change is made cannot make the run a no-op."""
+    ((flag, _),) = deployer.setting(arg).items()
+    cell_state = _state(run(STACK, CELL | dict.fromkeys(naming.LAZY_FLAGS, "true")))
+    fake = FakePulumi({"config": {"stage": "staging"}}, resources=cell_state)
+    assert deployer.main([LABEL, arg], RUN_ENV, _deployer(fake, tmp_path)) == 0
+    assert _reread(fake) == (
+        naming.LAZY_RESOURCES.get(flag, frozenset()) | naming.DEPLOYER_UPDATES[flag]
+    )
+    assert fake.calls[-1] == ("up", "--yes", "--stack", STACK)
+
+
+def test_the_first_run_reads_back_only_what_the_cell_already_has(tmp_path: Path) -> None:
+    fake = FakePulumi({"config": {"stage": "staging"}}, resources=_state(run(STACK, CELL)))
+    assert deployer.main([LABEL, "database"], RUN_ENV, _deployer(fake, tmp_path)) == 0
+    assert _reread(fake) == {naming.AGENT_SERVICE}
+
+
+def test_an_update_the_cloud_refused_is_read_back_whatever_it_was_on(tmp_path: Path) -> None:
+    """The provider keeps a refused update in the state as if made, with ``initErrors``; ``up``
+    would clear the error without calling the cloud (the false ready on proof cell 2)."""
+    refused = "gcp:cloudrunv2/service:Service::ssc-gateway"
+    cell_state = _state(run(STACK, CELL))
+    for resource in cell_state:
+        if deployer.resource_key(resource["urn"]) in (naming.AGENT_SERVICE, refused):
+            resource["initErrors"] = ["updating: googleapi: Error 403: denied"]
+    fake = FakePulumi({"config": {"stage": "staging"}}, resources=cell_state)
+    assert deployer.main([LABEL, "egress"], RUN_ENV, _deployer(fake, tmp_path)) == 0
+    assert _reread(fake) == {naming.AGENT_SERVICE, refused}
+
+
+def test_a_read_back_that_fails_stops_the_run_before_it_applies(tmp_path: Path) -> None:
+    class Unreadable(FakePulumi):
+        def __call__(self, *args: str, cwd: str | None = None) -> str:
+            if args[0] == "refresh":
+                self.calls.append(args)
+                raise deployer.CommandError("pulumi refresh --yes failed: 403")
+            return super().__call__(*args, cwd=cwd)
+
+    fake = Unreadable({"config": {"stage": "staging"}}, resources=_state(run(STACK, CELL)))
+    assert deployer.main([LABEL, "connections"], RUN_ENV, _deployer(fake, tmp_path)) == 1
+    assert not [c for c in fake.calls if c[0] == "up"]
+
+
+@pytest.mark.parametrize("flag", sorted(naming.DEPLOYER_UPDATES))
+def test_a_flag_changes_in_place_exactly_what_the_deployer_reads_back(flag: str) -> None:
+    def inputs(config: dict[str, str]) -> dict[str, dict[str, Any]]:
+        return {f"{d.type}::{d.name}": d.inputs for d in run(STACK, config)}
+
+    off, on = inputs(CELL | {flag: "false"}), inputs(CELL | {flag: "true"})
+    assert {k for k in off.keys() & on.keys() if off[k] != on[k]} == naming.DEPLOYER_UPDATES[flag]
+    assert set(on) - set(off) == naming.LAZY_RESOURCES.get(flag, frozenset())
+    assert set(naming.DEPLOYER_UPDATES) == {*naming.LAZY_FLAGS, *deployer.setting("warm=true")}
 
 
 def test_every_import_id_names_the_resource_the_cell_declares() -> None:
