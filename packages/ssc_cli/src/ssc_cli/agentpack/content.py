@@ -166,6 +166,16 @@ own; its calls are recorded the same way. Set it up once:
   `[build.public_env.preview]` and `[build.public_env.prod]` in `ssc.toml`; any other name must
   also be listed in `public_names` under `[build]`. Anyone who can open the app can read them.
 
+### SSC helper packages
+
+- The rules below name SSC's helpers. Each is an ordinary dependency: add the one the app imports
+  to its dependency list and its lock file, like any other package.
+- Python: `ssc-app` on PyPI (`pip install ssc-app`), imported as `ssc_app`, for Python 3.11 or
+  newer. It asks only for ranges of `pydantic` and `pyjwt[crypto]`, so the app keeps its own pins.
+- Node: `@delimitus/ssc-identity`, `@delimitus/ssc-reconnect` and `@delimitus/ssc-files` on npm
+  (`npm install @delimitus/ssc-identity`, and so on), for Node 22 or newer. They are ES modules;
+  a CommonJS app can `require()` them on Node 22.12 or newer.
+
 ### Sleeping, sessions and limits
 
 - Every app sleeps when nobody uses it and wakes on the next request, which takes a few seconds.
