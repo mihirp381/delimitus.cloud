@@ -32,7 +32,7 @@ Never send a password, a token or a secret value. We never need one.
 - **The first load is slow.** Apps sleep when nobody uses them, and wake in a few seconds. After that they are fast. Ask your org admin about the warm option for an app people open every day.
 - **A dashboard reloaded after an hour.** A session app's connection ends at 60 minutes. Keep what matters in the database or in the page's URL.
 - **A deploy is waiting.** The first deploy that needs a database waits while the database is created, a few minutes.
-- **`DB_TIER_FULL`.** The company's database is full. Your org admin can ask for the bigger database.
+- **`DB_TIER_FULL`.** The company's database is full. Your org admin can ask for the bigger database, or delete an app nobody needs any more to give its place back.
 
 ## What to expect
 

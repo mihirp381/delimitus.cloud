@@ -195,7 +195,27 @@ AGENT_SESSION_REFUSED`): the cell agent sets a new password, the new secret vers
 (`secret.rotated`) and the live release is deployed again (`202` with `Location`, or `200` when
 nothing is live); `404 NOT_FOUND` without a database, `409 DEPLOYMENT_IN_FLIGHT` while one runs,
 `503 DATABASE_UNAVAILABLE` when the cell agent is not configured or fails. A deployment that
-needs a database the instance has no room for fails with `DB_TIER_FULL`.
+needs a database the instance has no room for fails with `DB_TIER_FULL`; deleting an app (below)
+gives the places of its databases back.
+
+**An app is deleted by an org admin, for good** (GA-12, decision 014). `POST
+/v1/apps/{app}/delete` with `{"confirm": "<the app's slug>"}` needs an active org admin who is a
+person: anyone else is `403 FORBIDDEN` before any lookup, and an agent credential is `403
+AGENT_SESSION_REFUSED`. A `confirm` that is not the slug is `422 CONFIRMATION_MISMATCH`; a
+deploy, promote, rollback or build of the app under way is `409 APP_OPERATION_IN_FLIGHT`; a pull
+of its kill switch or an earlier removal still running is `409 KILL_SWITCH_IN_FLIGHT`. The answer
+is `202` with `{run_id, state}` and `Location: /v1/apps/{app}/delete/{run_id}`: the app is
+`deleting` from that commit, which denies every request to it as a disable does, and every route
+that would change it answers `409 APP_DELETING`. The run stops the app, then removes, in both
+environments, its timers and warm setting, its databases with their roles (the places and
+connections go back to the tier), its files, its secrets with every version, its services, its
+source bundles, and its grants, data-connection links, repository link and pending approval
+requests. `GET` on the `Location` (org admins) shows each step with its state, timings, tries,
+error and how many things it removed. A run that ends `failed` leaves the app `deleting`; the
+same POST again starts a run that finishes it, and what is already gone counts as removed. Once
+the last step is done the app is `deleted`: no list shows it, every route naming it answers `404
+NOT_FOUND` except the run's own, and its slug can be given to a new app. Its audit rows,
+releases, deployments and metrics stay. There is no route that deletes one environment.
 
 **Logs are read through the cell, never from the app** (SSC-024). `GET
 /v1/apps/{app}/environments/{env}/logs?source=app|build|deploy` needs a person who may change
@@ -434,9 +454,9 @@ stateless, JSON replies. Code: `api/mcp/`.
   shape as `ssc --json`).
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
   step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052;
-  `list_connections` is the route's own view), the warm flag (SSC-092) and
-  the cell resource flags (SSC-087): no tool sets them, and the cell enable and warm routes
-  refuse an agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself, and
+  `list_connections` is the route's own view), the warm flag (SSC-092),
+  the cell resource flags (SSC-087) and deleting an app (GA-12): no tool does them, and the cell
+  enable, warm and app delete routes refuse an agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself, and
   `preflight` checks one.
 - **Wiring.** The SDK's routes are added to the FastAPI router rather than mounted (no
   trailing-slash redirect, metadata at the root); they are not in `openapi.json`. The session
