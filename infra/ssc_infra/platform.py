@@ -380,8 +380,10 @@ def _deployer_job(
 ) -> None:
     """The job runs ``infra/deployer/Dockerfile`` once ``deployer_image`` names a build of it in
     this project's registry. Each control plane's worker, which runs the cell jobs, may start it
-    with its own arguments and read its executions; nothing else."""
-    gcp.artifactregistry.Repository(
+    with its own arguments and read its executions; nothing else. The deployer reads that
+    registry: a cell's agent, gateway and data gateway run images from it, and a lazy flag
+    updates those services."""
+    registry = gcp.artifactregistry.Repository(
         "platform-registry",
         project=n.BOOTSTRAP_PROJECT,
         location=n.REGION,
@@ -389,6 +391,16 @@ def _deployer_job(
         format="DOCKER",
         description="SSC's own images in the platform project: the cell deployer, the build "
         "tools image and the Railpack frontend mirror.",
+        opts=opts,
+    )
+    # Cloud Run checks that whoever deploys an image may read it.
+    gcp.artifactregistry.RepositoryIamMember(
+        "deployer-registry",
+        project=n.BOOTSTRAP_PROJECT,
+        location=n.REGION,
+        repository=registry.repository_id,
+        role="roles/artifactregistry.reader",
+        member=deployer.member,
         opts=opts,
     )
     if image is None:
