@@ -5,6 +5,7 @@ import pytest
 
 from ssc_datagw.classify import (
     BIGQUERY,
+    TSQL_STATEMENT_WORDS,
     bigquery_refusal,
     mysql_refusal,
     refusal,
@@ -254,6 +255,10 @@ TSQL_READS = [
     "SELECT * FROM reporting.tvf(1)",
     "SELECT reporting.f(1) FROM reporting.orders",
     "SELECT fn_total FROM reporting.orders",
+    "SELECT id FROM reporting.orders ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+    "SELECT id FROM reporting.orders ORDER BY id OFFSET 1 ROW FETCH FIRST 1 ROW ONLY",
+    "SELECT [exec], \"update\", N'delete', 'set' FROM reporting.orders",
+    "SELECT exec_date, updated_at, settings, IIF(id > 1, 1, 0) FROM reporting.orders",
 ]
 
 TSQL_REFUSED = {
@@ -290,6 +295,19 @@ TSQL_REFUSED = {
     "drop": "DROP TABLE reporting.orders",
     "set": "SET LOCK_TIMEOUT 0",
     "begin transaction": "BEGIN TRANSACTION",
+    "exec hidden as a table alias": (
+        "SELECT id FROM reporting.orders EXEC('WAITFOR DELAY ''0:0:4''')"
+    ),
+    "exec hidden reading a global temporary table": (
+        "SELECT id FROM reporting.orders EXEC('SELECT * FROM ##g')"
+    ),
+    "delete hidden as a column alias": "SELECT 1 DELETE FROM reporting.orders",
+    "shutdown hidden as an alias": "SELECT 1 SHUTDOWN",
+    "reconfigure hidden as an alias": "SELECT 1 RECONFIGURE",
+    "a statement word glued on by a control character": "SELECT id FROM t\x01EXEC('x')",
+    "exec after the paging": (
+        "SELECT id FROM t ORDER BY id OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY EXEC('x')"
+    ),
     "empty": "",
     "garbage": "SELEC 1 FROM",
 }
@@ -305,6 +323,23 @@ def test_tsql_anything_else_is_refused(case: str) -> None:
     assert tsql_refusal(TSQL_REFUSED[case]) is not None
 
 
+TSQL_ALIAS_PLACES = {
+    "table": "SELECT id FROM reporting.orders {w}('x')",
+    "column": "SELECT id {w} FROM reporting.orders",
+    "cte": "WITH {w} AS (SELECT 1 AS a) SELECT a FROM {w}",
+    "subquery": "SELECT a FROM (SELECT 1 AS a) {w}",
+    "join": "SELECT o.id FROM reporting.orders o JOIN reporting.customers {w} ON {w}.id = o.id",
+}
+
+
+@pytest.mark.parametrize("word", sorted(TSQL_STATEMENT_WORDS))
+@pytest.mark.parametrize("place", sorted(TSQL_ALIAS_PLACES))
+def test_tsql_refuses_a_statement_word_wherever_it_stands_unquoted(word: str, place: str) -> None:
+    for spelled in (word.upper(), word):
+        sql = TSQL_ALIAS_PLACES[place].format(w=spelled)
+        assert tsql_refusal(sql) is not None, sql
+
+
 def test_tsql_reasons_name_the_construct() -> None:
     assert tsql_refusal("SELECT @@VERSION") == "the statement uses a variable"
     assert tsql_refusal("SELECT * FROM a.b.c") == "the statement names another database or server"
@@ -312,6 +347,7 @@ def test_tsql_reasons_name_the_construct() -> None:
     assert tsql_refusal("SELECT NEXT VALUE FOR s") == "the statement advances a sequence"
     assert tsql_refusal("SELECT * FROM dbo.xp_x") == "the statement reads an object that is refused"
     assert tsql_refusal("SELECT a.b.f(1)") == "the statement calls a function in another database"
+    assert tsql_refusal("SELECT a FROM t EXEC('y')") == "the statement holds another statement"
 
 
 SNOWFLAKE_READS = [

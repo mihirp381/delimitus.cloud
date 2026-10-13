@@ -298,6 +298,46 @@ TSQL: Final = Dialect(
 purpose (``WAITFOR``), and the extended, system and system-function prefixes."""
 
 
+TSQL_STATEMENT_WORDS: Final = frozenset(
+    {
+        "alter", "backup", "begin", "break", "bulk", "checkpoint", "close", "commit",
+        "continue", "create", "dbcc", "deallocate", "declare", "delete", "deny", "drop", "dump",
+        "exec", "execute", "fetch", "goto", "grant", "if", "insert", "kill", "load", "merge",
+        "open", "opendatasource", "openquery", "openrowset", "openxml", "print", "raiserror",
+        "readtext", "reconfigure", "restore", "return", "revert", "revoke", "rollback", "save",
+        "set", "setuser", "shutdown", "throw", "truncate", "update", "updatetext", "use",
+        "waitfor", "while", "writetext",
+    }
+)  # fmt: skip
+"""Words that start a T-SQL statement, compared in lower case: the statement keywords on
+Microsoft's reserved list, the ``OPEN...`` row-set functions, and ``THROW``.
+SQL Server needs no ``;`` between statements, and sqlglot can read such a word after a table or
+column as its alias, so the word is refused wherever it stands unquoted. A reserved word cannot
+name anything unquoted, so a read loses nothing; ``[exec]`` stays a name. ``FETCH`` right after
+``ROW`` or ``ROWS`` is ``OFFSET ... FETCH`` paging and passes."""
+_TSQL_QUOTED: Final = frozenset(
+    {TokenType.IDENTIFIER, TokenType.STRING, TokenType.NATIONAL_STRING, TokenType.HEX_STRING}
+)
+_TSQL_WORD: Final = re.compile(r"[A-Za-z0-9_@#$]+")
+
+
+def _tsql_tokens(sql: str) -> str | None:
+    """Why the tokens of a T-SQL read are refused: a variable, or a statement word outside a
+    string or a quoted name, wherever sqlglot put it."""
+    tokens = sqlglot.tokenize(sql, read=TSQL.read)
+    for at, token in enumerate(tokens):
+        if token.token_type == TokenType.PARAMETER:
+            return "the statement uses a variable"
+        if token.token_type in _TSQL_QUOTED:
+            continue
+        words = {w.lower() for w in _TSQL_WORD.findall(token.text)}
+        if words == {"fetch"} and at and tokens[at - 1].text.upper() in {"ROW", "ROWS"}:
+            continue
+        if words & TSQL_STATEMENT_WORDS:
+            return "the statement holds another statement"
+    return None
+
+
 def _tsql_object(node: exp.Expression) -> str | None:  # noqa: PLR0911  (one return per refusal)
     """Why one node of a T-SQL read is refused, or ``None``."""
     if isinstance(node, exp.NextValueFor):
@@ -324,13 +364,12 @@ def tsql_refusal(sql: str) -> str | None:
     ``@@x``), a three- or four-part name (another database or a linked server), a temporary
     table (``#t``, and ``##t``, which any login may read whatever its grants), ``NEXT VALUE
     FOR`` (it advances a sequence), a function called in another database, and a table named
-    like the refused prefixes. sqlglot nests block comments as SQL Server does. ``FOR JSON``
-    does not parse in sqlglot 28, so it is refused."""
-    reason = refusal(sql, TSQL)
+    like the refused prefixes, and a statement word anywhere outside a string or a quoted
+    name (:data:`TSQL_STATEMENT_WORDS`). sqlglot nests block comments as SQL Server does.
+    ``FOR JSON`` does not parse in sqlglot 28, so it is refused."""
+    reason = refusal(sql, TSQL) or _tsql_tokens(sql)
     if reason is not None:
         return reason
-    if any(t.token_type == TokenType.PARAMETER for t in sqlglot.tokenize(sql, read=TSQL.read)):
-        return "the statement uses a variable"
     root = sqlglot.parse_one(sql, read=TSQL.read)  # pyright: ignore[reportUnknownMemberType]
     return next((why for node in root.walk() if (why := _tsql_object(node)) is not None), None)
 
