@@ -134,6 +134,40 @@ jobs:
       - run: npm test
         working-directory: helpers/node/ssc-data
 
+  # ssc-app runs inside customers' apps: its wheel is installed alone on each Python it names,
+  # once with its dependencies at the oldest versions its ranges allow.
+  python-helper:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        resolution: [highest]
+        include:
+          - python: "3.11"
+            resolution: lowest-direct
+    env:
+      PYTHON: ${{ matrix.python }}
+      RESOLUTION: ${{ matrix.resolution }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+      - run: uv build --package ssc-app --wheel --out-dir "$RUNNER_TEMP/dist"
+      - run: uv venv --python "$PYTHON" "$RUNNER_TEMP/venv"
+      - name: Hold the helper's dependencies to one end of their ranges
+        run: |
+          uv pip compile --python "$RUNNER_TEMP/venv" --no-sources --no-deps --resolution "$RESOLUTION" \
+            packages/ssc_app/pyproject.toml -o "$RUNNER_TEMP/held.txt"
+      - name: Install the wheel and what its tests import
+        run: |
+          uv pip install --python "$RUNNER_TEMP/venv" --constraints "$RUNNER_TEMP/held.txt" \
+            "$RUNNER_TEMP"/dist/ssc_app-*.whl pytest pytest-asyncio fastapi httpx
+      - run: '"$RUNNER_TEMP/venv/bin/python" -m pytest packages/ssc_app/tests'
+
   console:
     runs-on: ubuntu-24.04
     defaults:

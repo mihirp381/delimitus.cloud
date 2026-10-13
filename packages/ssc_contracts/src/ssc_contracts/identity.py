@@ -13,7 +13,7 @@ a new version, never by editing v1. Two rules every consumer must keep:
 Pure data. Signing lives in ``ssc_edge.identity_note`` and verification in ``ssc_app.identity``.
 """
 
-from typing import Final, Literal
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -53,7 +53,7 @@ class IdentityNote(BaseModel):
         return self.sub.startswith("sch_")
 
     @model_validator(mode="after")
-    def _consistent(self) -> IdentityNote:
+    def _consistent(self) -> Self:
         if self.exp <= self.iat:
             raise ValueError("exp must be after iat")
         if self.exp - self.iat > MAX_TTL_SECONDS:

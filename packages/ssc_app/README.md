@@ -1,6 +1,12 @@
 # ssc-app
 
-The tiny helper an app installs to read the SSC identity note (`X-SSC-Identity`), to reconnect streams before the gateway's limit and to keep files. Depends on `pyjwt[crypto]` and `ssc-contracts` only.
+The tiny helper an app installs to read the SSC identity note (`X-SSC-Identity`), to reconnect streams before the gateway's limit, to keep files and to read company data.
+
+```
+pip install ssc-app
+```
+
+Python 3.11 or later. Depends on `pydantic` (2.5 or later) and `pyjwt[crypto]` (2.15 or later) only, both as ranges, so the app keeps its own pins.
 
 ```python
 import os

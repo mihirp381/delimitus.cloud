@@ -61,6 +61,12 @@ extend-exclude = ["spikes", "gates", "console", "infra/node_modules", "conforman
 target-version = "py314"
 src = ["packages/*/src", "conformance", "tools", "infra", "infra/tests"]
 
+# ssc-app runs inside customers' apps, on Python 3.11 and later; its note.py is the identity
+# contract's file, byte for byte.
+[tool.ruff.per-file-target-version]
+"packages/ssc_app/**" = "py311"
+"packages/ssc_contracts/src/ssc_contracts/identity.py" = "py311"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "N", "ASYNC", "T20", "PL"]
 ignore = ["PLR2004", "S101"]
@@ -141,6 +147,10 @@ strict = [
   "packages/ssc_console_host/src",
 ]
 reportMissingImports = true
+
+[[tool.pyright.executionEnvironments]]
+root = "packages/ssc_app/src"
+pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["packages", "conformance"]

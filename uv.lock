@@ -1580,14 +1580,12 @@ source = { editable = "packages/ssc_app" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
-    { name = "ssc-contracts" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "pydantic", specifier = "==2.13.5" },
-    { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.0" },
-    { name = "ssc-contracts", editable = "packages/ssc_contracts" },
+    { name = "pydantic", specifier = ">=2.5,<3" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.0,<3" },
 ]
 
 [[package]]
