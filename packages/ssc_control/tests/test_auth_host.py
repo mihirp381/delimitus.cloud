@@ -35,6 +35,7 @@ from ssc_control.db import NewOrg, bound_org, create_org, make_engine
 from ssc_control.identity import join, pages, sessions, tokens
 from ssc_control.identity.authhost import DEVICE_GRANT, AuthHost, create_auth_app
 from ssc_control.identity.cell_callers import CallerCheck, CellCaller, DevCallers
+from ssc_control.identity.limits import DEVICE_PER_HOUR
 from ssc_control.identity.settings import AuthSettings
 from ssc_shared.hosts import cell_project
 
@@ -483,6 +484,26 @@ async def test_a_person_login_is_never_an_agent_and_a_bad_agent_name_is_refused(
     for name in ("Claude Code", "x" * 65, "-lead", "a/b"):
         bad = await rig.http.post("/device/authorize", data={"org": rig.w.org, "agent": name})
         assert bad.json() == {"error": "invalid_request"}, name
+
+
+async def test_device_logins_are_limited_per_address(rig: Rig) -> None:
+    """Each ``/device/authorize`` stores a device code, so an address may start thirty an hour;
+    the entry a client writes itself into ``X-Forwarded-For`` does not reset its count."""
+
+    async def start(client: str, spoof: str = "6.6.6.6") -> httpx2.Response:
+        headers = {"x-forwarded-for": f"{spoof}, {client}, 35.191.0.1"}
+        return await rig.http.post("/device/authorize", data={"org": rig.w.org}, headers=headers)
+
+    for i in range(DEVICE_PER_HOUR):
+        assert (await start("10.0.0.1", spoof=f"6.6.6.{i}")).status_code == 200
+    blocked = await start("10.0.0.1", spoof="7.7.7.7")
+    assert blocked.status_code == 429
+    assert blocked.json() == {
+        "error": "invalid_request",
+        "error_description": "too many device logins",
+    }
+    assert blocked.headers["retry-after"] == "3600"
+    assert (await start("10.0.0.2")).status_code == 200
 
 
 # ── the API ──────────────────────────────────────────────────────────────────
