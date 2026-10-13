@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { after, before, beforeEach, test } from 'node:test';
 
 import { Files, FilesError, IDENTITY_PATH, REGION_PATH, URL_VARIABLE, gatewayUrl } from '../index.js';
@@ -166,4 +167,9 @@ test('the variable names the gateway', async () => {
   await files.put('notes/a.txt', 'hello', { contentType: 'text/plain' });
   assert.equal(Buffer.from(await files.get('notes/a.txt')).toString(), 'hello');
   assert.deepEqual(cell.audiences, [cell.base]);
+});
+
+test('a CommonJS app can require the package by its name', () => {
+  const helper = createRequire(import.meta.url)('@delimitus/ssc-files');
+  assert.equal(typeof helper.put, 'function');
 });

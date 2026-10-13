@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -208,4 +209,9 @@ test('the browser client stops on a clean close and gives up when it cannot get 
 
 test('browserClient() is the shipped browser file', () => {
   assert.equal(browserClient(), readFileSync(new URL('../browser.js', import.meta.url), 'utf8'));
+});
+
+test('a CommonJS app can require the package by its name', () => {
+  const helper = createRequire(import.meta.url)('@delimitus/ssc-reconnect');
+  assert.equal(typeof helper.closeBeforeDeadline, 'function');
 });
