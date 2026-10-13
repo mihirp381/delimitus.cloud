@@ -7,7 +7,7 @@ from types import ModuleType
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-PUBLISHED = ["ssc-contracts", "ssc-shared", "ssc-bundle", "ssc-cli"]
+PUBLISHED = ["ssc-contracts", "ssc-app", "ssc-shared", "ssc-bundle", "ssc-cli"]
 
 
 @pytest.fixture(scope="module")
@@ -40,11 +40,14 @@ def _tree(
     packages: dict[str, tuple[str, list[str]]],
     builds: list[str],
     action_cli: str = "0.0.1",
+    listed: list[str] | None = None,
 ) -> Path:
     workflow = root / tool_workflow()
     workflow.parent.mkdir(parents=True)
+    matrix = ", ".join(n.removeprefix("ssc-") for n in (builds if listed is None else listed))
     workflow.write_text(
         "".join(f"      - run: uv build --package {n} --out-dir dist\n" for n in builds)
+        + f"      matrix:\n        package: [{matrix}]\n"
     )
     action = root / ".github" / "actions" / "ssc-deploy" / "action.yml"
     action.parent.mkdir(parents=True)
@@ -84,6 +87,19 @@ def test_problems_are_named(tool, tmp_path):
 def test_a_published_name_must_be_a_workspace_package(tool, tmp_path):
     root = _tree(tmp_path, {"ssc-cli": ("0.0.1", [])}, ["ssc-cli", "ssc-typo"])
     assert tool.check(root) == ["ssc-typo is published but is not a workspace package"]
+
+
+def test_the_publish_job_lists_what_is_built_in_its_order(tool, tmp_path):
+    packages = {"ssc-app": ("0.0.1", []), "ssc-cli": ("0.0.1", [])}
+    builds = ["ssc-app", "ssc-cli"]
+    forgotten = _tree(tmp_path / "forgotten", packages, builds, listed=["ssc-cli"])
+    assert tool.check(forgotten) == [
+        "release-cli.yml builds ssc-app, ssc-cli but its PyPI job publishes ssc-cli"
+    ]
+    swapped = _tree(tmp_path / "swapped", packages, builds, listed=["ssc-cli", "ssc-app"])
+    assert tool.check(swapped) == [
+        "release-cli.yml builds ssc-app, ssc-cli but its PyPI job publishes ssc-cli, ssc-app"
+    ]
 
 
 def test_the_action_installs_the_released_cli(tool, tmp_path):

@@ -1,4 +1,5 @@
-# Publishes ssc-cli and the three packages it depends on to PyPI with trusted publishing.
+# Publishes ssc-cli, the three packages it depends on and the app helper ssc-app to PyPI with
+# trusted publishing.
 # Off until the founder sets the repository variable SSC_PUBLISH_ENABLED=true (decision 017).
 name: release-cli
 
@@ -31,12 +32,14 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.19"
-      # One version for the four packages, each pinning the others to it, and the tag naming it.
+      # One version for every package, each pinning the others it needs to it, and the tag
+      # naming it.
       - name: Check versions, pins and tag
         env:
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: uv run --no-project --python 3.14 python tools/release_versions.py --tag "$RELEASE_TAG"
       - run: uv build --package ssc-contracts --out-dir dist
+      - run: uv build --package ssc-app --out-dir dist
       - run: uv build --package ssc-shared --out-dir dist
       - run: uv build --package ssc-bundle --out-dir dist
       - run: uv build --package ssc-cli --out-dir dist
@@ -47,7 +50,8 @@ jobs:
           if-no-files-found: error
 
   # One environment per package: PyPI registers a trusted publisher once per repository, workflow
-  # and environment, so four new projects need four environments. Dependencies go first.
+  # and environment, so each new project needs its own environment. Dependencies go first, and
+  # ssc-app goes before the CLI whose agent pack tells apps to install it.
   publish:
     name: Publish ${{ matrix.package }} to PyPI
     if: vars.SSC_PUBLISH_ENABLED == 'true'
@@ -56,7 +60,7 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        package: [contracts, shared, bundle, cli]
+        package: [contracts, app, shared, bundle, cli]
     environment: pypi-${{ matrix.package }}
     permissions:
       id-token: write # PyPI trusted publishing
