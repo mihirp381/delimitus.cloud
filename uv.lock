@@ -1575,7 +1575,7 @@ requires-dist = [
 
 [[package]]
 name = "ssc-app"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "packages/ssc_app" }
 dependencies = [
     { name = "pydantic" },
