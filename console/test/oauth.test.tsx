@@ -15,7 +15,7 @@ import {
 } from '../src/auth/oauth';
 import { createSession, refreshDelay } from '../src/auth/session';
 import { App, createConsole } from '../src/router';
-import { fakeApi, json, ORIGIN } from './fakeApi';
+import { fakeApi, json, ORIGIN, problem } from './fakeApi';
 import { WHOAMI } from './harness';
 
 const AUTH = 'https://auth.test';
@@ -244,6 +244,49 @@ describe('the session', () => {
     expect(session.token()).toBeNull();
   });
 
+  it('refreshes once on a 401 when the machine slept past the refresh', async () => {
+    vi.useFakeTimers();
+    const { r, refreshed } = refresher([second]);
+    const session = createSession(null, r);
+    session.start(first);
+    vi.setSystemTime(Date.now() + 600_000);
+    expect(await session.renew()).toBe(true);
+    expect(session.token()).toBe('acc-2');
+    expect(await session.renew()).toBe(false);
+    expect(refreshed).toEqual(['ref-1']);
+  });
+
+  it('does not refresh a token refused within its lifetime', async () => {
+    vi.useFakeTimers();
+    const { r, refreshed } = refresher([second]);
+    const session = createSession(null, r);
+    session.start(first);
+    await vi.advanceTimersByTimeAsync(239_999);
+    expect(await session.renew()).toBe(false);
+    expect(refreshed).toEqual([]);
+    expect(await createSession(null, r).renew()).toBe(false);
+  });
+
+  it('sends the refresh token once when the timer and a 401 both refresh', async () => {
+    vi.useFakeTimers();
+    let release: (t: TokenSet) => void = () => undefined;
+    const refreshed: string[] = [];
+    const session = createSession(null, {
+      refresh: (token) => {
+        refreshed.push(token);
+        return new Promise<TokenSet>((resolve) => (release = resolve));
+      },
+      revoke: () => Promise.resolve(),
+    });
+    session.start(first);
+    await vi.advanceTimersByTimeAsync(240_000);
+    const renewed = session.renew();
+    release(second);
+    expect(await renewed).toBe(true);
+    expect(refreshed).toEqual(['ref-1']);
+    expect(session.token()).toBe('acc-2');
+  });
+
   it('keeps production tokens out of storage', () => {
     const { r } = refresher([]);
     const session = createSession(window.sessionStorage, r);
@@ -297,6 +340,78 @@ describe('sign-in screens', () => {
     expect(session.token()).toBeNull();
     expect(sent).toEqual([]);
     expect(screen.getByRole('link', { name: 'Try again' })).toBeTruthy();
+  });
+
+  describe('a 401 from the whoami poll', () => {
+    function signedInWith(refresh: Refresher['refresh'], whoami: (token: string | null) => Response) {
+      const api = fakeApi({
+        'GET /v1/whoami': (call) => whoami(call.headers.get('Authorization')),
+        'GET /v1/apps': () => json(200, { apps: [] }),
+      });
+      const session = createSession(null, { refresh, revoke: () => Promise.resolve() });
+      session.start({ accessToken: 'acc-1', refreshToken: 'ref-1', expiresIn: 300 });
+      const app = createConsole({
+        baseUrl: ORIGIN,
+        session,
+        oauth: client().oauth,
+        fetch: api.fetch,
+        history: createMemoryHistory({ initialEntries: ['/'] }),
+      });
+      render(<App console={app} />);
+      return { api, session, router: app.router };
+    }
+    const refused = () => problem(401, 'UNAUTHENTICATED', 'Authentication required');
+
+    it('refreshes a token that outlived a sleeping machine and stays signed in', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let slept = false;
+      const refresh = vi.fn(() => Promise.resolve<TokenSet>({ accessToken: 'acc-2', refreshToken: 'ref-2', expiresIn: 300 }));
+      const { api, session, router } = signedInWith(refresh, (token) =>
+        slept && token === 'Bearer acc-1' ? refused() : WHOAMI(),
+      );
+      await screen.findByRole('heading', { name: 'Apps' });
+      slept = true;
+      vi.setSystemTime(Date.now() + 600_000);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4999);
+      });
+      await waitFor(() => expect(session.token()).toBe('acc-2'));
+      expect(refresh).toHaveBeenCalledOnce();
+      await waitFor(() => expect(api.of('GET', '/v1/whoami').at(-1)?.headers.get('Authorization')).toBe('Bearer acc-2'));
+      expect(router.state.location.pathname).toBe('/');
+      session.clear();
+    });
+
+    it('signs a deactivated person out within 5 s without a refresh', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let deactivated = false;
+      const refresh = vi.fn(() => Promise.reject<TokenSet>(new SignInError('refused')));
+      const { session, router } = signedInWith(refresh, () => (deactivated ? refused() : WHOAMI()));
+      await screen.findByRole('heading', { name: 'Apps' });
+      deactivated = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4999);
+      });
+      await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+      expect(refresh).not.toHaveBeenCalled();
+      expect(session.token()).toBeNull();
+    });
+
+    it('signs a deactivated person out after a sleep, as the refresh is refused', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let deactivated = false;
+      const refresh = vi.fn(() => Promise.reject<TokenSet>(new SignInError('refused')));
+      const { session, router } = signedInWith(refresh, () => (deactivated ? refused() : WHOAMI()));
+      await screen.findByRole('heading', { name: 'Apps' });
+      deactivated = true;
+      vi.setSystemTime(Date.now() + 600_000);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4999);
+      });
+      await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(session.token()).toBeNull();
+    });
   });
 
   it('revokes at the auth host on sign-out', async () => {
