@@ -359,6 +359,9 @@ class IgnoresTraffic:
     async def scale_to_zero(self, service: str) -> None:
         await self.inner.scale_to_zero(service)
 
+    async def remove(self, service: str) -> None:
+        await self.inner.remove(service)
+
     async def observe(self, service: str) -> ServiceObservation | None:
         return await self.inner.observe(service)
 

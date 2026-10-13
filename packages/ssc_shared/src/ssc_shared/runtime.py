@@ -310,6 +310,11 @@ class RuntimeDriver(Protocol):
         """Serve nothing and hold no instances until the next ``apply``. Revisions are kept."""
         ...
 
+    async def remove(self, service: str) -> None:
+        """Delete the service with every revision, and the identity it ran as. One already gone
+        is fine. Only removing its app does this (GA-12)."""
+        ...
+
     async def observe(self, service: str) -> ServiceObservation | None:
         """What is running, or None when the service does not exist."""
         ...

@@ -7,12 +7,14 @@ is not an SSC app's, because its own IAM cannot limit a create by name. Each age
 org (``SSC_ORG_ID``, decision 030): every call but ``/healthz`` must name it in ``X-SSC-Org``,
 and ``apply`` takes only a spec labelled ``ssc-org`` with it; anything else is 403
 ``WRONG_CELL``, so a control plane that routed a call to the wrong cell changes nothing there.
-Secrets have one method,
-``ensure``; nothing here reads, returns or receives a secret value. App databases have
+The runtime also has ``remove`` (GA-12): the service with its revisions and its own service
+account, for an app that is being deleted.
+Secrets have two methods, ``ensure`` and ``remove`` (an app's secret with every version, never a
+connection's); nothing here reads, returns or receives a secret value. App databases have
 ``ensure``, ``rotate``, ``usage``, ``recovery_point`` and ``drop``; their passwords stay in the
-agent and the cell's Secret Manager, and the answers carry secret versions only. ``drop`` runs
-only while the service is gone or stopped (``SERVICE_LIVE`` otherwise), so no running app loses
-its database.
+agent and the cell's Secret Manager, and the answers carry secret versions only. ``drop`` and
+both ``remove`` run only while the service is gone or stopped (``SERVICE_LIVE`` otherwise), so no
+running app loses its database, a secret or itself.
 Logs (SSC-024) have ``read``, ``follow`` and ``health`` of one service; the agent builds the
 filter, redacts every line, and keeps the cell under Cloud Logging's quota.
 
@@ -60,7 +62,7 @@ from ssc_agent.cloud_monitoring import CellUsageReader
 from ssc_agent.datagw import DataGateway, DataGatewayError
 from ssc_agent.egress import EgressNotConfiguredError, ProxyCredentials
 from ssc_agent.files import CellFiles, FilesError
-from ssc_agent.secret_manager import SecretCustody, SecretsError
+from ssc_agent.secret_manager import SecretCustody, SecretsError, service_of
 from ssc_shared.build import (
     BuildDriverError,
     BuildNotFoundError,
@@ -121,6 +123,10 @@ class _WrongCellError(Exception):
     """A spec for another org's service: this agent's cell is not its cell."""
 
 
+class _ServiceLiveError(Exception):
+    """The service still runs, so nothing of it is removed."""
+
+
 def create_app(  # noqa: PLR0913  (usage is keyword-only)
     driver: RuntimeDriver,
     builder: CellBuilder | None = None,
@@ -158,6 +164,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
         "set_traffic": set_traffic,
         "scale_to_zero": scale_to_zero,
         "observe": observe,
+        "remove": _remove(driver),
     }
 
     @app.get(HEALTH_PATH)
@@ -165,7 +172,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
         return {"status": "ok"}
 
     @app.post(PREFIX + "/{method}")
-    async def call(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+    async def call(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
         handler = handlers.get(method)
         if handler is None:
             return _error(404, "NOT_FOUND", f"no method {method}")
@@ -180,10 +187,26 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
             return _error(404, "SERVICE_NOT_FOUND", str(exc))
         except RevisionNotFoundError as exc:
             return _error(404, "REVISION_NOT_FOUND", str(exc))
+        except _ServiceLiveError as exc:
+            return _error(409, "SERVICE_LIVE", str(exc))
         except RuntimeDriverError as exc:
             log.warning("runtime call failed", extra={"method": method, "error": str(exc)})
             return _error(502, "RUNTIME_ERROR", str(exc))
         return JSONResponse(result)
+
+    _build_routes(app, builder)
+    _secret_routes(app, driver, secrets)
+    _database_routes(app, driver, databases)
+    _log_routes(app, CellLogHub(None, driver) if logs is None else logs)
+    _usage_routes(app, CellUsageReader(None) if usage is None else usage)
+    _egress_routes(app, egress)
+    _file_routes(app, driver, files)
+    _datagw_routes(app, datagw)
+    return app
+
+
+def _build_routes(app: FastAPI, builder: CellBuilder | None) -> None:
+    """``start`` and ``poll`` of one build."""
 
     @app.post(BUILD_PREFIX + "/{method}")
     async def build(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
@@ -211,22 +234,32 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
             return _error(502, "BUILD_ERROR", str(exc))
         return JSONResponse(result)
 
-    _secret_routes(app, secrets)
-    _database_routes(app, driver, databases)
-    _log_routes(app, CellLogHub(None, driver) if logs is None else logs)
-    _usage_routes(app, CellUsageReader(None) if usage is None else usage)
-    _egress_routes(app, egress)
-    _file_routes(app, driver, files)
-    _datagw_routes(app, datagw)
-    return app
+
+async def _refuse_live(driver: RuntimeDriver, service: str) -> None:
+    seen = await driver.observe(service)
+    if seen is not None and not seen.stopped:
+        raise _ServiceLiveError(f"{service} still runs; stop it first")
 
 
-def _secret_routes(app: FastAPI, secrets: SecretCustody | None) -> None:
-    """``ensure`` and nothing else: no route reads, returns or receives a secret value."""
+def _remove(driver: RuntimeDriver) -> Handler:
+    """The runtime's ``remove``: a service that is gone or stopped, with its service account."""
+
+    async def remove(body: dict[str, Any]) -> dict[str, object]:
+        service = _service(body)
+        await _refuse_live(driver, service)
+        await driver.remove(service)
+        return {"removed": service}
+
+    return remove
+
+
+def _secret_routes(app: FastAPI, driver: RuntimeDriver, secrets: SecretCustody | None) -> None:
+    """``ensure``, and ``remove`` of an app's secret once its service is gone or stopped: no
+    route reads, returns or receives a secret value."""
 
     @app.post(SECRETS_PREFIX + "/{method}")
-    async def secret(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
-        if method != "ensure":
+    async def secret(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
+        if method not in ("ensure", "remove"):
             return _error(404, "NOT_FOUND", f"no method {method}")
         if secrets is None:
             return _error(503, "SECRETS_NOT_CONFIGURED", "this agent keeps no secrets")
@@ -235,9 +268,18 @@ def _secret_routes(app: FastAPI, secrets: SecretCustody | None) -> None:
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             name = _str(cast("dict[str, Any]", body), "secret")
+            if method == "remove":
+                await _refuse_live(driver, service_of(name))
+                await secrets.remove(name)
+                return JSONResponse({"removed": name})
             await secrets.ensure(name)
         except (ValueError, TypeError, KeyError) as exc:
             return _error(400, "INVALID_REQUEST", str(exc))
+        except _ServiceLiveError as exc:
+            return _error(409, "SERVICE_LIVE", str(exc))
+        except RuntimeDriverError as exc:
+            log.warning("secret call failed", extra={"method": method, "error": str(exc)})
+            return _error(502, "RUNTIME_ERROR", str(exc))
         except SecretsError as exc:
             log.warning("secret call failed", extra={"method": method, "error": str(exc)})
             return _error(502, "SECRETS_ERROR", str(exc))

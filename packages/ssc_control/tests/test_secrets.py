@@ -15,7 +15,7 @@ Ticket "done when" checks:
                                                     (the deny rule itself: a live check)
 Plus: refusals (an agent credential, an unconfigured cell, a platform name, a member, a
 deployment in flight), the same version again, a secret set before the first deployment, the
-intake's grant checks, the agent's one method, and migration 0021.
+intake's grant checks, the agent's two methods, and migration 0021.
 """
 
 from __future__ import annotations
@@ -697,16 +697,25 @@ def test_the_intake_needs_its_whole_configuration() -> None:
         config_from_env(env | {"SSC_INTAKE_ORIGIN": "http://ssc--secrets.cell.test"})
 
 
-async def test_the_agent_has_one_secret_method(cell: Cell) -> None:
+async def test_the_agent_has_two_secret_methods_and_neither_reads(cell: Cell) -> None:
     app = make_agent(cell.handler, cell.run, cell.clock.driver_sleep, ORG)
     async with httpx2.AsyncClient(
         transport=httpx2.ASGITransport(app=app), base_url=AGENT, headers={ORG_HEADER: ORG}
     ) as client:
-        for method in ("access", "get", "read", "versions", "addVersion", "remove", "delete"):
+        for method in ("access", "get", "read", "versions", "addVersion", "list", "delete"):
             assert (await client.post(f"/v1/secrets/{method}", json={})).status_code == 404
         r = await client.post("/v1/secrets/ensure", json={"secret": "projects-x"})
         assert r.status_code == 400
         assert (await client.get("/v1/secrets/ensure")).status_code == 405
+        # ``remove`` (GA-12) deletes an app's secret, whose service here never existed.
+        secret = secret_id(service_name("env_" + "g" * 20), NAME)
+        assert (await client.post("/v1/secrets/ensure", json={"secret": secret})).is_success
+        assert secret in cell.sm.secrets
+        r = await client.post("/v1/secrets/remove", json={"secret": secret})
+        assert (r.status_code, r.json()) == (200, {"removed": secret})
+        assert secret not in cell.sm.secrets
+        r = await client.post("/v1/secrets/remove", json={"secret": "ssc-conn-" + "c" * 20})
+        assert (r.status_code, r.json()["code"]) == (400, "INVALID_REQUEST")
     bare = create_agent(CloudRunDriver(CELL_RUNTIME, access_token), None, None, org_id=ORG)
     async with httpx2.AsyncClient(
         transport=httpx2.ASGITransport(app=bare), base_url=AGENT, headers={ORG_HEADER: ORG}
