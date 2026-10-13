@@ -5,7 +5,8 @@ Statements go through ``instances.executeSql`` as the agent's own IAM database u
 network path to the instance. The Data API runs a batch in one transaction, for at most 30
 seconds, and reports a failed statement as HTTP 200 with ``status.code`` set, so the status is
 checked as well as the HTTP code. ``CREATE DATABASE`` and ``DROP DATABASE`` cannot run in a
-transaction: ``databases.insert`` makes the database and ``databases.delete`` drops it. Apps
+transaction: ``databases.insert`` makes the database and ``databases.delete`` drops it, as Cloud
+SQL's own ``cloudsqlagent``, which may drop only a database ``cloudsqlsuperuser`` owns. Apps
 connect to the instance's DNS name when it has one, else to its private address, and verify it
 against every CA ``listServerCas`` returns.
 """

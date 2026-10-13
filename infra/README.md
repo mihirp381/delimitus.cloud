@@ -365,7 +365,7 @@ App files (SSC-046) sit in the cell bucket under `files/<env_id>/`, and the data
 
 Deleting an app (GA-12, `ssc apps delete`, decision 014's amendment) has the control plane ask the cell agent to remove what the app holds in the cell, one environment at a time. The agent refuses each call while that environment's service still runs, and answers a thing that is already gone as removed.
 
-- **Database.** `POST /v1/databases/drop` with `sscCellAgentDatabase`, as before (SSC-042). The drop first ends the sessions still open on the database, then deletes it, its roles and its secret.
+- **Database.** `POST /v1/databases/drop` with `sscCellAgentDatabase`, as before (SSC-042). The drop first ends the sessions still open on the database and gives it back to `cloudsqlsuperuser` (`databases.delete` runs as Cloud SQL's own `cloudsqlagent`, which drops no database an app's owner role owns), then deletes it, its roles and its secret.
 - **Files.** `POST /v1/files/drop` with `sscCellAgentFiles` on the bucket ("File storage"). Noncurrent versions go seven days later by the bucket's lifecycle rule.
 - **Secrets.** `POST /v1/secrets/remove` with the conditioned `secretmanager.admin` the agent already holds on `ssc-a-` names; deleting a secret deletes every version of it.
 - **Service.** `POST /v1/runtime/remove` with the custom role `sscCellAgentRemove`: `run.services.delete` and `iam.serviceAccounts.delete`, bound on the project (`agent-remove`). Like `sscCellAgentRuntime` it takes no name condition, so the agent's code holds it to `ssc-a-` names; it is a role of its own so that the runtime role stays without a delete (`tests/test_cell.py`).

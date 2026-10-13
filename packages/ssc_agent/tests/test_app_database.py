@@ -17,6 +17,12 @@ SSC-042: dropping an environment's database frees its place, is safe to re-run a
 while the environment's service still runs -> test_a_drop_frees_the_place_..., test_the_agent_
 drops_only_a_database_whose_service_is_gone_or_stopped.
 
+GA-12: ``databases.delete`` runs as Cloud SQL's own ``cloudsqlagent``, which drops only a database
+``cloudsqlsuperuser`` owns, so a drop gives the database back first; the instance here drops as
+such a role -> test_the_instance_drops_no_database_its_owner_role_owns_until_it_is_given_back,
+test_a_drop_that_stopped_part_way_is_finished_by_running_again, test_a_drop_removes_whatever_
+part_of_a_database_exists.
+
 SSC-043: a recovery point is the instance's time and write-ahead log position, read by the role
 that is no superuser -> test_a_recovery_point_is_the_instances_time_and_log_position, and its
 route in test_the_agent_answers_references_never_a_value.
@@ -381,6 +387,120 @@ async def test_a_half_made_database_can_be_dropped(
         (0,)
     ]
     assert vault.secrets == {}
+
+
+def left_of(instance: CloudSqlLike, name: str) -> tuple[int, int]:
+    """How many of the database ``name`` and of its two roles the instance still has."""
+    (found,) = rows(
+        instance,
+        "select (select count(*) from pg_database where datname = %s), "
+        "(select count(*) from pg_roles where rolname in (%s, %s))",
+        name,
+        name,
+        f"{name}_owner",
+    )
+    return found
+
+
+def owner_of(instance: CloudSqlLike, name: str) -> str:
+    ((dba,),) = rows(
+        instance, "select datdba::regrole::text from pg_database where datname = %s", name
+    )
+    return dba
+
+
+async def test_the_instance_drops_no_database_its_owner_role_owns_until_it_is_given_back(
+    dbs: CellAppDatabases, sql: LocalAdminSql, instance: CloudSqlLike
+) -> None:
+    """GA-12: the first live removal stopped here. ``databases.delete`` runs as a member of
+    ``cloudsqlsuperuser``, which ``ensure`` leaves no member of the owner role."""
+    svc = service(1)
+    name = database_name(svc)
+    await dbs.ensure(svc)
+    with pytest.raises(AdminSqlError, match="must be owner of database") as refused:
+        await sql.drop_database(name)
+    assert refused.value.status == 400
+    assert left_of(instance, name) == (1, 2)
+
+    before = len(sql.statements)
+    await dbs.drop(svc)
+    assert [s for s in sql.statements[before:] if "OWNER TO" in s] == [
+        f"ALTER DATABASE {name} OWNER TO {CLOUD_SQL_ADMIN}"
+    ]
+    assert left_of(instance, name) == (0, 0)
+
+
+async def test_a_drop_that_stopped_part_way_is_finished_by_running_again(
+    dbs: CellAppDatabases, sql: LocalAdminSql, vault: MemoryVault, instance: CloudSqlLike
+) -> None:
+    refused, failed = service(1), service(2)
+    for svc in (refused, failed):
+        await dbs.ensure(svc)
+
+    # As a drop that the instance refused left it: the login stopped, its sessions ended, the
+    # database still its owner role's.
+    name = database_name(refused)
+    await sql.run("postgres", [f"SET ROLE {CLOUD_SQL_ADMIN}", f"ALTER ROLE {name} NOLOGIN"])
+    assert rows(instance, "select rolcanlogin from pg_roles where rolname = %s", name) == [(False,)]
+    assert owner_of(instance, name) == f"{name}_owner"
+    await dbs.drop(refused)
+    assert left_of(instance, name) == (0, 0)
+    assert not [s for s in vault.secrets if s.startswith(f"{refused}-")]
+
+    # The database given back, then a drop that failed: the admin owns it, is no member of the
+    # owner role beyond the one that lets it drop the role, and nothing else is gone yet.
+    name = database_name(failed)
+    sql.fail_drops = 1
+    with pytest.raises(AdminSqlError, match="injected"):
+        await dbs.drop(failed)
+    assert left_of(instance, name) == (1, 2)
+    assert owner_of(instance, name) == CLOUD_SQL_ADMIN
+    assert rows(
+        instance,
+        "select count(*) from pg_auth_members where roleid = %s::regrole "
+        "and member = %s::regrole and (inherit_option or set_option)",
+        f"{name}_owner",
+        CLOUD_SQL_ADMIN,
+    ) == [(0,)]
+    assert url_of(vault, failed)
+    before = len(sql.statements)
+    await dbs.drop(failed)
+    assert not [s for s in sql.statements[before:] if "OWNER TO" in s]
+    assert left_of(instance, name) == (0, 0)
+    assert not [s for s in vault.secrets if s.startswith(f"{failed}-")]
+    assert (await dbs.usage(failed)).environments == 0
+
+
+async def test_a_drop_removes_whatever_part_of_a_database_exists(
+    dbs: CellAppDatabases, sql: LocalAdminSql, instance: CloudSqlLike
+) -> None:
+    svc = service(1)
+    name = database_name(svc)
+
+    # Both roles and a database never handed to its owner role.
+    sql.fail_creates = 1
+    with pytest.raises(AdminSqlError, match="injected"):
+        await dbs.ensure(svc)
+    await sql.create_database(name)
+    assert (left_of(instance, name), owner_of(instance, name)) == ((1, 2), CLOUD_SQL_ADMIN)
+    before = len(sql.statements)
+    await dbs.drop(svc)
+    assert not [s for s in sql.statements[before:] if "OWNER TO" in s]
+    assert left_of(instance, name) == (0, 0)
+
+    # The database alone.
+    await sql.create_database(name)
+    assert left_of(instance, name) == (1, 0)
+    await dbs.drop(svc)
+    assert left_of(instance, name) == (0, 0)
+
+    # The database and its owner role, the login role gone.
+    await dbs.ensure(svc)
+    with psycopg.connect(instance.superuser, autocommit=True) as conn:
+        conn.execute(f"drop role {name}".encode())
+    assert (left_of(instance, name), owner_of(instance, name)) == ((1, 1), f"{name}_owner")
+    await dbs.drop(svc)
+    assert left_of(instance, name) == (0, 0)
 
 
 async def test_a_drop_ends_the_sessions_the_app_still_holds_and_no_other_apps(
