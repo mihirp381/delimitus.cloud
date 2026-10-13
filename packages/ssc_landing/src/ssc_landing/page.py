@@ -21,7 +21,9 @@ SECURITY_HEADERS: Final = {
     # No preload and no includeSubDomains until every delimitus.com host serves HTTPS.
     "strict-transport-security": "max-age=31536000",
     "x-content-type-options": "nosniff",
-    "referrer-policy": "no-referrer",
+    # Not no-referrer: under it a browser posts the form with ``Origin: null`` when JavaScript
+    # is off, and the origin check refuses it. same-origin sends nothing to other sites.
+    "referrer-policy": "same-origin",
     "cross-origin-opener-policy": "same-origin",
     "cross-origin-resource-policy": "same-origin",
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",

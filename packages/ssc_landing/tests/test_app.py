@@ -117,6 +117,11 @@ def test_a_request_is_stored_and_logged_without_personal_data(world: World) -> N
     assert "dana" not in repr(world.logs).lower()
 
 
+def test_the_page_lets_its_own_form_name_its_origin(world: World) -> None:
+    """Under no-referrer a browser with JavaScript off posts ``Origin: null``, which is refused."""
+    assert world.client.get("/").headers["referrer-policy"] == "same-origin"
+
+
 @pytest.mark.parametrize(
     "origin", [None, "https://evil.example", "https://www.delimitus.com", "null"]
 )

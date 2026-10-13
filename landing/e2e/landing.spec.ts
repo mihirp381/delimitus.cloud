@@ -143,6 +143,23 @@ test.describe('without JavaScript', () => {
     await expect(page.locator('#term .chat__url')).toBeVisible();
     await expect(page.locator('#burst .burst__chips li').first()).toBeVisible();
   });
+
+  test('sends the form as a plain post the server takes', async ({ page }, info) => {
+    // Two projects post (one per engine): the service allows five requests a minute from one address.
+    test.skip(!info.project.name.endsWith('-1440'));
+    await page.goto('/');
+    const form = page.locator('#pilotForm');
+    await form.locator('[name="firstName"]').fill('Dana');
+    await form.locator('[name="lastName"]').fill('Ortiz');
+    await form.locator('[name="email"]').fill('dana@example.com');
+    await form.locator('[name="company"]').fill('Example Logistics');
+    const [answer] = await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith('/pilot-request')),
+      form.getByRole('button', { name: 'Request a pilot' }).click(),
+    ]);
+    expect(answer.status()).toBe(200);
+    await expect(page.getByText('We have your request and will reply by email.')).toBeVisible();
+  });
 });
 
 test('the form confirms only on the server answer', async ({ page }, info) => {
