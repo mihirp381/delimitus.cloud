@@ -5,7 +5,10 @@ on the build row, and ``BuildDriver.start`` is keyed by the build id. While the 
 job defers its own next poll (``schedule_at``) instead of sleeping, so a build never holds a
 worker, and no transaction stays open across a builder call. A builder error is retried until
 the build's deadline; after it, the build fails with ``BUILD_TIMED_OUT`` or
-``BUILD_DRIVER_ERROR``, so no build stays ``running``. Every step starts by claiming the build
+``BUILD_DRIVER_ERROR``, so no build stays ``running``. A step that raises (the database or the
+blob store out for a moment) is retried by the job (``deploy.jobs.RETRY``); the last attempt's
+failure fails the build with ``BUILD_DRIVER_ERROR`` (``give_up``), so the build's
+``BUILD_IN_FLIGHT`` hold never outlives its job. Every step starts by claiming the build
 and re-reading its app: a disabled or quarantined app fails the build with ``APP_NOT_ACTIVE``
 before any builder call. The builder is the org's own cell's (``runtime.cells``); an org
 whose cell is not configured fails the build with ``CELL_UNAVAILABLE``.
@@ -100,6 +103,11 @@ _SUCCEED = text(
 _FAIL = text(
     "update ssc.build set state = 'failed', failure_code = :code, finished_at = now() "
     "where org_id = :org and id = :id and state = 'running'"
+)
+
+_GIVE_UP = text(
+    "update ssc.build set state = 'failed', failure_code = :code, finished_at = now() "
+    "where org_id = :org and id = :id and state in ('queued', 'running')"
 )
 
 
@@ -383,4 +391,31 @@ async def _fail_in(conn: AsyncConnection, org_id: str, build: _Build, code: str)
             after={"state": "failed", "failure_code": code},
         ),
     )
+    return "failed"
+
+
+async def give_up(ports: Ports, *, org_id: str, build_id: str) -> str:
+    """Fail a build whose job ran out of attempts with ``BUILD_DRIVER_ERROR``: with no job left
+    it would stay ``queued`` or ``running``, and refuse every rebuild and promotion of its bundle
+    with ``BUILD_IN_FLIGHT``. The build's state after it, or ``missing``."""
+    async with bound_org(ports.engine, org_id) as conn:
+        build = await _load(conn, org_id, build_id)
+        if build is None:
+            return "missing"
+        if build.state not in ("queued", "running"):
+            return build.state
+        await conn.execute(_GIVE_UP, {"org": org_id, "id": build_id, "code": BUILD_DRIVER_ERROR})
+        await append_event(
+            conn,
+            NewEvent(
+                org_id=org_id,
+                action=AuditAction.BUILD_FAILED,
+                actor=build.actor,
+                target_kind="build",
+                target_id=build_id,
+                before={"state": build.state},
+                after={"state": "failed", "failure_code": BUILD_DRIVER_ERROR},
+            ),
+        )
+    log.warning("build failed for good: its job ran out of attempts", extra={"build_id": build_id})
     return "failed"

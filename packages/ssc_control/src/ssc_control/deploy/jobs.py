@@ -8,25 +8,49 @@ objects ``deploy.bundle_gc`` finds unusable, in each org's cell bucket when ``Po
 is set, else in the blob store; with neither it does nothing.
 ``deployment_sweep`` runs every five minutes and defers again, or fails, a deployment whose job is
 gone (``deploy.reaper``).
+
+A ``run_build`` step that raises is retried (``RETRY``, as the snapshot compile); when no attempt
+is left the build fails with ``BUILD_DRIVER_ERROR`` (``builds.give_up``) instead of staying
+``running`` with no job.
 """
 
+import logging
 from typing import Final
 
-from procrastinate import Blueprint, JobContext
+from procrastinate import Blueprint, JobContext, RetryStrategy
+from sqlalchemy.exc import DBAPIError
 
 from ssc_control.deploy import builds, bundle_gc, deployments, reaper
 from ssc_control.worker_ports import ports_of
+from ssc_shared.blobstore import BlobError
+
+log = logging.getLogger(__name__)
 
 GC_CRON: Final = "17 * * * *"
+RETRY: Final = RetryStrategy(
+    max_attempts=6,
+    wait=1,
+    linear_wait=2,
+    retry_exceptions=[DBAPIError, BlobError, OSError, TimeoutError],
+)
 
 
 def blueprint() -> Blueprint:
     bp = Blueprint()
 
-    @bp.task(name="run_build", pass_context=True)
+    @bp.task(name="run_build", pass_context=True, retry=RETRY)
     async def run_build(context: JobContext, org_id: str, build_id: str) -> str:  # pyright: ignore[reportUnusedFunction]
         """One step of a build; returns its state after the step."""
-        return await builds.run_build(ports_of(context), org_id=org_id, build_id=build_id)
+        ports = ports_of(context)
+        try:
+            return await builds.run_build(ports, org_id=org_id, build_id=build_id)
+        except Exception as exc:
+            if RETRY.get_retry_decision(exception=exc, job=context.job) is None:
+                try:
+                    await builds.give_up(ports, org_id=org_id, build_id=build_id)
+                except Exception:
+                    log.exception("could not fail the build", extra={"build_id": build_id})
+            raise
 
     @bp.task(name="run_deployment", pass_context=True)
     async def run_deployment(context: JobContext, org_id: str, deployment_id: str) -> str:  # pyright: ignore[reportUnusedFunction]

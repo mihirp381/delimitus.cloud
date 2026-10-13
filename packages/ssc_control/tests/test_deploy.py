@@ -63,10 +63,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+from procrastinate import JobContext
+from procrastinate.jobs import Job
 from psycopg.rows import dict_row
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_testkit import (
     ISSUER,
@@ -117,8 +119,11 @@ from ssc_control.db import (
     upgrade,
 )
 from ssc_control.deferral import KILL_SWITCH_PRIORITY, MANUAL_TIMER_PRIORITY, ROLLBACK_PRIORITY
+from ssc_control.deploy import builds as builds_module
+from ssc_control.deploy import jobs as deploy_jobs
 from ssc_control.deploy import reaper, tasks
 from ssc_control.deploy.build_driver import (
+    BUILD_DRIVER_ERROR,
     BUILD_TIMED_OUT,
     BuildStatus,
     FakeBuildDriver,
@@ -157,6 +162,7 @@ from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.snapshot.compiler import compile_document
 from ssc_control.timers.service import Timers
 from ssc_control.worker import CompositionError, Ports, build_app, compose_ports
+from ssc_control.worker_ports import PORTS_KEY
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.canonical import manifest_digest
 from ssc_shared.clock import SystemClock
@@ -808,6 +814,53 @@ async def test_a_build_of_a_stopped_app_fails_when_claimed(b: Bench) -> None:
         assert audit_of(b, build)[-1]["action"] == "build.failed"
     assert (len(builds.requests), builds.polls) == (1, 1)
     assert rows_of(b.dsn, b.w.org, "select count(*) as n from ssc.release") == [{"n": 0}]
+
+
+def job_context(ports: Ports, attempts: int) -> JobContext:
+    """What the worker hands a task: its job, run ``attempts`` times already, and the ports."""
+    job = Job(
+        id=1, queue="default", lock=None, queueing_lock=None, task_name="t", attempts=attempts
+    )
+    return JobContext(
+        app=cast(Any, None),
+        job=job,
+        start_timestamp=0.0,
+        additional_context={PORTS_KEY: ports},
+        abort_reason=lambda: None,
+    )
+
+
+async def blip(*_args: object, **_kwargs: object) -> None:
+    raise OperationalError("select", {}, Exception("server closed the connection unexpectedly"))
+
+
+async def test_a_build_whose_job_runs_out_of_attempts_fails_and_frees_its_bundle(
+    b: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slow = with_cell(b.ports, build=FakeBuildDriver(polls=5))
+    bundle, _ = seed_bundle(b)
+    build = start_build(b, b.w.preview, bundle).json()["build_id"]
+    take_job(b.dsn, f"bld:{build}")
+    step = deploy_jobs.blueprint().tasks["run_build"]
+    monkeypatch.setattr(builds_module, "defer_build", blip)
+    # With attempts left the step raises for Procrastinate to run it again.
+    with pytest.raises(OperationalError):
+        await step.func(job_context(slow, 0), org_id=b.w.org, build_id=build)
+    assert get(b, f"/v1/builds/{build}").json()["state"] == "running"
+    assert_problem(start_build(b, b.w.preview, bundle), ErrorCode.BUILD_IN_FLIGHT)
+    # The last attempt fails the build, so its bundle can be built again.
+    with pytest.raises(OperationalError):
+        await step.func(
+            job_context(slow, deploy_jobs.RETRY.max_attempts), org_id=b.w.org, build_id=build
+        )
+    monkeypatch.undo()
+    out = get(b, f"/v1/builds/{build}").json()
+    assert (out["state"], out["failure_code"]) == ("failed", BUILD_DRIVER_ERROR)
+    assert audit_of(b, build)[-1]["action"] == "build.failed"
+    assert start_build(b, b.w.preview, bundle).status_code == 202
+    # A build that already ended is left as it is.
+    assert await builds_module.give_up(b.ports, org_id=b.w.org, build_id=build) == "failed"
+    assert len([e for e in audit_of(b, build) if e["action"] == "build.failed"]) == 1
 
 
 async def test_a_release_row_cannot_be_edited(b: Bench, dsns: Dsns) -> None:
