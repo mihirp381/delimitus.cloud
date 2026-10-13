@@ -43,6 +43,9 @@ CELL = {
 }
 
 
+PROXIED = {"stage": "staging", "proxy_image": CELL["proxy_image"]}
+
+
 def _urn(key: str) -> str:
     return f"urn:pulumi:{STACK}::{naming.PROJECT}::{key}"
 
@@ -86,9 +89,33 @@ class FakePulumi:
         return dict(p.split("=", 1) for p in pairs)
 
 
-def _deployer(fake: FakePulumi, tmp_path: Path, locks: list[datetime] | None = None) -> Deployer:
+class FakeProxies:
+    """The proxy group's machines as each read finds them; the last answer repeats."""
+
+    def __init__(self, *reads: list[str]) -> None:
+        self.reads = list(reads) or [[deployer.PROXY_HEALTHY]]
+        self.asked: list[tuple[str, bool]] = []
+        self.slept: list[float] = []
+
+    def __call__(self, label: str, ha: bool) -> list[str]:  # noqa: FBT001
+        self.asked.append((label, ha))
+        return self.reads[min(len(self.asked), len(self.reads)) - 1]
+
+
+def _deployer(
+    fake: FakePulumi,
+    tmp_path: Path,
+    locks: list[datetime] | None = None,
+    proxies: FakeProxies | None = None,
+) -> Deployer:
+    proxies = proxies or FakeProxies()
     return Deployer(
-        run=fake, locks=lambda _stack: list(locks or []), now=lambda: NOW, infra_dir=str(tmp_path)
+        run=fake,
+        locks=lambda _stack: list(locks or []),
+        proxies=proxies,
+        now=lambda: NOW,
+        sleep=proxies.slept.append,
+        infra_dir=str(tmp_path),
     )
 
 
@@ -154,6 +181,8 @@ def test_the_runner_sets_exactly_its_flag_and_nothing_else(
         "agent_image": "img@sha256:1",
         "org_id": "org_" + "d" * 20,  # the agent serves one org (decision 030)
     }
+    if flag == "egress":
+        applied = CELL | applied  # a proxy needs its image, and that the gateway settings
     outputs = {"config": _exported(applied, monkeypatch)["config"]}
     fake = FakePulumi(outputs)
     assert deployer.main([LABEL, flag], RUN_ENV, _deployer(fake, tmp_path)) == 0
@@ -248,7 +277,7 @@ def test_a_stack_with_no_applied_config_is_not_applied(tmp_path: Path) -> None:
 
 
 def test_a_lock_left_by_a_killed_run_is_cancelled(tmp_path: Path) -> None:
-    fake = FakePulumi({"config": {"stage": "staging"}})
+    fake = FakePulumi({"config": PROXIED})
     stale = [NOW - deployer.STALE_LOCK - timedelta(minutes=1)]
     assert deployer.main([LABEL, "egress"], RUN_ENV, _deployer(fake, tmp_path, stale)) == 0
     commands = [c[0] for c in fake.calls]
@@ -257,7 +286,7 @@ def test_a_lock_left_by_a_killed_run_is_cancelled(tmp_path: Path) -> None:
 
 
 def test_a_live_run_is_left_alone(tmp_path: Path) -> None:
-    fake = FakePulumi({"config": {"stage": "staging"}})
+    fake = FakePulumi({"config": PROXIED})
     fresh = [NOW - deployer.STALE_LOCK - timedelta(minutes=1), NOW - timedelta(minutes=5)]
     assert deployer.main([LABEL, "egress"], RUN_ENV, _deployer(fake, tmp_path, fresh)) == 1
     assert not [c for c in fake.calls if c[0] in ("cancel", "up", "refresh")]
@@ -314,7 +343,7 @@ def test_a_run_reads_back_what_its_flag_adds_or_changes(arg: str, tmp_path: Path
     before ``up``, so a state that wrongly says the change is made cannot make the run a no-op."""
     ((flag, _),) = deployer.setting(arg).items()
     cell_state = _state(run(STACK, CELL | dict.fromkeys(naming.LAZY_FLAGS, "true")))
-    fake = FakePulumi({"config": {"stage": "staging"}}, resources=cell_state)
+    fake = FakePulumi({"config": PROXIED}, resources=cell_state)
     assert deployer.main([LABEL, arg], RUN_ENV, _deployer(fake, tmp_path)) == 0
     assert _reread(fake) == (
         naming.LAZY_RESOURCES.get(flag, frozenset()) | naming.DEPLOYER_UPDATES[flag]
@@ -336,7 +365,7 @@ def test_an_update_the_cloud_refused_is_read_back_whatever_it_was_on(tmp_path: P
     for resource in cell_state:
         if deployer.resource_key(resource["urn"]) in (naming.AGENT_SERVICE, refused):
             resource["initErrors"] = ["updating: googleapi: Error 403: denied"]
-    fake = FakePulumi({"config": {"stage": "staging"}}, resources=cell_state)
+    fake = FakePulumi({"config": PROXIED}, resources=cell_state)
     assert deployer.main([LABEL, "egress"], RUN_ENV, _deployer(fake, tmp_path)) == 0
     assert _reread(fake) == {naming.AGENT_SERVICE, refused}
 
@@ -352,6 +381,116 @@ def test_a_read_back_that_fails_stops_the_run_before_it_applies(tmp_path: Path) 
     fake = Unreadable({"config": {"stage": "staging"}}, resources=_state(run(STACK, CELL)))
     assert deployer.main([LABEL, "connections"], RUN_ENV, _deployer(fake, tmp_path)) == 1
     assert not [c for c in fake.calls if c[0] == "up"]
+
+
+def test_egress_is_done_only_when_the_proxy_answers_its_check(tmp_path: Path) -> None:
+    """``up`` returns when the group exists. The run goes on reading the group until its check
+    on the proxy port finds the machine healthy, and only then says the flag is on."""
+    fake = FakePulumi({"config": PROXIED})
+    proxies = FakeProxies([], ["PROVISIONING/CREATING"], ["RUNNING/NONE/UNHEALTHY"], ["HEALTHY"])
+    assert (
+        deployer.main([LABEL, "egress"], RUN_ENV, _deployer(fake, tmp_path, proxies=proxies)) == 0
+    )
+    assert proxies.asked == [(LABEL, False)] * 4
+    assert proxies.slept == [deployer.PROXY_POLL_SECONDS] * 3
+    assert fake.calls[-1][0] == "up"
+
+
+def test_a_proxy_that_never_answers_fails_the_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakePulumi({"config": PROXIED})
+    proxies = FakeProxies(["RUNNING/NONE/TIMEOUT"])
+    assert (
+        deployer.main([LABEL, "egress"], RUN_ENV, _deployer(fake, tmp_path, proxies=proxies)) == 1
+    )
+    assert len(proxies.asked) == deployer.PROXY_WAIT_SECONDS // deployer.PROXY_POLL_SECONDS + 1
+    assert sum(proxies.slept) == deployer.PROXY_WAIT_SECONDS
+    printed = capsys.readouterr().err
+    assert f"did not answer its check on port {cell.PROXY_PORT}" in printed
+    assert "RUNNING/NONE/TIMEOUT" in printed
+    assert "egress is true" not in printed
+
+
+def test_both_machines_of_a_proxy_in_two_zones_must_answer(tmp_path: Path) -> None:
+    fake = FakePulumi({"config": PROXIED | {"proxy_ha": "true"}})
+    proxies = FakeProxies(["HEALTHY"], ["HEALTHY", "RUNNING/VERIFYING"], ["HEALTHY", "HEALTHY"])
+    assert (
+        deployer.main([LABEL, "egress"], RUN_ENV, _deployer(fake, tmp_path, proxies=proxies)) == 0
+    )
+    assert proxies.asked == [(LABEL, True)] * 3
+
+
+@pytest.mark.parametrize("arg", ["database", "connections", "warm=true", "warm=false"])
+def test_only_egress_waits_for_the_proxy(arg: str, tmp_path: Path) -> None:
+    fake = FakePulumi({"config": {"stage": "staging"}})
+    proxies = FakeProxies(["RUNNING/NONE/UNHEALTHY"])
+    assert deployer.main([LABEL, arg], RUN_ENV, _deployer(fake, tmp_path, proxies=proxies)) == 0
+    assert proxies.asked == []
+
+
+def test_egress_is_refused_on_a_cell_that_names_no_proxy_image(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Its machine would run nothing and never pass its check; nothing is written or applied."""
+    fake = FakePulumi({"config": {"stage": "staging", "database": "true"}})
+    proxies = FakeProxies()
+    assert (
+        deployer.main([LABEL, "egress"], RUN_ENV, _deployer(fake, tmp_path, proxies=proxies)) == 1
+    )
+    assert [c[:2] for c in fake.calls] == [("stack", "output")]
+    assert proxies.asked == []
+    assert "has no proxy_image" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("machine", "state"),
+    [
+        (
+            {
+                "instanceStatus": "RUNNING",
+                "currentAction": "NONE",
+                "instanceHealth": [{"detailedHealthState": "HEALTHY"}],
+            },
+            "HEALTHY",
+        ),
+        (
+            {
+                "instanceStatus": "RUNNING",
+                "currentAction": "NONE",
+                "instanceHealth": [{"detailedHealthState": "UNHEALTHY"}],
+            },
+            "RUNNING/NONE/UNHEALTHY",
+        ),
+        ({"instanceStatus": "RUNNING", "currentAction": "NONE"}, "RUNNING/NONE"),
+        (
+            {
+                "instanceStatus": "RUNNING",
+                "currentAction": "RECREATING",
+                "instanceHealth": [{"detailedHealthState": "HEALTHY"}],
+            },
+            "RUNNING/RECREATING/HEALTHY",
+        ),
+        ({"currentAction": "CREATING"}, "CREATING"),
+    ],
+)
+def test_a_machine_is_healthy_only_when_it_runs_untouched_and_passes_its_check(
+    machine: dict[str, Any], state: str
+) -> None:
+    assert deployer.machine_state(machine) == state
+
+
+def test_the_proxy_group_read_is_the_one_the_cell_declares() -> None:
+    declared = mockcloud.run(STACK, CELL | {"egress": "true"})
+    group = mockcloud.one(declared, "gcp:compute/instanceGroupManager:InstanceGroupManager")
+    assert (group.inputs["name"], group.inputs["zone"]) == (deployer.PROXY_GROUP, cell.PROXY_ZONE)
+    assert group.inputs["waitForInstances"] is False
+    assert group.inputs["autoHealingPolicies"]["initialDelaySec"] < deployer.PROXY_WAIT_SECONDS
+    both = mockcloud.run(STACK, CELL | {"egress": "true", "proxy_ha": "true"})
+    regional = "gcp:compute/regionInstanceGroupManager:RegionInstanceGroupManager"
+    spread = mockcloud.one(both, regional).inputs
+    assert (spread["name"], spread["region"]) == (deployer.PROXY_GROUP, naming.REGION)
+    assert spread["targetSize"] == cell.PROXY_HA_SIZE
 
 
 @pytest.mark.parametrize("flag", sorted(naming.DEPLOYER_UPDATES))

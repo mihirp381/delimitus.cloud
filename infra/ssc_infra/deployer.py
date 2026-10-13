@@ -20,19 +20,26 @@ then finds nothing to do and reports success (proof cell 2, 2026-10-09). So befo
 run reads back from the cloud every resource the state holds such a reason for, and the ones its
 flag adds or changes (``naming.LAZY_RESOURCES``, ``naming.DEPLOYER_UPDATES``) that the state
 already has; ``up`` then applies what really differs.
+
+Nor is ``egress`` done when ``up`` returns: the group exists then, its machine may not have
+started the proxy. The run waits until the group's own check, a TCP connection to the proxy
+port, finds every machine healthy, and fails if that takes longer than ``PROXY_WAIT_SECONDS``.
+A cell with no ``proxy_image`` would start a machine that runs nothing, so ``egress`` is refused
+there before anything is applied.
 """
 
 import json
 import os
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from ssc_infra import naming as n
 from ssc_infra import stack_config
-from ssc_infra.cell import PROXY_ZONE
+from ssc_infra.cell import PROXY_HA_SIZE, PROXY_PORT, PROXY_ZONE
 from ssc_infra.run import CommandError, pulumi
 from ssc_infra.stack_config import INFRA_DIR, Pulumi
 from ssc_shared.hosts import check_cell_label
@@ -78,8 +85,14 @@ IMPORT_IDS: Final = {
         f"projects/{{project}}/locations/{n.REGION}/services/{n.DATA_GATEWAY}"
     ),
 }
+PROXY_GROUP: Final = "ssc-proxy"
+PROXY_HEALTHY: Final = "HEALTHY"
+PROXY_WAIT_SECONDS: Final = 600
+PROXY_POLL_SECONDS: Final = 15
+COMPUTE_API: Final = "https://compute.googleapis.com/compute/v1"
 
 type Locks = Callable[[str], list[datetime]]
+type Proxies = Callable[[str, bool], list[str]]
 
 
 class RefusedError(ValueError):
@@ -124,6 +137,36 @@ def state_locks(stack: str) -> list[datetime]:
     return [b.time_created for b in blobs if b.time_created is not None]
 
 
+def machine_state(machine: Mapping[str, Any]) -> str:
+    """One managed instance as the group's check sees it: ``HEALTHY`` only when it runs, the
+    group is doing nothing to it and every check on it passes; otherwise what it is instead."""
+    status, action = machine.get("instanceStatus"), machine.get("currentAction")
+    checks: list[dict[str, Any]] = machine.get("instanceHealth") or []
+    health = [str(c.get("detailedHealthState")) for c in checks]
+    if status == "RUNNING" and action == "NONE" and health and set(health) == {PROXY_HEALTHY}:
+        return PROXY_HEALTHY
+    return "/".join(str(part) for part in (status, action, *health) if part)
+
+
+def proxy_states(label: str, ha: bool) -> list[str]:  # noqa: FBT001  (the ``Proxies`` shape)
+    """Each machine of the cell's proxy group, read from Compute Engine as the deployer."""
+    import google.auth  # noqa: PLC0415
+    from google.auth.transport.requests import AuthorizedSession  # noqa: PLC0415
+
+    default = cast("Callable[..., tuple[Any, str | None]]", google.auth.default)  # pyright: ignore[reportUnknownMemberType]
+    credentials = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])[0]
+    place = f"regions/{n.REGION}" if ha else f"zones/{PROXY_ZONE}"
+    url = (
+        f"{COMPUTE_API}/projects/{n.cell_project(label)}/{place}"
+        f"/instanceGroupManagers/{PROXY_GROUP}/listManagedInstances"
+    )
+    response: Any = AuthorizedSession(credentials).post(url, timeout=30.0)  # pyright: ignore[reportUnknownMemberType]
+    if response.status_code != 200:  # noqa: PLR2004
+        raise CommandError(f"reading the proxy group failed: HTTP {response.status_code}")
+    machines: list[dict[str, Any]] = response.json().get("managedInstances") or []
+    return [machine_state(m) for m in machines]
+
+
 def resource_key(urn: str) -> str:
     """A URN as ``naming`` writes a resource: its own type and its name."""
     *_, type_, name = urn.split("::")
@@ -142,12 +185,16 @@ class Deployer:
 
     run: Pulumi = clean_pulumi
     locks: Locks = state_locks
+    proxies: Proxies = proxy_states
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    sleep: Callable[[float], None] = time.sleep
     infra_dir: str = INFRA_DIR
 
     def apply(self, label: str, flag: str) -> None:
         stack = n.cell_stack(label)
         settings = stack_config.applied(label, run=self.run, infra_dir=self.infra_dir)
+        if flag == "egress" and not settings.get("proxy_image"):
+            raise CommandError(f"{stack} has no proxy_image: its proxy would run nothing")
         stack_config.write(label, settings | setting(flag), run=self.run, infra_dir=self.infra_dir)
         self.unlock(stack)
         state: Any = json.loads(self.run("stack", "export", "--stack", stack, cwd=self.infra_dir))
@@ -155,6 +202,23 @@ class Deployer:
         self.recover(stack, label, deployment)
         self.reread(stack, flag, deployment)
         self.run("up", "--yes", "--stack", stack, cwd=self.infra_dir)
+        if flag == "egress":
+            self.proxy_answers(label, ha=settings.get("proxy_ha") == "true")
+
+    def proxy_answers(self, label: str, *, ha: bool) -> None:
+        """Waits until the proxy group's check finds every machine it should have healthy."""
+        size = PROXY_HA_SIZE if ha else 1
+        states: list[str] = []
+        for attempt in range(PROXY_WAIT_SECONDS // PROXY_POLL_SECONDS + 1):
+            if attempt:
+                self.sleep(PROXY_POLL_SECONDS)
+            states = self.proxies(label, ha)
+            if len(states) >= size and set(states) == {PROXY_HEALTHY}:
+                return
+        raise CommandError(
+            f"{n.cell_stack(label)}: the proxy did not answer its check on port {PROXY_PORT} "
+            f"within {PROXY_WAIT_SECONDS} s: {', '.join(states) or 'no machine'}"
+        )
 
     def unlock(self, stack: str) -> None:
         """A lock older than ``STALE_LOCK`` was left by a killed run; a newer one is a live run."""
