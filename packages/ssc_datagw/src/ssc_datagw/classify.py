@@ -23,7 +23,9 @@ sessions wait on (``GET_LOCK`` and kin), wait on replication, burn time on purpo
 refused because it returns 1 when ``max_execution_time`` or ``KILL QUERY`` interrupts it: the
 read would end quietly with a row instead of as ``QUERY_TIMEOUT``. sqlglot and MySQL read
 backslash escapes alike, so no string form is refused. A ``/*! ... */`` comment, which MySQL
-runs as SQL and sqlglot keeps as a comment, is refused.
+runs as SQL and sqlglot keeps as a comment, is refused, and so is a ``--`` outside a string, a
+quoted name or a comment with no whitespace after it, which MySQL reads as two minus signs and
+sqlglot as the start of a comment.
 """
 
 import re
@@ -33,7 +35,7 @@ from typing import Final
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
-from sqlglot.tokens import TokenType
+from sqlglot.tokens import Token, TokenType
 
 DENIED: Final = frozenset(
     {
@@ -177,6 +179,34 @@ MYSQL: Final = Dialect(
 )
 
 
+def _past(text: str, mark: str, at: int) -> int:
+    found = text.find(mark, at)
+    return len(text) if found < 0 else found + len(mark)
+
+
+def _bare_dashes(sql: str, tokens: list[Token]) -> bool:
+    """Whether a ``--`` without whitespace after it stands outside every token: in the text
+    between them, which holds only whitespace and comments, and not inside another comment.
+    MySQL starts a comment at ``--`` only when whitespace follows; sqlglot at any ``--``, so
+    ``1--1 FOR SHARE`` would hide a negation and everything after it from this check."""
+    edges = [-1, *(i for t in tokens for i in (t.start, t.end)), len(sql)]
+    for begin, end in zip(edges[::2], edges[1::2], strict=True):
+        gap, at = sql[begin + 1 : end], 0
+        while at < len(gap):
+            if gap.startswith("/*", at):
+                at = _past(gap, "*/", at + 2)
+            elif gap.startswith("--", at):
+                after = gap[at + 2 : at + 3]
+                if not after or not (after.isspace() or after < " "):
+                    return True
+                at = _past(gap, "\n", at)
+            elif gap.startswith("#", at):
+                at = _past(gap, "\n", at)
+            else:
+                at += 1
+    return False
+
+
 def _names(node: exp.Func) -> set[str]:
     if isinstance(node, exp.Anonymous):
         return {node.name}
@@ -222,8 +252,12 @@ def refusal(  # noqa: PLR0911  (one return per refusal)
 
 
 def mysql_refusal(sql: str) -> str | None:
-    """:func:`refusal` as MySQL reads the text."""
-    return refusal(sql, MYSQL)
+    """:func:`refusal` as MySQL reads the text, and a ``--`` that MySQL does not read as a
+    comment start."""
+    reason = refusal(sql, MYSQL)
+    if reason is None and _bare_dashes(sql, sqlglot.tokenize(sql, read=MYSQL.read)):
+        return "the statement uses -- without a space after it"
+    return reason
 
 
 BIGQUERY_DENIED: Final = frozenset({"external_query", "session_user"})

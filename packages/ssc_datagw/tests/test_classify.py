@@ -142,6 +142,47 @@ def test_a_comment_that_mysql_does_not_run_passes() -> None:
     assert refusal("SELECT 1 /*! a note */") is None
 
 
+MYSQL_BARE_DASHES = [
+    "SELECT id FROM reporting.orders WHERE id = 1--1 FOR SHARE",
+    "SELECT 1--1, SLEEP(3)",
+    "SELECT 1--1, GET_LOCK('x', 1)",
+    "SELECT id FROM reporting.orders WHERE id = ?--1",
+    "SELECT 1 /* a note */--1",
+    "SELECT 1 -- a note\n--1 FOR SHARE",
+    "--1\nSELECT 1",
+    "SELECT 1 --",
+]
+
+
+@pytest.mark.parametrize("sql", MYSQL_BARE_DASHES)
+def test_mysql_refuses_dashes_it_reads_as_minus_minus_and_sqlglot_as_a_comment(sql: str) -> None:
+    # MySQL starts a comment at -- only when whitespace follows; 1--1 is 1 - (-1) to it.
+    assert mysql_refusal(sql) == "the statement uses -- without a space after it"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 'a--b'",
+        'SELECT "a--b", `c--d` FROM reporting.orders',
+        "SELECT 1 -- x",
+        "SELECT 1 --\tx",
+        "SELECT 1 --\n",
+        "SELECT 1 /* --x */",
+        "SELECT 1 # x --y",
+        "SELECT 1 #--y",
+        "SELECT 1 - -1",
+    ],
+)
+def test_dashes_in_a_string_a_quoted_name_or_a_real_comment_pass(sql: str) -> None:
+    assert mysql_refusal(sql) is None
+
+
+def test_bare_dashes_are_mysqls_alone() -> None:
+    assert refusal("SELECT 1--1") is None
+    assert snowflake_refusal("SELECT 1--1", "reporting") is None
+
+
 BIGQUERY_READS = [
     "SELECT 1",
     "SELECT id, amount FROM reporting.orders WHERE id = ?",

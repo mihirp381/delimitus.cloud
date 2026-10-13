@@ -102,6 +102,8 @@ MATRIX = {
     "sleep in an executable comment": "SELECT id /*!50000 , SLEEP(3) */ FROM reporting.orders",
     "statement in an executable comment": "SELECT 1 /*! ; DELETE FROM reporting.orders */",
     "lock in a mariadb executable comment": "SELECT 1 /*M!100000 , GET_LOCK('x', 1) */",
+    "share lock behind bare dashes": "SELECT id FROM reporting.orders WHERE id = 1--1 FOR SHARE",
+    "lock behind bare dashes": "SELECT 1--1, GET_LOCK('x', 1)",
 }
 DATABASE_REFUSES = {
     "temp table": ("CREATE TEMPORARY TABLE t (x INT)", "25006"),
@@ -300,6 +302,14 @@ async def test_done_when_a_second_statement_past_the_classifier_is_refused_by_th
     assert time.monotonic() - started < 3  # noqa: PLR2004  (the SLEEP never ran)
     async with db.connect() as admin:
         assert await scalar(admin, "SELECT COUNT(*) FROM reporting.orders") == 50
+
+
+async def test_the_server_reads_bare_dashes_as_two_minus_signs(db: Db) -> None:
+    """Why the classifier refuses ``1--1``: sqlglot reads ``--1`` as a comment, MySQL as
+    ``- -1``, so what follows it runs."""
+    connector = MySqlConnector(db.target(), classify=_no_classifier)
+    _, rows = await read(connector, ask("SELECT 1--1 AS two"))
+    assert [list(r) for r in rows] == [[2]]
 
 
 async def test_a_statement_past_the_classifier_without_a_result_set_answers_no_rows(
