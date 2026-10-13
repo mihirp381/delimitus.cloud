@@ -345,7 +345,7 @@ App files (SSC-046) sit in the cell bucket under `files/<env_id>/`, and the data
 - **Customer's key.** The bucket's default key is the cell's own `bucket` key (`key-bucket`, the cell key ring, rotated like the others). Cloud Storage's agent for the project, `service-<project number>@gs-project-accounts.iam.gserviceaccount.com`, read through `gcp.storage.get_project_service_account`, holds `cloudkms.cryptoKeyEncrypterDecrypter` on it (`storage-agent-key`), and the bucket waits for that grant. A default key applies to objects written after it is set: on an existing cell, snapshots and anchors already in the bucket keep Google's key until they are rewritten.
 - **Signing.** `ssc-data` holds `iam.serviceAccountTokenCreator` on itself (`data-signs-as-itself`) and signs each link through IAM `signBlob` (`iamcredentials.googleapis.com`, enabled with the cell's APIs). No account key exists, and `iam.disableServiceAccountKeyCreation` forbids one (SSC-095).
 - **Data gateway.** `ssc-data` holds `storage.objectUser` on the bucket under the condition `only app files` (`bucket-data-files`): objects whose name starts `files/`, or a listing whose prefix does. It counts an environment's bytes with that listing and deletes a file through the API; the app's own `PUT` and `GET` go straight to Cloud Storage with the link.
-- **Agent.** The custom role `sscCellAgentFiles` (`storage.objects.delete`) is bound on the bucket under the same condition (`bucket-agent-files`), not on the project. With its bucket-wide `storage.objectViewer` the agent lists an environment's files and deletes them through `POST /v1/files/drop` (it reads `SSC_CELL_BUCKET`), refused while the environment's service runs. The flow that calls it once the database's grace period ends is not built yet.
+- **Agent.** The custom role `sscCellAgentFiles` (`storage.objects.delete`) is bound on the bucket under the same condition (`bucket-agent-files`), not on the project. With its bucket-wide `storage.objectViewer` the agent lists an environment's files and deletes them through `POST /v1/files/drop` (it reads `SSC_CELL_BUCKET`), refused while the environment's service runs. An app's removal calls it (GA-12, "App removal" below).
 - **Versions.** The bucket keeps replaced and deleted objects as noncurrent versions; a lifecycle rule deletes noncurrent versions under `files/` seven days after they become noncurrent. Cloud Storage's soft delete may keep a deleted object for its retention period after that.
 - **Egress.** `storage.googleapis.com` and the other storage hosts are refused on the egress allowlist (`ssc_contracts.egress`); apps reach Cloud Storage only through Private Google Access, with `.googleapis.com` in `NO_PROXY`.
 
@@ -360,6 +360,18 @@ App files (SSC-046) sit in the cell bucket under `files/<env_id>/`, and the data
 7. Conditions. Impersonating `ssc-data`, `gcloud storage ls gs://ssc-c-<label>-cell/files/` succeeds, `gcloud storage ls gs://ssc-c-<label>-cell/` and a copy to `snapshots/x` are refused; impersonating the agent, `gcloud storage rm` of an object under `snapshots/` is refused and one under `files/` succeeds. This settles the `objectListPrefix` attribute in the condition, which Google documents for `storage.objects.list`.
 8. Kill. `ssc disable <app>`, then `put`: `403 APP_NOT_ACTIVE` once the snapshot moves; a link handed out before keeps working until it expires.
 9. Private access. From the app, a transfer to `storage.googleapis.com` goes out by Private Google Access with no proxy, and the egress proxy's log has no line for it.
+
+## App removal
+
+Deleting an app (GA-12, `ssc apps delete`, decision 014's amendment) has the control plane ask the cell agent to remove what the app holds in the cell, one environment at a time. The agent refuses each call while that environment's service still runs, and answers a thing that is already gone as removed.
+
+- **Database.** `POST /v1/databases/drop` with `sscCellAgentDatabase`, as before (SSC-042). The drop first ends the sessions still open on the database, then deletes it, its roles and its secret.
+- **Files.** `POST /v1/files/drop` with `sscCellAgentFiles` on the bucket ("File storage"). Noncurrent versions go seven days later by the bucket's lifecycle rule.
+- **Secrets.** `POST /v1/secrets/remove` with the conditioned `secretmanager.admin` the agent already holds on `ssc-a-` names; deleting a secret deletes every version of it.
+- **Service.** `POST /v1/runtime/remove` with the custom role `sscCellAgentRemove`: `run.services.delete` and `iam.serviceAccounts.delete`, bound on the project (`agent-remove`). Like `sscCellAgentRuntime` it takes no name condition, so the agent's code holds it to `ssc-a-` names; it is a role of its own so that the runtime role stays without a delete (`tests/test_cell.py`).
+- **Not removed.** The app's images in the cell's Artifact Registry.
+
+A cell made before this role gets it with the next `pulumi up` of its stack. Until then a removal stops at its `delete_services` step with the cell's refusal, after the database places are already given back, and continues once the role is there (`ssc apps delete` again).
 
 ## Audit anchors
 

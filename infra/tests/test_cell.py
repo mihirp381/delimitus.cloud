@@ -1504,6 +1504,14 @@ def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared])
     assert all(p.endswith(".create") for p in roles["sscCellAgentCreate"])
     runtime = roles["sscCellAgentRuntime"]
     assert not any(p.endswith((".delete", ".create")) for p in runtime)
+    # Deleting is a role of its own (GA-12): a deleted app's service and its account, no more.
+    assert set(roles["sscCellAgentRemove"]) == {"run.services.delete", "iam.serviceAccounts.delete"}
+    deleting = {
+        r
+        for r, held in roles.items()
+        if r.startswith("sscCellAgent") and any(p.endswith(".delete") for p in held)
+    }
+    assert deleting == {"sscCellAgentRemove", "sscCellAgentDatabase", "sscCellAgentFiles"}
     assert "iam.serviceAccounts.actAs" in runtime
     assert {"run.services.setIamPolicy", "run.revisions.list"} <= set(runtime)
     assert "cloudbuild.builds.create" in roles["sscCellAgentCreate"]
