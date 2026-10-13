@@ -564,6 +564,19 @@ def test_a_failed_health_check_prints_the_end_of_the_app_log(cli, api, folder):
     assert [q.url.params["source"] for q in asked] == ["app"]
 
 
+def test_the_log_tail_shows_an_app_s_control_characters_as_escapes(cli, api, folder):
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("failed", failure_code="HEALTH_CHECK_FAILED")
+    ]
+    api.routes[("GET", LOGS)] = [
+        _log_page("app", "ok\x1b]52;c;ZWNobyBoaQ==\x07\x1b[2K\rFix: none\nValueError: boom")
+    ]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", session=api.session())
+    assert r.code == ExitCode.FAILED
+    assert "  ok\\x1b]52;c;ZWNobyBoaQ==\\x07\\x1b[2K\\x0dFix: none\nValueError: boom\n" in r.stderr
+    assert not set(r.stderr) & {"\x1b", "\x07", "\r"}
+
+
 def test_a_log_that_cannot_be_read_leaves_the_error_as_it_was(cli, api, folder, fake_problem):
     api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("failed", failure_code="BUILD_FAILED")]
     api.routes[("GET", LOGS)] = [fake_problem(503, "LOGS_UNAVAILABLE")]

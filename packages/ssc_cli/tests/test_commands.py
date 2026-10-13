@@ -1099,6 +1099,29 @@ def test_logs_prints_the_environments_lines(cli, scripted):
     assert "GET / 200 3ms" in human
 
 
+# An app line that would write the clipboard (OSC 52), clear the line and return the cursor,
+# and turn the text red with the one-byte CSI.
+HOSTILE = "ok\x1b]52;c;ZWNobyBoaQ==\x07\x1b[2K\rINFO  all good\x9b31m\tred"
+
+
+def test_logs_shows_an_app_s_control_characters_as_escapes(cli, scripted):
+    scripted.add("GET", LOGS, _page("1.1.1", HOSTILE))
+    human = cli("logs", "demo", session=scripted.session()).stdout
+    assert "ok\\x1b]52;c;ZWNobyBoaQ==\\x07\\x1b[2K\\x0dINFO  all good\\x9b31m\tred" in human
+    assert not set(human) & {"\x1b", "\x07", "\r", "\x9b"}
+    as_json = cli("logs", "demo", "--json", session=scripted.session())
+    assert [line.text for line in LogsResult.model_validate(as_json.json()).lines] == [HOSTILE]
+
+
+def test_logs_prints_a_traceback_as_lines_and_still_escapes_the_rest(cli, scripted):
+    trace = 'Traceback (most recent call last):\n  File "app.py", line 3\nValueError: boom\r\x1b[2K'
+    scripted.add("GET", LOGS, _page("1.1.1", trace))
+    human = cli("logs", "demo", session=scripted.session()).stdout
+    assert 'Traceback (most recent call last):\n  File "app.py", line 3\n' in human
+    assert "ValueError: boom\\x0d\\x1b[2K" in human
+    assert not set(human) & {"\x1b", "\r"}
+
+
 def test_logs_follow_prints_new_lines(cli, scripted, monkeypatch):
     monkeypatch.setattr(logs_command, "FOLLOW_POLLS", 2)
     scripted.add("GET", LOGS, _page("1.1.1", "old"), _page("1.2.2", "new"), _page("1.2.2"))

@@ -21,7 +21,7 @@ from ssc_cli.commands.share import Env
 from ssc_cli.commands.status import AppArg
 from ssc_cli.errors import CliError
 from ssc_cli.models import LogLineOut
-from ssc_cli.output import print_json, say
+from ssc_cli.output import print_json, say, visible
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import LogLineRow, LogsResult
 from ssc_contracts.errors import ErrorCode
@@ -164,4 +164,4 @@ def _row(line: LogLineOut) -> LogLineRow:
 
 
 def _text(line: LogLineRow) -> str:
-    return f"{line.timestamp}  {line.severity:<8}  {line.text}"
+    return visible(f"{line.timestamp}  {line.severity:<8}  {line.text}")

@@ -5,13 +5,25 @@ Without ``--json`` it prints title, detail, request id, any log tail and any fix
 """
 
 import json
+import re
 from collections.abc import Sequence
+from typing import Final
 
 import typer
 from pydantic import BaseModel
 
 from ssc_cli.errors import CliError
 from ssc_cli.shapes import ErrorResult
+
+_CONTROL: Final = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def visible(text: str) -> str:
+    """App-written text as a terminal may show it: every C0 and C1 control but tab and newline,
+    ESC and carriage return included, written as its escape (``\\x1b``), so a log line cannot
+    move the cursor, recolour, retitle the window or write the clipboard. A newline stays one, so
+    a traceback still reads as lines."""
+    return _CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
 
 
 def print_json(model: BaseModel) -> None:
@@ -32,7 +44,7 @@ def print_error(error: CliError, json_mode: bool) -> None:
     if error.log_tail:
         typer.echo("Last log lines:", err=True)
         for line in error.log_tail:
-            typer.echo(f"  {line}", err=True)
+            typer.echo(f"  {visible(line)}", err=True)
     if error.fix:
         typer.echo(f"Fix: {error.fix}", err=True)
 
