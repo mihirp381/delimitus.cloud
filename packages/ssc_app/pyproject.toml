@@ -3,6 +3,8 @@ name = "ssc-app"
 version = "0.0.3"
 description = "The helper an app on Small Software Cloud installs: who is signed in, streams that reconnect, files and company data."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 # An app runs on the Python it chose and holds its own pins, so these are ranges; CI job
 # python-helper installs the wheel alone at both ends of them. PyJWT starts at the release the
 # workspace pins for its security fixes.

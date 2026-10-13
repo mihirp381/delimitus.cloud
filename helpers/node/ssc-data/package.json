@@ -11,7 +11,7 @@
       "default": "./index.js"
     }
   },
-  "files": ["index.js", "index.d.ts", "README.md"],
+  "files": ["index.js", "index.d.ts", "README.md", "LICENSE"],
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --test test/*.test.js"
@@ -21,6 +21,6 @@
     "url": "git+https://github.com/mihirp381/delimitus.cloud.git",
     "directory": "helpers/node/ssc-data"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "publishConfig": { "access": "public" }
 }
