@@ -3,6 +3,7 @@
 import ast
 import json
 import re
+import tomllib
 from pathlib import Path
 
 import httpx2
@@ -23,6 +24,7 @@ from ssc_contracts import app_env
 from ssc_contracts.manifest import load_manifest
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "ssc_cli"
+ROOT = Path(__file__).resolve().parents[3]
 SKILL = ".claude/skills/ssc/SKILL.md"
 USER_TEXT = "# Team notes\n\nDeploy on Fridays only after lunch.\n"
 MCP_URL = "https://api.delimitus.com/mcp"
@@ -461,3 +463,24 @@ def test_pack_gives_the_session_and_cold_start_facts(cli, tmp_path):
         "`ssc secret set <app> NAME --env <env>`",
     ):
         assert fact in " ".join(agents.split()), fact
+
+
+def test_pack_names_the_helpers_as_they_are_published(cli, tmp_path):
+    init(cli, tmp_path)
+    agents = " ".join((tmp_path / "AGENTS.md").read_text().split())
+    helper = ROOT / "packages" / "ssc_app"
+    project = tomllib.loads((helper / "pyproject.toml").read_text())["project"]
+    assert f"`{project['name']}` on PyPI (`pip install {project['name']}`)" in agents
+    assert f"Python {project['requires-python'].removeprefix('>=')} or newer" in agents
+    modules = set(re.findall(r"ssc_app(?:\.| import )([a-z_]+)", agents))
+    assert modules == {"identity", "reconnect", "files"}
+    for module in modules:
+        assert (helper / "src" / "ssc_app" / f"{module}.py").is_file(), module
+    packages = [json.loads(p.read_text()) for p in ROOT.glob("helpers/node/*/package.json")]
+    node = {p["name"]: p for p in packages}
+    named = set(re.findall(r"@delimitus/[a-z-]+", agents))
+    assert len(named) == 3 and named <= set(node)
+    assert "`npm install @delimitus/ssc-identity`" in agents
+    for name in named:
+        assert "private" not in node[name], name
+        assert f"Node {node[name]['engines']['node'].removeprefix('>=')} or newer" in agents
