@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx2
+import pytest
 from fastapi import FastAPI
 from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters
@@ -19,7 +20,8 @@ from ssc_cli.agentpack import guide
 from ssc_cli.api import ApiClient
 from ssc_cli.commands.deploy import prepare_folder
 from ssc_cli.credentials import Login, store_login
-from ssc_cli.mcp_local import INSTRUCTIONS, TOOLS, agent_opener, build_server
+from ssc_cli.errors import CliError
+from ssc_cli.mcp_local import INSTRUCTIONS, TOOLS, agent_opener, build_server, seg
 from ssc_control.api.mcp import tools as server_tools
 from ssc_control.api.mcp.server import INSTRUCTIONS as SERVER_INSTRUCTIONS
 from ssc_control.api.settings import Settings
@@ -192,6 +194,15 @@ async def test_a_connection_name_never_leaves_the_schema_route(fake_api):
             assert described.is_error, name
             assert described.structured_content is None, name  # the argument's pattern
     assert fake_api.seen == []
+
+
+def test_a_path_argument_is_always_one_segment():
+    assert seg("warehouse") == "warehouse"
+    assert seg("../../v1/audit?limit=2#x%") == "..%2F..%2Fv1%2Faudit%3Flimit%3D2%23x%25"
+    for dot in ("", ".", ".."):
+        with pytest.raises(CliError) as refused:
+            seg(dot)
+        assert refused.value.body.code == "VALIDATION_FAILED"
 
 
 async def test_refusals_are_tool_errors(fake_api, fake_problem):
