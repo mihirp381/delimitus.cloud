@@ -67,6 +67,9 @@ class Runtime:
     async def scale_to_zero(self, service: str) -> None:
         raise AssertionError(service)
 
+    async def remove(self, service: str) -> None:
+        raise AssertionError(service)
+
     async def observe(self, service: str) -> ServiceObservation | None:
         if service not in self.services:
             return None

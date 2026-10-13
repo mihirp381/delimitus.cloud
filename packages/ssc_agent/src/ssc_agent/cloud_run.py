@@ -2,7 +2,8 @@
 
 Runs as the cell agent, whose IAM reaches only services and service accounts named ``ssc-a-*``
 (decision 022). That rules out the operations API, so a call that must finish (``set_traffic``,
-``scale_to_zero``) polls the service until ``observedGeneration`` catches up instead.
+``scale_to_zero``) polls the service until ``observedGeneration`` catches up instead, and
+``remove`` polls until the service is gone.
 
 Each app environment's service:
 
@@ -20,7 +21,9 @@ Each app environment's service:
 - names its revisions ``<service>-<generation>-<fingerprint>``, so ``apply`` knows the revision
   it asked for before Cloud Run has made it;
 - pins traffic to named revisions after the first, so a new revision never takes traffic;
-- stops with manual scaling at 0 instances, which keeps every revision.
+- stops with manual scaling at 0 instances, which keeps every revision;
+- is removed with its revisions and its service account when its app is deleted (GA-12), and
+  never otherwise.
 
 A revision's fingerprint is computed from its container as Cloud Run reports it, never from a
 label, so a change made outside SSC shows as drift.
@@ -175,6 +178,22 @@ class CloudRunDriver(RuntimeDriver):
         await self._update(service, stop)
         await self.wait_settled(service)
 
+    async def remove(self, service: str) -> None:
+        _check_service(service)
+        try:
+            await self._call("DELETE", f"{RUN_API}/{self.cell.service_path(service)}")
+        except _ApiError as exc:
+            if exc.status != _HTTP_NOT_FOUND:
+                raise
+        await self._wait_gone(service)
+        account = f"projects/{self.cell.project}/serviceAccounts/{self.cell.identity(service)}"
+        try:
+            await self._call("DELETE", f"{IAM_API}/{account}")
+        except _ApiError as exc:
+            if exc.status != _HTTP_NOT_FOUND:
+                raise
+        self._known_identities.discard(service)
+
     async def observe(self, service: str) -> ServiceObservation | None:
         _check_service(service)
         svc = await self._get_service(service)
@@ -219,6 +238,14 @@ class CloudRunDriver(RuntimeDriver):
         while not await self.settled(service):
             if waited >= within:
                 raise RuntimeDriverError(f"{service}: not settled after {within:.0f} s")
+            await self._sleep(self._poll)
+            waited += self._poll
+
+    async def _wait_gone(self, service: str, within: float = SETTLE_TIMEOUT_SECONDS) -> None:
+        waited = 0.0
+        while await self._get_service(service) is not None:
+            if waited >= within:
+                raise RuntimeDriverError(f"{service}: not gone after {within:.0f} s")
             await self._sleep(self._poll)
             waited += self._poll
 
@@ -347,8 +374,8 @@ class CloudRunDriver(RuntimeDriver):
     async def ensure_identity(self, service: str) -> None:
         """The environment's own service account, with no project roles. Its secrets name it on
         their own policies (``secret_manager.CellSecretCustody``). It is remembered for the
-        process's life, because the agent never deletes an account, and IAM's 429 is retried with
-        back-off."""
+        process's life, because only ``remove`` deletes an account, and IAM's 429 is retried
+        with back-off."""
         if service in self._known_identities:
             return
         for attempt in range(IDENTITY_CREATE_TRIES):

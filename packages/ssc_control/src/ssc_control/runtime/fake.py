@@ -22,7 +22,7 @@ from ssc_control.runtime.driver import (
     revision_fingerprint,
 )
 
-Method = Literal["apply", "set_traffic", "scale_to_zero", "observe"]
+Method = Literal["apply", "set_traffic", "scale_to_zero", "remove", "observe"]
 METHODS: Final[tuple[str, ...]] = get_args(Method)
 
 
@@ -219,6 +219,10 @@ class FakeRuntimeDriver(RuntimeDriver):
     async def scale_to_zero(self, service: str) -> None:
         await self._enter("scale_to_zero", service)
         self._service(service).stopped = True
+
+    async def remove(self, service: str) -> None:
+        await self._enter("remove", service)
+        self.services.pop(service, None)
 
     async def observe(self, service: str) -> ServiceObservation | None:
         await self._enter("observe", service)

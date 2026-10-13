@@ -383,6 +383,31 @@ async def test_a_half_made_database_can_be_dropped(
     assert vault.secrets == {}
 
 
+async def test_a_drop_ends_the_sessions_the_app_still_holds_and_no_other_apps(
+    dbs: CellAppDatabases, vault: MemoryVault, instance: CloudSqlLike
+) -> None:
+    """GA-12: a database with a session open cannot be dropped, and a stopped service's pooled
+    connections can outlive it."""
+    going, staying = service(1), service(2)
+    await dbs.ensure(going)
+    await dbs.ensure(staying)
+    name = database_name(going)
+    with (
+        psycopg.connect(dsn_of(instance, url_of(vault, going)), autocommit=True) as held,
+        psycopg.connect(dsn_of(instance, url_of(vault, staying)), autocommit=True) as neighbour,
+    ):
+        held.execute("create table kept (n int)")
+        await dbs.drop(going)
+        with pytest.raises(psycopg.OperationalError):
+            held.execute("select 1")
+        assert neighbour.execute("select 1").fetchone() == (1,)
+    assert rows(instance, "select count(*) from pg_database where datname = %s", name) == [(0,)]
+    assert rows(instance, "select count(*) from pg_roles where rolname like %s", f"{name}%") == [
+        (0,)
+    ]
+    assert (await dbs.usage(staying)).environments == 1
+
+
 async def test_ten_apps_at_their_limit_leave_room_for_administration(
     dbs: CellAppDatabases, vault: MemoryVault, instance: CloudSqlLike
 ) -> None:
@@ -499,6 +524,9 @@ class Runtime:
         raise AssertionError(service)
 
     async def scale_to_zero(self, service: str) -> None:
+        raise AssertionError(service)
+
+    async def remove(self, service: str) -> None:
         raise AssertionError(service)
 
     async def observe(self, service: str) -> ServiceObservation | None:

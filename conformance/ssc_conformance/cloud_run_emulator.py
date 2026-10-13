@@ -3,7 +3,8 @@
 It models what ``CloudRunDriver`` relies on, pessimistically where Cloud Run's behaviour is not
 documented: a write leaves the service reconciling, and its revision does not exist yet, until
 ``settle()``; ``LATEST`` traffic statuses name no revision; traffic may only name revisions that
-exist; an ``etag`` that is not the current one is refused. ``unhealthy(digest)`` makes revisions
+exist; an ``etag`` that is not the current one is refused; a deleted service is still there,
+reconciling, until ``settle()``. ``unhealthy(digest)`` makes revisions
 of that image fail; ``index(digest, platform)`` makes revisions of that image index run, and
 report, its platform manifest, as Cloud Run does.
 """
@@ -37,6 +38,7 @@ class _Service:
     pending_revision: Json | None = None
     traffic_statuses: list[Json] = field(default_factory=list[Json])
     policy: Json | None = None
+    deleting: bool = False
 
 
 class CloudRunEmulator:
@@ -63,8 +65,11 @@ class CloudRunEmulator:
         self._indexes[digest] = platform
 
     def settle(self) -> None:
-        for svc in self.services.values():
-            self._settle(svc)
+        for svc in list(self.services.values()):
+            if svc.deleting:
+                del self.services[svc.name]
+            else:
+                self._settle(svc)
 
     def edit(self, service: str, change: Callable[[Json], None]) -> None:
         """A change made outside SSC (the console, gcloud): ``change(body)`` edits the service
@@ -110,13 +115,24 @@ class CloudRunEmulator:
             case "POST", "", "setIamPolicy":
                 svc.policy = copy.deepcopy(body["policy"])
                 return httpx2.Response(200, json=svc.policy)
+            case "DELETE", "", "":
+                svc.deleting = True
+                if self.auto_settle:
+                    del self.services[name]
+                return httpx2.Response(200, json={"name": "operations/delete", "done": False})
             case _:
                 return _error(404, "NOT_FOUND", f"{request.method} {path}")
 
     # ── IAM ──────────────────────────────────────────────────────────────────
 
     def _iam(self, method: str, path: str, body: Json) -> httpx2.Response:
-        if method != "POST" or path != f"/v1/projects/{PROJECT}/serviceAccounts":
+        accounts = f"/v1/projects/{PROJECT}/serviceAccounts"
+        if method == "DELETE" and path.startswith(accounts + "/"):
+            email = path.removeprefix(accounts + "/")
+            if self.accounts.pop(email.split("@", 1)[0], None) is None:
+                return _error(404, "NOT_FOUND", f"{email} not found")
+            return httpx2.Response(200, json={})
+        if method != "POST" or path != accounts:
             return _error(404, "NOT_FOUND", path)
         account = str(body["accountId"])
         if account in self.accounts:
@@ -238,7 +254,7 @@ class CloudRunEmulator:
             "name": f"projects/{PROJECT}/locations/{REGION}/services/{svc.name}",
             "generation": str(svc.generation),
             "observedGeneration": str(svc.observed),
-            "reconciling": svc.observed < svc.generation,
+            "reconciling": svc.deleting or svc.observed < svc.generation,
             "etag": self._etag(svc),
             "trafficStatuses": copy.deepcopy(svc.traffic_statuses),
         }

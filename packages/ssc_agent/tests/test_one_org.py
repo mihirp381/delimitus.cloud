@@ -37,6 +37,9 @@ class Recording:
     async def scale_to_zero(self, service: str) -> None:
         self.calls.append(f"scale_to_zero {service}")
 
+    async def remove(self, service: str) -> None:
+        self.calls.append(f"remove {service}")
+
     async def observe(self, service: str) -> ServiceObservation | None:
         self.calls.append(f"observe {service}")
 

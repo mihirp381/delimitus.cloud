@@ -184,3 +184,21 @@ class RuntimeDriverContract:
         assert not (await observed(runtime_driver, spec.service)).stopped
         with pytest.raises(ServiceNotFoundError):
             await runtime_driver.scale_to_zero(service_name(new_id("env")))
+
+    async def test_remove_takes_a_stopped_service_and_one_already_gone_is_fine(
+        self, runtime_driver: RuntimeDriver, images: Images, settle: Settle
+    ) -> None:
+        spec, other = new_spec(images.first), new_spec(images.second)
+        await runtime_driver.apply(spec)
+        kept = await runtime_driver.apply(other)
+        await settle()
+        await runtime_driver.scale_to_zero(spec.service)
+        await runtime_driver.remove(spec.service)
+        assert await runtime_driver.observe(spec.service) is None
+        await runtime_driver.remove(spec.service)
+        await runtime_driver.remove(service_name(new_id("env")))
+        assert traffic(await observed(runtime_driver, other.service)) == {kept: 100}
+        # Nothing of it is left to be in the way of a service of the same name.
+        again = await runtime_driver.apply(spec)
+        await settle()
+        assert traffic(await observed(runtime_driver, spec.service)) == {again: 100}

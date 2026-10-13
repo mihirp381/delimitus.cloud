@@ -17,7 +17,8 @@ environments cannot both take the last place. ``ensure`` and ``rotate`` then set
 ``recovery_point`` tells the instance's time and write-ahead log position, which a production
 deployment records before it starts so a restore can go back to it (SSC-043); it reads only
 server functions on ``postgres``, never the app's database. ``drop`` frees the place again
-(SSC-042): it stops the login, drops the database and both roles,
+(SSC-042): it stops the login, ends the sessions the login role still holds (a database with a
+session open cannot be dropped), drops the database and both roles,
 and deletes the database secrets. It is safe to re-run, and the agent's route refuses it while
 the environment's service still runs.
 
@@ -44,6 +45,7 @@ ADMIN_ROLE: Final = "cloudsqlsuperuser"
 SCRAM_ITERATIONS: Final = 4096
 TIER_FULL_MARK: Final = "SSC_DB_TIER_FULL"
 CEILING_LOCK: Final = 40400040
+TERMINATE_WAIT_MS: Final = 5000
 APP_OWNER_ROLE: Final = r"^app_[a-z0-9]{20}_owner$"
 
 type Rows = list[dict[str, Any]]
@@ -209,8 +211,17 @@ class CellAppDatabases:
         owner = f"{name}_owner"
         state = await self._state(name, owner)
         if state["has_login"]:
+            # Only a member of a role may end its sessions, so the admin is one for this batch.
             await self._sql.run(
-                "postgres", [f"SET ROLE {ADMIN_ROLE}", f"ALTER ROLE {name} NOLOGIN"]
+                "postgres",
+                [
+                    f"SET ROLE {ADMIN_ROLE}",
+                    f"ALTER ROLE {name} NOLOGIN",
+                    f"GRANT {name} TO {ADMIN_ROLE}",
+                    f"SELECT pg_terminate_backend(pid, {TERMINATE_WAIT_MS}) "  # noqa: S608  (constant SQL fragments; names are validated)
+                    f"FROM pg_stat_activity WHERE usename = '{name}'",
+                    f"REVOKE {name} FROM {ADMIN_ROLE}",
+                ],
             )
         if state["has_database"]:
             await self._sql.drop_database(name)

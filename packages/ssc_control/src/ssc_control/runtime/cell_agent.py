@@ -69,6 +69,9 @@ class CellAgentDriver(RuntimeDriver):
     async def scale_to_zero(self, service: str) -> None:
         await self._call("scale_to_zero", {"service": service})
 
+    async def remove(self, service: str) -> None:
+        await self._call("remove", {"service": service})
+
     async def observe(self, service: str) -> ServiceObservation | None:
         body = await self._call("observe", {"service": service})
         seen = body.get("observation")
