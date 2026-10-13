@@ -319,6 +319,40 @@ class DisableResult(Shape):
     total_ms: int | None
 
 
+class AppDeleteStepRow(Shape):
+    name: str
+    state: str
+    removed: int | None
+    elapsed_ms: int | None
+    attempts: int
+    error: str | None
+
+
+class AppDeleteResult(Shape):
+    """``apps delete``: the app is ``deleting`` from the moment the API answered and ``deleted``
+    once the run ``completed``; ``state`` is the run's once ssc stopped following it."""
+
+    app_id: str
+    slug: str
+    status: str
+    run_id: str
+    state: str
+    steps: list[AppDeleteStepRow]
+    total_ms: int | None
+
+
+class AppDeleteRunResult(Shape):
+    """``apps delete-status``: one removal of an app, as the API has it now."""
+
+    app_id: str
+    run_id: str
+    state: str
+    steps: list[AppDeleteStepRow]
+    started_at: str
+    finished_at: str | None
+    total_ms: int | None
+
+
 class AccessGrantRow(Shape):
     grant_id: str
     role: str
@@ -702,6 +736,9 @@ SHAPES: dict[str, type[BaseModel]] = {
         PromoteResult,
         KillSwitchStepRow,
         DisableResult,
+        AppDeleteStepRow,
+        AppDeleteResult,
+        AppDeleteRunResult,
         AccessGrantRow,
         AccessResult,
         SecretSetResult,
