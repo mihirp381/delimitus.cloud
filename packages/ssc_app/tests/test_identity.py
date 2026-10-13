@@ -5,6 +5,7 @@ import http.server
 import importlib.util
 import json
 import threading
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ from ssc_app.identity import (
     token_from_headers,
     verify,
 )
-from ssc_contracts.identity import IDENTITY_HEADER
+from ssc_app.note import IDENTITY_HEADER
 
 ROOT = Path(__file__).resolve().parents[3]
 VECTORS_DIR = ROOT / "conformance" / "identity_note"
@@ -117,8 +118,15 @@ def test_default_clock_refuses_the_fixed_vectors_as_expired() -> None:
     assert e.value.code == "expired"
 
 
+def test_the_note_model_is_the_contract_s_file() -> None:
+    contract = ROOT / "packages" / "ssc_contracts" / "src" / "ssc_contracts" / "identity.py"
+    mine = files("ssc_app").joinpath("note.py").read_text(encoding="utf-8")
+    assert mine == contract.read_text(encoding="utf-8")
+
+
 def test_regenerated_vectors_match_the_committed_ones() -> None:
     """Signatures are randomised (ECDSA), so compare everything but the token bytes, then verify."""
+    pytest.importorskip("ssc_edge")  # the generator signs with the gateway's code, not the helper's
     fresh = _load_generator().build_vectors()
 
     def strip(doc: dict[str, Any]) -> dict[str, Any]:
