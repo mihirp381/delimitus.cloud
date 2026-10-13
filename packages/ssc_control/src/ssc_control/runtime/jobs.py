@@ -35,8 +35,9 @@ TICK_CRON: Final = "* * * * * */15"
 RECONCILE_ENV: Final = f"{NAMESPACE}:reconcile_env"
 
 _LIVE_ENVS: Final = text(
-    "select id from ssc.environment where org_id = :org and current_deployment_id is not null "
-    "order by id"
+    "select e.id from ssc.environment e join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
+    "where e.org_id = :org and e.current_deployment_id is not null and a.status <> 'deleted' "
+    "order by e.id"
 )
 
 

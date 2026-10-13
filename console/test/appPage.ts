@@ -13,7 +13,7 @@ export const PREVIEW_GRANTS = `${APP_PATH}/environments/${PREVIEW}/grants`;
 /** The first render in a worker can be slow while modules load under parallel test files. */
 export const FIRST_RENDER_MS = 5000;
 
-export type Status = 'active' | 'disabled' | 'quarantined';
+export type Status = 'active' | 'disabled' | 'quarantined' | 'deleting';
 
 export function app(status: Status = 'active') {
   return {

@@ -31,6 +31,14 @@ and the time since the command: the last step's is the drill's.
 
 ``sweep`` re-defers a running run whose job is gone (one that raised, say while the database was
 down), so no run stays ``running`` for ever and blocks ``enable``.
+
+Removing an app (GA-12) is a run in mode ``delete``. ``start_delete`` marks the app ``deleting``,
+which denies it as a disable does, and the run goes through ``DELETE_STEPS``: the first four
+steps above, then ``lifecycle.removal``'s, which delete what the app had. Its cell steps work
+like ``scale_to_zero``, one environment per job holding that environment's lock. Unlike the
+switch, a removal stops at a step that failed and ends ``failed`` there: nothing later is
+deleted on top of something that is still in place. Asking again starts a new run, whose steps
+find what is already gone and go on; the last one marks the app ``deleted``.
 """
 
 import asyncio
@@ -52,9 +60,10 @@ from ssc_contracts.ids import new_id
 from ssc_control.audit import Actor, NewEvent, append_event
 from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
+from ssc_control.lifecycle import removal
 from ssc_control.lifecycle.tasks import defer_kill_switch, queueing_lock
 from ssc_control.ports import KillReason, TimersPort
-from ssc_control.runtime.cells import CELL_UNAVAILABLE, CellUnavailableError
+from ssc_control.runtime.cells import CELL_UNAVAILABLE, CellUnavailableError, OrgCell
 from ssc_control.runtime.driver import (
     RuntimeDriver,
     RuntimeDriverError,
@@ -67,9 +76,14 @@ from ssc_control.worker_ports import Ports
 log = logging.getLogger(__name__)
 
 Mode = KillReason
+RunMode = Literal["disable", "quarantine", "delete"]
+"""A run's mode: the switch's two, or the removal of the app."""
 StepName = Literal[
     "gateway_deny", "datagw_suspend", "egress_remove", "scale_to_zero", "pause_timers"
 ]
+StopStepName = Literal["gateway_deny", "datagw_suspend", "egress_remove", "scale_to_zero"]
+DeleteStepName = Literal[StopStepName, removal.StepName]
+AnyStepName = Literal[StepName, removal.StepName]
 StepState = Literal["running", "done", "unconfirmed", "failed"]
 
 STEPS: Final[tuple[StepName, ...]] = (
@@ -79,8 +93,24 @@ STEPS: Final[tuple[StepName, ...]] = (
     "scale_to_zero",
     "pause_timers",
 )
+STOP_STEPS: Final[tuple[StopStepName, ...]] = (
+    "gateway_deny",
+    "datagw_suspend",
+    "egress_remove",
+    "scale_to_zero",
+)
+DELETE: Final = "delete"
+DELETE_STEPS: Final[tuple[DeleteStepName, ...]] = (*STOP_STEPS, *removal.STEPS)
+"""A removal's steps: deny and stop as the switch does, then delete."""
+ALL_STEPS: Final[tuple[AnyStepName, ...]] = (*STEPS, *removal.STEPS)
 STEP_STATES: Final[frozenset[str]] = frozenset({"running", "done", "unconfirmed", "failed"})
 MODE_STATUS: Final[Mapping[Mode, str]] = {"disable": "disabled", "quarantine": "quarantined"}
+
+
+def steps_for(mode: RunMode) -> tuple[AnyStepName, ...]:
+    """The steps a run in ``mode`` goes through, in order."""
+    return DELETE_STEPS if mode == DELETE else STEPS
+
 
 RUNNING: Final = "running"
 MISSING: Final = "missing"
@@ -144,9 +174,10 @@ def span_ms(start: datetime, end: datetime) -> int:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Step:
     """One entry of ``steps``. ``confirm_by`` is the gateway's deadline; ``stopped`` the
-    environments ``scale_to_zero`` has stopped so far."""
+    environments ``scale_to_zero``, or a removal's cell step, has done so far; ``removed`` how
+    many things a removal's step deleted."""
 
-    name: StepName
+    name: AnyStepName
     state: StepState
     started_at: datetime
     finished_at: datetime | None = None
@@ -156,8 +187,10 @@ class Step:
     error: str | None = None
     confirm_by: datetime | None = None
     stopped: tuple[str, ...] = ()
+    removed: int | None = None
 
     def to_json(self) -> dict[str, Any]:
+        counted = {} if self.removed is None else {"removed": self.removed}
         return {
             "name": self.name,
             "state": self.state,
@@ -169,14 +202,16 @@ class Step:
             "error": self.error,
             "confirm_by": _iso(self.confirm_by),
             "stopped": list(self.stopped),
+            **counted,
         }
 
     @classmethod
     def from_json(cls, raw: Mapping[str, Any]) -> Step:
         name, state, started = str(raw["name"]), str(raw["state"]), _ts(raw["started_at"])
-        if name not in STEPS or state not in STEP_STATES or started is None:
+        if name not in ALL_STEPS or state not in STEP_STATES or started is None:
             raise ValueError(f"not a kill-switch step: {raw!r}")
         version, elapsed = raw.get("snapshot_version"), raw.get("elapsed_ms")
+        removed = raw.get("removed")
         return cls(
             name=name,
             state=cast("StepState", state),
@@ -188,6 +223,7 @@ class Step:
             error=None if raw.get("error") is None else str(raw["error"]),
             confirm_by=_ts(raw.get("confirm_by")),
             stopped=tuple(str(e) for e in cast("list[object]", raw.get("stopped") or [])),
+            removed=None if removed is None else int(removed),
         )
 
     def finish(self, at: datetime, state: StepState, *, tried: bool = True) -> Step:
@@ -238,7 +274,7 @@ _NOW = text("select clock_timestamp()")
 class _Run:
     id: str
     app_id: str
-    mode: Mode
+    mode: RunMode
     state: str
     raw_steps: object
     """``steps`` as read, for the compare-and-set."""
@@ -266,7 +302,7 @@ async def _load(conn: AsyncConnection, org_id: str, run_id: str) -> _Run | None:
     return _Run(
         id=str(row.id),
         app_id=str(row.app_id),
-        mode=cast("Mode", str(row.mode)),
+        mode=cast("RunMode", str(row.mode)),
         state=str(row.state),
         raw_steps=row.steps,
         steps=steps_of(row.steps),
@@ -319,7 +355,8 @@ async def _record(
     paused: Sequence[str] | None = None,
 ) -> str | None:
     """Write the finished ``step`` in place of the running one and audit it. After the last
-    step the run finishes too: its state is returned; otherwise None, to go on."""
+    step, or a removal's failed one, the run finishes too: its state is returned; otherwise
+    None, to go on."""
     steps = (*run.steps[:-1], step)
     await _write(conn, org_id, run, steps, paused)
     after: dict[str, Any] = {
@@ -336,6 +373,8 @@ async def _record(
     }
     if step.error is not None:
         after["error"] = step.error
+    if step.removed is not None:
+        after["removed"] = step.removed
     await append_event(
         conn,
         NewEvent(
@@ -347,7 +386,8 @@ async def _record(
             after=after,
         ),
     )
-    if step.name != STEPS[-1]:
+    stops_here = run.mode == DELETE and step.state == "failed"
+    if step.name != steps_for(run.mode)[-1] and not stops_here:
         return None
     return await _finish_run(conn, org_id, run, steps, step.finished_at)
 
@@ -448,9 +488,10 @@ async def _begin(job: _Job, conn: AsyncConnection, run: _Run) -> str | None:
     """Write the next step as running. The gateway's asks for its snapshot version here."""
     await _lock(conn, job.org_id, run)
     now = await _now(conn)
-    if len(run.steps) >= len(STEPS):
+    names = steps_for(run.mode)
+    if len(run.steps) >= len(names):
         return await _finish_run(conn, job.org_id, run, run.steps, None)
-    step = Step(name=STEPS[len(run.steps)], state="running", started_at=now)
+    step = Step(name=names[len(run.steps)], state="running", started_at=now)
     if step.name == "gateway_deny":
         version = await job.ports.snapshot.request(conn, job.org_id)
         step = replace(step, snapshot_version=version, confirm_by=now + job.timings.confirm_within)
@@ -460,7 +501,7 @@ async def _begin(job: _Job, conn: AsyncConnection, run: _Run) -> str | None:
     return None
 
 
-async def _work(job: _Job, run: _Run, step: Step) -> str | None:
+async def _work(job: _Job, run: _Run, step: Step) -> str | None:  # noqa: PLR0911  (one return per step)
     match step.name:
         case "gateway_deny" | "datagw_suspend" | "egress_remove":
             return await _confirm(job, run, step)
@@ -468,6 +509,14 @@ async def _work(job: _Job, run: _Run, step: Step) -> str | None:
             return await _scale(job, run, step)
         case "pause_timers":
             return await _pause(job, run, step)
+        case "drop_databases" | "delete_files" | "delete_secrets" | "delete_services" as name:
+            return await _remove_in_cell(job, run, step, name)
+        case "remove_timers":
+            return await _remove_timers(job, run, step)
+        case "delete_bundles":
+            return await _delete_bundles(job, run, step)
+        case "remove_records":
+            return await _remove_records(job, run, step)
 
 
 async def _confirm(job: _Job, run: _Run, step: Step) -> str | None:
@@ -492,13 +541,29 @@ async def _confirm(job: _Job, run: _Run, step: Step) -> str | None:
 
 async def _scale(job: _Job, run: _Run, step: Step) -> str | None:
     """Stop the next environment if this job holds its lock, else hand over to a job that does."""
+
+    async def stop(driver: RuntimeDriver, _: OrgCell, env_id: str) -> None:
+        await _stop(driver, service_name(env_id))
+
+    return await _each_env(job, run, step, stop)
+
+
+async def _each_env(
+    job: _Job,
+    run: _Run,
+    step: Step,
+    work: Callable[[RuntimeDriver, OrgCell, str], Awaitable[int | None]],
+) -> str | None:
+    """``work`` on the next environment the step has not done, prod first, in the job that holds
+    that environment's lock; the step is done once none is left. What ``work`` counts adds up in
+    ``removed``."""
     if job.ports.cells is None:
         raise StepFailedError(RUNTIME_UNAVAILABLE, final=True)
     try:
-        driver = (await job.ports.cells.for_org(job.org_id)).runtime
+        cell = await job.ports.cells.for_org(job.org_id)
     except CellUnavailableError:
         raise StepFailedError(CELL_UNAVAILABLE, final=True) from None
-    if driver is None:
+    if cell.runtime is None:
         raise StepFailedError(RUNTIME_UNAVAILABLE, final=True)
     pending = [e for e in run.env_ids if e not in step.stopped]
     if not pending:
@@ -508,10 +573,11 @@ async def _scale(job: _Job, run: _Run, step: Step) -> str | None:
     if job.held_env != pending[0]:
         await job.defer(run, env_id=pending[0])
         return RUNNING
-    await _stop(driver, service_name(pending[0]))
+    counted = await work(cell.runtime, cell, pending[0])
     async with job.tx() as conn:
         await _lock(conn, job.org_id, run)
-        stopped = replace(step, stopped=(*step.stopped, pending[0]))
+        removed = step.removed if counted is None else (step.removed or 0) + counted
+        stopped = replace(step, stopped=(*step.stopped, pending[0]), removed=removed)
         await _write(conn, job.org_id, run, (*run.steps[:-1], stopped))
     return None
 
@@ -530,12 +596,59 @@ async def _stop(driver: RuntimeDriver, service: str) -> None:
 async def _pause(job: _Job, run: _Run, step: Step) -> str | None:
     async with job.tx() as conn:
         await _lock(conn, job.org_id, run)
+        reason = cast("Mode", run.mode)  # no removal has this step
         paused = await job.ports.timers.pause_for_kill(
-            conn, org_id=job.org_id, app_id=run.app_id, reason=run.mode, actor=run.actor
+            conn, org_id=job.org_id, app_id=run.app_id, reason=reason, actor=run.actor
         )
         ids = tuple(dict.fromkeys((*run.paused, *paused)))
         done = step.finish(await _now(conn), "done")
         return await _record(conn, job.org_id, run, done, ids)
+
+
+# ── a removal's steps (``lifecycle.removal`` does the deleting) ───────────────
+
+
+async def _remove_in_cell(job: _Job, run: _Run, step: Step, name: removal.CellStep) -> str | None:
+    """One environment's part of a cell step, in the job holding its lock like ``_scale``."""
+
+    async def remove(_: RuntimeDriver, cell: OrgCell, env_id: str) -> int:
+        try:
+            return await removal.in_cell(
+                job.ports.engine, cell, name, org_id=job.org_id, env_id=env_id, actor=run.actor
+            )
+        except removal.RemovalError as exc:
+            raise StepFailedError(exc.code) from exc
+
+    return await _each_env(job, run, step, remove)
+
+
+async def _remove_timers(job: _Job, run: _Run, step: Step) -> str | None:
+    async with job.tx() as conn:
+        await _lock(conn, job.org_id, run)
+        removed = await removal.remove_timers(
+            conn, job.ports.timers, org_id=job.org_id, app_id=run.app_id, actor=run.actor
+        )
+        done = replace(step.finish(await _now(conn), "done"), removed=removed)
+        return await _record(conn, job.org_id, run, done)
+
+
+async def _delete_bundles(job: _Job, run: _Run, step: Step) -> str | None:
+    removed = await removal.delete_bundles(job.ports, org_id=job.org_id, app_id=run.app_id)
+    async with job.tx() as conn:
+        await _lock(conn, job.org_id, run)
+        done = replace(step.finish(await _now(conn), "done"), removed=removed)
+        return await _record(conn, job.org_id, run, done)
+
+
+async def _remove_records(job: _Job, run: _Run, step: Step) -> str | None:
+    """The last step: the app is ``deleted`` in the transaction that completes the run."""
+    async with job.tx() as conn:
+        await _lock(conn, job.org_id, run)
+        removed = await removal.remove_records(
+            conn, org_id=job.org_id, app_id=run.app_id, actor=run.actor
+        )
+        done = replace(step.finish(await _now(conn), "done"), removed=removed)
+        return await _record(conn, job.org_id, run, done)
 
 
 async def _failed_try(job: _Job, run: _Run, step: Step, code: str, *, final: bool) -> str | None:
@@ -563,6 +676,15 @@ async def _failed_try(job: _Job, run: _Run, step: Step, code: str, *, final: boo
 # ── start and enable, in the API's transaction ───────────────────────────────
 
 _LOCK_APP = text("select status from ssc.app where org_id = :org and id = :app for update")
+_LOCK_APP_SLUG = text(
+    "select status, slug from ssc.app where org_id = :org and id = :app for update"
+)
+_WORK_IN_FLIGHT = text(
+    "select 'deployment' as kind, id from ssc.deployment "
+    "where org_id = :org and app_id = :app and state in ('pending', 'running') "
+    "union all select 'build', id from ssc.build "
+    "where org_id = :org and app_id = :app and state in ('queued', 'running') limit 1"
+)
 _SET_STATUS = text("update ssc.app set status = :status where org_id = :org and id = :app")
 _INSERT_RUN = text(
     "insert into ssc.kill_switch_run (id, org_id, app_id, mode, actor_kind, actor_id, "
@@ -596,8 +718,10 @@ class Started:
 
 async def _lock_app(conn: AsyncConnection, org_id: str, app_id: str) -> str:
     status = (await conn.execute(_LOCK_APP, {"org": org_id, "app": app_id})).scalar_one_or_none()
-    if status is None:
+    if status is None or status == removal.DELETED:
         raise RefusedError(ErrorCode.NOT_FOUND, app_id=app_id)
+    if status == removal.DELETING:
+        raise RefusedError(ErrorCode.APP_DELETING, app_id=app_id)
     return str(status)
 
 
@@ -637,6 +761,45 @@ async def start(
     await mark_dirty(conn, org_id)
     await defer_kill_switch(conn, org_id=org_id, app_id=app_id, run_id=run_id)
     return Started(run_id=run_id, before=before, after=after)
+
+
+async def start_delete(
+    conn: AsyncConnection, *, org_id: str, app_id: str, confirm: str, actor: Actor
+) -> Started:
+    """Mark the app ``deleting`` in the caller's transaction and defer its removal run; the
+    caller audits it. ``confirm`` must be the app's slug. Refused while a deployment (a deploy,
+    promote or rollback) or a build of the app is under way, or a run of its kill switch. An app
+    whose last removal failed is ``deleting`` already: this starts the run that finishes it."""
+    params = {"org": org_id, "app": app_id}
+    row = (await conn.execute(_LOCK_APP_SLUG, params)).first()
+    if row is None or row.status == removal.DELETED:
+        raise RefusedError(ErrorCode.NOT_FOUND, app_id=app_id)
+    if confirm != row.slug:
+        raise RefusedError(ErrorCode.CONFIRMATION_MISMATCH, app_id=app_id)
+    await _refuse_in_flight(conn, org_id, app_id)
+    work = (await conn.execute(_WORK_IN_FLIGHT, params)).first()
+    if work is not None:
+        raise RefusedError(
+            ErrorCode.APP_OPERATION_IN_FLIGHT, app_id=app_id, kind=str(work.kind), id=str(work.id)
+        )
+    await conn.execute(_SET_STATUS, {**params, "status": removal.DELETING})
+    run_id = new_id("kil")
+    await conn.execute(
+        _INSERT_RUN,
+        {
+            "id": run_id,
+            "org": org_id,
+            "app": app_id,
+            "mode": DELETE,
+            "kind": actor.kind.value,
+            "actor": actor.id,
+            "via": actor.via_agent,
+            "client": actor.client_id,
+        },
+    )
+    await mark_dirty(conn, org_id)
+    await defer_kill_switch(conn, org_id=org_id, app_id=app_id, run_id=run_id)
+    return Started(run_id=run_id, before=str(row.status), after=removal.DELETING)
 
 
 async def enable(

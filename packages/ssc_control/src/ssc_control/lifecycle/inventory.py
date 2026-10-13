@@ -51,7 +51,8 @@ cross join lateral (
   ) g
   where e.org_id = a.org_id and e.app_id = a.id
 ) envs
-where a.org_id = :org and (cast(:cursor as text) is null or a.slug > cast(:cursor as text))
+where a.org_id = :org and a.status <> 'deleted'
+  and (cast(:cursor as text) is null or a.slug > cast(:cursor as text))
 order by a.slug
 limit :limit
 """

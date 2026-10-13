@@ -119,7 +119,7 @@ async def require_app_builder(uow: UnitOfWork, app_id: str) -> str:
 _SELECT_BUILDABLE_APPS = text(
     "select a.id from ssc.app a "
     "join ssc.user_account u on u.org_id = a.org_id and u.id = :id "
-    "where a.org_id = :org and u.status = 'active' and ("
+    "where a.org_id = :org and a.status <> 'deleted' and u.status = 'active' and ("
     "u.role = 'admin' or a.owner_user_id = u.id or exists ("
     "select 1 from ssc.app_grant g join ssc.environment e "
     "on e.org_id = g.org_id and e.id = g.environment_id "
@@ -147,7 +147,8 @@ _SELECT_SHARER = text(
     "select 1 from ssc.user_account u "
     "where u.org_id = :org and u.id = :id and u.status = 'active' and ("
     "u.role = 'admin' "
-    "or exists (select 1 from ssc.app a where a.org_id = u.org_id and a.owner_user_id = u.id) "
+    "or exists (select 1 from ssc.app a where a.org_id = u.org_id and a.owner_user_id = u.id "
+    "and a.status <> 'deleted') "
     "or exists (select 1 from ssc.app_grant g where g.org_id = u.org_id and g.role = 'builder' "
     "and (g.subject_kind = 'org' "
     "or (g.subject_kind = 'user' and g.user_id = u.id) "

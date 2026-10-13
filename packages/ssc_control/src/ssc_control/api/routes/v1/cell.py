@@ -52,7 +52,7 @@ _ENVIRONMENTS = text(
     "select e.id, e.app_id, a.slug, e.name, d.environment_id is not null "
     "from ssc.environment e join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
     "left join ssc.app_database d on d.org_id = e.org_id and d.environment_id = e.id "
-    "where e.org_id = :org order by a.slug, e.name"
+    "where e.org_id = :org and a.status <> 'deleted' order by a.slug, e.name"
 )
 _TIER_FULL_AT = text(
     "select max(finished_at) from ssc.deployment where org_id = :org and failure_code = :code"

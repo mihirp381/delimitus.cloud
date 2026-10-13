@@ -7,10 +7,15 @@ Pulling the switch answers ``202`` once the app's new status is committed: the d
 then on, whatever happens to the saga the worker runs after it. ``GET`` on the run's
 ``Location`` shows each step with its timings. ``enable`` puts the app back; the reconciler
 restores serving. A transfer moves an app to another active member.
+
+Deleting an app (GA-12) is the same shape: ``202`` once the app is ``deleting``, which denies it
+as a disable does, and a ``Location`` for the run that removes what it had. The caller confirms
+with the app's slug, and must be a person: an agent credential is ``AGENT_SESSION_REFUSED``.
+The run stays readable after the app is ``deleted`` and gone from every other route.
 """
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import Field
@@ -27,11 +32,17 @@ from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.lifecycle import inventory, kill_switch
-from ssc_control.lifecycle.kill_switch import Mode, RefusedError, StepName, StepState
+from ssc_control.lifecycle.kill_switch import (
+    DeleteStepName,
+    Mode,
+    RefusedError,
+    StepName,
+    StepState,
+)
 
 router = APIRouter()
 
-AppStatus = Literal["active", "disabled", "quarantined"]
+AppStatus = Literal["active", "disabled", "quarantined", "deleting"]
 _SLUG_PATTERN = r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$"
 
 
@@ -117,13 +128,50 @@ class KillSwitchRun(Strict):
     total_ms: int | None
 
 
+class AppDelete(Strict):
+    confirm: str = Field(description="The app's slug, typed again: what is about to be deleted.")
+
+
+class AppDeleteAccepted(Strict):
+    run_id: str
+    state: Literal["running"]
+
+
+class AppDeleteStep(Strict):
+    name: DeleteStepName
+    state: StepState
+    snapshot_version: int | None
+    started_at: datetime
+    finished_at: datetime | None
+    elapsed_ms: int | None
+    attempts: int
+    error: str | None = Field(description="The reason code of the last failed try, if any.")
+    removed: int | None = Field(
+        description="How many things the step deleted; null for a step that deletes nothing."
+    )
+
+
+class AppDeleteRun(Strict):
+    run_id: str
+    app_id: str
+    state: Literal["running", "completed", "failed"]
+    steps: list[AppDeleteStep] = Field(description="The steps begun so far, in order.")
+    started_at: datetime
+    finished_at: datetime | None
+    total_ms: int | None
+
+
 class OwnerTransfer(Strict):
     user_id: str = Field(pattern=r"^usr_[a-z0-9]{20}$")
 
 
 _SELECT_RUN = text(
-    "select id, app_id, mode, state, steps, started_at, finished_at "
-    "from ssc.kill_switch_run where org_id = :org and app_id = :app and id = :id"
+    "select id, app_id, mode, state, steps, started_at, finished_at from ssc.kill_switch_run "
+    "where org_id = :org and app_id = :app and id = :id and mode <> 'delete'"
+)
+_SELECT_DELETE_RUN = text(
+    "select id, app_id, state, steps, started_at, finished_at from ssc.kill_switch_run "
+    "where org_id = :org and app_id = :app and id = :id and mode = 'delete'"
 )
 _SELECT_APP = text(
     "select id, slug, owner_user_id, status, created_at from ssc.app "
@@ -230,7 +278,7 @@ async def get_kill_switch_run(app_id: Id, run_id: Id, uow: UserUoW) -> KillSwitc
         state=row["state"],
         steps=[
             KillSwitchStep(
-                name=s.name,
+                name=cast("StepName", s.name),
                 state=s.state,
                 snapshot_version=s.snapshot_version,
                 started_at=s.started_at,
@@ -257,12 +305,13 @@ async def get_kill_switch_run(app_id: Id, run_id: Id, uow: UserUoW) -> KillSwitc
         ErrorCode.NOT_FOUND,
         ErrorCode.APP_ALREADY_ACTIVE,
         ErrorCode.KILL_SWITCH_IN_FLIGHT,
+        ErrorCode.APP_DELETING,
     ),
 )
 async def enable_app(app_id: Id, request: Request, uow: UserUoW) -> Response:
     """Make a disabled or quarantined app active again and resume the schedules the kill
     switch paused. The reconciler brings it back up. ``KILL_SWITCH_IN_FLIGHT`` until the
-    running pull has finished."""
+    running pull has finished. An app being deleted does not come back (``APP_DELETING``)."""
     await require_admin(uow)
     try:
         before = await kill_switch.enable(
@@ -282,6 +331,95 @@ async def enable_app(app_id: Id, request: Request, uow: UserUoW) -> Response:
         after={"status": "active"},
     )
     return uow.reply(await _app_out(uow, app_id, request))
+
+
+@router.post(
+    "/apps/{app_id}/delete",
+    status_code=202,
+    response_model=AppDeleteAccepted,
+    dependencies=[UserIdempotent],
+    responses=problem_responses(
+        *POST_COMMON,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
+        ErrorCode.NOT_FOUND,
+        ErrorCode.CONFIRMATION_MISMATCH,
+        ErrorCode.APP_OPERATION_IN_FLIGHT,
+        ErrorCode.KILL_SWITCH_IN_FLIGHT,
+    ),
+)
+async def delete_app(app_id: Id, body: AppDelete, uow: UserUoW) -> Response:
+    """Delete the app with everything it had, in both environments: 202 plus a ``Location`` to
+    follow the steps. Nothing brings it back.
+
+    ``CONFIRMATION_MISMATCH`` unless ``confirm`` is the app's slug; ``APP_OPERATION_IN_FLIGHT``
+    while a deploy, promote, rollback or build of the app is under way; ``KILL_SWITCH_IN_FLIGHT``
+    while a pull of its switch, or an earlier removal, is still running. A removal that ended
+    ``failed`` is finished by asking again."""
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
+    await require_admin(uow)
+    try:
+        started = await kill_switch.start_delete(
+            uow.conn,
+            org_id=uow.org_id,
+            app_id=app_id,
+            confirm=body.confirm,
+            actor=actor_of(uow.principal),
+        )
+    except RefusedError as e:
+        raise Refusal(e.code, evidence=dict(e.evidence)) from e
+    await uow.audit(
+        AuditAction.APP_DELETED,
+        target_kind="app",
+        target_id=app_id,
+        before={"status": started.before},
+        after={"status": started.after},
+    )
+    return uow.reply(
+        AppDeleteAccepted(run_id=started.run_id, state="running"),
+        status=202,
+        headers={"Location": f"/v1/apps/{app_id}/delete/{started.run_id}"},
+    )
+
+
+@router.get(
+    "/apps/{app_id}/delete/{run_id}",
+    response_model=AppDeleteRun,
+    responses=problem_responses(*AUTHENTICATED, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND),
+)
+async def get_app_delete_run(app_id: Id, run_id: Id, uow: UserUoW) -> AppDeleteRun:
+    """One removal of the app: each step's state and timings, how many things it deleted, and
+    the total. Readable after the app is gone."""
+    await require_admin(uow)
+    params = {"org": uow.org_id, "app": app_id, "id": run_id}
+    row = (await uow.conn.execute(_SELECT_DELETE_RUN, params)).mappings().first()
+    if row is None:
+        raise Refusal(ErrorCode.NOT_FOUND, evidence={"run_id": run_id})
+    started: datetime = row["started_at"]
+    finished: datetime | None = row["finished_at"]
+    return AppDeleteRun(
+        run_id=row["id"],
+        app_id=row["app_id"],
+        state=row["state"],
+        steps=[
+            AppDeleteStep(
+                name=cast("DeleteStepName", s.name),
+                state=s.state,
+                snapshot_version=s.snapshot_version,
+                started_at=s.started_at,
+                finished_at=s.finished_at,
+                elapsed_ms=s.elapsed_ms,
+                attempts=s.attempts,
+                error=s.error,
+                removed=s.removed,
+            )
+            for s in kill_switch.steps_of(row["steps"])
+        ],
+        started_at=started,
+        finished_at=finished,
+        total_ms=None if finished is None else kill_switch.span_ms(started, finished),
+    )
 
 
 @router.put(
