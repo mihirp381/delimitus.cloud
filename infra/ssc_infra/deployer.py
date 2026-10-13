@@ -13,6 +13,13 @@ other flag to false.
 
 A run killed halfway is converged by the next: a lock older than any run is cancelled, and a
 create Pulumi never saw finish is imported where its ID is known, dropped otherwise.
+
+A run does not take the state's word for what it is about to change. The provider records an
+update the cloud refused as made, with the reason beside it (``initErrors``), and the next ``up``
+then finds nothing to do and reports success (proof cell 2, 2026-10-09). So before ``up`` the
+run reads back from the cloud every resource the state holds such a reason for, and the ones its
+flag adds or changes (``naming.LAZY_RESOURCES``, ``naming.DEPLOYER_UPDATES``) that the state
+already has; ``up`` then applies what really differs.
 """
 
 import json
@@ -117,10 +124,15 @@ def state_locks(stack: str) -> list[datetime]:
     return [b.time_created for b in blobs if b.time_created is not None]
 
 
+def resource_key(urn: str) -> str:
+    """A URN as ``naming`` writes a resource: its own type and its name."""
+    *_, type_, name = urn.split("::")
+    return f"{type_.rsplit('$', 1)[-1]}::{name}"
+
+
 def import_id(urn: str, label: str) -> str | None:
     """The cloud ID of a lazy resource from its URN, where its name is fixed."""
-    *_, type_, name = urn.split("::")
-    template = IMPORT_IDS.get(f"{type_.rsplit('$', 1)[-1]}::{name}")
+    template = IMPORT_IDS.get(resource_key(urn))
     return template.format(project=n.cell_project(label)) if template else None
 
 
@@ -138,7 +150,10 @@ class Deployer:
         settings = stack_config.applied(label, run=self.run, infra_dir=self.infra_dir)
         stack_config.write(label, settings | setting(flag), run=self.run, infra_dir=self.infra_dir)
         self.unlock(stack)
-        self.recover(stack, label)
+        state: Any = json.loads(self.run("stack", "export", "--stack", stack, cwd=self.infra_dir))
+        deployment: dict[str, Any] = state.get("deployment", {})
+        self.recover(stack, label, deployment)
+        self.reread(stack, flag, deployment)
         self.run("up", "--yes", "--stack", stack, cwd=self.infra_dir)
 
     def unlock(self, stack: str) -> None:
@@ -151,10 +166,9 @@ class Deployer:
             raise CommandError(f"{stack} is being applied by another run")
         self.run("cancel", "--yes", "--stack", stack, cwd=self.infra_dir)
 
-    def recover(self, stack: str, label: str) -> None:
+    def recover(self, stack: str, label: str, deployment: Mapping[str, Any]) -> None:
         """Imports or drops every create a killed run left pending."""
-        state: Any = json.loads(self.run("stack", "export", "--stack", stack, cwd=self.infra_dir))
-        ops: list[dict[str, Any]] = state.get("deployment", {}).get("pending_operations") or []
+        ops: list[dict[str, Any]] = deployment.get("pending_operations") or []
         pending = [str(op["resource"]["urn"]) for op in ops if op.get("type") == "creating"]
         known = {urn: found for urn in pending if (found := import_id(urn, label))}
         if known:
@@ -172,6 +186,22 @@ class Deployer:
                 *targets,
                 cwd=self.infra_dir,
             )
+
+    def reread(self, stack: str, flag: str, deployment: Mapping[str, Any]) -> None:
+        """Reads back from the cloud what the state may be wrong about: every resource an update
+        was refused on, and what this flag adds or changes. Without it ``up`` compares the config
+        with a state that already claims the change and calls nothing."""
+        (name,) = setting(flag)
+        mine = n.LAZY_RESOURCES.get(name, frozenset()) | n.DEPLOYER_UPDATES[name]
+        resources: list[dict[str, Any]] = deployment.get("resources") or []
+        stale = [
+            str(r["urn"])
+            for r in resources
+            if r.get("initErrors") or resource_key(str(r["urn"])) in mine
+        ]
+        if stale:
+            targets = [a for u in stale for a in ("--target", u)]
+            self.run("refresh", "--yes", "--stack", stack, *targets, cwd=self.infra_dir)
 
 
 def main(argv: Sequence[str], environ: Mapping[str, str], deployer: Deployer | None = None) -> int:
