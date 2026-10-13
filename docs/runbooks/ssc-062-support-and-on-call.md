@@ -118,4 +118,4 @@ Reply from the support inbox. Each is short on purpose.
 
 **"My deploy is waiting."** If it is the first deploy that needs a database, the database is being created, which takes a few minutes; the deploy continues by itself. If it keeps waiting, ask for the deploy's id.
 
-**"`DB_TIER_FULL`."** The company's database has no room for another app database. Nothing is broken and nothing was created. An org admin can see the places used on the "Your environment" screen and can ask for the bigger database, a paid step; the screen shows its monthly price.
+**"`DB_TIER_FULL`."** The company's database has no room for another app database. Nothing is broken and nothing was created. An org admin can see the places used on the "Your environment" screen and can ask for the bigger database, a paid step; the screen shows its monthly price. An admin can also give places back by deleting an app nobody needs any more (`ssc apps delete <app> --confirm <app>`, or "Delete app" on the app's Settings tab): that removes the app with its data for good.
