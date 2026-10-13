@@ -108,6 +108,9 @@ class AuditViewError(ValueError):
 
 
 def _scalar(value: object) -> bool:
+    # Never a float, not even 5.0: the chain hashes Python's JSON of the value, and verify
+    # compares it with the jsonb Postgres hands back, which spells some floats differently (1e16
+    # comes back as 10000000000000000), so a float could make an honest row fail verification.
     return value is None or isinstance(value, (str, int))
 
 
