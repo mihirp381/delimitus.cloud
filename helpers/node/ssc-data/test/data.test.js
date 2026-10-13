@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { after, before, beforeEach, test } from 'node:test';
 
 import { Data, DataError, IDENTITY_PATH, REGION_PATH, URL_VARIABLE, gatewayUrl } from '../index.js';
@@ -143,4 +144,9 @@ test('the variable names the gateway', async () => {
   const result = await new Data({ metadata: cell.base }).query('finance', 'select 1', [1], { maxRows: 5 });
   assert.equal(result.rowCount, 2);
   assert.equal(cell.asked[0][2].max_rows, 5);
+});
+
+test('a CommonJS app can require the package by its name', () => {
+  const helper = createRequire(import.meta.url)('@delimitus/ssc-data');
+  assert.equal(typeof helper.query, 'function');
 });

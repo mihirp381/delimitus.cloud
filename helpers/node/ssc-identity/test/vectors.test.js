@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 import { IdentityRefused, IdentityVerifier, REFUSAL_CODES, tokenFromHeaders, verify } from '../index.js';
@@ -89,4 +90,9 @@ test('JWKS inline as a data: URL needs no network', async () => {
   assert.match((await v.verify(CASES['user note'].token, { now: VECTORS.now })).sub, /^usr_/);
   assert.ok(await v.verify(CASES['user note signed by the second key'].token, { now: VECTORS.now }));
   await assert.rejects(v.verify(CASES['unknown kid'].token, { now: VECTORS.now }), (e) => e.code === 'unknown_key');
+});
+
+test('a CommonJS app can require the package by its name', () => {
+  const helper = createRequire(import.meta.url)('@delimitus/ssc-identity');
+  assert.equal(typeof helper.IdentityVerifier, 'function');
 });
