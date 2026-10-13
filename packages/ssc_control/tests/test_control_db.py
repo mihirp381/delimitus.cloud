@@ -1898,3 +1898,108 @@ def test_0036_downgrades_with_a_ci_row_and_upgrades(dsns: Dsns) -> None:
     upgrade(dsn, "0036_ci_tokens")
     assert _constraints(dsn) == after
     assert run(dsn, None, columns) == [(2,)]
+
+
+# ── Removing an app (revision 0037) ─────────────────────────────────────────────────────────
+
+
+def test_a_deleted_app_gives_its_slug_back_and_no_other_does(dsns: Dsns) -> None:
+    created = make_org(dsns.app, "App removal")
+    org, admin = created.org_id, created.admin_user_id
+    status = "update ssc.app set status = %s where id = %s returning status"
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, org)
+        first = add_app(conn, org, admin, "ledger")
+        for kept in ("disabled", "quarantined", "deleting"):
+            conn.execute(status, (kept, first))
+            with pytest.raises(psycopg.Error) as e, conn.transaction():
+                add_app(conn, org, admin, "ledger")
+            assert sqlstate(e) == UNIQUE_VIOLATION, kept
+            assert "app_slug_live" in str(e.value)
+        with pytest.raises(psycopg.Error) as e, conn.transaction():
+            conn.execute(status, ("gone", first))
+        assert sqlstate(e) == CHECK_VIOLATION
+        conn.execute(status, ("deleted", first))
+        second = add_app(conn, org, admin, "ledger")
+        conn.execute(status, ("deleted", second))  # any number of deleted apps share a slug
+        third = add_app(conn, org, admin, "ledger")
+        with pytest.raises(psycopg.Error) as e, conn.transaction():
+            conn.execute(status, ("active", first))  # the name has been taken since
+        assert sqlstate(e) == UNIQUE_VIOLATION
+        conn.execute(
+            KILL_INSERT.replace("'disable'", "'delete'"), (new_id("kil"), org, third, admin)
+        )
+        env = add_env(conn, org, third)
+        conn.execute(
+            "insert into ssc.app_database (org_id, environment_id, host, port, connection_limit) "
+            "values (%s, %s, '10.0.0.5', 5432, 2)",
+            (org, env),
+        )
+        gone = conn.execute("delete from ssc.app_database where environment_id = %s", (env,))
+        assert gone.rowcount == 1
+
+
+def _checks(dsn: str, table: str) -> dict[str, tuple[str, bool]]:
+    rows = run(
+        dsn,
+        None,
+        "select conname, pg_get_constraintdef(oid), convalidated from pg_constraint "
+        "where conrelid = %s::regclass and contype in ('c', 'u')",
+        (table,),
+    )
+    return {name: (definition, valid) for name, definition, valid in rows}
+
+
+def test_0037_downgrades_with_a_deleted_app_and_upgrades(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database appdelete owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="appdelete").render_as_string(hide_password=False)
+    admin = make_url(dsns.superuser).set(database="appdelete").render_as_string(hide_password=False)
+    upgrade(dsn, "0036_ci_tokens")
+    before = _checks(dsn, "ssc.app"), _checks(dsn, "ssc.kill_switch_run")
+    assert before[0]["app_org_id_slug_key"] == ("UNIQUE (org_id, slug)", True)
+    upgrade(dsn, "0037_app_delete")
+    after = _checks(dsn, "ssc.app"), _checks(dsn, "ssc.kill_switch_run")
+    assert "app_org_id_slug_key" not in after[0]
+    assert "'deleted'" in after[0]["app_status_check"][0]
+    assert "'delete'" in after[1]["kill_switch_run_mode_check"][0]
+    assert all(valid for checks in after for _, valid in checks.values())
+    index = "select indexdef from pg_indexes where schemaname = 'ssc' and indexname = %s"
+    (live,) = run(dsn, None, index, ("app_slug_live",))
+    assert "UNIQUE" in live[0] and "(status <> 'deleted'::text)" in live[0]
+    app = (
+        "insert into ssc.app (id, org_id, slug, owner_user_id, status) "
+        "values (%s, 'org_x', %s, 'usr_x', %s)"
+    )
+    with psycopg.connect(admin) as conn:  # no foreign keys: org_x and usr_x do not exist
+        conn.execute("set session_replication_role = replica")
+        conn.execute(app, (new_id("app"), "ledger", "deleted"))
+        conn.execute(app, (new_id("app"), "ledger", "active"))
+    # Two apps share a slug, one of them deleted: the old constraint refuses them until one is
+    # renamed (development databases only), and the refused downgrade changes nothing.
+    with pytest.raises(psycopg.errors.UniqueViolation, match="app_org_id_slug_key"):
+        downgrade(dsn, "0036_ci_tokens")
+    assert (_checks(dsn, "ssc.app"), _checks(dsn, "ssc.kill_switch_run")) == after
+    with psycopg.connect(admin) as conn:
+        conn.execute("update ssc.app set slug = 'ledger-old' where status = 'deleted'")
+    downgrade(dsn, "0036_ci_tokens")  # the deleted row does not stop it
+    restored = _checks(dsn, "ssc.app"), _checks(dsn, "ssc.kill_switch_run")
+    assert restored[0]["app_org_id_slug_key"] == before[0]["app_org_id_slug_key"]
+    for checks, was, name in (
+        (restored[0], before[0], "app_status_check"),
+        (restored[1], before[1], "kill_switch_run_mode_check"),
+    ):
+        assert checks[name] == (f"{was[name][0]} NOT VALID", False), name
+    assert run(dsn, None, index, ("app_slug_live",)) == []
+    grant = (
+        "select count(*) from information_schema.role_table_grants where table_schema = 'ssc' "
+        f"and table_name = 'app_database' and grantee = '{APP_ROLE}' and privilege_type = 'DELETE'"
+    )
+    assert run(dsn, None, grant) == [(0,)]
+    with psycopg.connect(admin) as conn:
+        conn.execute("set session_replication_role = replica")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(app, (new_id("app"), "other", "deleting"))
+    upgrade(dsn, "0037_app_delete")
+    assert (_checks(dsn, "ssc.app"), _checks(dsn, "ssc.kill_switch_run")) == after
+    assert run(dsn, None, grant) == [(1,)]
