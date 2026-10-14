@@ -59,16 +59,17 @@ test('a Headers object and repeated headers are read too', () => {
 
 test('without a deadline or past it nothing is ended; inside the margin it ends after half the time left', async () => {
   const written = [];
+  const closed = [];
   const at = [];
   const res = { write: (s) => written.push(s), end: () => written.push('end') };
-  const socket = { close: (...args) => at.push(Date.now()) && written.push(args) };
+  const socket = { close: (...args) => at.push(Date.now()) && closed.push(args) };
   const passed = { [DEADLINE_HEADER]: String(Math.floor(Date.now() / 1000) - 5) };
   endBeforeDeadline(res, {});
   closeBeforeDeadline(socket, {});
   endBeforeDeadline(res, passed, { margin: 0 });
   closeBeforeDeadline(socket, passed);
   await sleep(50);
-  assert.deepEqual(written, []);
+  assert.deepEqual([written, closed], [[], []]);
   const soon = { [DEADLINE_HEADER]: String(Math.floor(Date.now() / 1000) + 2) };
   const left = secondsLeft(soon);
   const start = Date.now();
@@ -76,9 +77,12 @@ test('without a deadline or past it nothing is ended; inside the margin it ends 
   closeBeforeDeadline(socket, soon, { margin: 10 });
   const cancel = closeBeforeDeadline(socket, soon, { margin: 10 });
   cancel();
-  await until(() => written.length === 3, 4000);
+  // Each call times itself from its own reading of the clock, so which of the two ends first
+  // is not promised: the stream's writes and the socket's close are checked apart.
+  await until(() => written.length === 2 && closed.length >= 1, 4000);
   const took = (at[0] - start) / 1000;
-  assert.deepEqual(written, ['retry: 250\n\n', 'end', [RESTART_CODE, 'restart']]);
+  assert.deepEqual(written, ['retry: 250\n\n', 'end']);
+  assert.deepEqual(closed, [[RESTART_CODE, 'restart']]);
   assert.ok(took >= left / 2 - 0.05 && took < left, `ended after ${took} s of ${left}, not at once`);
 });
 
