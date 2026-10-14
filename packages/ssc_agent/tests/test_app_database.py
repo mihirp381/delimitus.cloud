@@ -689,6 +689,28 @@ async def test_the_agent_drops_only_a_database_whose_service_is_gone_or_stopped(
         assert (bad.status_code, bad.json()["code"]) == (400, "INVALID_REQUEST")
 
 
+async def test_a_failed_call_is_logged_with_its_method_and_why_unless_it_sent_a_secret(
+    dbs: CellAppDatabases, sql: LocalAdminSql, caplog: pytest.LogCaptureFixture
+) -> None:
+    """GA-12: the first live removal's log said a database call failed, and not which or why."""
+    app = create_app(driver=Runtime(), databases=dbs, org_id=ORG)
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://agent", headers={ORG_HEADER: ORG}
+    ) as agent:
+        svc = service(0)
+        sql.fail_creates = 1
+        unmade = await agent.post("/v1/databases/ensure", json={"service": svc})
+        assert (unmade.status_code, unmade.json()["code"]) == (502, "DATABASE_ERROR")
+        assert (await agent.post("/v1/databases/ensure", json={"service": svc})).is_success
+        sql.fail_drops = 1
+        kept = await agent.post("/v1/databases/drop", json={"service": svc})
+        assert (kept.status_code, kept.json()["code"]) == (502, "DATABASE_ERROR")
+    assert [r.getMessage() for r in caplog.records if r.name == "ssc_agent.app"] == [
+        "database call failed: ensure: AdminSqlError",
+        "database call failed: drop: databases.delete: injected failure",
+    ]
+
+
 async def test_an_agent_without_an_instance_makes_no_database() -> None:
     app = create_app(driver=None, org_id=ORG)  # type: ignore[arg-type]
     async with httpx2.AsyncClient(

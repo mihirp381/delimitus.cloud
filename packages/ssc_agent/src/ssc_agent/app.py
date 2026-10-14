@@ -25,6 +25,8 @@ Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FO
 ``DATABASES_NOT_CONFIGURED`` when the agent runs without a builder, secret custody or a Cloud SQL
 instance. Logs add 429 ``LOGS_RATE_LIMITED`` (with ``retry_after``), 502 ``LOGS_ERROR`` and 503
 ``LOGS_NOT_CONFIGURED`` without a log view; health still answers then, from the service alone.
+A failed runtime, secret, database or files call is logged with its method and the reason it
+answers, in the line itself; a database ``ensure`` or ``rotate`` with the error's type instead.
 Usage (SSC-028) has ``read``: counts and durations for every app service in the cell over whole
 hours, from Cloud Monitoring, never from an app; 502 ``USAGE_ERROR``, and 503
 ``USAGE_NOT_CONFIGURED`` without a usage source or the right to read it.
@@ -190,7 +192,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
         except _ServiceLiveError as exc:
             return _error(409, "SERVICE_LIVE", str(exc))
         except RuntimeDriverError as exc:
-            log.warning("runtime call failed", extra={"method": method, "error": str(exc)})
+            log.warning("runtime call failed: %s: %s", method, exc)
             return _error(502, "RUNTIME_ERROR", str(exc))
         return JSONResponse(result)
 
@@ -278,10 +280,10 @@ def _secret_routes(app: FastAPI, driver: RuntimeDriver, secrets: SecretCustody |
         except _ServiceLiveError as exc:
             return _error(409, "SERVICE_LIVE", str(exc))
         except RuntimeDriverError as exc:
-            log.warning("secret call failed", extra={"method": method, "error": str(exc)})
+            log.warning("secret call failed: %s: %s", method, exc)
             return _error(502, "RUNTIME_ERROR", str(exc))
         except SecretsError as exc:
-            log.warning("secret call failed", extra={"method": method, "error": str(exc)})
+            log.warning("secret call failed: %s: %s", method, exc)
             return _error(502, "SECRETS_ERROR", str(exc))
         return JSONResponse({"secret": name})
 
@@ -317,10 +319,14 @@ def _database_routes(
         except DatabaseMissingError as exc:
             return _error(404, "DATABASE_NOT_FOUND", str(exc))
         except RuntimeDriverError as exc:
-            log.warning("database call failed", extra={"method": method, "error": str(exc)})
+            log.warning("database call failed: %s: %s", method, exc)
             return _error(502, "RUNTIME_ERROR", str(exc))
         except (AppDatabaseError, AdminSqlError, SecretsError) as exc:
-            log.warning("database call failed", extra={"method": method, "error": str(exc)})
+            # ``ensure`` and ``rotate`` send the instance a verifier and Secret Manager the
+            # password, and no pattern knows either, so what those two answered is not logged.
+            sent_a_secret = method in ("ensure", "rotate")
+            why = type(exc).__name__ if sent_a_secret else str(exc)
+            log.warning("database call failed: %s: %s", method, why)
             return _error(502, "DATABASE_ERROR", str(exc))
         return JSONResponse(result)
 
@@ -367,10 +373,10 @@ def _file_routes(app: FastAPI, driver: RuntimeDriver, files: CellFiles | None) -
         except (ValueError, TypeError, KeyError) as exc:
             return _error(400, "INVALID_REQUEST", str(exc))
         except RuntimeDriverError as exc:
-            log.warning("files call failed", extra={"method": method, "error": str(exc)})
+            log.warning("files call failed: %s: %s", method, exc)
             return _error(502, "RUNTIME_ERROR", str(exc))
         except FilesError as exc:
-            log.warning("files call failed", extra={"method": method, "error": str(exc)})
+            log.warning("files call failed: %s: %s", method, exc)
             return _error(502, "FILES_ERROR", str(exc))
         return JSONResponse({"dropped": service, "files": deleted})
 
