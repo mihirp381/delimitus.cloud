@@ -767,6 +767,26 @@ table.tbl tr:last-child td { border-bottom: 0; }
 
 /* ── the gap ─────────────────────────────────────────────────────────── */
 .gap__end { margin: 0; font: 600 clamp(1.2rem, 2vw, 1.5rem)/1.3 var(--display); letter-spacing: -0.02em; text-wrap: balance; }
+/* what IT leaders say: published figures and quotes, sources in plain text */
+.proof { display: flex; flex-direction: column; gap: 16px; }
+.proof__k { margin: 0; font: 600 0.78rem var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+.proof__figs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.proof__figs li { background: var(--card); border-radius: var(--r-xl); padding: 22px 20px; display: flex; flex-direction: column; gap: 8px; }
+.proof__figs li:nth-child(1) { --tone: var(--t-blue); }
+.proof__figs li:nth-child(2) { --tone: var(--t-violet); }
+.proof__figs li:nth-child(3) { --tone: var(--t-purple); }
+.proof__figs li:nth-child(4) { --tone: var(--t-magenta); }
+.proof__figs b { font: 700 2rem/1.1 var(--display); letter-spacing: -0.03em; color: var(--tone); font-variant-numeric: tabular-nums; }
+.proof__figs span { font-size: 0.92rem; line-height: 1.45; color: var(--ink-2); text-wrap: pretty; }
+.proof__qs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.proof__q { margin: 0; padding: 22px 24px; border-radius: var(--r-xl); background: var(--card); border-left: 4px solid var(--t-orange); display: flex; flex-direction: column; gap: 8px; }
+.proof__q blockquote { margin: 0; }
+.proof__q p { margin: 0; font: 600 1.2rem/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); text-wrap: balance; }
+.proof__q figcaption { font-size: 0.85rem; color: var(--ink-2); }
+.proof .src li { overflow-wrap: anywhere; }
+@media (max-width: 1100px) { .proof__figs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .proof__qs { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 420px) { .proof__figs { grid-template-columns: minmax(0, 1fr); } }
 
 /* ── how it works: the terminal ──────────────────────────────────────── */
 .term { width: 100%; max-width: 660px; background: #1D1D1F; color: #F5F5F7; border-radius: var(--r-xl); overflow: hidden; box-shadow: var(--shadow-lift); }
@@ -828,6 +848,23 @@ table.tbl tr:last-child td { border-bottom: 0; }
   .calc table.tbl th:nth-child(2), .calc table.tbl td:nth-child(2) { display: table-cell; }
 }
 @media (max-width: 400px) { .calc__in { grid-template-columns: minmax(0, 1fr); } }
+/* the comparison: four ways, every column kept on small screens (it scrolls sideways) */
+.cmp { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-xl); overflow: hidden; box-shadow: var(--shadow-soft); }
+table.tbl--cmp { min-width: 760px; table-layout: fixed; }
+table.tbl--cmp caption { text-align: left; padding: 14px 22px; color: var(--ink-2); }
+table.tbl--cmp th, table.tbl--cmp td { padding: 12px 16px; vertical-align: top; text-wrap: pretty; }
+table.tbl--cmp thead th:first-child { width: 17%; }
+table.tbl--cmp tbody th { font-size: 0.86rem; font-weight: 600; color: var(--ink); background: none; border-top: 0; }
+table.tbl--cmp tr > :last-child { background: var(--accent-soft); color: var(--ink); }
+table.tbl--cmp thead th:last-child { color: var(--accent-ink); }
+table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
+.cmp__note { margin: 0; padding: 14px 22px; border-top: 1px solid var(--line); font-size: 0.8rem; color: var(--ink-2); overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  table.tbl--cmp { min-width: 680px; }
+  table.tbl--cmp th:nth-child(2), table.tbl--cmp td:nth-child(2), table.tbl--cmp th:nth-child(3), table.tbl--cmp td:nth-child(3) { display: table-cell; }
+  table.tbl--cmp th, table.tbl--cmp td { padding-left: 12px; padding-right: 10px; }
+  .cmp__note { padding-left: 16px; padding-right: 16px; }
+}
 
 /* ── what it does not do ─────────────────────────────────────────────── */
 .limits { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
@@ -999,7 +1036,7 @@ table.tbl tr:last-child td { border-bottom: 0; }
     <ol class="enter__in enter__steps" id="heroSteps">
       <li data-claim="agent"><span class="enter__n">1</span><p><b>Tell your agent what to build</b><span>“Build this and deploy it on Delimitus.”</span></p></li>
       <li data-claim="deploy login"><span class="enter__n">2</span><p><b>Your agent builds and deploys</b><span>Delimitus handles infrastructure, security and company access.</span></p></li>
-      <li data-claim="share minutes"><span class="enter__n">3</span><p><b>Get a secure, shareable app</b><span>Ready for your team in minutes.</span></p></li>
+      <li data-claim="share minutes"><span class="enter__n">3</span><p><b>Get a secure, shareable app</b><span>Measured: one prompt to a running preview in 3½ minutes with Claude Code, 8 with Codex.</span></p></li>
     </ol>
     <div class="enter__into" id="into">
       <p class="label">One prompt</p>
@@ -1104,6 +1141,26 @@ table.tbl tr:last-child td { border-bottom: 0; }
         </div>
       </div>
       <p class="gap__end">So the tool stays on a laptop, or goes back to a spreadsheet. <span class="grad">Delimitus is that list, done.</span></p>
+      <div class="proof">
+        <p class="proof__k">What IT leaders say</p>
+        <ul class="proof__figs">
+          <li data-claim="src-retool"><b>93%</b><span>of 307 CISOs, CTOs and CIOs are at least somewhat concerned about vibe-coded internal tools running in production.</span></li>
+          <li data-claim="src-retool"><b>4%</b><span>have governance that covers AI-generated code, however it was written.</span></li>
+          <li data-claim="src-retool"><b>5%</b><span>are very confident they can see everything running in their own production.</span></li>
+          <li data-claim="src-retool"><b>55%</b><span>want security and access controls in a platform underneath the app. 7% want the builder to set them inside each app.</span></li>
+        </ul>
+        <div class="proof__qs">
+          <figure class="proof__q" data-claim="src-retool"><blockquote><p>“It works. It ships. Nobody logs it anywhere.”</p></blockquote><figcaption>An enterprise CISO, in Retool’s State of AI Governance 2026</figcaption></figure>
+          <figure class="proof__q" data-claim="src-redaccess"><blockquote><p>“Build the paved path.”</p></blockquote><figcaption>Will Bengtson, CISO at ConductorOne, quoted by TechTarget, June 2026</figcaption></figure>
+        </div>
+        <details class="src">
+          <summary>Sources</summary>
+          <ul>
+            <li data-claim="src-retool">Retool, State of AI Governance 2026: 307 senior technology and security leaders (43% CISOs, 35% CTOs, 22% CIOs), surveyed with Wynter in May 2026. Published 17 June 2026. retool.com/blog/ai-governance-report-2026</li>
+            <li data-claim="src-redaccess">TechTarget, “Vibe coding security crisis CIOs can’t ignore”, by Sean Michael Kerner, 2 June 2026: Will Bengtson’s quote, and Red Access research that found 2,000 of 5,000 corporate-purpose apps holding sensitive data with no authentication, in a scan of more than 380,000 web assets. techtarget.com/searchcio/feature/vibe-coding-security-crisis-CIOs-cant-ignore</li>
+          </ul>
+        </details>
+      </div>
     </div>
   </div>
 </section>
@@ -1346,6 +1403,22 @@ table.tbl tr:last-child td { border-bottom: 0; }
           <p class="trio__t">One request from the agent. IT approves what matters.</p>
           <p class="trio__fig trio__fig--txt">Pricing is agreed with each pilot</p>
         </article>
+      </div>
+      <div class="cmp">
+        <div class="tbl-scroll">
+          <table class="tbl tbl--cmp" data-claim="compare src-redaccess src-marmelab login account data approvals inventory logs kill pilot">
+            <caption class="small">Four ways to put an internal app in front of your team. The Delimitus column is part of the private pilot offer.</caption>
+            <thead><tr><th scope="col">What it takes</th><th scope="col">Do it yourself</th><th scope="col">Publish from a prototyping tool</th><th scope="col">Self-host an open-source platform</th><th scope="col">Delimitus</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Company login on every app</th><td>You build it</td><td data-claim="src-redaccess">Up to the builder; a 2026 scan found 2,000 corporate apps holding sensitive data with no login</td><td data-claim="src-marmelab">Built in, optional for each app; you run it</td><td data-claim="login">Every request, every app</td></tr>
+              <tr><th scope="row">Cloud account, database, secrets</th><td>You set up and pay</td><td>Theirs; data sits on their hosting</td><td data-claim="src-marmelab">Your servers; one developer took two weeks to build it and estimated one or two more person-months to reach production grade</td><td data-claim="account">Set up for you, in a cloud account of your company’s own</td></tr>
+              <tr><th scope="row">Read-only company data, with IT approval</th><td>You build it</td><td>Depends on the tool</td><td data-claim="src-marmelab">A database for each app; the write-up doesn’t cover reading existing company data</td><td data-claim="data approvals">IT approves each connection; apps read, never write</td></tr>
+              <tr><th scope="row">IT inventory, logs, kill switch</th><td>You build it</td><td>Depends on the tool</td><td data-claim="src-marmelab">Admin console with owner, logs, backups, audit trail and a stop switch</td><td data-claim="inventory logs kill">Included</td></tr>
+              <tr><th scope="row">Who maintains it</th><td>Your IT</td><td>The vendor; the app is on their platform</td><td>Your IT</td><td data-claim="pilot">Delimitus, inside the pilot</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="cmp__note" data-claim="src-redaccess src-marmelab">Sources: the scan is Red Access research reported by TechTarget, “Vibe coding security crisis CIOs can’t ignore”, 2 June 2026 (techtarget.com/searchcio/feature/vibe-coding-security-crisis-CIOs-cant-ignore). The self-hosted column is François Zaninotto, “Building Your Own AI Platform for Vibe-Coded Apps”, Marmelab blog, 15 October 2026 (marmelab.com/blog/2026/10/15/building-your-own-ai-platform.html): about 44,000 lines, MIT licence, github.com/marmelab/platform.</p>
       </div>
       <details class="src model" id="model">
         <summary>See the full cost model</summary>
