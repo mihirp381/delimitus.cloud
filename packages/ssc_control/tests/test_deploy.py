@@ -1877,6 +1877,47 @@ async def test_a_deployment_waiting_for_a_cell_resource_is_left_alone(b: Bench) 
     assert await sweep(b) == 0
 
 
+@pytest.mark.parametrize(
+    ("state", "failure_code"), [("ready", None), ("failed", "CELL_DEPLOYER_FAILED")]
+)
+async def test_a_deployment_whose_cell_resource_wait_ended_is_run_again(
+    b: Bench, state: str, failure_code: str | None
+) -> None:
+    """``cell.create.wake`` re-defers the waiters of a ready or failed resource, but a waiter's
+    row goes only in that deployment's next transaction: when the job fails first, the row is
+    left on a resource no longer in flight, and the reaper is the only way on."""
+    release = await build_release(b, b.w.preview)
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    lock = f"dep:{op}"
+    ended = datetime.now(UTC)
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.cell_resource (org_id, resource, state, cause, actor_kind, actor_id, "
+        "started_at, ready_at, failure_code, failed_at) "
+        "values (%s, 'database', %s, 'deploy', 'user', %s, now(), %s, %s, %s)",
+        b.w.org,
+        state,
+        b.w.admin,
+        ended if state == "ready" else None,
+        failure_code,
+        ended if state == "failed" else None,
+    )
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.cell_resource_waiter (org_id, resource, deployment_id) "
+        "values (%s, 'database', %s)",
+        b.w.org,
+        op,
+    )
+    end_jobs(b.dsn, lock, "failed")
+    assert await sweep(b) == 1
+    assert [j["args"] for j in waiting_jobs(b.dsn, lock)] == [
+        {"org_id": b.w.org, "deployment_id": op}
+    ]
+
+
 def test_the_worker_runs_the_deployment_sweep() -> None:
     app = worker.build_app("postgresql://ssc_app@localhost/ssc")
     assert "deploy:deployment_sweep" in app.tasks

@@ -4,12 +4,15 @@ error while going live, leaves its deployment ``pending`` or ``running``, and th
 
 ``sweep`` runs every five minutes. For each ``pending`` or ``running`` deployment with no job
 waiting or running under its ``queueing_lock`` (``dep:<id>``), and not waiting on a lazy cell
-resource (``cell_resource_waiter``, whose job re-defers it), it defers the deployment job again;
-the job is safe to run twice (``deployments``). Once :data:`MAX_ATTEMPTS` jobs have failed it
-fails the deployment with ``DEPLOYMENT_STALLED`` instead, audited as ``deploy.failed`` or
-``rollback.failed`` by the deployment's actor, and frees the environment. The reaper never calls
-the runtime: a lowered request timeout stays until the next deployment, as after a lost traffic
-call. A job left ``doing`` by a dead worker is the stalled sweep's (``worker.retry_stalled``).
+resource still being made (a ``cell_resource_waiter`` row on a ``requested`` or ``creating``
+resource, whose job re-defers it), it defers the deployment job again; the job is safe to run
+twice (``deployments``). A waiter's row on a ready or failed resource does not count: only the
+deployment's own next transaction removes it, so a job that failed first leaves it behind. Once
+:data:`MAX_ATTEMPTS` jobs have failed it fails the deployment with ``DEPLOYMENT_STALLED``
+instead, audited as ``deploy.failed`` or ``rollback.failed`` by the deployment's actor, and frees
+the environment. The reaper never calls the runtime: a lowered request timeout stays until the
+next deployment, as after a lost traffic call. A job left ``doing`` by a dead worker is the
+stalled sweep's (``worker.retry_stalled``).
 """
 
 import logging
@@ -34,7 +37,9 @@ _IN_FLIGHT = text(
     "select d.id, d.environment_id, d.kind from ssc.deployment d "
     "where d.org_id = :org and d.state in ('pending', 'running') and not exists ("
     "select 1 from ssc.cell_resource_waiter w "
-    "where w.org_id = d.org_id and w.deployment_id = d.id) "
+    "join ssc.cell_resource r on r.org_id = w.org_id and r.resource = w.resource "
+    "where w.org_id = d.org_id and w.deployment_id = d.id "
+    "and r.state in ('requested', 'creating')) "
     "order by d.started_at"
 )
 _JOBS = text(
