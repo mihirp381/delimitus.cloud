@@ -312,6 +312,8 @@ on creating a link. Lowering a ceiling opens no approval: it flags each environm
 audience is inside. A user is inside a group ceiling when they are an active member of a listed
 group at the moment of the check; when the directory changes a listed group's members, each
 environment now over is flagged and an `exceed_ceiling` request is opened for the owner to decide.
+An environment whose exact grants an approved `exceed_ceiling` request for the connection covers is
+not over it on any of these paths: the approval names the grants, not the ceiling.
 
 **A connected GitHub repository deploys preview on every push** (SSC-047, decision 027).
 `PUT /v1/apps/{app_id}/github` names `repository` (`owner/name`), optionally `branch` (the

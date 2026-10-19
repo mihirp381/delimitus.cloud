@@ -291,6 +291,18 @@ def vectors() -> dict[str, bytes]:
     out["row number in another spelling"] = export(
         [*good[:2]]
     ) + line(good[2]).replace(b'"cpu":1.0', b'"cpu":1.00').replace(b'"tiny":1e-05', b'"tiny":0.00001') + export(good[3:])
+    # Text UTF-8 cannot carry: a lone surrogate, written as a JSON escape. The CLI once crashed on it.
+    def escaped(rec: dict[str, Any]) -> bytes:
+        return json.dumps(rec, separators=(",", ":")).encode() + b"\n"
+
+    lone = {"format": "\ud800", "events": 4}
+    out["row with a lone surrogate"] = line(short[0]) + escaped({**short[1], "after": lone})
+    out["canonical and row with a lone surrogate"] = line(short[0]) + escaped(
+        {
+            **rehashed(short[1], json.dumps({**doc(short[1]), "after": lone}, sort_keys=True, separators=(",", ":")).encode()),
+            "after": lone,
+        }
+    )
     out["row number of another type"] = export([*good[:2]]) + line(good[2]).replace(b'"cpu":1.0', b'"cpu":1') + export(good[3:])
     return out
 

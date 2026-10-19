@@ -222,7 +222,11 @@ class FakeGitHub:
         if m and method == "GET":
             if perms.get("checks") != "read":
                 return httpx2.Response(403)
-            return _page(request, "check_runs", self.check_runs.get(m.group(1), []))
+            runs = self.check_runs.get(m.group(1), [])
+            if parse_qs(request.url.query.decode()).get("filter", ["latest"])[0] == "latest":
+                newest = {r["name"]: r["id"] for r in sorted(runs, key=lambda r: r["id"])}
+                runs = [r for r in runs if newest[r["name"]] == r["id"]]
+            return _page(request, "check_runs", runs)
         if rest == "/actions/runs" and method == "GET":
             if perms.get("actions") != "read":
                 return httpx2.Response(403)

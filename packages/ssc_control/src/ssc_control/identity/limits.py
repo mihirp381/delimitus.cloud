@@ -3,8 +3,9 @@ instance.
 
 ``/register`` takes ten clients an hour per address. The work-email step of ``/authorize`` takes
 twenty tries an hour per address and twenty per email domain, because each try asks WorkOS and
-looks the organisation up across every org (decision 029). ``/ci-tokens`` takes ten CI tokens an
-hour per person (GA-7.7).
+looks the organisation up across every org (decision 029). ``/device/authorize`` takes thirty
+command-line logins an hour per address, as each one stores a device code. ``/ci-tokens`` takes
+ten CI tokens an hour per person (GA-7.7).
 
 Cloud Run may run more than one instance, so a limit is per instance. The address is the
 client's, as the control load balancer appends it to ``X-Forwarded-For``: ``<anything the client
@@ -23,6 +24,8 @@ LOAD_BALANCER_HOPS: Final = 2
 """The client is the second entry from the right of ``X-Forwarded-For``."""
 REGISTER_PER_HOUR: Final = 10
 EMAIL_PER_HOUR: Final = 20
+DEVICE_PER_HOUR: Final = 30
+"""Command-line logins (``/device/authorize``) an address may start an hour."""
 CI_TOKENS_PER_HOUR: Final = 10
 """CI tokens a person may create an hour (GA-7.7), counted per person, not per address."""
 

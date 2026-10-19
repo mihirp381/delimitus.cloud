@@ -33,15 +33,18 @@ from typing import Any
 import pytest
 import test_deploy
 from httpx2 import Response
+from sqlalchemy.exc import OperationalError
 from ssc_testkit import SigningKey, assert_problem, auth, mint, new_key
 from test_cell_resources import done
 from test_deploy import (
     Bench,
     SpyGate,
+    blip,
     build_release,
     deploy,
     execute,
     get,
+    job_context,
     rows_of,
     run,
     set_prod_gate,
@@ -52,6 +55,7 @@ from ssc_contracts.cells import WarmGateway
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.cell import create, tasks, warm
+from ssc_control.cell import jobs as cell_jobs
 from ssc_control.cell.deployer import FakeCellDeployer
 from ssc_control.db import bound_org
 from ssc_control.metrics.warm_hint import WarmHint, hint_working_days, warm_hints, working_days
@@ -284,6 +288,33 @@ async def test_gateway_runs_that_keep_failing_end_failed(cell: Warm) -> None:
     assert gateway == {"warm": True, "state": "failed", "failure_code": "CELL_DEPLOYER_FAILED"}
     assert await cell.step() == "failed"
 
+    assert put_warm(b, [], gateway=False, shown=0).status_code == 200
+    assert put_warm(b, [], gateway=True, shown=10).status_code == 200
+    assert await cell.step() == "turning_on"
+    cell.fake.finish()
+    assert await cell.step() == "on"
+
+
+async def test_a_gateway_job_out_of_attempts_ends_failed_not_turning_on(
+    cell: Warm, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    b = cell.b
+    assert put_warm(b, [], gateway=True, shown=10).status_code == 200
+    done(b.dsn, f"cellwarm:{b.w.org}")
+    step = cell_jobs.blueprint().tasks["warm_gateway"]
+    monkeypatch.setattr(warm, "defer_warm_gateway", blip)
+    # With attempts left the step raises for Procrastinate to run it again.
+    with pytest.raises(OperationalError):
+        await step.func(job_context(cell.ports, 0), org_id=b.w.org)
+    assert get(b, "/v1/warm", b.t.admin).json()["gateway"]["state"] == "turning_on"
+    # The last attempt fails the change instead of leaving it turning on with no job.
+    with pytest.raises(OperationalError):
+        await step.func(job_context(cell.ports, cell_jobs.RETRY.max_attempts), org_id=b.w.org)
+    monkeypatch.undo()
+    gateway = get(b, "/v1/warm", b.t.admin).json()["gateway"]
+    assert gateway == {"warm": True, "state": "failed", "failure_code": "CELL_RESOURCE_STALLED"}
+    assert await warm.give_up(cell.ports, org_id=b.w.org) == "failed"
+    # Changing the wish starts again.
     assert put_warm(b, [], gateway=False, shown=0).status_code == 200
     assert put_warm(b, [], gateway=True, shown=10).status_code == 200
     assert await cell.step() == "turning_on"

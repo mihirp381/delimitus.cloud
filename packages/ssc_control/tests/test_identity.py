@@ -403,6 +403,33 @@ async def test_group_events_refresh_the_members(world: World) -> None:
     assert members == [(0,)]
 
 
+async def test_a_group_event_names_the_group_and_never_renames_it_to_its_id(world: World) -> None:
+    names = "select directory_ref, display_name from ssc.user_group where org_id = :org order by 1"
+    world.wo.group("directory_group_01OPS", "Ops", FOUNDER_UID)
+    await world.tick()
+    world.wo.members["directory_group_01OPS"].add(FOUNDER_UID)
+    world.wo.event(  # no name in this event: the group keeps "Ops"
+        "dsync.group.user_added",
+        {"directory_id": world.wo.directory, "group": {"id": "directory_group_01OPS"}},
+    )
+    world.wo.group("directory_group_02FIN", "Finance", FOUNDER_UID)
+    world.wo.event(  # a new group arrives by event, named by it, not six hours later
+        "dsync.group.created",
+        {"directory_id": world.wo.directory, "id": "directory_group_02FIN", "name": "Finance"},
+    )
+    await world.tick()
+    assert await world.rows(names) == [
+        ("directory_group_01OPS", "Ops"),
+        ("directory_group_02FIN", "Finance"),
+    ]
+    world.wo.event(
+        "dsync.group.updated",
+        {"directory_id": world.wo.directory, "id": "directory_group_01OPS", "name": "Operations"},
+    )
+    await world.tick()
+    assert (await world.rows(names))[0] == ("directory_group_01OPS", "Operations")
+
+
 async def test_the_admin_group_sets_roles_but_never_removes_the_last_admin(dsns: Dsns) -> None:
     w = await new_world(dsns, admin_group_ref="directory_group_01ADMINS")
     try:

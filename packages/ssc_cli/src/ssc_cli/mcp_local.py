@@ -30,7 +30,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal, cast
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 from mcp.server.mcpserver import MCPServer
@@ -140,8 +140,7 @@ Who = Annotated[
 ConnectionName = Annotated[
     str,
     Field(
-        min_length=1,
-        max_length=300,
+        pattern=r"^[a-z][a-z0-9-]{0,62}$",
         description="The data connection's name, as the app's `ssc.toml` names it.",
     ),
 ]
@@ -270,6 +269,18 @@ def waiting_note(notice: str, operation_id: str) -> str:
         "back again, and do not send a new idempotency_key. Check get_status(app, "
         f"operation={operation_id!r}) every minute or two until it is healthy or failed."
     )
+
+
+def seg(value: object) -> str:
+    """``value`` as one path segment, as the API's own MCP tools place it: every ``/``, ``?``,
+    ``#`` and ``%`` escaped, and never a dot segment, so no argument can move a call to another
+    route. Arguments are also pattern-checked; this is the second layer."""
+    text = str(value)
+    if text in {"", ".", ".."}:
+        raise local_error(
+            ErrorCode.VALIDATION_FAILED, "Not a valid name.", f"{text!r} is not a name or id."
+        )
+    return quote(text, safe="")
 
 
 def resolve_app(c: ApiClient, ref: str) -> Body:
@@ -692,9 +703,8 @@ def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
         def work(c: ApiClient) -> Body:
             found = resolve_app(c, app)
             env_id = environment_id(found, environment)
-            return c.get_json(
-                f"/v1/apps/{found['id']}/environments/{env_id}/connections/{connection}/schema"
-            )
+            env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}"
+            return c.get_json(f"{env_path}/connections/{seg(connection)}/schema")
 
         return run(open_client, work)
 

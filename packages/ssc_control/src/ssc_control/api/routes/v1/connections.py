@@ -61,9 +61,13 @@ _GATEWAY_CODES: Final = {
     "DATA_SNAPSHOT_STALE": ErrorCode.DATA_SNAPSHOT_STALE,
     "CONNECTION_UNAVAILABLE": ErrorCode.CONNECTION_UNAVAILABLE,
     "QUERY_TIMEOUT": ErrorCode.QUERY_TIMEOUT,
+    "QUERY_FAILED": ErrorCode.CONNECTION_UNAVAILABLE,
 }
-"""The data gateway's codes this API passes on. Any other (its ``UNAUTHENTICATED`` for the
-agent's own token among them) is ``CELL_UNAVAILABLE``: never the caller's problem."""
+"""The data gateway's codes this API passes on. ``QUERY_FAILED`` while reading the schema is the
+source refusing the connection's own login (BigQuery's ``accessDenied``, say): its credentials or
+permissions, so ``CONNECTION_UNAVAILABLE``, whose text says to check them; the source's message
+is not passed on. Any other (its ``UNAUTHENTICATED`` for the agent's own token among them) is
+``CELL_UNAVAILABLE``: never the caller's problem."""
 _ENVIRONMENT: Final = text(
     "select 1 from ssc.environment where org_id = :org and app_id = :app and id = :env"
 )

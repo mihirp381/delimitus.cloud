@@ -145,6 +145,37 @@ def test_views_refuse_what_they_do_not_list(kind: str, data: dict[str, Any]) -> 
         check_view(kind, data)
 
 
+@pytest.mark.parametrize(
+    "value", [5.0, 0.0, -0.0, 1.5, 1e16, 1e100, 1e-300, float("inf"), float("nan")]
+)
+def test_views_refuse_every_float_however_whole(value: float) -> None:
+    # The chain's integrity depends on it: a jsonb round trip spells 1e16 and 1e100 differently.
+    with pytest.raises(AuditViewError):
+        check_view("warm", {"monthly_usd_shown": value})
+    with pytest.raises(AuditViewError):
+        check_view("audit", {"filters": {"since": value}})
+
+
+async def test_append_refuses_a_float_before_the_insert(dsns: Dsns) -> None:
+    engine = make_engine(dsns.app)
+    try:
+        org = await new_org(engine)
+        whole = NewEvent(
+            org_id=org,
+            action=AuditAction.ORG_UPDATED,
+            actor=Actor(ActorKind.USER, "usr_x"),
+            target_kind="warm",
+            target_id=org,
+            after={"monthly_usd_shown": 1e16},
+        )
+        with pytest.raises(AuditViewError):
+            async with bound_org(engine, org) as conn:
+                await append_event(conn, whole)
+        assert (await run_verify(dsns.app, org)) == VerifyReport(True, 1, 1, None)
+    finally:
+        await engine.dispose()
+
+
 def test_views_accept_every_shape_the_call_sites_write() -> None:
     check_view("app", {"slug": "a", "owner_user_id": "usr_x", "status": "active"})
     check_view(

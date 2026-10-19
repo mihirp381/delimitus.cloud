@@ -154,3 +154,31 @@ def test_breaking_checker_catches_a_new_required_parameter(tmp_path: Path) -> No
     result = breaking(SPEC, new)
     assert result.returncode == 1
     assert "required query parameter 'page' added" in result.stdout
+
+
+def test_breaking_checker_catches_a_property_removed_from_a_nullable_object(
+    tmp_path: Path,
+) -> None:
+    spec = build_spec()
+    detail = spec["components"]["schemas"]["ApprovalDetail"]["properties"]["connection"]
+    assert {"type": "null"} in detail["anyOf"]  # the object is reached through a nullable field
+    target = spec["components"]["schemas"]["ApprovalConnection"]
+    del target["properties"]["ceiling_audience"]
+    target["required"] = [r for r in target.get("required", []) if r != "ceiling_audience"]
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps(spec))
+    result = breaking(SPEC, new)
+    assert result.returncode == 1, result.stdout
+    assert "connection.ceiling_audience: response property removed" in result.stdout
+
+
+def test_breaking_checker_catches_a_value_removed_from_a_nullable_enum(tmp_path: Path) -> None:
+    spec = build_spec()
+    field = spec["components"]["schemas"]["ApprovalDetail"]["properties"]["decision_channel"]
+    (values,) = [m["enum"] for m in field["anyOf"] if "enum" in m]
+    values.remove("cli")
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps(spec))
+    result = breaking(SPEC, new)
+    assert result.returncode == 1, result.stdout
+    assert "decision_channel: enum value 'cli' removed" in result.stdout

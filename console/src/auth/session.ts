@@ -17,6 +17,12 @@ export interface Session {
   signOut(): Promise<void>;
   /** Called when a refresh fails and the session has ended; one listener. */
   onLost(listener: () => void): void;
+  /**
+   * After a 401: true once a refresh has replaced the access token. It refreshes only when the
+   * refresh is overdue (the timer did not fire, as when a laptop slept), so a token refused within
+   * its lifetime (a deactivated person) is not refreshed and the caller signs out at once.
+   */
+  renew(): Promise<boolean>;
 }
 
 /** When to refresh: a minute early, but never sooner than halfway through a short lifetime. */
@@ -35,6 +41,11 @@ export function createSession(storage: Storage | null, refresher: Refresher | nu
   let current: string | null = null;
   let refreshToken: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  // When the timer should refresh, by the wall clock; a sleeping machine does not run timers.
+  let refreshAt = Number.POSITIVE_INFINITY;
+  // The refresh in flight: the timer and a 401 share it, as a refresh token sent twice is a reuse,
+  // which revokes the session.
+  let refreshing: Promise<boolean> | null = null;
   // Bumped on every change, so a refresh that answers after a sign-out or a new sign-in is dropped.
   let generation = 0;
   let lost: () => void = () => undefined;
@@ -55,30 +66,44 @@ export function createSession(storage: Storage | null, refresher: Refresher | nu
     generation += 1;
     if (timer !== null) clearTimeout(timer);
     timer = null;
+    refreshAt = Number.POSITIVE_INFINITY;
+    refreshing = null;
     current = null;
     refreshToken = null;
     write(null);
   };
-  const begin = (tokens: TokenSet) => {
+  const refresh = (): Promise<boolean> => {
+    const held = refreshToken;
+    if (refreshing === null && held !== null && refresher !== null) {
+      const mine = generation;
+      refreshing = refresher.refresh(held).then(
+        (next) => {
+          if (mine !== generation) return false;
+          begin(next);
+          return true;
+        },
+        () => false,
+      );
+    }
+    return refreshing ?? Promise.resolve(false);
+  };
+  function begin(tokens: TokenSet) {
     reset();
     current = tokens.accessToken;
     refreshToken = tokens.refreshToken;
     if (refresher === null) return;
     const mine = generation;
+    const delay = refreshDelay(tokens.expiresIn);
+    refreshAt = Date.now() + delay;
     timer = setTimeout(() => {
       timer = null;
-      refresher.refresh(tokens.refreshToken).then(
-        (next) => {
-          if (mine === generation) begin(next);
-        },
-        () => {
-          if (mine !== generation) return;
-          reset();
-          lost();
-        },
-      );
-    }, refreshDelay(tokens.expiresIn));
-  };
+      void refresh().then((renewed) => {
+        if (renewed || mine !== generation) return;
+        reset();
+        lost();
+      });
+    }, delay);
+  }
   return {
     token: () => current,
     set(token, keepForTab) {
@@ -101,5 +126,6 @@ export function createSession(storage: Storage | null, refresher: Refresher | nu
     onLost(listener) {
       lost = listener;
     },
+    renew: () => (Date.now() >= refreshAt ? refresh() : Promise.resolve(false)),
   };
 }

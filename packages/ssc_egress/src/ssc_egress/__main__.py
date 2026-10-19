@@ -8,27 +8,44 @@ without waiting for its worker threads and the process ends with ``os._exit``, s
 read still retrying against an unreachable bucket never holds the container past its stop
 timeout.
 
+A stop that arrives while the imports below still load (about a second and a half in the image)
+is recorded by ``_early_stop``, installed before them: the container's first process ignores a
+signal it has no handler for, so without it that stop waited out the stop timeout and ended in
+``SIGKILL``. ``main`` then exits 0 without starting Envoy, or ``_serve`` stops at once.
+
 Settings: ``SSC_ORG_ID`` and ``SSC_CELL_BUCKET`` (required), ``SSC_PROXY_PORT`` (default
 ``PROXY_PORT``), ``SSC_ENVOY_BIN`` (default ``envoy``) and ``STORAGE_EMULATOR_HOST`` (tests).
 """
 
-import asyncio
-import json
-import logging
-import os
 import signal
-import subprocess
-import tempfile
-from collections.abc import Mapping
-from pathlib import Path
-from typing import Final, NoReturn
+from types import FrameType
 
-from ssc_contracts.egress import PROXY_PORT
-from ssc_egress.envoy import EgressConfig, Policy, bootstrap, envoy_args
-from ssc_egress.runner import ListenerWriter, follow
-from ssc_shared.access import ViewHolder
-from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of
-from ssc_shared.snapshot_feed import SnapshotFeed
+_stopped_early: list[int] = []
+
+
+def _early_stop(signum: int, _frame: FrameType | None) -> None:
+    _stopped_early.append(signum)
+
+
+signal.signal(signal.SIGTERM, _early_stop)
+signal.signal(signal.SIGINT, _early_stop)
+
+import asyncio  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+from collections.abc import Mapping  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Final, NoReturn  # noqa: E402
+
+from ssc_contracts.egress import PROXY_PORT  # noqa: E402
+from ssc_egress.envoy import EgressConfig, Policy, bootstrap, envoy_args  # noqa: E402
+from ssc_egress.runner import ListenerWriter, follow  # noqa: E402
+from ssc_shared.access import ViewHolder  # noqa: E402
+from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of  # noqa: E402
+from ssc_shared.snapshot_feed import SnapshotFeed  # noqa: E402
 
 log = logging.getLogger("ssc_egress")
 
@@ -67,6 +84,8 @@ async def _serve(
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(signum, stop.set)
+    if _stopped_early:  # a stop while Envoy was starting, before the handlers above
+        stop.set()
     holder = ViewHolder(org_id)
     feed = SnapshotFeed(GcsBlobStore(bucket_of(bucket)), holder)
     await follow(feed, holder, writer, stop=stop, envoy=envoy)
@@ -95,6 +114,9 @@ def main() -> int:
     except SettingsError as exc:
         log.error("%s", exc)
         return 2
+    if _stopped_early:
+        log.info("stopped before the proxy started")
+        return 0
     cfg, writer, envoy = _start(os.environ)
     log.info("egress proxy serving on port %s", cfg.port)
     loop = asyncio.new_event_loop()

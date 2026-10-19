@@ -2,6 +2,7 @@
 decision 012, GA-3.5)."""
 
 import base64
+import dataclasses
 import hashlib
 import json
 import uuid
@@ -19,6 +20,10 @@ from ssc_cli.shapes import AuditExportResult, AuditVerifyResult
 
 ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 USR = "usr_aaaaaaaaaaaaaaaaaaaa"
+# The export files the console's port of the check is tested against, with this check's reports.
+VECTORS: dict[str, Any] = json.loads(
+    (Path(__file__).parents[3] / "console/test/fixtures/audit-chain.json").read_text()
+)
 
 
 def _chain(n: int, *, start: int = 1, org: str = ORG) -> list[dict[str, Any]]:
@@ -156,6 +161,30 @@ def test_verify_exits_1_on_a_break_and_says_where(cli, tmp_path):
     human = cli("audit", "verify", str(path))
     assert "Chain broken at line 4 (seq 4): its canonical bytes" in human.stdout
     assert "The 3 events before it check out." in human.stdout
+
+
+@pytest.mark.parametrize("name", sorted(VECTORS))
+def test_the_console_vectors_still_report_what_they_say(name, tmp_path):
+    path = tmp_path / "audit.jsonl"
+    path.write_bytes(base64.b64decode(VECTORS[name]["file"]))
+    with path.open(encoding="utf-8", errors="replace") as lines:
+        assert dataclasses.asdict(check_lines(lines)) == VECTORS[name]["report"]
+
+
+@pytest.mark.parametrize(
+    "name", ["row with a lone surrogate", "canonical and row with a lone surrogate"]
+)
+def test_verify_names_a_lone_surrogate_as_a_fields_break(cli, tmp_path, name):
+    """Text UTF-8 cannot carry is a row that does not match, not a traceback."""
+    path = tmp_path / "audit.jsonl"
+    path.write_bytes(base64.b64decode(VECTORS[name]["file"]))
+    r = cli("audit", "verify", str(path), "--json")
+    assert r.code == ExitCode.FAILED, r.stderr
+    result = AuditVerifyResult.model_validate(r.json())
+    assert (result.ok, result.broken_line, result.cause, result.checked) == (False, 2, "fields", 1)
+    human = cli("audit", "verify", str(path))
+    assert "Chain broken at line 2 (seq 2): its canonical bytes" in human.stdout
+    assert "Traceback" not in human.stdout + human.stderr
 
 
 def test_verify_needs_no_login(cli, tmp_path, isolated):

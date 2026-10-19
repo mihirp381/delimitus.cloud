@@ -380,8 +380,10 @@ def test_plain_http_is_never_forwarded(proxy: Proxy) -> None:
 def test_removing_a_host_cuts_its_open_tunnel_within_the_drain_time(proxy: Proxy) -> None:
     sock, status, _ = proxy.connect("b.wild.test:443")
     assert status == 200  # noqa: PLR2004
-    started = time.monotonic()
     proxy.apply(policy_of(view(hosts=("api.allowed.test",))))
+    # The clock starts once the new listener is in place: ``docker exec`` alone takes seconds
+    # on a loaded machine, and that time is the test's, not the proxy's.
+    started = time.monotonic()
     try:
         sock.settimeout(DRAIN_SECONDS + 10)
         while sock.recv(4096):
@@ -399,10 +401,10 @@ def test_removing_a_host_cuts_its_open_tunnel_within_the_drain_time(proxy: Proxy
 def test_revoking_a_credential_cuts_its_open_tunnel_within_the_drain_time(proxy: Proxy) -> None:
     sock, status, _ = proxy.connect("api.allowed.test:443")
     assert status == 200  # noqa: PLR2004
-    started = time.monotonic()
     doc = snapshot()
     doc["environments"][PROD]["status"] = "quarantined"
     proxy.apply(policy_of(AccessView.from_document(doc)))
+    started = time.monotonic()
     try:
         sock.settimeout(DRAIN_SECONDS + 10)
         while sock.recv(4096):

@@ -32,18 +32,18 @@ def test_vector(name: str) -> None:
     case = CASES[name]
     expect = case["expect"]
     if "ok" in expect:
-        got = _verify(case).model_dump(exclude_none=True)
+        got = _verify(case, case.get("issuer")).model_dump(exclude_none=True)
         got["groups"] = list(got["groups"])
         assert got == expect["ok"]
     else:
         with pytest.raises(NoteRefusedError) as e:
-            _verify(case)
+            _verify(case, case.get("issuer"))
         assert e.value.code == expect["refused"]
 
 
-def test_the_vectors_cover_every_code_but_the_pinned_issuer() -> None:
+def test_the_vectors_cover_every_code() -> None:
     seen = {c["expect"]["refused"] for c in VECTORS["cases"] if "refused" in c["expect"]}
-    assert seen == set(get_args(RefusalCode)) - {"wrong_issuer"}
+    assert seen == set(get_args(RefusalCode))
 
 
 def test_a_pinned_issuer_refuses_another() -> None:

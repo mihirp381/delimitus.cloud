@@ -17,7 +17,9 @@ Each step locks the resource's row, does one thing and, unless the resource is `
    step that makes it ``ready`` also writes its ``fixed_resource`` metrics event (SSC-028), keyed
    by the resource so the cell has exactly one per resource however often the step runs.
 
-With no deployer configured the resource fails at once with ``CELL_DEPLOYER_UNAVAILABLE``.
+With no deployer configured the resource fails at once with ``CELL_DEPLOYER_UNAVAILABLE``. A step
+that raises is retried by its job (``cell.jobs.RETRY``); after the last attempt ``give_up`` fails
+the resource with ``CELL_RESOURCE_STALLED`` and wakes its waiters, as step 3 does.
 """
 
 import logging
@@ -47,6 +49,7 @@ MAX_ATTEMPTS: Final = 3
 BACKOFF_SECONDS: Final = (60.0, 300.0)
 CELL_DEPLOYER_FAILED: Final = "CELL_DEPLOYER_FAILED"
 CELL_DEPLOYER_UNAVAILABLE: Final = "CELL_DEPLOYER_UNAVAILABLE"
+CELL_RESOURCE_STALLED: Final = "CELL_RESOURCE_STALLED"
 CELL_RESOURCE_UNVERIFIED: Final = "CELL_RESOURCE_UNVERIFIED"
 
 _LABEL = text("select cell_label from ssc.org where id = :org")
@@ -102,6 +105,23 @@ async def create_step(ports: Ports, *, org_id: str, resource: CellResource) -> s
     if execution is None:
         return await _start(ports, org_id, resource, label)
     return await _poll(ports, org_id, resource, execution)
+
+
+async def give_up(ports: Ports, *, org_id: str, resource: CellResource) -> str:
+    """Fail a resource whose job ran out of attempts with ``CELL_RESOURCE_STALLED``: with no job
+    left it would stay ``creating`` and its waiting deployments ``pending``, which the deployment
+    sweep leaves to this job. The resource's state after it (or ``missing``)."""
+    async with bound_org(ports.engine, org_id) as conn:
+        row = await lock(conn, org_id, resource)
+        if row is None:
+            return "missing"
+        if row.state in (CellResourceState.READY, CellResourceState.FAILED):
+            return row.state.value
+        await _finish(conn, org_id, row, CELL_RESOURCE_STALLED, "its job ran out of attempts")
+    log.warning(
+        "cell resource failed for good: its job ran out of attempts", extra={"org_id": org_id}
+    )
+    return CellResourceState.FAILED.value
 
 
 async def _start(ports: Ports, org_id: str, resource: CellResource, label: str) -> str:

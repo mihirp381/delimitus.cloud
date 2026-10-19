@@ -34,6 +34,7 @@ CHUNK_BYTES: Final = 64 * 1024
 
 CONTENTS_READ: Final = {"contents": "read"}
 CHECKS_WRITE: Final = {"checks": "write"}
+CHECKS_READ: Final = {"checks": "read"}
 GATE_READ: Final = {"checks": "read", "actions": "read"}
 METADATA_READ: Final = {"metadata": "read"}
 
@@ -229,10 +230,14 @@ class GitHubApp:
                 out.write(chunk)
         return written
 
-    async def create_check_run(self, repo: RepoRef, sha: str, report: CheckReport) -> int:
+    async def create_check_run(
+        self, repo: RepoRef, sha: str, report: CheckReport, external_id: str | None = None
+    ) -> int:
         token = await self.installation_token(repo.installation_id, CHECKS_WRITE, repo.id)
         path = f"/repos/{repo.name}/check-runs"
         body = {"name": CHECK_NAME, "head_sha": sha, **report.body()}
+        if external_id is not None:
+            body["external_id"] = external_id
         raw = await self._call("POST", path, token, json=body, ok=201)
         if raw is None:
             raise GitHubError(404, path)
@@ -270,6 +275,23 @@ class GitHubApp:
         token = await self.installation_token(repo.installation_id, GATE_READ, repo.id)
         path = f"/repos/{repo.name}/commits/{sha}/check-runs"
         return await self._pages(path, token, "check_runs", {"filter": "all"})
+
+    async def open_check_run(self, repo: RepoRef, sha: str, external_id: str) -> int | None:
+        """The newest :data:`CHECK_NAME` run on the commit carrying ``external_id`` that is not
+        completed yet, or None. Every run is listed (``filter=all``): GitHub's default lists only
+        the newest run of a name, which may be another app's on the same repository."""
+        token = await self.installation_token(repo.installation_id, CHECKS_READ, repo.id)
+        path = f"/repos/{repo.name}/commits/{sha}/check-runs"
+        params = {"check_name": CHECK_NAME, "filter": "all"}
+        runs = await self._pages(path, token, "check_runs", params)
+        ids = [
+            int(r["id"])
+            for r in runs
+            if r.get("name") == CHECK_NAME
+            and r.get("external_id") == external_id
+            and r.get("status") != "completed"
+        ]
+        return max(ids, default=None)
 
     async def workflow_runs(self, repo: RepoRef, sha: str) -> list[Json]:
         """The Actions workflow runs of the commit, read page by page up to :data:`MAX_PAGES`

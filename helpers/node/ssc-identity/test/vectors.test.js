@@ -20,16 +20,16 @@ function plain(note) {
 for (const c of VECTORS.cases) {
   test(`vector: ${c.name}`, async () => {
     if ('ok' in c.expect) {
-      assert.deepEqual(plain(await verify(c.token, opts({ audience: c.audience }))), c.expect.ok);
+      assert.deepEqual(plain(await verify(c.token, opts({ audience: c.audience, issuer: c.issuer }))), c.expect.ok);
     } else {
-      await assert.rejects(verify(c.token, opts({ audience: c.audience })), (e) => e instanceof IdentityRefused && e.code === c.expect.refused);
+      await assert.rejects(verify(c.token, opts({ audience: c.audience, issuer: c.issuer })), (e) => e instanceof IdentityRefused && e.code === c.expect.refused);
     }
   });
 }
 
-test('vectors cover every refusal code but wrong_issuer', () => {
+test('vectors cover every refusal code', () => {
   const seen = new Set(VECTORS.cases.filter((c) => 'refused' in c.expect).map((c) => c.expect.refused));
-  assert.deepEqual([...seen].sort(), REFUSAL_CODES.filter((c) => c !== 'wrong_issuer').sort());
+  assert.deepEqual([...seen].sort(), [...REFUSAL_CODES].sort());
 });
 
 test('wrong issuer when pinned', async () => {

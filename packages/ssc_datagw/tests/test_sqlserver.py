@@ -403,6 +403,23 @@ async def test_a_missing_table_is_a_query_failure(db: Db) -> None:
     assert e.value.sqlstate == "42P01"
 
 
+HIDDEN_STATEMENTS = (
+    "SELECT id FROM reporting.orders EXEC('WAITFOR DELAY ''00:00:02''')",
+    "SELECT id FROM reporting.orders EXEC('SELECT 1')",
+    "SELECT id FROM reporting.orders o JOIN reporting.orders WAITFOR ON 1 = 1",
+)
+"""Texts sqlglot 28 reads as one ``SELECT`` with the second statement as an alias, and SQL
+Server runs as two: the classifier is the only guard against them."""
+
+
+@pytest.mark.parametrize("sql", HIDDEN_STATEMENTS)
+async def test_done_when_a_statement_hidden_as_an_alias_is_refused(db: Db, sql: str) -> None:
+    started = time.monotonic()
+    with pytest.raises(QueryRefusedError):
+        await read(SqlServerConnector(db.target()), ask(sql))
+    assert time.monotonic() - started < 1
+
+
 @pytest.mark.parametrize("case", sorted(DATABASE_REFUSES))
 async def test_done_when_the_database_refuses_by_itself(db: Db, case: str) -> None:
     sql, sqlstate = DATABASE_REFUSES[case]

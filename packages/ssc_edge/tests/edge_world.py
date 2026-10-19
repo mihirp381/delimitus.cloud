@@ -145,6 +145,34 @@ class Signer:
         return jwt.encode(claims, self.key, algorithm="ES256", headers=head)
 
 
+class Tokens:
+    """Identity tokens for the upstream, as the metadata server would mint them."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.audiences: list[str] = []
+        self.fail = fail
+
+    async def identity(self, audience: str) -> str:
+        if self.fail:
+            raise RuntimeError("metadata server down")
+        self.audiences.append(audience)
+        return "google.id.token"
+
+
+def env(**changes: str) -> dict[str, str]:
+    """The gateway's environment, with ``changes`` on top; an empty value drops the key."""
+    base = {
+        "SSC_ORG_ID": ORG,
+        "SSC_CELL_LABEL": LABEL,
+        "SSC_PROJECT_NUMBER": "123456789012",
+        "SSC_CELL_BUCKET": f"ssc-c-{LABEL}-cell",
+        "SSC_GATEWAY_KEYRING": "Y2lwaGVy",
+        "SSC_GATEWAY_KMS_KEY": "projects/p/locations/l/keyRings/r/cryptoKeys/k",
+    }
+    base.update(changes)
+    return {k: v for k, v in base.items() if v}
+
+
 @dataclass
 class FakeRedeemer:
     sessions: dict[str, Session] = field(default_factory=dict)

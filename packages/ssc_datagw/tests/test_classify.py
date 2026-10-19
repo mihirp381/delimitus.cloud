@@ -5,6 +5,7 @@ import pytest
 
 from ssc_datagw.classify import (
     BIGQUERY,
+    TSQL_STATEMENT_WORDS,
     bigquery_refusal,
     mysql_refusal,
     refusal,
@@ -117,6 +118,69 @@ def test_the_reason_names_the_construct_and_never_quotes_the_statement() -> None
 def test_mysql_refuses_a_sleep_which_would_end_quietly_instead_of_timing_out() -> None:
     assert mysql_refusal("SELECT SLEEP(1)") == "the statement calls a function that is refused"
     assert mysql_refusal("SELECT id FROM reporting.orders WHERE id = ?") is None
+
+
+MYSQL_EXECUTABLE_COMMENTS = [
+    "SELECT id /*!50000 , SLEEP(3) */ FROM reporting.orders",
+    "SELECT id FROM reporting.orders WHERE id = 1 /*!50000 OR BENCHMARK(1e9, 1) */",
+    "SELECT 1 /*! ; DELETE FROM reporting.orders */",
+    "/*!50000 DELETE FROM reporting.orders */ SELECT 1",
+    "SELECT(/*!GET_LOCK('x', 1)*/)",
+    "SELECT 1 /*M!100000 , SLEEP(1) */",
+    "SELECT 1 /*!*/",
+]
+
+
+@pytest.mark.parametrize("sql", MYSQL_EXECUTABLE_COMMENTS)
+def test_mysql_refuses_an_executable_comment(sql: str) -> None:
+    assert mysql_refusal(sql) == "the statement uses an executable comment"
+
+
+def test_a_comment_that_mysql_does_not_run_passes() -> None:
+    assert mysql_refusal("SELECT 1 /* ! a note */ -- !x") is None
+    assert mysql_refusal("SELECT '/*!50000 x */'") is None
+    assert refusal("SELECT 1 /*! a note */") is None
+
+
+MYSQL_BARE_DASHES = [
+    "SELECT id FROM reporting.orders WHERE id = 1--1 FOR SHARE",
+    "SELECT 1--1, SLEEP(3)",
+    "SELECT 1--1, GET_LOCK('x', 1)",
+    "SELECT id FROM reporting.orders WHERE id = ?--1",
+    "SELECT 1 /* a note */--1",
+    "SELECT 1 -- a note\n--1 FOR SHARE",
+    "--1\nSELECT 1",
+    "SELECT 1 --",
+]
+
+
+@pytest.mark.parametrize("sql", MYSQL_BARE_DASHES)
+def test_mysql_refuses_dashes_it_reads_as_minus_minus_and_sqlglot_as_a_comment(sql: str) -> None:
+    # MySQL starts a comment at -- only when whitespace follows; 1--1 is 1 - (-1) to it.
+    assert mysql_refusal(sql) == "the statement uses -- without a space after it"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 'a--b'",
+        'SELECT "a--b", `c--d` FROM reporting.orders',
+        "SELECT 1 -- x",
+        "SELECT 1 --\tx",
+        "SELECT 1 --\n",
+        "SELECT 1 /* --x */",
+        "SELECT 1 # x --y",
+        "SELECT 1 #--y",
+        "SELECT 1 - -1",
+    ],
+)
+def test_dashes_in_a_string_a_quoted_name_or_a_real_comment_pass(sql: str) -> None:
+    assert mysql_refusal(sql) is None
+
+
+def test_bare_dashes_are_mysqls_alone() -> None:
+    assert refusal("SELECT 1--1") is None
+    assert snowflake_refusal("SELECT 1--1", "reporting") is None
 
 
 BIGQUERY_READS = [
@@ -232,6 +296,10 @@ TSQL_READS = [
     "SELECT * FROM reporting.tvf(1)",
     "SELECT reporting.f(1) FROM reporting.orders",
     "SELECT fn_total FROM reporting.orders",
+    "SELECT id FROM reporting.orders ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+    "SELECT id FROM reporting.orders ORDER BY id OFFSET 1 ROW FETCH FIRST 1 ROW ONLY",
+    "SELECT [exec], \"update\", N'delete', 'set' FROM reporting.orders",
+    "SELECT exec_date, updated_at, settings, IIF(id > 1, 1, 0) FROM reporting.orders",
 ]
 
 TSQL_REFUSED = {
@@ -268,6 +336,19 @@ TSQL_REFUSED = {
     "drop": "DROP TABLE reporting.orders",
     "set": "SET LOCK_TIMEOUT 0",
     "begin transaction": "BEGIN TRANSACTION",
+    "exec hidden as a table alias": (
+        "SELECT id FROM reporting.orders EXEC('WAITFOR DELAY ''0:0:4''')"
+    ),
+    "exec hidden reading a global temporary table": (
+        "SELECT id FROM reporting.orders EXEC('SELECT * FROM ##g')"
+    ),
+    "delete hidden as a column alias": "SELECT 1 DELETE FROM reporting.orders",
+    "shutdown hidden as an alias": "SELECT 1 SHUTDOWN",
+    "reconfigure hidden as an alias": "SELECT 1 RECONFIGURE",
+    "a statement word glued on by a control character": "SELECT id FROM t\x01EXEC('x')",
+    "exec after the paging": (
+        "SELECT id FROM t ORDER BY id OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY EXEC('x')"
+    ),
     "empty": "",
     "garbage": "SELEC 1 FROM",
 }
@@ -283,6 +364,23 @@ def test_tsql_anything_else_is_refused(case: str) -> None:
     assert tsql_refusal(TSQL_REFUSED[case]) is not None
 
 
+TSQL_ALIAS_PLACES = {
+    "table": "SELECT id FROM reporting.orders {w}('x')",
+    "column": "SELECT id {w} FROM reporting.orders",
+    "cte": "WITH {w} AS (SELECT 1 AS a) SELECT a FROM {w}",
+    "subquery": "SELECT a FROM (SELECT 1 AS a) {w}",
+    "join": "SELECT o.id FROM reporting.orders o JOIN reporting.customers {w} ON {w}.id = o.id",
+}
+
+
+@pytest.mark.parametrize("word", sorted(TSQL_STATEMENT_WORDS))
+@pytest.mark.parametrize("place", sorted(TSQL_ALIAS_PLACES))
+def test_tsql_refuses_a_statement_word_wherever_it_stands_unquoted(word: str, place: str) -> None:
+    for spelled in (word.upper(), word):
+        sql = TSQL_ALIAS_PLACES[place].format(w=spelled)
+        assert tsql_refusal(sql) is not None, sql
+
+
 def test_tsql_reasons_name_the_construct() -> None:
     assert tsql_refusal("SELECT @@VERSION") == "the statement uses a variable"
     assert tsql_refusal("SELECT * FROM a.b.c") == "the statement names another database or server"
@@ -290,6 +388,7 @@ def test_tsql_reasons_name_the_construct() -> None:
     assert tsql_refusal("SELECT NEXT VALUE FOR s") == "the statement advances a sequence"
     assert tsql_refusal("SELECT * FROM dbo.xp_x") == "the statement reads an object that is refused"
     assert tsql_refusal("SELECT a.b.f(1)") == "the statement calls a function in another database"
+    assert tsql_refusal("SELECT a FROM t EXEC('y')") == "the statement holds another statement"
 
 
 SNOWFLAKE_READS = [
@@ -311,6 +410,7 @@ SNOWFLAKE_READS = [
     "WITH r AS (SELECT * FROM orders) SELECT COUNT(*) FROM r",
     "SELECT id FROM a UNION ALL SELECT id FROM b",
     "SELECT CURRENT_TIMESTAMP(), CURRENT_ROLE()",
+    "SELECT CONTAINS(note, 'ai') FROM orders",  # names with "ai" in them, not AI_
 ]
 
 SNOWFLAKE_REFUSED = {
@@ -367,6 +467,9 @@ SNOWFLAKE_REFUSED = {
     "the snowflake database quoted": 'SELECT * FROM "SNOWFLAKE".ACCOUNT_USAGE.LOGIN_HISTORY',
     "a snowflake function": "SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'p')",
     "a snowflake table function": "SELECT * FROM TABLE(snowflake.information_schema.tables())",
+    "ai_complete": "SELECT AI_COMPLETE('model', 'prompt')",
+    "ai_classify": "SELECT ai_classify(note, ['a', 'b']) FROM orders",
+    "ai_embed": "SELECT AI_EMBED('model', note) FROM orders",
     "garbage": "SELEC 1 FROM",
     "empty": "",
 }
@@ -397,6 +500,7 @@ def test_snowflake_reasons_name_the_construct() -> None:
     assert why("SELECT * FROM TABLE(RESULT_SCAN('x'))") == (
         "the statement calls a function that is refused"
     )
+    assert why("SELECT AI_COMPLETE('m', 'p')") == ("the statement calls a function that is refused")
     assert why("CALL p()") == "the statement is not a SELECT (Command)"
     assert why("USE DATABASE x") == "the statement is not a SELECT (Use)"
 

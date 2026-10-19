@@ -24,15 +24,16 @@ read, without the classifier, which is for the app's text.
 What the database refuses on its own, with the classifier off (``tests/test_mysql.py``): a
 write (``1142``, the user has ``SELECT`` only), a temporary table (``1792``, the transaction is
 read-only), a change of the transaction (``1568``), a locking read (``1142``), a file
-(``1227``). The driver sends every statement with ``MULTI_STATEMENTS`` on, so only the
-classifier holds a text to one statement; the second statement of a pair meets the same
-privileges as the first.
+(``1227``). asyncmy always asks for ``MULTI_STATEMENTS`` at connect, so each session turns it
+off again with ``COM_SET_OPTION``: past the classifier, a second statement is a syntax error
+(``1064``) and never runs.
 """
 
 import asyncio
 import json
 import logging
 import re
+import struct
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ from typing import Any, Final, Literal, cast
 import asyncmy
 import sqlglot
 from asyncmy import errors
+from asyncmy.constants.COMMAND import COM_SET_OPTION
 from asyncmy.cursors import SSCursor
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlglot.errors import SqlglotError
@@ -202,6 +204,16 @@ ORDER BY t, n
 """  # noqa: S608  (built from constants only)
 """Every column the user may read in the session's database, at most 500 tables of 500."""
 _CONNECT: Final = cast("Callable[..., Any]", asyncmy.connect)  # pyright: ignore[reportUnknownMemberType]
+MULTI_STATEMENTS_OFF: Final = struct.pack("<H", 1)
+"""``COM_SET_OPTION``'s argument ``MYSQL_OPTION_MULTI_STATEMENTS_OFF``."""
+
+
+async def _one_statement(conn: Any) -> None:
+    """Turns ``MULTI_STATEMENTS`` off for the session. asyncmy sets the flag at connect whatever
+    the caller asks and has no call for the option, so the command is sent by hand; an error
+    reply raises from ``read_packet``."""
+    await conn._execute_command(COM_SET_OPTION, MULTI_STATEMENTS_OFF)  # noqa: SLF001
+    await conn.read_packet()
 
 
 class MySqlTarget(BaseModel):
@@ -433,7 +445,7 @@ class MySqlConnector:
         t = self._target
         try:
             async with asyncio.timeout(seconds):
-                return await _CONNECT(
+                conn = await _CONNECT(
                     host=t.host,
                     port=t.port,
                     user=t.user,
@@ -446,6 +458,12 @@ class MySqlConnector:
                     autocommit=False,
                     charset="utf8mb4",
                 )
+                try:
+                    await _one_statement(conn)
+                except BaseException:
+                    conn.close()
+                    raise
+                return conn
         except TimeoutError:
             raise
         except (OSError, errors.Error) as exc:

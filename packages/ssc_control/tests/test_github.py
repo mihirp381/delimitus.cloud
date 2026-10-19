@@ -45,12 +45,14 @@ from pathlib import Path
 from typing import Any, cast
 
 import jwt
+import psycopg
 import pytest
 import test_deploy
 from fake_github import _PEM, _PUBLIC, APP_ID, BASE, FakeGitHub, Json, files_of, tarball_of
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+from procrastinate.jobs import Job
 from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
 from test_app_hosts import logged_evidence
 from test_bundles import SERVICE_ROLE_ROLE, supabase_jwt
@@ -84,12 +86,14 @@ from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.builds import run_build
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.github import gate
+from ssc_control.github import jobs as github_jobs
+from ssc_control.github import push as push_module
 from ssc_control.github.__main__ import main, run_bind
-from ssc_control.github.client import CHECK_NAME, MAX_PAGES, PAGE, RepoRef
+from ssc_control.github.client import CHECK_NAME, MAX_PAGES, PAGE, CheckReport, RepoRef
 from ssc_control.github.links import BindError, RequiredCheck
 from ssc_control.github.push import run_push
 from ssc_control.github.source import unpack
-from ssc_control.github.tasks import RUN_PUSH, push_lock
+from ssc_control.github.tasks import RUN_PUSH, next_lock, push_lock
 from ssc_control.github.webhook import MAX_BODY_BYTES
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
@@ -246,12 +250,14 @@ def push_event(
 
 
 def todo(g: G, sha: str) -> list[dict[str, Any]]:
+    """The push jobs of ``sha`` waiting: a delivery's, then a step's own next one."""
     return rows_of(
         g.b.dsn,
         g.b.w.org,
-        "select args, scheduled_at from procrastinate.procrastinate_jobs "
-        "where queueing_lock = %s and status = 'todo'",
+        "select args, scheduled_at, queueing_lock from procrastinate.procrastinate_jobs "
+        "where queueing_lock in (%s, %s) and status = 'todo' order by id",
         push_lock(g.b.w.app, sha),
+        next_lock(g.b.w.app, sha),
     )
 
 
@@ -268,10 +274,24 @@ def push_jobs(g: G) -> int:
 
 
 async def step(g: G, sha: str) -> str:
-    """What the worker does with the waiting push job: fetch it, then run it."""
+    """What the worker does with the waiting push job: fetch it, run it, then mark it done,
+    which frees the commit's ``lock`` for the next step."""
     (job,) = todo(g, sha)
-    take_job(g.b.dsn, push_lock(g.b.w.app, sha))
-    return await run_push(g.ports, **job["args"])
+    take_job(g.b.dsn, job["queueing_lock"])
+    outcome = await run_push(g.ports, **job["args"])
+    done(g, sha)
+    return outcome
+
+
+def done(g: G, sha: str) -> None:
+    """The worker marks the commit's running push job succeeded once it returns."""
+    with psycopg.connect(g.b.dsn, autocommit=True) as conn:
+        conn.execute("set search_path to procrastinate")
+        conn.execute(
+            "update procrastinate_jobs set status = 'succeeded' "
+            "where lock = %s and status = 'doing'",
+            (push_lock(g.b.w.app, sha),),
+        )
 
 
 def preview_url(g: G) -> str:
@@ -421,11 +441,188 @@ async def test_a_redelivered_push_after_the_build_builds_nothing_more(g: G) -> N
     publish(g, sha)
     deliver(g, "push", push_event(g, sha))
     assert await step(g, sha) == "building"
-    take_job(g.b.dsn, push_lock(g.b.w.app, sha))
+    (taken,) = todo(g, sha)
+    take_job(g.b.dsn, next_lock(g.b.w.app, sha))
     assert deliver(g, "push", push_event(g, sha)).status_code == 202
     (job,) = [j for j in todo(g, sha) if j["args"]["build_id"] is None]
+    # The step the worker took runs while the redelivery waits: its next step is still deferred.
+    assert await run_push(g.ports, **taken["args"]) == "building"
+    done(g, sha)
+    (follow,) = [j for j in todo(g, sha) if j["args"]["build_id"] is not None]
+    assert follow["args"]["build_id"] == taken["args"]["build_id"]
+    take_job(g.b.dsn, push_lock(g.b.w.app, sha))
     assert await run_push(g.ports, **job["args"]) == "duplicate"
+    done(g, sha)
     assert len(rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")) == 1
+    build = str(follow["args"]["build_id"])
+    assert await run_build(g.ports, org_id=g.b.w.org, build_id=build) == "succeeded"
+    assert await step(g, sha) == "deploying"
+    (dep,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.deployment")
+    assert await run(g.b, dep["id"], g.ports) == "healthy"
+    assert await step(g, sha) == "healthy"
+    (check,) = g.hub.ssc_runs(sha)
+    assert (check["status"], check["conclusion"]) == ("completed", "success")
+
+
+def fetch_job(g: G, sha: str) -> dict[str, Any] | None:
+    """What a worker does to take the next job, through Procrastinate's own fetch, which honours
+    each job's ``lock``; None when nothing may run now. Every other waiting job in the shared
+    database is row-locked meanwhile, so the fetch (``SKIP LOCKED``) sees only this commit's."""
+    lock = push_lock(g.b.w.app, sha)
+    with psycopg.connect(g.b.dsn) as hold, psycopg.connect(g.b.dsn, autocommit=True) as conn:
+        hold.execute(
+            "select id from procrastinate.procrastinate_jobs "
+            "where status = 'todo' and lock is distinct from %s for update",
+            (lock,),
+        )
+        conn.execute("set search_path to procrastinate")
+        worker = conn.execute("select worker_id from procrastinate_register_worker_v1()")
+        (worker_id,) = worker.fetchone() or (None,)
+        row = conn.execute(
+            "select id, args from procrastinate_fetch_job_v2(null, %s)", (worker_id,)
+        ).fetchone()
+        hold.rollback()
+    return None if row is None or row[0] is None else {"id": row[0], "args": row[1]}
+
+
+def finish_job(g: G, job_id: int, status: str) -> None:
+    """What a worker does when a job returns (``succeeded``) or raises (``failed``)."""
+    with psycopg.connect(g.b.dsn, autocommit=True) as conn:
+        conn.execute("set search_path to procrastinate")
+        conn.execute("select procrastinate_finish_job_v1(%s, %s, false)", (job_id, status))
+
+
+async def test_a_push_redelivered_during_its_first_step_waits_and_builds_nothing_more(
+    g: G, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every step of one commit takes the lock ``push:<app>:<sha>``: a redelivery while step 1
+    runs is not fetched until it ends, then stops at ``duplicate``. One check run, one build."""
+    await connect(g)
+    sha = sha_of(5)
+    publish(g, sha)
+    real = push_module.fetch_bundle
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        await release.wait()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(push_module, "fetch_bundle", held)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    first = fetch_job(g, sha)
+    assert first is not None
+    running = asyncio.create_task(run_push(g.ports, **first["args"]))
+    await entered.wait()
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    assert fetch_job(g, sha) is None  # the redelivery waits for the running step
+    release.set()
+    assert await running == "building"
+    finish_job(g, first["id"], "succeeded")
+    again = fetch_job(g, sha)
+    assert again is not None
+    assert again["args"]["build_id"] is None  # the redelivery runs before the next step
+    assert await run_push(g.ports, **again["args"]) == "duplicate"
+    finish_job(g, again["id"], "succeeded")
+    assert len(rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")) == 1
+    (check,) = g.hub.ssc_runs(sha)
+    assert check["status"] == "in_progress"
+    (follow,) = todo(g, sha)
+    assert follow["args"]["build_id"] is not None
+
+
+async def test_a_push_step_that_raises_releases_the_commit_lock(
+    g: G, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A step that raises ends ``failed``, which frees ``push:<app>:<sha>`` for the next one."""
+    await connect(g)
+    sha = sha_of(6)
+    publish(g, sha)
+    real = push_module.fetch_bundle
+
+    async def broken(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("the network went away")
+
+    monkeypatch.setattr(push_module, "fetch_bundle", broken)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    first = fetch_job(g, sha)
+    assert first is not None
+    with pytest.raises(OSError):
+        await run_push(g.ports, **first["args"])
+    finish_job(g, first["id"], "failed")
+    monkeypatch.setattr(push_module, "fetch_bundle", real)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    again = fetch_job(g, sha)
+    assert again is not None
+    assert await run_push(g.ports, **again["args"]) == "building"
+
+
+async def retried(g: G, sha: str, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """The waiting push step raises once (``name`` in ``push`` fails), then Procrastinate's retry
+    runs the same job, with the same arguments, to the end."""
+    (job,) = todo(g, sha)
+    take_job(g.b.dsn, job["queueing_lock"])
+
+    async def broken(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("the network went away")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(push_module, name, broken)
+        with pytest.raises(OSError) as raised:
+            await run_push(g.ports, **job["args"])
+    assert github_jobs.RETRY.get_retry_decision(exception=raised.value, job=attempt(0))
+    await run_push(g.ports, **job["args"])
+    done(g, sha)
+
+
+def attempt(attempts: int) -> Job:
+    return Job(
+        id=1, queue="default", lock=None, queueing_lock=None, task_name="t", attempts=attempts
+    )
+
+
+def test_the_push_job_retries_a_step_that_raises() -> None:
+    assert github_jobs.blueprint().tasks["run_push"].retry_strategy is github_jobs.RETRY
+
+
+async def test_a_step_1_retried_after_its_check_run_opened_reuses_it_and_deploys(
+    g: G, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await connect(g)
+    sha = sha_of(19)
+    publish(g, sha)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    await retried(g, sha, monkeypatch, "fetch_bundle")  # after the check run, before _store
+    (check,) = g.hub.ssc_runs(sha)
+    assert (check["status"], check["external_id"]) == ("in_progress", g.b.w.app)
+    (build,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")
+    (job,) = todo(g, sha)
+    assert job["args"]["check_run_id"] == check["id"]
+    assert await run_build(g.ports, org_id=g.b.w.org, build_id=build["id"]) == "succeeded"
+    assert await step(g, sha) == "deploying"
+    (dep,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.deployment")
+    assert await run(g.b, dep["id"], g.ports) == "healthy"
+    assert await step(g, sha) == "healthy"
+    assert len(g.hub.ssc_runs(sha)) == 1
+    assert (check["status"], check["conclusion"]) == ("completed", "success")
+
+
+async def test_a_step_2_retried_after_it_raised_deploys(
+    g: G, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await connect(g)
+    sha = sha_of(20)
+    publish(g, sha)
+    assert deliver(g, "push", push_event(g, sha)).status_code == 202
+    assert await step(g, sha) == "building"
+    (build,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.build")
+    assert await run_build(g.ports, org_id=g.b.w.org, build_id=build["id"]) == "succeeded"
+    await retried(g, sha, monkeypatch, "defer_deployment")  # inside step 2's transaction
+    (dep,) = rows_of(g.b.dsn, g.b.w.org, "select id from ssc.deployment")
+    assert await run(g.b, dep["id"], g.ports) == "healthy"
+    assert await step(g, sha) == "healthy"
+    (check,) = g.hub.ssc_runs(sha)
+    assert (check["status"], check["conclusion"]) == ("completed", "success")
 
 
 async def test_a_secret_in_the_pushed_source_fails_the_check_and_builds_nothing(
@@ -846,6 +1043,29 @@ async def test_paging_stops_on_an_empty_short_or_counted_page() -> None:
             got = await github.check_runs(repo, sha)
             assert [r["id"] for r in got] == [r["id"] for r in hub.check_runs.get(sha, [])]
             assert gets(hub, f"/commits/{sha}/check-runs") == requests, runs
+    finally:
+        await github.aclose()
+
+
+async def test_the_open_check_run_is_this_apps_and_not_completed() -> None:
+    hub = FakeGitHub()
+    raw = hub.repo("acme/ledger", INSTALLATION)
+    repo = RepoRef(installation_id=INSTALLATION, id=raw["id"], name="acme/ledger")
+    github = hub.client()
+    sha = sha_of(24)
+    try:
+        assert await github.open_check_run(repo, sha, "app_a") is None
+        hub.ci(sha, CHECK_NAME, CI, "main", status="in_progress", conclusion=None)  # no app's id
+        for app, status in [("app_a", "completed"), ("app_b", "in_progress")]:
+            run = hub.ci(sha, CHECK_NAME, CI, "main", status=status)
+            run["external_id"] = app
+        theirs = run["id"]
+        assert await github.open_check_run(repo, sha, "app_a") is None
+        report = CheckReport(status="in_progress", title="Building", summary="Building.")
+        mine = await github.create_check_run(repo, sha, report, external_id="app_a")
+        assert await github.open_check_run(repo, sha, "app_a") == mine
+        # another app's open run on the same commit is found behind this newer one
+        assert await github.open_check_run(repo, sha, "app_b") == theirs
     finally:
         await github.aclose()
 

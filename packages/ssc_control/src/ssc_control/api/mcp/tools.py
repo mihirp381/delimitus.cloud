@@ -42,7 +42,7 @@ import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Final, Literal, cast
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 import httpx2
@@ -127,8 +127,7 @@ Who = Annotated[
 ConnectionName = Annotated[
     str,
     Field(
-        min_length=1,
-        max_length=300,
+        pattern=r"^[a-z][a-z0-9-]{0,62}$",
         description="The data connection's name, as the app's `ssc.toml` names it.",
     ),
 ]
@@ -186,6 +185,18 @@ class Refused(Exception):  # noqa: N818  (a refusal to report, not a programming
     def __init__(self, error: Body) -> None:
         super().__init__(error.get("code"))
         self.error = error
+
+
+def seg(value: object) -> str:
+    """``value`` as one path segment: every ``/``, ``?``, ``#`` and ``%`` escaped, and never a
+    dot segment, so no argument can move a call to another route. Arguments are also
+    pattern-checked; this is the second layer."""
+    text = str(value)
+    if text in {"", ".", ".."}:
+        raise Refused(
+            local_error("VALIDATION_FAILED", "Not a valid name.", f"{text!r} is not a name or id.")
+        )
+    return quote(text, safe="")
 
 
 def local_error(code: str, title: str, detail: str, status: int | None = None) -> Body:
@@ -303,7 +314,7 @@ async def rollback_to(  # noqa: PLR0913  (the rollback tool's arguments)
 ) -> Body:
     """Post the rollback; a ``SCHEMA_AHEAD`` refusal comes back with the migrations named."""
     found = await resolve_app(c, app)
-    env_path = f"/v1/apps/{found['id']}/environments/{environment_id(found, env)}"
+    env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(environment_id(found, env))}"
     sent: Body = {"release_id": release, "kind": "rollback"}
     if confirm:
         sent["confirm"] = True
@@ -336,10 +347,10 @@ def waiting_note(notice: str, operation_id: str) -> str:
 async def resolve_app(c: V1, ref: str) -> Body:
     """An ``app_`` id, or a slug looked up in the org's app list (as ``ssc`` does)."""
     if ref.startswith(APP_PREFIX):
-        return await c.get(f"/v1/apps/{ref}")
+        return await c.get(f"/v1/apps/{seg(ref)}")
     for app in (await c.get("/v1/apps"))["apps"]:
         if app["slug"] == ref:
-            return await c.get(f"/v1/apps/{app['id']}")
+            return await c.get(f"/v1/apps/{seg(app['id'])}")
     raise Refused(
         local_error(
             "APP_NOT_FOUND",
@@ -381,7 +392,7 @@ async def releases_page(c: V1, app_id: str, limit: int, before: int | None) -> B
     query: dict[str, int] = {"limit": limit}
     if before is not None:
         query["before"] = before
-    return await c.get(f"/v1/apps/{app_id}/releases?{urlencode(query)}")
+    return await c.get(f"/v1/apps/{seg(app_id)}/releases?{urlencode(query)}")
 
 
 async def list_releases_of(c: V1, ref: str, limit: int, before: int | None) -> Body:
@@ -426,7 +437,7 @@ async def deploy_release(c: V1, app: Body, preview_id: str, release: Body, key: 
     url = env["url"]
     current = env["current_deployment_id"]
     if current is not None:
-        op = await c.get(f"/v1/operations/{current}")
+        op = await c.get(f"/v1/operations/{seg(current)}")
         if op["release_id"] == release["release_id"] and op["state"] == "healthy":
             return {
                 "stage": "live",
@@ -435,7 +446,7 @@ async def deploy_release(c: V1, app: Body, preview_id: str, release: Body, key: 
                 "url": url,
                 "next": f"Preview runs this bundle now at {url}. Nothing more to do.",
             }
-    path = f"/v1/apps/{app['id']}/environments/{preview_id}/deployments"
+    path = f"/v1/apps/{seg(app['id'])}/environments/{seg(preview_id)}/deployments"
     body = {"release_id": release["release_id"], "kind": "deploy"}
     r = await c.post(path, body, derived_key("deploy", key))
     accepted: Body = r.json()
@@ -461,12 +472,12 @@ async def upload_and_build(  # noqa: PLR0913  (keyword-only)
     """Record and complete the bundle, then build it on preview; ``upload`` until the bytes
     are there."""
     # Fresh keys: a replayed answer would carry an upload URL that has expired.
-    bundles = f"/v1/apps/{app_id}/bundles"
+    bundles = f"/v1/apps/{seg(app_id)}/bundles"
     r = await c.post(bundles, {"digest": digest, "size_bytes": size}, fresh_key())
     bundle: Body = r.json()
     if bundle["state"] == "pending":
         try:
-            done = await c.post(f"{bundles}/{bundle['bundle_id']}/complete", {}, fresh_key())
+            done = await c.post(f"{bundles}/{seg(bundle['bundle_id'])}/complete", {}, fresh_key())
         except Refused as e:
             if e.error["code"] != "BUNDLE_NOT_UPLOADED":
                 raise
@@ -479,7 +490,7 @@ async def upload_and_build(  # noqa: PLR0913  (keyword-only)
                 "deploy again with the same arguments.",
             }
         bundle = done.json()
-    path = f"/v1/apps/{app_id}/environments/{preview_id}/builds"
+    path = f"/v1/apps/{seg(app_id)}/environments/{seg(preview_id)}/builds"
     again = (
         "call deploy again with the same arguments. If it failed, fix the source; to retry "
         "the same bundle, send a new idempotency_key."
@@ -576,7 +587,7 @@ async def ask_share(  # noqa: PLR0913  (keyword-only)
         )
     attempt = 0
     while True:
-        current = await c.get(f"/v1/apps/{found['id']}/environments/{env_id}/grants")
+        current = await c.get(f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}/grants")
         version = current["grants_version"]
         existing: list[GrantKey] = [
             (g["role"], g["subject_kind"], g["subject_id"]) for g in current["grants"]
@@ -657,7 +668,8 @@ async def logs_of(  # noqa: PLR0913  (keyword-only)
         query.update(since=since, limit=limit)
     else:
         query["after"] = after
-    page = await c.get(f"/v1/apps/{found['id']}/environments/{env_id}/logs?{urlencode(query)}")
+    env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}"
+    page = await c.get(f"{env_path}/logs?{urlencode(query)}")
     text = "\n".join(
         f"{line['timestamp']} {line['severity']} {redact(line['text'])}" for line in page["lines"]
     )
@@ -762,9 +774,8 @@ def _org_tools(
         async def work(c: V1) -> Body:
             found = await resolve_app(c, app)
             env_id = environment_id(found, environment)
-            return await c.get(
-                f"/v1/apps/{found['id']}/environments/{env_id}/connections/{connection}/schema"
-            )
+            env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}"
+            return await c.get(f"{env_path}/connections/{seg(connection)}/schema")
 
         return await run(api, ctx, work)
 
@@ -805,12 +816,12 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
             current: dict[str, Body | None] = {}
             for env in found["environments"]:
                 dep = env["current_deployment_id"]
-                current[env["name"]] = await c.get(f"/v1/operations/{dep}") if dep else None
+                current[env["name"]] = await c.get(f"/v1/operations/{seg(dep)}") if dep else None
             out: Body = {"app": found, "current": current}
             if operation is not None:
-                out["operation"] = await c.get(f"/v1/operations/{operation}")
+                out["operation"] = await c.get(f"/v1/operations/{seg(operation)}")
             if build is not None:
-                out["build"] = await c.get(f"/v1/builds/{build}")
+                out["build"] = await c.get(f"/v1/builds/{seg(build)}")
             return out
 
         return await run(api, ctx, work)

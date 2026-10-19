@@ -1,13 +1,16 @@
 """``ssc doctor``: each rule fires on its synthetic fixture, and only there."""
 
 import json
+import tarfile
 from pathlib import Path
 from typing import get_args
 
 import pytest
 
+from ssc_bundle.pack import pack
 from ssc_cli.doctor import run_doctor
 from ssc_cli.doctor.finding import FIX, SEVERITY, DoctorCode
+from ssc_cli.doctor.rules import SKIP_DIRS, packed_files
 from ssc_cli.errors import ExitCode
 from ssc_cli.shapes import DoctorResult
 from ssc_contracts.manifest import MAX_MANIFEST_BYTES, ManifestError, load_manifest
@@ -517,6 +520,27 @@ def test_a_secret_in_an_env_file_or_an_ignored_file_is_not_reported(tmp_path):
         },
     )
     assert codes(tmp_path) == []
+
+
+@pytest.mark.parametrize("folder", ["build", "dist", "out", ".next", "coverage"])
+def test_a_secret_in_build_output_is_reported_as_the_deploy_refuses_it(tmp_path, folder):
+    """The deploy packs build output, so doctor and preflight check it too."""
+    key = "AKIA" + "QWERTYUIOPASDFGH"
+    make(tmp_path, {"package.json": PKG, "server.js": SERVER, f"{folder}/server.js": f"'{key}'\n"})
+    found = [(f.code, f.path) for f in run_doctor(tmp_path)]
+    assert found == [("SECRET_IN_BUNDLE", f"{folder}/server.js")]
+
+
+def test_doctor_checks_the_files_the_packer_packs(tmp_path):
+    files = {f"{d}/f.js": "x\n" for d in SKIP_DIRS - {".git"}}
+    files |= {"server.js": SERVER, ".env.local": "A=1\n", ".sscignore": "notes/\n"}
+    make(tmp_path, files | {"notes/a.md": "x\n", "src/deep/b.py": "x\n", ".DS_Store": ""})
+    (tmp_path / ".git").write_text("gitdir: elsewhere\n")
+    bundle = pack(tmp_path, tmp_path.parent / "bundle.tar.gz")
+    with tarfile.open(bundle.path) as tar:
+        shipped = sorted(m.name for m in tar.getmembers() if m.isfile())
+    assert packed_files(tmp_path) == shipped
+    assert "build/f.js" in shipped and "node_modules/f.js" not in shipped
 
 
 @pytest.mark.parametrize(

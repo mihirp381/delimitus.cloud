@@ -113,7 +113,7 @@ app.use(async (req, res, next) => {
 
 ## Test vectors
 
-`conformance/identity_note/vectors.json` holds the JWKS, a fixed `now`, two app origins and 33 cases: six that verify and 27 that must be refused with a named code (wrong audience, expired, not yet valid, foreign key, unknown `kid`, missing `kid`, tampered payload, `alg` none, HS256, wrong or missing `typ`, TTL over 300 s, 51 groups, email as subject, schedule note with email or name, unknown role, unknown claim, malformed tokens). Regenerate with `uv run python conformance/identity_note/generate.py`; the signing keys beside it are throwaway test keys. Both helpers run every case in CI, and a Python test checks that regenerating gives the same cases.
+`conformance/identity_note/vectors.json` holds the JWKS, a fixed `now`, two app origins and 34 cases: six that verify and 28 that must be refused with a named code (wrong audience, another issuer with the issuer pinned (a case's `issuer` is the one the verifier pins), expired, not yet valid, foreign key, unknown `kid`, missing `kid`, tampered payload, `alg` none, HS256, wrong or missing `typ`, TTL over 300 s, 51 groups, email as subject, schedule note with email or name, unknown role, unknown claim, malformed tokens). Regenerate with `uv run python conformance/identity_note/generate.py`; the signing keys beside it are throwaway test keys. Both helpers run every case in CI, and a Python test checks that regenerating gives the same cases.
 
 ## Still owed by other tickets
 

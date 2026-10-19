@@ -59,7 +59,12 @@ from ssc_control.db import bound_org, check_org_id
 from ssc_control.identity import connections, join, pages, sessions, tokens
 from ssc_control.identity.authorize import DEVICE_GRANT, Kit, OAuthFlow
 from ssc_control.identity.cell_callers import CallerCheck
-from ssc_control.identity.limits import CI_TOKENS_PER_HOUR, RateLimit
+from ssc_control.identity.limits import (
+    CI_TOKENS_PER_HOUR,
+    DEVICE_PER_HOUR,
+    RateLimit,
+    client_address,
+)
 from ssc_control.identity.rules import LoginRefusal, ProfileError, parse_return_to
 from ssc_control.identity.settings import AuthSettings
 from ssc_control.identity.workos import WorkOSClient, WorkOSError
@@ -462,8 +467,18 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
 
     # ── command line (RFC 8628, RFC 7009) ─────────────────────────────────────
 
+    device_limit = RateLimit(host.clock, DEVICE_PER_HOUR)
+
     @app.post("/device/authorize")
     async def device_authorize(request: Request) -> JSONResponse:
+        peer = request.client.host if request.client is not None else None
+        address = client_address(request.headers.get("x-forwarded-for"), peer, s.trusted_hops)
+        if not device_limit.allow(address):
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": "too many device logins"},
+                status_code=429,
+                headers={"retry-after": "3600", "cache-control": "no-store"},
+            )
         form = _form(await request.body())
         org_id, agent = _org(form.get("org", "")), form.get("agent")
         if org_id is None or (agent is not None and not tokens.AGENT_CLIENT.fullmatch(agent)):

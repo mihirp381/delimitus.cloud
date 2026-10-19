@@ -81,12 +81,12 @@ A failure here never reaches a user: only the throwaway environment is granted. 
 ## 6. Check the ceiling
 
 1. Share an environment that uses the connection with a person outside the ceiling (or the whole org). Pass: `APPROVAL_REQUIRED` until an `exceed_ceiling` request for that connection and that audience is approved by the owner or an admin (never the requester).
-2. Lower the ceiling (`PATCH` with a shorter list). Pass: every environment now over it shows `over_ceiling_since` in `ssc connections`, with one `connection.flagged` audit row each. No approval is opened and the data gateway is not told; the flag clears when the audience is narrowed inside the ceiling.
+2. Lower the ceiling (`PATCH` with a shorter list). Pass: every environment now over it, except one whose exact audience an `exceed_ceiling` request approved, shows `over_ceiling_since` in `ssc connections`, with one `connection.flagged` audit row each. No approval is opened and the data gateway is not told; the flag clears when the audience is narrowed inside the ceiling.
 
 ## Know before you rely on it
 
 - A user is inside a group ceiling when they are an active member of a listed group at the moment of the check. When the directory sync (or the internal directory route) changes the members of a listed group, every environment now over the ceiling is flagged and one `exceed_ceiling` approval asks the connection's owner, who decides; approving clears the flag. The data gateway is not told, and suspending the connection stays the admin's action. Deactivating a user is not re-checked yet.
-- An approved widening keeps covering those grants: a later directory change re-flags the environment but asks nobody, and narrowing the audience or suspending the connection is the action.
+- An approved widening keeps covering those grants: a later directory change or a narrower ceiling does not flag the environment again, because the approval names the grants, not the ceiling. To withdraw it, narrow the audience or suspend the connection.
 - `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and up to ten run, so a grant can reach up to ten times them (decision 034). Say so to the data owner when they set them.
 - The ceiling is not enforced at the data gateway. Flagging is the signal; narrowing the audience or suspending the connection is the action.
 - Rolling back: `DELETE /v1/apps/<app>/environments/<env>/connections/finance` stops an environment reaching it; `{"status": "suspended"}` stops all of them.

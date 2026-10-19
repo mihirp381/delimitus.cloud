@@ -16,7 +16,7 @@ Pure data. Signing lives in ``ssc_control.timers.https`` and verification in
 ``ssc_edge.schedule_token``.
 """
 
-from typing import Final, Literal
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -45,7 +45,7 @@ class ScheduleClaims(BaseModel):
     exp: int = Field(ge=0)
 
     @model_validator(mode="after")
-    def _consistent(self) -> ScheduleClaims:
+    def _consistent(self) -> Self:
         if self.exp <= self.iat:
             raise ValueError("exp must be after iat")
         if self.exp - self.iat > MAX_TTL_SECONDS:

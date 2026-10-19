@@ -4,8 +4,7 @@ import json
 
 import httpx2
 import pytest
-from edge_world import HOST, LABEL, NONCE, NOW, ORG
-from test_server import Tokens, env
+from edge_world import HOST, LABEL, NONCE, NOW, ORG, Tokens, env
 
 from ssc_edge.redeemer import HttpRedeemer, session_of
 from ssc_edge.server import SettingsError, redeemer_for, settings_from_env

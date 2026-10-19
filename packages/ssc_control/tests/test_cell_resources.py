@@ -43,12 +43,15 @@ import psycopg
 import pytest
 import test_deploy
 from fastapi.routing import APIRoute
+from sqlalchemy.exc import OperationalError
 from ssc_testkit import SigningKey, assert_problem, auth, mint, new_key, with_cell
 from test_deploy import (
     Bench,
     SpyGate,
+    blip,
     build_release,
     get,
+    job_context,
     manifest_of,
     operation,
     pointer,
@@ -67,6 +70,7 @@ from ssc_control.api.routes.v1 import cell as cell_api
 from ssc_control.approvals import service
 from ssc_control.audit import Actor
 from ssc_control.cell import create, tasks, verify
+from ssc_control.cell import jobs as cell_jobs
 from ssc_control.cell.deployer import (
     DEPLOYER_ENV,
     DEPLOYER_JOB_ENV,
@@ -478,6 +482,45 @@ async def test_a_resource_that_keeps_failing_fails_its_waiters_and_a_later_deplo
     asked = cell_audit(b)[-1]
     assert asked["action"] == "cell.resource_requested"
     assert asked["before"] == {"state": "failed", "failure_code": create.CELL_DEPLOYER_FAILED}
+
+
+async def test_a_resource_whose_job_runs_out_of_attempts_fails_and_wakes_its_waiters(
+    cell: Cell, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    b = cell.b
+    op = await stateful_deploy(cell, b.w.preview)
+    assert await run(b, op, cell.ports) == "running"
+    done(b.dsn, create_lock(b))
+    step = cell_jobs.blueprint().tasks["create_resource"]
+    monkeypatch.setattr(create, "defer_create", blip)
+    # With attempts left the step raises for Procrastinate to run it again.
+    with pytest.raises(OperationalError):
+        await step.func(job_context(cell.ports, 0), org_id=b.w.org, resource=DB.value)
+    assert resources_of(b)["database"]["state"] == "creating"
+    assert waiters(b) == [op]
+    # The last attempt fails the resource and re-defers the deployment waiting for it.
+    last = job_context(cell.ports, cell_jobs.RETRY.max_attempts)
+    with pytest.raises(OperationalError):
+        await step.func(last, org_id=b.w.org, resource=DB.value)
+    monkeypatch.undo()
+    row = resources_of(b)["database"]
+    assert (row["state"], row["failure_code"]) == ("failed", create.CELL_RESOURCE_STALLED)
+    assert cell_audit(b)[-1]["action"] == "cell.resource_failed"
+    assert len(jobs(b, f"dep:{op}")) == 1
+    assert await run(b, op, cell.ports) == "failed"
+    assert operation(b, op)["failure_code"] == CELL_RESOURCE_FAILED
+    assert waiters(b) == []
+    # A resource that already ended is left as it is; a later deploy asks again.
+    assert await create.give_up(cell.ports, org_id=b.w.org, resource=DB) == "failed"
+    again = await stateful_deploy(cell, b.w.preview)
+    assert await run(b, again, cell.ports) == "running"
+    assert resources_of(b)["database"]["state"] == "requested"
+
+
+def test_the_cell_jobs_retry_a_step_that_raises() -> None:
+    tasks_of = cell_jobs.blueprint().tasks
+    for name in ("create_resource", "warm_gateway"):
+        assert tasks_of[name].retry_strategy is cell_jobs.RETRY
 
 
 async def test_with_no_deployer_the_resource_fails_at_once(cell: Cell) -> None:

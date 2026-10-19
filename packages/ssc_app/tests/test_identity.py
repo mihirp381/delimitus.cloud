@@ -37,6 +37,7 @@ def _load_generator() -> Any:
 
 def _check(case: dict[str, Any], **kw: Any) -> None:
     expect = case["expect"]
+    kw = {"issuer": case.get("issuer"), **kw}
     if "ok" in expect:
         note = verify(case["token"], audience=case["audience"], now=VECTORS["now"], **kw)
         got = note.model_dump(exclude_none=True)
@@ -55,7 +56,7 @@ def test_vector(name: str) -> None:
 
 def test_vectors_cover_every_refusal_code() -> None:
     seen = {c["expect"]["refused"] for c in VECTORS["cases"] if "refused" in c["expect"]}
-    assert seen == REFUSAL_CODES - {"wrong_issuer"}  # issuer is optional; tested below
+    assert seen == REFUSAL_CODES
 
 
 def test_wrong_issuer_when_pinned() -> None:

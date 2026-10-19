@@ -10,9 +10,11 @@ created, when a ceiling changes, and when the directory changes the members of a
 lists (GA-5.3, decision 034). Changing a ceiling only flags: every environment now over it gets
 ``over_ceiling_since`` and one ``connection.flagged`` row. A directory change flags the same way
 and also opens one ``exceed_ceiling`` approval per environment it newly flags, asked in the name
-of the app's owner, for the connection's owner or an org admin to decide. Nothing is blocked at
-the data gateway and nothing is suspended. The flag clears when the environment's audience is back
-inside every ceiling, or when a widening past it was approved; clearing withdraws the pending
+of the app's owner, for the connection's owner or an org admin to decide. An environment whose
+exact grants an approved ``exceed_ceiling`` request covers for the connection is not over it, on
+every path: the approval names the grants, not the ceiling. Nothing is blocked at the data gateway
+and nothing is suspended. The flag clears when the environment's audience is back inside every
+ceiling, or when a widening past it was approved; clearing withdraws the pending
 ``exceed_ceiling`` requests on that environment and connection. Directory membership is read at
 the moment of each check; a deactivation is not re-checked.
 """
@@ -57,6 +59,15 @@ Status = Literal["active", "suspended"]
 CONNECTION: Final = "connection"
 GRANT: Final = "connection_grant"
 BACK_INSIDE: Final = "the audience is back inside the ceiling"
+LIMIT_KEYS: Final = (
+    "max_rows",
+    "max_bytes",
+    "timeout_ms",
+    "concurrency",
+    "daily_rows",
+    "daily_bytes",
+)
+"""The caps a connection and a grant may carry (``SnapshotLimits``), one flat audit key each."""
 _COLUMNS: Final = (
     "id, name, kind, classification, owner_user_id, ceiling, allowed_schemas, limits, "
     "setup_status, status, created_at, updated_at"
@@ -100,7 +111,7 @@ _OF_CONNECTION = text(
     "where org_id = :org and connection_id = :con order by environment_id for update"
 )
 _FIND_GRANT = text(
-    "select id from ssc.connection_grant "
+    "select id, limits from ssc.connection_grant "
     "where org_id = :org and connection_id = :con and environment_id = :env for update"
 )
 _INSERT_GRANT = text(
@@ -178,7 +189,14 @@ class Connection:
             "allowed_schemas": list(self.allowed_schemas),
             "setup_status": self.setup_status,
             "status": self.status,
+            **limits_view(self.limits),
         }
+
+
+def limits_view(limits: Mapping[str, Any] | None) -> dict[str, int | None]:
+    """The caps as flat audit keys, one per cap, None where there is none."""
+    given = limits or {}
+    return {k: None if given.get(k) is None else int(given[k]) for k in LIMIT_KEYS}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -392,17 +410,33 @@ async def environment_grants(
     return {(str(r[0]), str(r[1]), None if r[2] is None else str(r[2])) for r in rows}
 
 
+async def _approved_past(
+    conn: AsyncConnection, org_id: str, env_id: str, name: str, grants: Collection[GrantKey]
+) -> bool:
+    """Whether the newest ``exceed_ceiling`` request for connection ``name`` and exactly
+    ``grants`` on the environment is approved: the test linking an environment applies. Its key
+    names no ceiling, so an approval covers the grants it named whatever the ceiling becomes."""
+    req = Requirement(RequirementKind.EXCEED_CEILING, exceed_subject_key(name, grants))
+    found = (
+        await approvals.newest(conn, org_id=org_id, environment_id=env_id, requirements=[req])
+    ).get(req)
+    return found is not None and found.state == "approved"
+
+
 async def flag_over_ceiling(
     conn: AsyncConnection, org_id: str, connection: Connection, actor: Actor
 ) -> list[str]:
-    """Flag every environment using ``connection`` whose audience is now over its ceiling, one
-    ``connection.flagged`` row each, and clear the flag of those back inside (withdrawing their
-    pending ``exceed_ceiling`` requests). Opens no approval. The environments newly flagged."""
+    """Flag every environment using ``connection`` whose audience is now over its ceiling and not
+    approved past it (:func:`_approved_past`), one ``connection.flagged`` row each, and clear the
+    flag of the others (withdrawing their pending ``exceed_ceiling`` requests). Opens no
+    approval. The environments newly flagged."""
     flagged: list[str] = []
     rows = (await conn.execute(_OF_CONNECTION, {"org": org_id, "con": connection.id})).all()
     for grant_id, env_id, since in rows:
         grants = await environment_grants(conn, org_id, str(env_id))
         over = exceeds(await _resolved(conn, org_id, connection.ceiling, grants), grants)
+        if over:
+            over = not await _approved_past(conn, org_id, str(env_id), connection.name, grants)
         if over and since is None:
             await conn.execute(_FLAG, {"org": org_id, "id": grant_id})
             await _audit(
@@ -631,11 +665,26 @@ async def grant(  # noqa: PLR0913  (keyword-only)
     """Link the environment to ``connection``, or replace the limits of a link it has. The
     link's id, and whether it is new."""
     params = {"org": org_id, "con": connection.id, "env": environment_id}
-    found = (await conn.execute(_FIND_GRANT, params)).scalar_one_or_none()
+    found = (await conn.execute(_FIND_GRANT, params)).first()
     if found is not None:
-        await conn.execute(_SET_LIMITS, {"org": org_id, "id": found, "limits": _dump(limits)})
+        found_id = str(found[0])
+        await conn.execute(_SET_LIMITS, {"org": org_id, "id": found_id, "limits": _dump(limits)})
+        old, new = limits_view(found[1]), limits_view(limits)
+        changed = [k for k in new if new[k] != old[k]]
+        if changed:
+            where = {"connection_id": connection.id, "environment_id": environment_id}
+            await _audit(
+                conn,
+                org_id,
+                actor,
+                AuditAction.CONNECTION_UPDATED,
+                target_kind=GRANT,
+                target_id=found_id,
+                before={**where, **{k: old[k] for k in changed}},
+                after={**where, **{k: new[k] for k in changed}},
+            )
         await mark_dirty(conn, org_id)
-        return str(found), False
+        return found_id, False
     grant_id = new_id("cgr")
     await conn.execute(
         _INSERT_GRANT,

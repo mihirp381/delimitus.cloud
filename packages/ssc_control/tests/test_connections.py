@@ -47,7 +47,7 @@ from ssc_contracts.audit import AuditAction
 from ssc_contracts.connections import AVAILABLE as AVAILABLE_KINDS
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
-from ssc_contracts.snapshot import SnapshotDoc
+from ssc_contracts.snapshot import SnapshotDoc, SnapshotLimits
 from ssc_control.api import Settings, create_app
 from ssc_control.api.settings import INTERNAL_AUDIENCE
 from ssc_control.connections import service as connection_service
@@ -672,6 +672,42 @@ def test_the_snapshot_carries_ready_connections_with_their_grants(
     assert list(compiled(dsns.app, world)["connections"]) == ["finance"]
 
 
+def test_a_change_to_the_caps_is_audited_cap_by_cap(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    """Review A-11: changing a grant's caps writes one ``connection.updated`` row on the grant,
+    and a connection's, one on the connection, each naming the caps that changed."""
+    assert connection_service.LIMIT_KEYS == tuple(SnapshotLimits.model_fields)
+    finance(client, world, tokens, None, classification="internal")
+    path = link_path(world, world.prod, "finance")
+
+    def put_limits(body: dict[str, Any]) -> list[dict[str, Any]]:
+        r = client.put(path, json=body, headers=auth(tokens.admin))
+        assert r.status_code == 200, r.text
+        rows = events_of(dsns.app, world.org, AuditAction.CONNECTION_UPDATED)
+        return [e for e in rows if e["target_kind"] == connection_service.GRANT]
+
+    assert put_limits({"limits": {"max_rows": 10, "timeout_ms": 500}}) == []
+    ((con_id,),) = rows(dsns.app, world, "select id from ssc.connection where name = 'finance'")
+    where = {"connection_id": con_id, "environment_id": world.prod}
+    (removed,) = put_limits({"limits": {"timeout_ms": 500}})
+    assert (removed["before"], removed["after"]) == (
+        {**where, "max_rows": 10},
+        {**where, "max_rows": None},
+    )
+    _, raised = put_limits({"limits": {"max_rows": 1000000, "timeout_ms": 500}})
+    assert (raised["before"], raised["after"]) == (
+        {**where, "max_rows": None},
+        {**where, "max_rows": 1000000},
+    )
+    assert len(put_limits({"limits": {"max_rows": 1000000, "timeout_ms": 500}})) == 2
+    capped = patch(client, tokens.admin, "finance", {"limits": {"daily_rows": 5000}})
+    assert capped.status_code == 200, capped.text
+    updated = events_of(dsns.app, world.org, AuditAction.CONNECTION_UPDATED)[-1]
+    assert updated["target_kind"] == connection_service.CONNECTION
+    assert (updated["before"], updated["after"]) == ({"daily_rows": None}, {"daily_rows": 5000})
+
+
 def test_a_change_marks_the_snapshot_dirty(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:
@@ -1026,6 +1062,30 @@ def test_narrowing_the_sharing_withdraws_the_re_check_request(
     assert (cancelled["actor_kind"], cancelled["actor_id"]) == ("user", world.admin)
 
 
+def test_an_approved_audience_is_not_flagged_by_a_directory_change_or_a_new_ceiling(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    """Review A-10: an environment linked past the ceiling by an approved ``exceed_ceiling`` for
+    its exact grants is not over it on any path, so no flag is left that no one can decide."""
+    group = add_group(dsns.app, world, [world.builder])
+    finance(client, world, tokens, ceiling_doc(("group", group)))
+    before, version = prod_grants(client, world, tokens)
+    wide = [*before, user_grant(world.approver)]
+    assert put(client, world, world.prod, tokens.admin, wide, version).status_code == 200
+    apr = ask_exceed(client, tokens.admin, world, wide)
+    assert decide_as(client, tokens, apr, world.member).status_code == 200
+    assert link(client, world, world.prod, tokens.admin).status_code == 200
+    r = set_members(client, signing_key, world, group, [world.builder, world.admin])
+    assert r.status_code == 200, r.text
+    narrowed = patch(
+        client, tokens.admin, "finance", {"ceiling": ceiling_doc(("user", world.builder))}
+    )
+    assert narrowed.status_code == 200, narrowed.text
+    assert links_of(client, world, world.prod, tokens.admin)[0]["over_ceiling_since"] is None
+    assert events_of(dsns.app, world.org, AuditAction.CONNECTION_FLAGGED) == []
+    assert [a["state"] for a in approvals_of(dsns.app, world.org)] == ["approved"]
+
+
 # GA-5.8: the columns an environment sees, from the cell's data gateway through the agent.
 
 ORDERS = Schema(
@@ -1153,6 +1213,7 @@ def test_the_columns_follow_the_approvals_rule(
         ("DATA_SNAPSHOT_STALE", 503, ErrorCode.DATA_SNAPSHOT_STALE),
         ("CONNECTION_UNAVAILABLE", 503, ErrorCode.CONNECTION_UNAVAILABLE),
         ("QUERY_TIMEOUT", 408, ErrorCode.QUERY_TIMEOUT),
+        ("QUERY_FAILED", 422, ErrorCode.CONNECTION_UNAVAILABLE),  # the source refused the read
         ("UNAUTHENTICATED", 401, ErrorCode.CELL_UNAVAILABLE),
         ("UNAVAILABLE", 503, ErrorCode.CELL_UNAVAILABLE),
         ("SOMETHING_NEW", 500, ErrorCode.CELL_UNAVAILABLE),

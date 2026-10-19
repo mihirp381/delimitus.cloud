@@ -558,7 +558,18 @@ async def test_an_awake_run_names_what_it_did_not_see(world: World, clock: Clock
 async def test_a_plain_answer_left_open_fails_the_run(
     world: World, clock: Clock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(kd, "WATCH_SECONDS", 0.5)
+    async def ended_on_the_clock(_: kd.Drill, stream: kd.Stream) -> float | None:
+        """``Drill._ended`` waits ``WATCH_SECONDS`` of real time, which a stream that never
+        ends would make this test wait for; here the watch is on the virtual clock, so the
+        stream that ends at 2.5 s always wins and the plain answer always times out."""
+        drained = asyncio.ensure_future(stream.drain())
+        watched = asyncio.ensure_future(clock.sleep(kd.WATCH_SECONDS))
+        done, _ = await asyncio.wait({drained, watched}, return_when=asyncio.FIRST_COMPLETED)
+        drained.cancel()
+        watched.cancel()
+        return clock() if drained in done else None
+
+    monkeypatch.setattr(kd.Drill, "_ended", ended_on_the_clock)
     world.plain_cut = None
     run = await clock.run(drill(world, clock).awake())
     assert run.stream == pytest.approx(2.5)

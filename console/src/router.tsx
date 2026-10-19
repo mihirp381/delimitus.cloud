@@ -44,9 +44,16 @@ export function createConsole({ baseUrl, session, oauth, fetch, history, isAdmin
     baseUrl,
     fetch,
     getToken: session.token,
+    // A token that outlived a sleeping machine is refreshed once; any other refusal signs out.
     onUnauthorized: () => {
-      void session.signOut();
-      toLogin();
+      void session.renew().then((renewed) => {
+        if (renewed) {
+          void queryClient.invalidateQueries();
+          return;
+        }
+        void session.signOut();
+        toLogin();
+      });
     },
   });
   session.onLost(toLogin);

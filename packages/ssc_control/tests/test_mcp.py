@@ -891,8 +891,7 @@ async def test_request_connection(world: World) -> None:
     assert approval["state"] == "pending"
     assert approval["requested_via_agent"] is True
     assert bad.is_error
-    assert bad.structured_content["error"]["code"] == "VALIDATION_FAILED"
-    assert bad.structured_content["error"]["status"] is not None
+    assert bad.structured_content is None  # refused by the tool's own argument pattern
 
 
 async def test_create_app_once_per_key_and_audited_as_agent(world: World) -> None:
@@ -937,6 +936,81 @@ async def test_describe_connection_reads_the_schema_route(world: World) -> None:
         described = await client.call_tool("describe_connection", args)
     assert described.is_error
     assert described.structured_content["error"]["code"] == "NOT_FOUND"
+
+
+ESCAPES = (
+    "../../../../../../v1/audit?limit=2#",
+    "../../../../../../v1/ci-tokens?x=",
+    "nothing/../../../../../../v1/users",
+    "nothing?limit=2",
+    "nothing#",
+    "..",
+)
+
+
+@pytest.mark.parametrize("name", ESCAPES)
+async def test_describe_connection_never_leaves_the_schema_route(world: World, name: str) -> None:
+    """A connection name is one path segment: ``../``, ``?`` and ``#`` never reach another
+    ``/v1`` route (here the audit log, the CI tokens, the users)."""
+    args = {"app": "mcp-app", "environment": "prod", "connection": name}
+    async with session(world.url, world.agent) as client:
+        described = await client.call_tool("describe_connection", args)
+    assert described.is_error
+    assert described.structured_content is None  # the argument pattern refused it
+    text = " ".join(getattr(c, "text", "") for c in described.content)
+    for key in ("events", "ci_tokens", "users"):
+        assert f'"{key}"' not in text
+
+
+ESCAPE_PATH = "../../../../../../v1/audit?limit=2#"
+ESCAPE_ARGS: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("get_app", {"app": ESCAPE_PATH}),
+    ("get_status", {"app": ESCAPE_PATH}),
+    ("get_status", {"app": "mcp-app", "operation": ESCAPE_PATH}),
+    ("get_status", {"app": "mcp-app", "build": ESCAPE_PATH}),
+    ("list_releases", {"app": ESCAPE_PATH}),
+    ("rollback", {"app": ESCAPE_PATH, "release": "rel_" + "0" * 20, "env": "preview"}),
+    ("rollback", {"app": "mcp-app", "release": ESCAPE_PATH, "env": "preview"}),
+    ("deploy", {"app": ESCAPE_PATH}),
+    ("request_share", {"app": ESCAPE_PATH, "env": "prod", "who": "org"}),
+    ("request_connection", {"app": ESCAPE_PATH, "connection": "ledger-db"}),
+    ("request_connection", {"app": "mcp-app", "connection": ESCAPE_PATH}),
+    ("describe_connection", {"app": ESCAPE_PATH, "environment": "prod", "connection": "x"}),
+    ("get_logs", {"app": ESCAPE_PATH, "env": "prod"}),
+    ("get_logs", {"app": "mcp-app", "env": "prod", "after": ESCAPE_PATH}),
+    ("set_secret", {"app": ESCAPE_PATH, "env": "prod", "name": "STRIPE_KEY"}),
+)
+
+
+@pytest.mark.parametrize(("tool", "args"), ESCAPE_ARGS)
+async def test_every_path_argument_is_pattern_checked(
+    world: World, tool: str, args: dict[str, Any]
+) -> None:
+    async with session(world.url, world.agent) as client:
+        result = await client.call_tool(tool, args)
+    assert result.is_error
+    assert result.structured_content is None  # refused before any /v1 call
+
+
+@pytest.mark.parametrize(
+    ("value", "segment"),
+    [
+        ("app_" + "a" * 20, "app_" + "a" * 20),
+        ("ledger-db", "ledger-db"),
+        ("../v1/audit", "..%2Fv1%2Faudit"),
+        ("x?limit=2#", "x%3Flimit%3D2%23"),
+        ("50%", "50%25"),
+    ],
+)
+def test_a_path_segment_is_always_one_segment(value: str, segment: str) -> None:
+    assert tools.seg(value) == segment
+
+
+@pytest.mark.parametrize("value", ["", ".", ".."])
+def test_a_dot_segment_is_refused(value: str) -> None:
+    with pytest.raises(tools.Refused) as refused:
+        tools.seg(value)
+    assert refused.value.error["code"] == "VALIDATION_FAILED"
 
 
 # ── releases and deploy ──────────────────────────────────────────────────────

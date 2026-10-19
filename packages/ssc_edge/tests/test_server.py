@@ -19,8 +19,10 @@ from edge_world import (
     PAY_HOST,
     PROD,
     FakeRedeemer,
+    Tokens,
     World,
     config,
+    env,
     session,
     snapshot,
 )
@@ -53,18 +55,6 @@ from ssc_shared.canonical import canonical_bytes
 from ssc_shared.clock import SystemClock
 from ssc_shared.runtime import service_name
 from ssc_shared.snapshot_feed import SnapshotFeed, latest_key, object_key
-
-
-class Tokens:
-    def __init__(self, fail: bool = False) -> None:
-        self.audiences: list[str] = []
-        self.fail = fail
-
-    async def identity(self, audience: str) -> str:
-        if self.fail:
-            raise RuntimeError("metadata server down")
-        self.audiences.append(audience)
-        return "google.id.token"
 
 
 def client(gate: Gate | None, tokens: Tokens | None = None) -> TestClient:
@@ -135,19 +125,6 @@ def test_every_failure_is_unavailable(world: World, case: str) -> None:
 
 def test_healthz(world: World) -> None:
     assert client(world.gate()).get("/healthz").json() == {"status": "ok"}
-
-
-def env(**changes: str) -> dict[str, str]:
-    base = {
-        "SSC_ORG_ID": ORG,
-        "SSC_CELL_LABEL": LABEL,
-        "SSC_PROJECT_NUMBER": "123456789012",
-        "SSC_CELL_BUCKET": f"ssc-c-{LABEL}-cell",
-        "SSC_GATEWAY_KEYRING": "Y2lwaGVy",
-        "SSC_GATEWAY_KMS_KEY": "projects/p/locations/l/keyRings/r/cryptoKeys/k",
-    }
-    base.update(changes)
-    return {k: v for k, v in base.items() if v}
 
 
 def test_settings_defaults() -> None:

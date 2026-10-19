@@ -22,7 +22,10 @@ sessions wait on (``GET_LOCK`` and kin), wait on replication, burn time on purpo
 (``BENCHMARK``, ``SLEEP``) or reach outside the server through the ``sys_*`` UDFs. ``SLEEP`` is
 refused because it returns 1 when ``max_execution_time`` or ``KILL QUERY`` interrupts it: the
 read would end quietly with a row instead of as ``QUERY_TIMEOUT``. sqlglot and MySQL read
-backslash escapes alike, so no string form is refused.
+backslash escapes alike, so no string form is refused. A ``/*! ... */`` comment, which MySQL
+runs as SQL and sqlglot keeps as a comment, is refused, and so is a ``--`` outside a string, a
+quoted name or a comment with no whitespace after it, which MySQL reads as two minus signs and
+sqlglot as the start of a comment.
 """
 
 import re
@@ -32,7 +35,7 @@ from typing import Final
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
-from sqlglot.tokens import TokenType
+from sqlglot.tokens import Token, TokenType
 
 DENIED: Final = frozenset(
     {
@@ -148,6 +151,9 @@ class Dialect:
     """Qualifiers whose functions are refused (BigQuery's ``ML.``), in lower case."""
     denied_paths: re.Pattern[str] | None = None
     """Tables refused by their dotted path, matched in lower case."""
+    executable_comments: bool = False
+    """Whether the engine runs ``/*! ... */`` (and MariaDB's ``/*M! ... */``) as SQL, which
+    sqlglot keeps as a comment the rest of this check never sees."""
 
     def refuses(self, name: str) -> bool:
         low = name.lower()
@@ -165,7 +171,40 @@ POSTGRES: Final = Dialect(
     denied_suffixes=DENIED_SUFFIXES,
     unsafe_strings=_UNSAFE_STRINGS,
 )
-MYSQL: Final = Dialect(read="mysql", denied=MYSQL_DENIED, denied_prefixes=MYSQL_DENIED_PREFIXES)
+MYSQL: Final = Dialect(
+    read="mysql",
+    denied=MYSQL_DENIED,
+    denied_prefixes=MYSQL_DENIED_PREFIXES,
+    executable_comments=True,
+)
+
+
+def _past(text: str, mark: str, at: int) -> int:
+    found = text.find(mark, at)
+    return len(text) if found < 0 else found + len(mark)
+
+
+def _bare_dashes(sql: str, tokens: list[Token]) -> bool:
+    """Whether a ``--`` without whitespace after it stands outside every token: in the text
+    between them, which holds only whitespace and comments, and not inside another comment.
+    MySQL starts a comment at ``--`` only when whitespace follows; sqlglot at any ``--``, so
+    ``1--1 FOR SHARE`` would hide a negation and everything after it from this check."""
+    edges = [-1, *(i for t in tokens for i in (t.start, t.end)), len(sql)]
+    for begin, end in zip(edges[::2], edges[1::2], strict=True):
+        gap, at = sql[begin + 1 : end], 0
+        while at < len(gap):
+            if gap.startswith("/*", at):
+                at = _past(gap, "*/", at + 2)
+            elif gap.startswith("--", at):
+                after = gap[at + 2 : at + 3]
+                if not after or not (after.isspace() or after < " "):
+                    return True
+                at = _past(gap, "\n", at)
+            elif gap.startswith("#", at):
+                at = _past(gap, "\n", at)
+            else:
+                at += 1
+    return False
 
 
 def _names(node: exp.Func) -> set[str]:
@@ -189,6 +228,8 @@ def refusal(  # noqa: PLR0911  (one return per refusal)
     for token in tokens:
         if token.token_type in unsafe:
             return f"the statement uses {unsafe[token.token_type]}"
+        if dialect.executable_comments and any(c.startswith(("!", "M!")) for c in token.comments):
+            return "the statement uses an executable comment"
     found = [s for s in statements if s is not None]
     if len(found) != 1 or len(statements) > 1:
         return "the text is not exactly one statement"
@@ -211,8 +252,12 @@ def refusal(  # noqa: PLR0911  (one return per refusal)
 
 
 def mysql_refusal(sql: str) -> str | None:
-    """:func:`refusal` as MySQL reads the text."""
-    return refusal(sql, MYSQL)
+    """:func:`refusal` as MySQL reads the text, and a ``--`` that MySQL does not read as a
+    comment start."""
+    reason = refusal(sql, MYSQL)
+    if reason is None and _bare_dashes(sql, sqlglot.tokenize(sql, read=MYSQL.read)):
+        return "the statement uses -- without a space after it"
+    return reason
 
 
 BIGQUERY_DENIED: Final = frozenset({"external_query", "session_user"})
@@ -287,6 +332,46 @@ TSQL: Final = Dialect(
 purpose (``WAITFOR``), and the extended, system and system-function prefixes."""
 
 
+TSQL_STATEMENT_WORDS: Final = frozenset(
+    {
+        "alter", "backup", "begin", "break", "bulk", "checkpoint", "close", "commit",
+        "continue", "create", "dbcc", "deallocate", "declare", "delete", "deny", "drop", "dump",
+        "exec", "execute", "fetch", "goto", "grant", "if", "insert", "kill", "load", "merge",
+        "open", "opendatasource", "openquery", "openrowset", "openxml", "print", "raiserror",
+        "readtext", "reconfigure", "restore", "return", "revert", "revoke", "rollback", "save",
+        "set", "setuser", "shutdown", "throw", "truncate", "update", "updatetext", "use",
+        "waitfor", "while", "writetext",
+    }
+)  # fmt: skip
+"""Words that start a T-SQL statement, compared in lower case: the statement keywords on
+Microsoft's reserved list, the ``OPEN...`` row-set functions, and ``THROW``.
+SQL Server needs no ``;`` between statements, and sqlglot can read such a word after a table or
+column as its alias, so the word is refused wherever it stands unquoted. A reserved word cannot
+name anything unquoted, so a read loses nothing; ``[exec]`` stays a name. ``FETCH`` right after
+``ROW`` or ``ROWS`` is ``OFFSET ... FETCH`` paging and passes."""
+_TSQL_QUOTED: Final = frozenset(
+    {TokenType.IDENTIFIER, TokenType.STRING, TokenType.NATIONAL_STRING, TokenType.HEX_STRING}
+)
+_TSQL_WORD: Final = re.compile(r"[A-Za-z0-9_@#$]+")
+
+
+def _tsql_tokens(sql: str) -> str | None:
+    """Why the tokens of a T-SQL read are refused: a variable, or a statement word outside a
+    string or a quoted name, wherever sqlglot put it."""
+    tokens = sqlglot.tokenize(sql, read=TSQL.read)
+    for at, token in enumerate(tokens):
+        if token.token_type == TokenType.PARAMETER:
+            return "the statement uses a variable"
+        if token.token_type in _TSQL_QUOTED:
+            continue
+        words = {w.lower() for w in _TSQL_WORD.findall(token.text)}
+        if words == {"fetch"} and at and tokens[at - 1].text.upper() in {"ROW", "ROWS"}:
+            continue
+        if words & TSQL_STATEMENT_WORDS:
+            return "the statement holds another statement"
+    return None
+
+
 def _tsql_object(node: exp.Expression) -> str | None:  # noqa: PLR0911  (one return per refusal)
     """Why one node of a T-SQL read is refused, or ``None``."""
     if isinstance(node, exp.NextValueFor):
@@ -313,13 +398,12 @@ def tsql_refusal(sql: str) -> str | None:
     ``@@x``), a three- or four-part name (another database or a linked server), a temporary
     table (``#t``, and ``##t``, which any login may read whatever its grants), ``NEXT VALUE
     FOR`` (it advances a sequence), a function called in another database, and a table named
-    like the refused prefixes. sqlglot nests block comments as SQL Server does. ``FOR JSON``
-    does not parse in sqlglot 28, so it is refused."""
-    reason = refusal(sql, TSQL)
+    like the refused prefixes, and a statement word anywhere outside a string or a quoted
+    name (:data:`TSQL_STATEMENT_WORDS`). sqlglot nests block comments as SQL Server does.
+    ``FOR JSON`` does not parse in sqlglot 28, so it is refused."""
+    reason = refusal(sql, TSQL) or _tsql_tokens(sql)
     if reason is not None:
         return reason
-    if any(t.token_type == TokenType.PARAMETER for t in sqlglot.tokenize(sql, read=TSQL.read)):
-        return "the statement uses a variable"
     root = sqlglot.parse_one(sql, read=TSQL.read)  # pyright: ignore[reportUnknownMemberType]
     return next((why for node in root.walk() if (why := _tsql_object(node)) is not None), None)
 
@@ -345,9 +429,12 @@ SNOWFLAKE_DENIED_PREFIXES: Final = (
     "login_history",
     "task_history",
     "copy_history",
+    "ai_",
 )
 """``SYSTEM$`` functions act on the account; the history functions show other sessions'
-queries, logins, tasks and loads."""
+queries, logins, tasks and loads; the ``AI_`` functions (``AI_COMPLETE``, ``AI_CLASSIFY``,
+``AI_EMBED`` and the rest) call and bill Cortex models outside the read, without the
+``SNOWFLAKE.CORTEX`` qualifier the database rule refuses."""
 SNOWFLAKE: Final = Dialect(
     read="snowflake", denied=SNOWFLAKE_DENIED, denied_prefixes=SNOWFLAKE_DENIED_PREFIXES
 )

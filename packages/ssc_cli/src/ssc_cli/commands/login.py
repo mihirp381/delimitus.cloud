@@ -143,11 +143,14 @@ def logout(ctx: typer.Context, agent: AgentLogoutOpt = False, json_mode: JsonOpt
                     client.revoke(kept.refresh_token)
                 revoked = True
             except CliError as e:
-                if e.body.code != NETWORK_ERROR:
-                    raise
+                # The login leaves this computer whatever the auth host says.
+                why = (
+                    "could not be reached"
+                    if e.body.code == NETWORK_ERROR
+                    else f"did not end the login ({e.body.code})"
+                )
                 typer.echo(
-                    "Warning: the auth host could not be reached; the login ends on its own "
-                    "within 12 hours.",
+                    f"Warning: the auth host {why}; the login ends on its own within 12 hours.",
                     err=True,
                 )
         cleared = clear_token(api_url, agent=agent)

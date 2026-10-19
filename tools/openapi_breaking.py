@@ -12,6 +12,10 @@ Breaking, in the order checked:
     widens, such as ``string`` to ``null|string``, passes: every old value still fits
   * an enum value removed (request or response)
 
+Each check also looks inside the members of an ``anyOf`` or ``oneOf`` (a nullable field is one),
+pairing old and new members by type, so a property or an enum value removed from a nullable
+object or enum is caught too.
+
 Additive changes (new paths, new optional fields, new statuses, new enum values) pass. Deprecating
 an operation is fine; removing it is a new major version.
 """
@@ -68,6 +72,27 @@ def widened(old_sig: str, new_sig: str) -> bool:
     return set(old_sig.split("|")) <= set(new_sig.split("|"))
 
 
+def members(schema: Schema, doc: Doc) -> list[Schema]:
+    """The members of an ``anyOf`` or ``oneOf``, or the schema itself."""
+    schema = doc.resolve(schema)
+    found = schema.get("anyOf") or schema.get("oneOf")
+    return [m for m in found if isinstance(m, dict)] if isinstance(found, list) else [schema]
+
+
+def compare_members(
+    where: str, old: Schema, new: Schema, docs: tuple[Doc, Doc], *, request: bool
+) -> Iterator[str]:
+    """Compare each old member with the new member of the same type, in order within a type."""
+    old_doc, new_doc = docs
+    waiting: dict[str, list[Schema]] = {}
+    for member in members(new, new_doc):
+        waiting.setdefault(type_signature(member, new_doc), []).append(member)
+    for member in members(old, old_doc):
+        same = waiting.get(type_signature(member, old_doc))
+        if same:
+            yield from compare_schema(where, member, same.pop(0), docs, request=request)
+
+
 def properties(schema: Schema, doc: Doc) -> tuple[dict[str, Schema], set[str]]:
     schema = doc.resolve(schema)
     props = schema.get("properties", {})
@@ -81,11 +106,15 @@ def properties(schema: Schema, doc: Doc) -> tuple[dict[str, Schema], set[str]]:
 def compare_schema(
     where: str, old: Schema, new: Schema, docs: tuple[Doc, Doc], *, request: bool
 ) -> Iterator[str]:
-    """Yield breaking changes between two schemas, descending into properties and items."""
+    """Yield breaking changes between two schemas, descending into properties, items and the
+    members of a union."""
     old_doc, new_doc = docs
     old_sig, new_sig = type_signature(old, old_doc), type_signature(new, new_doc)
     if old_sig != new_sig and not (request and widened(old_sig, new_sig)):
         yield f"{where}: type changed from {old_sig} to {new_sig}"
+        return
+    if len(members(old, old_doc)) > 1 or len(members(new, new_doc)) > 1:
+        yield from compare_members(where, old, new, docs, request=request)
         return
     old_r, new_r = old_doc.resolve(old), new_doc.resolve(new)
     old_enum, new_enum = old_r.get("enum"), new_r.get("enum")
