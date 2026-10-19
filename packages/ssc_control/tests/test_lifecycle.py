@@ -79,6 +79,8 @@ from ssc_control.lifecycle import kill_switch, tasks
 from ssc_control.lifecycle.kill_switch import Timings
 from ssc_control.metrics import metrics_port
 from ssc_control.ports import KillReason, NullTimersPort
+from ssc_control.runtime.app_databases import FakeAppDatabases
+from ssc_control.runtime.cell_removal import FakeCellRemoval
 from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.runtime.driver import RuntimeDriverError, service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver, changed
@@ -1290,6 +1292,31 @@ async def test_owner_transfer(b: Bench) -> None:
     (row,) = rows_of(b.dsn, b.w.org, "select owner_user_id from ssc.app where id = %s", b.w.app)
     assert row["owner_user_id"] == b.w.builder
     assert len(transfers()) == 1
+
+
+# ── a deleted app ────────────────────────────────────────────────────────────
+
+
+async def test_a_deleted_apps_deploy_logs_are_not_found(b: Bench, tmp_path: Path) -> None:
+    """GA-12: a deleted app is ``NOT_FOUND`` on every route naming it, the logs route too,
+    although it checks the credential in a transaction of its own."""
+    await bring_up(b)
+    logs = f"/v1/apps/{b.w.app}/environments/{b.w.prod}/logs?source=deploy"
+    assert get(b, logs).status_code == 200
+    cell = OrgCell(
+        label=STATIC_LABEL,
+        runtime=b.driver,
+        build=FakeBuildDriver(),
+        app_databases=FakeAppDatabases(),
+        removal=FakeCellRemoval(),
+    )
+    ports = replace(b.ports, cells=StaticCells(cell), blob_store=fs_blob(tmp_path / "blobs"))
+    r = post(b, f"/v1/apps/{b.w.app}/delete", {"confirm": "ledger"})
+    assert r.status_code == 202, r.text
+    assert (await drain(b, ports))[-1].outcome == "completed"
+    assert app_status(b) == "deleted"
+    assert_problem(get(b, logs), ErrorCode.NOT_FOUND)
+    assert_problem(get(b, logs, b.t.builder), ErrorCode.NOT_FOUND)
 
 
 # ── jobs that race, stall or go missing ──────────────────────────────────────

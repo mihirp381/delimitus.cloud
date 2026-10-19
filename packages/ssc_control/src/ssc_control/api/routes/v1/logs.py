@@ -35,7 +35,7 @@ from ssc_control.api.ratelimit import limit
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.runtime import cell_of, runtime_of
-from ssc_control.api.uow import UnitOfWork, UserUoW, check_scope, check_session
+from ssc_control.api.uow import UnitOfWork, UserUoW, check_app, check_scope, check_session
 from ssc_control.db.bind import bound_org
 from ssc_shared.logs import (
     CLOUD_BUILD_REF,
@@ -221,6 +221,7 @@ async def _authorise(
     async with bound_org(runtime_of(request).engine, principal.org_id) as conn:
         await check_session(conn, principal)
         await check_scope(request, conn, principal)
+        await check_app(request, conn, principal)
         uow = UnitOfWork(conn=conn, principal=principal, request_id=request_id_of(request))
         params = {"org": principal.org_id, "app": app_id, "env": environment_id}
         if (await conn.execute(_SELECT_ENV, params)).first() is None:
