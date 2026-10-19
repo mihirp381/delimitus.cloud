@@ -92,6 +92,12 @@ def _unb64(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
+def _same(a: str, b: str) -> bool:
+    """A constant-time comparison; ``hmac.compare_digest`` refuses a ``str`` holding a non-ASCII
+    character, so a crafted cookie or ``state`` would otherwise be a 500."""
+    return hmac.compare_digest(a.encode(), b.encode())
+
+
 class Sealer:
     """HMAC-SHA256 signed JSON with an expiry, one purpose per use."""
 
@@ -107,7 +113,7 @@ class Sealer:
 
     def open(self, purpose: str, value: str, now: int) -> dict[str, Any] | None:
         body, _, mac = value.partition(".")
-        if not body or not hmac.compare_digest(mac, self._mac(purpose, body)):
+        if not body or not _same(mac, self._mac(purpose, body)):
             return None
         try:
             data = json.loads(_unb64(body))
@@ -385,13 +391,13 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         login = sealer.open("login", request.cookies.get(login_cookie, ""), now())
         state, code = request.query_params.get("state", ""), request.query_params.get("code", "")
         error = request.query_params.get("error", "")
-        if login is not None and error and hmac.compare_digest(state, str(login.get("check"))):
+        if login is not None and error and _same(state, str(login.get("check"))):
             shown = error if _WORKOS_ERROR.fullmatch(error) else "unrecognised"
             log.warning("WorkOS refused the sign-in for %s: %s", login.get("org"), shown)
             response = refused()
             clear(response, login_cookie)
             return response
-        if login is None or not code or not hmac.compare_digest(state, str(login.get("check"))):
+        if login is None or not code or not _same(state, str(login.get("check"))):
             return bad_request()
         org_id = _org(str(login.get("org", "")))
         if org_id is None:

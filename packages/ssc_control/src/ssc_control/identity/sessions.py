@@ -49,6 +49,12 @@ def new_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _same(a: str, b: str) -> bool:
+    """A constant-time comparison; ``hmac.compare_digest`` refuses a ``str`` holding a non-ASCII
+    character."""
+    return hmac.compare_digest(a.encode(), b.encode())
+
+
 @dataclass(frozen=True, slots=True)
 class LiveSession:
     id: str
@@ -302,9 +308,7 @@ async def redeem_code(
     if row is None:
         return None
     session_id, issued_host, binding = row
-    if not hmac.compare_digest(issued_host, host) or not hmac.compare_digest(
-        bytes(binding), digest(nonce)
-    ):
+    if not _same(issued_host, host) or not hmac.compare_digest(bytes(binding), digest(nonce)):
         return None
     live = await live_session(conn, org_id, str(session_id))
     if live is None:

@@ -262,6 +262,33 @@ async def test_a_sign_in_workos_refused_shows_the_refused_page(
     assert forged.status_code == 400
 
 
+async def test_a_non_ascii_state_is_a_bad_request_not_a_crash(rig: Rig) -> None:
+    """``hmac.compare_digest`` raises on a ``str`` holding a non-ASCII character; a crafted
+    ``state`` (``%C3%A9``) is the bad-request reply, with or without a WorkOS ``error``."""
+    await rig.login(secrets.token_urlsafe(32))
+    crafted = await rig.http.get("/callback", params={"state": "é", "code": "x"})
+    assert (crafted.status_code, crafted.text) == (400, pages.BAD_REQUEST)
+    errored = await rig.http.get(
+        "/callback", params={"state": "é", "code": "x", "error": "access_denied"}
+    )
+    assert (errored.status_code, errored.text) == (400, pages.BAD_REQUEST)
+    no_code = await rig.http.get("/callback", params={"state": "é", "error": "access_denied"})
+    assert (no_code.status_code, no_code.text) == (400, pages.BAD_REQUEST)
+
+
+async def test_a_login_cookie_with_a_non_ascii_character_is_no_cookie(rig: Rig) -> None:
+    r = await rig.login(secrets.token_urlsafe(32))
+    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
+    sealed = rig.http.cookies["__Host-ssc-login"]
+    async with client_for(rig.host) as fresh:
+        for value in (f"{sealed}é", f"{sealed.partition('.')[0]}.é"):
+            cookie = f"__Host-ssc-login={value}".encode("latin-1")
+            got = await fresh.get(
+                "/callback", params={"code": "x", "state": state}, headers={"cookie": cookie}
+            )
+            assert (got.status_code, got.text) == (400, pages.BAD_REQUEST)
+
+
 @pytest.mark.parametrize(
     ("idp_id", "connection_type", "reason"),
     [
@@ -343,6 +370,17 @@ async def test_redeem_from_another_cells_project_is_refused(rig: Rig) -> None:
         r = await rig.redeem(location, nonce, bearer="google.id.token", http=http)
     assert r.status_code == 401
     assert (await rig.redeem(location, nonce)).status_code == 200, "the refused try kept the code"
+
+
+async def test_redeem_for_a_non_ascii_host_is_invalid_grant(rig: Rig) -> None:
+    location, nonce = await rig.sign_in()
+    code = parse_qs(urlsplit(location).query)["code"][0]
+    body = {"org": rig.w.org, "code": code, "host": "é", "nonce": nonce}
+    r = await rig.http.post(
+        "/internal/redeem", json=body, headers={"authorization": f"Bearer dev.{SECRET}"}
+    )
+    assert (r.status_code, r.json()) == (400, {"error": "invalid_grant"})
+    assert (await rig.redeem(location, nonce)).status_code == 400, "the wrong host used it up"
 
 
 async def test_jwks_and_health(rig: Rig) -> None:
