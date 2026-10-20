@@ -1,7 +1,7 @@
 """A pilot request: what the form sends, checked, or a refusal that says which fields to fix.
 
-The refusal cases follow the Delimitus waitlist (``waitlist_store.py``): a request is read by a
-person, so it needs a name, a company and an address that can be answered.
+A request is read by a person, so it needs a name, a company and an address that can be
+answered.
 """
 
 import json

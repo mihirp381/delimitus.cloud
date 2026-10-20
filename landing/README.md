@@ -8,7 +8,7 @@ form.
 |---|---|
 | `index.html` | The page: inline CSS, JS and SVG, one PNG data URI (the horizon), no other file |
 | `art/` | The horizon mask; `cd landing/art && python3 embed.py` rebuilds it and re-embeds it (needs Pillow and numpy, not part of the workspace) |
-| `CLAIMS.md` | Every claim on the page, its ticket and status, or its public source; the blockers before publishing |
+| `CLAIMS.md` | Every claim on the page with its truth state and the date checked, and the public and economics sources |
 | `denylist.txt` | Words that never appear on the page |
 | `forbidden_claims.txt` | Absolute or unproven phrases that never appear on the page |
 | `calculator_vectors.json`, `calculator.test.mjs` | The cost calculator's test vectors; `node --test landing/calculator.test.mjs` |
