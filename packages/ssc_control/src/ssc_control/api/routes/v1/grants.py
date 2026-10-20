@@ -174,6 +174,50 @@ _BUMP_GRANTS = text(
 )
 
 
+_LOCK_PREVIEW = text(
+    "select id from ssc.environment where org_id = :org and app_id = :app and name = 'preview' "
+    "for update"
+)
+_USER_GRANT = text(
+    "select 1 from ssc.app_grant where org_id = :org and environment_id = :env and user_id = :user"
+)
+
+
+async def grant_owner_preview(uow: UnitOfWork, app_id: str, owner: str) -> bool:
+    """A builder grant for ``owner`` on the app's preview unless they hold one (GA-12 F9b)."""
+    env = (await uow.conn.execute(_LOCK_PREVIEW, {"org": uow.org_id, "app": app_id})).scalar_one()
+    params = {"org": uow.org_id, "env": env, "user": owner}
+    if (await uow.conn.execute(_USER_GRANT, params)).first() is not None:
+        return False
+    gid = new_id("gnt")
+    await uow.conn.execute(
+        _INSERT_GRANT,
+        {
+            "id": gid,
+            "org": uow.org_id,
+            "env": env,
+            "role": "builder",
+            "kind": "user",
+            "user": owner,
+            "group": None,
+            "by": owner,
+        },
+    )
+    await uow.conn.execute(_BUMP_GRANTS, {"org": uow.org_id, "env": env})
+    await uow.audit(
+        AuditAction.GRANT_ADDED,
+        target_kind="app_grant",
+        target_id=gid,
+        after={
+            "environment_id": env,
+            "role": "builder",
+            "subject_kind": "user",
+            "subject_id": owner,
+        },
+    )
+    return True
+
+
 def _grant_out(row: dict[str, Any]) -> GrantOut:
     return GrantOut(
         id=str(row["id"]),

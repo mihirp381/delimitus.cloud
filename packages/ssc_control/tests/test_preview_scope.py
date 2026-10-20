@@ -159,10 +159,11 @@ def test_preview_scoped_token_cannot_change_prod(
     for table in ("build", "deployment"):
         sql = f"select count(*) from ssc.{table} where environment_id = %s"
         assert count(b, sql, b.env("prod")) == 0, table
-    assert (
-        count(b, "select count(*) from ssc.audit_event where action ~ '^(grant|deploy|build)[.]'")
-        == 0
+    changes = (
+        "select count(*) from ssc.audit_event where action ~ '^(grant|deploy|build)[.]' "
+        "and after->>'environment_id' is distinct from %s"
     )
+    assert count(b, changes, b.env("preview")) == 0
     assert put_grants(b, "prod", b.full, grants).status_code == 200
 
 

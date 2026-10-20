@@ -288,6 +288,17 @@ async def publish_now(dsn: str, org: str, blob: FsBlobStore) -> tuple[int, bytes
     return version, await read_blob(blob, pointer["key"])
 
 
+def test_the_owner_reaches_their_preview_through_a_builder_grant(
+    world: World, dsns: Dsns, tmp_path: Path
+) -> None:
+    holder = ViewHolder(world.org)
+    _, doc = asyncio.run(publish_now(dsns.app, world.org, blob_store(tmp_path)))
+    assert holder.apply(doc) is True
+    preview = decide(holder.view, world.preview, world.admin)
+    assert (preview.allowed, preview.reason, preview.role) == (True, "granted", "builder")
+    assert decide(holder.view, world.prod, world.admin).allowed is False
+
+
 # ── done when: removed from a group, a user loses access ─────────────────────
 
 
@@ -519,11 +530,11 @@ def test_floors_and_who_may_change_sharing(
 ) -> None:
     una = new_member(client, world)
     refused = put_grants(
-        client, world, world.preview, world.admin_token, [grant("user", "user", una)], 1
+        client, world, world.preview, world.admin_token, [grant("user", "user", una)], 2
     )
     assert_problem(refused, ErrorCode.VALIDATION_FAILED)
     ok = put_grants(
-        client, world, world.preview, world.admin_token, [grant("builder", "user", una)], 1
+        client, world, world.preview, world.admin_token, [grant("builder", "user", una)], 2
     )
     assert ok.status_code == 200, ok.text
     prod = put_grants(client, world, world.prod, world.admin_token, [grant("user", "user", una)], 1)
@@ -541,7 +552,7 @@ def test_floors_and_who_may_change_sharing(
     builder = user_token(signing_key, world.org, una)
     assert_problem(put_grants(client, world, world.prod, builder, [], 2), ErrorCode.FORBIDDEN)
     kept = [grant("builder", "user", una), grant("builder", "org")]
-    assert put_grants(client, world, world.preview, builder, kept, 2).status_code == 200
+    assert put_grants(client, world, world.preview, builder, kept, 3).status_code == 200
 
 
 def test_the_audience_ceiling_hook_is_called(
@@ -787,8 +798,8 @@ def cast_of_builders(client: TestClient, world: World, signing_key: SigningKey) 
     assert set_members(client, world, gid, [grouped]).status_code == 200
     on_preview = [grant("builder", "user", direct), grant("builder", "user", gone)]
     on_prod = [grant("builder", "group", gid), grant("user", "user", viewer)]
-    for env, grants in ((world.preview, on_preview), (world.prod, on_prod)):
-        r = put_grants(client, world, env, world.admin_token, grants, 1)
+    for env, grants, version in ((world.preview, on_preview, 2), (world.prod, on_prod, 1)):
+        r = put_grants(client, world, env, world.admin_token, grants, version)
         assert r.status_code == 200, r.text
     assert sync_user(client, world, gone_subject, status="deactivated").status_code == 200
     people = {
@@ -807,7 +818,7 @@ def open_owned_to_the_org(client: TestClient, world: World, cast: Cast) -> None:
     """An org-wide builder grant on ``owned``'s preview: every active member builds it."""
     w = World(**{**world.__dict__, "app": cast.owned, "preview": cast.owned_preview})
     grants = [grant("builder", "org")]
-    r = put_grants(client, w, cast.owned_preview, cast.owner_token, grants, 1)
+    r = put_grants(client, w, cast.owned_preview, cast.owner_token, grants, 2)
     assert r.status_code == 200, r.text
 
 

@@ -66,6 +66,7 @@ def test_journey_live(cli, live, isolated, tmp_path):
     to_org = ShareResult.model_validate(ssc("share", slug, "--org"))
     assert to_org.changed
     to_me = ShareResult.model_validate(ssc("share", created.id, live.admin_id, "--env", "preview"))
+    assert not to_me.changed  # the owner's preview grant comes with the app
     assert [(g.role, g.subject_kind, g.subject_id) for g in to_me.grants] == [
         ("builder", "user", live.admin_id)
     ]
@@ -74,7 +75,7 @@ def test_journey_live(cli, live, isolated, tmp_path):
     status = AppResult.model_validate(ssc("status", slug))
     versions = {e.name: e.grants_version for e in status.environments}
     before = {e.name: e.grants_version for e in created.environments}
-    assert versions == {"prod": before["prod"] + 1, "preview": before["preview"] + 1}
+    assert versions == {"prod": before["prod"] + 1, "preview": before["preview"]}
     assert all(e.deployment is None for e in status.environments)
 
     gone = ShareResult.model_validate(ssc("unshare", slug, "--org"))

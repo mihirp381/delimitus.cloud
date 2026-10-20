@@ -280,7 +280,10 @@ def test_create_app_makes_two_environments_and_an_audit_row(world: World) -> Non
     assert app["owner_user_id"] == world.org.admin_user_id
     assert app["status"] == "active"
     assert sorted(e["name"] for e in app["environments"]) == ["preview", "prod"]
-    assert all(e["grants_version"] == 1 for e in app["environments"])
+    assert (env_of(app, "prod")["grants_version"], env_of(app, "preview")["grants_version"]) == (
+        1,
+        2,
+    )
     audit = rows(
         world.dsns.app,
         world.org.org_id,
@@ -297,6 +300,43 @@ def test_create_app_makes_two_environments_and_an_audit_row(world: World) -> Non
             {"slug": "alpha", "owner_user_id": world.org.admin_user_id},
         )
     ]
+
+
+def test_create_app_grants_the_owner_builder_on_preview(world: World) -> None:
+    app = create_app_via_api(world, "owned-preview")
+    owner, preview = world.org.admin_user_id, env_of(app, "preview")["id"]
+    grants = rows(
+        world.dsns.app,
+        world.org.org_id,
+        "select e.name, g.id, g.role, g.subject_kind, g.user_id, g.group_id, g.granted_by_user_id "
+        "from ssc.app_grant g join ssc.environment e on e.id = g.environment_id "
+        "where e.app_id = %s",
+        (app["id"],),
+    )
+    assert [g[:1] + g[2:] for g in grants] == [("preview", "builder", "user", owner, None, owner)]
+    audit = rows(
+        world.dsns.app,
+        world.org.org_id,
+        "select action, target_kind, after, policy_decision_id from ssc.audit_event "
+        "where target_id = %s",
+        (grants[0][1],),
+    )
+    assert audit == [
+        (
+            "grant.added",
+            "app_grant",
+            {
+                "environment_id": preview,
+                "role": "builder",
+                "subject_kind": "user",
+                "subject_id": owner,
+            },
+            None,
+        )
+    ]
+    shown = world.client.get(grants_url(app, "preview"), headers=auth(world.user_token))
+    assert shown.headers["ETag"] == '"2"'
+    assert [g["subject_id"] for g in shown.json()["grants"]] == [owner]
 
 
 def test_replay_returns_first_result_byte_for_byte(world: World) -> None:

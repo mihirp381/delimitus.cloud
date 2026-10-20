@@ -15,6 +15,7 @@ from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Slug, Strict, require_user
+from ssc_control.api.routes.v1.grants import grant_owner_preview
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.snapshot.service import mark_dirty
@@ -133,6 +134,7 @@ async def create_app(body: AppCreate, uow: UserUoW, request: Request) -> Respons
         await uow.conn.execute(
             _INSERT_ENV, {"id": new_id("env"), "org": uow.org_id, "app": app_id, "name": name}
         )
+    await grant_owner_preview(uow, app_id, owner)
     apps_domain = runtime_of(request).settings.apps_domain
     out = AppOut(**dict(row), environments=await environments_of(uow, app_id, apps_domain))
     await uow.audit(

@@ -1300,6 +1300,45 @@ async def test_owner_transfer(b: Bench) -> None:
     assert len(transfers()) == 1
 
 
+def preview_grants(b: Bench) -> list[dict[str, Any]]:
+    return rows_of(
+        b.dsn,
+        b.w.org,
+        "select g.role, g.user_id, e.grants_version from ssc.app_grant g "
+        "join ssc.environment e on e.id = g.environment_id "
+        "where g.environment_id = %s order by g.created_at, g.id",
+        b.w.preview,
+    )
+
+
+async def test_transfer_gives_a_new_owner_without_one_a_preview_grant(b: Bench) -> None:
+    assert transfer(b, b.w.member).status_code == 200
+    grants = preview_grants(b)
+    assert [(g["role"], g["user_id"]) for g in grants] == [
+        ("builder", b.w.builder),
+        ("builder", b.w.member),
+    ]
+    assert {g["grants_version"] for g in grants} == {2}
+    (added,) = rows_of(
+        b.dsn,
+        b.w.org,
+        "select actor_id, after from ssc.audit_event "
+        "where action = 'grant.added' and after->>'subject_id' = %s",
+        b.w.member,
+    )
+    assert added["actor_id"] == b.w.admin
+    assert added["after"] == {
+        "environment_id": b.w.preview,
+        "role": "builder",
+        "subject_kind": "user",
+        "subject_id": b.w.member,
+    }
+    assert transfer(b, b.w.member).status_code == 200
+    assert transfer(b, b.w.builder).status_code == 200
+    assert transfer(b, b.w.member).status_code == 200
+    assert preview_grants(b) == grants
+
+
 # ── a deleted app ────────────────────────────────────────────────────────────
 
 

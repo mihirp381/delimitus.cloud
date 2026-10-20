@@ -30,6 +30,7 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.apps import AppOut, environments_of
 from ssc_control.api.routes.v1.common import Id, Strict
+from ssc_control.api.routes.v1.grants import grant_owner_preview
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.lifecycle import inventory, kill_switch
@@ -40,6 +41,7 @@ from ssc_control.lifecycle.kill_switch import (
     StepName,
     StepState,
 )
+from ssc_control.snapshot.service import mark_dirty
 
 router = APIRouter()
 
@@ -469,4 +471,6 @@ async def transfer_owner(app_id: Id, body: OwnerTransfer, request: Request, uow:
             before={"owner_user_id": before},
             after={"owner_user_id": body.user_id},
         )
+        if await grant_owner_preview(uow, app_id, body.user_id):
+            await mark_dirty(uow.conn, uow.org_id)
     return await _app_out(uow, app_id, request)

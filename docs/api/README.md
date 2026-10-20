@@ -69,8 +69,9 @@ new `ETag`.
 **Sharing has floors and owners** (decision 019). Preview takes `builder` grants only and prod
 `user` or `builder`; a grant below the floor, or two grants for one subject, is `422
 VALIDATION_FAILED`. Only an active org admin, the app's owner or a builder on that environment may
-`PUT .../grants` (`403 FORBIDDEN` otherwise). No owner grant is created and the owner's grants can
-be removed like any other; the owner keeps the right to change sharing. `GET .../access?user_id=`
+`PUT .../grants` (`403 FORBIDDEN` otherwise). Creating an app gives its owner a `builder` grant on
+preview, as does a transfer to a new owner without one (2026-10-20); prod starts with none. The
+owner's grants can be removed like any other; the owner keeps the right to change sharing. `GET .../access?user_id=`
 explains one user's access with the same evaluator the gateway uses.
 
 **The server says who the caller is** (decision 019). `GET /v1/whoami` returns `role`: `admin` or
