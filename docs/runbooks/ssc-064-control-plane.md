@@ -88,7 +88,7 @@ The preview should create, and change, only the following:
 | New accounts | `ssc-control`, `ssc-control-worker`, `ssc-auth` and `ssc-control-migrate`, plus the API's and the worker's own signing grants |
 | New database | Cloud SQL `ssc-control` and its database `ssc` |
 | New secrets | seven empty secrets, with their grants |
-| New buckets | `ssc-control-prod-blobs`, and `ssc-control-prod-keys` holding `<label>/jwks.json` |
+| New buckets | `ssc-control-prod-keys` holding `<label>/jwks.json` (no `blobs` bucket since 2026-10-19: source bundles, snapshots and anchors are in each cell's bucket) |
 | New Cloud Run | services `ssc-api` and `ssc-auth` on the placeholder; worker pool `ssc-worker` at 0 instances |
 | New entry | the load balancer, the certificate for the three hosts, and A records for `api`, `auth` and `keys` in the `delimitus` zone |
 | Deployer grants | `cell-deployer-control-runs` and `-reads` (old, on `ssc-control@ssc-control-staging`) are replaced by `cell-deployer-{staging,prod}-worker-{runs,reads}` |
@@ -113,7 +113,7 @@ pulumi up --stack c-$LABEL
 The preview should change only these, from `ssc-control-staging` to `ssc-control-prod`:
 - `agent-invoker` moves to `ssc-control@ssc-control-prod`;
 - `bucket-control` is deleted if it is still there (SSC-012: only the worker uses the cell bucket);
-- `agent-invoker-worker` and `bucket-control-worker` are new, for `ssc-control-worker@ssc-control-prod`;
+- `agent-invoker-worker` and `bucket-control-worker-{bundles,snapshots,anchors}` are new, for `ssc-control-worker@ssc-control-prod`: `storage.objectUser` under `bundles/`, `snapshots/` and `audit-anchors/` only (a cell applied before 2026-10-19 also deletes its bucket-wide `bucket-control-worker`, and replaces `bucket-gateway` with one under `snapshots/` only);
 - `bucket-control-api-bundles` is new, for `ssc-control@ssc-control-prod`: `storage.objectUser` under `bundles/` only (source bundles, decision 015);
 - the intake's `SSC_CONTROL_SA`.
 
@@ -406,6 +406,37 @@ Since the decision 015 amendment of 2026-10-07, each org's source bundles go to 
    ```sh
    unset APP_PW SSC_DATABASE_DSN SSC_ENV SSC_BLOB_BACKEND SSC_BLOB_BUCKET SSC_BLOB_SIGNER SSC_CELL_BUCKET_TEMPLATE
    ```
+
+## Retire the control blobs bucket **[real]**
+
+Since 2026-10-19 (decision 015, amendment of that date) the platform stack declares no `ssc-control-<stage>-blobs` and no grant on it (`blobs-api`, `blobs-worker`), and the API and the worker run without `SSC_BLOB_BACKEND` and `SSC_BLOB_BUCKET`. Do this once per control stage, after "Move source bundles to the cells" above has left the bucket empty. The stack does not set `force_destroy`, so `pulumi up` refuses to delete a bucket that still holds objects; the two grants are deleted before the bucket either way, so only the operator can still reach what is left.
+
+1. The bucket must be empty, noncurrent versions included:
+
+   ```sh
+   gcloud storage ls --all-versions --recursive gs://ssc-control-prod-blobs/
+   ```
+
+   Pass: it prints nothing. Anything under `bundles/`: run "Move source bundles to the cells" first. Anything else: find out what wrote it before going on.
+
+2. Apply:
+
+   ```sh
+   pulumi preview --stack platform --diff
+   pulumi up --stack platform
+   ```
+
+   The preview deletes `control-<stage>-blobs`, `control-<stage>-blobs-api` and `control-<stage>-blobs-worker` for each stage, and changes `ssc-api` and `ssc-worker` to drop `SSC_BLOB_BACKEND` and `SSC_BLOB_BUCKET` (each keeps `SSC_BLOB_SIGNER` and `SSC_CELL_BUCKET_TEMPLATE`). Nothing else. If the delete fails with "bucket is not empty", go back to step 1.
+
+3. Check:
+
+   ```sh
+   gcloud storage buckets describe gs://ssc-control-prod-blobs
+   ```
+
+   Pass: not found. A deploy, a build and the next snapshot and anchor ticks still succeed, since all of them use the org's cell bucket.
+
+After this, `ssc_control.deploy.bundle_move` has no source to read; it is not run again.
 
 ## Record
 

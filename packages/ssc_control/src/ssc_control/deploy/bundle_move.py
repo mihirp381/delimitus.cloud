@@ -14,6 +14,11 @@ Prints one line per object, then ``moved N, already there N, failed N, skipped N
 ``would move N, ...``). Exit 0, or 1 when anything failed. Run with the worker's settings:
 ``SSC_DATABASE_DSN``, ``SSC_BLOB_*`` and ``SSC_CELL_BUCKET_TEMPLATE``; without a blob store or a
 cell template it exits 2.
+
+The source is the control plane's ``ssc-control-<stage>-blobs``. Since 2026-10-19 the
+deployed API and worker no longer carry ``SSC_BLOB_BACKEND`` or ``SSC_BLOB_BUCKET``, so the
+operator sets both by hand (runbook SSC-064, "Move source bundles to the cells"), and once that
+bucket is retired ("Retire the control blobs bucket") there is no source left to move.
 """
 
 import argparse

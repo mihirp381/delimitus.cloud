@@ -11,14 +11,20 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from ssc_testkit import Dsns, make_org
 
+from ssc_control.api import create_app
 from ssc_control.api.routes.blobs import blob_store_for, check_fs_allowed
+from ssc_control.api.runtime import Runtime
 from ssc_control.api.settings import Settings
+from ssc_control.db import make_engine
 from ssc_control.storage import (
     CELL_BUCKET_ENV,
     StorageConfigError,
     blob_store_from_env,
     cell_stores,
+    org_bundle_store,
+    org_store,
 )
 from ssc_control.worker import CompositionError, compose_ports
 from ssc_shared.blobstore import BlobStore
@@ -127,3 +133,46 @@ def test_the_worker_composes_cell_stores_only_when_a_template_is_set() -> None:
     assert compose_ports({**env, CELL_BUCKET_ENV: "ssc-c-{cell}-cell"}).cell_stores is not None
     with pytest.raises(CompositionError, match="exactly one"):
         compose_ports({**env, CELL_BUCKET_ENV: "no-placeholder"})
+
+
+def test_no_backend_and_a_template_is_the_cell_store_for_an_org(dsns: Dsns) -> None:
+    """What the control projects run with (decision 015, amended): no ``SSC_BLOB_BACKEND``,
+    no ``SSC_BLOB_BUCKET``, the cell template and the signer. The API and the worker start with
+    no blob store, and an org's snapshots, anchors and bundles go to its cell's bucket."""
+    env = {
+        "SSC_DATABASE_DSN": dsns.app,
+        "SSC_API_JWKS": json.dumps({"keys": []}),
+        "SSC_API_ISSUER": "https://auth.delimitus.com",
+        "SSC_ENV": "staging",
+        CELL_BUCKET_ENV: "ssc-c-{cell}-cell",
+        "SSC_BLOB_SIGNER": "ssc-control-worker@ssc-control-staging.iam.gserviceaccount.com",
+    }
+    assert blob_store_from_env(env) is None
+    ports = compose_ports(env)
+    assert ports.blob_store is None and ports.cell_stores is not None
+    runtime = create_app(Settings.from_env(env)).state.runtime
+    assert isinstance(runtime, Runtime)
+    assert runtime.blob_store is None and runtime.cell_stores is not None
+
+    made: dict[str, BlobStore] = {}
+
+    def bucket(name: str) -> BlobStore:
+        made[name] = cast("BlobStore", object())
+        return made[name]
+
+    stores = cell_stores(env[CELL_BUCKET_ENV], bucket=bucket)
+    org = make_org(dsns.app)
+
+    async def chosen() -> list[BlobStore | None]:
+        engine = make_engine(dsns.app)
+        try:
+            return [
+                await pick(engine, org.org_id, blob_store=None, cell_stores=stores)
+                for pick in (org_store, org_bundle_store)
+            ]
+        finally:
+            await engine.dispose()
+
+    picked = asyncio.run(chosen())
+    assert list(made) == [f"ssc-c-{org.cell_label}-cell"]
+    assert picked == [made[f"ssc-c-{org.cell_label}-cell"]] * 2

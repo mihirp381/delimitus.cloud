@@ -444,7 +444,7 @@ def api_env(
         "SSC_API_PUBLIC_URL": n.origin(n.API_HOST),
         "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
         "SSC_CELL_BUCKET_TEMPLATE": n.CELL_BUCKET_TEMPLATE,
-        **_blob_env(stage, signer),
+        **_signer_env(signer),
     }
     if cfg.cells and cfg.serves_cells(stage):
         env["SSC_CELLS"] = cells_env(cfg.cells)
@@ -460,7 +460,7 @@ def worker_env(
         "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
         "SSC_API_PUBLIC_URL": n.origin(n.API_HOST),
         "SSC_CELL_BUCKET_TEMPLATE": n.CELL_BUCKET_TEMPLATE,
-        **_blob_env(stage, signer),
+        **_signer_env(signer),
     }
     if cfg.deployer:
         env["SSC_CELL_DEPLOYER"] = "cloud_run"
@@ -501,12 +501,11 @@ def auth_env(cfg: ControlConfig, stage: n.Stage) -> dict[str, pulumi.Input[str]]
     }
 
 
-def _blob_env(stage: n.Stage, signer: pulumi.Input[str]) -> dict[str, pulumi.Input[str]]:
-    return {
-        "SSC_BLOB_BACKEND": "gcs",
-        "SSC_BLOB_BUCKET": n.control_bucket(stage, "blobs"),
-        "SSC_BLOB_SIGNER": signer,
-    }
+def _signer_env(signer: pulumi.Input[str]) -> dict[str, pulumi.Input[str]]:
+    """Who signs the cell stores' URLs (``storage.cell_stores_from_env``). No ``SSC_BLOB_BACKEND``:
+    every org's bundles, snapshots and anchors are in its cell bucket (decision 015, amended),
+    and the control plane keeps no bucket of its own for them."""
+    return {"SSC_BLOB_SIGNER": signer}
 
 
 def secrets_in(cfg: ControlConfig, stage: n.Stage) -> dict[str, tuple[str, ...]]:
@@ -637,7 +636,6 @@ class ControlPlane:
         self.registry()
         self.database()
         self.secrets()
-        self.blobs()
         self.services()
         self.migrate_job()
         if self.public:
@@ -772,26 +770,6 @@ class ControlPlane:
                         opts=self._o(),
                     )
                 )
-
-    def blobs(self) -> None:
-        """Bundles and build inputs (decision 015): private, signed URLs only."""
-        bucket = gcp.storage.Bucket(
-            self._name("blobs"),
-            project=self.pid,
-            name=n.control_bucket(self.stage, "blobs"),
-            location=n.REGION.upper(),
-            uniform_bucket_level_access=True,
-            public_access_prevention="enforced",
-            opts=self._o(),
-        )
-        for role in SIGNERS:
-            gcp.storage.BucketIAMMember(
-                self._name(f"blobs-{role}"),
-                bucket=bucket.name,
-                role="roles/storage.objectUser",
-                member=self.cp.accounts[role].member,
-                opts=self._o(),
-            )
 
     def services(self) -> None:
         cfg, stage = self.cfg, self.stage

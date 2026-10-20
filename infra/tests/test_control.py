@@ -272,8 +272,6 @@ def test_every_setting_of_the_api_is_wired(released: list[Declared]) -> None:
             "SSC_API_USER_AUDIENCE": "https://api.delimitus.com",
             "SSC_API_PUBLIC_URL": "https://api.delimitus.com",
             "SSC_APPS_DOMAIN": "delimitusapps.com",
-            "SSC_BLOB_BACKEND": "gcs",
-            "SSC_BLOB_BUCKET": f"ssc-control-{stage}-blobs",
             "SSC_BLOB_SIGNER": email(naming.CONTROL_SA, stage),
             "SSC_CELL_BUCKET_TEMPLATE": "ssc-c-{cell}-cell",
             **cell,
@@ -289,8 +287,6 @@ def test_every_setting_of_the_worker_is_wired(released: list[Declared]) -> None:
             "SSC_ENV": stage,
             "SSC_APPS_DOMAIN": "delimitusapps.com",
             "SSC_API_PUBLIC_URL": "https://api.delimitus.com",
-            "SSC_BLOB_BACKEND": "gcs",
-            "SSC_BLOB_BUCKET": f"ssc-control-{stage}-blobs",
             "SSC_BLOB_SIGNER": email(naming.CONTROL_WORKER_SA, stage),
             "SSC_CELL_BUCKET_TEMPLATE": "ssc-c-{cell}-cell",
             "SSC_CELL_DEPLOYER": "cloud_run",
@@ -794,8 +790,6 @@ def test_keys_serves_each_cell_jwks(released: list[Declared]) -> None:
         if d.type == "gcp:storage/bucket:Bucket" and d.inputs["name"].startswith("ssc-control")
     }
     assert buckets["ssc-control-prod-keys"]["publicAccessPrevention"] == "inherited"
-    for stage in naming.STAGES:
-        assert buckets[f"ssc-control-{stage}-blobs"]["publicAccessPrevention"] == "enforced"
     public = {
         d.inputs["bucket"]
         for d in released
@@ -803,6 +797,20 @@ def test_keys_serves_each_cell_jwks(released: list[Declared]) -> None:
         and d.inputs["member"] == "allUsers"
     }
     assert public == {"ssc-control-prod-keys"}
+
+
+def test_the_control_plane_keeps_no_blobs_bucket(released: list[Declared]) -> None:
+    """Every org's bundles, snapshots and anchors are in its cell bucket (decision 015,
+    amended), so the control projects hold no ``blobs`` bucket and no grant on one."""
+    for stage in naming.STAGES:
+        blobs = naming.control_bucket(stage, "blobs")
+        assert not [
+            d
+            for d in released
+            if d.type.startswith("gcp:storage/bucket")
+            and (d.inputs.get("name") == blobs or d.inputs.get("bucket") == blobs)
+        ]
+        assert not [d for d in released if d.name.startswith(f"control-{stage}-blobs")]
 
 
 def test_staging_holds_the_public_hosts_while_prod_does_not_run(bare: list[Declared]) -> None:
