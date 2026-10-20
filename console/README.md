@@ -51,16 +51,9 @@ console image's build context leaves those files out.
 ## Production sign-in
 
 "Continue with your work account" sends the person to the auth host's `/authorize` (decision 029)
-and back to `/auth/callback`, which exchanges the code at `/token`. The build reads two settings:
+and back to `/auth/callback`, which exchanges the code at `/token`, using the auth settings below.
 
-| Variable | Default | What |
-|---|---|---|
-| `VITE_SSC_AUTH_URL` | `https://auth.delimitus.com` | The auth host's origin; also the `iss` the callback must carry. |
-| `VITE_SSC_API_AUDIENCE` | `https://api.delimitus.com` | The resource asked for, the API's user audience (`SSC_API_USER_AUDIENCE`). |
-| `VITE_SSC_SUPPORT_EMAIL` | empty | The support address on the Help page, as a `mailto:` link. Empty, or anything but one plain address: the page says "Ask your SSC contact" and links nothing. |
-| `VITE_SSC_TRUST_URL` | empty | The trust pack's `https` address, linked from the Help page. Empty, or not an `https` address: no link is shown. |
-
-In production the console is served at `https://console.delimitus.com` by `packages/ssc_console_host` (its Dockerfile runs `npm ci && npm run build` with these settings as build arguments), and the control entry sends `/v1` on that host to the API; see "Console" in `infra/README.md`.
+In production the console is served at `https://console.delimitus.com` by `packages/ssc_console_host` (its Dockerfile runs `npm ci && npm run build` with the first four settings below as build arguments), and the control entry sends `/v1` on that host to the API; see "Console" in `infra/README.md`.
 
 The auth host must know the console's origin as `SSC_CONSOLE_URL`: its client `ssc-console`
 redirects only to `<SSC_CONSOLE_URL>/auth/callback`, and `/token` and `/revoke` answer CORS for that
@@ -70,6 +63,20 @@ skips the email step). Sign-out calls `/revoke`.
 While a signed-in page is on show the shell asks `/v1/whoami` every 4 seconds
 (`WHOAMI_EVERY_MS` in `src/routes/_authed.tsx`). A 401 there, as for a person deactivated in the
 directory, signs the console out and opens the login page, within 5 seconds.
+
+## Settings
+
+The build reads five settings, from the environment or a `.env` file; `npm run dev` and
+`vite preview` read one more.
+
+| Variable | Default | What |
+|---|---|---|
+| `VITE_SSC_AUTH_URL` | `https://auth.delimitus.com` | The auth host's origin; also the `iss` the callback must carry. |
+| `VITE_SSC_API_AUDIENCE` | `https://api.delimitus.com` | The resource asked for, the API's user audience (`SSC_API_USER_AUDIENCE`). |
+| `VITE_SSC_SUPPORT_EMAIL` | empty | The support address on the Help page, as a `mailto:` link. Empty, or anything but one plain address: the page says "Ask your SSC contact" and links nothing. |
+| `VITE_SSC_TRUST_URL` | empty | The trust pack's `https` address, linked from the Help page. Empty, or not an `https` address: no link is shown. |
+| `VITE_SSC_DEV_LOGIN` | unset | `1` compiles the token sign-in form into a production build (the end-to-end test does). Never set for a release; `npm run build` refuses the result. |
+| `SSC_API_URL` | `http://127.0.0.1:8000` | Dev and preview only: where the proxy sends `/v1`. Not part of the build; the built console calls the API on its own origin. |
 
 ## End-to-end test
 

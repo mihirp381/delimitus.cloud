@@ -66,3 +66,33 @@ def test_the_console_image_ships_only_the_venv_and_the_build() -> None:
         "--from=console /console/dist /app/dist",
     ]
     assert all("@sha256:" in line for line in re.findall(r"^FROM .*", dockerfile, flags=re.M))
+
+
+REPO = HOST.parents[1]
+
+
+def _read(*paths: Path) -> str:
+    return "\n".join(p.read_text(encoding="utf-8") for p in paths)
+
+
+def _table_names(readme: str, heading: str) -> set[str]:
+    section = readme.split(heading, 1)[1].split("\n#", 1)[0]
+    return set(re.findall(r"^\| `([A-Z_]+)` \|", section, flags=re.M))
+
+
+def test_the_console_readme_lists_the_settings_the_build_reads() -> None:
+    console = REPO / "console"
+    sources = [*sorted((console / "src").rglob("*.ts*")), console / "vite.config.ts"]
+    read = set(re.findall(r"\b(VITE_SSC_[A-Z_]+|SSC_API_URL)\b", _read(*sources)))
+    readme = (console / "README.md").read_text(encoding="utf-8")
+    assert _table_names(readme, "## Settings") == read
+    assert "reads two settings" not in readme
+
+
+def test_the_host_readme_lists_the_settings_the_host_and_image_read() -> None:
+    main = (HOST / "src" / "ssc_console_host" / "__main__.py").read_text(encoding="utf-8")
+    dockerfile = (HOST / "Dockerfile").read_text(encoding="utf-8")
+    readme = (HOST / "README.md").read_text(encoding="utf-8")
+    assert _table_names(readme, "## Settings") == set(re.findall(r'"(SSC_[A-Z_]+|PORT)"', main))
+    args = set(re.findall(r"^ARG (VITE_SSC_[A-Z_]+)=", dockerfile, flags=re.M))
+    assert _table_names(readme, "## Build arguments") == args

@@ -60,7 +60,7 @@ feature or making a product claim.
 
 ## Product surfaces, testing, and pilot
 
-- [Admin console](../console/README.md) and [public page](../landing/README.md).
+- [Admin console](../console/README.md), its [host](../packages/ssc_console_host/README.md) and [public page](../landing/README.md).
 - [Landing-page claims](../landing/CLAIMS.md).
 - [Build fixtures](../conformance/build_fixtures/README.md) and
   [customer isolation tests](../e2e/isolation/README.md).
