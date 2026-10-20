@@ -13,7 +13,19 @@ the last name of each ledger is its latest:
 - ``drizzle``: ``meta/_journal.json``; each entry's ``tag``, in ``idx`` order.
 - ``knex``: the ``.js``, ``.ts``, ``.cjs`` and ``.mjs`` files directly in the folder a ``knexfile``
   names as its migrations ``directory`` (``migrations`` beside it by default); the file name,
-  sorted, as Knex records it.
+  sorted, as Knex records it. Without a knexfile (B-10), code that calls ``migrate.latest(`` or
+  ``migrate.up(`` on Knex (the file names ``knex``, or a ``package.json`` depends on it) points at
+  the ``directory`` it passes, else ``migrations`` at the root.
+- ``sequelize`` (B-10): the same files in the ``migrations-path`` of a ``.sequelizerc``, or in
+  ``migrations`` beside it or beside a ``package.json`` that depends on ``sequelize`` or
+  ``sequelize-cli``; the file name, sorted, as ``SequelizeMeta`` records it.
+- ``typeorm`` (B-10): each ``class <Name> implements MigrationInterface`` in a ``.ts`` or ``.js``
+  file; the class name, in the order of the timestamp that ends it, as TypeORM runs them.
+- ``node-pg-migrate`` (B-10): beside a ``package.json`` that depends on it, the ``.js``, ``.ts``,
+  ``.cjs``, ``.mjs`` and ``.sql`` files directly in the folder its scripts name with ``-m`` or
+  ``--migrations-dir`` (``migrations`` by default); the name without its extension, sorted.
+- ``flyway`` (B-10): every ``V<version>__<description>.sql``; the name without ``.sql``, in
+  version order.
 
 Nothing under ``node_modules``, a virtual environment, ``__pycache__`` or ``__MACOSX`` counts, nor
 any path with a part starting ``._`` (macOS AppleDouble twins, B-9), and a name longer than
@@ -26,7 +38,17 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Final, cast
 
-LEDGERS: Final = ("prisma", "alembic", "django", "drizzle", "knex")
+LEDGERS: Final = (
+    "prisma",
+    "alembic",
+    "django",
+    "drizzle",
+    "knex",
+    "sequelize",
+    "typeorm",
+    "node-pg-migrate",
+    "flyway",
+)
 MAX_NAME: Final = 255
 
 type Ledgers = dict[str, tuple[str, ...]]
@@ -47,6 +69,21 @@ _KNEX_DIRECTORY = re.compile(
     r"""\bmigrations\s*:\s*\{[^{}]*?\bdirectory\s*:\s*["'`]([^"'`]+)["'`]"""
 )
 _KNEX_SUFFIXES: Final = (".js", ".ts", ".cjs", ".mjs")
+_KNEX_CALL = re.compile(r"\.migrate\.(?:latest|up)\s*\(")
+_CALL_DIRECTORY = re.compile(
+    r"""\.migrate\.(?:latest|up)\s*\(\s*\{[^{}]*?\bdirectory\s*:\s*["'`]([^"'`]+)["'`]"""
+)
+_PACKAGE_JSON = re.compile(r"^(?P<dir>(?:.*/)?)package\.json$")
+_SEQUELIZERC = re.compile(r"^(?P<dir>(?:.*/)?)\.sequelizerc$")
+_SEQUELIZE_PATH = re.compile(
+    r"""["']migrations-path["']\s*:\s*(?:path\.(?:resolve|join)\(\s*(?:__dirname\s*,\s*)?)?"""
+    r"""((?:["'][^"'\n]+["']\s*,?\s*)+)"""
+)
+_TYPEORM = re.compile(r"\bclass\s+([A-Za-z_$][\w$]*)\s+implements\s+MigrationInterface\b")
+_TIMESTAMP = re.compile(r"(\d+)$")
+_PG_MIGRATE_DIR = re.compile(r"(?:\s-m|--migrations-dir)(?:\s+|=)[\"']?([^\s\"']+)")
+_PG_MIGRATE_SUFFIXES: Final = (*_KNEX_SUFFIXES, ".sql")
+_FLYWAY = re.compile(r"(?:^|/)(?P<name>V(?P<version>\d+(?:[._]\d+)*)__[^/]+)\.sql$")
 _REVISION = re.compile(r"""^revision\s*(?::[^=\n]*)?=\s*["']([^"']+)["']""", re.MULTILINE)
 _DOWN_REVISION = re.compile(
     r"""^down_revision\s*(?::[^=\n]*)?=\s*(\([^)]*\)|\[[^\]]*\]|[^\n]*)""", re.MULTILINE
@@ -63,6 +100,10 @@ def ledgers(files: Mapping[str, bytes | None]) -> Ledgers:
         "django": _django(paths),
         "drizzle": _drizzle(paths, files),
         "knex": _knex(paths, files),
+        "sequelize": _sequelize(paths, files),
+        "typeorm": _typeorm(paths, files),
+        "node-pg-migrate": _node_pg_migrate(paths, files),
+        "flyway": _flyway(paths),
     }
     out: Ledgers = {}
     for ledger, names in found.items():
@@ -175,10 +216,129 @@ def _knex(paths: list[str], files: Mapping[str, bytes | None]) -> list[str]:
             continue
         text = _text(files, path) or ""
         named = _KNEX_DIRECTORY.findall(text) or ["migrations"]
-        for directory in named:
-            relative = directory.strip().removeprefix("./").strip("/")
-            if relative and ".." not in relative.split("/"):
-                folders.add(f"{m['dir']}{relative}/")
+        folders |= _folders(m["dir"], named)
+    if not folders:
+        folders = _knex_called(paths, files)
+    return sorted(_files_in(paths, folders, _KNEX_SUFFIXES))
+
+
+def _knex_called(paths: list[str], files: Mapping[str, bytes | None]) -> set[str]:
+    """The folders code without a knexfile migrates: ``migrate.latest(`` or ``migrate.up(`` in
+    a file that names Knex, or in an app whose ``package.json`` depends on it."""
+    depends = bool(_depending_on(paths, files, "knex"))
+    folders: set[str] = set()
+    for path in paths:
+        if not _is_source(path):
+            continue
+        text = _text(files, path)
+        if text is None or _KNEX_CALL.search(text) is None:
+            continue
+        if depends or "knex" in text:
+            folders |= _folders("", _CALL_DIRECTORY.findall(text) or ["migrations"])
+    return folders
+
+
+def _sequelize(paths: list[str], files: Mapping[str, bytes | None]) -> list[str]:
+    folders: set[str] = set()
+    for path in paths:
+        m = _SEQUELIZERC.match(path)
+        if m is None:
+            continue
+        named = _SEQUELIZE_PATH.search(_text(files, path) or "")
+        parts = _QUOTED.findall(named[1]) if named is not None else ["migrations"]
+        folders |= _folders(m["dir"], ["/".join(p.strip("/") for p in parts)])
+    for name in ("sequelize", "sequelize-cli"):
+        folders |= _folders_beside(_depending_on(paths, files, name), "migrations")
+    return sorted(_files_in(paths, folders, _KNEX_SUFFIXES))
+
+
+def _typeorm(paths: list[str], files: Mapping[str, bytes | None]) -> list[str]:
+    classes: set[str] = set()
+    for path in paths:
+        if not _is_source(path):
+            continue
+        text = _text(files, path)
+        if text is not None and "MigrationInterface" in text:
+            classes.update(_TYPEORM.findall(text))
+
+    def when(name: str) -> tuple[int, str]:
+        m = _TIMESTAMP.search(name)
+        return (int(m[1]) if m is not None else 0, name)
+
+    return sorted(classes, key=when)
+
+
+def _node_pg_migrate(paths: list[str], files: Mapping[str, bytes | None]) -> list[str]:
+    folders: set[str] = set()
+    for folder, manifest in _depending_on(paths, files, "node-pg-migrate").items():
+        scripts = manifest.get("scripts")
+        named = [
+            d
+            for script in (
+                cast("dict[str, object]", scripts) if isinstance(scripts, dict) else {}
+            ).values()
+            if isinstance(script, str) and "node-pg-migrate" in script
+            for d in _PG_MIGRATE_DIR.findall(script)
+        ]
+        folders |= _folders(folder, named or ["migrations"])
+    found = _files_in(paths, folders, _PG_MIGRATE_SUFFIXES)
+    return sorted({name.rsplit(".", 1)[0] for name in found})
+
+
+def _flyway(paths: list[str]) -> list[str]:
+    versions: dict[str, tuple[int, ...]] = {}
+    for path in paths:
+        m = _FLYWAY.search(path)
+        if m is not None:
+            version = tuple(int(n) for n in re.split(r"[._]", m["version"]))
+            versions[m["name"]] = version
+    return sorted(versions, key=lambda name: (versions[name], name))
+
+
+def _is_source(path: str) -> bool:
+    return path.endswith(_KNEX_SUFFIXES) and not path.endswith(".d.ts")
+
+
+def _depending_on(
+    paths: list[str], files: Mapping[str, bytes | None], dependency: str
+) -> dict[str, dict[str, object]]:
+    """Each folder whose ``package.json`` lists ``dependency``, with that file's object."""
+    out: dict[str, dict[str, object]] = {}
+    for path in paths:
+        m = _PACKAGE_JSON.match(path)
+        if m is None:
+            continue
+        try:
+            manifest: object = json.loads(_text(files, path) or "")
+        except ValueError:
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        fields = cast("dict[str, object]", manifest)
+        for key in ("dependencies", "devDependencies"):
+            listed = fields.get(key)
+            if isinstance(listed, dict) and dependency in listed:
+                out[m["dir"]] = fields
+    return out
+
+
+def _folders(base: str, named: Iterable[str]) -> set[str]:
+    """``base`` joined to each relative folder ``named``; a name that leaves ``base`` is
+    dropped."""
+    out: set[str] = set()
+    for directory in named:
+        relative = directory.strip().removeprefix("./").strip("/")
+        if relative and ".." not in relative.split("/"):
+            out.add(f"{base}{relative}/")
+    return out
+
+
+def _folders_beside(found: Mapping[str, object], name: str) -> set[str]:
+    return {f"{base}{name}/" for base in found}
+
+
+def _files_in(paths: list[str], folders: set[str], suffixes: tuple[str, ...]) -> set[str]:
+    """The names of the files with ``suffixes`` directly in one of ``folders``."""
     names: set[str] = set()
     for path in paths:
         for folder in folders:
@@ -186,8 +346,8 @@ def _knex(paths: list[str], files: Mapping[str, bytes | None]) -> list[str]:
             if (
                 rest != path
                 and "/" not in rest
-                and rest.endswith(_KNEX_SUFFIXES)
+                and rest.endswith(suffixes)
                 and not rest.endswith(".d.ts")
             ):
                 names.add(rest)
-    return sorted(names)
+    return names

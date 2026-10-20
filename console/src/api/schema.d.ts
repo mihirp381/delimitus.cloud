@@ -3274,7 +3274,7 @@ export interface components {
         LedgerAhead: {
             /**
              * Ledger
-             * @description The migration tool: `prisma`, `alembic`, `django`, `drizzle` or `knex`.
+             * @description The migration tool: `prisma`, `alembic`, `django`, `drizzle`, `knex`, `sequelize`, `typeorm`, `node-pg-migrate` or `flyway`.
              */
             ledger: string;
             /**
@@ -3346,6 +3346,12 @@ export interface components {
         };
         /** OperationAccepted */
         OperationAccepted: {
+            /**
+             * Migrations Unknown
+             * @description True for a rollback of an app that declares a database when the release's build recognised no migration tool: whether the database has migrations the release lacks was not checked.
+             * @default false
+             */
+            migrations_unknown: boolean;
             /**
              * Notice
              * @description What this deployment sets off and waits for, such as the company's database being created the first time an app asks for one.

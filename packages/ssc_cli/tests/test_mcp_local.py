@@ -26,7 +26,7 @@ from ssc_control.api.mcp import tools as server_tools
 from ssc_control.api.mcp.server import INSTRUCTIONS as SERVER_INSTRUCTIONS
 from ssc_control.api.settings import Settings
 from ssc_shared.fence import CLOSE, OPEN
-from ssc_shared.requirements import platform_requirements
+from ssc_shared.requirements import MIGRATIONS_UNKNOWN, platform_requirements
 
 DECISIONS = Path(__file__).resolve().parents[3] / "docs" / "decisions" / "README.md"
 ORG = "org_aaaaaaaaaaaaaaaaaaaa"
@@ -280,6 +280,24 @@ async def test_rollback_sends_the_given_key(fake_api):
     (post,) = [q for q in fake_api.seen if q.method == "POST"]
     assert post.headers["Idempotency-Key"] == "k1"
     assert json.loads(post.content) == {"release_id": release, "kind": "rollback"}
+
+
+async def test_a_rollback_whose_migrations_were_not_checked_carries_a_caution(fake_api):
+    """B-10: as the remote tool, the answer's migrations_unknown comes with a caution."""
+    app_id = "app_" + "a" * 20
+    env_id = "env_" + "p" * 20
+    app = {"id": app_id, "slug": "a1", "environments": [{"id": env_id, "name": "prod"}]}
+    path = f"/v1/apps/{app_id}/environments/{env_id}/deployments"
+    body = {"operation_id": "dep_1", "state": "pending", "migrations_unknown": True}
+    accepted = httpx2.Response(202, json=body, headers={"Location": "/v1/o"})
+    fake_api.add("GET", f"/v1/apps/{app_id}", httpx2.Response(200, json=app))
+    fake_api.add("POST", path, accepted)
+    args = {"app": app_id, "release": "rel_" + "r" * 20, "env": "prod", "idempotency_key": "k1"}
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("rollback", args)
+    assert not r.is_error
+    assert r.structured_content["migrations_unknown"] is True
+    assert r.structured_content["caution"] == MIGRATIONS_UNKNOWN
 
 
 async def test_a_rollback_past_migrations_names_them_and_needs_confirm(fake_api, fake_problem):

@@ -89,7 +89,8 @@ LOCAL_CODES: Final = frozenset(
 
 
 class ErrorBody(BaseModel):
-    """The ``error`` member printed under ``--json``."""
+    """The ``error`` member printed under ``--json``. ``fix`` and ``log_tail`` are the
+    ``CliError``'s, filled in only when the error is printed (B-10)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -100,6 +101,8 @@ class ErrorBody(BaseModel):
     request_id: str | None = None
     instance: str | None = None
     type: str | None = None
+    fix: str | None = None
+    log_tail: tuple[str, ...] | None = None
 
 
 class CliError(Exception):
@@ -109,11 +112,11 @@ class CliError(Exception):
         super().__init__(body.code)
         self.body = body
         self.exit_code = exit_code
-        # The next step, printed as a ``Fix:`` line without ``--json``. Not part of the JSON.
+        # The next step: a ``Fix:`` line, and the error's ``fix`` under ``--json`` (B-10).
         self.fix = fix
         self.retry_after: float | None = None
-        # The last log lines that show why a build or health check failed, printed under the
-        # error without ``--json``. Not part of the JSON.
+        # The last log lines that show why a build or health check failed: printed under the
+        # error, and its ``log_tail`` under ``--json`` (B-10).
         self.log_tail: tuple[str, ...] = ()
 
 

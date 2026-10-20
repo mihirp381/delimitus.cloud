@@ -154,11 +154,14 @@ A cell resource (`GET /v1/cell`) and the warm gateway (`GET /v1/warm`) carry the
 
 **A rollback past migrations needs `confirm`** (SSC-043). A release has `latest_migrations`, the
 last migration name per ledger its build found (`prisma`, `alembic`, `django`, `drizzle`,
-`knex`), or null when the build did not read the source. A rollback to a release that lacks
+`knex`, `sequelize`, `typeorm`, `node-pg-migrate`, `flyway`), or null when the build did not read
+the source. A rollback to a release that lacks
 migrations the environment's database may have run is `409 SCHEMA_AHEAD`; its evidence has
 `release_id` and the count per ledger. `GET .../environments/{env}/migrations-ahead?release_id=`
 names them. The same POST with `confirm: true` goes ahead and audits the names
-(`migrations_ahead`, as `ledger:name`). Only `kind: rollback` is checked. A prod deployment of
+(`migrations_ahead`, as `ledger:name`). Only `kind: rollback` is checked. A rollback of an app
+that declares `[state] postgres` whose release has no recognised ledger cannot be checked: its
+`202` says `migrations_unknown: true` (B-10). A prod deployment of
 an environment with a database carries `recovery_point` `{at, lsn}`, recorded before the
 runtime is called. It is the time to restore to if the deployment harms the data
 (`docs/runbooks/ssc-043-restore-database.md`). `lsn` is null when the cell agent did not

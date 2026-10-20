@@ -51,6 +51,29 @@ class PlatformRequirements(_Data):
 
 _SESSIONS = ", ".join(sorted(f.capitalize() for f in SESSION_FRAMEWORKS))
 
+MIGRATION_TOOLS: Final = (
+    "Prisma",
+    "Alembic",
+    "Django",
+    "Drizzle",
+    "Knex",
+    "Sequelize",
+    "TypeORM",
+    "node-pg-migrate",
+    "Flyway",
+)
+"""The migration tools whose migrations a build reads from the source, in the order of
+``ssc_bundle.migrations.LEDGERS`` (B-10); a test holds the two together."""
+_TOOLS = f"{', '.join(MIGRATION_TOOLS[:-1])} and {MIGRATION_TOOLS[-1]}"
+
+MIGRATIONS_UNKNOWN: Final = (
+    "This rollback was not checked for database migrations: the app has a database, but SSC "
+    f"recognised no migration tool in the release (it reads {_TOOLS}). If the database has "
+    "migrations the release lacks, the release may fail against it; deploy a fix forward then."
+)
+"""The caution a rollback answered with ``migrations_unknown`` comes with, in the CLI and both
+MCP servers."""
+
 RULES: Final = (
     PlatformRule(
         id="port",
@@ -194,6 +217,13 @@ FACTS: Final = (
         f"and a stateful app runs {app_database.MAX_INSTANCES} instance, so set every connection "
         f"pool to {app_database.POOL_SIZE}. The first app to ask for a database creates the "
         "company's, which takes about ten minutes once.",
+    ),
+    PlatformRule(
+        id="migrations",
+        text="A rollback does not undo database migrations. SSC reads the migrations of "
+        f"{_TOOLS} from the source, and a rollback to a release that lacks some the database may "
+        "have run stops with SCHEMA_AHEAD until it is confirmed. With another tool nothing is "
+        "checked: the rollback goes ahead and its answer says migrations_unknown.",
     ),
 )
 """How an app behaves once it runs: nothing to fix, but code should expect it."""

@@ -7,7 +7,8 @@ built for one environment is refused in another.
 A rollback does not undo database migrations. When the environment's database may have run
 migrations the release lacks, the API refuses with ``SCHEMA_AHEAD`` until ``--confirm`` (SSC-043);
 its problem carries fixed text, so the migrations are read from ``migrations-ahead`` and named in
-the ``Fix:`` line.
+the ``Fix:`` line (the error's ``fix`` under ``--json``). When the app has a database but SSC
+recognised no migration tool in the release, nothing was checked: a caution says so (B-10).
 """
 
 import re
@@ -31,6 +32,7 @@ from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import RollbackResult
 from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_operation
 from ssc_contracts.errors import ErrorCode
+from ssc_shared.requirements import MIGRATIONS_UNKNOWN
 
 ROLLBACK: Final = "rollback"
 RELEASE_PREFIX: Final = "rel_"
@@ -105,10 +107,13 @@ def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option
         operation_id=op.operation_id,
         state=state,
         url=where.url,
+        migrations_unknown=op.migrations_unknown,
     )
     if json_mode:
         print_json(result)
         return
+    if op.migrations_unknown:
+        say(f"Caution: {MIGRATIONS_UNKNOWN}")
     if state == "healthy":
         say(f"{where.name} of {target.slug} runs {rel.label} again.")
     else:

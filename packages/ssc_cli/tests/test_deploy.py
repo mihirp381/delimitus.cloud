@@ -573,6 +573,31 @@ def test_a_failed_build_prints_the_end_of_its_log(cli, api, folder):
     assert [q.url.params["source"] for q in asked] == ["build"]
 
 
+def test_a_failed_health_check_under_json_carries_the_fix_and_the_log(cli, api, folder):
+    """B-10: --json keeps the Fix line and the log tail as the error's ``fix`` and
+    ``log_tail``; the other keys stay as they were."""
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("failed", failure_code="HEALTH_CHECK_FAILED")
+    ]
+    api.routes[("GET", LOGS)] = [_log_page("app", "starting", "Error: Cannot find module './db'")]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", "--json", session=api.session())
+    assert r.code == ExitCode.FAILED
+    error = r.json()["error"]
+    assert error["code"] == "HEALTH_CHECK_FAILED"
+    assert error["fix"] == "The app stopped while starting; read the log lines above."
+    assert error["log_tail"] == ["starting", "Error: Cannot find module './db'"]
+    assert {"code", "title", "detail", "status", "request_id", "instance", "type"} <= set(error)
+
+
+def test_an_error_without_a_fix_has_null_fix_and_log_under_json(cli, api, folder):
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("running")]
+    r = cli(
+        "deploy", str(folder), "--app", "demo", "--timeout", "1", "--json", session=api.session()
+    )
+    assert r.code == ExitCode.FAILED
+    assert r.json()["error"]["log_tail"] is None
+
+
 def test_a_failed_health_check_prints_the_end_of_the_app_log(cli, api, folder):
     api.routes[("GET", f"/v1/operations/{DEP}")] = [
         _operation("failed", failure_code="HEALTH_CHECK_FAILED")
@@ -944,6 +969,7 @@ def test_rollback_by_number_goes_to_the_environment_it_was_built_for(cli, histor
     result = RollbackResult.model_validate(r.json())
     assert (result.environment, result.release_number, result.state) == ("prod", 2, "pending")
     assert result.url == PROD_URL
+    assert result.migrations_unknown is False
     listed = [q for q in history.seen if q.url.path == RELEASES]
     assert dict(listed[0].url.params) == {"limit": "1", "before": "3"}
     posted = [q for q in history.seen if q.method == "POST"]
@@ -1025,6 +1051,41 @@ def test_a_rollback_past_migrations_names_them_and_needs_confirm(cli, history, f
     assert r.code == 0, r.stdout
     posted = [q for q in history.seen if q.method == "POST"]
     assert [_body(q).get("confirm") for q in posted] == [None, True]
+
+
+def test_a_rollback_past_migrations_under_json_names_them_in_the_fix(cli, history, fake_problem):
+    """B-10: the migrations were only in the Fix line, which --json dropped."""
+    history.routes[("GET", RELEASES)] = [_page(_release(2, PROD))]
+    history.add("POST", PROD_DEPLOYMENTS, fake_problem(409, "SCHEMA_AHEAD"))
+    ahead = {
+        "environment_id": PROD,
+        "release_id": "rel_00000000000000000002",
+        "ledgers": [{"ledger": "knex", "names": ["20261002_add_total.js"]}],
+    }
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/migrations-ahead"
+    history.add("GET", path, httpx2.Response(200, json=ahead))
+    r = cli("rollback", APP_ID, "R2", "--json", session=history.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "SCHEMA_AHEAD")
+    fix = r.json()["error"]["fix"]
+    assert "knex: 20261002_add_total.js" in fix
+    assert "`ssc rollback demo R2 --env prod --confirm`" in fix
+
+
+def test_a_rollback_whose_migrations_were_not_checked_says_so(cli, history):
+    """B-10: an app with a database whose migration tool SSC does not recognise rolls back
+    unchecked; the answer's migrations_unknown becomes a caution and a JSON key."""
+    accepted = {"operation_id": DEP, "state": "pending", "migrations_unknown": True}
+    unchecked = httpx2.Response(202, json=accepted, headers={"location": f"/v1/operations/{DEP}"})
+    history.routes[("GET", RELEASES)] = [_page(_release(2, PROD))]
+    history.add("POST", PROD_DEPLOYMENTS, unchecked, unchecked)
+    r = cli("rollback", APP_ID, "R2", session=history.session())
+    assert r.code == 0, r.stderr
+    caution = next(line for line in r.stdout.splitlines() if line.startswith("Caution: "))
+    assert "migration tool" in caution
+    assert "not checked" in caution
+    r = cli("rollback", APP_ID, "R2", "--json", session=history.session())
+    assert r.code == 0, r.stdout
+    assert r.json()["migrations_unknown"] is True
 
 
 def test_a_rollback_past_migrations_stays_schema_ahead_when_the_list_is_refused(

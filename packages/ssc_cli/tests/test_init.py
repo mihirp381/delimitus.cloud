@@ -23,6 +23,7 @@ from ssc_cli.shapes import ErrorResult, InitResult
 from ssc_contracts import app_env
 from ssc_contracts.connections import AVAILABLE
 from ssc_contracts.manifest import load_manifest
+from ssc_shared.requirements import MIGRATION_TOOLS
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "ssc_cli"
 ROOT = Path(__file__).resolve().parents[3]
@@ -536,3 +537,12 @@ def test_pack_says_how_an_app_reads_a_data_connection(cli, tmp_path):
     ):
         assert fact in agents, fact
         assert source in limits, source
+
+
+def test_pack_names_the_migration_tools_a_rollback_checks(cli, tmp_path):
+    """B-10: SCHEMA_AHEAD is not universal; the pack says which tools SSC reads."""
+    init(cli, tmp_path)
+    agents = " ".join((tmp_path / "AGENTS.md").read_text().split())
+    for tool in MIGRATION_TOOLS:
+        assert tool in agents, tool
+    assert "`migrations_unknown`" in agents

@@ -262,7 +262,9 @@
   "ErrorBody": {
     "code": "string",
     "detail": "string",
+    "fix": "string|null",
     "instance": "string|null",
+    "log_tail": "array<string>|null",
     "request_id": "string|null",
     "status": "integer|null",
     "title": "string",
@@ -451,6 +453,7 @@
     "app_id": "string",
     "environment": "string",
     "environment_id": "string",
+    "migrations_unknown": "boolean",
     "operation_id": "string",
     "release_id": "string",
     "release_number": "integer",

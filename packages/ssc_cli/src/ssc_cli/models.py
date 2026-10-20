@@ -90,6 +90,7 @@ class OperationAccepted(Wire):
     operation_id: str
     state: str
     notice: str | None = None
+    migrations_unknown: bool = False
 
 
 class UploadTarget(Wire):

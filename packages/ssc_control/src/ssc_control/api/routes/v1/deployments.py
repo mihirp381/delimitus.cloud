@@ -15,8 +15,10 @@ current config and sharing versions: it changes the running code, nothing else.
 
 A rollback to a release that lacks migrations the environment's database may have run is
 ``SCHEMA_AHEAD`` unless the request says ``confirm`` (SSC-043): the problem carries fixed text, so
-``GET .../migrations-ahead`` names the migrations. A confirmed one is audited with them. A
-``prod`` deployment of an environment with a database shows the recovery point its job recorded.
+``GET .../migrations-ahead`` names the migrations. A confirmed one is audited with them. A rollback
+of an app that declares a database but whose build recognised no migration tool cannot be checked,
+so its answer says ``migrations_unknown`` (B-10). A ``prod`` deployment of an environment with a
+database shows the recovery point its job recorded.
 """
 
 from collections.abc import Mapping
@@ -79,7 +81,8 @@ class RecoveryPointOut(Strict):
 
 class LedgerAhead(Strict):
     ledger: str = Field(
-        description="The migration tool: `prisma`, `alembic`, `django`, `drizzle` or `knex`."
+        description="The migration tool: `prisma`, `alembic`, `django`, `drizzle`, `knex`, "
+        "`sequelize`, `typeorm`, `node-pg-migrate` or `flyway`."
     )
     names: list[str] = Field(
         description="The migrations the database may have run that the release lacks, in the "
@@ -104,6 +107,12 @@ class OperationAccepted(Strict):
         default=None,
         description="What this deployment sets off and waits for, such as the company's "
         "database being created the first time an app asks for one.",
+    )
+    migrations_unknown: bool = Field(
+        default=False,
+        description="True for a rollback of an app that declares a database when the release's "
+        "build recognised no migration tool: whether the database has migrations the release "
+        "lacks was not checked.",
     )
 
 
@@ -421,6 +430,7 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
         )
     superseded: list[str] = []
     ahead: ledgers.Ledgers = {}
+    unknown = False
     if body.kind == "rollback":
         ahead = await ledgers.ahead(
             uow.conn,
@@ -437,6 +447,7 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
                     "ahead": {ledger: len(names) for ledger, names in ahead.items()},
                 },
             )
+        unknown = await _migrations_unknown(uow, app_id, body.release_id)
         superseded = [
             str(i) for i in (await uow.conn.execute(_SUPERSEDE_IN_FLIGHT_DEPLOY, params)).scalars()
         ]
@@ -467,10 +478,23 @@ async def create_deployment(  # noqa: PLR0913  (FastAPI maps each parameter to t
             operation_id=dep_id,
             state="pending",
             notice=await _first_use_notice(uow, body.release_id),
+            migrations_unknown=unknown,
         ),
         status=202,
         headers={"Location": f"/v1/operations/{dep_id}"},
     )
+
+
+async def _migrations_unknown(uow: UnitOfWork, app_id: str, release_id: str) -> bool:
+    """Whether ``release_id`` declares a database but its build recognised no migration tool,
+    so a rollback to it is not checked for migrations (B-10)."""
+    spec = await release_spec(uow.conn, uow.org_id, release_id)
+    if spec is None or not spec.manifest.state.postgres:
+        return False
+    known = await ledgers.of_release(
+        uow.conn, org_id=uow.org_id, app_id=app_id, release_id=release_id
+    )
+    return not known
 
 
 async def _first_use_notice(uow: UnitOfWork, release_id: str) -> str | None:

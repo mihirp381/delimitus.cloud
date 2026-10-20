@@ -9,7 +9,8 @@ app's database: the cell agent never connects to it.
 
 ``ahead`` is what a rollback is checked against: the migrations the database may have run that
 the target release does not have. It is empty when the environment has no database or the
-release's migrations are unknown.
+release's migrations are unknown. ``of_release`` is what a release knows, empty when its build
+recognised no ledger tool or did not read the source.
 """
 
 import json
@@ -82,6 +83,14 @@ async def ahead(
     if known is None or known.migrations is None:
         return {}
     return missing(ledgers_of(seen.migrations), ledgers_of(known.migrations))
+
+
+async def of_release(
+    conn: AsyncConnection, *, org_id: str, app_id: str, release_id: str
+) -> Ledgers:
+    """The migrations ``release_id`` knows, per ledger; empty when none are known."""
+    known = (await conn.execute(_RELEASE, {"org": org_id, "app": app_id, "id": release_id})).first()
+    return {} if known is None else ledgers_of(known.migrations)
 
 
 async def record_seen(

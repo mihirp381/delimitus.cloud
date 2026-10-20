@@ -3,12 +3,20 @@
 from collections import Counter
 from typing import get_args
 
+from ssc_bundle.migrations import LEDGERS
 from ssc_cli.doctor import run_doctor
 from ssc_cli.doctor.finding import FIX, DoctorCode
 from ssc_contracts.build import FIX_ITS, NOTICES
 from ssc_contracts.manifest import RESOURCE_CLASSES
 from ssc_contracts.packages import APPROVED_PACKAGES
-from ssc_shared.requirements import FACTS, REQUIREMENT_OF, RULES, platform_requirements
+from ssc_shared.requirements import (
+    FACTS,
+    MIGRATION_TOOLS,
+    MIGRATIONS_UNKNOWN,
+    REQUIREMENT_OF,
+    RULES,
+    platform_requirements,
+)
 
 
 def test_requirements_and_doctor_come_from_one_source() -> None:
@@ -60,3 +68,15 @@ def test_the_requirements_carry_the_ticket_rules_and_facts() -> None:
     )
     assert set(req.approved_packages) == APPROVED_PACKAGES
     assert "preflight" in req.next
+
+
+def test_the_requirements_name_every_migration_tool_a_rollback_checks() -> None:
+    """B-10: SCHEMA_AHEAD covers the tools ssc_bundle reads, and the rules say which."""
+    assert [t.lower() for t in MIGRATION_TOOLS] == list(LEDGERS)
+    facts = {f.id: " ".join(f.text.split()) for f in platform_requirements().facts}
+    assert "SCHEMA_AHEAD" in facts["migrations"]
+    assert "migrations_unknown" in facts["migrations"]
+    for tool in MIGRATION_TOOLS:
+        assert tool in facts["migrations"], tool
+        assert tool in MIGRATIONS_UNKNOWN, tool
+    assert "not checked" in MIGRATIONS_UNKNOWN

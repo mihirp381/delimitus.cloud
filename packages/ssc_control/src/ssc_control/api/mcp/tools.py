@@ -65,7 +65,7 @@ from ssc_control.domain.approval_rules import GrantKey
 from ssc_shared.fence import fence
 from ssc_shared.logs import MAX_LINES, MAX_SINCE_SECONDS
 from ssc_shared.redaction import redact
-from ssc_shared.requirements import platform_requirements
+from ssc_shared.requirements import MIGRATIONS_UNKNOWN, platform_requirements
 
 TOOLS: Final = (
     "get_platform_requirements",
@@ -331,6 +331,8 @@ async def rollback_to(  # noqa: PLR0913  (the rollback tool's arguments)
     out = {**body, "location": r.headers["Location"], "idempotency_key": key}
     if body.get("notice"):
         out["next"] = waiting_note(body["notice"], str(body["operation_id"]))
+    if body.get("migrations_unknown"):
+        out["caution"] = MIGRATIONS_UNKNOWN
     return out
 
 
@@ -847,7 +849,9 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         per environment at a time. To retry after an error, send the same idempotency_key: the
         same operation comes back and nothing starts twice. A rollback does not undo database
         migrations: when the database has some the release lacks, it is refused with
-        SCHEMA_AHEAD naming them, and goes ahead only with confirm=true."""
+        SCHEMA_AHEAD naming them, and goes ahead only with confirm=true. When SSC does not
+        recognise the app's migration tool nothing is checked, and the answer's caution says so:
+        tell the person."""
         key = idempotency_key or fresh_key()
         return await run(
             api, ctx, lambda c: rollback_to(c, app, release, env, key=key, confirm=confirm)

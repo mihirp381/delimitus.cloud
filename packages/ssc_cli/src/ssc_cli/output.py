@@ -32,7 +32,8 @@ def print_json(model: BaseModel) -> None:
 
 def print_error(error: CliError, json_mode: bool) -> None:
     if json_mode:
-        print_json(ErrorResult(error=error.body))
+        shown = {"fix": error.fix, "log_tail": error.log_tail or None}
+        print_json(ErrorResult(error=error.body.model_copy(update=shown)))
         return
     # The title, detail and request id may be the server's words: shown escaped (B-5).
     body = error.body

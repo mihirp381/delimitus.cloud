@@ -75,7 +75,7 @@ from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
 from ssc_shared.fence import CLOSE, OPEN
 from ssc_shared.logs import Health, LogLine, LogPage, LogQuery
-from ssc_shared.requirements import platform_requirements
+from ssc_shared.requirements import MIGRATIONS_UNKNOWN, platform_requirements
 
 SPEC = Path(__file__).resolve().parents[3] / "docs" / "api" / "openapi.json"
 ASK_FIRST = (
@@ -424,6 +424,7 @@ async def test_mutations_audited_as_agent(world: World) -> None:
         "location": f"/v1/operations/{op}",
         "idempotency_key": key,
         "notice": None,
+        "migrations_unknown": False,
     }
     assert again.structured_content == first.structured_content
     assert second.is_error
@@ -1285,6 +1286,43 @@ class AcceptingV1:
     async def post(self, path: str, body: dict[str, Any], key: str) -> httpx2.Response:
         accepted = {"operation_id": "dep_" + "a" * 20, "state": "pending", "notice": self.notice}
         return httpx2.Response(202, json=accepted, headers={"Location": "/v1/operations/x"})
+
+
+class RollingBackV1:
+    """``/v1`` with one app, answering a rollback as the deployments route does."""
+
+    def __init__(self, unknown: bool) -> None:
+        self.unknown = unknown
+
+    async def get(self, path: str) -> dict[str, Any]:
+        return {"id": "app_" + "a" * 20, "slug": "a1", "environments": [ENV_P]}
+
+    async def post(self, path: str, body: dict[str, Any], key: str) -> httpx2.Response:
+        accepted = {
+            "operation_id": "dep_" + "a" * 20,
+            "state": "pending",
+            "notice": None,
+            "migrations_unknown": self.unknown,
+        }
+        return httpx2.Response(202, json=accepted, headers={"Location": "/v1/operations/x"})
+
+
+ENV_P = {"id": "env_" + "p" * 20, "name": "prod"}
+
+
+async def test_a_rollback_whose_migrations_were_not_checked_carries_a_caution() -> None:
+    """B-10: a database app whose migration tool SSC does not recognise rolls back unchecked;
+    the tool's answer says so in ``caution``."""
+    args = ("app_" + "a" * 20, "rel_" + "r" * 20, "prod")
+    unchecked = await tools.rollback_to(
+        cast("tools.V1", RollingBackV1(True)), *args, key="k", confirm=False
+    )
+    checked = await tools.rollback_to(
+        cast("tools.V1", RollingBackV1(False)), *args, key="k", confirm=False
+    )
+    assert unchecked["migrations_unknown"] is True
+    assert unchecked["caution"] == MIGRATIONS_UNKNOWN
+    assert "caution" not in checked
 
 
 async def test_a_deploy_waiting_on_a_creation_says_so() -> None:

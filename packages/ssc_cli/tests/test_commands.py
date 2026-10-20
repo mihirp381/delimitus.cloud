@@ -243,6 +243,8 @@ def test_refusal_rendering(cli, fake_api, fake_problem, isolated):
         "request_id": "req_test",
         "instance": "/v1/x",
         "type": "https://errors.delimitus.com/already_exists",
+        "fix": None,
+        "log_tail": None,
     }
 
 

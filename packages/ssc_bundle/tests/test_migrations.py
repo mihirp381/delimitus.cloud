@@ -116,6 +116,97 @@ def test_knex_reads_its_directory_from_the_knexfile() -> None:
     assert found(escape) == {}
 
 
+def test_knex_without_a_knexfile_reads_the_folder_its_code_migrates() -> None:
+    """B-10: ``knex.migrate.latest()`` in the code and ``migrations/`` at the root."""
+    files = {
+        "package.json": json.dumps({"dependencies": {"knex": "3.1.0", "pg": "8.13.0"}}),
+        "server.js": "const db = knex(config);\nawait db.migrate.latest();\n",
+        "migrations/20261001_init.js": "",
+        "migrations/20261002_add_total.js": "",
+        "migrations/nested/20261003_no.js": "",
+    }
+    assert found(files) == {"knex": ("20261001_init.js", "20261002_add_total.js")}
+    named = {
+        "index.ts": "await knex.migrate.latest({ directory: './db/m' });",
+        "db/m/0001_a.ts": "",
+        "migrations/0002_not_these.js": "",
+    }
+    assert found(named) == {"knex": ("0001_a.ts",)}
+    assert found({"migrations/0001_a.js": "", "server.js": "listen()"}) == {}
+
+
+def test_sequelize_reads_its_rc_file_or_the_default_folder() -> None:
+    files = {
+        "package.json": json.dumps(
+            {"dependencies": {"sequelize": "6.37.0"}, "devDependencies": {"sequelize-cli": "6"}}
+        ),
+        "migrations/20261001000000-create-user.js": "",
+        "migrations/20261002000000-add-total.js": "",
+        "migrations/README.md": "",
+    }
+    assert found(files) == {
+        "sequelize": ("20261001000000-create-user.js", "20261002000000-add-total.js")
+    }
+    rc = {
+        ".sequelizerc": "const path = require('path');\nmodule.exports = {\n"
+        "  'config': path.resolve('config', 'database.json'),\n"
+        "  'migrations-path': path.resolve('db', 'migrations'),\n};\n",
+        "db/migrations/20261001000000-init.cjs": "",
+        "migrations/20261009000000-not-these.js": "",
+    }
+    assert found(rc) == {"sequelize": ("20261001000000-init.cjs",)}
+    assert found({"migrations/20261001000000-a.js": ""}) == {}
+
+
+def test_typeorm_names_each_migration_class_in_timestamp_order() -> None:
+    files = {
+        "src/migrations/1696000000000-AddTotal.ts": (
+            "import { MigrationInterface, QueryRunner } from 'typeorm';\n"
+            "export class AddTotal1696000000000 implements MigrationInterface {}\n"
+        ),
+        "src/migrations/1695000000000-Init.ts": (
+            "export class Init1695000000000 implements MigrationInterface {}\n"
+        ),
+        "src/entity/User.ts": "export class User {}\n",
+        "src/types.d.ts": "export class Fake1 implements MigrationInterface {}\n",
+    }
+    assert found(files) == {"typeorm": ("Init1695000000000", "AddTotal1696000000000")}
+
+
+def test_node_pg_migrate_reads_its_folder_from_the_scripts() -> None:
+    files = {
+        "package.json": json.dumps({"dependencies": {"node-pg-migrate": "7.9.0"}}),
+        "migrations/1696000000000_init.js": "",
+        "migrations/1696000000001_add-total.sql": "",
+        "migrations/notes.txt": "",
+    }
+    assert found(files) == {"node-pg-migrate": ("1696000000000_init", "1696000000001_add-total")}
+    scripted = {
+        "package.json": json.dumps(
+            {
+                "scripts": {"migrate": "node-pg-migrate -m db/migrations up"},
+                "devDependencies": {"node-pg-migrate": "7.9.0"},
+            }
+        ),
+        "db/migrations/1696000000000_init.ts": "",
+        "migrations/1696000000009_not_these.js": "",
+    }
+    assert found(scripted) == {"node-pg-migrate": ("1696000000000_init",)}
+
+
+def test_flyway_orders_versioned_scripts_by_version() -> None:
+    files = {
+        "db/migration/V1__init.sql": "",
+        "db/migration/V2__add_total.sql": "",
+        "db/migration/V10__later.sql": "",
+        "db/migration/V1_1__fix.sql": "",
+        "db/migration/R__views.sql": "",
+        "db/migration/U2__undo_total.sql": "",
+        "db/migration/V3_notes.sql": "",
+    }
+    assert found(files) == {"flyway": ("V1__init", "V1_1__fix", "V2__add_total", "V10__later")}
+
+
 def test_apple_double_files_are_not_migrations() -> None:
     """B-9: a macOS tar's ``._`` twin of each file is no migration of any ledger."""
     files = {

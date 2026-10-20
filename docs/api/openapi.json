@@ -4533,7 +4533,7 @@
         "additionalProperties": false,
         "properties": {
           "ledger": {
-            "description": "The migration tool: `prisma`, `alembic`, `django`, `drizzle` or `knex`.",
+            "description": "The migration tool: `prisma`, `alembic`, `django`, `drizzle`, `knex`, `sequelize`, `typeorm`, `node-pg-migrate` or `flyway`.",
             "title": "Ledger",
             "type": "string"
           },
@@ -4697,6 +4697,12 @@
       "OperationAccepted": {
         "additionalProperties": false,
         "properties": {
+          "migrations_unknown": {
+            "default": false,
+            "description": "True for a rollback of an app that declares a database when the release's build recognised no migration tool: whether the database has migrations the release lacks was not checked.",
+            "title": "Migrations Unknown",
+            "type": "boolean"
+          },
           "notice": {
             "anyOf": [
               {
