@@ -118,7 +118,7 @@ row-level security and transaction-scoped org binding. Wire contracts are indexe
 - [gates/](../gates/) contains intentional failures that prove lint, typing, import, dependency,
   secret, and API gates work.
 - [infra/](../infra/README.md) is a separate Pulumi/uv project; its provider SDK stays outside
-  the service workspace. [spikes/](../spikes/) contains experiments and proof-run harnesses.
+  the service workspace.
 - [tools/](../tools/) contains the local dev stack, dependency policy checks, OpenAPI checks,
   and release checks. [.github/](../.github/) runs them and hosts the preview deploy action.
 

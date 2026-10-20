@@ -5,7 +5,7 @@ tolerance = 0.20
 min_usd = 1.0
 adds_up_within = 0.02
 adds_up_usd = 0.50
-source = "Architecture 2026-10-03 section 10 and the tickets' decided lines, list prices in us-central1, free tiers ignored. The one copy of these figures: ssc_control.metrics.cost_model reads it, and so does the proof-run kit (spikes/proofrun/proofrun/cost.py). tolerance: SSC-096 amends the model when a line is more than 20 % off. min_usd: a project line under $1 on both sides is not flagged. adds_up_within and adds_up_usd: a stated 'about' figure adds up when the parts come within 2 % or 50 cents of it."
+source = "Architecture 2026-10-03 section 10 and the tickets' decided lines, list prices in us-central1, free tiers ignored. The one copy of these figures: ssc_control.metrics.cost_model reads it. tolerance: SSC-096 amends the model when a line is more than 20 % off. min_usd: a project line under $1 on both sides is not flagged. adds_up_within and adds_up_usd: a stated 'about' figure adds up when the parts come within 2 % or 50 cents of it."
 
 [cloud_run.request]
 vcpu_second = 0.000024

@@ -1,6 +1,6 @@
 # SSC-096 monthly cost reconciliation
 
-Once a month, this runbook compares each project's bill with the cost model and the usage events. When a line is off, the model changes, not the page. The command is `uv run python -m ssc_control.metrics.reconcile`. Its docstring gives the attribution rules. The model lives in `packages/ssc_control/src/ssc_control/metrics/cost_model.toml`, and each figure in it names its source. The proof-run kit reads the same file (`spikes/proofrun/proofrun/cost.py`).
+Once a month, this runbook compares each project's bill with the cost model and the usage events. When a line is off, the model changes, not the page. The command is `uv run python -m ssc_control.metrics.reconcile`. Its docstring gives the attribution rules. The model lives in `packages/ssc_control/src/ssc_control/metrics/cost_model.toml`, and each figure in it names its source.
 
 Nothing here creates or changes a resource, and the command never calls a billing API. Steps marked **[real]** read a real bill or a real control database. Run them only with the founder's agreement. The page is for us only and never bills a customer (A6).
 
@@ -119,7 +119,7 @@ Put the reasons in `reasons-YYYY-MM.json`, then re-run step 2 with `--reasons re
 
 A line that is more than 20 % off two months running, or for a reason that will recur, means the model is wrong. Change it in these three places, in the same change:
 
-1. **`cost_model.toml`**: the figure and its `source`, saying which month's bill showed it. The model's own tests and the kit's test (`spikes/proofrun/tests/test_t8_t9_t10.py`) read this file. If you change a cell part, also update `ssc_contracts.cells.MONTHLY_USD`; a test checks that the two agree.
+1. **`cost_model.toml`**: the figure and its `source`, saying which month's bill showed it. The model's own tests read this file. If you change a cell part, also update `ssc_contracts.cells.MONTHLY_USD`; a test checks that the two agree.
 2. **Architecture section 10**: the ten-customer table and the per-app target, if the change moves them.
 3. **Decision 006, A7**: the cost assumption, with the month and the measured figure.
 
@@ -149,7 +149,7 @@ What this run proves:
 - the fixed lines: T1's empty under $25 and full under $50, now taken from a real bill with each part pro-rated from its creation;
 - the platform lines.
 
-It cannot attribute Cloud Run to apps, because these cells have no events. The whole Cloud Run bill appears as "Cloud Run, not apps", and T9's own `t9 bill` command checks the hourly rates. Write T9's usage amounts and the page's fixed lines into `spikes/proofrun/RESULTS.md`, and change the model as in step 5 where they disagree.
+It cannot attribute Cloud Run to apps, because these cells have no events. The whole Cloud Run bill appears as "Cloud Run, not apps", and T9's own `t9 bill` command checks the hourly rates. Write T9's usage amounts and the page's fixed lines into the SSC-086 proof-run record (internal, kept outside this repository), and change the model as in step 5 where they disagree.
 
 ## Second run: dogfood (SSC-030) **[real]**
 

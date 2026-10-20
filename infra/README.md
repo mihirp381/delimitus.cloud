@@ -581,7 +581,7 @@ The steps print as `[n/9]` with each step's time and the running total, and a li
 8. The floor probes: `ssc_conformance.nightly` with the cell's project, agent URL and probe digest.
 9. Move the state to the bucket (below). It counts in the total and the 15 minutes, and prints its own line, `state move: mm:ss`.
 
-**Where the state lives while it runs.** Pulumi rewrites the whole checkpoint after every resource, and in the bucket with a 7 MB state that made 8.8 sinkhole rules a minute (274 on a local file; `spikes/sinkhole/pulumi_probe/README.md`). So steps 1 to 8 run every `pulumi` call, both applies included, with `PULUMI_BACKEND_URL=file://~/.ssc/onboard/<label>`, a folder made with mode 0700 and never under a temporary folder. The secrets provider is still the KMS key, and `Pulumi.<stack>.yaml` stays in `infra/`. Step 9 then:
+**Where the state lives while it runs.** Pulumi rewrites the whole checkpoint after every resource, and in the bucket with a 7 MB state that made 8.8 sinkhole rules a minute (274 on a local file; internal sinkhole probe notes). So steps 1 to 8 run every `pulumi` call, both applies included, with `PULUMI_BACKEND_URL=file://~/.ssc/onboard/<label>`, a folder made with mode 0700 and never under a temporary folder. The secrets provider is still the KMS key, and `Pulumi.<stack>.yaml` stays in `infra/`. Step 9 then:
 
 1. exports the local stack (`pulumi stack export`, secrets stay sealed) and saves a copy of `Pulumi.<stack>.yaml` as `Pulumi.<stack>.yaml.before-init` in the folder;
 2. creates the stack in `gs://ssc-platform-0-pulumi` with the same secrets provider, and stops if `secretsprovider` or `encryptedkey` in the yaml changed (it names the line, never the key, and does not restore the copy);

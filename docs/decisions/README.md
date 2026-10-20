@@ -4,9 +4,9 @@ One short file per decision: the choice, the reason, and what would make us reve
 
 | # | Decision | Source | Status |
 |---|---|---|---|
-| 001 | Cloud and runtime: GCP, Cloud Run gen2 in a project per customer cell, Direct VPC egress into a deny-all VPC, regional internal Application LB, kill switch by traffic to a tombstone revision, prod apps kept warm | SSC-001 (`spikes/bakeoff/RESULTS.md`, `spikes/bakeoff/COST_SHEET.md`) | decided 2026-09-29; amended 2026-10-06 from SSC-086 pass 1 (T7 and certificate changes chosen by the founder 2026-10-06; T7's to be measured again) |
-| 002 | Login vendor and directory join key: WorkOS SSO and Directory Sync (amended: no AuthKit; SSC runs its own device flow and sessions, decision 024); users keyed on the directory user, joined by SSO `idp_id` where it equals the directory `idp_id` (Okta), by email plus an admin link where it does not (Google); SSC revokes sessions and CLI tokens itself on directory deactivation or removal | SSC-002 (`spikes/loginproof/RESULTS.md`, `spikes/loginproof/NOTES.md` h) | decided 2026-09-30; amended 2026-10-01 (SSC-019); V1 pilot IdP is Okta only, Google Workspace not offered until its lockout and rename checks pass on SSC (founder 2026-10-08, GA-2.6); Entra untested (founder skip); WorkOS data residency Unknown |
-| 003 | App database connection string form: one `postgresql://` URL with `sslmode=verify-full` and an absolute `sslrootcert`, plus `PG*` parts; databases created by `databases.insert`, roles and grants by `executeSql` | SSC-005 (`spikes/appdb/RESULTS.md`) | decided 2026-09-30 |
+| 001 | Cloud and runtime: GCP, Cloud Run gen2 in a project per customer cell, Direct VPC egress into a deny-all VPC, regional internal Application LB, kill switch by traffic to a tombstone revision, prod apps kept warm | SSC-001 (internal bake-off results and cost sheet, 2026-09) | decided 2026-09-29; amended 2026-10-06 from SSC-086 pass 1 (T7 and certificate changes chosen by the founder 2026-10-06; T7's to be measured again) |
+| 002 | Login vendor and directory join key: WorkOS SSO and Directory Sync (amended: no AuthKit; SSC runs its own device flow and sessions, decision 024); users keyed on the directory user, joined by SSO `idp_id` where it equals the directory `idp_id` (Okta), by email plus an admin link where it does not (Google); SSC revokes sessions and CLI tokens itself on directory deactivation or removal | SSC-002 (internal login-proof results and notes) | decided 2026-09-30; amended 2026-10-01 (SSC-019); V1 pilot IdP is Okta only, Google Workspace not offered until its lockout and rename checks pass on SSC (founder 2026-10-08, GA-2.6); Entra untested (founder skip); WorkOS data residency Unknown |
+| 003 | App database connection string form: one `postgresql://` URL with `sslmode=verify-full` and an absolute `sslrootcert`, plus `PG*` parts; databases created by `databases.insert`, roles and grants by `executeSql` | SSC-005 (internal app-database record) | decided 2026-09-30 |
 | 004 | Domains: `delimitus.com` platform hosts; apps on `delimitusapps.com` with opaque org labels; host rule `<slug>.<cell label>.<apps domain>` and `<slug>--preview.<cell label>.<apps domain>` | tickets §2 SSC-006; host rule SSC-042 (`ssc_shared/hosts.py`) | decided 2026-09-28; host rule and apps domain 2026-09-29; amended 2026-10-06 from SSC-086 pass 1 (T7 and certificate changes chosen by the founder 2026-10-06; T7's to be measured again) |
 | 005 | The seven decide-once rules | build path | decided 2026-09-28 |
 | 006 | Assumptions A1 to A7 | tickets §1 | decided 2026-09-28; A7 still pending a bill (2026-10-06) |
@@ -41,7 +41,7 @@ One short file per decision: the choice, the reason, and what would make us reve
 
 ## 001 Cloud and runtime
 
-**Amendment 2026-10-06 (decision 025; SSC-086 results pass 1, `spikes/proofrun/RESULTS.md`).** The choice of GCP and Cloud Run gen2 stands.
+**Amendment 2026-10-06 (decision 025; SSC-086 results pass 1, the SSC-086 proof-run record (internal, kept outside this repository)).** The choice of GCP and Cloud Run gen2 stands.
 - **Load balancer.** No internal load balancer: one global external Application Load Balancer per cell (SSC-088), with a serverless NEG to the gateway at minimum 0.
   - T2: a browser reached a probe app on its public host (200).
   - T3: all 14 runtime probes passed on the new path, on both cells.
@@ -83,7 +83,7 @@ Reverse if: warm-instance cost per app pushes a typical cell over A7, or a custo
 Choice: WorkOS for SSO (SAML) and Directory Sync. Command-line login was AuthKit's device flow; amended below.
 - An SSC user is keyed on the directory user (`(issuer, subject)` with the directory `idp_id`), never on email.
 - A login joins its directory user by SSO `idp_id` equal to directory `idp_id`. Okta passes: the `00u…` user id is in both, and it survived an email change.
-- Google Workspace SAML sends the email as `idp_id`, so a Google login joins by a unique lower-cased email match against the synced directory, and the fallback design in `spikes/loginproof/RESULTS.md` applies: an unmatched login gets no groups and lands in an admin `Unlinked logins` list; a link, once made, is stored and audited.
+- Google Workspace SAML sends the email as `idp_id`, so a Google login joins by a unique lower-cased email match against the synced directory, and the fallback design in the login-proof record (internal, kept outside this repository) applies: an unmatched login gets no groups and lands in an admin `Unlinked logins` list; a link, once made, is stored and audited.
 - The SSO email and the directory email can disagree (Okta sent the old address after a change), so email is display only.
 - WorkOS does not revoke refresh tokens or end sessions when a directory user is removed (measured: still refreshing 11 minutes after a Google suspension). On `dsync.user.updated` to `inactive` and on `dsync.user.deleted`, SSC ends its own sessions and revokes the user's WorkOS sessions (`POST /user_management/sessions/revoke`).
 - Google Workspace removes a suspended user from the directory instead of marking them `inactive`, so both events are handled. WorkOS polls Google (docs: about every 30 minutes; observed about ten), so the 5-minute lockout in SSC-019 counts from the directory event, not from the admin's click.
@@ -101,7 +101,7 @@ Amendment 2026-10-01 (SSC-019, decision 024): SSC does not use WorkOS User Manag
 Choice: every app database gets one URL, and the same values as separate `PG*` variables.
 - `DATABASE_URL=postgresql://app_<id>:<password>@<host>:<port>/app_<id>?sslmode=verify-full&sslrootcert=<absolute CA path>`
 - Also `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGSSLMODE`, `PGSSLROOTCERT`, for frameworks with no URL parser (Django).
-- The cell agent creates the database with the Cloud SQL Admin API `databases.insert`. Roles and grants go through `executeSql`, in the four-step order in `spikes/appdb/RESULTS.md`. Grants run before `REVOKE CONNECT ... FROM PUBLIC`, because afterwards the cell agent can no longer connect.
+- The cell agent creates the database with the Cloud SQL Admin API `databases.insert`. Roles and grants go through `executeSql`, in the four-step order of the SSC-005 app-database record (internal, kept outside this repository). Grants run before `REVOKE CONNECT ... FROM PUBLIC`, because afterwards the cell agent can no longer connect.
 - `executeSql` callers check `status.code`, not only the HTTP code, because SQL failures return HTTP 200.
 
 Reason: psycopg, asyncpg, node-pg, drizzle and Prisma 7 (through its adapter) all accepted the URL as given and rejected a wrong CA. Django needed the parts. On Cloud SQL, creation from the cell agent took 1.67 to 2.1 s. An identity with no roles got HTTP 403, and no app role could connect to another app's database. `executeSql` runs semicolon-separated statements in one transaction and cannot run `CREATE DATABASE`, hence `databases.insert`.
@@ -167,7 +167,7 @@ Choice: build on these until buyers exist. There are no customers yet, and buyer
 | A4 | First pilot apps are Python and Node apps from Claude Code, Codex, Cursor, plus one Lovable or Replit export. | Assumed; SSC-003 ran 20 such apps. |
 | A5 | Pilot company databases are Postgres reachable over the internet or from a fixed IP we publish. | Assumed; each cell has a fixed NAT IP (decision 001). |
 | A6 | Price is a flat platform fee; no pricing bands in MVP V1. | Assumed. |
-| A7 | An empty cell costs under $450 a month. | Measured: $199.37 on GCP list prices (`spikes/bakeoff/COST_SHEET.md`), plus about $9.86 a month per warm prod app (`spikes/bakeoff/RESULTS.md`). |
+| A7 | An empty cell costs under $450 a month. | Measured: $199.37 on GCP list prices (internal bake-off cost sheet, 2026-09), plus about $9.86 a month per warm prod app (internal bake-off results, 2026-09). |
 
 Reason: waiting for buyers would stall the build; each assumption has a known cost if wrong (tickets section 1).
 
@@ -309,7 +309,7 @@ Reverse if: a change would refuse or re-digest a manifest v1 accepts (then `ssc/
 
 ## 014 Runtime driver and worker
 
-**Amendment 2026-10-06 (decision 025; SSC-086, `spikes/proofrun/RESULTS.md`).** The paragraph below now runs in cells, except for session billing.
+**Amendment 2026-10-06 (decision 025; SSC-086, the SSC-086 proof-run record (internal, kept outside this repository)).** The paragraph below now runs in cells, except for session billing.
 - Every environment ran at minimum 0 on both proof cells. T3 passed 14/14 on each, and T7 answered all 60 cold and warm loads.
 - The apps' startup probe runs every 1 s instead of 5 (`STARTUP_PERIOD_SECONDS`; T7 option 1, chosen by the founder on 2026-10-06). The next cold series measures it.
 - The kill switch confirms the deny inside its own job, checking every 0.25 s (T8 option 1). Three drills on the new control image, 2026-10-07: 4.35 s, 8.03 s and 4.66 s end to end against 10 s; the deny was done in under 1.5 s each time, and Cloud Run's own scale-to-zero (2 to 6 s) is now the largest part.
@@ -618,9 +618,9 @@ Reverse if: a customer needs data in another region (then add `ssc-cells/<region
 
 ## 022 Cell bootstrap
 
-**Amendment 2026-10-13 (GA-12 step 0.4; found live in GA-4.5 run 1, `spikes/proofrun/RESULTS.md`).** The deployer of the SSC-087 amendment below gains one role, built and not yet applied: `artifactregistry.reader` on the repository `ssc-platform` in `ssc-platform-0`, that repository only. Cloud Run refuses an update of a service by a caller that cannot read its image, a cell's agent, gateway and data gateway run images from that repository, and the `database`, `connections` and `warm` runs update those services. Each cell's Cloud Run service agent already read it. A deployer run also reads back from the cloud, before it applies, every resource the state holds a refused update for and what its flag adds or changes: the retry after that refusal found the state already claiming the change, called nothing and reported success. An `egress` run ends only when the proxy group's own check finds its machine healthy, and is refused on a cell with no `proxy_image`. The control plane no longer takes a run's success as the resource: before it writes `ready` it asks the cell's agent for the database, the data gateway or the proxy's address (`ssc_control/cell/verify.py`), and an answer that is not the expected one is a failed attempt, `CELL_RESOURCE_UNVERIFIED` after three.
+**Amendment 2026-10-13 (GA-12 step 0.4; found live in GA-4.5 run 1, the SSC-086 proof-run record (internal, kept outside this repository)).** The deployer of the SSC-087 amendment below gains one role, built and not yet applied: `artifactregistry.reader` on the repository `ssc-platform` in `ssc-platform-0`, that repository only. Cloud Run refuses an update of a service by a caller that cannot read its image, a cell's agent, gateway and data gateway run images from that repository, and the `database`, `connections` and `warm` runs update those services. Each cell's Cloud Run service agent already read it. A deployer run also reads back from the cloud, before it applies, every resource the state holds a refused update for and what its flag adds or changes: the retry after that refusal found the state already claiming the change, called nothing and reported success. An `egress` run ends only when the proxy group's own check finds its machine healthy, and is refused on a cell with no `proxy_image`. The control plane no longer takes a run's success as the resource: before it writes `ready` it asks the cell's agent for the database, the data gateway or the proxy's address (`ssc_control/cell/verify.py`), and an answer that is not the expected one is a failed attempt, `CELL_RESOURCE_UNVERIFIED` after three.
 
-**Amendment 2026-10-06 (decision 025; SSC-086, `spikes/proofrun/RESULTS.md`).** The cell's contents below are proved. Its cost is not yet proved.
+**Amendment 2026-10-06 (decision 025; SSC-086, the SSC-086 proof-run record (internal, kept outside this repository)).** The cell's contents below are proved. Its cost is not yet proved.
 - T1: one cell with every flag on and one with every flag off, applied from the same stack. 0 differences outside the flags over 1,604 resources, and no policy override.
 - T5: `db-f1-micro` was ready in 8.0 min, the ten app databases took 0.5 s each at most, and cross-connects were refused 9 of 9 times.
 - T6: the `e2-micro` proxy passed. A listed host left from the cell's reserved IP, an unlisted host was refused, and a call with no credential was refused. NAT carries the gateway and the proxy. The data gateway's NAT leg failed on its stand-in only (see `RESULTS.md`).
@@ -809,7 +809,7 @@ Reverse the source if SSC-086 shows the active instance count does not stay abov
 
 ## 026 Billing slots
 
-Signed by the founder on 2026-10-06, after reading the proof run's first results (`spikes/proofrun/RESULTS.md`, pass 1). The two open facts below do not hold the decision; each is added here when measured.
+Signed by the founder on 2026-10-06, after reading the proof run's first results (the SSC-086 proof-run record (internal, kept outside this repository), pass 1). The two open facts below do not hold the decision; each is added here when measured.
 
 Choice: customer cells go on a second billing account. The first account keeps the platform and staging. No project is ever shared between two customers to save a slot.
 - Facts: a billing account links at most five projects. Unlinked projects do not count; deleting a project does not free a slot faster than unlinking it. No raise is requested, because the wait for Google's review is not acceptable (founder, 2026-10-03).

@@ -16,7 +16,6 @@ from ssc_cli.shapes import DoctorResult
 from ssc_contracts.manifest import MAX_MANIFEST_BYTES, ManifestError, load_manifest
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "doctor"
-CORPUS = Path(__file__).resolve().parents[3] / "spikes" / "corpus20" / "RESULTS.md"
 CODES = sorted(SEVERITY)
 
 
@@ -435,10 +434,18 @@ def test_each_ssc_003_cause_has_a_code_that_catches_it(cause, code):
     assert codes(FIXTURES / code) == [code], cause
 
 
-def test_the_static_six_are_the_corpus_buckets():
-    text = CORPUS.read_text().split("## Ranked causes, static scan", 1)[1].split("\n\n")[1]
-    rows = [line.split("|")[1].strip() for line in text.splitlines()[2:]]
-    assert rows == list(STATIC_SIX)
+SSC_003_STATIC_BUCKETS = (
+    "needs build-time public variable",
+    "uses SQLite on disk",
+    "needs Supabase auth",
+    "binds to localhost only",
+    "hard-coded key or password",
+    "needs a native library",
+)
+
+
+def test_the_static_six_are_the_ssc_003_static_buckets():
+    assert list(STATIC_SIX) == list(SSC_003_STATIC_BUCKETS)
 
 
 def test_supabase_auth_is_caught_as_an_external_service(tmp_path):

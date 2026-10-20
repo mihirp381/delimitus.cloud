@@ -54,7 +54,7 @@ by the founder, 2026-10-08 (GA-6.5).
   created, the later steps never ran, no image was pushed, and no release or deployment was made.
   The value appeared in no command output, build log line or audit row. The stored bundle that
   holds the random value stays in the cell's bundle store. Since GA-12 the first two scans find
-  that shape themselves and nothing is uploaded. [GA-6.5, `proofrun buildsecret`]
+  that shape themselves and nothing is uploaded. [GA-6.5, proof-run build-secret test, an internal record]
 - Limits: the first two scans skip files over 1 MiB, binary files, lockfiles and `ssc.toml`.
   Their name-keyed rule (a credential-like variable name assigned a random-looking value) reads
   only the first 4096 characters of a line; a longer line is minified code or data. Every rule

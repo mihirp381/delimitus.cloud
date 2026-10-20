@@ -25,7 +25,5 @@ auth-jwks.json
 timer-jwks.json
 timer-key.pem
 
-# Local planning material and experiment output
-spikes/appdb/docker/certs/
-spikes/bakeoff/results/
+# Local planning material
 Cloud_for_small_soft/

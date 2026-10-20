@@ -65,6 +65,7 @@ feature or making a product claim.
 - [Build fixtures](../conformance/build_fixtures/README.md) and
   [customer isolation tests](../e2e/isolation/README.md).
 - [Pilot success sheet](pilot/success-sheet.md) and [how to get help](support/how-to-get-help.md).
+- Research harnesses and proof-run records are kept on an internal archive branch, not on main.
 
 Keep this index current when adding a guide. Published documentation should resolve from a
 fresh clone; local planning files under `Cloud_for_small_soft/` are outside the versioned docs.

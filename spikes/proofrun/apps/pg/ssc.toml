@@ -1,8 +1,0 @@
-schema = "ssc/v1"
-
-[runtime]
-start = "python server.py"
-health_path = "/health"
-
-[state]
-postgres = true

@@ -103,8 +103,8 @@ capabilities. The [remote MCP guide](docs/runbooks/remote-mcp.md) covers coding-
 
 Python packages use `packages/<package>/src/<module>/` and keep tests beside each package.
 The root [pyproject.toml](pyproject.toml) defines the workspace and quality gates;
-[uv.lock](uv.lock) records its dependencies. Infrastructure and experiments have their own
-project files and lockfiles. [spikes/](spikes/) holds research harnesses and proof runs.
+[uv.lock](uv.lock) records its dependencies. Infrastructure has its own project file and
+lockfile.
 
 ## Development and operations
 

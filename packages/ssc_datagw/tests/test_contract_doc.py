@@ -1,5 +1,5 @@
 """``docs/contracts/data-gateway.md`` names only error codes the gateway answers, and it and the
-gateway's sources, which customers read, name none of our own accounts, cells or spikes."""
+gateway's sources, which customers read, name none of our own accounts, cells or harnesses."""
 
 import re
 from pathlib import Path
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DOC = ROOT / "docs" / "contracts" / "data-gateway.md"
 SOURCES = ROOT / "packages" / "ssc_datagw" / "src" / "ssc_datagw"
 INTERNAL = re.compile(
-    r"founder|proof cell|spikes/proofrun|our GCP sandbox|BigQuery sandbox|sandbox sources"
+    r"founder|proof cell|proofrun|our GCP sandbox|BigQuery sandbox|sandbox sources"
     r"|trial account on 20",
     re.IGNORECASE,
 )
@@ -29,7 +29,7 @@ def test_every_error_code_the_doc_names_is_one_the_gateway_answers() -> None:
     assert sorted(named - VENDOR - set(ERRORS)) == []
 
 
-def test_customer_facing_text_names_none_of_our_own_accounts_cells_or_spikes() -> None:
+def test_customer_facing_text_names_none_of_our_own_accounts_cells_or_harnesses() -> None:
     texts = [DOC, *sorted(SOURCES.glob("*.py")), *sorted(SOURCES.glob("*.sql"))]
     found = {
         f"{path.relative_to(ROOT)}:{n}": m.group(0)

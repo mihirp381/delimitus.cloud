@@ -1,9 +1,7 @@
 """The cost model as data (architecture section 10, SSC-096): ``cost_model.toml`` beside this file.
 
 That file is the one copy of the figures. Every figure in it carries where it comes from. The
-monthly reconciliation (``metrics.reconcile``) reads it through :func:`load`, and the proof-run
-kit (``spikes/proofrun/proofrun/cost.py``) reads the same file by its path in the repository, so
-the kit never imports product code and product code never imports the kit.
+monthly reconciliation (``metrics.reconcile``) reads it through :func:`load`.
 
 Nothing here bends a stated figure to fit its parts. :func:`checks` recomputes each stated sum
 from its parts and rates, and the reconciliation prints every one that does not add up.

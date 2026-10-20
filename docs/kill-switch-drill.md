@@ -58,7 +58,7 @@ These repository variables and secrets are no longer read and can be deleted: `S
 
 ## Results
 
-Not yet run. Seconds from the command, median / maximum over ten runs. The first row repeats SSC-086 T8 with the real data gateway and proxy in place of its stand-ins; the numbers are copied from `spikes/proofrun/RESULTS.md` once T8 runs. The "longest an open stream survived" is the maximum of the stream cut column.
+Not yet run. Seconds from the command, median / maximum over ten runs. The first row repeats SSC-086 T8 with the real data gateway and proxy in place of its stand-ins; the numbers are copied from the SSC-086 proof-run record (internal, kept outside this repository) once T8 runs. The "longest an open stream survived" is the maximum of the stream cut column.
 
 | Row | Runs | Front door | Stream cut | Query end | Tunnel close | Instance stop | Timer pause | `latest.json` moved |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

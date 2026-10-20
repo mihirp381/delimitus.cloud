@@ -1,7 +1,7 @@
 # Contributing to SSC
 
 The root Python workspace contains the product packages and conformance suite. The console,
-Node helpers, infrastructure, and research harnesses have their own tooling. Start with the
+Node helpers, and infrastructure have their own tooling. Start with the
 [repository overview](README.md) and [architecture guide](docs/architecture.md).
 
 ## Toolchain and setup
@@ -169,13 +169,12 @@ uv run python tools/lock_age_check.py infra/uv.lock
 ```
 
 The [infrastructure guide](infra/README.md) covers cloud configuration and live checks.
-Research harnesses under `spikes/` use their own README, project, and lockfile where present.
 
 ## Repository and dependency rules
 
 - Keep product Python code in `packages/<package>/src/<module>/`, with tests in that package's
-  `tests/`. Shared black-box checks and vectors belong in `conformance/`; experiments belong in
-  `spikes/`; operational procedures and contracts belong in `docs/`.
+  `tests/`. Shared black-box checks and vectors belong in `conformance/`; operational
+  procedures and contracts belong in `docs/`.
 - Preserve the dependency order: contracts, shared code, bundles, then services. Cell services
   and the app helper cannot import the control plane or its database dependencies. The public
   page and console host serve independently of the platform services. Import-linter enforces
