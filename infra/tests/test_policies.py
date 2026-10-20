@@ -480,7 +480,7 @@ def declared_org_policies(platform: list[Declared]) -> dict[str, Any]:
     }
     key = one(platform, "gcp:tags/tagKey:TagKey").outputs["name"]
     value = one(platform, "gcp:tags/tagValue:TagValue").outputs["name"]
-    text = json.dumps(found).replace(ACCOUNT.operator, "<operator>")
+    text = json.dumps(found).replace(ACCOUNT.operator, "${SSC_OPERATOR}")
     text = text.replace(f"organizations/{ACCOUNT.org_id}", "organizations/${SSC_ORG_ID}")
     text = text.replace(f"'tagKeys/{key}'", "'${SSC_PUBLIC_TAG_KEY}'")
     text = text.replace(f"'tagValues/{value}'", "'${SSC_PUBLIC_TAG_VALUE}'")

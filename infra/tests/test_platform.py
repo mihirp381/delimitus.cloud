@@ -271,6 +271,10 @@ def test_only_the_nightly_and_drill_workflows_on_main_become_the_nightly_account
     provider = one(declared, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider")
     condition = provider.inputs["attributeCondition"]
     assert f'assertion.repository == "{ACCOUNT.github_repository}"' in condition
+    assert f'assertion.repository_id == "{ACCOUNT.github_repository_id}"' in condition
+    assert f'assertion.repository_owner_id == "{ACCOUNT.github_owner_id}"' in condition
+    mapping = provider.inputs["attributeMapping"]
+    assert mapping["attribute.repository_id"] == "assertion.repository_id"
     repo = ACCOUNT.github_repository
     assert (
         f'assertion.workflow_ref in ["{repo}/.github/workflows/nightly.yml@refs/heads/main", '
@@ -282,7 +286,7 @@ def test_only_the_nightly_and_drill_workflows_on_main_become_the_nightly_account
     }
     assert members["nightly-wif"]["role"] == "roles/iam.workloadIdentityUser"
     assert members["nightly-wif"]["member"].endswith(
-        f"/workloadIdentityPools/ssc-github/attribute.repository/{ACCOUNT.github_repository}"
+        f"/workloadIdentityPools/ssc-github/attribute.repository_id/{ACCOUNT.github_repository_id}"
     )
     tokens = members["nightly-control-id-tokens"]
     assert tokens["role"] == "roles/iam.serviceAccountOpenIdTokenCreator"

@@ -24,12 +24,16 @@ ACCOUNT = Account(
     billing_account="AAAAAA-BBBBBB-CCCCCC",
     operator="user:operator@example.com",
     github_repository="example-org/example-repo",
+    github_repository_id="100000001",
+    github_owner_id="200000002",
 )
 PLATFORM_CONFIG = {
     "org_id": ACCOUNT.org_id,
     "billing_account": ACCOUNT.billing_account,
     "operator": ACCOUNT.operator,
     "github_repository": ACCOUNT.github_repository,
+    "github_repository_id": ACCOUNT.github_repository_id,
+    "github_owner_id": ACCOUNT.github_owner_id,
 }
 CELL_CONFIG = {"billing_account": ACCOUNT.billing_account, "operator": ACCOUNT.operator}
 """What every stack's config holds in these tests; a cell's ``org_id`` is the customer's."""

@@ -18,6 +18,8 @@ SHAPES: Final = {
         "user:<email>, group:<email> or serviceAccount:<email>",
     ),
     "github_repository": (re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"), "<owner>/<name>"),
+    "github_repository_id": (re.compile(r"[0-9]+"), "the repository's numeric GitHub id"),
+    "github_owner_id": (re.compile(r"[0-9]+"), "the owner's numeric GitHub id"),
 }
 
 
@@ -27,6 +29,8 @@ class Account:
     billing_account: str
     operator: str
     github_repository: str
+    github_repository_id: str
+    github_owner_id: str
 
     @property
     def org(self) -> str:
@@ -50,6 +54,8 @@ def from_config(config: pulumi.Config) -> Account:
         billing_account=require(config, "billing_account"),
         operator=require(config, "operator"),
         github_repository=require(config, "github_repository"),
+        github_repository_id=require(config, "github_repository_id"),
+        github_owner_id=require(config, "github_owner_id"),
     )
 
 

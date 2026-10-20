@@ -52,7 +52,7 @@
     "mode": "enforce",
     "parameters": {
       "allowedMemberSubjects": [
-        "<operator>"
+        "${SSC_OPERATOR}"
       ],
       "allowedPrincipalSets": [
         "//cloudresourcemanager.googleapis.com/organizations/${SSC_ORG_ID}"

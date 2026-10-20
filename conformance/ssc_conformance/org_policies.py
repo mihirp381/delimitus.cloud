@@ -4,7 +4,7 @@ Lists the policies set on the ``ssc-cells`` folder and on the cell project, as `
 over REST, and compares them with ``expected_org_policies.json``. The folder must set exactly
 those constraints with exactly those values, and the project none of its own, so no cell can
 loosen a policy (SSC-095). The infra tests hold the file equal to what the platform stack
-declares; the operator is written ``<operator>`` in it and is any ``user:`` here. The one
+declares; the operator is written ``${SSC_OPERATOR}`` in it. The one
 exception rule must carry the platform's exact condition, ``resource.matchTagId(...)`` on the
 public-invoker tag, whose ids the file writes ``${SSC_PUBLIC_TAG_KEY}`` and
 ``${SSC_PUBLIC_TAG_VALUE}`` and the run takes from those variables, as it takes the organisation
@@ -15,7 +15,8 @@ as a failure.
 Configuration and exit status as ``ssc_conformance.least_privilege``: ``SSC_PROBE_PROJECT``,
 ``SSC_NIGHT_FOLDER_ID``, ``SSC_EVIDENCE_FILE``, and ``SSC_PUBLIC_TAG_KEY`` (``tagKeys/<id>``)
 and ``SSC_PUBLIC_TAG_VALUE`` (``tagValues/<id>``), the platform stack's ``public_invoker_tag``,
-and ``SSC_ORG_ID``, the organisation's numeric id.
+``SSC_ORG_ID``, the organisation's numeric id, and ``SSC_OPERATOR``, the platform stack's
+``operator``.
 A 403 is ``skipped (no read access)``.
 """
 
@@ -37,15 +38,18 @@ from ssc_conformance.evidence import Result
 from ssc_conformance.least_privilege import FOLDER_ENV, PROJECT_ENV
 
 EXPECTED: Final = Path(__file__).with_name("expected_org_policies.json")
-OPERATOR: Final = "<operator>"
-SUBJECTS: Final = "allowedMemberSubjects"
 TAG_KEY_ENV: Final = "SSC_PUBLIC_TAG_KEY"
 TAG_VALUE_ENV: Final = "SSC_PUBLIC_TAG_VALUE"
 ORG_ENV: Final = "SSC_ORG_ID"
+OPERATOR_ENV: Final = "SSC_OPERATOR"
 FORMS: Final = {
     TAG_KEY_ENV: (re.compile(r"tagKeys/[0-9]+"), "tagKeys/<number>"),
     TAG_VALUE_ENV: (re.compile(r"tagValues/[0-9]+"), "tagValues/<number>"),
     ORG_ENV: (re.compile(r"[0-9]+"), "the organisation's numeric id"),
+    OPERATOR_ENV: (
+        re.compile(r"(user|group|serviceAccount):[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+"),
+        "user:, group: or serviceAccount: and an address",
+    ),
 }
 
 type Json = dict[str, Any]
@@ -53,24 +57,19 @@ type Json = dict[str, Any]
 
 def _parameters(value: object) -> dict[str, list[str]]:
     found = cast(Json, value) if isinstance(value, dict) else {}
-    shaped = {name: sorted(cloud.strings(values)) for name, values in found.items()}
-    if SUBJECTS in shaped:
-        shaped[SUBJECTS] = sorted(
-            OPERATOR if m.startswith("user:") else m for m in shaped[SUBJECTS]
-        )
-    return shaped
+    return {name: sorted(cloud.strings(values)) for name, values in found.items()}
 
 
 def load_expected(environ: Mapping[str, str], path: Path = EXPECTED) -> dict[str, Json]:
-    """The expected file with the tag's ids and the org id put in from ``environ``."""
+    """The expected file with the tag's ids, the org id and the operator from ``environ``."""
     raw = path.read_text(encoding="utf-8")
     wanted = [name for name in FORMS if f"${{{name}}}" in raw]
     missing = [name for name in wanted if not environ.get(name)]
     if missing:
         raise cloud.CloudReadError(
             f"missing {', '.join(missing)}: the public-invoker tag's key and value ids "
-            "(tagKeys/<id>, tagValues/<id>; the platform stack's public_invoker_tag) and the "
-            "organisation's numeric id"
+            "(tagKeys/<id>, tagValues/<id>; the platform stack's public_invoker_tag), the "
+            "organisation's numeric id and the platform stack's operator"
         )
     bad = [name for name in wanted if not FORMS[name][0].fullmatch(environ[name])]
     if bad:

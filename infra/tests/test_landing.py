@@ -276,6 +276,20 @@ def test_the_founder_is_told_without_personal_data(full: list[Declared]) -> None
     assert stored["alertStrategy"]["notificationRateLimit"] == {"period": "300s"}
 
 
+def test_a_non_user_operator_needs_a_notify_address() -> None:
+    group = {"operator": "group:platform-admins@example.com"}
+    with pytest.raises(Exception, match="landing needs landing_notify_email"):
+        _run(landing="true", **group)
+    declared = _run(landing="true", landing_notify_email="alerts@example.com", **group)
+    (channel,) = [
+        d.inputs
+        for d in declared
+        if d.type == "gcp:monitoring/notificationChannel:NotificationChannel"
+        and "landing" in d.name
+    ]
+    assert channel["labels"] == {"email_address": "alerts@example.com"}
+
+
 def test_the_notify_address_can_be_set() -> None:
     declared = _run(landing="true", landing_notify_email="founder@example.com")
     (channel,) = [

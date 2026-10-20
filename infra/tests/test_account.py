@@ -19,6 +19,8 @@ def test_the_account_is_read_from_config() -> None:
     assert ACCOUNT.billing_account == "AAAAAA-BBBBBB-CCCCCC"
     assert ACCOUNT.operator == "user:operator@example.com"
     assert ACCOUNT.github_repository == "example-org/example-repo"
+    assert ACCOUNT.github_repository_id == "100000001"
+    assert ACCOUNT.github_owner_id == "200000002"
 
 
 @pytest.mark.parametrize("key", sorted(PLATFORM_CONFIG))
@@ -40,6 +42,9 @@ def test_every_key_is_required(key: str) -> None:
         ("operator", "domain:example.com"),
         ("github_repository", "example-repo"),
         ("github_repository", "example-org/example-repo/extra"),
+        ("github_repository_id", "example-repo"),
+        ("github_repository_id", "-1"),
+        ("github_owner_id", "example-org"),
     ],
 )
 def test_a_wrong_shape_names_the_key_and_not_the_value(key: str, value: str) -> None:

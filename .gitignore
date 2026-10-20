@@ -27,3 +27,6 @@ timer-key.pem
 
 # Local planning material
 Cloud_for_small_soft/
+
+# Agent worktrees
+.claude/

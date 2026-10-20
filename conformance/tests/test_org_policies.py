@@ -15,11 +15,12 @@ from ssc_conformance import org_policies as op
 
 PROJECT = "ssc-c-test"
 FOLDER = "111"
-OPERATOR = "user:someone@example.com"
+OPERATOR = "user:operator@example.com"
 EXPECTED_ENV = {
     op.TAG_KEY_ENV: "tagKeys/1",
     op.TAG_VALUE_ENV: "tagValues/2",
     op.ORG_ENV: "000000000000",
+    op.OPERATOR_ENV: OPERATOR,
 }
 EXPECTED = op.load_expected(EXPECTED_ENV)
 TAG = "resource.matchTagId('tagKeys/1', 'tagValues/2')"
@@ -36,11 +37,7 @@ def live(constraint: str, spec: Json) -> Json:
     else:
         main: Json = {"enforce": True}
         if spec["parameters"]:
-            subjects = [
-                OPERATOR if v == "<operator>" else v
-                for v in spec["parameters"]["allowedMemberSubjects"]
-            ]
-            main["parameters"] = {**spec["parameters"], "allowedMemberSubjects": subjects}
+            main["parameters"] = {k: list(v) for k, v in spec["parameters"].items()}
         rules = [main]
     if spec["exception"]:
         rules.append({"enforce": False, "condition": {"expression": spec["exception"]}})
@@ -85,7 +82,7 @@ async def test_the_folder_as_declared_passes_and_is_listed() -> None:
     assert text.count("\n") == len(EXPECTED) + 2
     assert "| gcp.resourceLocations | allow global, in:us-central1-locations |" in text
     assert "| compute.restrictSharedVpcHostProjects | deny all |" in text
-    assert "allowedMemberSubjects <operator>" in text
+    assert "allowedMemberSubjects user:operator@example.com" in text
     assert f"off where {TAG}" in text
 
 
@@ -129,7 +126,7 @@ def _loosened(constraint: str, change: Any) -> list[Json]:
         (
             "iam.managed.allowedPolicyMembers",
             lambda r: r[0]["parameters"]["allowedMemberSubjects"].append("user:b@example.com"),
-            "allowedMemberSubjects <operator>, <operator>",
+            "allowedMemberSubjects user:b@example.com, user:operator@example.com",
         ),
         (
             "run.allowedIngress",
@@ -153,7 +150,7 @@ async def test_an_exception_on_another_tag_fails() -> None:
         )
     )
     assert result.status == ev.FAIL
-    assert "expected enforced; allowedMemberSubjects <operator>" in result.reason
+    assert "expected enforced; allowedMemberSubjects user:operator@example.com" in result.reason
     assert f"off where {other}" in result.reason
 
 
@@ -204,6 +201,9 @@ def test_the_org_comes_from_the_environment() -> None:
         (EXPECTED_ENV | {"SSC_PUBLIC_TAG_KEY": "1')"}, "SSC_PUBLIC_TAG_KEY"),
         ({k: v for k, v in EXPECTED_ENV.items() if k != "SSC_ORG_ID"}, "missing SSC_ORG_ID"),
         (EXPECTED_ENV | {"SSC_ORG_ID": "organizations/1"}, "SSC_ORG_ID"),
+        ({k: v for k, v in EXPECTED_ENV.items() if k != "SSC_OPERATOR"}, "missing SSC_OPERATOR"),
+        (EXPECTED_ENV | {"SSC_OPERATOR": "operator@example.com"}, "SSC_OPERATOR"),
+        (EXPECTED_ENV | {"SSC_OPERATOR": 'user:a"b@example.com'}, "SSC_OPERATOR"),
     ],
 )
 def test_the_tag_and_org_must_be_set_and_well_formed(environ: dict[str, str], named: str) -> None:
@@ -251,11 +251,14 @@ async def test_a_refused_read_is_no_read_access() -> None:
     assert text == ""
 
 
-def test_the_operator_is_any_user_and_other_members_are_kept() -> None:
-    spec = op.normalise(
-        live("iam.managed.allowedPolicyMembers", EXPECTED["iam.managed.allowedPolicyMembers"])
-    )
-    assert spec == EXPECTED["iam.managed.allowedPolicyMembers"]
+def test_the_operator_is_the_configured_one_and_other_members_are_kept() -> None:
+    expected = EXPECTED["iam.managed.allowedPolicyMembers"]
+    assert expected["parameters"]["allowedMemberSubjects"] == [OPERATOR]
+    spec = op.normalise(live("iam.managed.allowedPolicyMembers", expected))
+    assert spec == expected
+    other = {**expected["parameters"], "allowedMemberSubjects": ["user:someone@example.com"]}
+    spec = op.normalise(live("iam.managed.allowedPolicyMembers", {**expected, "parameters": other}))
+    assert spec != expected
     assert op.normalise({"name": "x/policies/y"})["mode"].startswith("unrecognised")
 
 

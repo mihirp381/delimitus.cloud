@@ -198,7 +198,7 @@ def sa_principal(email: pulumi.Input[str]) -> pulumi.Output[str]:
 def _nightly(
     project: pulumi.Input[str],
     control: gcp.serviceaccount.Account,
-    repository: str,
+    acct: account.Account,
     opts: pulumi.ResourceOptions,
 ) -> gcp.serviceaccount.Account:
     """The nightly probe run (SSC-017): GitHub Actions on ``main`` of this repository, running
@@ -224,6 +224,7 @@ def _nightly(
         display_name="SSC GitHub Actions",
         opts=after,
     )
+    repository = acct.github_repository
     workflows = ", ".join(
         f'"{repository}/{w}@refs/heads/main"' for w in (n.NIGHTLY_WORKFLOW, n.KILL_DRILL_WORKFLOW)
     )
@@ -236,10 +237,14 @@ def _nightly(
         attribute_mapping={
             "google.subject": "assertion.sub",
             "attribute.repository": "assertion.repository",
+            "attribute.repository_id": "assertion.repository_id",
             "attribute.workflow_ref": "assertion.workflow_ref",
         },
         attribute_condition=(
-            f'assertion.repository == "{repository}" && assertion.workflow_ref in [{workflows}]'
+            f'assertion.repository == "{repository}" '
+            f'&& assertion.repository_id == "{acct.github_repository_id}" '
+            f'&& assertion.repository_owner_id == "{acct.github_owner_id}" '
+            f"&& assertion.workflow_ref in [{workflows}]"
         ),
         oidc=gcp.iam.WorkloadIdentityPoolProviderOidcArgs(
             issuer_uri="https://token.actions.githubusercontent.com"
@@ -260,7 +265,7 @@ def _nightly(
         member=pulumi.Output.concat(
             "principalSet://iam.googleapis.com/",
             pool.name,
-            f"/attribute.repository/{repository}",
+            f"/attribute.repository_id/{acct.github_repository_id}",
         ),
         opts=opts,
     )
@@ -508,7 +513,7 @@ def build() -> None:
     }
     staging = controls["staging"]
 
-    nightly = _nightly(staging.project.project_id, staging.api, acct.github_repository, opts)
+    nightly = _nightly(staging.project.project_id, staging.api, acct, opts)
     zones = _zones(
         {"apps-zone-cell-deployer": operator, "apps-zone-deployer": deployer.member}, opts
     )
