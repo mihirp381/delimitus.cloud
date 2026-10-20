@@ -15,6 +15,11 @@ MIB: Final = 1024 * 1024
 USER_AUDIENCE: Final = "https://api.delimitus.com"
 INTERNAL_AUDIENCE: Final = "https://api.delimitus.com/internal"
 APPS_DOMAIN: Final = "delimitusapps.com"
+_REQUIRED: Final = ("SSC_DATABASE_DSN", "SSC_API_JWKS", "SSC_API_ISSUER")
+
+
+class SettingsError(ValueError):
+    """A variable the API cannot start without is not set; names it, never a value."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +98,9 @@ class Settings:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         e = os.environ if env is None else env
+        missing = next((name for name in _REQUIRED if name not in e), None)
+        if missing is not None:
+            raise SettingsError(f"{missing} is not set")
         return cls(
             database_dsn=e["SSC_DATABASE_DSN"],
             jwks=json.loads(e["SSC_API_JWKS"]),

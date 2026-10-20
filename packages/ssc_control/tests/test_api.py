@@ -39,6 +39,7 @@ from ssc_testkit import (
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
+from ssc_control.api import __main__ as api_main
 from ssc_control.api.auth import API_TOKEN_TYP
 from ssc_control.api.idempotency import (
     IDEMPOTENCY_HEADER,
@@ -51,7 +52,7 @@ from ssc_control.api.idempotency import (
     settle,
 )
 from ssc_control.api.problems import REQUEST_ID_HEADER, BodyLimitMiddleware
-from ssc_control.api.settings import INTERNAL_AUDIENCE, USER_AUDIENCE
+from ssc_control.api.settings import INTERNAL_AUDIENCE, USER_AUDIENCE, SettingsError
 from ssc_control.api.uow import Reply
 from ssc_control.db import (
     CreatedOrg,
@@ -787,6 +788,31 @@ def test_settings_from_env() -> None:
     assert s.rate_capacity == 10
     assert s.user_audience == USER_AUDIENCE
     assert s.internal_audience == INTERNAL_AUDIENCE
+
+
+def test_settings_name_the_first_missing_variable_and_never_a_value() -> None:
+    with pytest.raises(SettingsError, match=r"^SSC_DATABASE_DSN is not set$"):
+        Settings.from_env({})
+    dsn = "postgresql://ssc_app:hunter2@db/ssc"
+    with pytest.raises(SettingsError) as e:
+        Settings.from_env({"SSC_DATABASE_DSN": dsn, "SSC_API_JWKS": "{}"})
+    assert str(e.value) == "SSC_API_ISSUER is not set"
+
+
+def test_the_api_entrypoint_exits_2_naming_a_missing_variable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    started: list[object] = []
+
+    def run(app: object, **kwargs: object) -> None:
+        started.append(app)
+
+    monkeypatch.setattr("uvicorn.run", run)
+    for name in ("SSC_DATABASE_DSN", "SSC_API_JWKS", "SSC_API_ISSUER"):
+        monkeypatch.delenv(name, raising=False)
+    assert api_main.main() == 2
+    assert capsys.readouterr() == ("", "ssc api: SSC_DATABASE_DSN is not set\n")
+    assert started == []
 
 
 def test_spec_settings_need_no_database() -> None:

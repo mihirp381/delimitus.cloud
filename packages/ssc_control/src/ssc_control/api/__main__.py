@@ -6,12 +6,17 @@ import sys
 import uvicorn
 
 from ssc_control.api.app import create_app
-from ssc_control.api.settings import Settings
+from ssc_control.api.settings import Settings, SettingsError
 
 
 def main() -> int:
+    try:
+        settings = Settings.from_env()
+    except SettingsError as exc:
+        sys.stderr.write(f"ssc api: {exc}\n")
+        return 2
     uvicorn.run(
-        create_app(Settings.from_env()),
+        create_app(settings),
         host="0.0.0.0",  # noqa: S104  (a container listens on all)
         port=int(os.environ.get("PORT", "8080")),
         proxy_headers=True,
