@@ -242,9 +242,20 @@ async def test_refusals_are_tool_errors(fake_api, fake_problem):
         "request_id": "req_test",
         "instance": "/v1/x",
         "type": "https://errors.delimitus.com/not_found",
+        "retry_after": None,
     }
     assert bad.is_error
     assert bad.structured_content is None
+
+
+async def test_a_rate_limited_tool_says_when_to_retry(fake_api, fake_problem):
+    fake_api.add("GET", "/v1/apps", fake_problem(429, "RATE_LIMITED", **{"Retry-After": "30"}))
+    async with Client(local_server(fake_api), cache=None) as client:
+        result = await client.call_tool("list_apps", {})
+    assert result.is_error
+    assert result.structured_content["error"]["code"] == "RATE_LIMITED"
+    assert result.structured_content["error"]["retry_after"] == 30
+    assert "Retry after 30 seconds." in result.content[0].text
 
 
 async def test_blocked_folder_sends_nothing(fake_api, tmp_path: Path):

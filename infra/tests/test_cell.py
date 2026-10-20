@@ -2378,3 +2378,252 @@ def test_the_stack_exports_its_public_entry(monkeypatch: pytest.MonkeyPatch) -> 
         "intake",
         "proxy",
     }
+
+
+BUILDKIT_IMAGE = f"{naming.platform_registry()}/buildkit@sha256:" + "b" * 64
+POOL = BUILD | {"build_buildkit_image": BUILDKIT_IMAGE}
+POOLED = (
+    GATEWAY | {"agent_image": AGENT_IMAGE} | POOL | {"egress": "true", "proxy_image": PROXY_IMAGE}
+)
+POOL_RESOURCES = {
+    "gcp:compute/globalAddress:GlobalAddress::builds-range",
+    "gcp:cloudbuild/workerPool:WorkerPool::builds",
+    "gcp:compute/firewall:Firewall::ingress-proxy-builds",
+    "gcp:secretmanager/secret:Secret::build-proxy-credential",
+    "gcp:secretmanager/secretVersion:SecretVersion::build-proxy-credential-v1",
+    "gcp:secretmanager/secretIamMember:SecretIamMember::build-proxy-credential-build",
+    "gcp:tags/tagValue:TagValue::secret-kind-build-proxy",
+    "gcp:projects/iAMMember:IAMMember::agent-build-pool",
+}
+
+
+@pytest.fixture(scope="module")
+def pooled() -> list[Declared]:
+    return run(naming.cell_stack("testcell05"), POOLED)
+
+
+def _keys(declared: list[Declared]) -> set[str]:
+    return {f"{d.type}::{d.name}" for d in declared}
+
+
+def _agent_env(declared: list[Declared]) -> dict[str, Any]:
+    agent = one(declared, "gcp:cloudrunv2/service:Service", naming.CELL_AGENT).inputs
+    return {e["name"]: e["value"] for e in agent["template"]["containers"][0]["envs"]}
+
+
+def _token(declared: list[Declared]) -> str:
+    version = one(
+        declared, "gcp:secretmanager/secretVersion:SecretVersion", "build-proxy-credential-v1"
+    )
+    return version.inputs["secretData"]["value"]
+
+
+def test_the_builds_range_overlaps_no_subnet_the_database_s_or_google_s() -> None:
+    builds = ip_network(cell.BUILDS_RANGE)
+    assert cell.BUILDS_RANGE == "10.22.0.0/24"
+    assert builds.is_private
+    for other in (*cell.SUBNETS.values(), f"{cell.PSA_ADDRESS}/{cell.PSA_PREFIX}"):
+        assert not builds.overlaps(ip_network(other)), other
+    assert not builds.overlaps(ip_network(cell.GOOGLE_PRIVATE_RANGE))
+
+
+def test_the_build_pool_has_no_public_address_and_peers_on_its_own_range(
+    pooled: list[Declared],
+) -> None:
+    pool = one(pooled, "gcp:cloudbuild/workerPool:WorkerPool").inputs
+    assert (pool["name"], pool["location"], pool["project"]) == (
+        "ssc-builds",
+        naming.REGION,
+        "ssc-c-testcell05",
+    )
+    assert pool["workerConfig"] == {
+        "machineType": "e2-medium",
+        "diskSizeGb": 100,
+        "noExternalIp": True,
+    }
+    assert pool["networkConfig"] == {
+        "peeredNetwork": "vpc-id",
+        "peeredNetworkIpRange": "10.22.0.0/24",
+    }
+    builds = one(pooled, "gcp:compute/globalAddress:GlobalAddress", "builds-range").inputs
+    assert (builds["address"], builds["prefixLength"]) == ("10.22.0.0", 24)
+    assert (builds["purpose"], builds["addressType"]) == ("VPC_PEERING", "INTERNAL")
+    connection = one(pooled, "gcp:servicenetworking/connection:Connection").inputs
+    assert connection["reservedPeeringRanges"] == ["ssc-psa", "ssc-builds"]
+
+
+def test_only_the_builds_range_reaches_the_build_listener(pooled: list[Declared]) -> None:
+    rules = {d.name: d.inputs for d in pooled if d.type == "gcp:compute/firewall:Firewall"}
+    assert rules["ingress-proxy-builds"]["sourceRanges"] == ["10.22.0.0/24"]
+    assert rules["ingress-proxy-builds"]["targetTags"] == [cell.PROXY_TAG]
+    assert rules["ingress-proxy-builds"]["allows"] == [{"protocol": "tcp", "ports": ["3129"]}]
+    assert rules["ingress-proxy"]["allows"] == [{"protocol": "tcp", "ports": ["3128"]}]
+    opened = [
+        name
+        for name, rule in rules.items()
+        if rule["direction"] == "INGRESS"
+        and any("3129" in a.get("ports", []) or "ports" not in a for a in rule.get("allows", []))
+    ]
+    assert opened == ["ingress-proxy-builds"]
+
+
+def test_the_build_proxy_credential_is_read_by_ssc_build_alone(pooled: list[Declared]) -> None:
+    project = "ssc-c-testcell05"
+    secret = one(pooled, "gcp:secretmanager/secret:Secret", "build-proxy-credential").inputs
+    assert secret["secretId"] == naming.BUILD_PROXY_SECRET == "ssc-build-proxy"
+    assert not secret["secretId"].startswith((naming.APP_PREFIX, "ssc-conn-"))
+    key = one(pooled, "gcp:tags/tagKey:TagKey")
+    value = one(pooled, "gcp:tags/tagValue:TagValue", "secret-kind-build-proxy")
+    key_id, value_id = f"tagKeys/{key.outputs['name']}", f"tagValues/{value.outputs['name']}"
+    assert (value.inputs["parent"], value.inputs["shortName"]) == (key_id, "build-proxy")
+    assert secret["tags"] == {key_id: value_id}
+    access = [
+        (d.inputs["secretId"], d.inputs["role"], d.inputs["member"])
+        for d in pooled
+        if d.type == "gcp:secretmanager/secretIamMember:SecretIamMember"
+    ]
+    build = f"serviceAccount:{naming.sa_email('ssc-build', project)}"
+    assert access == [("ssc-build-proxy", "roles/secretmanager.secretAccessor", build)]
+    bound = [d.inputs["tagValue"] for d in pooled if d.type.startswith("gcp:tags/tagValueIam")]
+    assert value_id not in bound
+    assert len(_token(pooled)) >= 43
+
+
+def test_ssc_build_is_refused_every_secret_but_the_build_proxy_s(pooled: list[Declared]) -> None:
+    rules = [r["denyRule"] for r in one(pooled, "gcp:iam/denyPolicy:DenyPolicy").inputs["rules"]]
+    assert len(rules) == 3
+    assert "ssc-build" not in _denied(rules[0])
+    assert _denied(rules[0]) == {
+        "ssc-gateway",
+        "ssc-cell-agent",
+        naming.SECRET_INTAKE,
+        "ssc-proxy",
+    }
+    assert _denied(rules[1]) == {"ssc-data"}
+    key = one(pooled, "gcp:tags/tagKey:TagKey")
+    value = one(pooled, "gcp:tags/tagValue:TagValue", "secret-kind-build-proxy")
+    assert _denied(rules[2]) == {"ssc-build"}
+    assert rules[2]["deniedPermissions"] == [naming.SECRET_READ]
+    assert rules[2]["denialCondition"]["expression"] == (
+        f"!resource.matchTagId('tagKeys/{key.outputs['name']}', "
+        f"'tagValues/{value.outputs['name']}')"
+    )
+    assert "exceptionPrincipals" not in rules[2]
+
+
+def test_the_agent_may_use_the_pool_and_nothing_else_new(pooled: list[Declared]) -> None:
+    agent = f"serviceAccount:{naming.sa_email(naming.CELL_AGENT, 'ssc-c-testcell05')}"
+    plain = run(naming.cell_stack("testcell05"), GATEWAY | {"agent_image": AGENT_IMAGE} | BUILD)
+    granted, before = _grants(pooled, agent), _grants(plain, agent)
+    assert granted == before | {"roles/cloudbuild.workerPoolUser": None}
+    build = f"serviceAccount:{naming.sa_email('ssc-build', 'ssc-c-testcell05')}"
+    assert _grants(pooled, build) == _grants(plain, build)
+
+
+def test_with_egress_the_agent_runs_builds_in_the_pool_behind_the_build_proxy(
+    pooled: list[Declared],
+) -> None:
+    env = _agent_env(pooled)
+    assert set(env) == AGENT_ENV | BUILD_ENV | set(naming.BUILD_POOL_ENVS)
+    assert env["SSC_BUILD_POOL"] == (
+        f"projects/ssc-c-testcell05/locations/{naming.REGION}/workerPools/ssc-builds"
+    )
+    assert env["SSC_BUILD_PROXY"] == "10.20.4.10:3129"
+    assert env["SSC_BUILD_PROXY_SECRET"] == (
+        "projects/ssc-c-testcell05/secrets/ssc-build-proxy/versions/latest"
+    )
+    assert env["SSC_BUILD_BUILDKIT_IMAGE"] == BUILDKIT_IMAGE
+    assert _token(pooled) not in json.dumps(env)
+
+
+def test_without_egress_the_pool_waits_and_the_agent_builds_as_before() -> None:
+    config = GATEWAY | {"agent_image": AGENT_IMAGE} | POOL
+    declared = run(naming.cell_stack("testcell05"), config)
+    assert POOL_RESOURCES <= _keys(declared)
+    assert set(_agent_env(declared)) == AGENT_ENV | BUILD_ENV
+
+
+def test_the_proxy_holds_the_build_credential_s_sha1_and_never_the_token(
+    pooled: list[Declared],
+) -> None:
+    template = one(pooled, "gcp:compute/instanceTemplate:InstanceTemplate").inputs
+    user_data = template["metadata"]["user-data"]
+    token = _token(pooled)
+    sha = base64.b64encode(hashlib.sha1(token.encode()).digest()).decode()  # noqa: S324
+    assert sha == cell.token_sha1(token)
+    assert f"-e SSC_BUILD_USER=build -e SSC_BUILD_SHA1={sha} {PROXY_IMAGE}" in user_data
+    assert token not in user_data
+    for port in (3128, 3129):
+        accept = f"INPUT -p tcp --dport {port} -j ACCEPT"
+        assert f"iptables -w -C {accept} 2>/dev/null || iptables -w -I {accept}" in user_data
+
+
+def test_proxy_ha_balances_the_build_listener_too() -> None:
+    declared = run(naming.cell_stack("testcell05"), POOLED | {"proxy_ha": "true"})
+    rule = one(declared, "gcp:compute/forwardingRule:ForwardingRule").inputs
+    assert rule["ports"] == ["3128", "3129"]
+
+
+def test_without_buildkit_a_cell_is_as_it_was(monkeypatch: pytest.MonkeyPatch) -> None:
+    exported: dict[str, Any] = {}
+    monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
+    config = GATEWAY | {"agent_image": AGENT_IMAGE} | BUILD | {"egress": "true"}
+    declared = run(naming.cell_stack("testcell05"), config | {"proxy_image": PROXY_IMAGE})
+    assert not POOL_RESOURCES & _keys(declared)
+    assert "build_pool" not in exported
+    connection = one(declared, "gcp:servicenetworking/connection:Connection").inputs
+    assert connection["reservedPeeringRanges"] == ["ssc-psa"]
+    assert set(_agent_env(declared)) == AGENT_ENV | BUILD_ENV
+    user_data = one(declared, "gcp:compute/instanceTemplate:InstanceTemplate").inputs["metadata"][
+        "user-data"
+    ]
+    assert "SSC_BUILD_" not in user_data
+    assert "3129" not in user_data
+    assert user_data == cell.proxy_cloud_config(
+        PROXY_IMAGE, GATEWAY["org_id"], naming.cell_bucket("testcell05")
+    )
+    ha = run(
+        naming.cell_stack("testcell05"), config | {"proxy_image": PROXY_IMAGE, "proxy_ha": "true"}
+    )
+    assert one(ha, "gcp:compute/forwardingRule:ForwardingRule").inputs["ports"] == ["3128"]
+
+
+def test_the_stack_exports_its_build_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    exported: dict[str, Any] = {}
+    monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
+    run(naming.cell_stack("testcell05"), GATEWAY | {"agent_image": AGENT_IMAGE} | POOL)
+    assert isinstance(exported["build_pool"], pulumi.Output)
+
+
+@pytest.mark.parametrize(
+    ("image", "tools", "problem"),
+    [
+        (BUILDKIT_IMAGE.replace("@sha256:" + "b" * 64, ":v0.33.1"), TOOLS_IMAGE, "build_buildkit"),
+        ("docker.io/moby/buildkit@sha256:" + "b" * 64, TOOLS_IMAGE, "build_buildkit_image must"),
+        (BUILDKIT_IMAGE, None, "needs build_tools_image and build_frontend_image"),
+    ],
+)
+def test_buildkit_is_pinned_in_the_platform_registry_and_needs_the_build_images(
+    image: str, tools: str | None, problem: str
+) -> None:
+    assert cell.buildkit_setting(None, TOOLS_IMAGE) is None
+    assert cell.buildkit_setting("", None) is None
+    assert cell.buildkit_setting(BUILDKIT_IMAGE, TOOLS_IMAGE) == BUILDKIT_IMAGE
+    with pytest.raises(ValueError, match=problem):
+        cell.buildkit_setting(image, tools)
+
+
+def test_two_pooled_cells_differ_only_in_their_own_settings() -> None:
+    config = PROXY | POOL
+    a = cell_diff.normalise(as_export(run(naming.cell_stack(A), config), A, config=config), A)
+    b = cell_diff.normalise(as_export(run(naming.cell_stack(B), config), B, config=config), B)
+    assert cell_diff.compare(a, b) == []
+
+
+def test_cell_diff_leaves_out_the_agent_s_build_pool_settings_for_egress() -> None:
+    flags = EMPTY_FLAGS | {"egress": True}
+    for env in naming.BUILD_POOL_ENVS:
+        path = f"inputs.template.containers.0.envs.{env}.value"
+        assert cell_diff._flagged(naming.AGENT_SERVICE, path, ["egress"])
+        assert not cell_diff._flagged(naming.AGENT_SERVICE, path, ["database"])
+    assert flags["egress"] is True

@@ -6,17 +6,36 @@ by the founder, 2026-10-08 (GA-6.5).
 
 ## Build network
 
-- Builds run on the cell's Cloud Build default pool with open internet egress: a build step can
-  reach any public host. This is how dependencies install from public registries. Locking build
-  egress down (SSC-076) is not in V1. [cloud_build.py:25, 279-287; decision 014]
+- In a cell with `egress` and `build_buildkit_image`, builds run in the cell's private Cloud
+  Build pool `ssc-builds`, whose workers have no external address and sit on their own range,
+  10.22.0.0/24. [cell.py `build_network`; decision 014, amendment 2026-10-19]
+- From that pool a build reaches the internet only through the cell proxy's build listener on
+  port 3129, which only the builds range may reach; the apps subnet never can. The listener
+  opens tunnels on 443 only to the platform's list of package registries and toolchain
+  sources (PyPI, npm, Yarn, Node.js, GitHub releases, mise, the GitHub and Docker Hub
+  container registries) and forwards plain HTTP only to Debian's archives, whose packages apt
+  verifies. Anything else is refused and the build fails with `BUILD_HOST_NOT_ALLOWED`.
+  [ssc_contracts/egress.py `BUILD_HOSTS`, `BUILD_PLAIN_HOSTS`; ssc_egress/envoy.py; cell.py
+  `ingress-proxy-builds`]
+- The listener admits one credential, a random token that only `ssc-build` may read from Secret
+  Manager; the proxy holds only its SHA-1. The token reaches the plan and build steps alone, as
+  Railpack and BuildKit secrets, never in an image layer or its environment. [cloud_build.py
+  `build_config`; cell.py `_build_deny`]
+- Measured: the `egress-exfil` fixture, whose install script calls `https://example.com/` and
+  `http://1.1.1.1/`, fails with `BUILD_HOST_NOT_ALLOWED`, and the proxy logs both refusals
+  for the build user on the build listener. Checked locally against Envoy 1.39 and Railpack
+  0.40.1; the cell run is a live check of decision 014's 2026-10-19 amendment.
+- In a cell without them, builds run on Cloud Build's default pool with open internet egress:
+  a build step can reach any public host. [cloud_build.py; decision 014]
 - A build runs as the cell's `ssc-build` account, which holds no storage role: it reads its own
   bundle only through a signed URL for that one bundle, valid at most 10 minutes.
   [cloud_build.py:8-9; decision 014]
 - A build receives only its bundle URL and digest, the manifest's public build values, the start
   command and the system package list. App secrets set with `ssc secret set` are not among them.
   [cloud_build.py:252-267]
-- So a dependency's install script runs with open egress and can read the app's source and public
-  build values, but no app secret. Nothing in a build can reach the cell's database.
+- So a dependency's install script can read the app's source and public build values, but no
+  app secret, and, in the private pool, can send them only to the listed registries. Nothing
+  in a build can reach the cell's database.
   [decision 014]
 - Build logs go to Cloud Logging only. [cloud_build.py:283]
 

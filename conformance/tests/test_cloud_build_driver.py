@@ -198,6 +198,7 @@ async def test_the_listed_system_packages_reach_the_plan_step(
         (12, "BUILD_PRIVATE_REGISTRY"),
         (13, "BUILD_NO_ENTRYPOINT"),
         (14, "BUILD_EXITED_NONZERO"),
+        (16, "BUILD_HOST_NOT_ALLOWED"),
     ],
 )
 async def test_each_step_exit_reaches_control_as_its_reason(

@@ -25,7 +25,13 @@ from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict, require_user
-from ssc_control.api.routes.v1.grants import ApplyOutcome, GrantIn, apply_approved, lock_environment
+from ssc_control.api.routes.v1.grants import (
+    ApplyOutcome,
+    GrantIn,
+    apply_approved,
+    lock_environment,
+    missing_subjects,
+)
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals import service
 from ssc_control.approvals.service import ApprovalRefusedError, ApprovalRow, Decider
@@ -399,7 +405,8 @@ async def _diff(uow: UnitOfWork, row: ApprovalRow) -> GrantDiff | None:
 async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
     """Ask another admin of the org to approve one change to one environment. Allowed to the
     environment's builders, its app's owner and org admins, agent sessions included. An
-    `exceed_ceiling` request is decided by the named connection's owner or an org admin."""
+    `exceed_ceiling` request is decided by the named connection's owner or an org admin. A grant
+    naming a user or group the org does not have is `NOT_FOUND`."""
     require_user(uow)
     env = (
         await uow.conn.execute(_SELECT_ENV, {"org": uow.org_id, "env": body.environment_id})
@@ -410,6 +417,11 @@ async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
         raise Refusal(ErrorCode.APP_DELETING, evidence={"app_id": env.id})
     by = await require_builder(uow, body.environment_id)
     requirement, payload = _requirement(body, int(env.grants_version))
+    grants = cast("list[dict[str, Any]]", payload.get("grants", []))
+    if missing := await missing_subjects(
+        uow, ((g["subject_kind"], g["subject_id"]) for g in grants)
+    ):
+        raise Refusal(ErrorCode.NOT_FOUND, evidence={"subject_ids": missing})
     if requirement.kind is RequirementKind.EXCEED_CEILING:
         named = str(payload["connection"])
         if await connections.get(uow.conn, uow.org_id, named) is None:

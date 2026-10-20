@@ -18,6 +18,7 @@ Approving the last open requirement of a change applies it (:func:`apply_approve
 Each grant a change actually adds records one ``share`` metrics event (SSC-028).
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any, Final, Literal, Self
 
@@ -159,6 +160,10 @@ _SELECT_GRANTS = text(
     "where org_id = :org and environment_id = :env order by role, subject_kind, user_id, group_id"
 )
 _DELETE_GRANT = text("delete from ssc.app_grant where org_id = :org and id = :id")
+_SELECT_SUBJECTS = text(
+    "select id from ssc.user_account where org_id = :org and id = any(:users) "
+    "union all select id from ssc.user_group where org_id = :org and id = any(:groups)"
+)
 _INSERT_GRANT = text(
     "insert into ssc.app_grant (id, org_id, environment_id, role, subject_kind, user_id, group_id, "
     "granted_by_user_id) values (:id, :org, :env, :role, :kind, :user, :group, :by)"
@@ -180,6 +185,22 @@ def _grant_out(row: dict[str, Any]) -> GrantOut:
 
 def _grant_key(g: GrantIn | GrantOut) -> GrantKey:
     return (g.role, g.subject_kind, g.subject_id)
+
+
+async def missing_subjects(
+    uow: UnitOfWork, subjects: Iterable[tuple[str, str | None]]
+) -> list[str]:
+    """The user and group ids among ``(subject_kind, subject_id)`` pairs not in the caller's org."""
+    wanted = {(kind, sid) for kind, sid in subjects if sid is not None}
+    if not wanted:
+        return []
+    params = {
+        "org": uow.org_id,
+        "users": [sid for kind, sid in wanted if kind == "user"],
+        "groups": [sid for kind, sid in wanted if kind == "group"],
+    }
+    found = set((await uow.conn.execute(_SELECT_SUBJECTS, params)).scalars())
+    return sorted({sid for _, sid in wanted} - found)
 
 
 def _grants_payload(grants: dict[GrantKey, GrantIn]) -> list[dict[str, Any]]:
@@ -511,6 +532,8 @@ async def _assess(
     if env is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
     await require_builder(uow, environment_id)
+    if missing := await missing_subjects(uow, ((g.subject_kind, g.subject_id) for g in grants)):
+        raise Refusal(ErrorCode.REFERENCE_NOT_FOUND, evidence={"subject_ids": missing})
     # Sharing freeze (SSC-025). FOR SHARE waits for a kill switch pulled at the same moment,
     # or a removal asked for (GA-12).
     app_status = _APP_STATUS if expected is None else _SHARE_APP_STATUS
@@ -608,8 +631,8 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
 
     Only an org admin, the app's owner or a builder on this environment may; anyone else gets
     ``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant
-    for one subject is ``VALIDATION_FAILED``. A quarantined app's sharing is frozen:
-    ``APP_NOT_ACTIVE``.
+    for one subject is ``VALIDATION_FAILED``, and one naming a user or group the org does not have
+    ``REFERENCE_NOT_FOUND``. A quarantined app's sharing is frozen: ``APP_NOT_ACTIVE``.
 
     A change that needs approval is not applied. An agent session gets ``202`` and the pending
     approval ids (asked for here). A person gets ``409 APPROVAL_REQUIRED``, whose body names
@@ -675,7 +698,11 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     response_model=GrantsRequirements,
     dependencies=[UserIdempotent],
     responses=problem_responses(
-        *POST_COMMON, ErrorCode.NOT_FOUND, ErrorCode.FORBIDDEN, ErrorCode.APP_NOT_ACTIVE
+        *POST_COMMON,
+        ErrorCode.NOT_FOUND,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.REFERENCE_NOT_FOUND,
+        ErrorCode.APP_NOT_ACTIVE,
     ),
 )
 async def grants_requirements(

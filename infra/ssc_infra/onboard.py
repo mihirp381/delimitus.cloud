@@ -96,6 +96,7 @@ SETTINGS: Final = frozenset(
         "billing_account",
         "build_tools_image",
         "build_frontend_image",
+        "build_buildkit_image",
         "gateway_image",
         "gateway_min",
         "gateway_max",

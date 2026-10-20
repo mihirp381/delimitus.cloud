@@ -28,6 +28,7 @@ _PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"\bsk-(ant-|proj-)?[A-Za-z0-9_-]{20,}"),
     re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),
     re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    re.compile(r"\bsb_secret_[A-Za-z0-9_-]{16,}"),
     re.compile(r"https://hooks\.slack\.com/services/\S+"),
 )
 _COOKIE: Final = re.compile(r"(?i)\b((?:set-)?cookie\s*:\s*)\S[^\r\n]*")

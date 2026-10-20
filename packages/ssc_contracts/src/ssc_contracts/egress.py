@@ -46,6 +46,30 @@ CREDENTIAL_ID: Final = re.compile(r"[a-z0-9]{12}")
 DIGEST: Final = re.compile(r"[A-Za-z0-9+/]{27}=")
 """Base64 of a SHA-1 digest."""
 
+BUILD_PROXY_PORT: Final = 3129
+BUILD_USER: Final = "build"
+BUILD_HOSTS: Final = (
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "registry.yarnpkg.com",
+    "nodejs.org",
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "mise-versions.jdx.dev",
+    "ghcr.io",
+    "pkg-containers.githubusercontent.com",
+    "registry-1.docker.io",
+    "auth.docker.io",
+    "index.docker.io",
+    "production.cloudflare.docker.com",
+)
+"""Platform-owned, reviewed like ``APPROVED_PACKAGES``: never a host for one app."""
+BUILD_PLAIN_HOSTS: Final = ("deb.debian.org", "security.debian.org")
+"""apt verifies these against signed release files, so plain HTTP is safe here alone."""
+BUILD_NO_PROXY_VALUE: Final = NO_PROXY_VALUE + ",.pkg.dev"
+
 STORAGE_HOSTS: Final = ("storage.googleapis.com", "storage.cloud.google.com")
 """Cloud Storage's hosts. No allowlist entry may reach one, or a bucket's own host under one
 (``<bucket>.storage.googleapis.com``): an app's files leave the cell only by the file broker's
@@ -115,6 +139,11 @@ def authority_regex(pattern: str) -> str:
     if pattern.startswith("*."):
         body = f"{_LABEL_RE2}\\.{body}"
     return f"(?i)^{body}:{TUNNEL_PORT}$"
+
+
+def plain_authority_regex(host: str) -> str:
+    body = host.replace(".", "\\.")
+    return f"(?i)^{body}(:80)?$"
 
 
 @dataclass(frozen=True, slots=True)

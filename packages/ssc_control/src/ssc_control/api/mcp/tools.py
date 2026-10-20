@@ -41,6 +41,7 @@ sets the warm flag (SSC-092) or a cell resource flag (SSC-087), which only a per
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -122,17 +123,22 @@ Digest = Annotated[
     ),
 ]
 SizeBytes = Annotated[int, Field(gt=0, le=2**53 - 1, description="Length of the `.tar.gz`.")]
+PRINTABLE: Final = r"^[^\x00-\x1f\x7f]+$"
 Who = Annotated[
     str,
     Field(
         min_length=1,
         max_length=200,
+        pattern=PRINTABLE,
         description="A user (`usr_...`), a group (`grp_...`) or its exact name (find_groups), "
         "or `org` for everyone in the org.",
     ),
 ]
 GroupName = Annotated[
-    str, Field(min_length=1, max_length=200, description="The start of a group's name.")
+    str,
+    Field(
+        min_length=1, max_length=200, pattern=PRINTABLE, description="The start of a group's name."
+    ),
 ]
 ConnectionName = Annotated[
     str,
@@ -148,6 +154,8 @@ IdempotencyKey = Annotated[
     Field(
         min_length=1,
         max_length=200,
+        # It travels as the Idempotency-Key header: visible ASCII only.
+        pattern=r"^[!-~]+$",
         description="Send the same key to retry safely; a new one is made when absent.",
     ),
 ]
@@ -218,7 +226,13 @@ def local_error(code: str, title: str, detail: str, status: int | None = None) -
         "request_id": None,
         "instance": None,
         "type": None,
+        "retry_after": None,
     }
+
+
+def _retry_after(r: httpx2.Response) -> int | None:
+    value = r.headers.get("Retry-After", "")
+    return int(value) if value.isdigit() else None
 
 
 def _checked(r: httpx2.Response) -> httpx2.Response:
@@ -229,7 +243,7 @@ def _checked(r: httpx2.Response) -> httpx2.Response:
     except ValueError:
         body = None
     if isinstance(body, dict) and "code" in body:
-        raise Refused(cast("Body", body))
+        raise Refused({**cast("Body", body), "retry_after": _retry_after(r)})
     raise Refused(
         local_error(
             "BAD_RESPONSE",
@@ -262,6 +276,16 @@ def _request_id(ctx: Context) -> str | None:
     scope = cast("dict[str, object] | None", getattr(ctx.request_context.request, "scope", None))
     rid = scope.get(REQUEST_ID_SCOPE_KEY) if scope is not None else None
     return rid if isinstance(rid, str) else None
+
+
+class InProcessCalls(logging.Filter):
+    """Drops httpx2's line for a call to ``BASE_URL``: its URL carries the tool's arguments."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return BASE_URL not in record.getMessage()
+
+
+IN_PROCESS_CALLS: Final = InProcessCalls()
 
 
 def marked(api: FastAPI) -> ASGIApp:
@@ -297,6 +321,8 @@ def refused(error: Body) -> CallToolResult:
     text = f"{error['code']}: {error['title']} {error['detail']}"
     if error.get("request_id"):
         text += f" Request id: {error['request_id']}."
+    if error.get("retry_after") is not None:
+        text += f" Retry after {error['retry_after']} seconds."
     return CallToolResult(
         content=[TextContent(type="text", text=text)],
         structured_content={"error": error},

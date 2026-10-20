@@ -20,7 +20,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from ssc_control.api.mcp.auth import AgentTokenVerifier
-from ssc_control.api.mcp.tools import register
+from ssc_control.api.mcp.tools import IN_PROCESS_CALLS, register
 from ssc_control.api.runtime import Runtime
 
 MCP_PATH: Final = "/mcp"
@@ -57,7 +57,7 @@ def build_mcp(rt: Runtime, api: FastAPI) -> MCPServer:
         server = MCPServer(
             name="ssc",
             instructions=INSTRUCTIONS,
-            token_verifier=AgentTokenVerifier(rt.verifier, s.mcp_audience),
+            token_verifier=AgentTokenVerifier(rt.verifier, s.mcp_audience, rt.engine),
             # Validated from strings so a path-less issuer keeps its exact spelling (no "/").
             auth=AuthSettings.model_validate(
                 {
@@ -68,6 +68,7 @@ def build_mcp(rt: Runtime, api: FastAPI) -> MCPServer:
                 }
             ),
         )
+    logging.getLogger("httpx2").addFilter(IN_PROCESS_CALLS)
     register(server, api, s)
     return server
 

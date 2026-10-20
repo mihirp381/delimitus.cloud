@@ -57,7 +57,7 @@ from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
 from ssc_testkit import ISSUER, Dsns, SigningKey, make_org, mint, new_key
 
-from ssc_contracts.audit import AuditAction
+from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.cells import NOTICE, CellResource
 from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
@@ -66,9 +66,11 @@ from ssc_control.api.mcp.server import INSTRUCTIONS
 from ssc_control.api.mcp.tools import TOOLS
 from ssc_control.api.openapi import build_spec, spec_json
 from ssc_control.api.settings import INTERNAL_AUDIENCE, USER_AUDIENCE
-from ssc_control.db import CreatedOrg, bind_org_sync, make_engine
+from ssc_control.audit.chain import Actor
+from ssc_control.db import CreatedOrg, bind_org_sync, bound_org, make_engine
 from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.builds import run_build
+from ssc_control.identity import sessions
 from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.worker_ports import Ports
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
@@ -211,10 +213,14 @@ class PlantedLogs:
 
 
 @contextmanager
-def serving(settings_for: Callable[[str], Settings], blobs: Path | None = None) -> Iterator[str]:
+def serving(
+    settings_for: Callable[[str], Settings],
+    blobs: Path | None = None,
+    logs: PlantedLogs | None = None,
+) -> Iterator[str]:
     """``create_app`` under uvicorn on a free port, in a thread; yields its base URL. With
     ``blobs``, bundles go to a filesystem store there, served at ``<url>/blobs``. The cell's
-    logs are :class:`PlantedLogs`."""
+    logs are ``logs``, else :class:`PlantedLogs`."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     sock.listen(128)
@@ -223,7 +229,7 @@ def serving(settings_for: Callable[[str], Settings], blobs: Path | None = None) 
     if blobs is not None:
         signer = UrlSigner({"k1": b"k" * 32}, active="k1", clock=SystemClock())
         store = FsBlobStore(blobs, signer=signer, base_url=f"{url}/blobs")
-    cells = StaticCells(OrgCell(label=STATIC_LABEL, logs=PlantedLogs()))
+    cells = StaticCells(OrgCell(label=STATIC_LABEL, logs=logs or PlantedLogs()))
     app = create_app(settings_for(url), None, store, cells=cells)
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
@@ -568,7 +574,16 @@ async def test_tool_error_carries_the_request_id(world: World) -> None:
     result = r.json()["result"]
     assert result["isError"] is True
     error = result["structuredContent"]["error"]
-    assert set(error) == {"type", "title", "status", "detail", "instance", "code", "request_id"}
+    assert set(error) == {
+        "type",
+        "title",
+        "status",
+        "detail",
+        "instance",
+        "code",
+        "request_id",
+        "retry_after",
+    }
     assert error["code"] == "NOT_FOUND"
     assert error["request_id"] == r.headers["X-Request-Id"]
     assert error["request_id"] in result["content"][0]["text"]
@@ -653,6 +668,36 @@ async def test_wrong_audience_401(world: World) -> None:
     assert_refused(await post_initialize(world.url, world.agent_v1), world.url)
     expired = world.agent_token(expires_in=-60)
     assert_refused(await post_initialize(world.url, expired), world.url)
+
+
+async def test_a_credential_from_a_session_that_is_not_live_401(world: World) -> None:
+    """Revoking a session (``ssc logout``, ``/revoke``) shuts the transport too, not only each
+    tool's ``/v1`` call, so the client is told to sign in again."""
+    org, user = world.org.org_id, world.org.admin_user_id
+    actor = Actor(ActorKind.USER, user)
+    engine = make_engine(world.dsns.app)
+    try:
+        async with bound_org(engine, org) as conn:
+            sid = await sessions.open_session(
+                conn,
+                org,
+                user_id=user,
+                kind="cli",
+                connection_id="conn_mcp",
+                actor=actor,
+                agent_client_id=CLIENT_ID,
+                token_audience=f"{world.url}/mcp",
+            )
+        token = world.agent_token(sid=sid)
+        assert (await post_initialize(world.url, token)).status_code == 200
+        async with bound_org(engine, org) as conn:
+            await sessions.revoke_session(conn, org, sid, "logout", actor=actor)
+        assert_refused(await post_initialize(world.url, token), world.url)
+    finally:
+        await engine.dispose()
+    assert_refused(
+        await post_initialize(world.url, world.agent_token(sid=new_id("ses"))), world.url
+    )
 
 
 async def test_v1_refuses_an_mcp_credential_from_outside(world: World) -> None:
@@ -1122,6 +1167,24 @@ async def test_request_connection(world: World) -> None:
     assert approval["requested_via_agent"] is True
     assert bad.is_error
     assert bad.structured_content is None  # refused by the tool's own argument pattern
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("create_app", {"slug": "mcp-key"}),
+        ("request_share", {"app": "mcp-app", "env": "prod", "who": "org"}),
+        ("request_connection", {"app": "mcp-app", "connection": "warehouse"}),
+    ],
+)
+async def test_an_idempotency_key_is_visible_ascii(
+    world: World, tool: str, args: dict[str, Any]
+) -> None:
+    """The key travels as a header: a control character is the tool's validation refusal."""
+    async with session(world.url, world.agent) as client:
+        bad = await client.call_tool(tool, {**args, "idempotency_key": "k\r\nX-Injected: 1"})
+    assert bad.is_error
+    assert bad.structured_content is None
 
 
 async def test_create_app_once_per_key_and_audited_as_agent(world: World) -> None:

@@ -117,6 +117,17 @@ def test_slugs_shorter_than_3_422_before_db(
     assert app_rows(h, slug) == []
 
 
+def test_a_refused_input_is_not_logged(h: Hosts, caplog: pytest.LogCaptureFixture) -> None:
+    slug = "Echoed-$(id)-4242"
+    with caplog.at_level(logging.DEBUG):
+        r = create(h, slug)
+    assert_problem(r, ErrorCode.VALIDATION_FAILED)
+    assert logged_evidence(caplog, r)["errors"] == [
+        {"loc": ["body", "slug"], "type": "string_pattern_mismatch"}
+    ]
+    assert "4242" not in caplog.text
+
+
 def test_a_3_character_slug_is_fine(h: Hosts) -> None:
     assert create(h, "abc").status_code == 201
 

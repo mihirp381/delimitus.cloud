@@ -66,9 +66,15 @@ EXPECTED = {
     "dash-app": Expected("ssc", "builds", LIVE, framework="dash"),
     "unlisted-native-library": Expected("ssc", "ADD_APPROVED_PACKAGE", LOCAL),
     "listed-native-library": Expected("ssc", "builds", LIVE, packages=("poppler-utils",)),
+    "egress-exfil": Expected("ssc", "BUILD_HOST_NOT_ALLOWED", LIVE),
 }
 DELIMITUS = sorted(n for n, e in EXPECTED.items() if e.delimitus != "ssc")
-BUILD_FAILURES = {"BUILD_DEPENDENCY_UNRESOLVED", "HEALTH_CHECK_FAILED", "builds"}
+BUILD_FAILURES = {
+    "BUILD_DEPENDENCY_UNRESOLVED",
+    "BUILD_HOST_NOT_ALLOWED",
+    "HEALTH_CHECK_FAILED",
+    "builds",
+}
 
 
 def server_side(bundle: Path) -> tuple[bool, Analysis]:

@@ -112,10 +112,11 @@ The control plane turns on a cell's `database`, `egress` or `connections` flag w
 The cell agent runs each build in the cell's own Cloud Build as `ssc-build` (SSC-015, `ssc_agent.cloud_build`). The stack wires it in:
 
 - **Settings.** `build_tools_image` and `build_frontend_image`, both or neither, each `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/<image>@sha256:<digest>`. Anything else, or one without the other, fails the stack before apply: a partial set would stop the agent from starting.
+- **Build network (SSC-076).** `build_buildkit_image`, the BuildKit mirror in the same registry, pinned by digest, needs both images. It makes the private pool `ssc-builds` on 10.22.0.0/24, the `ingress-proxy-builds` rule (3129 from that range), the `ssc-build-proxy` secret only `ssc-build` reads, and the agent's project-level `cloudbuild.workerPoolUser`. With `egress` the proxy also serves its build listener and the agent sets `SSC_BUILD_POOL`, `SSC_BUILD_PROXY`, `SSC_BUILD_PROXY_SECRET` and `SSC_BUILD_BUILDKIT_IMAGE`. Setting it on an existing cell with `proxy_ha` replaces the proxy's forwarding rule.
 - **Agent environment.** With `agent_image` and both images set: `SSC_BUILD_SA` (`ssc-build@ssc-c-<label>.iam.gserviceaccount.com`), `SSC_BUILD_TOOLS_IMAGE` and `SSC_BUILD_FRONTEND_IMAGE`. Without them none of the three is set, and the agent answers builds with `BUILD_NOT_CONFIGURED`.
 - **Agent permissions.** `cloudbuild.builds.create` in `sscCellAgentCreate`; `cloudbuild.builds.get` and `cloudbuild.builds.list` in `sscCellAgentRuntime`. Acting as `ssc-build` is the `iam.serviceAccounts.actAs` that `sscCellAgentRuntime` already holds on the project (it covers every account in the cell, as for app identities).
 - **`ssc-build`.** `artifactregistry.writer` on the cell's `ssc-apps`; `artifactregistry.reader` on `ssc-platform` in `ssc-platform-0`, which holds the tools image and the Railpack frontend mirror (and the cell deployer's image, which builds can therefore pull); `logging.logWriter`. No storage role of any kind: the bundle's signed URL is all it reads (`tests/test_cell.py`).
-- **Policies.** None of the folder policies touches this: the builds run in `us-central1`, on Google's default pool (no VM in the cell), and the registry grant is on a platform project, to an organisation identity.
+- **Policies.** None of the folder policies touches this: the builds run in `us-central1`, on Google's default pool (no VM in the cell) or the private pool, which peers through the same service networking connection the `vpc-peering` rule allows and has no external address, and the registry grant is on a platform project, to an organisation identity.
 
 The cell stack writes the reader grant into `ssc-platform-0`, as it writes the apps zone's records. The operator's run creates it. The cell deployer may read that registry (The cell deployer, above) but not change who else does, so re-apply each existing cell by hand once before the deployer next runs on it.
 
@@ -130,8 +131,12 @@ jq -r '."containerimage.digest"' /tmp/tools.json
 docker buildx imagetools create --tag $REG/railpack-frontend:v0.40.1 \
   ghcr.io/railwayapp/railpack-frontend:v0.40.1@sha256:f1973377693af30c9b37a92c97c661c07b277ccdc6be909213c74c771f8d2d6d
 docker buildx imagetools inspect $REG/railpack-frontend:v0.40.1
+docker buildx imagetools create --tag $REG/buildkit:v0.33.1 \
+  docker.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+docker buildx imagetools inspect $REG/buildkit:v0.33.1
 pulumi config set --stack c-<label> build_tools_image $REG/ssc-build-tools@<tools digest>
 pulumi config set --stack c-<label> build_frontend_image $REG/railpack-frontend@<mirror digest>
+pulumi config set --stack c-<label> build_buildkit_image $REG/buildkit@<mirror digest>
 pulumi up --stack c-<label>
 ```
 

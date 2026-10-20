@@ -21,6 +21,7 @@ SHAPED = (
     "ya29." + FAKE,
     "eyJ" + "hbGciOiJIUzI1" + "." + "eyJzdWIiOiIx" + "." + "c2lnbmF0dXJl",
     "sk-" + "ant-" + FAKE,
+    "sb_" + "secret_" + FAKE,
     "-----BEGIN " + "PRIVATE KEY-----\nMIIEv" + FAKE + "\n-----END " + "PRIVATE KEY-----",
 )
 

@@ -187,11 +187,19 @@ def test_who_may_ask_and_what_is_refused(
         headers=auth(tokens.admin),
     )
     assert_problem(no_key, ErrorCode.IDEMPOTENCY_KEY_REQUIRED)
+    assert_problem(
+        requirements(client, world, world.prod, tokens.admin, [*wide, unknown_user()]),
+        ErrorCode.REFERENCE_NOT_FOUND,
+    )
     with_quarantine(dsns, world)
     assert_problem(
         requirements(client, world, world.prod, tokens.admin, wide), ErrorCode.APP_NOT_ACTIVE
     )
     assert approvals_of(dsns.app, world.org) == []
+
+
+def unknown_user() -> dict[str, Any]:
+    return {"role": "user", "subject_kind": "user", "subject_id": new_id("usr")}
 
 
 def with_quarantine(dsns: Dsns, w: World) -> None:
@@ -232,3 +240,15 @@ def test_an_agent_put_names_every_requirement_it_asked_for(
         },
     ]
     assert body["approval_ids"] == [r["approval_id"] for r in body["requirements"]]
+
+
+def test_an_agent_put_naming_an_unknown_user_opens_nothing(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    over_ceiling(client, world, tokens, dsns)
+    data_connected(client, world, tokens)
+    asked = len(approvals_of(dsns.app, world.org))
+    wide = [*org_wide(client, world, tokens), unknown_user()]
+    refused = put(client, world, world.prod, tokens.admin_agent, wide, 1)
+    assert_problem(refused, ErrorCode.REFERENCE_NOT_FOUND)
+    assert len(approvals_of(dsns.app, world.org)) == asked

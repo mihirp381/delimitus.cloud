@@ -40,7 +40,8 @@ members and nothing else:
 The catalogue is `ssc_contracts.errors.CATALOGUE`: one `ErrorCode`, one status, one fixed title
 and one fixed detail. The text never carries field names, ids or SQL. Evidence (what was wrong,
 which constraint fired) is logged as one JSON line under the `request_id`, which every response
-also returns in `X-Request-Id`. There is exactly one renderer (`api/problems.py`); validation
+also returns in `X-Request-Id`. For a validation error that is each error's location and type,
+never the refused input. There is exactly one renderer (`api/problems.py`); validation
 errors, 404s, database errors and unexpected exceptions all go through it. The `Problem` schema is
 a single component in `openapi.json` that every 4xx and 5xx response refers to.
 A request body over 1 MiB (`Settings.max_body_bytes`) is `413 REQUEST_TOO_LARGE` before any route
@@ -157,6 +158,10 @@ A cell resource (`GET /v1/cell`) and the warm gateway (`GET /v1/warm`) carry the
 | `CELL_DEPLOYER_UNAVAILABLE` | No cell deployer is configured. |
 | `CELL_RESOURCE_STALLED` | Its job raised on every attempt. |
 | `CELL_RESOURCE_UNVERIFIED` | The runs ended well three times but the cell's agent never found the resource there to use (resources only). |
+
+A failed build (`GET /v1/builds/{id}`) carries a `failure_code` from `ssc_contracts.build`, and
+`ssc` prints its fix-it. `BUILD_HOST_NOT_ALLOWED` (SSC-076): a build step tried to reach a host
+outside the package registries the cell's build network allows.
 
 **A rollback past migrations needs `confirm`** (SSC-043). A release has `latest_migrations`, the
 last migration name per ledger its build found (`prisma`, `alembic`, `django`, `drizzle`,
@@ -408,8 +413,8 @@ stateless, JSON replies. Code: `api/mcp/`.
 
 - **Who.** Only a user credential that an agent holds, issued for this endpoint: the audience
   is the MCP resource (`SSC_MCP_RESOURCE`, default `<public URL>/mcp`), `kind: user`,
-  `agent: true` and a `client_id` (decision 029). Any other bearer, or none, gets the SDK's
-  `401` with
+  `agent: true` and a `client_id` (decision 029), from a session that is still live (not
+  revoked by `ssc logout` or `/revoke`). Any other bearer, or none, gets the SDK's `401` with
   `WWW-Authenticate: Bearer ... resource_metadata="<public URL>/.well-known/oauth-protected-resource/mcp"`
   (RFC 6750 and RFC 9728, not a problem body). That metadata names the API's token issuer, the
   auth host, as the authorization server. A remote client gets its credential there with OAuth:
@@ -514,7 +519,8 @@ stateless, JSON replies. Code: `api/mcp/`.
 - **Refusals** are tool results with `isError: true` and structured content `{"error": {...}}`:
   the problem's seven members for an API refusal, or `APP_NOT_FOUND`, `ENVIRONMENT_NOT_FOUND`
   or `VALIDATION_FAILED` with `status: null` for one found before calling the API (the same
-  shape as `ssc --json`).
+  shape as `ssc --json`), plus `retry_after`: the seconds of the API's `Retry-After` (on
+  `RATE_LIMITED`, say), else `null`.
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
   step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052;
   `list_connections` is the route's own view), the warm flag (SSC-092),

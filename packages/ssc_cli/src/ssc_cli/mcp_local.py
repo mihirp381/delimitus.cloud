@@ -26,6 +26,7 @@ doctor`` on it here, answering with the findings and their fix-its (SSC-093).
 import asyncio
 import hashlib
 import json
+import math
 import re
 import tempfile
 from collections.abc import Callable
@@ -138,17 +139,22 @@ Folder = Annotated[
         "ssc.toml, are refused.",
     ),
 ]
+PRINTABLE: Final = r"^[^\x00-\x1f\x7f]+$"
 Who = Annotated[
     str,
     Field(
         min_length=1,
         max_length=200,
+        pattern=PRINTABLE,
         description="A user (`usr_...`), a group (`grp_...`) or its exact name (find_groups), "
         "or `org` for everyone in the org.",
     ),
 ]
 GroupName = Annotated[
-    str, Field(min_length=1, max_length=200, description="The start of a group's name.")
+    str,
+    Field(
+        min_length=1, max_length=200, pattern=PRINTABLE, description="The start of a group's name."
+    ),
 ]
 ConnectionName = Annotated[
     str,
@@ -193,6 +199,8 @@ IdempotencyKey = Annotated[
     Field(
         min_length=1,
         max_length=200,
+        # It travels as the Idempotency-Key header: visible ASCII only.
+        pattern=r"^[!-~]+$",
         description="Send the same key to retry safely; a new one is made when absent.",
     ),
 ]
@@ -214,10 +222,13 @@ def ok(body: Body) -> CallToolResult:
 
 
 def refused(e: CliError) -> CallToolResult:
-    error = e.body.model_dump(exclude={"fix", "log_tail"})
+    wait = None if e.retry_after is None else max(1, math.ceil(e.retry_after))
+    error = {**e.body.model_dump(exclude={"fix", "log_tail"}), "retry_after": wait}
     text = f"{error['code']}: {error['title']} {error['detail']}"
     if error.get("request_id"):
         text += f" Request id: {error['request_id']}."
+    if wait is not None:
+        text += f" Retry after {wait} seconds."
     if e.fix:
         text += f" Fix: {e.fix}"
     return CallToolResult(

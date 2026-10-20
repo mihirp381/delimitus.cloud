@@ -7,6 +7,7 @@ checks exactly that.
 
 import base64
 import binascii
+import hashlib
 import re
 import secrets
 from collections.abc import Sequence
@@ -18,6 +19,7 @@ from typing import Final, cast
 import pulumi
 import pulumi_gcp as gcp
 
+from ssc_contracts.egress import BUILD_PROXY_PORT, BUILD_USER
 from ssc_infra import account as stack_account
 from ssc_infra import alerts
 from ssc_infra import naming as n
@@ -93,6 +95,13 @@ DNS_TTL: Final = 300
 CELL_BUDGET_USD: Final = 50
 PSA_ADDRESS: Final = "10.21.0.0"
 PSA_PREFIX: Final = 20
+BUILDS_ADDRESS: Final = "10.22.0.0"
+BUILDS_RANGE_PREFIX: Final = 24
+BUILDS_RANGE: Final = f"{BUILDS_ADDRESS}/{BUILDS_RANGE_PREFIX}"
+BUILD_POOL: Final = "ssc-builds"
+BUILD_POOL_MACHINE: Final = "e2-medium"
+BUILD_POOL_DISK_GB: Final = 100
+BUILD_PROXY_KIND: Final = "build-proxy"
 GOOGLE_PRIVATE: Final = ("199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11")
 GOOGLE_PRIVATE_RANGE: Final = "199.36.153.8/30"
 GATEWAY_TAG: Final = "ssc-gateway"
@@ -222,6 +231,7 @@ class CellConfig:
     warm: bool
     build_tools_image: str | None = None
     build_frontend_image: str | None = None
+    build_buildkit_image: str | None = None
     gateway_image: str | None = None
     gateway_keyring: str | None = None
     gateway_jwks: str | None = None
@@ -244,6 +254,10 @@ class CellConfig:
     @property
     def project_id(self) -> str:
         return n.cell_project(self.label)
+
+    @property
+    def build_pool(self) -> bool:
+        return self.build_buildkit_image is not None
 
     @property
     def disposable(self) -> bool:
@@ -280,6 +294,7 @@ class CellConfig:
             "operator": self.operator,
             "build_tools_image": self.build_tools_image,
             "build_frontend_image": self.build_frontend_image,
+            "build_buildkit_image": self.build_buildkit_image,
             "gateway_image": self.gateway_image,
             "gateway_keyring": self.gateway_keyring,
             "gateway_jwks": self.gateway_jwks,
@@ -324,6 +339,7 @@ def read_config(stack: str) -> CellConfig:
         warm=config.get_bool("warm") or False,
         build_tools_image=tools,
         build_frontend_image=frontend,
+        build_buildkit_image=buildkit_setting(config.get("build_buildkit_image"), tools),
         gateway_image=image,
         gateway_keyring=keyring,
         gateway_jwks=jwks,
@@ -351,6 +367,18 @@ def build_images(tools: str | None, frontend: str | None) -> tuple[str | None, s
                 f"{' or '.join(BUILD_IMAGES)} is set"
             )
     return tools, frontend
+
+
+def buildkit_setting(image: str | None, tools: str | None) -> str | None:
+    if not image:
+        return None
+    if not PINNED_IMAGE.fullmatch(image):
+        raise ValueError(
+            f"build_buildkit_image must be {n.platform_registry()}/<image>@sha256:<digest>"
+        )
+    if not tools:
+        raise ValueError(f"build_buildkit_image needs {' and '.join(BUILD_IMAGES)}")
+    return image
 
 
 def gateway_settings(
@@ -409,7 +437,7 @@ def proxy_settings(image: str | None, org: str | None) -> str | None:
     return image
 
 
-def proxy_cloud_config(image: str, org_id: str, bucket: str) -> str:
+def proxy_cloud_config(image: str, org_id: str, bucket: str, build_sha1: str | None = None) -> str:
     """The proxy machine's ``user-data``: a systemd unit that runs ``image`` read-only on the
     host network and restarts it whenever it exits, after Docker is configured to pull from the
     platform registry with the machine's own identity, the host refuses tunnels to the
@@ -423,14 +451,22 @@ def proxy_cloud_config(image: str, org_id: str, bucket: str) -> str:
         f"ExecStartPre=/bin/sh -c 'iptables -w -C {rule} 2>/dev/null || iptables -w -A {rule}'"
         for rule in rules
     ]
-    accept = f"INPUT -p tcp --dport {PROXY_PORT} -j ACCEPT"
-    host.append(
-        f"ExecStartPre=/bin/sh -c 'iptables -w -C {accept} 2>/dev/null || iptables -w -I {accept}'"
+    ports = [PROXY_PORT] if build_sha1 is None else [PROXY_PORT, BUILD_PROXY_PORT]
+    for port in ports:
+        accept = f"INPUT -p tcp --dport {port} -j ACCEPT"
+        host.append(
+            f"ExecStartPre=/bin/sh -c 'iptables -w -C {accept} 2>/dev/null || "
+            f"iptables -w -I {accept}'"
+        )
+    build = (
+        ""
+        if build_sha1 is None
+        else f"-e SSC_BUILD_USER={BUILD_USER} -e SSC_BUILD_SHA1={build_sha1} "
     )
     run = (
         "/usr/bin/docker run --rm --name ssc-egress --network host --read-only --tmpfs /tmp "
         "--cap-drop ALL --security-opt no-new-privileges "
-        f"-e SSC_ORG_ID={org_id} -e SSC_CELL_BUCKET={bucket} {image}"
+        f"-e SSC_ORG_ID={org_id} -e SSC_CELL_BUCKET={bucket} {build}{image}"
     )
     unit = "\n".join(
         (
@@ -519,6 +555,10 @@ def _int_or(value: int | None, default: int) -> int:
     return default if value is None else value
 
 
+def token_sha1(token: str) -> str:
+    return base64.b64encode(hashlib.sha1(token.encode()).digest()).decode()  # noqa: S324
+
+
 def secret_condition() -> gcp.projects.IAMMemberConditionArgs:
     """App secrets (``ssc-a-*``) and connection secrets (``ssc-conn-*``, SSC-051)."""
     return gcp.projects.IAMMemberConditionArgs(
@@ -595,6 +635,7 @@ class Cell:
         self.identities()
         self.keys()
         self.network()
+        self.build_network()
         self.proxy_check()
         if cfg.database:
             self.database()
@@ -797,6 +838,9 @@ class Cell:
         )
         self.connection_tag = self._connection_tag()
         self._project_role("build-logs", self.build_sa.member, "roles/logging.logWriter")
+        if self.cfg.build_pool:
+            # pulumi-gcp has no WorkerPool IAM resource.
+            self._project_role("agent-build-pool", agent, "roles/cloudbuild.workerPoolUser")
         self._project_role("gateway-logs", self.gateway_sa.member, "roles/logging.logWriter")
         self._project_role("agent-logs", agent, "roles/logging.logWriter")
         self._project_role("data-logs", self.data_sa.member, "roles/logging.logWriter")
@@ -848,6 +892,16 @@ class Cell:
             member=self.agent_sa.member,
             opts=self._o(),
         )
+        self.build_proxy_tag: pulumi.Output[str] | None = None
+        if self.cfg.build_pool:
+            build_proxy = gcp.tags.TagValue(
+                "secret-kind-build-proxy",
+                parent=key_id,
+                short_name=BUILD_PROXY_KIND,
+                description="The build proxy credential (SSC-076).",
+                opts=self._o(),
+            )
+            self.build_proxy_tag = pulumi.Output.concat("tagValues/", build_proxy.name)
         return key_id, value_id
 
     def keys(self) -> None:
@@ -949,11 +1003,25 @@ class Cell:
             network=self.vpc.id,
             opts=self._o(),
         )
+        ranges = [psa.name]
+        if self.cfg.build_pool:
+            builds = gcp.compute.GlobalAddress(
+                "builds-range",
+                project=self.pid,
+                name=BUILD_POOL,
+                purpose="VPC_PEERING",
+                address_type="INTERNAL",
+                address=BUILDS_ADDRESS,
+                prefix_length=BUILDS_RANGE_PREFIX,
+                network=self.vpc.id,
+                opts=self._o(),
+            )
+            ranges.append(builds.name)
         self.psa = gcp.servicenetworking.Connection(
             "psa",
             network=self.vpc.id,
             service="servicenetworking.googleapis.com",
-            reserved_peering_ranges=[psa.name],
+            reserved_peering_ranges=ranges,
             deletion_policy="ABANDON",  # Google holds it for a while after Cloud SQL is deleted
             opts=self._o(),
         )
@@ -1007,6 +1075,69 @@ class Cell:
                     name=self.edge_subnet.id, source_ip_ranges_to_nats=["ALL_IP_RANGES"]
                 )
             ],
+            opts=self._o(),
+        )
+
+    def build_network(self) -> None:
+        # Made at onboarding, not by egress: the deployer holds no role for these (SSC-087).
+        self.build_pool_: gcp.cloudbuild.WorkerPool | None = None
+        if not self.cfg.build_pool:
+            return
+        self.build_pool_ = gcp.cloudbuild.WorkerPool(
+            "builds",
+            project=self.pid,
+            name=BUILD_POOL,
+            location=n.REGION,
+            worker_config=gcp.cloudbuild.WorkerPoolWorkerConfigArgs(
+                machine_type=BUILD_POOL_MACHINE,
+                disk_size_gb=BUILD_POOL_DISK_GB,
+                no_external_ip=True,
+            ),
+            network_config=gcp.cloudbuild.WorkerPoolNetworkConfigArgs(
+                peered_network=self.vpc.id,
+                peered_network_ip_range=BUILDS_RANGE,
+            ),
+            opts=self._o(self.psa),
+        )
+        self._ingress("ingress-proxy-builds", [BUILDS_RANGE], PROXY_TAG, BUILD_PROXY_PORT)
+        tag_key = self.connection_tag[0]
+        secret = gcp.secretmanager.Secret(
+            "build-proxy-credential",
+            project=self.pid,
+            secret_id=n.BUILD_PROXY_SECRET,
+            replication=gcp.secretmanager.SecretReplicationArgs(
+                user_managed=gcp.secretmanager.SecretReplicationUserManagedArgs(
+                    replicas=[
+                        gcp.secretmanager.SecretReplicationUserManagedReplicaArgs(location=n.REGION)
+                    ]
+                )
+            ),
+            tags=pulumi.Output.all(tag_key, self.build_proxy_tag).apply(lambda t: {t[0]: t[1]}),
+            deletion_protection=False,
+            opts=self._o(),
+        )
+        version = gcp.secretmanager.SecretVersion(
+            "build-proxy-credential-v1",
+            secret=secret.id,
+            # ignore_changes keeps the first draw, so a re-run never rotates it.
+            secret_data=pulumi.Output.secret(secrets.token_urlsafe(32)),
+            opts=pulumi.ResourceOptions.merge(
+                self._o(), pulumi.ResourceOptions(ignore_changes=["secret_data"])
+            ),
+        )
+        # A SHA-1 of 32 random bytes reveals nothing; plain keeps the template diffable.
+        self.build_proxy_sha1 = pulumi.Output.unsecret(
+            version.secret_data.apply(lambda t: token_sha1(t or ""))
+        )
+        self.build_proxy_version = pulumi.Output.concat(
+            "projects/", self.pid, "/secrets/", secret.secret_id, "/versions/latest"
+        )
+        gcp.secretmanager.SecretIamMember(
+            "build-proxy-credential-build",
+            project=self.pid,
+            secret_id=secret.secret_id,
+            role="roles/secretmanager.secretAccessor",
+            member=self.build_sa.member,
             opts=self._o(),
         )
 
@@ -1888,6 +2019,21 @@ class Cell:
                 "SSC_BUILD_TOOLS_IMAGE": tools,
                 "SSC_BUILD_FRONTEND_IMAGE": frontend,
             }
+        if self.cfg.egress and self.build_pool_ and self.cfg.build_buildkit_image:
+            pool, proxy, secret, buildkit = n.BUILD_POOL_ENVS
+            env |= {
+                pool: pulumi.Output.concat(
+                    "projects/",
+                    self.pid,
+                    "/locations/",
+                    n.REGION,
+                    "/workerPools/",
+                    self.build_pool_.name,
+                ),
+                proxy: pulumi.Output.concat(self.proxy_ip.address, f":{BUILD_PROXY_PORT}"),
+                secret: self.build_proxy_version,
+                buildkit: self.cfg.build_buildkit_image,
+            }
         if self.cfg.database:
             env[n.SQL_INSTANCE_ENV] = self.sql.name
         if self.cfg.connections:
@@ -1977,15 +2123,19 @@ class Cell:
         zones instead, behind an internal load balancer that holds the reserved address."""
         cfg = self.cfg
         health = self.proxy_health
-        metadata = {
+        base = {
             "enable-oslogin": "TRUE",
             "block-project-ssh-keys": "true",
             "google-logging-enabled": "true",
             "cos-update-strategy": "update_disabled",
         }
+        metadata: dict[str, pulumi.Input[str]] = dict(base)
         if cfg.proxy_image and cfg.org_id:
-            metadata["user-data"] = proxy_cloud_config(
-                cfg.proxy_image, cfg.org_id, n.cell_bucket(cfg.label)
+            image, org, bucket = cfg.proxy_image, cfg.org_id, n.cell_bucket(cfg.label)
+            metadata["user-data"] = (
+                self.build_proxy_sha1.apply(lambda sha: proxy_cloud_config(image, org, bucket, sha))
+                if cfg.build_pool
+                else proxy_cloud_config(image, org, bucket)
             )
         template = gcp.compute.InstanceTemplate(
             "proxy-template",
@@ -2097,7 +2247,9 @@ class Cell:
             region=n.REGION,
             load_balancing_scheme="INTERNAL",
             ip_protocol="TCP",
-            ports=[str(PROXY_PORT)],
+            ports=[
+                str(p) for p in (PROXY_PORT, BUILD_PROXY_PORT)[: 2 if self.cfg.build_pool else 1]
+            ],
             ip_address=self.proxy_ip.address,
             network=self.vpc.id,
             subnetwork=self.edge_subnet.id,
@@ -2167,8 +2319,9 @@ class Cell:
         granted. The second refuses ``ssc-data`` every secret without the cell's connection tag
         (SSC-051), so no grant can give it an app secret; it reads a connection secret only with
         the ``secretAccessor`` the agent sets on that secret."""
+        pooled = self.build_proxy_tag is not None
         ours = (self.gateway_sa, self.agent_sa, self.build_sa, self.intake_sa, self.proxy_sa)
-        denied = [sa_principal(sa.email) for sa in ours]
+        denied = [sa_principal(sa.email) for sa in ours if not (pooled and sa is self.build_sa)]
         if self.cfg.probe:
             self.denied_probe = self._sa(n.PROBE_DENIED_SA, "SSC deny probe (always refused)")
             denied.append(sa_principal(self.denied_probe.email))
@@ -2200,9 +2353,29 @@ class Cell:
                         ),
                     ),
                 ),
+                *self._build_deny(tag_key),
             ],
             opts=self._o(),
         )
+
+    def _build_deny(self, tag_key: pulumi.Output[str]) -> list[gcp.iam.DenyPolicyRuleArgs]:
+        if self.build_proxy_tag is None:
+            return []
+        return [
+            gcp.iam.DenyPolicyRuleArgs(
+                description="Builds read the build proxy's credential and no other secret.",
+                deny_rule=gcp.iam.DenyPolicyRuleDenyRuleArgs(
+                    denied_principals=[sa_principal(self.build_sa.email)],
+                    denied_permissions=[n.SECRET_READ],
+                    denial_condition=gcp.iam.DenyPolicyRuleDenyRuleDenialConditionArgs(
+                        title=f"not {SECRET_KIND_KEY}={BUILD_PROXY_KIND}",
+                        expression=pulumi.Output.format(
+                            "!resource.matchTagId('{0}', '{1}')", tag_key, self.build_proxy_tag
+                        ),
+                    ),
+                ),
+            )
+        ]
 
     def probe(self) -> None:
         """A secret both probe identities hold ``secretAccessor`` on: one must read it, the other
@@ -2347,6 +2520,8 @@ class Cell:
         pulumi.export("proxy_ip", self.proxy_ip.address)
         pulumi.export("datagw_ip", self.datagw_ip.address)
         pulumi.export("database_range", f"{PSA_ADDRESS}/{PSA_PREFIX}")
+        if self.build_pool_:
+            pulumi.export("build_pool", self.build_pool_.id)
         pulumi.export("gateway_kms_key", self.gateway_key.id)
         if self.cfg.gateway_jwks:
             pulumi.export("identity_jwks", self.cfg.gateway_jwks)

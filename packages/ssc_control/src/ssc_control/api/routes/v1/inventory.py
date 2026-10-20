@@ -10,7 +10,8 @@ restores serving. A transfer moves an app to another active member.
 
 Deleting an app (GA-12) is the same shape: ``202`` once the app is ``deleting``, which denies it
 as a disable does, and a ``Location`` for the run that removes what it had. The caller confirms
-with the app's slug, and must be a person: an agent credential is ``AGENT_SESSION_REFUSED``.
+with the app's slug. Every change here is a person's: an agent credential is
+``AGENT_SESSION_REFUSED`` before any lookup.
 The run stays readable after the app is ``deleted`` and gone from every other route.
 """
 
@@ -222,6 +223,7 @@ async def get_inventory(
     responses=problem_responses(
         *POST_COMMON,
         ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
         ErrorCode.NOT_FOUND,
         ErrorCode.APP_NOT_ACTIVE,
         ErrorCode.KILL_SWITCH_IN_FLIGHT,
@@ -233,6 +235,8 @@ async def pull_kill_switch(app_id: Id, body: KillSwitchCreate, uow: UserUoW) -> 
 
     ``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``
     while an earlier pull is still running; ``APP_DELETING`` while the app is being deleted."""
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     await require_admin(uow)
     try:
         started = await kill_switch.start(
@@ -303,6 +307,7 @@ async def get_kill_switch_run(app_id: Id, run_id: Id, uow: UserUoW) -> KillSwitc
     responses=problem_responses(
         *POST_COMMON,
         ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
         ErrorCode.NOT_FOUND,
         ErrorCode.APP_ALREADY_ACTIVE,
         ErrorCode.KILL_SWITCH_IN_FLIGHT,
@@ -313,6 +318,8 @@ async def enable_app(app_id: Id, request: Request, uow: UserUoW) -> Response:
     """Make a disabled or quarantined app active again and resume the schedules the kill
     switch paused. The reconciler brings it back up. ``KILL_SWITCH_IN_FLIGHT`` until the
     running pull has finished. An app being deleted does not come back (``APP_DELETING``)."""
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     await require_admin(uow)
     try:
         before = await kill_switch.enable(
@@ -429,6 +436,7 @@ async def get_app_delete_run(app_id: Id, run_id: Id, uow: UserUoW) -> AppDeleteR
     responses=problem_responses(
         *AUTHENTICATED,
         ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
         ErrorCode.NOT_FOUND,
         ErrorCode.REFERENCE_NOT_FOUND,
         ErrorCode.OWNER_NOT_ACTIVE,
@@ -437,6 +445,8 @@ async def get_app_delete_run(app_id: Id, run_id: Id, uow: UserUoW) -> AppDeleteR
 async def transfer_owner(app_id: Id, body: OwnerTransfer, request: Request, uow: UserUoW) -> AppOut:
     """Give the app to another member. ``REFERENCE_NOT_FOUND`` for a user not in the org,
     ``OWNER_NOT_ACTIVE`` for a deactivated one."""
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     await require_admin(uow)
     before = (
         await uow.conn.execute(_LOCK_APP_OWNER, {"org": uow.org_id, "id": app_id})

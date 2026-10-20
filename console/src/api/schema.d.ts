@@ -123,7 +123,8 @@ export interface paths {
          * Create Approval
          * @description Ask another admin of the org to approve one change to one environment. Allowed to the
          *     environment's builders, its app's owner and org admins, agent sessions included. An
-         *     `exceed_ceiling` request is decided by the named connection's owner or an org admin.
+         *     `exceed_ceiling` request is decided by the named connection's owner or an org admin. A grant
+         *     naming a user or group the org does not have is `NOT_FOUND`.
          */
         post: operations["create_approval_v1_approvals_post"];
         delete?: never;
@@ -591,8 +592,8 @@ export interface paths {
          *
          *     Only an org admin, the app's owner or a builder on this environment may; anyone else gets
          *     ``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant
-         *     for one subject is ``VALIDATION_FAILED``. A quarantined app's sharing is frozen:
-         *     ``APP_NOT_ACTIVE``.
+         *     for one subject is ``VALIDATION_FAILED``, and one naming a user or group the org does not have
+         *     ``REFERENCE_NOT_FOUND``. A quarantined app's sharing is frozen: ``APP_NOT_ACTIVE``.
          *
          *     A change that needs approval is not applied. An agent session gets ``202`` and the pending
          *     approval ids (asked for here). A person gets ``409 APPROVAL_REQUIRED``, whose body names
@@ -5917,7 +5918,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -7140,7 +7141,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7611,7 +7612,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -7709,7 +7710,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -7889,7 +7890,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8673,7 +8674,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8839,7 +8840,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;

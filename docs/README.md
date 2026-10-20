@@ -56,6 +56,8 @@ feature or making a product claim.
 - [App access, logs, audit, and internet access](trust/app-access-limits.md): revocation,
   request limits, log delay, audit anchors, and the organisation-wide egress allowlist.
 - [Builds](trust/build-limits.md): build network access and secret scanning limits.
+- [AI agents](trust/agent-limits.md): what an agent credential can and cannot do, what the
+  adversarial matrix and the live sweep check, and the gaps they found.
 
 ## Product surfaces, testing, and pilot
 

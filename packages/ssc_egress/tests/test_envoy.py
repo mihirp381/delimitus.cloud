@@ -29,16 +29,29 @@ from egress_world import (
     snapshot,
 )
 
-from ssc_contracts.egress import DRAIN_SECONDS, MAX_HOSTS, token_digest
+from ssc_contracts.egress import (
+    BUILD_HOSTS,
+    BUILD_PLAIN_HOSTS,
+    BUILD_PROXY_PORT,
+    BUILD_USER,
+    DRAIN_SECONDS,
+    MAX_HOSTS,
+    authority_regex,
+    plain_authority_regex,
+    token_digest,
+)
 from ssc_egress.envoy import (
+    BUILD_LISTENER,
     ENVOY_VERSION,
     LDS_FILE,
     PUBLIC_RESOLVERS,
     REALM,
     USER_HEADER,
+    BuildListener,
     EgressConfig,
     Policy,
     bootstrap,
+    build_listener,
     envoy_args,
     lds_document,
     listener,
@@ -58,6 +71,7 @@ ECHO_IMAGE = (
 )
 ECHO = """
 import socketserver
+import threading
 
 class Echo(socketserver.BaseRequestHandler):
     def handle(self):
@@ -68,10 +82,30 @@ class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
+class Plain(socketserver.BaseRequestHandler):
+    def handle(self):
+        head = b""
+        while b"\\r\\n\\r\\n" not in head and (data := self.request.recv(4096)):
+            head += data
+        body = head.lower()
+        self.request.sendall(
+            b"HTTP/1.1 200 OK\\r\\ncontent-length: %d\\r\\n\\r\\n" % len(body) + body
+        )
+
+threading.Thread(target=Server(("0.0.0.0", 80), Plain).serve_forever, daemon=True).start()
 Server(("0.0.0.0", 443), Echo).serve_forever()
 """
-ALIASES = ("api.allowed.test", "b.wild.test", "x.y.wild.test", "wild.test", "other.test")
+ALIASES = (
+    "api.allowed.test", "b.wild.test", "x.y.wild.test", "wild.test", "other.test", "plain.test"
+)  # fmt: skip
 PROD_USER = f"{PROD}.prod00000001"
+BUILD_TOKEN = "build-token-" + "b" * 32  # noqa: S105  (a test credential)
+BUILD = BuildListener(
+    user=BUILD_USER,
+    sha1=token_digest(BUILD_TOKEN),
+    hosts=("api.allowed.test",),
+    plain_hosts=("plain.test",),
+)
 
 
 def view(**changes: Any) -> AccessView:
@@ -153,6 +187,49 @@ def test_the_listener_version_follows_its_content() -> None:
     )
 
 
+def test_without_build_settings_the_bootstrap_has_no_static_listener() -> None:
+    plain = bootstrap(EgressConfig())
+    assert "listeners" not in plain["static_resources"]
+    with_build = bootstrap(EgressConfig(build=BUILD))
+    (resource,) = with_build["static_resources"].pop("listeners")
+    assert json.dumps(with_build) == json.dumps(plain)
+    assert resource["name"] == BUILD_LISTENER
+    assert resource["address"]["socket_address"]["port_value"] == BUILD_PROXY_PORT
+
+
+def test_the_build_listener_routes_are_the_build_hosts_and_nothing_else() -> None:
+    build = BuildListener(user=BUILD_USER, sha1=token_digest(BUILD_TOKEN))
+    hcm = hcm_of(build_listener(EgressConfig(), build))
+    routes = hcm["route_config"]["virtual_hosts"][0]["routes"]
+    connect = [r for r in routes if r["name"].startswith("allow-")]
+    plain = [r for r in routes if r["name"].startswith("plain-")]
+    assert [r["match"]["headers"][0]["string_match"]["safe_regex"]["regex"] for r in connect] == [
+        authority_regex(h) for h in BUILD_HOSTS
+    ]
+    assert all("connect_matcher" in r["match"] for r in connect)
+    assert [r["match"]["headers"][0]["string_match"]["safe_regex"]["regex"] for r in plain] == [
+        plain_authority_regex(h) for h in BUILD_PLAIN_HOSTS
+    ]
+    for route in plain:
+        assert route["match"]["headers"][1]["name"] == ":method"
+        assert "proxy-authorization" in route["request_headers_to_remove"]
+        assert "upgrade_configs" not in route["route"]
+    assert [r["name"] for r in routes[-2:]] == ["refuse", "refuse-plain"]
+    assert routes[-2]["direct_response"] == routes[-1]["direct_response"] == {"status": 403}
+    auth = hcm["http_filters"][0]["typed_config"]
+    assert auth["users"]["inline_string"] == f"{BUILD_USER}:{{SHA}}{token_digest(BUILD_TOKEN)}\n"
+    assert BUILD_TOKEN not in json.dumps(hcm)
+    assert hcm["http_protocol_options"] == {"allow_absolute_url": True}
+
+
+def test_the_org_listener_never_lists_the_build_user() -> None:
+    cfg = EgressConfig(build=BUILD)
+    org = json.dumps(lds_document(cfg, policy_of(view())))
+    assert token_digest(BUILD_TOKEN) not in org
+    assert f"{BUILD_USER}:" not in org
+    assert lds_document(cfg, policy_of(view())) == lds_document(EgressConfig(), policy_of(view()))
+
+
 def docker() -> str:
     found = shutil.which("docker")
     if (
@@ -177,7 +254,8 @@ def static(cfg: EgressConfig, policy: Policy) -> dict[str, Any]:
     config = bootstrap(cfg)
     del config["dynamic_resources"]
     resource = {k: v for k, v in listener(cfg, policy).items() if k != "@type"}
-    config["static_resources"]["listeners"] = [resource]
+    static = config["static_resources"]
+    static["listeners"] = [resource, *static.get("listeners", [])]
     return config
 
 
@@ -198,9 +276,16 @@ LONGEST = "*." + ".".join(["a" * 61] * 4)
     ],
     ids=["nothing", "no-credentials", "snapshot", "longest-host", "most-hosts"],
 )
-def test_the_rendered_config_validates(tmp_path: Path, policy: Policy) -> None:
+@pytest.mark.parametrize(
+    "build",
+    [None, BuildListener(user=BUILD_USER, sha1=token_digest(BUILD_TOKEN))],
+    ids=["org", "with-build"],
+)
+def test_the_rendered_config_validates(
+    tmp_path: Path, policy: Policy, build: BuildListener | None
+) -> None:
     assert len(LONGEST) <= 253  # noqa: PLR2004
-    (tmp_path / "envoy.json").write_text(json.dumps(static(EgressConfig(), policy)))
+    (tmp_path / "envoy.json").write_text(json.dumps(static(EgressConfig(build=build), policy)))
     tmp_path.chmod(READABLE)
     out = subprocess.run(
         [docker(), "run", "--rm", "-v", f"{tmp_path}:/c:ro", ENVOY_IMAGE]
@@ -219,6 +304,7 @@ class Proxy:
     port: int
     name: str
     cfg: EgressConfig
+    build_port: int
 
     def apply(self, policy: Policy) -> None:
         """Moves a new listener into place inside the container, as the runner does."""
@@ -228,10 +314,14 @@ class Proxy:
         run("exec", "-i", self.name, "sh", "-c", script, stdin=body)
 
     def connect(
-        self, authority: str, user: str | None = PROD_USER, token: str = TOKEN
+        self,
+        authority: str,
+        user: str | None = PROD_USER,
+        token: str = TOKEN,
+        port: int | None = None,
     ) -> tuple[socket.socket, int, str]:
         """A ``CONNECT``; the open socket, the status and the response body (empty on 200)."""
-        sock = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        sock = socket.create_connection(("127.0.0.1", port or self.port), timeout=10)
         head = f"CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n"
         if user is not None:
             basic = base64.b64encode(f"{user}:{token}".encode()).decode()
@@ -280,7 +370,7 @@ def proxy(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Proxy]:
     tmp.chmod(READABLE)
     (tmp / "lds").mkdir()
     (tmp / "echo.py").write_text(ECHO)
-    cfg = EgressConfig(lds_dir="/lds", resolvers=())
+    cfg = EgressConfig(lds_dir="/lds", resolvers=(), build=BUILD)
     (tmp / "envoy.json").write_text(json.dumps(bootstrap(cfg)))
     (tmp / "lds" / LDS_FILE).write_text(json.dumps(lds_document(cfg, policy_of(view()))))
     tag = f"ssc053-{os.getpid()}"
@@ -293,11 +383,15 @@ def proxy(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Proxy]:
         )  # fmt: skip
         run(
             "run", "-d", "--rm", "--name", f"{tag}-envoy", "--network", tag,
-            "-p", "127.0.0.1::3128", "-v", f"{tmp}:/c:ro", "-v", f"{tmp / 'lds'}:/lds",
+            "-p", "127.0.0.1::3128", "-p", f"127.0.0.1::{BUILD_PROXY_PORT}",
+            "-v", f"{tmp}:/c:ro", "-v", f"{tmp / 'lds'}:/lds",
             ENVOY_IMAGE, *envoy_args("/c/envoy.json"),
         )  # fmt: skip
-        port = int(run("port", f"{tag}-envoy", "3128/tcp").splitlines()[0].rsplit(":", 1)[1])
-        found = Proxy(port=port, name=f"{tag}-envoy", cfg=cfg)
+        port, build_port = (
+            int(run("port", f"{tag}-envoy", f"{p}/tcp").splitlines()[0].rsplit(":", 1)[1])
+            for p in (3128, BUILD_PROXY_PORT)
+        )
+        found = Proxy(port=port, name=f"{tag}-envoy", cfg=cfg, build_port=build_port)
 
         def answers() -> bool:
             try:
@@ -416,3 +510,57 @@ def test_revoking_a_credential_cuts_its_open_tunnel_within_the_drain_time(proxy:
     assert proxy.status("api.allowed.test:443") == 407  # noqa: PLR2004
     proxy.apply(policy_of(view()))
     wait_until(lambda: proxy.status("api.allowed.test:443") == 200)  # noqa: PLR2004
+
+
+def test_the_build_listener_tunnels_to_a_build_host_only(proxy: Proxy) -> None:
+    build = {"user": BUILD_USER, "token": BUILD_TOKEN, "port": proxy.build_port}
+    assert proxy.echoes("api.allowed.test:443", **build)
+    sock, status, body = proxy.connect("b.wild.test:443", **build)
+    sock.close()
+    assert status == 403  # noqa: PLR2004
+    assert "build network refused b.wild.test:443" in body
+    for authority in ("8.8.8.8:443", "api.allowed.test:80", "plain.test:443"):
+        assert proxy.status(authority, **build) == 403, authority  # noqa: PLR2004
+
+
+def test_the_build_listener_takes_only_the_build_credential(proxy: Proxy) -> None:
+    assert proxy.status("api.allowed.test:443", port=proxy.build_port) == 407  # noqa: PLR2004
+    assert proxy.status("api.allowed.test:443", user=BUILD_USER, token=BUILD_TOKEN) == 407  # noqa: PLR2004
+
+
+def plain_request(port: int, url: str, host: str, method: str = "GET") -> bytes:
+    basic = base64.b64encode(f"{BUILD_USER}:{BUILD_TOKEN}".encode()).decode()
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
+        sock.sendall(
+            f"{method} {url} HTTP/1.1\r\nHost: {host}\r\n"
+            f"Proxy-Authorization: Basic {basic}\r\nConnection: close\r\n\r\n".encode()
+        )
+        data = b""
+        while chunk := sock.recv(4096):
+            data += chunk
+    return data
+
+
+def test_plain_http_reaches_a_plain_host_without_the_credential(proxy: Proxy) -> None:
+    answer = plain_request(proxy.build_port, "http://plain.test/dists/Release", "plain.test")
+    assert answer.startswith(b"HTTP/1.1 200"), answer[:200]
+    head = answer.partition(b"\r\n\r\n")[2]
+    assert head.startswith(b"get /dists/release http/1.1")
+    assert b"proxy-authorization" not in head
+    assert USER_HEADER.encode() not in head
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "host"),
+    [
+        ("GET", "http://api.allowed.test/", "api.allowed.test"),
+        ("GET", "http://other.test/", "other.test"),
+        ("POST", "http://plain.test/upload", "plain.test"),
+        ("GET", "http://plain.test:8080/", "plain.test:8080"),
+    ],
+    ids=["connect-only-host", "unlisted-host", "post", "other-port"],
+)
+def test_any_other_plain_request_is_refused(proxy: Proxy, method: str, url: str, host: str) -> None:
+    answer = plain_request(proxy.build_port, url, host, method)
+    assert answer.startswith(b"HTTP/1.1 403"), answer[:200]
+    assert b"build network refused" in answer

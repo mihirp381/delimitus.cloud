@@ -40,6 +40,9 @@ CELL = {
     "org_id": "org_" + "a" * 20,
     "datagw_image": f"{naming.platform_registry()}/ssc-datagw@sha256:" + "c" * 64,
     "proxy_image": f"{naming.platform_registry()}/ssc-egress@sha256:" + "9" * 64,
+    "build_tools_image": f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64,
+    "build_frontend_image": f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64,
+    "build_buildkit_image": f"{naming.platform_registry()}/buildkit@sha256:" + "b" * 64,
 }
 
 
@@ -494,7 +497,12 @@ def test_the_proxy_group_read_is_the_one_the_cell_declares() -> None:
 
 
 @pytest.mark.parametrize("flag", sorted(naming.DEPLOYER_UPDATES))
-def test_a_flag_changes_in_place_exactly_what_the_deployer_reads_back(flag: str) -> None:
+def test_a_flag_changes_in_place_exactly_what_the_deployer_reads_back(
+    flag: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # State keeps the first token draw; mocks have no state.
+    monkeypatch.setattr(cell.secrets, "token_urlsafe", lambda size: "t" * size)
+
     def inputs(config: dict[str, str]) -> dict[str, dict[str, Any]]:
         return {f"{d.type}::{d.name}": d.inputs for d in run(STACK, config)}
 

@@ -263,7 +263,9 @@ async def _on_http_exception(request: Request, exc: Exception) -> Response:
 
 async def _on_validation(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, RequestValidationError)
-    return render(request, ErrorCode.VALIDATION_FAILED, evidence={"errors": exc.errors()})
+    # Where and why only: the input, and a message or context that may quote it, stay out.
+    errors = [{"loc": e["loc"], "type": e["type"]} for e in exc.errors()]
+    return render(request, ErrorCode.VALIDATION_FAILED, evidence={"errors": errors})
 
 
 async def _on_dbapi(request: Request, exc: Exception) -> Response:

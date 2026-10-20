@@ -15,8 +15,9 @@ signal it has no handler for, so without it that stop waited out the stop timeou
 
 Settings: ``SSC_ORG_ID`` and ``SSC_CELL_BUCKET`` (required), ``SSC_PROXY_PORT`` (default
 ``PROXY_PORT``), ``SSC_SNAPSHOT_MAX_AGE`` (seconds without a confirmed snapshot before the proxy
-refuses every tunnel, default ``MAX_AGE_SECONDS``, 300, as the gateway's), ``SSC_ENVOY_BIN``
-(default ``envoy``) and ``STORAGE_EMULATOR_HOST`` (tests).
+refuses every tunnel, default ``MAX_AGE_SECONDS``, 300, as the gateway's), ``SSC_BUILD_USER``
+and ``SSC_BUILD_SHA1`` (both or neither, for the build listener), ``SSC_ENVOY_BIN`` (default
+``envoy``) and ``STORAGE_EMULATOR_HOST`` (tests).
 """
 
 import signal
@@ -43,8 +44,14 @@ from collections.abc import Mapping  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Final, NoReturn  # noqa: E402
 
-from ssc_contracts.egress import PROXY_PORT  # noqa: E402
-from ssc_egress.envoy import EgressConfig, Policy, bootstrap, envoy_args  # noqa: E402
+from ssc_contracts.egress import DIGEST, PROXY_PORT  # noqa: E402
+from ssc_egress.envoy import (  # noqa: E402
+    BuildListener,
+    EgressConfig,
+    Policy,
+    bootstrap,
+    envoy_args,
+)
 from ssc_egress.runner import MAX_AGE_SECONDS, ListenerWriter, follow  # noqa: E402
 from ssc_shared import redaction  # noqa: E402
 from ssc_shared.access import ViewHolder  # noqa: E402
@@ -80,9 +87,24 @@ def _max_age(env: Mapping[str, str]) -> float:
     return value
 
 
-def _start(env: Mapping[str, str]) -> tuple[EgressConfig, ListenerWriter, subprocess.Popen[bytes]]:
+def _build(env: Mapping[str, str]) -> BuildListener | None:
+    user = env.get("SSC_BUILD_USER", "").strip()
+    sha1 = env.get("SSC_BUILD_SHA1", "").strip()
+    if not user and not sha1:
+        return None
+    if not (user and sha1):
+        raise SettingsError("SSC_BUILD_USER and SSC_BUILD_SHA1 are set together or not at all")
+    if DIGEST.fullmatch(sha1) is None or not user.isidentifier():
+        raise SettingsError("SSC_BUILD_SHA1 is the base64 SHA-1 of the build token, for a user")
+    return BuildListener(user=user, sha1=sha1)
+
+
+def _start(
+    env: Mapping[str, str], build: BuildListener | None
+) -> tuple[EgressConfig, ListenerWriter, subprocess.Popen[bytes]]:
     work = Path(tempfile.mkdtemp(prefix="ssc-egress-"))
-    cfg = EgressConfig(port=int(env.get("SSC_PROXY_PORT", str(PROXY_PORT))), lds_dir=str(work))
+    port = int(env.get("SSC_PROXY_PORT", str(PROXY_PORT)))
+    cfg = EgressConfig(port=port, lds_dir=str(work), build=build)
     writer = ListenerWriter(cfg)
     writer.write(Policy())
     config = work / "envoy.json"
@@ -134,14 +156,17 @@ def main() -> int:
         org_id = _need(os.environ, "SSC_ORG_ID")
         bucket = _need(os.environ, "SSC_CELL_BUCKET")
         max_age = _max_age(os.environ)
+        build = _build(os.environ)
     except SettingsError as exc:
         log.error("%s", exc)
         return 2
     if _stopped_early:
         log.info("stopped before the proxy started")
         return 0
-    cfg, writer, envoy = _start(os.environ)
+    cfg, writer, envoy = _start(os.environ, build)
     log.info("egress proxy serving on port %s", cfg.port)
+    if build is not None:
+        log.info("build listener on port %s", build.port)
     loop = asyncio.new_event_loop()
     try:
         stopped = loop.run_until_complete(_serve(org_id, bucket, writer, envoy, max_age))

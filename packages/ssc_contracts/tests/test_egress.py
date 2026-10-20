@@ -6,15 +6,23 @@ import pytest
 
 from ssc_contracts.app_env import secret_name_problem
 from ssc_contracts.egress import (
+    BUILD_HOSTS,
+    BUILD_NO_PROXY_VALUE,
+    BUILD_PLAIN_HOSTS,
+    BUILD_PROXY_PORT,
     CATALOGUE,
     CREDENTIAL_ID,
     DIGEST,
+    NO_PROXY_VALUE,
+    PROXY_PORT,
+    STORAGE_HOSTS,
     authority_regex,
     catalogue_entry,
     credential_user,
     host_pattern_problem,
     new_credential,
     pattern_matches,
+    plain_authority_regex,
     proxy_url,
     refusal_message,
     token_digest,
@@ -169,3 +177,41 @@ def test_the_raw_addresses_delimitus_attacks_use_are_never_entries(address: str)
 @pytest.mark.parametrize("pattern", ["www.googleapis.com", "*.google.com", "sheets.googleapis.com"])
 def test_google_hosts_that_are_not_storage_stay_allowed(pattern: str) -> None:
     assert host_pattern_problem(pattern) is None
+
+
+@pytest.mark.parametrize("host", [*BUILD_HOSTS, *BUILD_PLAIN_HOSTS])
+def test_every_build_host_is_a_valid_entry_and_reaches_no_storage(host: str) -> None:
+    assert host_pattern_problem(host) is None, host
+    assert host not in STORAGE_HOSTS
+    assert not host.startswith("*.")
+
+
+def test_the_build_lists_are_unique_and_apart() -> None:
+    assert len(set(BUILD_HOSTS)) == len(BUILD_HOSTS)
+    assert not set(BUILD_HOSTS) & set(BUILD_PLAIN_HOSTS)
+    assert BUILD_PROXY_PORT != PROXY_PORT
+
+
+@pytest.mark.parametrize(
+    ("authority", "allowed"),
+    [
+        ("deb.debian.org", True),
+        ("deb.debian.org:80", True),
+        ("DEB.debian.org", True),
+        ("deb.debian.org:443", False),
+        ("deb.debian.org:8080", False),
+        ("debxdebian.org", False),
+        ("deb.debian.org.evil.io", False),
+        ("x.deb.debian.org", False),
+    ],
+)
+def test_a_plain_host_matches_by_name_and_port_80_only(authority: str, allowed: bool) -> None:
+    regex = plain_authority_regex("deb.debian.org")
+    assert (re.search(regex, authority) is not None) is allowed
+
+
+def test_a_build_skips_the_proxy_for_google_and_the_platform_registry() -> None:
+    names = BUILD_NO_PROXY_VALUE.split(",")
+    assert set(NO_PROXY_VALUE.split(",")) < set(names)
+    assert ".pkg.dev" in names
+    assert not set(names) & set(BUILD_HOSTS)
