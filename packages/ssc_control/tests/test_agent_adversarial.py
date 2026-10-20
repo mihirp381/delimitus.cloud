@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx2
+import psycopg
 import pytest
 from adversarial_rig import (
     PLANTED_DATABASE,
@@ -34,6 +35,7 @@ from test_mcp import CLIENT_ID, JSONRPC_HEADERS, env_id, rows, rpc_call, serving
 
 from ssc_conformance import adversarial
 from ssc_conformance.adversarial import KNOWN, got_of, problem, send
+from ssc_contracts.ids import new_id
 from ssc_control.api.mcp.tools import TOOLS
 from ssc_control.api.openapi import build_spec
 from ssc_control.api.settings import USER_AUDIENCE
@@ -247,12 +249,42 @@ def test_the_victims_names_are_no_oracle(arena: Arena, case: str) -> None:
     assert leaked(arena, text_of(theirs), args) == set()
 
 
-@pytest.mark.xfail(strict=True, reason="finding: a share request may name a user of another org")
-def test_a_share_for_a_victims_user_is_refused(arena: Arena) -> None:
-    args = {"app": arena.a.app["slug"], "env": "prod", "who": arena.b.org.admin_user_id}
-    before = arena.snapshot()
-    result = arena.rpc("request_share", args)
-    assert result["isError"] is True, result
+@pytest.fixture(scope="module")
+def victim_group(arena: Arena) -> str:
+    group = new_id("grp")
+    with psycopg.connect(arena.dsns.superuser) as conn:
+        conn.execute(
+            "insert into ssc.user_group (id, org_id, directory_ref, display_name) "
+            "values (%s, %s, %s, 'Finance')",
+            (group, arena.b.org.org_id, f"ref-{group}"),
+        )
+    return group
+
+
+@pytest.mark.parametrize("kind", ["user", "group"])
+def test_a_share_for_a_victims_subject_is_not_found(
+    arena: Arena, victim_group: str, kind: str
+) -> None:
+    theirs = arena.b.org.admin_user_id if kind == "user" else victim_group
+    results = []
+    for who in (theirs, f"{theirs[:4]}{ZERO}"):
+        before = arena.snapshot()
+        result = arena.rpc("request_share", {"app": arena.a.app["slug"], "env": "prod", "who": who})
+        assert changed(before, arena.snapshot()) == []
+        results.append(outcome(result))
+        assert leaked(arena, text_of(result), {"who": who}) == set()
+    assert results == [(True, "NOT_FOUND"), (True, "NOT_FOUND")]
+
+
+def test_grants_naming_a_victims_user_open_no_request(arena: Arena) -> None:
+    env = env_id(arena.a.app, "prod")
+    path = f"/v1/apps/{arena.a.app['id']}/environments/{env}/grants"
+    with arena.v1(arena.a.api.access) as c:
+        etag = c.get(path).headers["ETag"]
+        before = arena.snapshot()
+        grant = {"role": "user", "subject_kind": "user", "subject_id": arena.b.org.admin_user_id}
+        r = c.put(path, json={"grants": [grant]}, headers={"If-Match": etag})
+    assert got_of(r) == problem("REFERENCE_NOT_FOUND")
     assert changed(before, arena.snapshot()) == []
 
 

@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, make_org, mint, new_key
+from test_mcp import add_account
 
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
@@ -255,7 +256,7 @@ def test_preview_scoped_token_may_upload_source(b: Bench) -> None:
 
 def test_preview_scoped_token_may_ask_for_a_preview_share(b: Bench) -> None:
     """Founder decision 2026-09-29. Asking changes nothing: another admin of the org decides."""
-    member = new_id("usr")
+    member = add_account(b.dsns.app, b.org.org_id, "member")
     grants = [{"role": "builder", "subject_kind": "user", "subject_id": member}]
     url = f"/v1/apps/{b.app['id']}/environments/{b.env('preview')}/grants"
     version = b.client.get(url, headers=auth(b.preview)).json()["grants_version"]
@@ -287,7 +288,8 @@ def test_preview_scoped_token_may_ask_to_exceed_a_ceiling_outside_prod(
         "/v1/connections", json=connection, headers=auth(b.full, **{IDEMPOTENCY_HEADER: new_key()})
     )
     assert created.status_code == 201, created.text
-    grants = [{"role": "builder", "subject_kind": "user", "subject_id": new_id("usr")}]
+    member = add_account(b.dsns.app, b.org.org_id, "member")
+    grants = [{"role": "builder", "subject_kind": "user", "subject_id": member}]
     ask = {"kind": "exceed_ceiling", "payload": {"connection": "finance", "grants": grants}}
     r = post(b, "/v1/approvals", {"environment_id": b.env("preview"), **ask})
     assert r.status_code == 201, r.text

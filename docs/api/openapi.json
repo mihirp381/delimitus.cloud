@@ -7199,7 +7199,7 @@
         ]
       },
       "post": {
-        "description": "Ask another admin of the org to approve one change to one environment. Allowed to the\nenvironment's builders, its app's owner and org admins, agent sessions included. An\n`exceed_ceiling` request is decided by the named connection's owner or an org admin.",
+        "description": "Ask another admin of the org to approve one change to one environment. Allowed to the\nenvironment's builders, its app's owner and org admins, agent sessions included. An\n`exceed_ceiling` request is decided by the named connection's owner or an org admin. A grant\nnaming a user or group the org does not have is `NOT_FOUND`.",
         "operationId": "create_approval_v1_approvals_post",
         "parameters": [
           {
@@ -10337,7 +10337,7 @@
         ]
       },
       "put": {
-        "description": "Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.\n\nOnly an org admin, the app's owner or a builder on this environment may; anyone else gets\n``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant\nfor one subject is ``VALIDATION_FAILED``. A quarantined app's sharing is frozen:\n``APP_NOT_ACTIVE``.\n\nA change that needs approval is not applied: an agent session gets ``202`` and the pending\napproval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.",
+        "description": "Replace the sharing rules of one environment. Requires ``If-Match`` with the current ETag.\n\nOnly an org admin, the app's owner or a builder on this environment may; anyone else gets\n``FORBIDDEN``. A grant below the environment's floor (``user`` on preview) or a second grant\nfor one subject is ``VALIDATION_FAILED``, and one naming a user or group the org does not have\n``REFERENCE_NOT_FOUND``. A quarantined app's sharing is frozen: ``APP_NOT_ACTIVE``.\n\nA change that needs approval is not applied: an agent session gets ``202`` and the pending\napproval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.",
         "operationId": "put_grants_v1_apps__app_id__environments__environment_id__grants_put",
         "parameters": [
           {
