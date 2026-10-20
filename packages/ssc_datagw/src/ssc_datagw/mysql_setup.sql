@@ -24,7 +24,8 @@
 --   @user      the user's name (default ssc_datagw); it may log in from any host, over TLS only
 --
 -- The user must log in over TLS, may hold at most 20 sessions at once, and may SELECT from the
--- named schemas' tables and views; nothing else. Every other privilege it held is revoked, every
+-- named schemas' tables and views; nothing else. Each schema is granted by its exact name: _ and
+-- %, which a database-level GRANT reads as wildcards, are escaped. Every other privilege it held is revoked, every
 -- role granted to it is revoked, and no role is active when it logs in. The script is safe to
 -- run again, which is how a new password or another schema lands.
 --
@@ -170,7 +171,14 @@ BEGIN
         SET item = TRIM(SUBSTRING_INDEX(rest, ',', 1));
         SET rest = IF(LOCATE(',', rest) > 0, SUBSTRING(rest, LOCATE(',', rest) + 1), '');
         IF item <> '' THEN
-            SET @ssc_sql = CONCAT('GRANT SELECT ON `', REPLACE(item, '`', '``'), '`.* TO ', account);
+            -- In a database-level GRANT, _ and % are wildcards (app_1 would grant appz1 too)
+            -- unless escaped with a backslash, and a backslash escapes itself.
+            SET @ssc_sql = CONCAT('GRANT SELECT ON `',
+                                  REPLACE(REPLACE(REPLACE(REPLACE(item, '\\', '\\\\'),
+                                                          '_', '\\_'),
+                                                  '%', '\\%'),
+                                          '`', '``'),
+                                  '`.* TO ', account);
             PREPARE ssc_stmt FROM @ssc_sql;
             EXECUTE ssc_stmt;
             DEALLOCATE PREPARE ssc_stmt;
@@ -191,7 +199,7 @@ DROP PROCEDURE ssc_setup;
 SELECT p.table_schema AS `schema`,
        p.privilege_type AS `privilege`,
        (SELECT COUNT(*) FROM information_schema.tables t
-         WHERE t.table_schema = p.table_schema) AS tables_and_views
+         WHERE t.table_schema LIKE p.table_schema) AS tables_and_views
   FROM information_schema.schema_privileges p
  WHERE p.grantee = CONCAT(QUOTE(@user), '@', QUOTE('%'))
  ORDER BY p.table_schema, p.privilege_type;

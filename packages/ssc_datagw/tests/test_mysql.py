@@ -591,6 +591,43 @@ ONLY_SELECT = sorted(
 )
 
 
+async def test_the_setup_script_grants_a_schema_name_not_a_pattern(db: Db) -> None:
+    # In a database-level GRANT MySQL reads _ and % as wildcards: app_1 would also grant appz1.
+    code, out = db.mysql(
+        "CREATE DATABASE app_1; CREATE DATABASE appz1; CREATE DATABASE `app%2`; "
+        "CREATE TABLE app_1.t (x INT); INSERT INTO app_1.t VALUES (1); "
+        "CREATE TABLE appz1.t (x INT); INSERT INTO appz1.t VALUES (2); "
+        "CREATE TABLE `app%2`.t (x INT); INSERT INTO `app%2`.t VALUES (3)"
+    )
+    assert code == 0, out
+    try:
+        code, out = db.setup(password=USER_PASSWORD, schemas="reporting,app_1")
+        assert code == 0, out
+        assert "\tSELECT\t1" in out
+        async with db.connect() as admin:
+            held = "SELECT Db FROM mysql.db WHERE User = %s AND Db LIKE 'app%%'"
+            assert await scalar(admin, held, USER) == "app\\_1"
+        connector = MySqlConnector(db.target())
+        _, rows = await read(connector, ask("SELECT x FROM app_1.t"))
+        assert list(rows[0]) == [1]
+        with pytest.raises(QueryFailedError) as e:
+            await read(connector, ask("SELECT x FROM appz1.t"))
+        assert e.value.sqlstate == "42000"
+        code, out = db.setup(password=USER_PASSWORD, schemas="reporting,app%2")
+        assert code == 0, out
+        _, rows = await read(connector, ask("SELECT x FROM `app%2`.t"))
+        assert list(rows[0]) == [3]
+        for other in ("app_1", "appz1"):
+            with pytest.raises(QueryFailedError):
+                await read(connector, ask(f"SELECT x FROM {other}.t"))
+    finally:
+        code, out = db.setup(password=USER_PASSWORD, schemas="reporting")
+        assert code == 0, out
+        code, out = db.mysql("DROP DATABASE app_1; DROP DATABASE appz1; DROP DATABASE `app%2`")
+        assert code == 0, out
+    assert grants_of_the_user(db) == ONLY_SELECT
+
+
 async def test_the_setup_script_revokes_each_grant_on_its_own_level(db: Db) -> None:
     account = f"'{USER}'@'%'"
     code, out = db.mysql(
