@@ -432,6 +432,34 @@ def test_share_through_an_agent_waits_for_approval(cli, scripted):
     assert len(_puts(scripted)) == 2
 
 
+def test_share_says_what_each_pending_approval_is_for(cli, scripted):
+    """GA-12 F21: a 202 names each requirement; an older server's 202 without them still parses."""
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    other = "apr_bbbbbbbbbbbbbbbbbbbb"
+    pending = {
+        "environment_id": PROD,
+        "grants_version": 3,
+        "approval_ids": [APR, other],
+        "requirements": [
+            {"kind": "agent_share", "connection": None, "approval_id": APR, "state": "pending"},
+            {
+                "kind": "exceed_ceiling",
+                "connection": "finance",
+                "approval_id": other,
+                "state": "pending",
+            },
+        ],
+    }
+    scripted.add("GET", path, _grants(3, ORG_USER))
+    scripted.add("PUT", path, httpx2.Response(202, json=pending, headers={"etag": '"3"'}))
+    human = cli("share", "demo", USR, session=scripted.session())
+    assert human.code == 0, human.stderr
+    assert human.stdout.startswith(
+        f"Waiting for approval, nothing changed yet: {APR} (agent_share), "
+        f"{other} (exceed_ceiling, connection finance)."
+    )
+
+
 def test_applied_share_has_no_pending(cli, scripted):
     path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
     scripted.add("GET", path, _grants(3))

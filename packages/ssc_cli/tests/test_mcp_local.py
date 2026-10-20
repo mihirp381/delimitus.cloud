@@ -38,6 +38,7 @@ ASK_FIRST = (
 )
 ASK_CLAUSE = "create an app (only when the person asks, after telling them the slug)"
 ENV_ID = "env_" + "p" * 20
+GRANT_ID = "gnt_" + "g" * 20
 PLANTED = (
     "password=hunter2-planted-0001",
     "sk_live_" + "P" * 24,
@@ -335,8 +336,8 @@ async def test_request_share_never_lowers_a_role(fake_api):
     app_id = "app_" + "a" * 20
     env_id = "env_" + "p" * 20
     app = {"id": app_id, "slug": "a1", "environments": [{"id": env_id, "name": "prod"}]}
-    held = {"role": "builder", "subject_kind": "user", "subject_id": USR}
-    grants = {"grants_version": 3, "grants": [held]}
+    held = {"id": GRANT_ID, "role": "builder", "subject_kind": "user", "subject_id": USR}
+    grants = {"environment_id": env_id, "grants_version": 3, "grants": [held]}
     fake_api.add("GET", f"/v1/apps/{app_id}", httpx2.Response(200, json=app))
     fake_api.add(
         "GET", f"/v1/apps/{app_id}/environments/{env_id}/grants", httpx2.Response(200, json=grants)
@@ -351,6 +352,99 @@ async def test_request_share_never_lowers_a_role(fake_api):
         assert r.structured_content["requested"] is False
         assert "already has builder" in r.structured_content["next"]
     assert all(q.method == "GET" for q in fake_api.seen)
+
+
+def share_app(fake_api: Any, *grants_answers: httpx2.Response) -> tuple[str, str]:
+    """An app whose prod has one builder grant, answering GET grants in this order."""
+    app = {"id": APP_ID, "slug": "a1", "environments": [{"id": ENV_ID, "name": "prod"}]}
+    fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
+    fake_api.add("GET", f"/v1/apps/{APP_ID}/environments/{ENV_ID}/grants", *grants_answers)
+    return APP_ID, f"/v1/apps/{APP_ID}/environments/{ENV_ID}/grants"
+
+
+def grants_at(version: int) -> httpx2.Response:
+    held = {"id": GRANT_ID, "role": "builder", "subject_kind": "user", "subject_id": USR}
+    return httpx2.Response(
+        200,
+        json={"environment_id": ENV_ID, "grants_version": version, "grants": [held]},
+        headers={"etag": f'"{version}"'},
+    )
+
+
+async def test_request_share_puts_the_grants_and_reports_every_requirement(fake_api):
+    """GA-12 F21: the API opens every approval the change needs; the tool names each."""
+    other = "usr_" + "b" * 20
+    app_id, path = share_app(fake_api, grants_at(3))
+    pending = {
+        "environment_id": ENV_ID,
+        "grants_version": 3,
+        "approval_ids": ["apr_1", "apr_2", "apr_3"],
+        "requirements": [
+            {"kind": "agent_share", "connection": None, "approval_id": "apr_1", "state": "pending"},
+            {"kind": "widen_audience", "approval_id": "apr_2", "state": "pending"},
+            {
+                "kind": "exceed_ceiling",
+                "connection": "finance",
+                "approval_id": "apr_3",
+                "state": "pending",
+            },
+        ],
+    }
+    fake_api.add("PUT", path, httpx2.Response(202, json=pending))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("request_share", {"app": app_id, "env": "prod", "who": other})
+    assert not r.is_error
+    out = r.structured_content
+    assert out["requested"] is True
+    assert out["applied"] is False
+    assert "not_requested" not in out
+    assert out["approval_ids"] == ["apr_1", "apr_2", "apr_3"]
+    assert [(q["kind"], q.get("connection")) for q in out["requirements"]] == [
+        ("agent_share", None),
+        ("widen_audience", None),
+        ("exceed_ceiling", "finance"),
+    ]
+    assert "The last approval applies the change" in out["next"]
+    (put,) = [q for q in fake_api.seen if q.method == "PUT"]
+    assert put.headers["if-match"] == '"3"'
+    assert json.loads(put.content)["grants"] == [
+        {"role": "builder", "subject_kind": "user", "subject_id": USR},
+        {"role": "user", "subject_kind": "user", "subject_id": other},
+    ]
+    assert not [q for q in fake_api.seen if q.method == "POST"]
+
+
+async def test_request_share_applies_when_every_approval_is_in(fake_api):
+    other = "usr_" + "b" * 20
+    app_id, path = share_app(fake_api, grants_at(3))
+    applied = {
+        "environment_id": ENV_ID,
+        "grants_version": 4,
+        "grants": [{"id": GRANT_ID, "role": "user", "subject_kind": "user", "subject_id": other}],
+    }
+    fake_api.add("PUT", path, httpx2.Response(200, json=applied))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("request_share", {"app": app_id, "env": "prod", "who": other})
+    assert not r.is_error
+    out = r.structured_content
+    assert (out["requested"], out["applied"], out["grants_version"]) == (False, True, 4)
+    assert out["next"] == f"{other} now has user on prod."
+
+
+async def test_request_share_rereads_stale_grants_and_puts_again(fake_api, fake_problem):
+    other = "usr_" + "b" * 20
+    app_id, path = share_app(fake_api, grants_at(3), grants_at(4))
+    pending = {"environment_id": ENV_ID, "grants_version": 4, "approval_ids": ["apr_1"]}
+    fake_api.add(
+        "PUT", path, fake_problem(412, "PRECONDITION_STALE"), httpx2.Response(202, json=pending)
+    )
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("request_share", {"app": app_id, "env": "prod", "who": other})
+    assert not r.is_error
+    assert r.structured_content["approval_ids"] == ["apr_1"]
+    assert r.structured_content["requirements"] == []
+    puts = [q.headers["if-match"] for q in fake_api.seen if q.method == "PUT"]
+    assert puts == ['"3"', '"4"']
 
 
 def test_ssc_mcp_uses_the_agent_login_over_the_person_s(fake_api, monkeypatch):

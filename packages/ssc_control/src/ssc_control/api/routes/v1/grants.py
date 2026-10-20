@@ -132,6 +132,10 @@ class GrantsPending(Strict):
     environment_id: str
     grants_version: int = Field(description="Unchanged: the version the change will replace.")
     approval_ids: list[str] = Field(description="Retry the same change once all are approved.")
+    requirements: list[RequirementOut] = Field(
+        default_factory=list[RequirementOut],
+        description="What each approval in `approval_ids` is for, in the same order.",
+    )
 
 
 _LOCK_ENV = text(
@@ -238,9 +242,9 @@ async def _ask(  # noqa: PLR0913  (keyword-only)
     desired: dict[GrantKey, GrantIn],
     version: int,
     exceeded: tuple[str, ...],
-) -> list[str]:
-    """Open (or find) the approval request for each open requirement; their ids."""
-    asked: list[str] = []
+) -> list[tuple[Requirement, ApprovalRow]]:
+    """Open (or find) the approval request for each open requirement."""
+    asked: list[tuple[Requirement, ApprovalRow]] = []
     names = {exceed_subject_key(n, set(desired)): n for n in exceeded}
     for req in open_:
         payload: dict[str, Any] = {"grants": _grants_payload(desired)}
@@ -258,7 +262,7 @@ async def _ask(  # noqa: PLR0913  (keyword-only)
             payload=payload,
             actor=actor_of(uow.principal),
         )
-        asked.append(row.id)
+        asked.append((req, row))
     return asked
 
 
@@ -627,7 +631,10 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
             exceeded=change.exceeded,
         )
         pending = GrantsPending(
-            environment_id=environment_id, grants_version=current, approval_ids=asked
+            environment_id=environment_id,
+            grants_version=current,
+            approval_ids=[row.id for _, row in asked],
+            requirements=[change.out(req, row) for req, row in asked],
         )
         return uow.reply(pending, status=202, headers={ETAG: etag(current)})
     if open_:

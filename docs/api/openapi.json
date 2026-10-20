@@ -3924,6 +3924,14 @@
             "description": "Unchanged: the version the change will replace.",
             "title": "Grants Version",
             "type": "integer"
+          },
+          "requirements": {
+            "description": "What each approval in `approval_ids` is for, in the same order.",
+            "items": {
+              "$ref": "#/components/schemas/RequirementOut"
+            },
+            "title": "Requirements",
+            "type": "array"
           }
         },
         "required": [

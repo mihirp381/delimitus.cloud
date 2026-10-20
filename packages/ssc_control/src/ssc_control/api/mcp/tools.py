@@ -9,7 +9,9 @@ row-level security, the ``Idempotency-Key`` claim, the per-credential rate limit
 
 A refusal becomes a tool error (``isError``) whose structured content is ``{"error": {...}}``, the
 same members ``ssc --json`` prints: the problem's for an API refusal, ``status: null`` for one
-found here. Anything that would widen what an app can do only opens an approval request.
+found here. Anything that would widen what an app can do waits for approval: ``request_share``
+asks for every approval the change needs, and the last one applies it; the rest only open an
+approval request.
 
 Log text reaches the agent redacted (by the cell, the API and again here) and inside the untrusted
 frame (``ssc_shared.fence``); an org admin can turn log reading off for agents (``AGENT_LOGS_OFF``).
@@ -59,6 +61,7 @@ from ssc_contracts.errors import ErrorCode
 from ssc_control.api.auth import MCP_CALL_SCOPE_KEY
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.problems import REQUEST_ID_HEADER, REQUEST_ID_SCOPE_KEY
+from ssc_control.api.routes.v1.common import IF_MATCH
 from ssc_control.api.settings import Settings
 from ssc_control.domain import grant_rules
 from ssc_control.domain.approval_rules import GrantKey
@@ -242,6 +245,9 @@ class V1:
 
     async def post(self, path: str, body: Body, key: str) -> httpx2.Response:
         return _checked(await self._client.post(path, json=body, headers={IDEMPOTENCY_HEADER: key}))
+
+    async def put(self, path: str, body: Body, if_match: str) -> httpx2.Response:
+        return _checked(await self._client.put(path, json=body, headers={IF_MATCH: if_match}))
 
 
 def _request_id(ctx: Context) -> str | None:
@@ -570,11 +576,16 @@ def grant_body(key: GrantKey) -> Body:
     return {"role": role, "subject_kind": kind, "subject_id": subject}
 
 
-async def ask_share(  # noqa: PLR0913  (keyword-only)
-    c: V1, *, ref: str, env: str, who: str, role: str | None, key: str
-) -> Body:
-    """Ask for ``who`` to get ``role`` on ``env``: an ``agent_share`` approval request for the
-    current grants plus that one. Never changes the grants, and never asks to lower a role."""
+SHARE_PENDING_NEXT: Final = (
+    "Pending: every listed request must be approved (agent_share and widen_audience by another "
+    "active admin of the org; exceed_ceiling by the connection's owner or an admin). The last "
+    "approval applies the change; nothing changes before it. If the grants still lack it "
+    "afterwards, call request_share again."
+)
+
+
+async def ask_share(c: V1, *, ref: str, env: str, who: str, role: str | None) -> Body:
+    """``PUT`` the grants plus ``who`` at ``role`` as the agent; the API asks for each approval."""
     found = await resolve_app(c, ref)
     env_id = environment_id(found, env)
     kind, subject = subject_of(who)
@@ -588,9 +599,10 @@ async def ask_share(  # noqa: PLR0913  (keyword-only)
                 f"A {wanted[0]!r} grant on {env} gives no access; preview is for builders.",
             )
         )
+    path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}/grants"
     attempt = 0
     while True:
-        current = await c.get(f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}/grants")
+        current = await c.get(path)
         version = current["grants_version"]
         existing: list[GrantKey] = [
             (g["role"], g["subject_kind"], g["subject_id"]) for g in current["grants"]
@@ -604,29 +616,30 @@ async def ask_share(  # noqa: PLR0913  (keyword-only)
                 "next": f"{who} already has {held[0]} on {env}. Nothing to ask for.",
             }
         desired = [g for g in existing if (g[1], g[2]) != (kind, subject)] + [wanted]
-        body = {
-            "environment_id": env_id,
-            "kind": "agent_share",
-            "payload": {"grants_version": version, "grants": [grant_body(g) for g in desired]},
-        }
         try:
-            r = await c.post("/v1/approvals", body, key)
+            r = await c.put(path, {"grants": [grant_body(g) for g in desired]}, f'"{version}"')
         except Refused as e:
             attempt += 1
             if e.error["code"] != "PRECONDITION_STALE" or attempt == SHARE_ATTEMPTS:
                 raise
             continue
+        out: Body = r.json()
+        if r.status_code == 202:  # noqa: PLR2004  (accepted: waiting for approval)
+            return {
+                "requested": True,
+                "applied": False,
+                "environment_id": env_id,
+                "grants_version": out["grants_version"],
+                "approval_ids": out["approval_ids"],
+                "requirements": out.get("requirements", []),
+                "next": SHARE_PENDING_NEXT,
+            }
         return {
-            "requested": True,
-            "created": r.status_code == 201,
-            "approval": r.json(),
-            "grants_version": version,
-            "not_requested": ["widen_audience"],
-            "next": "Pending: another active admin of the org must approve; SSC staff record "
-            "the decision. Nothing has changed. Once approved, the change is applied by "
-            f"`ssc share` (or PUT grants) at grants_version {version}. If the app uses a data "
-            "connection, widening its audience also needs a widen_audience approval, which "
-            "applying the change asks for.",
+            "requested": False,
+            "applied": True,
+            "environment_id": env_id,
+            "grants_version": out["grants_version"],
+            "next": f"{who} now has {wanted[0]} on {env}.",
         }
 
 
@@ -887,13 +900,14 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         idempotency_key: IdempotencyKey | None = None,
     ) -> CallToolResult:
         """Ask for someone to get access to one environment. `role` defaults to `user` on prod
-        and `builder` on preview (a preview `user` grant gives no access). This only opens an
-        approval request, which another admin of the org must approve; the sharing rules stay
-        as they are until then."""
-        key = idempotency_key or fresh_key()
-        return await run(
-            api, ctx, lambda c: ask_share(c, ref=app, env=env, who=who, role=role, key=key)
-        )
+        and `builder` on preview (a preview `user` grant gives no access). This asks for every
+        approval the change needs (always `agent_share`; `widen_audience` when the app uses
+        company data; `exceed_ceiling` per data connection whose ceiling the audience passes)
+        and lists them in `requirements`. Other people decide them; the last approval applies
+        the change, and the sharing rules stay as they are until then. `idempotency_key` is
+        accepted but not needed: asking again answers the same pending requests."""
+        del idempotency_key
+        return await run(api, ctx, lambda c: ask_share(c, ref=app, env=env, who=who, role=role))
 
     async def request_connection(
         app: AppRef,

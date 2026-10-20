@@ -41,7 +41,7 @@ from ssc_cli.errors import (
     ExitCode,
     local_error,
 )
-from ssc_cli.models import GrantIn, GrantOut, GrantsOut, GrantsPending
+from ssc_cli.models import GrantIn, GrantOut, GrantsOut, GrantsPending, RequirementOut
 from ssc_cli.output import dash, print_json, say, table
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import GrantRow, ShareResult, SubjectRow
@@ -198,12 +198,14 @@ def _run(  # noqa: PLR0913
     active_only: bool,
 ) -> None:
     with handled(json_mode), session(ctx).client() as client:
-        subjects, result = apply_change(client, app, env, whos, change, active_only=active_only)
+        subjects, result, asked = apply_change(
+            client, app, env, whos, change, active_only=active_only
+        )
     if json_mode:
         print_json(result)
         return
     if result.pending:
-        say(f"Waiting for approval, nothing changed yet: {', '.join(result.pending)}.")
+        say(f"Waiting for approval, nothing changed yet: {_pending(result.pending, asked)}.")
         say("Run the same command again once another admin of the org has approved.")
     else:
         say(done(subjects) if result.changed else "Nothing to change.")
@@ -223,7 +225,8 @@ def apply_change(  # noqa: PLR0913
     change: Change,
     *,
     active_only: bool,
-) -> tuple[list[Subject], ShareResult]:
+) -> tuple[list[Subject], ShareResult, list[RequirementOut]]:
+    """The subjects named, the result, and on a ``202`` what each pending approval is for."""
     app = resolve_app(client, app_ref)
     env = environment(app, env_name.value)
     subjects = [resolve_subject(client, w, env_name, active_only=active_only) for w in whos]
@@ -232,7 +235,7 @@ def apply_change(  # noqa: PLR0913
         current, etag = client.get_grants(app.id, env.id)
         desired = change(subjects, current.grants)
         if desired is None:
-            return subjects, _result(app.id, env_name, subjects, current, changed=False)
+            return subjects, _result(app.id, env_name, subjects, current, changed=False), []
         try:
             after = client.put_grants(app.id, env.id, desired, etag)
         except CliError as e:
@@ -248,10 +251,25 @@ def apply_change(  # noqa: PLR0913
             raise
         if isinstance(after, GrantsPending):
             pending = after.approval_ids
-            return subjects, _result(
-                app.id, env_name, subjects, current, changed=False, pending=pending
+            return (
+                subjects,
+                _result(app.id, env_name, subjects, current, changed=False, pending=pending),
+                after.requirements,
             )
-        return subjects, _result(app.id, env_name, subjects, after, changed=True)
+        return subjects, _result(app.id, env_name, subjects, after, changed=True), []
+
+
+def _pending(ids: list[str], asked: list[RequirementOut]) -> str:
+    """Each pending approval id, with its kind and connection when the server said them."""
+    what = {r.approval_id: r for r in asked if r.approval_id is not None}
+
+    def one(i: str) -> str:
+        r = what.get(i)
+        if r is None:
+            return i
+        return f"{i} ({r.kind}, connection {r.connection})" if r.connection else f"{i} ({r.kind})"
+
+    return ", ".join(one(i) for i in ids)
 
 
 def resolve_subject(client: ApiClient, who: Who, env: Env, *, active_only: bool) -> Subject:

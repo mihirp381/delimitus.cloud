@@ -27,6 +27,7 @@ RESPONSES = (
     models.GrantOut,
     models.GrantsOut,
     models.GrantsPending,
+    models.RequirementOut,
     models.OperationOut,
     models.OperationAccepted,
     models.UploadTarget,

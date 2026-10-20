@@ -3069,6 +3069,11 @@ export interface components {
              * @description Unchanged: the version the change will replace.
              */
             grants_version: number;
+            /**
+             * Requirements
+             * @description What each approval in `approval_ids` is for, in the same order.
+             */
+            requirements?: components["schemas"]["RequirementOut"][];
         };
         /**
          * GrantsRequirements

@@ -198,3 +198,37 @@ def with_quarantine(dsns: Dsns, w: World) -> None:
     with psycopg.connect(dsns.app) as conn:
         bind_org_sync(conn, w.org)
         conn.execute("update ssc.app set status = 'quarantined' where id = %s", (w.app,))
+
+
+def test_an_agent_put_names_every_requirement_it_asked_for(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    """GA-12 F21: the 202 says what each pending approval is for, so the agent can say so."""
+    over_ceiling(client, world, tokens, dsns)
+    data_connected(client, world, tokens)
+    wide = org_wide(client, world, tokens)
+    pending = put(client, world, world.prod, tokens.admin_agent, wide, 1)
+    assert pending.status_code == 202, pending.text
+    body = pending.json()
+    ids = {r["kind"]: r["id"] for r in approvals_of(dsns.app, world.org)}
+    assert body["requirements"] == [
+        {
+            "kind": "agent_share",
+            "connection": None,
+            "approval_id": ids["agent_share"],
+            "state": "pending",
+        },
+        {
+            "kind": "widen_audience",
+            "connection": None,
+            "approval_id": ids["widen_audience"],
+            "state": "pending",
+        },
+        {
+            "kind": "exceed_ceiling",
+            "connection": "finance",
+            "approval_id": ids["exceed_ceiling"],
+            "state": "pending",
+        },
+    ]
+    assert body["approval_ids"] == [r["approval_id"] for r in body["requirements"]]
