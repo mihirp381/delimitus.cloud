@@ -554,7 +554,9 @@ async def test_a_deployer_that_will_not_start_is_retried(cell: Cell) -> None:
     cell.fake.refuse_start = 1
     assert await cell.step() == "creating"
     assert cell.fake.runs == []
-    assert resources_of(b)["database"]["attempts"] == 1
+    row = resources_of(b)["database"]
+    assert (row["attempts"], row["execution"]) == (1, None)
+    assert row["last_error"] == "cell deployer: HTTP 503"
     assert await cell.step() == "creating"
     assert len(cell.fake.runs) == 1
 

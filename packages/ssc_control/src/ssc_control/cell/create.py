@@ -64,7 +64,8 @@ _RECORD = text(
 )
 _RETRY = text(
     "update ssc.cell_resource set execution = null, last_error = :error "
-    "where org_id = :org and resource = :res and state = 'creating' and execution = :exec"
+    "where org_id = :org and resource = :res and state = 'creating' "
+    "and execution is not distinct from cast(:exec as text)"
 )
 _READY = text(
     "update ssc.cell_resource set state = 'ready', ready_at = now(), last_error = null "
@@ -201,8 +202,7 @@ async def _attempt_failed(  # noqa: PLR0913, PLR0917
             await _finish(conn, org_id, row, code, error)
             return CellResourceState.FAILED.value
         params = {"org": org_id, "res": resource.value, "exec": execution, "error": error[:200]}
-        if execution is not None:
-            await conn.execute(_RETRY, params)
+        await conn.execute(_RETRY, params)
         delay = BACKOFF_SECONDS[min(row.attempts, len(BACKOFF_SECONDS)) - 1]
         await _later(ports, conn, org_id, resource, delay)
     return CellResourceState.CREATING.value
