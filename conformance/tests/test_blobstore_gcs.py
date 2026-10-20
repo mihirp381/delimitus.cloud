@@ -60,7 +60,8 @@ from ssc_shared.blobstore_gcs import (
 LIVE_BUCKET_ENV = "SSC_TEST_GCS_BUCKET"
 LIVE_SIGNER_ENV = "SSC_TEST_GCS_SIGNER"
 BUCKET = "ssc-c-testcell01-cell"
-SIGNER_EMAIL = "ssc-control@ssc-control-staging.iam.gserviceaccount.com"
+CONTROL_PROJECT = "ssc-control-staging"
+SIGNER_EMAIL = f"ssc-control@{CONTROL_PROJECT}.iam.gserviceaccount.com"
 
 
 @dataclass

@@ -13,7 +13,7 @@ PORT: Final = "PORT"
 """The port the app must listen on, on 0.0.0.0. ``[runtime] port`` in ``ssc.toml``, default 8080."""
 
 HOME: Final = "HOME"
-HOME_VALUE: Final = "/tmp"  # noqa: S108  (in-memory in the container; the corpus fix-it)
+HOME_VALUE: Final = "/tmp"  # noqa: S108  (in-memory; the read-only root filesystem fix-it)
 """Always ``/tmp``: the root filesystem is read-only and ``/tmp`` is memory, lost on restart."""
 
 DATABASE_URL: Final = "DATABASE_URL"

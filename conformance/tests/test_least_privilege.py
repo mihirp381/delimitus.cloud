@@ -22,7 +22,8 @@ EXPECTED = json.loads(lp.EXPECTED_DENY.read_text(encoding="utf-8"))
 PROOFS = (matrix.BUILD_BUNDLE, matrix.STAFF, matrix.DENY_READ, matrix.VERSIONS_ONLY)
 SECRET_READ = EXPECTED["permission"]
 BUILD = f"serviceAccount:ssc-build@{PROJECT}.iam.gserviceaccount.com"
-CONTROL = "serviceAccount:ssc-control@ssc-control-staging.iam.gserviceaccount.com"
+CONTROL_PROJECT = "ssc-control-staging"
+CONTROL = f"serviceAccount:ssc-control@{CONTROL_PROJECT}.iam.gserviceaccount.com"
 
 type Json = dict[str, Any]
 

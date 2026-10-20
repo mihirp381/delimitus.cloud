@@ -59,7 +59,7 @@ Every table refuses unknown keys, and every value has one TOML type: `port = "80
 | Key | Type | Default | Rule |
 |---|---|---|---|
 | `class` | string | `"small"` | `small`, `medium` or `large`; see [Resource classes](#resource-classes). |
-| `port` | integer | `8080` | 1 to 65535. The platform sets `PORT` to it (17 of 20 corpus apps never read `PORT`). |
+| `port` | integer | `8080` | 1 to 65535. The platform sets `PORT` to it (most apps never read `PORT`). |
 | `health_path` | string | `"/"` | Starts with a single `/`, URL path characters only, no `?query` or `#`, at most 256 characters. |
 | `start` | string | none | Start command, one line, at most 1024 characters (the Streamlit fix-it). |
 | `sessions` | boolean | `false` | `true` for an app that keeps sessions in process memory: it then runs at most 1 instance. Also detected; see [Session apps](#session-apps). |

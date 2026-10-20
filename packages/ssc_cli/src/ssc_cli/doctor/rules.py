@@ -1,7 +1,7 @@
 """The offline rules behind ``ssc doctor``: plain file reads and regular expressions.
 
-The causes come from the SSC-003 corpus study (an internal record), both its runtime list and
-its static list. Each rule is a pure function from a :class:`Tree` to findings. The checks are
+The causes come from an internal study of real apps (SSC-003), both its runtime list and its
+static list. Each rule is a pure function from a :class:`Tree` to findings. The checks are
 heuristics, except the ones the platform also runs: SQLite on disk, the session framework and the
 system packages off the platform package list use ``ssc_bundle.analyze`` and secrets use
 ``ssc_bundle.secrets``, over the files a deploy would pack.

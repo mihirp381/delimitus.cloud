@@ -603,7 +603,7 @@ Reverse if: builders need at-least-once runs with retries (then a retry policy p
 Choice: SSC lives under the existing Google Cloud organisation, in folders created before the first cell.
 - `ssc-platform`: the control plane projects (`ssc-control-prod`, `ssc-control-staging`).
 - `ssc-cells/prod` and `ssc-cells/staging`: one project per customer cell. The project ID is `ssc-c-<cell label>` (the org's opaque label, decision 004), never the customer's name. The staging folder holds our own test cells, including the one for the outside security test (SSC-008).
-- `ssc-sandbox`: throwaway spike projects. `delimitus-0926` moves here or is deleted.
+- `ssc-sandbox`: throwaway spike projects.
 - The live Delimitus project `ristretto-506621` stays outside these folders, and SSC identities get no roles on it.
 - Region: `us-central1` for everything. A resource-location org policy on `ssc-cells` and `ssc-platform` allows only `us-central1`.
 - Logs: the Cloud Logging default storage location is set to `us-central1` on the `ssc-cells` and `ssc-platform` folders before any project is created. The `_Default` and `_Required` buckets of every new project then land in-region. App, build and deploy logs stay in the cell project's `_Default` bucket, with 30-day retention (included in the price). The platform reads them only through the logs facade, filtered to org and app.

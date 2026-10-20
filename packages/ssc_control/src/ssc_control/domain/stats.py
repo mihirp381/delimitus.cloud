@@ -1,4 +1,4 @@
-"""Small-sample statistics for the metrics report (SSC-028), after Delimitus `corpus/src/stats.py`.
+"""Small-sample statistics for the metrics report (SSC-028).
 
 Wilson score intervals are for proportions only. Below ``NO_RATE_BELOW_N`` a rate is not
 reported: the report prints ``insufficient data (n=…, need 20)`` instead.
