@@ -468,11 +468,21 @@ def test_applied_share_has_no_pending(cli, scripted):
     assert r.json()["pending"] == []
 
 
+def _needs(*requirements: dict[str, object]) -> httpx2.Response:
+    body = {"environment_id": PROD, "grants_version": 3, "requirements": list(requirements)}
+    return httpx2.Response(200, json=body)
+
+
+WIDEN = {"kind": "widen_audience", "connection": None, "approval_id": None, "state": None}
+EXCEED = {"kind": "exceed_ceiling", "connection": "finance", "approval_id": None, "state": None}
+
+
 def test_approval_required_says_how_to_ask(cli, scripted, fake_problem):
     path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
     for _ in range(2):
         scripted.add("GET", path, _grants(3, ORG_USER))
         scripted.add("PUT", path, fake_problem(409, "APPROVAL_REQUIRED"))
+        scripted.add("POST", f"{path}/requirements", _needs(WIDEN))
     r = cli("share", "demo", USR, session=scripted.session())
     assert r.code == ExitCode.FAILED
     assert "Code: APPROVAL_REQUIRED" in r.stderr
@@ -493,6 +503,37 @@ def test_approval_required_says_how_to_ask(cli, scripted, fake_problem):
     assert as_json.json()["error"]["code"] == "APPROVAL_REQUIRED"
     ErrorResult.model_validate(as_json.json())
     assert len(_puts(scripted)) == 2
+    asked = [r for r in scripted.seen if r.url.path.endswith("/requirements")]
+    assert json.loads(asked[0].content)["grants"] == ask["payload"]["grants"]
+
+
+def test_approval_required_past_a_ceiling_names_the_connection_and_who_decides(
+    cli, scripted, fake_problem
+):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    scripted.add("GET", path, _grants(3, ORG_USER))
+    scripted.add("PUT", path, fake_problem(409, "APPROVAL_REQUIRED"))
+    scripted.add("POST", f"{path}/requirements", _needs(EXCEED))
+    r = cli("share", "demo", USR, session=scripted.session())
+    fix = _fix(r.stderr)
+    ask = json.loads(fix.split("POST /v1/approvals ", 1)[1].split("; ", 1)[0])
+    assert ask["kind"] == "exceed_ceiling"
+    assert ask["payload"]["connection"] == "finance"
+    assert len(ask["payload"]["grants"]) == 2
+    assert "finance's owner or an org admin decides" in fix
+    assert "widen_audience" not in fix
+
+
+def test_approval_required_for_several_reasons_lists_each(cli, scripted, fake_problem):
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/grants"
+    scripted.add("GET", path, _grants(3, ORG_USER))
+    scripted.add("PUT", path, fake_problem(409, "APPROVAL_REQUIRED"))
+    scripted.add("POST", f"{path}/requirements", _needs(WIDEN, EXCEED))
+    fix = _fix(cli("share", "demo", USR, session=scripted.session()).stderr)
+    assert fix.startswith("this change needs 2 approvals: (1) ")
+    assert '"kind": "widen_audience"' in fix.split("(2) ", 1)[0]
+    assert '"kind": "exceed_ceiling"' in fix.split("(2) ", 1)[1]
+    assert "finance's owner or an org admin decides" in fix
 
 
 def _fix(stderr: str) -> str:

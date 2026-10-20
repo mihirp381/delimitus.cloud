@@ -9,7 +9,8 @@ in between (412 ``PRECONDITION_STALE``), it reads again and retries, at most thr
 
 A change that needs approval is not applied (decision 016). Through an agent credential the API
 asks for the approvals itself and answers ``202``: the command prints the approval ids and exits
-0. A person widening a data-connected app gets ``APPROVAL_REQUIRED`` and a line saying how to ask.
+0. A person widening a data-connected app gets ``APPROVAL_REQUIRED`` and a line saying how to ask
+for each approval ``POST .../grants/requirements`` names.
 
 The API keeps the reasons for ``VALIDATION_FAILED`` and ``FORBIDDEN`` in its log (decision 019),
 so the ``Fix:`` line for them is worked out here from the sharing rules: which grant is below its
@@ -243,7 +244,7 @@ def apply_change(  # noqa: PLR0913
                 attempt += 1
                 continue
             if e.body.code == ErrorCode.APPROVAL_REQUIRED:
-                e.fix = approval_fix(env.id, desired)
+                e.fix = approval_fix(env.id, desired, _needed(client, app.id, env.id, desired))
             elif e.body.code == ErrorCode.VALIDATION_FAILED:
                 e.fix = rules_fix(app_ref, env_name, current.grants, desired)
             elif e.body.code == ErrorCode.FORBIDDEN:
@@ -400,8 +401,53 @@ def forbidden_fix(env: Env) -> str:
     )
 
 
-def approval_fix(environment_id: str, desired: list[GrantIn]) -> str:
-    """How to ask for the ``widen_audience`` approval of exactly this grant set."""
+def _needed(
+    client: ApiClient, app_id: str, environment_id: str, desired: list[GrantIn]
+) -> list[RequirementOut]:
+    try:
+        return client.grant_requirements(app_id, environment_id, desired).requirements
+    except CliError:
+        return []
+
+
+def _ask(environment_id: str, desired: list[GrantIn], req: RequirementOut) -> str:
+    grants = [g.model_dump(mode="json") for g in desired]
+    if req.kind == "exceed_ceiling" and req.connection:
+        ask = {
+            "environment_id": environment_id,
+            "kind": "exceed_ceiling",
+            "payload": {"connection": req.connection, "grants": grants},
+        }
+        return (
+            f"ask for approval with POST /v1/approvals {json.dumps(ask)}; "
+            f"connection {req.connection}'s owner or an org admin decides"
+        )
+    ask = {
+        "environment_id": environment_id,
+        "kind": "widen_audience",
+        "payload": {"grants": grants},
+    }
+    return (
+        f"ask for approval with POST /v1/approvals {json.dumps(ask)}; "
+        "another admin of the org decides"
+    )
+
+
+def approval_fix(
+    environment_id: str, desired: list[GrantIn], requirements: list[RequirementOut]
+) -> str:
+    """How to ask for each approval this grant set needs; ``widen_audience`` when unknown."""
+    asks = [r for r in requirements if r.kind in {"widen_audience", "exceed_ceiling"}]
+    if len(asks) > 1:
+        listed = "; ".join(
+            f"({n}) {_ask(environment_id, desired, r)}" for n, r in enumerate(asks, 1)
+        )
+        return (
+            f"this change needs {len(asks)} approvals: {listed}. "
+            "Then run this command again once all are approved."
+        )
+    if asks and asks[0].kind == "exceed_ceiling":
+        return f"{_ask(environment_id, desired, asks[0])}. Then run this command again."
     ask = {
         "environment_id": environment_id,
         "kind": "widen_audience",
