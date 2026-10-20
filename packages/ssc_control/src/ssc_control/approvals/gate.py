@@ -2,8 +2,9 @@
 
 Fail closed, the inverse of Delimitus' publish gate: ``clear`` is returned only when every rule
 was evaluated and every requirement is approved. A missing environment, an unknown profile,
-environment name or capability, unknown capabilities, or a requester with no user behind it
-give ``refused``. Preview is ``clear``. In production, an approved requirement passes, a pending
+environment name or capability, unknown capabilities, a requester with no user behind it, or an
+internet host the allowlist refuses (``ssc_contracts.egress.host_pattern_problem``) give
+``refused``. Preview is ``clear``. In production, an approved requirement passes, a pending
 one waits, a denied one refuses, and a missing one is opened as a pending request, then waits.
 
 Every outcome writes a ``policy_decision``. A new pending request is written in the caller's
@@ -18,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.audit import ActorKind
+from ssc_contracts.egress import host_pattern_problem
 from ssc_control.approvals.capabilities import CapabilitySource, RecordedCapabilities
 from ssc_control.approvals.policy import PolicyPrincipalKind, record_policy_decision
 from ssc_control.approvals.service import ApprovalRow, newest, request
@@ -103,6 +105,10 @@ async def _evaluate(  # noqa: PLR0913  (keyword-only)
         required = sorted(required_for_deploy(env[1], capabilities))
     except NoRuleError as e:
         return "refused", e.reason, [], ()
+    # An approval of such a host would allow nothing, so none is opened.
+    for host in sorted(capabilities.egress_hosts):
+        if (problem := host_pattern_problem(host)) is not None:
+            return "refused", f"egress_host_refused: {host}: {problem}", [], ()
     names = [f"{r.kind.value}:{r.subject_key}" for r in required]
     found = await newest(conn, org_id=org_id, environment_id=environment_id, requirements=required)
     # A cancelled request was withdrawn: the requirement is asked again.

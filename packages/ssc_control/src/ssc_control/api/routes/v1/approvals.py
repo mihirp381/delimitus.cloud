@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from sqlalchemy import text
 
 from ssc_contracts.audit import AuditAction
+from ssc_contracts.egress import host_pattern_problem
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.manifest import Hostname, Name
 from ssc_control.api.auth import PrincipalKind
@@ -302,6 +303,10 @@ def _requirement(body: ApprovalCreate, grants_version: int) -> tuple[Requirement
             stored = _parse(_NoPayload, body.payload).model_dump(mode="json")
         case RequirementKind.ENABLE_INTERNET_HOSTS:
             key = _named(body, _HOST)
+            # A host the allowlist refuses (Cloud Storage, say) could be approved and then
+            # never allowed, so it is refused here.
+            if (problem := host_pattern_problem(key)) is not None:
+                raise Refusal(ErrorCode.VALIDATION_FAILED, evidence={"subject_key": problem})
             stored = _parse(_NoPayload, body.payload).model_dump(mode="json")
     if body.subject_key is not None and body.subject_key != key:
         raise Refusal(ErrorCode.VALIDATION_FAILED, evidence={"subject_key": key})

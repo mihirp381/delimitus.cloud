@@ -35,6 +35,7 @@ from ssc_contracts.capabilities import (
     EnvironmentCapabilities,
     diff_capabilities,
 )
+from ssc_contracts.egress import host_pattern_problem
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import Manifest, load_manifest
@@ -363,6 +364,23 @@ async def test_the_gate_fails_closed(dsns: Dsns, case: str, reason: str) -> None
     assert approvals_of(dsns.app, w.org) == []
     (pol,) = policies_of(dsns.app, w.org, GATE_ACTION)
     assert (pol["id"], pol["outcome"], pol["reason"]) == (result.policy_decision_id, "deny", reason)
+
+
+async def test_the_gate_refuses_a_host_the_allowlist_refuses(dsns: Dsns) -> None:
+    """A declared host no approval could put on the allowlist refuses the deploy, naming the
+    host's problem, instead of opening a request that would be approved and do nothing."""
+    w = await make_world(dsns.app)
+    host = "storage.googleapis.com"
+    caps = RequestedCapabilities(
+        connections=frozenset({"finance"}), egress_hosts=frozenset({host, "api.example.com"})
+    )
+    result = await gate(dsns.app, w, caps)
+    assert (result.outcome, result.approval_ids) == ("refused", ())
+    assert approvals_of(dsns.app, w.org) == []
+    (pol,) = policies_of(dsns.app, w.org, GATE_ACTION)
+    problem = host_pattern_problem(host)
+    assert problem is not None
+    assert (pol["outcome"], pol["reason"]) == ("deny", f"egress_host_refused: {host}: {problem}")
 
 
 class _RollbackError(Exception):
@@ -904,6 +922,8 @@ def test_asking_for_an_approval(
         ("connect_data_source", "finance", {"note": "please"}),
         ("enable_internet_hosts", "https://api.example.com", {}),
         ("enable_internet_hosts", "10.0.0.1", {}),
+        ("enable_internet_hosts", "storage.googleapis.com", {}),
+        ("enable_internet_hosts", "my-bucket.storage.googleapis.com", {}),
         (
             "widen_audience",
             None,
