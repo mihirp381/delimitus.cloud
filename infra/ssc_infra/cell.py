@@ -185,6 +185,18 @@ USAGE_PERMISSIONS: Final = ("monitoring.timeSeries.list",)
 FILES_PERMISSIONS: Final = ("storage.objects.delete",)
 FILES_PREFIX: Final = "files/"
 SNAPSHOTS_PREFIX: Final = "snapshots/"
+# The prefixes the control worker uses in a cell bucket. ssc_infra cannot import ssc_control, so
+# these restate its keys: ``deploy.bundles.bundle_key`` (``bundles/``),
+# ``ssc_shared.snapshot_feed.snapshot_prefix`` (``snapshots/``) and
+# ``audit.anchor.PREFIX`` + "/" (``audit-anchors/``). A key moved there must move here too.
+BUNDLES_PREFIX: Final = "bundles/"
+ANCHORS_PREFIX: Final = "audit-anchors/"
+WORKER_PREFIXES: Final = {
+    "bundles": (BUNDLES_PREFIX, "only source bundles"),
+    "snapshots": (SNAPSHOTS_PREFIX, "only access snapshots"),
+    "anchors": (ANCHORS_PREFIX, "only audit anchors"),
+}
+"""``bucket-control-worker-<name>``: the prefix and the condition's title."""
 NONCURRENT_FILE_DAYS: Final = 7
 BUILD_IMAGES: Final = ("build_tools_image", "build_frontend_image")
 GATEWAY_SETTINGS: Final = ("gateway_image", "gateway_keyring", "gateway_jwks", "org_id")
@@ -513,16 +525,23 @@ def secret_condition() -> gcp.projects.IAMMemberConditionArgs:
     )
 
 
-def files_condition(bucket: str) -> gcp.storage.BucketIAMMemberConditionArgs:
-    """Objects under ``files/``, and a listing whose prefix is under it: a list is checked on
-    the bucket, so its prefix is the only thing to limit (SSC-046)."""
-    objects = f"projects/_/buckets/{bucket}/objects/{FILES_PREFIX}"
+def prefix_condition(
+    bucket: str, prefix: str, title: str
+) -> gcp.storage.BucketIAMMemberConditionArgs:
+    """Objects under ``prefix``, and a listing whose prefix is under it: a list is checked on
+    the bucket, so its prefix is the only thing to limit."""
+    objects = f"projects/_/buckets/{bucket}/objects/{prefix}"
     return gcp.storage.BucketIAMMemberConditionArgs(
-        title="only app files",
+        title=title,
         expression=f'resource.name.startsWith("{objects}") || '
         f"api.getAttribute('storage.googleapis.com/objectListPrefix', '')"
-        f".startsWith('{FILES_PREFIX}')",
+        f".startsWith('{prefix}')",
     )
+
+
+def files_condition(bucket: str) -> gcp.storage.BucketIAMMemberConditionArgs:
+    """``prefix_condition`` on ``files/``, the apps' files (SSC-046)."""
+    return prefix_condition(bucket, FILES_PREFIX, "only app files")
 
 
 def control_for(accounts: dict[str, str], stage: n.Stage, public: str | None = None) -> str:
@@ -1378,8 +1397,14 @@ class Cell:
         files when it is gone; a replaced or deleted file stays a noncurrent version for
         ``NONCURRENT_FILE_DAYS``. Source bundles sit under ``bundles/`` (decision 015): the
         control plane's API, which signs their upload and download URLs as itself, may read
-        and write there alone (``bucket-control-api-bundles``); the worker builds from them and
-        collects them with its bucket-wide grant."""
+        and write there alone (``bucket-control-api-bundles``). The worker, which builds from
+        the bundles and collects them, compiles the snapshots and writes the audit anchors,
+        holds ``objectUser`` on ``bundles/``, ``snapshots/`` and ``audit-anchors/`` and on
+        nothing else (``bucket-control-worker-<name>``, ``WORKER_PREFIXES``); it lists only
+        under those prefixes. The gateway, like ``ssc-data`` and ``ssc-proxy``, reads
+        ``snapshots/`` alone. The agent still holds bucket-wide ``objectViewer``
+        (``bucket-agent``): ``ssc_agent.files.CellFiles.drop`` lists ``files/env_<id>/`` with
+        it, and ``sscCellAgentFiles`` grants only the delete."""
         cfg = self.cfg
         self.bucket_ = gcp.storage.Bucket(
             "bucket",
@@ -1403,19 +1428,23 @@ class Cell:
             force_destroy=cfg.disposable,
             opts=self._o(self.bucket_key_grant),
         )
-        for name, member, role in (
-            (
-                "bucket-control-worker",
-                pulumi.Output.concat("serviceAccount:", self.control_worker),
-                "roles/storage.objectUser",
-            ),
-            ("bucket-gateway", self.gateway_sa.member, "roles/storage.objectViewer"),
-            ("bucket-agent", self.agent_sa.member, "roles/storage.objectViewer"),
-        ):
+        gcp.storage.BucketIAMMember(
+            "bucket-agent",
+            bucket=self.bucket_.name,
+            role="roles/storage.objectViewer",
+            member=self.agent_sa.member,
+            opts=self._o(),
+        )
+        for name, (prefix, title) in WORKER_PREFIXES.items():
             gcp.storage.BucketIAMMember(
-                name, bucket=self.bucket_.name, role=role, member=member, opts=self._o()
+                f"bucket-control-worker-{name}",
+                bucket=self.bucket_.name,
+                role="roles/storage.objectUser",
+                member=pulumi.Output.concat("serviceAccount:", self.control_worker),
+                condition=prefix_condition(n.cell_bucket(cfg.label), prefix, title),
+                opts=self._o(),
             )
-        bundles = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/bundles/"
+        bundles = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/{BUNDLES_PREFIX}"
         gcp.storage.BucketIAMMember(
             "bucket-control-api-bundles",
             bucket=self.bucket_.name,
@@ -1427,8 +1456,12 @@ class Cell:
             ),
             opts=self._o(),
         )
-        snapshots = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/snapshots/"
-        for name, account in (("bucket-data", self.data_sa), ("bucket-proxy", self.proxy_sa)):
+        snapshots = f"projects/_/buckets/{n.cell_bucket(cfg.label)}/objects/{SNAPSHOTS_PREFIX}"
+        for name, account in (
+            ("bucket-gateway", self.gateway_sa),
+            ("bucket-data", self.data_sa),
+            ("bucket-proxy", self.proxy_sa),
+        ):
             gcp.storage.BucketIAMMember(
                 name,
                 bucket=self.bucket_.name,

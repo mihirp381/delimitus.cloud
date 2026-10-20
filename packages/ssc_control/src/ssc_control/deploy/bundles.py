@@ -27,7 +27,11 @@ from ssc_shared.canonical import manifest_digest
 
 DIGEST_PREFIX: Final = "sha256:"
 BUNDLE_KEY: Final = re.compile(r"bundles/([^/]+)/([^/]+)/sha256/([0-9a-f]{64})\.tar\.gz")
-"""A ``bundle_key``: groups are the org, the app and the sha256 hex."""
+"""A ``bundle_key``: groups are the org, the app and the sha256 hex.
+
+The ``bundles/`` prefix is restated in ``infra/ssc_infra/cell.py`` ``WORKER_PREFIXES`` and
+``BUNDLES_PREFIX``: the API and worker grants reach only there.
+"""
 MAX_EVIDENCE_FINDINGS: Final = 20
 
 

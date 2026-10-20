@@ -30,6 +30,7 @@ _DIGEST = re.compile(r"sha256:([0-9a-f]{64})")
 
 
 def snapshot_prefix(org_id: str) -> str:
+    """Restated in ``infra/ssc_infra/cell.py`` (``SNAPSHOTS_PREFIX``), whose tests pin it here."""
     return f"snapshots/{org_id}/"
 
 

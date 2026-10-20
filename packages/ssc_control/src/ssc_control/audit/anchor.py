@@ -41,6 +41,7 @@ type AnchorCause = Literal["mismatch", "ahead", "missing", "differs", "malformed
 
 FORMAT: Final = "ssc-audit-anchor/v1"
 PREFIX: Final = "audit-anchors"
+"""Restated in ``infra/ssc_infra/cell.py`` ``WORKER_PREFIXES``: the worker may write only there."""
 LOCK_CLASS: Final = 12
 """First key of the org's anchor advisory lock; the second is ``hashtext(org_id)``."""
 CONTENT_TYPE: Final = "application/json"
