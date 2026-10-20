@@ -182,3 +182,74 @@ def test_breaking_checker_catches_a_value_removed_from_a_nullable_enum(tmp_path:
     result = breaking(SPEC, new)
     assert result.returncode == 1, result.stdout
     assert "decision_channel: enum value 'cli' removed" in result.stdout
+
+
+ENABLE = "/v1/cell/resources/{resource}/enable"
+
+
+def _resource_parameter(spec: dict[str, Any]) -> dict[str, Any]:
+    (param,) = [p for p in spec["paths"][ENABLE]["post"]["parameters"] if p["name"] == "resource"]
+    assert param["in"] == "path"
+    return param
+
+
+def test_breaking_checker_catches_a_value_removed_from_a_parameter_enum(tmp_path: Path) -> None:
+    spec = build_spec()
+    _resource_parameter(spec)["schema"]["enum"].remove("egress")
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps(spec))
+    result = breaking(SPEC, new)
+    assert result.returncode == 1, result.stdout
+    assert f"POST {ENABLE} path parameter resource: enum value 'egress' removed" in result.stdout
+
+
+def test_breaking_checker_catches_a_parameter_type_change(tmp_path: Path) -> None:
+    spec = build_spec()
+    _resource_parameter(spec)["schema"] = {"type": "integer", "title": "Resource"}
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps(spec))
+    result = breaking(SPEC, new)
+    assert result.returncode == 1, result.stdout
+    assert (
+        f"POST {ENABLE} path parameter resource: type changed from string to integer"
+        in result.stdout
+    )
+
+
+def test_breaking_checker_catches_a_response_property_made_optional(tmp_path: Path) -> None:
+    spec = build_spec()
+    spec["components"]["schemas"]["AccessExplained"]["required"].remove("user_id")
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps(spec))
+    result = breaking(SPEC, new)
+    assert result.returncode == 1, result.stdout
+    access = "GET /v1/apps/{app_id}/environments/{environment_id}/access"
+    assert f"{access} response 200.user_id: response property no longer required" in result.stdout
+
+
+def test_breaking_checker_catches_a_new_required_request_body(tmp_path: Path) -> None:
+    spec = build_spec()
+    complete = "/v1/apps/{app_id}/bundles/{bundle_id}/complete"
+    operation = spec["paths"][complete]["post"]
+    assert "requestBody" not in operation
+    operation["requestBody"] = {
+        "required": True,
+        "content": {"application/json": {"schema": {"type": "object"}}},
+    }
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps(spec))
+    result = breaking(SPEC, new)
+    assert result.returncode == 1, result.stdout
+    assert f"POST {complete}: required request body added" in result.stdout
+
+
+def test_breaking_checker_allows_a_new_optional_request_body(tmp_path: Path) -> None:
+    spec = build_spec()
+    complete = "/v1/apps/{app_id}/bundles/{bundle_id}/complete"
+    spec["paths"][complete]["post"]["requestBody"] = {
+        "content": {"application/json": {"schema": {"type": "object"}}},
+    }
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps(spec))
+    result = breaking(SPEC, new)
+    assert result.returncode == 0, result.stdout

@@ -6,8 +6,11 @@ Breaking, in the order checked:
   * a path or an operation (method) removed
   * a response status removed from an operation
   * a required parameter added
+  * a parameter's type changed, or an enum value removed from it (the parameter's schema is
+    compared as a request property, so a type that only widens passes)
+  * a required request body added, or an optional one made required
   * a request property removed, or made required when it was optional
-  * a response property removed
+  * a response property removed, or no longer required when it was
   * a property's type changed (request or response); a request property's type that only
     widens, such as ``string`` to ``null|string``, passes: every old value still fits
   * an enum value removed (request or response)
@@ -136,6 +139,10 @@ def compare_schema(
     if request:
         for name in sorted(new_req - old_req):
             yield f"{where}.{name}: request property became required"
+    else:
+        # Still there but optional: a client that relied on it being present breaks.
+        for name in sorted((old_req - new_req) & new_props.keys()):
+            yield f"{where}.{name}: response property no longer required"
     for name, old_prop in old_props.items():
         if name not in new_props:
             yield f"{where}.{name}: {'request' if request else 'response'} property removed"
@@ -143,6 +150,11 @@ def compare_schema(
         yield from compare_schema(
             f"{where}.{name}", old_prop, new_props[name], docs, request=request
         )
+
+
+def body_required(operation: dict[str, Any], doc: Doc) -> bool:
+    body = operation.get("requestBody")
+    return isinstance(body, dict) and doc.resolve(body).get("required") is True
 
 
 def body_schema(operation: dict[str, Any], doc: Doc) -> Schema | None:
@@ -171,15 +183,20 @@ def response_schemas(operation: dict[str, Any], doc: Doc) -> dict[str, Schema]:
     return out
 
 
-def required_parameters(operation: dict[str, Any], doc: Doc) -> set[tuple[str, str]]:
-    out: set[tuple[str, str]] = set()
+def parameters(operation: dict[str, Any], doc: Doc) -> dict[tuple[str, str], dict[str, Any]]:
+    """``(in, name) -> parameter``; header names are case-insensitive, so kept in lower case."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
     for raw in operation.get("parameters", []):
         if not isinstance(raw, dict):
             continue
         p = doc.resolve(raw)
-        if p.get("required"):
-            out.add((str(p.get("in")), str(p.get("name"))))
+        location, name = str(p.get("in")), str(p.get("name"))
+        out[(location, name.lower() if location == "header" else name)] = p
     return out
+
+
+def required_parameters(operation: dict[str, Any], doc: Doc) -> set[tuple[str, str]]:
+    return {key for key, p in parameters(operation, doc).items() if p.get("required")}
 
 
 def compare_operation(
@@ -193,6 +210,23 @@ def compare_operation(
         required_parameters(new, new_doc) - required_parameters(old, old_doc)
     ):
         yield f"{where}: required {location} parameter {name!r} added"
+    new_params = parameters(new, new_doc)
+    for (location, name), old_param in sorted(parameters(old, old_doc).items()):
+        new_param = new_params.get((location, name))
+        old_schema, new_schema = old_param.get("schema"), (new_param or {}).get("schema")
+        if isinstance(old_schema, dict) and isinstance(new_schema, dict):
+            yield from compare_schema(
+                f"{where} {location} parameter {name}",
+                old_schema,
+                new_schema,
+                (old_doc, new_doc),
+                request=True,
+            )
+    if body_required(new, new_doc) and not body_required(old, old_doc):
+        if isinstance(old.get("requestBody"), dict):
+            yield f"{where}: request body became required"
+        else:
+            yield f"{where}: required request body added"
     old_body, new_body = body_schema(old, old_doc), body_schema(new, new_doc)
     if old_body is not None and new_body is not None:
         yield from compare_schema(
