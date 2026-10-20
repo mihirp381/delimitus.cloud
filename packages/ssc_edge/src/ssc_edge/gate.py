@@ -9,7 +9,8 @@ Stages, in order, stopping at the first refusal:
    host set when it sent the browser to log in, so a code is good only in that browser.
 3. Request shape, the same for every host: a declared body over the cap is ``413``; a
    cross-origin request (Fetch-Metadata) that is not a top-level ``GET``/``HEAD`` navigation is
-   ``403``; a WebSocket upgrade whose ``Origin`` is not the app's own origin is ``403``.
+   ``403``; a WebSocket upgrade whose ``Origin`` is not the app's own origin is ``403`` (compared
+   as an origin: scheme and host in any case, ``:443`` written or not).
 4. Session: no valid session cookie for this host is a redirect to login, whether or not an app
    lives at the host. The redirect sets a fresh login nonce cookie and sends its SHA-256.
    A request carrying a schedule token (``SSC-Schedule-Token``, SSC-041) is a timer call
@@ -212,6 +213,25 @@ def normal_host(raw: str) -> str:
     return host.removesuffix(".")
 
 
+def _own_origin(origin: str | None, host: str) -> bool:
+    """Whether ``origin`` is ``https://<host>``, ``host`` being ``normal_host``'s: the scheme and
+    host in any case, port 443 written or not, no user, path, query or fragment."""
+    if not origin:
+        return False
+    try:
+        parts = urlsplit(origin.strip())
+        port = parts.port
+    except ValueError:
+        return False
+    plain = not (parts.path or parts.query or parts.fragment or "@" in parts.netloc)
+    return (
+        parts.scheme == "https"
+        and plain
+        and port in (None, 443)
+        and normal_host(parts.netloc) == host
+    )
+
+
 def _page(status: int, body: bytes, reason: Reason, *extra: tuple[str, str]) -> Deny:
     return Deny(status=status, headers=(*pages.HEADERS, *extra), body=body, reason=reason)
 
@@ -298,7 +318,7 @@ class Gate:
             )
             if not navigation:
                 return _page(403, pages.REFUSED, "cross_origin")
-        if h.get("upgrade", "").lower() == "websocket" and h.get("origin") != f"https://{host}":
+        if h.get("upgrade", "").lower() == "websocket" and not _own_origin(h.get("origin"), host):
             return _page(403, pages.REFUSED, "websocket_origin")
         return None
 

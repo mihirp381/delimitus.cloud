@@ -257,9 +257,29 @@ async def test_fetch_metadata(
 
 async def test_a_websocket_must_come_from_the_apps_own_origin(world: World) -> None:
     ws = {"upgrade": "websocket", "cookie": world.cookie()}
-    assert isinstance(await check(world, facts(origin=f"https://{HOST}", **ws)), Allow)
-    for origin in (f"https://{PAY_HOST}", f"http://{HOST}", "null"):
-        assert (await denied(world, facts(origin=origin, **ws))).reason == "websocket_origin"
+    for origin in (
+        f"https://{HOST}",
+        f"https://{HOST.upper()}",
+        "https://LEDGER." + HOST.removeprefix("ledger."),
+        f"HTTPS://{HOST}",
+        f"https://{HOST}:443",
+    ):
+        assert isinstance(await check(world, facts(origin=origin, **ws)), Allow), origin
+    for origin in (
+        f"https://{PAY_HOST}",
+        f"http://{HOST}",
+        f"http://{HOST}:443",
+        f"https://{HOST}:8443",
+        f"https://{HOST}/",
+        f"https://{HOST}/x",
+        f"https://u@{HOST}",
+        f"https://{HOST}:x",
+        "https://other",
+        "null",
+        "",
+    ):
+        out = await denied(world, facts(origin=origin, **ws))
+        assert out.reason == "websocket_origin", origin
     assert (await denied(world, facts(**ws))).reason == "websocket_origin"
 
 
