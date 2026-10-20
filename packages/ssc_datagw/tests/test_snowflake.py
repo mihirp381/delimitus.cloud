@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, timezone
 from datetime import time as clock
 from decimal import Decimal
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -1270,3 +1271,32 @@ def test_db_type_is_snowflakes_name_in_lower_case() -> None:
         ("vector", "string"),
     ]
     assert row(found, [None] * 6) == [None] * 6
+
+
+SETUP = files("ssc_datagw").joinpath("snowflake_setup.sql").read_text()
+
+
+def test_the_setup_script_makes_one_role_per_connection() -> None:
+    # Two connections in one database with one shared role would let an app granted one schema
+    # list read the other's: the role is named after the user unless ssc_role names another.
+    lines = SETUP.splitlines()
+    fixed = [line for line in lines if "SSC_DATAGW_READ" in line]
+    assert len(fixed) == 1
+    assert fixed[0].lstrip("- ").startswith("ssc_role")
+    assert "default" in fixed[0]
+    assert (
+        "SET ssc_read_role = COALESCE(GETVARIABLE('SSC_ROLE'), UPPER(TRIM($ssc_user)) || '_READ');"
+        in lines
+    )
+    code = SETUP.split("$$")[1]
+    # Never SET ssc_role itself: a second run in the session with another user would reuse it.
+    assert not [line for line in lines if line.startswith("SET ssc_role")]
+    assert "rl VARCHAR DEFAULT UPPER(TRIM($ssc_read_role));" in code
+    assert "rl RLIKE '[A-Z_][A-Z0-9_]{0,254}'" in code
+    assert "ssc_role" in code.split("not_a_name EXCEPTION")[1].splitlines()[0]
+    grants = [line for line in code.splitlines() if "EXECUTE IMMEDIATE '" in line]
+    assert grants
+    for line in grants:
+        if "ROLE" in line.split("EXECUTE IMMEDIATE", 1)[1]:
+            assert "|| rl" in line, line
+    assert "SHOW GRANTS TO ROLE IDENTIFIER($ssc_read_role);" in lines
