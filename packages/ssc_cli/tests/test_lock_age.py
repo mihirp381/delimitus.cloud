@@ -2,7 +2,7 @@
 
 A package whose age cannot be learnt is a failure, after three retries 1, 2 and 4 seconds apart:
 a gate that passes whenever PyPI or npm is down admits anything. The npm checker's other tests
-are in packages/ssc_cli/tests/test_npm_lock_age_check.py.
+are in test_npm_lock_age_check.py beside this file.
 """
 
 import importlib.util
@@ -15,7 +15,7 @@ from types import ModuleType
 
 import pytest
 
-TOOLS = Path(__file__).resolve().parents[2] / "tools"
+TOOLS = Path(__file__).resolve().parents[3] / "tools"
 REGISTRY = "https://registry.npmjs.org/"
 NOW = datetime(2026, 10, 1, tzinfo=UTC)
 

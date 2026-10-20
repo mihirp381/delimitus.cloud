@@ -1366,10 +1366,10 @@ def test_only_the_api_gains_the_bundles_prefix(cell_a: list[Declared]) -> None:
     bundles = f"projects/_/buckets/{naming.cell_bucket(A)}/objects/bundles/"
     api = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-control-api-bundles")
     assert api.inputs["condition"]["expression"] == f'resource.name.startsWith("{bundles}")'
-    assert [d.name for d in bound if "bundles/" in str(d.inputs.get("condition", ""))] == [
+    assert {d.name for d in bound if "bundles/" in str(d.inputs.get("condition", ""))} == {
         "bucket-control-worker-bundles",
         "bucket-control-api-bundles",
-    ]
+    }
     project = naming.cell_project(A)
     assert [d.name for d in bound if "condition" not in d.inputs] == []
     for account in ("ssc-data", "ssc-proxy", "ssc-build"):

@@ -1,6 +1,6 @@
 """tools/release_versions.py refuses to check a release without the tag it publishes.
 
-The tool's other tests are in packages/ssc_cli/tests/test_release_versions.py.
+The tool's other tests are in test_release_versions.py beside this file.
 """
 
 import importlib.util
@@ -9,7 +9,7 @@ from types import ModuleType
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(scope="module")

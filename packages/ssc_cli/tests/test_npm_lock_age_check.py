@@ -3,7 +3,7 @@
 import importlib.util
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
@@ -41,7 +41,14 @@ def entry(name: str, version: str) -> dict:
     return {"version": version, "resolved": f"{REGISTRY}{name}/-/{name}-{version}.tgz"}
 
 
-def run(tool: ModuleType, tmp_path: Path, packages: dict, times: dict, exceptions: str = "") -> int:
+def run(
+    tool: ModuleType,
+    tmp_path: Path,
+    packages: dict,
+    times: dict,
+    exceptions: str = "",
+    sleep: Callable[[float], object] = lambda _: None,
+) -> int:
     exc = tmp_path / "lock-exceptions.toml"
     exc.write_text(exceptions)
 
@@ -50,7 +57,7 @@ def run(tool: ModuleType, tmp_path: Path, packages: dict, times: dict, exception
             raise times[name]
         return times[name]
 
-    return tool.main(write_lock(tmp_path, packages), exc, fetch)
+    return tool.main(write_lock(tmp_path, packages), exc, fetch, sleep)
 
 
 def test_old_versions_pass_and_nested_copies_are_checked_once(
@@ -101,12 +108,14 @@ def test_a_package_from_outside_the_registry_fails(
     assert "node_modules/w" not in out
 
 
-def test_an_unlisted_version_fails_and_a_registry_error_warns(
+def test_an_unlisted_version_fails_and_an_unreachable_registry_warns_after_backing_off(
     tool: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     packages = {"node_modules/a": entry("a", "9.9.9"), "node_modules/b": entry("b", "1.0.0")}
     times = {"a": {"1.0.0": days_ago(30)}, "b": OSError("offline")}
-    assert run(tool, tmp_path, packages, times) == 1
+    waits: list[float] = []
+    assert run(tool, tmp_path, packages, times, sleep=waits.append) == 1
+    assert waits == list(tool.RETRY_DELAYS)
     out = capsys.readouterr().out
     assert "FAIL a@9.9.9: the registry lists no publish time" in out
     assert "WARN b@1.0.0: could not query the registry (offline)" in out
