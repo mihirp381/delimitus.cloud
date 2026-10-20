@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from ssc_contracts.identity import IDENTITY_ALG, IDENTITY_TYP, MAX_TTL_SECONDS, IdentityNote
 
 LEEWAY_SECONDS: Final = 30
+_OPTIONAL: Final = ("groups", "name", "email")
 
 RefusalCode = Literal[
     "missing",
@@ -113,6 +114,9 @@ def verify_note(  # noqa: PLR0913  (keyword-only)
         raise NoteRefusedError("expired", f"expired {at - exp}s ago")
     if iat > at + leeway:
         raise NoteRefusedError("not_yet_valid", f"issued {iat - at}s in the future")
+    nulls = [name for name in _OPTIONAL if name in claims and claims[name] is None]
+    if nulls:
+        raise NoteRefusedError("bad_claims", f"{', '.join(nulls)} sent as null")
     try:
         return IdentityNote.model_validate(claims)
     except ValidationError as exc:
