@@ -520,9 +520,9 @@ stateless, JSON replies. Code: `api/mcp/`.
    change naming its environment in the body; `check_scope` reads it there.
 
 CI runs `tools/openapi_check.py` (the file must match the code) and
-`tools/openapi_breaking.py` against the merge base (on a pull request) or the previous commit
-(on `main`). Breaking: a removed path, operation, response status or response property; a response
-property no longer required; a request property removed or made required; a request body added
-as required or made required; a changed type; a removed enum value; a new required parameter,
-or a parameter whose type changed or that lost an enum value.
+`tools/openapi_breaking.py` against the merge base (on a pull request) or the commit before the
+push (on `main`). Breaking: a removed path, operation, response status or response property; a
+response property no longer required; a request property removed or made required; a request
+body added as required or made required; a changed type; a removed enum value; a new required
+parameter, or a parameter whose type changed or that lost an enum value.
 Anything breaking means a new major prefix, not an edit to `/v1`.

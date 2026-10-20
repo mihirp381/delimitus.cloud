@@ -179,3 +179,12 @@ def test_the_cli_release_publishes_only_from_a_cli_tag_on_main() -> None:
         'uv run --no-project --python 3.14 python tools/release_versions.py --tag "$RELEASE_TAG"'
     ]
     assert "          RELEASE_TAG: ${{ github.ref_name }}" in build
+
+
+def test_a_push_to_main_compares_the_spec_with_the_commit_before_the_push() -> None:
+    lint = jobs("ci.yml")["lint"]
+    assert "          BEFORE: ${{ github.event.before }}" in lint
+    assert any(line.split("#")[0].strip() == "fetch-depth: 0" for line in lint)
+    script = "\n".join(run_scripts("ci.yml"))
+    assert 'base="$BEFORE"' in script
+    assert "0000000000000000000000000000000000000000" in script
