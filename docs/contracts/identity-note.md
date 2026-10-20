@@ -30,6 +30,8 @@ The gateway attaches one request header, `X-SSC-Identity`, holding a compact JWS
 
 No other claim is allowed; a note with an unknown claim is refused. Schedule notes carry no `name` and no `email`. Optional claims are omitted, never sent as `null`.
 
+Amendment 2026-10-19 (clarification, no wire change): both verifiers refuse `bad_claims` for `groups`, `name` or `email` sent as `null`; a group id matches `^grp_[a-z0-9]{20}$`; `name` is 1 to 256 Unicode code points and `email` at most 320, counted in code points (not UTF-16 units).
+
 ## The two rules every app must keep
 
 1. **Key on `sub`, never on `email`.** `sub` is stable for the life of the user. `email` and `name` are whatever the company directory says today; they change on marriage, rename and domain moves, and a schedule run has neither. A table keyed by email will merge two people or lose one.
@@ -113,7 +115,7 @@ app.use(async (req, res, next) => {
 
 ## Test vectors
 
-`conformance/identity_note/vectors.json` holds the JWKS, a fixed `now`, two app origins and 34 cases: six that verify and 28 that must be refused with a named code (wrong audience, another issuer with the issuer pinned (a case's `issuer` is the one the verifier pins), expired, not yet valid, foreign key, unknown `kid`, missing `kid`, tampered payload, `alg` none, HS256, wrong or missing `typ`, TTL over 300 s, 51 groups, email as subject, schedule note with email or name, unknown role, unknown claim, malformed tokens). Regenerate with `uv run python conformance/identity_note/generate.py`; the signing keys beside it are throwaway test keys. Both helpers run every case in CI, and a Python test checks that regenerating gives the same cases.
+`conformance/identity_note/vectors.json` holds the JWKS, a fixed `now`, two app origins and 40 cases: seven that verify (one with a 256-code-point name) and 33 that must be refused with a named code (wrong audience, another issuer with the issuer pinned (a case's `issuer` is the one the verifier pins), expired, not yet valid, foreign key, unknown `kid`, missing `kid`, tampered payload, `alg` none, HS256, wrong or missing `typ`, TTL over 300 s, 51 groups, email as subject, schedule note with email or name, unknown role, unknown claim, an upper-case group id, `groups`, `name` or `email` sent as `null`, a 257-code-point name, malformed tokens). Regenerate with `uv run python conformance/identity_note/generate.py`; the signing keys beside it are throwaway test keys. Both helpers run every case in CI, and a Python test checks that regenerating gives the same cases.
 
 ## Still owed by other tickets
 

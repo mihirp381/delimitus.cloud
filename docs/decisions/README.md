@@ -224,7 +224,7 @@ Choice: apps learn who the user is from one signed header, `X-SSC-Identity`, and
 
 - Compact JWS, `alg` ES256 only, `typ` `ssc-id+jwt` required, `kid` required. Twelve claims and no others: `iss`, `aud`, `sub`, `iat`, `exp`, `org`, `app`, `env`, `role`, `groups`, `name`, `email`. `aud` is the app's exact origin as one string. `exp = iat + 300`, and a verifier refuses a longer life even when the note has not expired.
 - `sub` is `usr_` or `sch_`, never an email. `name` and `email` are display strings and are absent on schedule notes. `role` is `builder`, `user` or `schedule`; `groups` holds at most 50 `grp_` ids and only the groups the app's sharing rule references.
-- Both helpers (`ssc_app.identity`, `@delimitus/ssc-identity`) raise one exception with one code from a closed list of twelve, run the same checks in the same order, and pass the same 33 vectors in `conformance/identity_note/`. The Node helper has no dependencies (webcrypto), so a customer app inherits nothing from us.
+- Both helpers (`ssc_app.identity`, `@delimitus/ssc-identity`) raise one exception with one code from a closed list of twelve, run the same checks in the same order, and pass the same 40 vectors in `conformance/identity_note/` (7 that verify, 33 that are refused). The Node helper has no dependencies (webcrypto), so a customer app inherits nothing from us.
 - Keys: EC P-256 in cell Secret Manager, public JWKS at `https://keys.delimitus.com/<cell_label>/jwks.json` as a static CDN file with at most two keys during rotation (SSC-013 implements). The gateway is the only minter (`ssc_edge.identity_note`).
 - Apps verify once per request and never mid-stream; revoking access ends open streams through the kill switch drain, not through token expiry.
 

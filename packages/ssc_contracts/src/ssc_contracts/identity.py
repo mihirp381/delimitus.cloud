@@ -13,6 +13,7 @@ a new version, never by editing v1. Two rules every consumer must keep:
 Pure data. Signing lives in ``ssc_edge.identity_note`` and verification in ``ssc_app.identity``.
 """
 
+import re
 from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -28,6 +29,7 @@ EnvironmentName = Literal["prod", "preview"]
 
 _ORIGIN = r"^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?$"
 _EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+_GROUP = re.compile(r"grp_[a-z0-9]{20}")
 
 
 class IdentityNote(BaseModel):
@@ -66,7 +68,7 @@ class IdentityNote(BaseModel):
         elif self.role == "schedule":
             raise ValueError("only a schedule subject carries role 'schedule'")
         for group in self.groups:
-            if not group.startswith("grp_") or len(group) != 24:
+            if not _GROUP.fullmatch(group):
                 raise ValueError(f"not a group id: {group!r}")
         if len(set(self.groups)) != len(self.groups):
             raise ValueError("groups repeat")
