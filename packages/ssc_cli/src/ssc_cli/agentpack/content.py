@@ -291,8 +291,8 @@ SSC sets `{port}`, `{home}`, `{database_url}` and the `PG` names (only with `pos
 `{app_origin}` and `{keys_url}` itself; the last two are not set in every environment yet.
 With `[egress] hosts` it also sets {egress_names}: outbound calls go through the cell's proxy,
 only over HTTPS and only to hosts on the company's allowlist; anything else is refused with a
-message that names the host. `ssc.toml` cannot set them, nor any other name that starts with
-`SSC_` or `RAILPACK_`.
+message that names the host. `ssc.toml` cannot set them, `PATH` or `DATABASE_CA`, nor any name
+that starts with `SSC_`, `RAILPACK_`, `K_` or `X_GOOGLE_`.
 """
 
 CLAUDE_IMPORT: Final = "@AGENTS.md\n"

@@ -406,6 +406,13 @@ def test_sets_are_unique_bounded_and_sorted() -> None:
         ("build", 'public_names = ["RAILPACK_DEPLOY_APT_PACKAGES"]', "set by the platform"),
         ("build", 'public_names = ["DATABASE_URL"]', "set by the platform"),
         ("build", 'public_names = ["DB_PASSWORD"]', "looks like a secret"),
+        ("build", 'public_names = ["PGHOST"]', "set by the platform"),
+        ("build", 'public_names = ["HTTPS_PROXY"]', "set by the platform"),
+        ("build", 'public_names = ["NO_PROXY"]', "set by the platform"),
+        ("build", 'public_names = ["DATABASE_CA"]', "set by the platform"),
+        ("build", 'public_names = ["K_SERVICE"]', "set by the platform"),
+        ("build", 'public_names = ["X_GOOGLE_FUNCTION"]', "set by the platform"),
+        ("build", 'public_names = ["VITE_API_URL"]', None),
     ],
 )
 def test_public_build_value_rules(section: str, body: str, fragment: str | None) -> None:
