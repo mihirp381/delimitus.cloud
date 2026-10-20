@@ -378,6 +378,12 @@ def test_ssc_cells_never_echoes_a_private_key() -> None:
     assert "SECRET-PART" not in str(caught.value)
 
 
+def test_ssc_cells_refuses_a_key_carrying_only_oth() -> None:
+    private = {"keys": [{**KEY, "oth": [{"r": "a", "d": "b", "t": "c"}]}]}
+    with pytest.raises(ValueError, match="private key"):
+        parse_cells(json.dumps({"cellabcd01": {"identity_jwks": private}}))
+
+
 def legacy_env(label: str = "cellabcd01") -> dict[str, str]:
     return {
         "SSC_CELL_AGENT_URL": hosts.agent_url(label, DOMAIN),

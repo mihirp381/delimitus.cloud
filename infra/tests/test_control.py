@@ -932,3 +932,34 @@ def test_the_mail_provider_s_records_go_in_the_platform_zone() -> None:
         ("_dmarc.delimitus.com.", "TXT"): ['"v=DMARC1; p=quarantine"'],
         ("em.delimitus.com.", "CNAME"): ["u1.wl.example.net."],
     }
+
+
+def test_a_jwk_carrying_only_oth_is_private() -> None:
+    oth = {"kty": "RSA", "kid": KID, "n": "x", "e": "AQAB", "oth": [{"r": "a", "d": "b", "t": "c"}]}
+    assert control.public_jwks_kids(json.dumps({"keys": [oth]})) is None
+
+
+def test_mail_record_names_with_dashes_and_dots_do_not_collide() -> None:
+    records = [
+        {"name": "a-b.delimitus.com", "type": "TXT", "data": "one"},
+        {"name": "a.b.delimitus.com", "type": "TXT", "data": "two"},
+    ]
+    declared = run(
+        naming.PLATFORM_STACK,
+        {
+            "platform_folder_id": PLATFORM_FOLDER,
+            "control_stages": json.dumps(["prod"]),
+            "mail_records": json.dumps(records),
+        },
+    )
+    names = {d.name for d in declared if d.name.startswith("control-prod-dns-mail-")}
+    assert names == {"control-prod-dns-mail-txt-a--b", "control-prod-dns-mail-txt-a-b"}
+
+
+def test_mail_records_that_would_share_a_resource_name_are_refused() -> None:
+    records = [
+        {"name": "a-.b.delimitus.com", "type": "TXT", "data": "one"},
+        {"name": "a.-b.delimitus.com", "type": "TXT", "data": "two"},
+    ]
+    with pytest.raises(ValueError, match="share the resource name dns-mail-txt-a---b"):
+        control.mail_record_settings(records)

@@ -41,8 +41,16 @@ def full_b() -> list[Declared]:
     return run(naming.cell_stack(B), FULL)
 
 
+PROJECTS = (
+    naming.cell_project(A),
+    naming.BOOTSTRAP_PROJECT,
+    *map(naming.control_project, naming.STAGES),
+)
+
+
 def _check(declared: list[Declared]) -> dict[str, list[str]]:
-    return policies.violations(RULES, ((d.type, d.name, d.inputs) for d in declared), PUBLIC_TAG)
+    resources = ((d.type, d.name, d.inputs) for d in declared)
+    return policies.violations(RULES, resources, PUBLIC_TAG, PROJECTS)
 
 
 def _add(type_: str, resource: str, /, **inputs: Any) -> Plant:
@@ -84,6 +92,26 @@ PLANTED: dict[str, tuple[str, Plant]] = {
             project=naming.cell_project(A),
             role="roles/viewer",
             member="user:someone@example.com",
+        ),
+    ),
+    "foreign-ssc-account": (
+        "iam.managed.allowedPolicyMembers",
+        _add(
+            "gcp:projects/iAMMember:IAMMember",
+            "foreign-account",
+            project=naming.cell_project(A),
+            role="roles/viewer",
+            member="serviceAccount:x@ssc-foreign.iam.gserviceaccount.com",
+        ),
+    ),
+    "other-cell-account": (
+        "iam.managed.allowedPolicyMembers",
+        _add(
+            "gcp:projects/iAMMember:IAMMember",
+            "other-cell-account",
+            project=naming.cell_project(A),
+            role="roles/viewer",
+            member=f"serviceAccount:ssc-agent@{OTHER_CELL}.iam.gserviceaccount.com",
         ),
     ),
     "public-agent": (
@@ -260,7 +288,8 @@ def test_the_public_invoker_tag_is_on_the_gateway_and_the_intake_alone(
 
 
 def test_another_tag_value_is_no_exception(full: list[Declared]) -> None:
-    found = policies.violations(RULES, ((d.type, d.name, d.inputs) for d in full), "tagValues/1")
+    resources = ((d.type, d.name, d.inputs) for d in full)
+    found = policies.violations(RULES, resources, "tagValues/1", PROJECTS)
     assert list(found) == ["iam.managed.allowedPolicyMembers"]
 
 

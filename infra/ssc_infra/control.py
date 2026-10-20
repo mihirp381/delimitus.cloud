@@ -26,7 +26,7 @@ PLACEHOLDER_IMAGE: Final = "us-docker.pkg.dev/cloudrun/container/hello"
 PINNED_IMAGE: Final = re.compile(
     rf"{re.escape(n.platform_registry())}(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{{64}}"
 )
-PRIVATE_JWK_MEMBERS: Final = frozenset({"d", "p", "q", "dp", "dq", "qi", "k"})
+PRIVATE_JWK_MEMBERS: Final = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
 
 API: Final = "api"
 WORKER: Final = "worker"
@@ -178,6 +178,13 @@ class MailRecord:
     type: str
     rrdatas: tuple[str, ...]
 
+    @property
+    def resource(self) -> str:
+        label = self.name.removesuffix(n.PLATFORM_DOMAIN).strip(".")
+        return (
+            f"dns-mail-{self.type.lower()}-{label.replace('-', '--').replace('.', '-') or 'apex'}"
+        )
+
 
 def mail_settings(raw: object) -> MailConfig | None:
     if raw is None:
@@ -238,9 +245,16 @@ def mail_record_settings(raw: object) -> tuple[MailRecord, ...]:
         if kind == "TXT" and not data.startswith('"'):
             data = txt_strings(data)
         sets.setdefault((name, kind), []).append(data)
-    return tuple(
+    records = tuple(
         MailRecord(name, kind, tuple(rrdatas)) for (name, kind), rrdatas in sorted(sets.items())
     )
+    seen: dict[str, str] = {}
+    for record in records:
+        if (other := seen.setdefault(record.resource, record.name)) != record.name:
+            raise ValueError(
+                f"mail_records {other} and {record.name} share the resource name {record.resource}"
+            )
+    return records
 
 
 @dataclass(frozen=True, slots=True)
@@ -657,9 +671,8 @@ class ControlPlane:
     def mail_dns(self) -> None:
         """The mail provider's records (``mail_records``), beside the hosts' A records."""
         for record in self.cfg.mail_records:
-            slug = record.name.removesuffix(n.PLATFORM_DOMAIN).strip(".").replace(".", "-")
             gcp.dns.RecordSet(
-                self._name(f"dns-mail-{record.type.lower()}-{slug or 'apex'}"),
+                self._name(record.resource),
                 project=n.BOOTSTRAP_PROJECT,
                 managed_zone=n.PLATFORM_ZONE,
                 name=f"{record.name}.",

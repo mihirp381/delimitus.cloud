@@ -59,7 +59,7 @@ change today; the bound keeps a future move from needing a restart of every proc
 STATIC_LABEL: Final = "staticcell"
 CELL_UNAVAILABLE: Final = "CELL_UNAVAILABLE"
 """The failure code of a job for an org whose cell is not configured (``ErrorCode`` too)."""
-PRIVATE_JWK_MEMBERS: Final = frozenset({"d", "p", "q", "dp", "dq", "qi", "k"})
+PRIVATE_JWK_MEMBERS: Final = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
 _CELL_LABEL = text("select cell_label from ssc.org where id = :org")
 
 

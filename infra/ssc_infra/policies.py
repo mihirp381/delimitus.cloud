@@ -33,15 +33,24 @@ SERVICE_AGENT: Final = re.compile(
     r"(gcp-sa-[a-z0-9-]+|gs-project-accounts)\.iam\.gserviceaccount\.com$"
 )
 """A Google service agent; Cloud Storage's has the older name ``gs-project-accounts``."""
-OWN_ACCOUNT: Final = re.compile(
-    r"^serviceAccount:[a-z0-9-]+@ssc-[a-z0-9-]+\.iam\.gserviceaccount\.com$"
-)
 DEFAULT_ACCOUNT: Final = re.compile(
     r"^serviceAccount:(\d+-compute@developer|[a-z][a-z0-9-]+@appspot)\.gserviceaccount\.com$"
 )
 RUN_SERVICE: Final = re.compile(
     r"^//run\.googleapis\.com/projects/[^/]+/locations/[^/]+/services/([^/]+)$"
 )
+
+
+def own_accounts(projects: Iterable[str]) -> re.Pattern[str]:
+    """A service account of one of ``projects``."""
+    names = "|".join(re.escape(p) for p in sorted(projects))
+    return re.compile(rf"^serviceAccount:[a-z0-9-]+@({names})\.iam\.gserviceaccount\.com$")
+
+
+@dataclass(frozen=True, slots=True)
+class Scope:
+    tag: str
+    accounts: re.Pattern[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +146,7 @@ def _tagged_services(resources: Sequence[Resource], tag: str) -> set[str]:
     return found
 
 
-def _locations(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _locations(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     region = n.REGION
     for type_, name, inputs in resources:
         for key in ("region", "location"):
@@ -146,7 +155,7 @@ def _locations(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[
                 yield f"{type_}::{name} {key} {value}"
 
 
-def _public_access(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _public_access(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     for type_, name, inputs in resources:
         if not type_.startswith("gcp:storage/"):
             continue
@@ -157,11 +166,11 @@ def _public_access(rule: Rule, resources: Sequence[Resource], tag: str) -> Itera
             yield f"{type_}::{name} grants a public member"
 
 
-def _policy_members(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _policy_members(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     subjects = set(rule.parameters["allowedMemberSubjects"])
-    tagged = _tagged_services(resources, tag)
+    tagged = _tagged_services(resources, scope.tag)
     for type_, name, inputs in resources:
-        if type_.startswith("gcp:tags/") and inputs.get("tagValue") == tag:
+        if type_.startswith("gcp:tags/") and inputs.get("tagValue") == scope.tag:
             match = RUN_SERVICE.match(str(inputs.get("parent", "")))
             if not match or match.group(1) not in PUBLIC_SERVICES:
                 yield f"{type_}::{name} binds the public-invoker tag to {inputs.get('parent')}"
@@ -173,25 +182,25 @@ def _policy_members(rule: Rule, resources: Sequence[Resource], tag: str) -> Iter
                 if not on_tagged:
                     yield f"{type_}::{name} grants {member} outside a tagged public service"
             elif member not in subjects and not (
-                OWN_ACCOUNT.match(member) or SERVICE_AGENT.match(member)
+                scope.accounts.match(member) or SERVICE_AGENT.match(member)
             ):
                 yield f"{type_}::{name} grants {member}, outside the organisation"
 
 
-def _sa_keys(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _sa_keys(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     for type_, name, _inputs in resources:
         if type_ == "gcp:serviceaccount/key:Key":
             yield f"{type_}::{name} creates a service account key"
 
 
-def _default_grants(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _default_grants(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     for type_, name, inputs in resources:
         for member in _members(type_, inputs):
             if DEFAULT_ACCOUNT.match(member):
                 yield f"{type_}::{name} grants {inputs.get('role')} to the default {member}"
 
 
-def _peering(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _peering(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     for type_, name, inputs in resources:
         if type_ == "gcp:compute/networkPeering:NetworkPeering":
             yield f"{type_}::{name} peers with {inputs.get('peerNetwork')}"
@@ -202,13 +211,13 @@ def _peering(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[st
             yield f"{type_}::{name} peers with {inputs.get('service')}"
 
 
-def _shared_vpc(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _shared_vpc(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     for type_, name, _inputs in resources:
         if type_.startswith("gcp:compute/sharedVPC"):
             yield f"{type_}::{name} joins a Shared VPC"
 
 
-def _ingress(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _ingress(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     allowed = {INGRESS[value] for value in rule.allowed}
     for type_, name, inputs in resources:
         if type_ == "gcp:cloudrunv2/service:Service":
@@ -219,7 +228,7 @@ def _ingress(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[st
             yield f"{type_}::{name} uses the v1 API; use cloudrunv2"
 
 
-def _vm_external_ip(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _vm_external_ip(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     for type_, name, inputs in resources:
         if type_ in (
             "gcp:compute/instance:Instance",
@@ -231,7 +240,7 @@ def _vm_external_ip(rule: Rule, resources: Sequence[Resource], tag: str) -> Iter
                     yield f"{type_}::{name} gives a VM an external address"
 
 
-def _sql_public_ip(rule: Rule, resources: Sequence[Resource], tag: str) -> Iterator[str]:
+def _sql_public_ip(rule: Rule, resources: Sequence[Resource], scope: Scope) -> Iterator[str]:
     for type_, name, inputs in resources:
         if type_ == "gcp:sql/databaseInstance:DatabaseInstance":
             ip = inputs.get("settings", {}).get("ipConfiguration", {})
@@ -239,7 +248,7 @@ def _sql_public_ip(rule: Rule, resources: Sequence[Resource], tag: str) -> Itera
                 yield f"{type_}::{name} has a public address"
 
 
-type Check = Callable[[Rule, Sequence[Resource], str], Iterator[str]]
+type Check = Callable[[Rule, Sequence[Resource], Scope], Iterator[str]]
 CHECKS: Final[dict[str, Check]] = {
     "gcp.resourceLocations": _locations,
     "storage.publicAccessPrevention": _public_access,
@@ -255,14 +264,16 @@ CHECKS: Final[dict[str, Check]] = {
 
 
 def violations(
-    rules: Iterable[Rule], resources: Iterable[Resource], tag: str
+    rules: Iterable[Rule], resources: Iterable[Resource], tag: str, projects: Iterable[str]
 ) -> dict[str, list[str]]:
     """Constraint → what in ``resources`` it would refuse. ``tag`` is the public-invoker tag
-    value's ID (``tagValues/<n>``)."""
+    value's ID (``tagValues/<n>``); ``projects`` are those whose service accounts may hold roles
+    (the cell's, the platform's and the control projects)."""
     declared = list(resources)
+    scope = Scope(tag, own_accounts(projects))
     found: dict[str, list[str]] = {}
     for rule in rules:
-        hits = list(CHECKS[rule.constraint](rule, declared, tag))
+        hits = list(CHECKS[rule.constraint](rule, declared, scope))
         if hits:
             found[rule.constraint] = hits
     return found
