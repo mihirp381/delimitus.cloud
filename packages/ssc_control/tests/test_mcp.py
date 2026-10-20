@@ -57,7 +57,7 @@ from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
 from ssc_testkit import ISSUER, Dsns, SigningKey, make_org, mint, new_key
 
-from ssc_contracts.audit import AuditAction
+from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.cells import NOTICE, CellResource
 from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
@@ -66,9 +66,11 @@ from ssc_control.api.mcp.server import INSTRUCTIONS
 from ssc_control.api.mcp.tools import TOOLS
 from ssc_control.api.openapi import build_spec, spec_json
 from ssc_control.api.settings import INTERNAL_AUDIENCE, USER_AUDIENCE
-from ssc_control.db import CreatedOrg, bind_org_sync, make_engine
+from ssc_control.audit.chain import Actor
+from ssc_control.db import CreatedOrg, bind_org_sync, bound_org, make_engine
 from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.builds import run_build
+from ssc_control.identity import sessions
 from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.worker_ports import Ports
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
@@ -630,6 +632,36 @@ async def test_wrong_audience_401(world: World) -> None:
     assert_refused(await post_initialize(world.url, world.agent_v1), world.url)
     expired = world.agent_token(expires_in=-60)
     assert_refused(await post_initialize(world.url, expired), world.url)
+
+
+async def test_a_credential_from_a_session_that_is_not_live_401(world: World) -> None:
+    """Revoking a session (``ssc logout``, ``/revoke``) shuts the transport too, not only each
+    tool's ``/v1`` call, so the client is told to sign in again."""
+    org, user = world.org.org_id, world.org.admin_user_id
+    actor = Actor(ActorKind.USER, user)
+    engine = make_engine(world.dsns.app)
+    try:
+        async with bound_org(engine, org) as conn:
+            sid = await sessions.open_session(
+                conn,
+                org,
+                user_id=user,
+                kind="cli",
+                connection_id="conn_mcp",
+                actor=actor,
+                agent_client_id=CLIENT_ID,
+                token_audience=f"{world.url}/mcp",
+            )
+        token = world.agent_token(sid=sid)
+        assert (await post_initialize(world.url, token)).status_code == 200
+        async with bound_org(engine, org) as conn:
+            await sessions.revoke_session(conn, org, sid, "logout", actor=actor)
+        assert_refused(await post_initialize(world.url, token), world.url)
+    finally:
+        await engine.dispose()
+    assert_refused(
+        await post_initialize(world.url, world.agent_token(sid=new_id("ses"))), world.url
+    )
 
 
 async def test_v1_refuses_an_mcp_credential_from_outside(world: World) -> None:

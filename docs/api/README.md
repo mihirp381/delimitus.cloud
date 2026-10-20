@@ -397,8 +397,8 @@ stateless, JSON replies. Code: `api/mcp/`.
 
 - **Who.** Only a user credential that an agent holds, issued for this endpoint: the audience
   is the MCP resource (`SSC_MCP_RESOURCE`, default `<public URL>/mcp`), `kind: user`,
-  `agent: true` and a `client_id` (decision 029). Any other bearer, or none, gets the SDK's
-  `401` with
+  `agent: true` and a `client_id` (decision 029), from a session that is still live (not
+  revoked by `ssc logout` or `/revoke`). Any other bearer, or none, gets the SDK's `401` with
   `WWW-Authenticate: Bearer ... resource_metadata="<public URL>/.well-known/oauth-protected-resource/mcp"`
   (RFC 6750 and RFC 9728, not a problem body). That metadata names the API's token issuer, the
   auth host, as the authorization server. A remote client gets its credential there with OAuth:

@@ -56,7 +56,7 @@ def build_mcp(rt: Runtime, api: FastAPI) -> MCPServer:
         server = MCPServer(
             name="ssc",
             instructions=INSTRUCTIONS,
-            token_verifier=AgentTokenVerifier(rt.verifier, s.mcp_audience),
+            token_verifier=AgentTokenVerifier(rt.verifier, s.mcp_audience, rt.engine),
             # Validated from strings so a path-less issuer keeps its exact spelling (no "/").
             auth=AuthSettings.model_validate(
                 {
