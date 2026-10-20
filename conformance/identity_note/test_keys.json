@@ -1,5 +1,5 @@
 {
-  "_comment": "THROWAWAY TEST KEYS for the identity-note conformance vectors. Generated once, committed on purpose, never used to sign anything real. A cell's signing key lives in Secret Manager (SSC-013). Allowlisted in .gitleaks.toml.",
+  "_comment": "THROWAWAY TEST KEYS for the identity-note conformance vectors. Generated once, committed on purpose, never used to sign anything real. A cell's signing key lives in the gateway keyring, sealed with a Cloud KMS key only the gateway may decrypt (decision 010 amendment; decision 022 denies Secret Manager reads in a cell). Allowlisted in .gitleaks.toml.",
   "keys": {
     "test-2026-09-a": {
       "kty": "EC",
