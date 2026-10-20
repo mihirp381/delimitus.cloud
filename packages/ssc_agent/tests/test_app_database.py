@@ -528,6 +528,56 @@ async def test_a_drop_ends_the_sessions_the_app_still_holds_and_no_other_apps(
     assert (await dbs.usage(staying)).environments == 1
 
 
+async def test_a_drop_takes_back_what_the_app_roles_own_outside_the_database(
+    dbs: CellAppDatabases, vault: MemoryVault, instance: CloudSqlLike
+) -> None:
+    svc = service(1)
+    await dbs.ensure(svc)
+    name = database_name(svc)
+    url = url_of(vault, svc)
+    try:
+        with psycopg.connect(dsn_of(instance, url, "postgres"), autocommit=True) as conn:
+            conn.execute(b"select lo_create(0)")
+        with psycopg.connect(dsn_of(instance, url), autocommit=True) as conn:
+            conn.execute(f"set role {name}".encode())
+            conn.execute(b"create table mine (n int)")
+            conn.execute(b"select lo_create(0)")
+        with psycopg.connect(instance.superuser, dbname="postgres", autocommit=True) as conn:
+            conn.execute(b"create table stray (n int)")
+            conn.execute(f"alter table stray owner to {name}_owner".encode())
+        await dbs.drop(svc)
+        assert left_of(instance, name) == (0, 0)
+        with psycopg.connect(instance.superuser, dbname="postgres") as conn:
+            owners = conn.execute(
+                "select lomowner::regrole::text from pg_largeobject_metadata "
+                "union all select tableowner from pg_tables where tablename = 'stray'"
+            ).fetchall()
+        assert owners == [(CLOUD_SQL_ADMIN,), (CLOUD_SQL_ADMIN,)]
+    finally:
+        with psycopg.connect(instance.superuser, dbname="postgres", autocommit=True) as conn:
+            conn.execute(b"drop table if exists stray")
+            conn.execute(b"select lo_unlink(oid) from pg_largeobject_metadata")
+
+
+async def test_a_drop_ends_the_sessions_when_the_admin_does_not_inherit(
+    dbs: CellAppDatabases, vault: MemoryVault, instance: CloudSqlLike
+) -> None:
+    svc = service(1)
+    await dbs.ensure(svc)
+    name = database_name(svc)
+    with psycopg.connect(instance.superuser, autocommit=True) as conn:
+        conn.execute(f"alter role {CLOUD_SQL_ADMIN} noinherit".encode())
+    try:
+        with psycopg.connect(dsn_of(instance, url_of(vault, svc)), autocommit=True) as held:
+            await dbs.drop(svc)
+            with pytest.raises(psycopg.OperationalError):
+                held.execute("select 1")
+    finally:
+        with psycopg.connect(instance.superuser, autocommit=True) as conn:
+            conn.execute(f"alter role {CLOUD_SQL_ADMIN} inherit".encode())
+    assert left_of(instance, name) == (0, 0)
+
+
 async def test_ten_apps_at_their_limit_leave_room_for_administration(
     dbs: CellAppDatabases, vault: MemoryVault, instance: CloudSqlLike
 ) -> None:
