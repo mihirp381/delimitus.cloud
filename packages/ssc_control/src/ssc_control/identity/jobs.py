@@ -61,7 +61,9 @@ def blueprint(*, cron: str = SYNC_CRON) -> Blueprint:
             return 0
         return await sync_all(ports.engine, ports.directory)
 
-    @bp.periodic(cron=PRUNE_CRON, periodic_id="oauth_client_prune")
+    @bp.periodic(
+        cron=PRUNE_CRON, periodic_id="oauth_client_prune", queueing_lock="oauth_client_prune"
+    )
     @bp.task(name="oauth_client_prune", pass_context=True, lock="oauth_client_prune")
     async def oauth_client_prune(context: JobContext, timestamp: int) -> int:  # pyright: ignore[reportUnusedFunction]
         """Delete OAuth clients unused for 30 days; returns how many."""

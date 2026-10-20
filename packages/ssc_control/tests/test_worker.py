@@ -544,6 +544,15 @@ def test_build_app_registers_every_lane_task_and_can_be_built_twice() -> None:
         )
 
 
+def test_every_periodic_task_carries_a_queueing_lock() -> None:
+    """A tick that is still queued when the next one comes is not queued twice."""
+    app = build_app("postgresql://ssc_app@localhost/ssc")
+    periodics = app.periodic_registry.periodic_tasks.values()
+    assert {p.task.name for p in periodics} >= {"identity:oauth_client_prune"}
+    unlocked = sorted(p.task.name for p in periodics if not p.configure_kwargs.get("queueing_lock"))
+    assert unlocked == []
+
+
 def periods(app: App, task_name: str) -> set[float]:
     ((periodic,),) = [
         [p for key, p in app.periodic_registry.periodic_tasks.items() if key[0] == task_name]
