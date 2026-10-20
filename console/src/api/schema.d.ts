@@ -920,7 +920,7 @@ export interface paths {
          * @description Stop the app now: 202 plus a ``Location`` to follow the steps.
          *
          *     ``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``
-         *     while an earlier pull is still running.
+         *     while an earlier pull is still running; ``APP_DELETING`` while the app is being deleted.
          */
         post: operations["pull_kill_switch_v1_apps__app_id__kill_switch_post"];
         delete?: never;
@@ -8495,7 +8495,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `KILL_SWITCH_IN_FLIGHT` */
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`, `APP_DELETING` */
             409: {
                 headers: {
                     [name: string]: unknown;

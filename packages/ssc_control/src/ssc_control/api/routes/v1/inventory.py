@@ -225,13 +225,14 @@ async def get_inventory(
         ErrorCode.NOT_FOUND,
         ErrorCode.APP_NOT_ACTIVE,
         ErrorCode.KILL_SWITCH_IN_FLIGHT,
+        ErrorCode.APP_DELETING,
     ),
 )
 async def pull_kill_switch(app_id: Id, body: KillSwitchCreate, uow: UserUoW) -> Response:
     """Stop the app now: 202 plus a ``Location`` to follow the steps.
 
     ``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``
-    while an earlier pull is still running."""
+    while an earlier pull is still running; ``APP_DELETING`` while the app is being deleted."""
     await require_admin(uow)
     try:
         started = await kill_switch.start(

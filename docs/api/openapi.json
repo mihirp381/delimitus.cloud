@@ -12688,7 +12688,7 @@
     },
     "/v1/apps/{app_id}/kill-switch": {
       "post": {
-        "description": "Stop the app now: 202 plus a ``Location`` to follow the steps.\n\n``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``\nwhile an earlier pull is still running.",
+        "description": "Stop the app now: 202 plus a ``Location`` to follow the steps.\n\n``APP_NOT_ACTIVE`` when the app is already stopped in that mode; ``KILL_SWITCH_IN_FLIGHT``\nwhile an earlier pull is still running; ``APP_DELETING`` while the app is being deleted.",
         "operationId": "pull_kill_switch_v1_apps__app_id__kill_switch_post",
         "parameters": [
           {
@@ -12787,7 +12787,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`"
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`, `APP_DELETING`"
           },
           "413": {
             "content": {

@@ -55,7 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key, with_cell
 
 from ssc_contracts.audit import ActorKind
-from ssc_contracts.errors import ErrorCode
+from ssc_contracts.errors import CATALOGUE, ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import default_manifest
 from ssc_control.api import Settings, create_app
@@ -1212,6 +1212,12 @@ async def test_kill_switch_refusals(b: Bench) -> None:
     assert code is ErrorCode.KILL_SWITCH_IN_FLIGHT
     await drain(b)
     assert_problem(pull(b, "disable"), ErrorCode.APP_NOT_ACTIVE)
+    # An app being deleted is refused, as enable refuses it, and the route says so.
+    execute(b.dsn, b.w.org, "update ssc.app set status = 'deleting' where id = %s", b.w.app)
+    assert_problem(pull(b, "quarantine"), ErrorCode.APP_DELETING)
+    op = cast("FastAPI", b.client.app).openapi()["paths"]["/v1/apps/{app_id}/kill-switch"]["post"]
+    status = str(CATALOGUE[ErrorCode.APP_DELETING].status)
+    assert ErrorCode.APP_DELETING.value in op["responses"][status]["description"]
 
 
 # ── enable and transfer ──────────────────────────────────────────────────────
