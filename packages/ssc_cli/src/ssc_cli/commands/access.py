@@ -13,7 +13,7 @@ from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.commands.share import EMAIL, MAX_EMAIL, MIN_EMAIL, Env, EnvOpt, Lookup, resolve_subject
 from ssc_cli.commands.status import AppArg
 from ssc_cli.errors import CliError
-from ssc_cli.output import dash, print_json, say, table
+from ssc_cli.output import dash, print_json, say, table, visible
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import AccessGrantRow, AccessResult
 from ssc_contracts.errors import ErrorCode
@@ -113,7 +113,13 @@ def explain(
             table(
                 ("ROLE", "KIND", "SUBJECT", "GROUP", "GRANT"),
                 [
-                    (g.role, g.subject_kind, dash(g.subject_id), dash(g.group_name), g.grant_id)
+                    (
+                        g.role,
+                        g.subject_kind,
+                        dash(g.subject_id),
+                        visible(dash(g.group_name)),
+                        g.grant_id,
+                    )
                     for g in result.grants
                 ],
             )
