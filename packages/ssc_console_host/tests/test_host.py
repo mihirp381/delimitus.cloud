@@ -5,6 +5,7 @@ Checks:
   * /assets/* immutable for a year, a miss is a 404 -> test_assets_are_kept_a_year,
                                                        test_a_missing_asset_is_not_the_page
   * any other path is index.html, no-store          -> test_app_routes_get_the_page_uncached
+  * a missing file (a dot in the last segment): 404 -> test_a_missing_file_is_a_404_not_the_page
   * .. refused                                      -> test_paths_leaving_dist_are_refused
   * /v1 and /mcp never served here                  -> test_api_paths_are_never_served_here
   * /healthz                                        -> test_health
@@ -90,7 +91,8 @@ def test_a_missing_asset_is_not_the_page(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "path", ["/", "/index.html", "/apps/x", "/auth/callback?code=c&state=s", "/approvals/1/"]
+    "path",
+    ["/", "/index.html", "/apps/x", "/auth/callback?code=c&state=s", "/approvals/1/", "/apps/x/a"],
 )
 def test_app_routes_get_the_page_uncached(client: TestClient, path: str) -> None:
     res = client.get(path)
@@ -101,6 +103,15 @@ def test_app_routes_get_the_page_uncached(client: TestClient, path: str) -> None
     # no-store is never answered from a validator.
     again = client.get(path, headers={"if-none-match": res.headers["etag"]})
     assert again.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path", ["/foo.js", "/x.map", "/robots.txt", "/apps/x/main.js.map", "/favicon.ico"]
+)
+def test_a_missing_file_is_a_404_not_the_page(client: TestClient, path: str) -> None:
+    res = client.get(path)
+    assert res.status_code == 404
+    assert res.content != INDEX
 
 
 @pytest.mark.parametrize(

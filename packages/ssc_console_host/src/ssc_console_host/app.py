@@ -9,6 +9,7 @@ here. What answers:
 - A path with a ``..`` or ``.`` segment, a backslash or a NUL: 404.
 - A file of ``dist/``: that file. ``/assets/*`` are content-hashed by Vite and kept a year; a
   missing asset is a 404, so a stale chunk fails loudly instead of loading the page as script.
+- Any other path whose last segment has a dot (``/robots.txt``, ``/x.map``): 404.
 - Any other path (``/apps/x``, ``/auth/callback``): ``index.html`` with ``no-store``, so a new
   build is picked up on the next load and the router takes it from there.
 
@@ -120,6 +121,8 @@ def create_app(site: Site, *, auth_origin: str) -> FastAPI:
             return _file(request, found, ASSET_CACHE) if found else _plain(404, "Not found\n")
         if found is not None and path != INDEX:
             return _file(request, found, FILE_CACHE)
+        if found is None and "." in path.rsplit("/", 1)[-1]:
+            return _plain(404, "Not found\n")
         return _file(request, site.index, INDEX_CACHE)
 
     return app
