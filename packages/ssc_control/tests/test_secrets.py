@@ -74,7 +74,13 @@ from ssc_agent import intake as intake_module
 from ssc_agent import secret_manager
 from ssc_agent.app import create_app as create_agent
 from ssc_agent.cloud_run import CloudRunDriver
-from ssc_agent.intake import GOOGLE_CERTS, GoogleGrants, config_from_env, create_intake
+from ssc_agent.intake import (
+    GOOGLE_CERTS,
+    MIN_REFETCH_SECONDS,
+    GoogleGrants,
+    config_from_env,
+    create_intake,
+)
 from ssc_agent.secret_manager import (
     ACCESSOR_ROLE,
     CellSecretCustody,
@@ -659,6 +665,41 @@ async def test_the_intake_takes_a_value_only_with_a_fresh_grant_for_it(
     assert answered.status_code == 201
     assert answered.json() == {"secret": sid, "version": "1"}
     assert VALUE not in answered.text
+
+
+async def test_an_unknown_key_refetches_googles_certs_at_most_once_a_minute(
+    google: Google,
+) -> None:
+    """The intake is public: a bearer naming a key Google does not list may force a refetch of
+    the certificates only once ``MIN_REFETCH_SECONDS`` have passed since the last one."""
+    fetched: list[float] = []
+    clock = [1000.0]
+
+    def certs(request: httpx2.Request) -> httpx2.Response:
+        fetched.append(clock[0])
+        return google.certs(request)
+
+    checks = GoogleGrants(CONTROL_SA, transport=httpx2.MockTransport(certs), clock=lambda: clock[0])
+    url = f"{INTAKE}/v1/secrets/ssc-a-x?grant={'n' * 32}"
+    known = google.token(url)
+    other = jwt.encode(
+        jwt.decode(known, options={"verify_signature": False}),
+        google.key,
+        algorithm="RS256",
+        headers={"kid": "google-test-unknown"},
+    )
+    assert await checks.allows(known, url)
+    assert fetched == [1000.0]
+    clock[0] += 10
+    assert not await checks.allows(other, url)
+    assert not await checks.allows(other, url)
+    assert fetched == [1000.0]
+    assert await checks.allows(known, url)
+    clock[0] += MIN_REFETCH_SECONDS
+    assert not await checks.allows(other, url)
+    assert fetched == [1000.0, 1010.0 + MIN_REFETCH_SECONDS]
+    assert await checks.allows(known, url)
+    await checks.aclose()
 
 
 async def test_intake_errors_never_echo_a_value(google: Google) -> None:

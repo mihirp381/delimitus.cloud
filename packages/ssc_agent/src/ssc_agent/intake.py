@@ -42,6 +42,9 @@ log = logging.getLogger(__name__)
 GOOGLE_CERTS: Final = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_ISSUERS: Final = ("https://accounts.google.com", "accounts.google.com")
 CERTS_SECONDS: Final = 3600
+# A bearer naming a key not in the cached set refetches Google's certificates at most this
+# often, so anyone reaching the public intake cannot make it fetch them on every request.
+MIN_REFETCH_SECONDS: Final = 60
 ENV: Final = {
     "project": "SSC_CELL_PROJECT",
     "origin": "SSC_INTAKE_ORIGIN",
@@ -76,8 +79,11 @@ class GoogleGrants(GrantCheck):
 
     async def _certs(self, *, force: bool = False) -> PyJWKSet:
         async with self._lock:
-            stale = self._clock() - self._fetched > CERTS_SECONDS
-            if self._keys is None or stale or force:
+            since = self._clock() - self._fetched
+            stale = since > CERTS_SECONDS
+            # A forced refetch inside MIN_REFETCH_SECONDS keeps the cached keys: the token then
+            # fails as naming an unknown key.
+            if self._keys is None or stale or (force and since > MIN_REFETCH_SECONDS):
                 r = await self._http.get(GOOGLE_CERTS)
                 r.raise_for_status()
                 self._keys = PyJWKSet.from_dict(cast("dict[str, Any]", r.json()))
