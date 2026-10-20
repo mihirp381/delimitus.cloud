@@ -38,6 +38,7 @@ from typing import Any, Final, cast
 import httpx2
 
 from ssc_contracts.app_env import DATABASE_CA, DATABASE_CA_PATH
+from ssc_shared.redaction import redact
 from ssc_shared.runtime import (
     SERVICE_NAME,
     Billing,
@@ -742,7 +743,7 @@ def _reason(response: httpx2.Response) -> str:
         error = _obj(_obj(response.json()).get("error"))
     except ValueError:
         return response.reason_phrase
-    return f"{error.get('status', '')} {error.get('message', '')}".strip()
+    return redact(f"{error.get('status', '')} {error.get('message', '')}".strip())
 
 
 __all__ = ["AccessTokens", "CellRuntime", "CloudRunDriver"]

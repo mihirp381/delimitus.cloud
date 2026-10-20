@@ -99,6 +99,24 @@ async def test_a_403_raises_at_once_and_is_not_remembered() -> None:
     assert len(iam.posts) == 2
 
 
+async def test_what_the_api_answered_is_redacted_in_the_error() -> None:
+    def refuse(_: httpx2.Request) -> httpx2.Response:
+        error = {"status": "INVALID_ARGUMENT", "message": "bad env DB_URL password=hunter2"}
+        return httpx2.Response(400, json={"error": error})
+
+    async def token() -> str:
+        return "dummy-token"
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(refuse))
+    driver = CloudRunDriver(CELL, token, client=client)
+    with pytest.raises(_ApiError) as raised:
+        await driver.ensure_identity("ssc-a-one")
+    assert raised.value.status == 400
+    assert "hunter2" not in raised.value.reason
+    assert "hunter2" not in str(raised.value)
+    assert raised.value.reason == "INVALID_ARGUMENT bad env DB_URL password=[redacted]"
+
+
 async def test_each_service_gets_its_own_post() -> None:
     iam = Iam([200])
     driver = iam.driver()
