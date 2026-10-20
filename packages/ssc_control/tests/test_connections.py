@@ -466,6 +466,87 @@ def test_approving_a_data_source_creates_no_grant(
     assert links_of(client, world, world.prod, tokens.admin) == []
 
 
+def approve(client: TestClient, token: str, approval_id: str, outcome: str = "approved") -> Any:
+    body = {"outcome": outcome, "reason": "Fine by me.", "channel": "console"}
+    return post(client, f"/v1/approvals/{approval_id}/decide", token, body)
+
+
+def ask_link(client: TestClient, w: World, tokens: Tokens, name: str = "finance") -> str:
+    asked = ask_api(client, tokens.admin, w.prod, subject=name)
+    assert asked.status_code == 201, asked.text
+    return str(asked.json()["id"])
+
+
+def test_approving_a_data_source_links_the_environment(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    finance(client, world, tokens, None, classification="internal")
+    apr = ask_link(client, world, tokens)
+    decided = approve(client, tokens.approver, apr)
+    assert decided.status_code == 200, decided.text
+    assert (decided.json()["applied"], decided.json()["applied_reason"]) == ("applied", None)
+    assert [c["connection"]["name"] for c in links_of(client, world, world.prod, tokens.admin)] == [
+        "finance"
+    ]
+    (granted,) = events_of(dsns.app, world.org, AuditAction.CONNECTION_GRANTED)
+    (row,) = [a for a in approvals_of(dsns.app, world.org) if a["id"] == apr]
+    assert granted["after"]["environment_id"] == world.prod
+    assert granted["policy_decision_id"] == row["policy_decision_id"] is not None
+
+
+def test_approving_a_data_source_already_linked_writes_nothing(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    finance(client, world, tokens, None, classification="internal")
+    assert link(client, world, world.prod, tokens.admin).status_code == 200
+    decided = approve(client, tokens.approver, ask_link(client, world, tokens))
+    assert decided.json()["applied"] == "applied"
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(1,)]
+    assert len(events_of(dsns.app, world.org, AuditAction.CONNECTION_GRANTED)) == 1
+
+
+def test_approving_a_data_source_over_its_ceiling_does_not_link(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    group = add_group(dsns.app, world, [world.builder])
+    finance(client, world, tokens, ceiling_doc(("group", group)))
+    before, version = prod_grants(client, world, tokens)
+    assert (
+        put(client, world, world.prod, tokens.admin, [*before, ORG_GRANT], version).status_code
+        == 200
+    )
+    decided = approve(client, tokens.approver, ask_link(client, world, tokens))
+    assert (decided.json()["applied"], decided.json()["applied_reason"]) == (
+        "not_applied",
+        "ceiling",
+    )
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
+
+
+def test_approving_a_data_source_whose_connection_is_gone_does_not_link(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    finance(client, world, tokens, None, classification="internal")
+    apr = ask_link(client, world, tokens)
+    gone = "delete from ssc.connection where org_id = %s and name = 'finance' returning id"
+    rows(dsns.superuser, world, gone, (world.org,))
+    decided = approve(client, tokens.approver, apr)
+    assert (decided.json()["applied"], decided.json()["applied_reason"]) == (
+        "not_applied",
+        "connection_missing",
+    )
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
+
+
+def test_denying_a_data_source_links_nothing(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    finance(client, world, tokens, None, classification="internal")
+    decided = approve(client, tokens.approver, ask_link(client, world, tokens), "denied")
+    assert decided.json()["applied"] == "not_applicable"
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
+
+
 def test_an_agent_that_widens_past_a_ceiling_waits_for_both_approvals(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:

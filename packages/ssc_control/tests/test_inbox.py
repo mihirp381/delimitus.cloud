@@ -366,13 +366,21 @@ def test_a_frozen_app_is_not_changed_by_an_approval(
     assert keyed(current(client, world, world.prod, tokens.admin)["grants"]) == before
 
 
-def test_connecting_a_data_source_applies_nothing(
+def test_connecting_a_data_source_that_does_not_exist_links_nothing(
     client: TestClient, world: World, tokens: Tokens
 ) -> None:
     apr = ask_api(client, tokens.builder, world.prod).json()["id"]
     done = decide(client, apr, tokens.approver)
-    assert (done.json()["state"], done.json()["applied"]) == ("approved", "not_applicable")
-    assert done.json()["applied_reason"] is None
+    assert (done.json()["state"], done.json()["applied"]) == ("approved", "not_applied")
+    assert done.json()["applied_reason"] == "connection_missing"
+
+
+def test_allowing_an_internet_host_applies_nothing(
+    client: TestClient, world: World, tokens: Tokens
+) -> None:
+    asked = ask_api(client, tokens.builder, world.prod, "enable_internet_hosts", "api.example.com")
+    done = decide(client, asked.json()["id"], tokens.approver)
+    assert (done.json()["applied"], done.json()["applied_reason"]) == ("not_applicable", None)
 
 
 def test_the_requester_may_withdraw_their_own_pending_request(

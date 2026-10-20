@@ -59,7 +59,7 @@ curl -sS -X PUT "$API/v1/apps/<app>/environments/<env>/connections/finance" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"limits": {"max_rows": 1000}}'
 ```
 
-Pass: `200` listing the connection; `ssc connections <app>` shows it and its `over ceiling` state. When the environment's audience is already wider than the ceiling the answer is `APPROVAL_REQUIRED`: ask `POST /v1/approvals` with `kind: exceed_ceiling`, `payload: {"connection": "finance", "grants": [<the environment's current grants>]}`; the owner or another admin decides it through the operator; then repeat the `PUT`. Approving `connect_data_source` for the name does not grant anything. For the first read a throwaway app's environment, shared with nobody but you, is the right grantee.
+Pass: `200` listing the connection; `ssc connections <app>` shows it and its `over ceiling` state. When the environment's audience is already wider than the ceiling the answer is `APPROVAL_REQUIRED`: ask `POST /v1/approvals` with `kind: exceed_ceiling`, `payload: {"connection": "finance", "grants": [<the environment's current grants>]}`; the owner or another admin decides it through the operator; then repeat the `PUT`. Since 2026-10-20 an admin approving a `connect_data_source` request for the name through `/decide` links its environment (decision 016 amendment); one recorded through the operator's `/decision` does not. For the first read a throwaway app's environment, shared with nobody but you, is the right grantee.
 
 ## 5. The first read
 

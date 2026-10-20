@@ -255,8 +255,9 @@ own; its calls are recorded the same way. Set it up once:
   `ssc.toml`. An environment can read a connection only after an org admin links it, preview
   and production each, on the app's Data tab in the console
   (`ssc connections <app> --env <env>` shows the links); production also waits for an approved
-  request, which `request_connection` opens and another admin decides. You never link or
-  approve: when a connection is missing or a read answers `CONNECTION_NOT_GRANTED`, tell the
+  request, which `request_connection` opens and another admin decides. Once approved, the
+  environment is linked, unless its audience exceeds the connection's ceiling. You never link
+  or approve: when a connection is missing or a read answers `CONNECTION_NOT_GRANTED`, tell the
   person which connection and environment an org admin has to link or approve.
 - Read a connection with the data helper: Python `from ssc_app import data`, then
   `data.query("sales-db", "select id, total from orders where year = $1", [2026])`; Node

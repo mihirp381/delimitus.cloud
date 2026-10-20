@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { approvalsSearch, requestedGrants } from '../src/api/approvals';
+import { type ApprovalDecided, appliedText, approvalsSearch, requestedGrants } from '../src/api/approvals';
 import { type Call, type Handler, json, problem } from './fakeApi';
 import { signedIn, start } from './harness';
 
@@ -395,5 +395,13 @@ describe('approval helpers', () => {
     expect(requestedGrants({ grants: [{ role: 'owner', subject_kind: 'org' }] })).toBeNull();
     expect(requestedGrants({ grants: 'all' })).toBeNull();
     expect(requestedGrants({})).toBeNull();
+  });
+
+  it('says what approving a connection did', () => {
+    const decided = (applied: string, applied_reason: string | null) =>
+      ({ ...approval('apr_000000000000000000c1', { state: 'approved' }), applied, applied_reason }) as ApprovalDecided;
+    expect(appliedText(decided('applied', null))).toBe('Approved, and the environment is linked to the connection.');
+    expect(appliedText(decided('not_applied', 'ceiling'))).toMatch(/beyond the connection's ceiling/);
+    expect(appliedText(decided('not_applied', 'connection_missing'))).toMatch(/the connection no longer exists/);
   });
 });

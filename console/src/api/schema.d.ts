@@ -188,8 +188,9 @@ export interface paths {
          * Decide As Approver
          * @description Approve or reject a request you can see, with a reason. Never in an agent session, never
          *     your own request; an org admin, or for `exceed_ceiling` the connection's owner. Approving a
-         *     sharing request applies it once every requirement for that change is approved. One that no
-         *     longer fits stays approved and says so in `applied`; the requester asks again.
+         *     sharing request applies it once every requirement for that change is approved; approving a
+         *     `connect_data_source` request links its environment. One that no longer fits stays approved
+         *     and says so in `applied`; the requester asks again.
          */
         post: operations["decide_as_approver_v1_approvals__approval_id__decide_post"];
         delete?: never;
@@ -1897,7 +1898,7 @@ export interface components {
             app: string;
             /** App Id */
             app_id: string;
-            /** @description `applied`: the grants were written. `waiting`: another requirement for the same change is still open. `not_applied`: approved, but the change no longer fits (see `applied_reason`); ask again. `not_applicable`: nothing to apply. */
+            /** @description `applied`: the grants were written, or for `connect_data_source` the environment is linked to the connection. `waiting`: another requirement for the same change is still open. `not_applied`: approved, but the change no longer fits (see `applied_reason`: for `connect_data_source`, `connection_missing` or `ceiling`); ask again. `not_applicable`: nothing to apply. */
             applied: components["schemas"]["ApplyOutcome"];
             /** Applied Reason */
             applied_reason: string | null;

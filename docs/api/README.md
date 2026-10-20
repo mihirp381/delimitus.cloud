@@ -497,7 +497,8 @@ stateless, JSON replies. Code: `api/mcp/`.
   - `find_groups(name)`: `GET /v1/groups?name=&match=prefix`, the org's groups whose name
     starts with `name`, at most 20.
   - `request_connection(app, connection)`: a `connect_data_source` request on prod; the server
-    validates the name.
+    validates the name. Once approved, the environment is linked, unless its audience exceeds
+    the connection's ceiling.
   - `list_connections()`: `GET /v1/connections` as is: every connection for an org admin,
     otherwise those the caller may see; names and classifications, never an address
     (decision 029).

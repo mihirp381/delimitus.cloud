@@ -1037,8 +1037,9 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         ctx: Context,
         idempotency_key: IdempotencyKey | None = None,
     ) -> CallToolResult:
-        """Ask for the app's prod environment to use a data connection. This only opens an
-        approval request, which another admin of the org must approve."""
+        """Ask for the app's prod environment to use a data connection. This opens an approval
+        request, which another admin of the org must approve; once approved, the environment is
+        linked, unless its audience exceeds the connection's ceiling."""
         key = idempotency_key or fresh_key()
         return await run(
             api, ctx, lambda c: ask_connection(c, ref=app, connection=connection, key=key)

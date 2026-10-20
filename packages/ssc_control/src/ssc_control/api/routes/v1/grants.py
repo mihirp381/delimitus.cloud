@@ -14,6 +14,7 @@ the grants and their version stay as they were. ``POST .../grants/requirements``
 on the same grants and says which approvals are missing, writing nothing (K-1).
 
 Approving the last open requirement of a change applies it (:func:`apply_approved`, SSC-049).
+Approving a ``connect_data_source`` request links its environment to the connection.
 
 Each grant a change actually adds records one ``share`` metrics event (SSC-028).
 """
@@ -465,6 +466,29 @@ async def _settles_flag(uow: UnitOfWork, row: ApprovalRow, same_grants: bool) ->
     return True
 
 
+async def _link_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcome, str | None]:
+    connection = await connections.get(uow.conn, uow.org_id, row.subject_key)
+    if connection is None:
+        return "not_applied", "connection_missing"
+    held = await connections.links(uow.conn, uow.org_id, row.environment_id)
+    if any(link.connection.name == row.subject_key for link in held):
+        return "applied", None
+    grants = await connections.environment_grants(uow.conn, uow.org_id, row.environment_id)
+    if await connections.over_ceiling(uow.conn, uow.org_id, connection, grants):
+        return "not_applied", "ceiling"
+    await connections.grant(
+        uow.conn,
+        org_id=uow.org_id,
+        actor=actor_of(uow.principal),
+        connection=connection,
+        environment_id=row.environment_id,
+        limits={},
+        by_user_id=row.decided_by_user_id or uow.principal.subject,
+        policy_decision_id=row.policy_decision_id,
+    )
+    return "applied", None
+
+
 async def apply_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcome, str | None]:
     """After ``row`` was approved: write its stored grant set when every requirement for that
     exact set is now approved, in the caller's transaction. ``waiting`` while another is open;
@@ -472,9 +496,18 @@ async def apply_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcom
     quarantine, the requester's right to build); ``not_applicable`` for the kinds that apply
     nothing. The approval stands either way. An ``exceed_ceiling`` approval for exactly the
     current grants of an environment flagged over that connection's ceiling (a directory change
-    opened it, GA-5.3) clears the flag and is ``applied``."""
-    if row.kind not in _SHARING or row.state != "approved":
+    opened it, GA-5.3) clears the flag and is ``applied``. An approved ``connect_data_source``
+    links its environment unless the connection is gone or the audience exceeds its ceiling."""
+    if row.state != "approved":
         return "not_applicable", None
+    if row.kind is RequirementKind.CONNECT_DATA_SOURCE:
+        return await _link_approved(uow, row)
+    if row.kind in _SHARING:
+        return await _apply_grants(uow, row)
+    return "not_applicable", None
+
+
+async def _apply_grants(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcome, str | None]:
     desired = _stored_grants(row)
     params = {"org": uow.org_id, "app": row.app_id, "env": row.environment_id}
     env = (await uow.conn.execute(_LOCK_ENV, params)).one()

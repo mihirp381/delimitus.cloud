@@ -137,13 +137,17 @@ const NOT_APPLIED: Readonly<Record<string, string>> = {
   app_not_active: 'the app is not active',
   requester_cannot_build: 'the requester can no longer build the app',
   payload_invalid: 'the stored request cannot be read',
+  connection_missing: 'the connection no longer exists',
+  ceiling: "the app's audience is beyond the connection's ceiling",
 };
 
 /** What an approval did once it was approved: whether the grant was applied, and why not. */
 export function appliedText(d: ApprovalDecided): string {
   switch (d.applied) {
     case 'applied':
-      return 'Approved, and the sharing change is now in force.';
+      return d.kind === 'connect_data_source'
+        ? 'Approved, and the environment is linked to the connection.'
+        : 'Approved, and the sharing change is now in force.';
     case 'waiting':
       return 'Approved. The change applies when the other approvals it needs are in.';
     case 'not_applied':
