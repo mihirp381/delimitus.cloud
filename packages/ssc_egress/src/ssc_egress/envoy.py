@@ -214,12 +214,13 @@ def _allow(index: int, pattern: str) -> dict[str, Any]:
 
 def _routes(policy: Policy) -> list[dict[str, Any]]:
     if not policy.users:
+        refused: tuple[tuple[str, dict[str, Any]], ...] = (
+            ("no-credentials", {"connect_matcher": {}}),
+            ("no-credentials-plain", {"prefix": ""}),
+        )
         return [
             {"name": name, "match": match, "direct_response": {"status": 401}}
-            for name, match in (
-                ("no-credentials", {"connect_matcher": {}}),
-                ("no-credentials-plain", {"prefix": ""}),
-            )
+            for name, match in refused
         ]
     return [
         *(_allow(i, p) for i, p in enumerate(policy.hosts)),

@@ -111,6 +111,11 @@ include = [
   "e2e/isolation/rig.py",
   "packages/ssc_landing/src",
   "packages/ssc_console_host/src",
+  "packages/ssc_control/src/ssc_control/identity",
+  "packages/ssc_control/src/ssc_control/cell",
+  "packages/ssc_control/src/ssc_control/connections",
+  "packages/ssc_control/src/ssc_control/egress",
+  "packages/ssc_egress/src",
 ]
 strict = [
   "packages/ssc_contracts/src",
@@ -145,6 +150,11 @@ strict = [
   "e2e/isolation/rig.py",
   "packages/ssc_landing/src",
   "packages/ssc_console_host/src",
+  "packages/ssc_control/src/ssc_control/identity",
+  "packages/ssc_control/src/ssc_control/cell",
+  "packages/ssc_control/src/ssc_control/connections",
+  "packages/ssc_control/src/ssc_control/egress",
+  "packages/ssc_egress/src",
 ]
 reportMissingImports = true
 

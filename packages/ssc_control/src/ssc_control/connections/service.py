@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, Literal, cast
 
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ssc_contracts.audit import AuditAction
@@ -211,7 +211,7 @@ class Link:
     connection: Connection
 
 
-def _connection(row: Mapping[str, Any]) -> Connection:
+def _connection(row: RowMapping) -> Connection:
     return Connection(
         id=str(row["id"]),
         name=str(row["name"]),

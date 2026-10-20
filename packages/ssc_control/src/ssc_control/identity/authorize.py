@@ -35,7 +35,7 @@ import re
 import secrets
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, cast
 from urllib.parse import parse_qs, urlencode
 
 from fastapi import FastAPI, Request, Response
@@ -144,7 +144,7 @@ def registration(body: object) -> Registration | tuple[str, str]:  # noqa: C901,
     """The client a registration asks for, or ``(error, description)`` (RFC 7591 section 3.2.2)."""
     if not isinstance(body, dict):
         return "invalid_client_metadata", "the body is a JSON object"
-    fields: dict[str, object] = {str(k): v for k, v in body.items()}  # pyright: ignore[reportUnknownVariableType]
+    fields = {str(k): v for k, v in cast(dict[object, object], body).items()}
     uris = fields.get("redirect_uris")
     if not isinstance(uris, list) or not 1 <= len(uris) <= oauth.MAX_REDIRECT_URIS:  # pyright: ignore[reportUnknownArgumentType]
         return "invalid_redirect_uri", "redirect_uris lists 1 to 10 URIs"
