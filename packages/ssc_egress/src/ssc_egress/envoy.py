@@ -35,10 +35,16 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from ssc_contracts.egress import (
+    BUILD_HOSTS,
+    BUILD_PLAIN_HOSTS,
+    BUILD_PROXY_PORT,
+    BUILD_USER,
     DRAIN_SECONDS,
     PROXY_PORT,
+    TUNNEL_PORT,
     authority_regex,
     credential_user,
+    plain_authority_regex,
     refusal_message,
 )
 from ssc_shared.access import AccessView
@@ -57,8 +63,26 @@ NOT_AUTHENTICATED: Final = (
     "carries; it is missing, revoked, or the app is stopped."
 )
 NOT_CONNECT: Final = "The cell's egress proxy opens HTTPS tunnels (CONNECT) only."
+BUILD_LISTENER: Final = "build"
+BUILD_NOT_AUTHENTICATED: Final = (
+    "The cell's build network needs the build credential, which the build's HTTPS_PROXY carries."
+)
+BUILD_REFUSED: Final = (
+    "The cell's build network refused %REQ(:AUTHORITY)%: a build reaches only the platform's "
+    f"package registries and toolchain sources, over HTTPS (CONNECT to port {TUNNEL_PORT}), and "
+    "Debian's archives over plain HTTP. See BUILD_HOST_NOT_ALLOWED."
+)
 _T: Final = "type.googleapis.com/envoy.extensions."
 _CONNECT: Final = {"upgrade_type": "CONNECT"}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BuildListener:
+    user: str
+    sha1: str
+    port: int = BUILD_PROXY_PORT
+    hosts: tuple[str, ...] = BUILD_HOSTS
+    plain_hosts: tuple[str, ...] = BUILD_PLAIN_HOSTS
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -70,6 +94,7 @@ class EgressConfig:
     lds_dir: str = "/tmp/ssc-egress"  # noqa: S108  (the container's own memory)
     resolvers: tuple[str, ...] = PUBLIC_RESOLVERS
     max_connections: int = 2000
+    build: BuildListener | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +141,13 @@ def _dns_cache(cfg: EgressConfig) -> dict[str, Any]:
 
 def bootstrap(cfg: EgressConfig) -> dict[str, Any]:
     """The fixed part: the forward-proxy cluster and the listener read from ``LDS_FILE``."""
+    config = _bootstrap(cfg)
+    if cfg.build is not None:
+        config["static_resources"]["listeners"] = [build_listener(cfg, cfg.build)]
+    return config
+
+
+def _bootstrap(cfg: EgressConfig) -> dict[str, Any]:
     return {
         "node": {"id": "ssc-egress", "cluster": "ssc-egress"},
         "dynamic_resources": {
@@ -234,14 +266,73 @@ def _htpasswd(users: Iterable[tuple[str, str]]) -> str:
 
 def listener(cfg: EgressConfig, policy: Policy) -> dict[str, Any]:
     """The listener for ``policy``."""
+    mappers = [
+        _reply(401, NOT_AUTHENTICATED, 407),
+        _reply(403, refusal_message("%REQ(:AUTHORITY)%")),
+        _reply(405, NOT_CONNECT),
+    ]
+    return _listener(
+        cfg, LISTENER, cfg.port, users=policy.users, routes=_routes(policy), mappers=mappers
+    )
+
+
+def _plain(index: int, host: str) -> dict[str, Any]:
+    return {
+        "name": f"plain-{index}",
+        "match": {
+            "prefix": "",
+            "headers": [
+                {
+                    "name": ":authority",
+                    "string_match": {"safe_regex": {"regex": plain_authority_regex(host)}},
+                },
+                {"name": ":method", "string_match": {"safe_regex": {"regex": "^(GET|HEAD)$"}}},
+            ],
+        },
+        "request_headers_to_remove": ["proxy-authorization", USER_HEADER],
+        "route": {"cluster": CLUSTER, "timeout": "0s"},
+    }
+
+
+def build_listener(cfg: EgressConfig, build: BuildListener) -> dict[str, Any]:
+    routes = [
+        *(_allow(i, host) for i, host in enumerate(build.hosts)),
+        *(_plain(i, host) for i, host in enumerate(build.plain_hosts)),
+        {"name": "refuse", "match": {"connect_matcher": {}}, "direct_response": {"status": 403}},
+        {"name": "refuse-plain", "match": {"prefix": ""}, "direct_response": {"status": 403}},
+    ]
+    mappers = [_reply(401, BUILD_NOT_AUTHENTICATED, 407), _reply(403, BUILD_REFUSED)]
+    resource = _listener(
+        cfg,
+        BUILD_LISTENER,
+        build.port,
+        users=((build.user, build.sha1),),
+        routes=routes,
+        mappers=mappers,
+        options={"http_protocol_options": {"allow_absolute_url": True}},
+    )
+    del resource["@type"]
+    return resource
+
+
+def _listener(  # noqa: PLR0913
+    cfg: EgressConfig,
+    name: str,
+    port: int,
+    *,
+    users: tuple[tuple[str, str], ...],
+    routes: list[dict[str, Any]],
+    mappers: list[dict[str, Any]],
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     filters: list[dict[str, Any]] = []
-    if policy.users:
+    if users:
         filters.append(
             {
                 "name": "envoy.filters.http.basic_auth",
                 "typed_config": {
                     "@type": _T + "filters.http.basic_auth.v3.BasicAuth",
-                    "users": {"inline_string": _htpasswd(policy.users)},
+                    "users": {"inline_string": _htpasswd(users)},
                     "forward_username_header": USER_HEADER,
                     "authentication_header": "proxy-authorization",
                 },
@@ -274,11 +365,14 @@ def listener(cfg: EgressConfig, policy: Policy) -> dict[str, Any]:
         "received": "%BYTES_RECEIVED%",
         "ms": "%DURATION%",
     }
+    if name != LISTENER:
+        log_format["listener"] = name
     hcm = {
         "@type": _T + "filters.network.http_connection_manager.v3.HttpConnectionManager",
-        "stat_prefix": "egress",
+        "stat_prefix": name,
         "codec_type": "HTTP1",
         "request_headers_timeout": "10s",
+        **(options or {}),
         "upgrade_configs": [_CONNECT],
         "access_log": [
             {
@@ -290,22 +384,16 @@ def listener(cfg: EgressConfig, policy: Policy) -> dict[str, Any]:
             }
         ],
         "route_config": {
-            "name": "egress",
-            "virtual_hosts": [{"name": "egress", "domains": ["*"], "routes": _routes(policy)}],
+            "name": name,
+            "virtual_hosts": [{"name": name, "domains": ["*"], "routes": routes}],
         },
-        "local_reply_config": {
-            "mappers": [
-                _reply(401, NOT_AUTHENTICATED, 407),
-                _reply(403, refusal_message("%REQ(:AUTHORITY)%")),
-                _reply(405, NOT_CONNECT),
-            ]
-        },
+        "local_reply_config": {"mappers": mappers},
         "http_filters": filters,
     }
     return {
         "@type": "type.googleapis.com/envoy.config.listener.v3.Listener",
-        "name": LISTENER,
-        "address": {"socket_address": {"address": "0.0.0.0", "port_value": cfg.port}},  # noqa: S104  (the cell's apps reach it)
+        "name": name,
+        "address": {"socket_address": {"address": "0.0.0.0", "port_value": port}},  # noqa: S104  (the cell's apps reach it)
         "filter_chains": [
             {
                 "filters": [
@@ -342,8 +430,10 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python -m ssc_egress.envoy")
     parser.add_argument("part", choices=("bootstrap", "listener"))
     parser.add_argument("--host", action="append", default=[], help="an allowlist entry")
+    parser.add_argument("--build", action="store_true", help="with the build listener")
     args = parser.parse_args(argv)
-    cfg = EgressConfig()
+    build = BuildListener(user=BUILD_USER, sha1="B" * 27 + "=") if args.build else None
+    cfg = EgressConfig(build=build)
     example = Policy(tuple(args.host), (("env_" + "a" * 20 + ".example00000", "A" * 27 + "="),))
     out = bootstrap(cfg) if args.part == "bootstrap" else lds_document(cfg, example)
     json.dump(out, sys.stdout, indent=1)

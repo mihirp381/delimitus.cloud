@@ -13,6 +13,7 @@ from ssc_contracts.packages import HOW_TO_ASK
 
 BUILD_DEPENDENCY_UNRESOLVED: Final = "BUILD_DEPENDENCY_UNRESOLVED"
 BUILD_PRIVATE_REGISTRY: Final = "BUILD_PRIVATE_REGISTRY"
+BUILD_HOST_NOT_ALLOWED: Final = "BUILD_HOST_NOT_ALLOWED"
 BUILD_NO_ENTRYPOINT: Final = "BUILD_NO_ENTRYPOINT"
 BUILD_EXITED_NONZERO: Final = "BUILD_EXITED_NONZERO"
 BUILD_UNSUPPORTED_RUNTIME: Final = "BUILD_UNSUPPORTED_RUNTIME"
@@ -35,6 +36,11 @@ FIX_ITS: Final[Mapping[str, str]] = MappingProxyType(
         BUILD_PRIVATE_REGISTRY: "The app installs from a private package registry, which the "
         "build cannot reach and holds no credentials for. Use public packages only; for one the "
         "platform does not carry, ask for it with ADD_APPROVED_PACKAGE.",
+        BUILD_HOST_NOT_ALLOWED: "A build step tried to reach a host the build network does not "
+        "allow. A build reaches only the public package registries and toolchain sources: PyPI, "
+        "npm and Yarn, nodejs.org, GitHub and its release downloads, ghcr.io, Docker Hub and "
+        "Debian's archives. Remove the download from the install or build script (a postinstall "
+        "or setup.py that fetches from the internet), or vendor the file into the source.",
         BUILD_NO_ENTRYPOINT: "The build could not tell how to start the app. Set start under "
         "[runtime] in ssc.toml (for Streamlit: streamlit run app.py --server.port $PORT "
         "--server.address 0.0.0.0) or add a Procfile with one web: line. A notebook is not an "

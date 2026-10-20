@@ -134,7 +134,7 @@ RULES: Final = (
         "file frozen: keep the lock file in step with the dependency list, and use no private "
         "registry.",
         doctor=("LOCKFILE_STALE",),
-        build=("BUILD_DEPENDENCY_UNRESOLVED", "BUILD_PRIVATE_REGISTRY"),
+        build=("BUILD_DEPENDENCY_UNRESOLVED", "BUILD_PRIVATE_REGISTRY", "BUILD_HOST_NOT_ALLOWED"),
     ),
     PlatformRule(
         id="system-packages",
