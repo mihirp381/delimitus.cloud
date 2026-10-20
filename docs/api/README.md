@@ -152,6 +152,10 @@ A cell resource (`GET /v1/cell`) and the warm gateway (`GET /v1/warm`) carry the
 | `CELL_RESOURCE_STALLED` | Its job raised on every attempt. |
 | `CELL_RESOURCE_UNVERIFIED` | The runs ended well three times but the cell's agent never found the resource there to use (resources only). |
 
+A failed build (`GET /v1/builds/{id}`) carries a `failure_code` from `ssc_contracts.build`, and
+`ssc` prints its fix-it. `BUILD_HOST_NOT_ALLOWED` (SSC-076): a build step tried to reach a host
+outside the package registries the cell's build network allows.
+
 **A rollback past migrations needs `confirm`** (SSC-043). A release has `latest_migrations`, the
 last migration name per ledger its build found (`prisma`, `alembic`, `django`, `drizzle`,
 `knex`), or null when the build did not read the source. A rollback to a release that lacks
