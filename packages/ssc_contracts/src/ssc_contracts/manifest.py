@@ -35,6 +35,7 @@ from pydantic import (
     model_validator,
 )
 
+from ssc_contracts import egress
 from ssc_contracts.identity import EnvironmentName
 
 SCHEMA_V1: Final = "ssc/v1"
@@ -190,6 +191,9 @@ def _hostname(value: str) -> str:
         raise ValueError("must be a DNS host name such as api.example.com")
     if labels[-1].isdigit():
         raise ValueError("IP addresses are not allowed; name the host")
+    problem = egress.storage_host_problem(value)
+    if problem is not None:
+        raise ValueError(problem)
     return value
 
 

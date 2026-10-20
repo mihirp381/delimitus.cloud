@@ -344,6 +344,9 @@ def test_runtime_rules(body: str, fragment: str | None) -> None:
     assert message is None if fragment is None else fragment in (message or "")
 
 
+STORAGE_REFUSED = "Cloud Storage is never allowed; an app keeps files with the file broker"
+
+
 @pytest.mark.parametrize(
     ("host", "fragment"),
     [
@@ -362,6 +365,10 @@ def test_runtime_rules(body: str, fragment: str | None) -> None:
         ("a_b.example.com", "DNS host name"),
         ("example.com.", "DNS host name"),
         ("a" * 64 + ".com", "DNS host name"),
+        ("storage.googleapis.com", STORAGE_REFUSED),
+        ("bucket.storage.googleapis.com", STORAGE_REFUSED),
+        ("storage.cloud.google.com", STORAGE_REFUSED),
+        ("api.stripe.com", None),
     ],
 )
 def test_egress_host_rules(host: str, fragment: str | None) -> None:
