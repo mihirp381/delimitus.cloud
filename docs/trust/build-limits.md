@@ -37,7 +37,7 @@ by the founder, 2026-10-08 (GA-6.5).
 
 ## Secrets in source
 
-- `.env` and `.env.*` files are never uploaded. [ignore.py:14-23]
+- `.env` and `.env.*` files are never uploaded. [ignore.py:19, 30-33; tarcheck.py `_checked_name`]
 - `ssc deploy` scans the folder before upload and uploads nothing if the local scan finds a
   secret; the build runs a wider scan and refuses what it finds. The control plane repeats the
   local scan on the stored bundle. Besides credential-like names, the local scan knows GitHub,

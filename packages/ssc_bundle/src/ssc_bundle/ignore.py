@@ -4,7 +4,8 @@
 gitignore syntax, negation included, but cannot re-include a fixed or hygiene exclusion, and
 cannot leave out ``ssc.toml`` at the root: the CLI checks the manifest on disk, so the server
 must receive that one, not fall back to the default (B-2). ``dist/`` and ``build/`` are kept:
-static sites ship them.
+static sites ship them. macOS metadata (``._*`` AppleDouble twins, ``__MACOSX/``, ``.DS_Store``)
+is hygiene: never packed, and refused by the server (B-9).
 """
 
 from collections.abc import Iterable
@@ -16,9 +17,14 @@ from pathspec import GitIgnoreSpec
 from ssc_contracts.manifest import MANIFEST_FILE
 
 FIXED_PATTERNS: Final = (".env", ".env.*", "node_modules/", ".git")
-HYGIENE_PATTERNS: Final = (".venv/", "__pycache__/", ".DS_Store")
+HYGIENE_PATTERNS: Final = (".venv/", "__pycache__/", ".DS_Store", "._*", "__MACOSX/")
 IGNORE_FILE: Final = ".sscignore"
 ENV_REASON: Final = ".env"
+
+
+def is_macos_metadata(name: str) -> bool:
+    """A path part macOS writes beside a file: an AppleDouble ``._*`` twin or ``.DS_Store``."""
+    return name.startswith("._") or name == ".DS_Store"
 
 
 def is_env_name(name: str) -> bool:

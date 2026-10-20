@@ -116,6 +116,33 @@ def test_knex_reads_its_directory_from_the_knexfile() -> None:
     assert found(escape) == {}
 
 
+def test_apple_double_files_are_not_migrations() -> None:
+    """B-9: a macOS tar's ``._`` twin of each file is no migration of any ledger."""
+    files = {
+        "knexfile.js": "module.exports = {};",
+        "migrations/20261001_init.js": "",
+        "migrations/._20261001_init.js": "",
+        "._knexfile.js": "",
+        "prisma/migrations/0001_a/migration.sql": "",
+        "prisma/migrations/._0002_b/migration.sql": "",
+        "prisma/migrations/0003_c/._migration.sql": "",
+        "manage.py": "",
+        "shop/migrations/__init__.py": "",
+        "shop/migrations/0001_initial.py": "",
+        "shop/._migrations/0002_x.py": "",
+        "db/env.py": "",
+        "db/versions/a1.py": alembic("a1", "None"),
+        "db/versions/._a1.py": None,
+        "__MACOSX/migrations/20261009_x.js": "",
+    }
+    assert found(files) == {
+        "prisma": ("0001_a",),
+        "alembic": ("a1",),
+        "django": ("shop.0001_initial",),
+        "knex": ("20261001_init.js",),
+    }
+
+
 @pytest.mark.parametrize(
     "path",
     [

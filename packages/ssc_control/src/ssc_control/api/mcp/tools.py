@@ -408,6 +408,7 @@ def pack_instructions(settings: Settings) -> Body:
             "relative paths, regular files and directories only (no links)",
             "no .env or .env.* files, and no secret values in any file",
             "leave out node_modules/ and .git",
+            "on macOS run tar with COPYFILE_DISABLE=1; `._*` and `.DS_Store` files are refused",
         ],
         "max_bytes": settings.bundle_max_bytes,
         "max_unpacked_bytes": settings.bundle_max_unpacked_bytes,

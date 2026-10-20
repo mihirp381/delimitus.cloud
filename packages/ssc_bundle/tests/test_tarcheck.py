@@ -76,6 +76,14 @@ def test_env_files_are_refused(name: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "name", ["._app.py", "lib/._util.py", "__MACOSX/._app.py", ".DS_Store", "lib/.DS_Store"]
+)
+def test_macos_metadata_is_refused(name: str) -> None:
+    """B-9: ``._*`` and ``.DS_Store`` entries come from a macOS tar; ssc never packs them."""
+    assert refused(gz(raw_tar(member("app.py"), member(name)))) == "hygiene"
+
+
+@pytest.mark.parametrize(
     "name",
     [
         "/etc/passwd",

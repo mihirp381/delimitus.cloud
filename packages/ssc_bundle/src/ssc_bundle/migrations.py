@@ -15,8 +15,9 @@ the last name of each ledger is its latest:
   names as its migrations ``directory`` (``migrations`` beside it by default); the file name,
   sorted, as Knex records it.
 
-Nothing under ``node_modules``, a virtual environment or ``__pycache__`` counts, and a name
-longer than ``MAX_NAME`` is left out. A ledger with no migration is absent.
+Nothing under ``node_modules``, a virtual environment, ``__pycache__`` or ``__MACOSX`` counts, nor
+any path with a part starting ``._`` (macOS AppleDouble twins, B-9), and a name longer than
+``MAX_NAME`` is left out. A ledger with no migration is absent.
 """
 
 import heapq
@@ -30,7 +31,9 @@ MAX_NAME: Final = 255
 
 type Ledgers = dict[str, tuple[str, ...]]
 
-_SKIP = re.compile(r"(?:^|/)(?:node_modules|\.venv|venv|site-packages|__pycache__)/")
+_SKIP = re.compile(
+    r"(?:^|/)(?:(?:node_modules|\.venv|venv|site-packages|__pycache__|__MACOSX)/|\._)"
+)
 _PRISMA = re.compile(r"^(?P<dir>(?:.*/)?migrations)/(?P<name>[^/]+)/migration\.sql$")
 _PRISMA_HOME = re.compile(r"(?:^|/)prisma/migrations$")
 _ALEMBIC = re.compile(r"^(?P<dir>(?:.*/)?)versions/(?P<stem>[^/]+)\.py$")

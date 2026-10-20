@@ -2,9 +2,11 @@
 
 Streaming, without extracting. Refused as malformed: absolute paths, ``.``/``..`` segments,
 backslashes, names that are not NFC UTF-8, duplicates, links, devices, FIFOs, sparse files,
-``.env`` files, and any non-zero byte after the end of the archive (another tar reader could
-find entries there that this one never saw). Over a cap: more entries than ``max_files``, file
-sizes past ``max_unpacked_bytes``, or a decompressed stream past that plus header room.
+``.env`` files, macOS metadata (``._*`` and ``.DS_Store``, which ``pack`` never adds: a macOS
+``tar`` run without ``COPYFILE_DISABLE=1`` does; B-9), and any non-zero byte after the end of
+the archive (another tar reader could find entries there that this one never saw). Over a cap:
+more entries than ``max_files``, file sizes past ``max_unpacked_bytes``, or a decompressed stream
+past that plus header room.
 """
 
 import gzip
@@ -15,7 +17,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import IO, Final
 
-from ssc_bundle.ignore import is_env_name
+from ssc_bundle.ignore import is_env_name, is_macos_metadata
 from ssc_bundle.limits import BundleMalformedError, BundleTooLargeError, Limits
 from ssc_contracts.manifest import MANIFEST_FILE, MAX_MANIFEST_BYTES
 
@@ -131,6 +133,8 @@ def _checked_name(member: tarfile.TarInfo) -> str:
         raise BundleMalformedError("bad_name", "not a plain relative NFC path", path=name)
     if any(is_env_name(p) for p in parts):
         raise BundleMalformedError("env_file", ".env files are never uploaded", path=name)
+    if any(is_macos_metadata(p) for p in parts):
+        raise BundleMalformedError("hygiene", "macOS metadata is never uploaded", path=name)
     return name
 
 

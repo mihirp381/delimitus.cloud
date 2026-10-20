@@ -1368,3 +1368,10 @@ def test_public_url_setting() -> None:
     assert Settings.from_env(env).mcp_audience == "https://api.example.test/mcp"
     env["SSC_MCP_RESOURCE"] = "https://api.delimitus.com/mcp"
     assert Settings.from_env(env).mcp_audience == "https://api.delimitus.com/mcp"
+
+
+def test_the_pack_rules_say_how_to_pack_on_macos():
+    """B-9: a macOS tar adds ``._*`` twins, which the server refuses."""
+    rules = " ".join(tools.pack_instructions(Settings.for_spec())["rules"])
+    assert "COPYFILE_DISABLE=1" in rules
+    assert "`._*` and `.DS_Store` files are refused" in rules
