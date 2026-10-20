@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -44,6 +45,7 @@ def _tree(
     builds: list[str],
     action_cli: str = "0.0.1",
     listed: list[str] | None = None,
+    without_readme: frozenset[str] = frozenset(),
 ) -> Path:
     workflow = root / tool_workflow()
     workflow.parent.mkdir(parents=True)
@@ -60,6 +62,9 @@ def _tree(
         folder.mkdir(parents=True)
         listed = ", ".join(f'"{d}"' for d in deps)
         text = f'[project]\nname = "{name}"\nversion = "{version}"\ndependencies = [{listed}]\n'
+        if name not in without_readme:
+            text += 'readme = "README.md"\n'
+            (folder / "README.md").write_text(f"# {name}\n")
         (folder / "pyproject.toml").write_text(text)
     return root
 
@@ -159,3 +164,29 @@ def test_the_action_installs_the_released_cli(tool, tmp_path):
     assert tool.check(missing) == [
         ".github/actions/ssc-deploy/action.yml must install ssc-cli==0.0.2 by default"
     ]
+
+
+def test_the_packages_customers_install_declare_a_readme(tool, tmp_path):
+    packages = {"ssc-app": ("0.0.1", []), "ssc-cli": ("0.0.1", [])}
+    root = _tree(tmp_path, packages, ["ssc-app", "ssc-cli"], without_readme=frozenset({"ssc-cli"}))
+    assert tool.check(root) == ["ssc-cli must declare a readme that exists"]
+
+
+PUBLIC_READMES = [
+    ROOT / "packages" / "ssc_app" / "README.md",
+    ROOT / "packages" / "ssc_cli" / "README.md",
+    *sorted((ROOT / "helpers" / "node").glob("*/README.md")),
+]
+
+
+@pytest.mark.parametrize("path", PUBLIC_READMES, ids=lambda p: p.parent.name)
+def test_a_readme_pypi_or_npm_shows_names_no_repository_path(path: Path):
+    text = path.read_text(encoding="utf-8")
+    assert re.findall(r"`(?:docs|conformance|packages|helpers|infra|tools)/[^`]*`", text) == []
+    assert re.findall(r"[a-z0-9]{12}\.delimitusapps\.com", text) == []
+
+
+@pytest.mark.parametrize("folder", ["packages/ssc_app", "helpers/node/ssc-identity"])
+def test_the_identity_readmes_give_an_example_origin(folder: str):
+    text = (ROOT / folder / "README.md").read_text(encoding="utf-8")
+    assert "`https://expenses.<cell label>.delimitusapps.com`" in text

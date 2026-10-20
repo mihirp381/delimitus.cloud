@@ -30,4 +30,4 @@ The call carries the app's own identity, so the app holds no database credential
 
 Errors are `DataError` with a `code`: the data gateway's (`CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`, `QUERY_REFUSED`, `QUERY_FAILED` with a `sqlstate`, `DAILY_BUDGET_SPENT`, `APP_NOT_ACTIVE`, ...), `UNREACHABLE` (the gateway or the app's own ID token could not be had) or `BAD_GATEWAY_RESPONSE` (an answer that is not JSON). The data gateway starts from zero, so a query is tried once more on a lost connection or a 502, 503 or 504; one that timed out is not.
 
-The gateway's address comes from the metadata server; `SSC_DATAGW_URL` replaces it. The Python helper is `ssc_app.data`, with the same names (`max_rows`, `max_bytes`, `timeout_ms`). The contract is `docs/contracts/data-gateway.md`.
+The gateway's address comes from the metadata server; `SSC_DATAGW_URL` replaces it. The Python helper is `ssc_app.data`, with the same names (`max_rows`, `max_bytes`, `timeout_ms`).

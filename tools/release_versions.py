@@ -1,7 +1,8 @@
 """The packages ``release-cli.yml`` publishes share one version, on PyPI and on npm: the Python
 ones pin each other to it exactly, each node helper is ready to publish, each publish job lists
-what is built for it, a ``cli-v<version>`` tag names that version, and the ssc-deploy Action
-installs that ``ssc-cli`` by default (decision 017). Exits 1 on any problem.
+what is built for it, the packages customers install declare a readme, a ``cli-v<version>`` tag
+names that version, and the ssc-deploy Action installs that ``ssc-cli`` by default (decision 017).
+Exits 1 on any problem.
 
     uv run --no-project --python 3.14 python tools/release_versions.py [--tag cli-v0.0.1]
 """
@@ -20,6 +21,7 @@ ACTION = Path(".github") / "actions" / "ssc-deploy" / "action.yml"
 HELPERS = Path("helpers") / "node"
 NPM_SCOPE = "@delimitus"
 TAG_PREFIX = "cli-v"
+WITH_README = ("ssc-app", "ssc-cli")
 _ACTION_CLI = re.compile(r'^    default: "ssc-cli==([^"]*)"$', re.M)
 _BUILD = re.compile(r"uv build --package ([A-Za-z0-9._-]+)")
 _PYPI_MATRIX = re.compile(r"^ +package: \[([^\]]*)\]$", re.M)
@@ -60,6 +62,18 @@ def members(root: Path) -> dict[str, dict[str, Any]]:
 def _requirements(project: dict[str, Any]) -> list[str]:
     extras = project.get("optional-dependencies", {})
     return [*project.get("dependencies", []), *(r for group in extras.values() for r in group)]
+
+
+def _readme_problems(root: Path, names: list[str]) -> list[str]:
+    problems: list[str] = []
+    for path in sorted(root.glob("packages/*/pyproject.toml")):
+        project = tomllib.loads(path.read_text())["project"]
+        name = canonical(project["name"])
+        readme = project.get("readme")
+        if name in WITH_README and name in names:
+            if not isinstance(readme, str) or not (path.parent / readme).is_file():
+                problems.append(f"{name} must declare a readme that exists")
+    return problems
 
 
 def _helper_problems(root: Path, version: str) -> list[str]:
@@ -118,6 +132,7 @@ def check(root: Path, tag: str | None = None) -> list[str]:
             spec = req[m.end() :].strip() if m else ""
             if spec != f"=={versions[dep]}":
                 problems.append(f"{name} must pin {dep}=={versions[dep]}, not {req!r}")
+    problems += _readme_problems(root, names)
     version = versions[names[-1]]
     problems += _helper_problems(root, version)
     if "ssc-cli" in versions:

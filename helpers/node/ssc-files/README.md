@@ -34,4 +34,4 @@ Each call asks the data gateway for a signed link with the app's own identity, t
 
 Errors are `FilesError` with a `code`: the data gateway's (`FILE_NOT_FOUND`, `FILES_QUOTA_EXCEEDED`, `APP_NOT_ACTIVE`, `VALIDATION_FAILED`, ...), `STORAGE_<status>` when Cloud Storage refused the transfer, `FILE_TOO_LARGE` when the data is over the link's `max_bytes` (refused before anything is sent), `UNREACHABLE` (the gateway, Cloud Storage or the app's own ID token could not be had) or `BAD_GATEWAY_RESPONSE` (an answer that is not JSON). The data gateway starts from zero, so a call to it is tried once more on a timeout, a lost connection or a 502, 503 or 504. `remove` is idempotent: a retried remove that finds nothing succeeds.
 
-The gateway's address comes from the metadata server; `SSC_DATAGW_URL` replaces it. The Python helper is `ssc_app.files`, with the same names (`delete` for `remove`). The contract is `docs/contracts/data-gateway.md#files`.
+The gateway's address comes from the metadata server; `SSC_DATAGW_URL` replaces it. The Python helper is `ssc_app.files`, with the same names (`delete` for `remove`).

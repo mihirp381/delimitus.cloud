@@ -31,4 +31,4 @@ Two rules:
 
 Every refusal is an `IdentityRefused` with a `code` (`missing`, `malformed`, `wrong_type`, `wrong_algorithm`, `unknown_key`, `bad_signature`, `wrong_audience`, `wrong_issuer`, `expired`, `not_yet_valid`, `ttl_too_long`, `bad_claims`). Treat them all as "not a signed-in user of this app": answer 401 and never echo the token.
 
-The full contract is `docs/contracts/identity-note.md` in the SSC repository. `npm test` runs the shared vectors in `conformance/identity_note/vectors.json`, the same ones the Python helper `ssc_app.identity` runs.
+`SSC_APP_ORIGIN` is the app's exact origin, such as `https://expenses.<cell label>.delimitusapps.com` (`https://expenses--preview.<cell label>.delimitusapps.com` in preview). Code outside SSC may pass `https://keys.delimitus.com/<cell label>/jwks.json` as `keys`. The note is an ES256 JWT (`typ: ssc-id+jwt`). This helper and the Python one, `ssc_app.identity`, are tested against the same shared vectors, so the same token gets the same answer from both.

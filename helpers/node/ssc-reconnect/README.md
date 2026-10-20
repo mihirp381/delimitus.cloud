@@ -41,6 +41,6 @@ In the page:
 
 Both server helpers take `{ margin }` in seconds (30) and `endBeforeDeadline` also `{ retryMs }` (1000). Both return a function that cancels, and cancel themselves when the stream closes first. A stream that opens with less than the margin left is ended after half the time left (`secondsToWait`), never at once. Without the header, as on a laptop, nothing is cut.
 
-A reconnect is a new connection. Keep anything that must outlive one in Postgres or in the browser. Streamlit, Gradio, Dash and Shiny use their own connections and cannot use this; see the session-app note in `docs/contracts/manifest.md`.
+A reconnect is a new connection. Keep anything that must outlive one in Postgres or in the browser. Streamlit, Gradio, Dash and Shiny use their own connections and cannot use this; an app using one is a session app, which runs on one instance and whose connections end at 60 minutes.
 
-`npm test` runs the shared vectors in `conformance/reconnect/vectors.json`, the same ones the Python helper `ssc_app.reconnect` runs, and holds a stream across a limit shortened to two seconds.
+This helper and the Python one, `ssc_app.reconnect`, are tested against the same shared vectors, and a test holds a stream across a limit shortened to two seconds.
