@@ -226,3 +226,10 @@ def test_a_page_over_the_weight_limit_is_refused() -> None:
 def test_inline_blocks_and_mailto_links_are_allowed() -> None:
     page = '<style>a{}</style><script>1</script><a href="mailto:x@example.com">x</a><a href="#a">'
     check_page(page, len(page))
+
+
+def test_the_egress_example_does_not_promise_a_per_app_allowlist() -> None:
+    """The allowlist is org-wide: an app reaches every host its admin allowed (egress contract)."""
+    text = _text_without_styles()
+    assert "Reaches only the internet hosts your admin allowed" in text
+    assert "tracking site and nothing else" not in text
