@@ -587,6 +587,23 @@ def test_a_rate_limit_slides_and_stays_bounded() -> None:
     assert limit.allow("c") and limit.allow("c") and not limit.allow("c")
 
 
+def test_a_full_rate_limit_counts_nothing() -> None:
+    """``full`` asks without counting: the callback and token failure windows count only a
+    refusal, but stop an address whose window is already full."""
+    now = [0.0]
+    limit = RateLimit(lambda: now[0], 2, window=10.0)
+    assert not limit.full("a"), "an unseen key is not full"
+    for _ in range(5):
+        assert not limit.full("a")
+    assert limit.allow("a") and not limit.full("a")
+    now[0] = 5.0
+    assert limit.allow("a") and limit.full("a") and limit.full("a")
+    now[0] = 10.0
+    assert not limit.full("a"), "the first request slid out of the window"
+    assert limit.allow("a") and limit.full("a")
+    assert not limit.allow("a"), "allow and full agree"
+
+
 # ── registration ─────────────────────────────────────────────────────────────
 
 

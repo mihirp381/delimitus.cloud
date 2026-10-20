@@ -12,6 +12,7 @@ import html
 import logging
 import re
 import secrets
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -35,7 +36,20 @@ from ssc_control.db import NewOrg, bound_org, create_org, make_engine
 from ssc_control.identity import join, pages, sessions, tokens
 from ssc_control.identity.authhost import DEVICE_GRANT, AuthHost, create_auth_app
 from ssc_control.identity.cell_callers import CallerCheck, CellCaller, DevCallers
-from ssc_control.identity.limits import DEVICE_PER_HOUR
+from ssc_control.identity.limits import (
+    CALLBACK_FAILURES_PER_HOUR,
+    CALLBACK_PER_HOUR,
+    DEVICE_PER_HOUR,
+    HOUR,
+    LOGIN_PER_HOUR,
+    LOGIN_PER_ORG_PER_HOUR,
+    REDEEM_FAILURES_PER_HOUR,
+    REVOKE_PER_HOUR,
+    TOKEN_FAILURES_PER_HOUR,
+    TOKEN_PER_HOUR,
+    USER_CODE_PER_HOUR,
+    USER_CODE_PER_ORG_PER_HOUR,
+)
 from ssc_control.identity.settings import AuthSettings
 from ssc_shared.hosts import cell_project
 
@@ -71,12 +85,31 @@ class FixedCallers:
 
 
 @dataclass
+class Clock:
+    """The auth host's clock: the real time plus ``offset``, which a test moves on."""
+
+    offset: float = 0.0
+
+    def __call__(self) -> float:
+        return time.time() + self.offset
+
+    def pass_the_hour(self) -> None:
+        """Slide every abuse-limit window past what it has counted."""
+        self.offset += HOUR + 1
+
+
+@dataclass
 class Rig:
     w: World
     label: str
     signer: tokens.Signer
     host: AuthHost
     http: httpx2.AsyncClient
+
+    @property
+    def clock(self) -> Clock:
+        assert isinstance(self.host.clock, Clock), "this rig's host keeps the real time"
+        return self.host.clock
 
     def app_url(self, app: str = "ledger", path: str = "/books?y=1") -> str:
         return f"https://{app}.{self.label}.{DOMAIN}{path}"
@@ -140,7 +173,7 @@ async def rig(dsns: Dsns) -> AsyncIterator[Rig]:
     s = settings(dsns)
     signer = tokens.Signer(s.signing_pem, s.signing_kid, s.auth_url)
     workos = w.wo.client()
-    host = AuthHost(s, w.engine, workos, signer, DevCallers(SECRET))
+    host = AuthHost(s, w.engine, workos, signer, DevCallers(SECRET), clock=Clock())
     http = client_for(host)
     try:
         yield Rig(w, str(label[0]), signer, host, http)
@@ -598,6 +631,226 @@ async def test_device_logins_are_limited_per_address(rig: Rig) -> None:
     }
     assert blocked.headers["retry-after"] == "3600"
     assert (await start("10.0.0.2")).status_code == 200
+
+
+# ── abuse limits on sign-in (decision 024, 2026-10-19) ───────────────────────
+
+
+def via(address: str) -> dict[str, str]:
+    """A request from ``address`` as the control load balancer forwards it."""
+    return {"x-forwarded-for": f"{address}, 35.191.0.1"}
+
+
+def login_params(rig: Rig) -> dict[str, str]:
+    return {"org": rig.w.org, "return_to": rig.app_url(), "binding": binding_of("n")}
+
+
+def assert_too_many_page(r: httpx2.Response) -> None:
+    assert (r.status_code, r.text) == (429, pages.TOO_MANY)
+    assert r.headers["cache-control"] == "no-store"
+
+
+def assert_too_many_tokens(r: httpx2.Response) -> None:
+    assert r.status_code == 429
+    assert r.json() == {"error": "invalid_request", "error_description": "too many token requests"}
+    assert (r.headers["retry-after"], r.headers["cache-control"]) == ("3600", "no-store")
+
+
+async def test_logins_are_limited_per_address(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    for _ in range(LOGIN_PER_HOUR):
+        r = await rig.http.get("/login", params=login_params(rig), headers=via("10.0.0.1"))
+        assert r.headers["location"].startswith("https://workos.test/")
+    calls = len(rig.w.wo.calls)
+    with caplog.at_level(logging.WARNING, logger="ssc.auth"):
+        blocked = await rig.http.get("/login", params=login_params(rig), headers=via("10.0.0.1"))
+    assert_too_many_page(blocked)
+    assert "set-cookie" not in blocked.headers, "a refused login sets and clears no cookie"
+    assert "/login refused: too many requests for address 10.0.0.1" in caplog.text
+    assert len(rig.w.wo.calls) == calls
+    other = await rig.http.get("/login", params=login_params(rig), headers=via("10.0.0.2"))
+    assert other.status_code == 302
+    rig.clock.pass_the_hour()
+    again = await rig.http.get("/login", params=login_params(rig), headers=via("10.0.0.1"))
+    assert again.status_code == 302
+
+
+async def test_logins_are_limited_per_org_across_addresses(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    for a in range(LOGIN_PER_ORG_PER_HOUR // LOGIN_PER_HOUR):
+        for _ in range(LOGIN_PER_HOUR):
+            r = await rig.http.get("/login", params=login_params(rig), headers=via(f"10.1.0.{a}"))
+            assert r.status_code == 302
+    with caplog.at_level(logging.WARNING, logger="ssc.auth"):
+        blocked = await rig.http.get("/login", params=login_params(rig), headers=via("10.2.0.1"))
+    assert_too_many_page(blocked)
+    assert "set-cookie" not in blocked.headers
+    assert f"/login refused: too many requests for org {rig.w.org}" in caplog.text
+    rig.clock.pass_the_hour()
+    again = await rig.http.get("/login", params=login_params(rig), headers=via("10.2.0.1"))
+    assert again.status_code == 302
+
+
+async def test_callbacks_are_limited_per_address(rig: Rig) -> None:
+    """Every ``/callback`` counts, a bad request too (the refusal these reach anyway)."""
+    for _ in range(CALLBACK_PER_HOUR):
+        r = await rig.http.get("/callback", params={"code": "x", "state": "s"})
+        assert (r.status_code, r.text) == (400, pages.BAD_REQUEST)
+    r = await rig.login(secrets.token_urlsafe(32))
+    rig.w.wo.profile("late-code", FOUNDER_IDP, "ada@example.com")
+    calls = len(rig.w.wo.calls)
+    blocked = await rig.through_workos(r, "late-code")
+    assert_too_many_page(blocked)
+    assert len(rig.w.wo.calls) == calls, "no code exchange with WorkOS"
+    assert await rig.w.audit(AuditAction.LOGIN_SUCCEEDED) == []
+    rig.clock.pass_the_hour()
+    r = await rig.login(secrets.token_urlsafe(32))
+    assert (await rig.through_workos(r, "late-code")).status_code == 302
+
+
+async def test_refused_sign_ins_stop_an_address_before_workos(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Twenty refused sign-ins an hour, then the next is answered without a code exchange or
+    a ``login.failed`` row; a sign-in that succeeds in between is not counted."""
+
+    async def stranger(n: int) -> httpx2.Response:
+        rig.w.wo.profile(f"bad-{n}", "00ustranger", "ada@example.com")
+        return await rig.through_workos(await rig.login(secrets.token_urlsafe(32)), f"bad-{n}")
+
+    half = CALLBACK_FAILURES_PER_HOUR // 2
+    for n in range(half):
+        assert (await stranger(n)).status_code == 403
+    await rig.sign_in()
+    assert (await rig.http.get("/logout")).status_code == 200
+    for n in range(half, CALLBACK_FAILURES_PER_HOUR):
+        assert (await stranger(n)).status_code == 403
+    assert len(await rig.w.audit(AuditAction.LOGIN_FAILED)) == CALLBACK_FAILURES_PER_HOUR
+    exchanges = rig.w.wo.calls.count("/sso/token")
+    with caplog.at_level(logging.WARNING, logger="ssc.auth"):
+        blocked = await stranger(CALLBACK_FAILURES_PER_HOUR)
+    assert_too_many_page(blocked)
+    assert rig.w.wo.calls.count("/sso/token") == exchanges
+    assert len(await rig.w.audit(AuditAction.LOGIN_FAILED)) == CALLBACK_FAILURES_PER_HOUR
+    assert "/callback refused: too many requests for address 127.0.0.1" in caplog.text
+    assert "bad-" not in caplog.text, "never a code in the log"
+    rig.clock.pass_the_hour()
+    assert (await stranger(CALLBACK_FAILURES_PER_HOUR + 1)).status_code == 403
+
+
+async def test_a_workos_error_counts_as_a_refused_sign_in(rig: Rig) -> None:
+    for _ in range(CALLBACK_FAILURES_PER_HOUR):
+        r = await rig.login(secrets.token_urlsafe(32))
+        state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
+        error = await rig.http.get("/callback", params={"error": "access_denied", "state": state})
+        assert error.status_code == 403
+    r = await rig.login(secrets.token_urlsafe(32))
+    rig.w.wo.profile("okta-code", FOUNDER_IDP, "ada@example.com")
+    assert_too_many_page(await rig.through_workos(r, "okta-code"))
+
+
+async def test_user_codes_are_limited_per_address(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """RFC 8628 §5.1: the user code is the brute-force target, so ten tries an hour per address."""
+    start = (await rig.http.post("/device/authorize", data={"org": rig.w.org})).json()
+    wrong = {"org": rig.w.org, "user_code": "BBBBBBBB"}
+    for _ in range(USER_CODE_PER_HOUR):
+        assert (await rig.http.post("/device", data=wrong)).status_code == 400
+    right = {"org": rig.w.org, "user_code": start["user_code"]}
+    calls = len(rig.w.wo.calls)
+    with caplog.at_level(logging.WARNING, logger="ssc.auth"):
+        blocked = await rig.http.post("/device", data=right)
+    assert_too_many_page(blocked)
+    assert "set-cookie" not in blocked.headers
+    assert "/device refused: too many requests for address 127.0.0.1" in caplog.text
+    assert start["user_code"] not in caplog.text and "BBBBBBBB" not in caplog.text
+    assert len(rig.w.wo.calls) == calls
+    rig.clock.pass_the_hour()
+    assert (await rig.http.post("/device", data=right)).status_code == 200
+
+
+async def test_user_codes_are_limited_per_org_across_addresses(rig: Rig) -> None:
+    wrong = {"org": rig.w.org, "user_code": "BBBBBBBB"}
+    for a in range(USER_CODE_PER_ORG_PER_HOUR // USER_CODE_PER_HOUR):
+        for _ in range(USER_CODE_PER_HOUR):
+            r = await rig.http.post("/device", data=wrong, headers=via(f"10.3.0.{a}"))
+            assert r.status_code == 400
+    assert_too_many_page(await rig.http.post("/device", data=wrong, headers=via("10.4.0.1")))
+    rig.clock.pass_the_hour()
+    r = await rig.http.post("/device", data=wrong, headers=via("10.4.0.1"))
+    assert r.status_code == 400
+
+
+async def test_token_requests_are_limited_per_address(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    for _ in range(TOKEN_PER_HOUR):
+        r = await rig.http.post("/token", data={"grant_type": "password"})
+        assert r.json() == {"error": "unsupported_grant_type"}
+    with caplog.at_level(logging.WARNING, logger="ssc.auth"):
+        blocked = await rig.http.post("/token", data={"grant_type": "password"})
+    assert_too_many_tokens(blocked)
+    assert "/token refused: too many requests for address 127.0.0.1" in caplog.text
+    rig.clock.pass_the_hour()
+    r = await rig.http.post("/token", data={"grant_type": "password"})
+    assert r.json() == {"error": "unsupported_grant_type"}
+
+
+async def test_a_command_line_login_polling_for_its_whole_life_is_never_limited(
+    rig: Rig,
+) -> None:
+    """``ssc login`` polls every ``DEVICE_INTERVAL`` seconds until the code expires."""
+    start = (await rig.http.post("/device/authorize", data={"org": rig.w.org})).json()
+    poll = {"grant_type": DEVICE_GRANT, "device_code": start["device_code"]}
+    for _ in range(tokens.DEVICE_SECONDS // tokens.DEVICE_INTERVAL):
+        r = await rig.http.post("/token", data=poll)
+        assert r.status_code == 400 and r.json()["error"] in {"authorization_pending", "slow_down"}
+        rig.clock.offset += tokens.DEVICE_INTERVAL
+
+
+async def test_wrong_grants_stop_an_address(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    junk = {"grant_type": "refresh_token", "refresh_token": "srt_junk"}
+    for _ in range(TOKEN_FAILURES_PER_HOUR):
+        r = await rig.http.post("/token", data=junk)
+        assert (r.status_code, r.json()) == (400, {"error": "invalid_grant"})
+    start = (await rig.http.post("/device/authorize", data={"org": rig.w.org})).json()
+    poll = {"grant_type": DEVICE_GRANT, "device_code": start["device_code"]}
+    with caplog.at_level(logging.WARNING, logger="ssc.auth"):
+        assert_too_many_tokens(await rig.http.post("/token", data=poll))
+    assert "srt_junk" not in caplog.text and start["device_code"] not in caplog.text
+    other = await rig.http.post("/token", data=poll, headers=via("10.5.0.1"))
+    assert other.json() == {"error": "authorization_pending"}
+    rig.clock.pass_the_hour()
+    r = await rig.http.post("/token", data=junk)
+    assert (r.status_code, r.json()) == (400, {"error": "invalid_grant"})
+
+
+async def test_revokes_are_limited_per_address(rig: Rig) -> None:
+    for _ in range(REVOKE_PER_HOUR):
+        assert (await rig.http.post("/revoke", data={"token": "junk"})).status_code == 200
+    assert_too_many_tokens(await rig.http.post("/revoke", data={"token": "junk"}))
+    rig.clock.pass_the_hour()
+    assert (await rig.http.post("/revoke", data={"token": "junk"})).status_code == 200
+
+
+async def test_codes_a_gateway_cannot_redeem_stop_its_org(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The gateway is the caller, so the count is the org's, whatever address it comes from."""
+    location, nonce = await rig.sign_in()
+    wrong = {"org": rig.w.org, "code": "junk", "host": urlsplit(location).hostname, "nonce": nonce}
+    gateway = {"authorization": f"Bearer dev.{SECRET}"}
+    for n in range(REDEEM_FAILURES_PER_HOUR):
+        r = await rig.http.post(
+            "/internal/redeem", json=wrong, headers={**gateway, **via(f"10.6.0.{n % 4}")}
+        )
+        assert (r.status_code, r.json()) == (400, {"error": "invalid_grant"})
+    with caplog.at_level(logging.WARNING, logger="ssc.auth"):
+        assert_too_many_tokens(await rig.redeem(location, nonce))
+    assert f"/internal/redeem refused: too many requests for org {rig.w.org}" in caplog.text
+    rig.clock.pass_the_hour()
+    assert (await rig.redeem(location, nonce)).status_code == 200, "the refused try kept the code"
 
 
 # ── the API ──────────────────────────────────────────────────────────────────

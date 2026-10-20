@@ -27,6 +27,14 @@ the API lists and revokes them.
 Every refused sign-in shows the same page (``pages.REFUSED``); the reason is logged and audited
 as ``login.failed``. Login state lives in a signed, ten-minute cookie; the WorkOS ``state`` is only
 its random check value.
+
+Abuse limits (``limits``, per instance): every unauthenticated route that reads the database or
+calls WorkOS is counted first, per client address (``limits.client_address``) and, where the
+route names one, per org; ``/callback`` and ``/token`` also stop an address that keeps failing,
+and ``/internal/redeem`` an org whose gateway keeps failing. A browser route over its limit
+answers ``pages.TOO_MANY`` (429) and sets no cookie; an OAuth route answers 429
+``invalid_request`` with ``retry-after: 3600``. Each refusal is logged once with the route and
+the address or org, never a code, a token or a user code.
 """
 
 import base64
@@ -60,8 +68,18 @@ from ssc_control.identity import connections, join, pages, sessions, tokens
 from ssc_control.identity.authorize import DEVICE_GRANT, Kit, OAuthFlow
 from ssc_control.identity.cell_callers import CallerCheck
 from ssc_control.identity.limits import (
+    CALLBACK_FAILURES_PER_HOUR,
+    CALLBACK_PER_HOUR,
     CI_TOKENS_PER_HOUR,
     DEVICE_PER_HOUR,
+    LOGIN_PER_HOUR,
+    LOGIN_PER_ORG_PER_HOUR,
+    REDEEM_FAILURES_PER_HOUR,
+    REVOKE_PER_HOUR,
+    TOKEN_FAILURES_PER_HOUR,
+    TOKEN_PER_HOUR,
+    USER_CODE_PER_HOUR,
+    USER_CODE_PER_ORG_PER_HOUR,
     RateLimit,
     client_address,
 )
@@ -165,6 +183,32 @@ def _oauth_error(error: str, status: int = 400) -> JSONResponse:
     return JSONResponse({"error": error}, status_code=status, headers={"cache-control": "no-store"})
 
 
+def _too_many_tokens() -> JSONResponse:
+    return JSONResponse(
+        {"error": "invalid_request", "error_description": "too many token requests"},
+        status_code=429,
+        headers={"retry-after": "3600", "cache-control": "no-store"},
+    )
+
+
+def _is_invalid_grant(response: JSONResponse) -> bool:
+    """An answer that counts as a failure: a code or token that does not exist or is spent."""
+    if response.status_code != 400:  # noqa: PLR2004
+        return False
+    answer = cast(dict[str, object], json.loads(bytes(response.body)))
+    return answer.get("error") == "invalid_grant"
+
+
+def _address(request: Request, hops: int) -> str:
+    peer = request.client.host if request.client is not None else None
+    return client_address(request.headers.get("x-forwarded-for"), peer, hops)
+
+
+def _limited(route: str, kind: Literal["address", "org"], key: str) -> None:
+    """The one log line of a refusal: never a code, a token or a user code."""
+    log.warning("%s refused: too many requests for %s %s", route, kind, key)
+
+
 def _ci_parent_refusal(live: sessions.LiveSession | None, user_id: str) -> JSONResponse | None:
     """Only a person's own live command-line session, not an agent's or an MCP client's, may
     open a CI session."""
@@ -219,6 +263,14 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
 
     def bad_request() -> HTMLResponse:
         return html(pages.BAD_REQUEST, 400)
+
+    def too_many() -> HTMLResponse:
+        return html(pages.TOO_MANY, 429)
+
+    login_by_address = RateLimit(host.clock, LOGIN_PER_HOUR)
+    login_by_org = RateLimit(host.clock, LOGIN_PER_ORG_PER_HOUR)
+    callback_limit = RateLimit(host.clock, CALLBACK_PER_HOUR)
+    callback_failures = RateLimit(host.clock, CALLBACK_FAILURES_PER_HOUR)
 
     def set_cookie(response: Response, name: str, value: str, max_age: int) -> None:
         response.set_cookie(
@@ -356,11 +408,18 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         return JSONResponse(host.signer.jwks(), headers={"cache-control": "max-age=300"})
 
     @app.get("/login")
-    async def login(request: Request) -> Response:
+    async def login(request: Request) -> Response:  # noqa: PLR0911  (one answer per check)
+        address = _address(request, s.trusted_hops)
+        if not login_by_address.allow(address):
+            _limited("/login", "address", address)
+            return too_many()
         q = request.query_params
         org_id, binding = _org(q.get("org", "")), q.get("binding", "")
         if org_id is None or _binding(binding) is None:
             return bad_request()
+        if not login_by_org.allow(org_id):
+            _limited("/login", "org", org_id)
+            return too_many()
         async with bound_org(host.engine, org_id) as conn:
             connection = await connections.load(conn, org_id)
             cell = (await conn.execute(_ORG_CELL, {"org": org_id})).one_or_none()
@@ -387,14 +446,27 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         return to_workos(connection, flow)
 
     @app.get("/callback")
-    async def callback(request: Request) -> Response:
+    async def callback(request: Request) -> Response:  # noqa: C901, PLR0911, PLR0912
+        address = _address(request, s.trusted_hops)
+        if not callback_limit.allow(address):
+            _limited("/callback", "address", address)
+            return too_many()
+        if callback_failures.full(address):
+            _limited("/callback", "address", address)
+            return too_many()
+
+        def refuse() -> HTMLResponse:
+            """A refused sign-in, counted against the address."""
+            callback_failures.allow(address)
+            return refused()
+
         login = sealer.open("login", request.cookies.get(login_cookie, ""), now())
         state, code = request.query_params.get("state", ""), request.query_params.get("code", "")
         error = request.query_params.get("error", "")
         if login is not None and error and _same(state, str(login.get("check"))):
             shown = error if _WORKOS_ERROR.fullmatch(error) else "unrecognised"
             log.warning("WorkOS refused the sign-in for %s: %s", login.get("org"), shown)
-            response = refused()
+            response = refuse()
             clear(response, login_cookie)
             return response
         if login is None or not code or not _same(state, str(login.get("check"))):
@@ -406,11 +478,11 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             profile = await host.workos.profile(code)
         except (WorkOSError, ProfileError) as e:
             log.warning("WorkOS profile exchange failed for %s: %s", org_id, e)
-            return refused()
+            return refuse()
         async with bound_org(host.engine, org_id) as conn:
             connection = await connections.load(conn, org_id)
             if connection is None or connection.frozen:
-                return refused()
+                return refuse()
             found = await join.find_person(conn, connection, profile)
             reason: LoginRefusal | None = found if isinstance(found, str) else None
             if not isinstance(found, str) and not found.active:
@@ -418,7 +490,7 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             if reason is not None or isinstance(found, str):
                 await audit_failure(conn, connection, reason or "no_match")
                 log.info("login refused for %s: %s", org_id, reason)
-                response: Response = refused()
+                response: Response = refuse()
             elif login.get("flow") == "oauth":
                 response = await oauth_flow.finish(
                     conn,
@@ -474,6 +546,11 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
     # ── command line (RFC 8628, RFC 7009) ─────────────────────────────────────
 
     device_limit = RateLimit(host.clock, DEVICE_PER_HOUR)
+    user_code_by_address = RateLimit(host.clock, USER_CODE_PER_HOUR)
+    user_code_by_org = RateLimit(host.clock, USER_CODE_PER_ORG_PER_HOUR)
+    token_limit = RateLimit(host.clock, TOKEN_PER_HOUR)
+    token_failures = RateLimit(host.clock, TOKEN_FAILURES_PER_HOUR)
+    revoke_limit = RateLimit(host.clock, REVOKE_PER_HOUR)
 
     @app.post("/device/authorize")
     async def device_authorize(request: Request) -> JSONResponse:
@@ -517,13 +594,20 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         return html(pages.device_form(org_id, code))
 
     @app.post("/device")
-    async def device_continue(request: Request) -> Response:
+    async def device_continue(request: Request) -> Response:  # noqa: PLR0911  (one answer per check)
         if request.headers.get("sec-fetch-site", "same-origin") not in {"same-origin", "none"}:
             return bad_request()
         form = _form(await request.body())
         org_id = _org(form.get("org", ""))
         if org_id is None:
             return bad_request()
+        address = _address(request, s.trusted_hops)
+        if not user_code_by_address.allow(address):
+            _limited("/device", "address", address)
+            return too_many()
+        if not user_code_by_org.allow(org_id):
+            _limited("/device", "org", org_id)
+            return too_many()
         async with bound_org(host.engine, org_id) as conn:
             connection = await connections.load(conn, org_id)
             grant = await tokens.pending_grant(conn, org_id, form.get("user_code", ""))
@@ -591,9 +675,7 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             done.token_audience or s.api_audience,
         )
 
-    @app.post("/token")
-    async def token(request: Request) -> JSONResponse:
-        form = _form(await request.body())
+    async def granted(form: Mapping[str, str]) -> JSONResponse:
         grant_type = form.get("grant_type")
         if grant_type == DEVICE_GRANT:
             return await device_token(form.get("device_code", ""))
@@ -603,8 +685,23 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             return await oauth_flow.code_token(form)
         return _oauth_error("unsupported_grant_type")
 
+    @app.post("/token")
+    async def token(request: Request) -> JSONResponse:
+        address = _address(request, s.trusted_hops)
+        if not token_limit.allow(address) or token_failures.full(address):
+            _limited("/token", "address", address)
+            return _too_many_tokens()
+        response = await granted(_form(await request.body()))
+        if _is_invalid_grant(response):
+            token_failures.allow(address)
+        return response
+
     @app.post("/revoke")
     async def revoke(request: Request) -> Response:
+        address = _address(request, s.trusted_hops)
+        if not revoke_limit.allow(address):
+            _limited("/revoke", "address", address)
+            return _too_many_tokens()
         raw = _form(await request.body()).get("token", "")
         parsed = tokens.org_of(raw, tokens.REFRESH_PREFIX)
         if parsed is not None:
@@ -700,8 +797,10 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
 
     # ── the gateway (SSC-018) ─────────────────────────────────────────────────
 
+    redeem_failures = RateLimit(host.clock, REDEEM_FAILURES_PER_HOUR)
+
     @app.post("/internal/redeem")
-    async def redeem(request: Request) -> JSONResponse:
+    async def redeem(request: Request) -> JSONResponse:  # noqa: PLR0911  (one answer per check)
         scheme, _, bearer = request.headers.get("authorization", "").partition(" ")
         caller = await host.callers.caller(bearer.strip()) if scheme.lower() == "bearer" else None
         if caller is None:
@@ -714,6 +813,9 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             return _oauth_error("invalid_request")
         if org_id is None or not code or not nonce:
             return _oauth_error("invalid_request")
+        if redeem_failures.full(org_id):
+            _limited("/internal/redeem", "org", org_id)
+            return _too_many_tokens()
         async with bound_org(host.engine, org_id) as conn:
             cell = (await conn.execute(_ORG_CELL, {"org": org_id})).one_or_none()
             if cell is None or (
@@ -723,6 +825,7 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                 return _oauth_error("unauthorized", 401)
             done = await sessions.redeem_code(conn, org_id, code=code, host=host_name, nonce=nonce)
         if done is None:
+            redeem_failures.allow(org_id)
             return _oauth_error("invalid_grant")
         return JSONResponse(
             {
