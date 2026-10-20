@@ -322,7 +322,7 @@ the only record of hosts until SSC-053 lands.
 
 **A connection has a classification and an audience ceiling** (SSC-052). `POST /v1/connections`
 (`name`, `owner_user_id`, `classification`, `ceiling`, `allowed_schemas`, `limits`, and the `host`,
-`port` and `database` the data gateway uses, stored and never returned) creates one `pending`;
+`port` and `database` the data gateway uses, stored and never returned) creates one `pending`. `allowed_schemas` is recorded for the setup script and the console and is not enforced by the data gateway, which reads whatever the connection's database role may read;
 `PATCH /v1/connections/{name}` changes it, `setup_status: ready` lets the snapshot carry it and
 `status: suspended` stops queries on it at the next snapshot. Only an active org admin in a person
 session writes; a `confidential` or `restricted` connection needs a `ceiling` (`CEILING_REQUIRED`)

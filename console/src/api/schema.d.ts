@@ -2430,7 +2430,10 @@ export interface components {
             address?: {
                 [key: string]: unknown;
             } | null;
-            /** Allowed Schemas */
+            /**
+             * Allowed Schemas
+             * @description Recorded for the setup script and the console; not enforced by the data gateway, which reads whatever the connection's database role may read. The setup script's grants are what bound it.
+             */
             allowed_schemas?: string[];
             /** @description Required for `confidential` and `restricted`; `internal` defaults to `org`. */
             ceiling?: components["schemas"]["CeilingDoc"] | null;
@@ -2473,7 +2476,10 @@ export interface components {
         };
         /** ConnectionOut */
         ConnectionOut: {
-            /** Allowed Schemas */
+            /**
+             * Allowed Schemas
+             * @description Recorded for the setup script and the console; not enforced by the data gateway, which reads whatever the connection's database role may read. The setup script's grants are what bound it.
+             */
             allowed_schemas: string[];
             ceiling: components["schemas"]["CeilingDoc"];
             /**
@@ -2516,7 +2522,10 @@ export interface components {
         };
         /** ConnectionPatch */
         ConnectionPatch: {
-            /** Allowed Schemas */
+            /**
+             * Allowed Schemas
+             * @description Recorded for the setup script and the console; not enforced by the data gateway, which reads whatever the connection's database role may read. The setup script's grants are what bound it.
+             */
             allowed_schemas?: string[] | null;
             ceiling?: components["schemas"]["CeilingDoc"] | null;
             /** Classification */

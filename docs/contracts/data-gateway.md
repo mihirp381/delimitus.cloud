@@ -657,7 +657,7 @@ Errors are a query's, with the same bodies and codes: `UNAUTHENTICATED`, `UNAVAI
 
 **Caps.** At most 500 tables and 500 columns a table; the rest are left out without a mark. Every name and type is the source's, typed as a read types it.
 
-The snapshot does not carry a connection's allowed schemas yet, so a description shows what the credential may read, which is what the setup scripts bound (`postgres_setup.sql` grants the named schemas, `mysql_setup.sql` the database, and so on).
+The snapshot does not carry a connection's allowed schemas yet, so a description shows what the credential may read, which is what the setup scripts bound (`postgres_setup.sql` grants the named schemas, `mysql_setup.sql` the database, and so on). The same holds for every read: a connection's `allowed_schemas` is recorded for the setup script and the console and is not enforced by the data gateway, which reads whatever the connection's database role may read.
 
 ## Limits
 

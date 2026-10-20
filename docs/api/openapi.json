@@ -2340,6 +2340,7 @@
             "title": "Address"
           },
           "allowed_schemas": {
+            "description": "Recorded for the setup script and the console; not enforced by the data gateway, which reads whatever the connection's database role may read. The setup script's grants are what bound it.",
             "items": {
               "pattern": "^[a-z_][a-z0-9_]{0,62}$",
               "type": "string"
@@ -2462,6 +2463,7 @@
         "additionalProperties": false,
         "properties": {
           "allowed_schemas": {
+            "description": "Recorded for the setup script and the console; not enforced by the data gateway, which reads whatever the connection's database role may read. The setup script's grants are what bound it.",
             "items": {
               "type": "string"
             },
@@ -2580,6 +2582,7 @@
                 "type": "null"
               }
             ],
+            "description": "Recorded for the setup script and the console; not enforced by the data gateway, which reads whatever the connection's database role may read. The setup script's grants are what bound it.",
             "title": "Allowed Schemas"
           },
           "ceiling": {

@@ -33,6 +33,8 @@ curl -sS -X POST "$API/v1/connections" \
 
 `kind` is one of `ssc_contracts.connections.KINDS` and `address` the kind's non-secret address (the API's `ConnectionIn.address` lists each kind's members; `port` defaults to the engine's). A kind without a connector yet is refused with `CONNECTOR_UNAVAILABLE`; the console offers only the available ones. For the SQL kinds, `host`, `port` and `database` at the top level still work in place of `address`.
 
+`allowed_schemas` is recorded for the setup script and the console. The data gateway does not enforce it: it reads whatever the connection's database role may read, so the schemas the setup script grants that role (step 2's credential) are what bound an app's reads.
+
 Pass: `201` and `setup_status` is `pending`. The answer, `GET /v1/connections` and the audit row `connection.created` show the kind and never the address. A `pending` connection can be granted to an environment but the data gateway does not serve it (step 3).
 
 ## 2. Give the data gateway its credentials
@@ -88,5 +90,6 @@ A failure here never reaches a user: only the throwaway environment is granted. 
 - A user is inside a group ceiling when they are an active member of a listed group at the moment of the check. When the directory sync (or the internal directory route) changes the members of a listed group, every environment now over the ceiling is flagged and one `exceed_ceiling` approval asks the connection's owner, who decides; approving clears the flag. The data gateway is not told, and suspending the connection stays the admin's action. Deactivating a user is not re-checked yet.
 - An approved widening keeps covering those grants: a later directory change or a narrower ceiling does not flag the environment again, because the approval names the grants, not the ceiling. To withdraw it, narrow the audience or suspend the connection.
 - `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, `daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, and up to ten run, so a grant can reach up to ten times them (decision 034). Say so to the data owner when they set them.
+- `allowed_schemas` is not enforced at the data gateway. The gateway reads whatever the connection's database role may read; run the kind's setup script with the same schemas and check its read-back, because that role's grants are the only bound.
 - The ceiling is not enforced at the data gateway. Flagging is the signal; narrowing the audience or suspending the connection is the action.
 - Rolling back: `DELETE /v1/apps/<app>/environments/<env>/connections/finance` stops an environment reaching it; `{"status": "suspended"}` stops all of them.

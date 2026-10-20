@@ -157,6 +157,21 @@ describe('connections page', () => {
     expect(await toast()).toBe('Changed ledger.');
   });
 
+  it('says by the schemas field that the data gateway does not enforce them, when adding and changing', async () => {
+    await connectionsPage({});
+    const hint = (dialog: HTMLElement) => {
+      const field = within(dialog).getByLabelText(/^Schemas/);
+      return document.getElementById(field.getAttribute('aria-describedby') ?? '')?.textContent ?? '';
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Add a connection' }));
+    const adding = await screen.findByRole('dialog', { name: 'Add a connection' });
+    expect(hint(adding)).toContain('not enforced by the data gateway');
+    fireEvent.click(within(adding).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Change ledger' }));
+    const changing = await screen.findByRole('dialog', { name: 'Change ledger' });
+    expect(hint(changing)).toContain('not enforced by the data gateway');
+  });
+
   it('suspends a connection only once its name is typed, and says apps lose it within seconds', async () => {
     const { api } = await connectionsPage({
       'PATCH /v1/connections/crm': ({ body }) => json(200, { ...CRM, ...(body as object) }),

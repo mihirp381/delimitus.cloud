@@ -73,6 +73,12 @@ _ENVIRONMENT: Final = text(
 )
 
 
+SCHEMAS_DESCRIPTION = (
+    "Recorded for the setup script and the console; not enforced by the data gateway, which "
+    "reads whatever the connection's database role may read. The setup script's grants are "
+    "what bound it."
+)
+
 LIMITS_DESCRIPTION = (
     "Caps on every query. `max_rows`, `max_bytes` and `timeout_ms` are exact. `concurrency`, "
     "`daily_rows` and `daily_bytes` are advisory: each data gateway instance counts its own, "
@@ -117,7 +123,10 @@ class ConnectionIn(Strict):
         description="Required for `confidential` and `restricted`; `internal` defaults to `org`.",
     )
     allowed_schemas: list[Schema] = Field(
-        default_factory=lambda: ["public"], min_length=1, max_length=50
+        default_factory=lambda: ["public"],
+        min_length=1,
+        max_length=50,
+        description=SCHEMAS_DESCRIPTION,
     )
     limits: SnapshotLimits | None = Field(default=None, description=LIMITS_DESCRIPTION)
     address: dict[str, Any] | None = Field(
@@ -169,7 +178,9 @@ class ConnectionPatch(Strict):
     owner_user_id: Annotated[str, StringConstraints(pattern=r"^usr_[a-z0-9]{20}$")] | None = None
     classification: Classification | None = None
     ceiling: CeilingDoc | None = None
-    allowed_schemas: list[Schema] | None = Field(default=None, min_length=1, max_length=50)
+    allowed_schemas: list[Schema] | None = Field(
+        default=None, min_length=1, max_length=50, description=SCHEMAS_DESCRIPTION
+    )
     limits: SnapshotLimits | None = Field(default=None, description=LIMITS_DESCRIPTION)
     setup_status: Literal["pending", "ready"] | None = Field(
         default=None,
@@ -189,7 +200,7 @@ class ConnectionOut(Strict):
     owner_user_id: str | None
     classification: Classification
     ceiling: CeilingDoc
-    allowed_schemas: list[str]
+    allowed_schemas: list[str] = Field(description=SCHEMAS_DESCRIPTION)
     limits: SnapshotLimits
     setup_status: Literal["pending", "ready"]
     status: Literal["active", "suspended"]

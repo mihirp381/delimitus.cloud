@@ -27,6 +27,7 @@ import {
   parseAddress,
   parseSchemas,
   parseSubjects,
+  SCHEMAS_NOTE,
   SQL_KINDS,
   subjectsText,
 } from '../../api/connections';
@@ -391,13 +392,17 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
           </fieldset>
           {sql ? (
             <label className="field" htmlFor={schemasId}>
-              <span>Schemas apps may read, separated by commas</span>
+              <span>Schemas, separated by commas</span>
               <input
                 id={schemasId}
                 value={schemas}
                 spellCheck={false}
+                aria-describedby={`${schemasId}-note`}
                 onChange={(e) => setSchemas(e.target.value)}
               />
+              <span id={`${schemasId}-note`} className="muted">
+                {SCHEMAS_NOTE}
+              </span>
             </label>
           ) : null}
           <CeilingFields
@@ -553,13 +558,17 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
         />
       </label>
       <label className="field" htmlFor={schemasId}>
-        <span>Schemas apps may read, separated by commas</span>
+        <span>Schemas, separated by commas</span>
         <input
           id={schemasId}
           value={schemas}
           spellCheck={false}
+          aria-describedby={`${schemasId}-note`}
           onChange={(e) => setSchemas(e.target.value)}
         />
+        <span id={`${schemasId}-note`} className="muted">
+          {SCHEMAS_NOTE}
+        </span>
       </label>
       <CeilingFields
         audience={audience}

@@ -49,6 +49,7 @@ from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.snapshot import SnapshotDoc, SnapshotLimits
 from ssc_control.api import Settings, create_app
+from ssc_control.api.routes.v1.connections import ConnectionIn, ConnectionOut, ConnectionPatch
 from ssc_control.api.settings import INTERNAL_AUDIENCE
 from ssc_control.connections import service as connection_service
 from ssc_control.db import bind_org_sync
@@ -231,6 +232,15 @@ def finance(
 def prod_grants(client: TestClient, w: World, tokens: Tokens) -> tuple[list[dict[str, Any]], int]:
     now = current(client, w, w.prod, tokens.admin)
     return keyed(now["grants"]), now["grants_version"]
+
+
+@pytest.mark.parametrize("model", [ConnectionIn, ConnectionPatch, ConnectionOut])
+def test_the_api_says_the_data_gateway_does_not_enforce_allowed_schemas(model: Any) -> None:
+    """The list is recorded for the setup script and the console; the gateway reads whatever the
+    connection's database role may read, and the API must not suggest otherwise."""
+    field = model.model_json_schema()["properties"]["allowed_schemas"]
+    assert "not enforced by the data gateway" in field["description"]
+    assert "database role" in field["description"]
 
 
 def test_a_ceiling_is_the_whole_org_or_a_listed_set() -> None:

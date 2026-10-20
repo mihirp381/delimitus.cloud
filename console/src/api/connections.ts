@@ -141,6 +141,9 @@ export const ADVISORY_LIMITS: readonly (keyof Limits)[] = ['concurrency', 'daily
 export const ADVISORY_NOTE =
   'Rows per query, bytes per query and the timeout are exact. Queries at once, rows a day and bytes a day are advisory: each gateway instance counts its own, and up to ten run, so a busy app can reach up to ten times them.';
 
+export const SCHEMAS_NOTE =
+  "Recorded for the setup script and this console, and not enforced by the data gateway: apps read whatever the connection's database role may read, so the setup script's grants are what bound it.";
+
 export const LIMIT_KEYS = Object.keys(LIMIT_TITLE) as readonly (keyof Limits)[];
 
 /** The limits that are set, one phrase each: "Rows per query 1000", "Queries at once 4". Empty when none is. */
