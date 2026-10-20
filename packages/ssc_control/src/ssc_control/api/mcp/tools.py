@@ -138,6 +138,8 @@ IdempotencyKey = Annotated[
     Field(
         min_length=1,
         max_length=200,
+        # It travels as the Idempotency-Key header: visible ASCII only.
+        pattern=r"^[!-~]+$",
         description="Send the same key to retry safely; a new one is made when absent.",
     ),
 ]

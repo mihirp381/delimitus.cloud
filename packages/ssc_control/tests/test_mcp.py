@@ -930,6 +930,24 @@ async def test_create_app_once_per_key_and_audited_as_agent(world: World) -> Non
     async with session(world.url, world.agent) as client:
         made = await client.call_tool("create_app", {"slug": "mcp-made", "idempotency_key": "k-1"})
         again = await client.call_tool("create_app", {"slug": "mcp-made", "idempotency_key": "k-1"})
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("create_app", {"slug": "mcp-key"}),
+        ("request_share", {"app": "mcp-app", "env": "prod", "who": "org"}),
+        ("request_connection", {"app": "mcp-app", "connection": "warehouse"}),
+    ],
+)
+async def test_an_idempotency_key_is_visible_ascii(
+    world: World, tool: str, args: dict[str, Any]
+) -> None:
+    """The key travels as a header: a control character is the tool's validation refusal."""
+    async with session(world.url, world.agent) as client:
+        bad = await client.call_tool(tool, {**args, "idempotency_key": "k\r\nX-Injected: 1"})
+    assert bad.is_error
+    assert bad.structured_content is None
+
+
         taken = await client.call_tool("create_app", {"slug": "mcp-made"})
         bad = await client.call_tool("create_app", {"slug": "Not A Slug"})
     assert not made.is_error, made.content
