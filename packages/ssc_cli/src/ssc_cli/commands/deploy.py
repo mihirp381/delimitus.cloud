@@ -3,16 +3,19 @@
 Everything that can refuse the bundle runs before anything leaves the machine: the manifest,
 packing (caps, links, ``.env`` files), the secret scan (``ssc_bundle.client.prepare``), SQLite
 on disk (``ssc_bundle.analyze.sqlite_on_disk``, the rule the build applies) and a system package
-off the platform package list (``ssc_bundle.analyze.package_needs``, likewise). Such a refusal
-exits 4 with the code the API would give, and ``status: null``. ``deploy`` always targets preview
-(decision 017); production changes only through ``promote``.
+off the platform package list (``ssc_bundle.analyze.package_needs``, likewise), then a server
+that cannot be reached in its container (``ssc doctor``'s ``PORT_BINDING`` block, over the files
+the bundle holds). Such a refusal exits 4 with the code the API or doctor would give, and
+``status: null``. ``deploy`` always targets preview (decision 017); production changes only
+through ``promote``.
 
 The deployment's ``notice`` says what it sets off, such as the company's database being created
 (SSC-087). The first deploy of an app also says how a sleeping app wakes up.
 
 A build that fails prints the last lines of its log under the error, and a deployment that
 fails its health check the last lines of the app's log, so the cause shows without a second
-command. A log that cannot be read leaves the error as it was.
+command; when those lines show the app crashing on start, the fix points at them instead of the
+port. A log that cannot be read leaves the error as it was.
 
 The build is always waited for, because only its release can be deployed. ``--wait`` also waits
 for the deployment to be live. ``--build`` picks up a build an earlier run stopped waiting for:
@@ -35,6 +38,8 @@ from ssc_bundle.limits import DEFAULT_LIMITS, BundleError, BundleTooLargeError
 from ssc_bundle.tarcheck import iter_entries
 from ssc_cli.api import ApiClient
 from ssc_cli.commands._common import JsonOpt, handled, session
+from ssc_cli.doctor.finding import FIX, PORT_BINDING
+from ssc_cli.doctor.rules import Tree, port_binding
 from ssc_cli.errors import (
     BAD_RESPONSE,
     BUILD_NOT_FOUND,
@@ -48,7 +53,13 @@ from ssc_cli.models import BundleCreate, BundleOut
 from ssc_cli.output import print_json, say
 from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import BundleWarning, CapabilityChangeRow, DeployResult
-from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_build, wait_for_operation
+from ssc_cli.wait import (
+    DEFAULT_TIMEOUT,
+    Budget,
+    health_check_fix,
+    wait_for_build,
+    wait_for_operation,
+)
 from ssc_contracts.build import SQLITE_ON_DISK, STATE_SQLITE_EPHEMERAL
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.manifest import ManifestError
@@ -215,6 +226,8 @@ def _log_on_failure(
             source == "app" and e.body.code == HEALTH_CHECK_FAILED
         ):
             e.log_tail = _log_tail(client, app_id, environment_id, source)
+            if e.body.code == HEALTH_CHECK_FAILED:
+                e.fix = health_check_fix(e.log_tail)
         raise
 
 
@@ -290,6 +303,8 @@ def prepare_folder(root: Path, dest: Path) -> Prepared:
             files = list(iter_entries(f, DEFAULT_LIMITS, MAX_ANALYZE_BYTES))
         sqlite = sqlite_on_disk(files, prepared.manifest)
         unlisted = [n for n in package_needs(files) if not n.listed]
+        packed = Tree(root=root, files=frozenset(name for name, _ in files), top_dirs=frozenset())
+        unreachable = port_binding(packed)
     except ManifestError as e:
         lines = [str(p) for p in e.problems[:MAX_DETAIL_LINES]]
         raise _blocked(
@@ -339,6 +354,19 @@ def prepare_folder(root: Path, dest: Path) -> Prepared:
                 for n in unlisted[:MAX_DETAIL_LINES]
             ),
             HOW_TO_ASK,
+        )
+    if unreachable:
+        raise CliError(
+            ErrorBody(
+                code=PORT_BINDING,
+                title="The app's server cannot be reached in its container, so nothing was "
+                "uploaded.",
+                detail="\n".join(
+                    f"{f.path}:{f.line}: {f.message}" for f in unreachable[:MAX_DETAIL_LINES]
+                ),
+            ),
+            ExitCode.BLOCKED,
+            FIX[PORT_BINDING],
         )
     return prepared
 

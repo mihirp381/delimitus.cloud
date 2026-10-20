@@ -38,8 +38,12 @@ by the founder, 2026-10-08 (GA-6.5).
 ## Secrets in source
 
 - `.env` and `.env.*` files are never uploaded. [ignore.py:14-23]
-- `ssc deploy` scans the folder before upload; a finding uploads nothing. The control plane
-  repeats the scan on the stored bundle. [deploy.py:301-309; bundles.py:142-166]
+- `ssc deploy` scans the folder before upload and uploads nothing if the local scan finds a
+  secret; the build runs a wider scan and refuses what it finds. The control plane repeats the
+  local scan on the stored bundle. Besides credential-like names, the local scan knows GitHub,
+  GitLab, Slack, Stripe live, Anthropic, OpenAI, Google API, npm and SendGrid keys by their own
+  shape under any name, as the build's gitleaks does (GA-12 F22). [deploy.py:316-324;
+  bundles.py:142-166; secrets.py `_PROVIDER`]
 - The build then runs gitleaks 8.30.1: its default rules (except `jwt`, since a Supabase anon key
   is public) plus SSC's rules for Supabase keys and database URLs with a password. A finding stops
   the build before anything is built: no image, no release, no deployment. Findings are printed
@@ -49,11 +53,12 @@ by the founder, 2026-10-08 (GA-6.5).
   gitleaks rule `github-pat`, `SECRET_IN_BUNDLE`. The scan step failed 19 s after the build was
   created, the later steps never ran, no image was pushed, and no release or deployment was made.
   The value appeared in no command output, build log line or audit row. The stored bundle that
-  holds the random value stays in the cell's bundle store. [GA-6.5, `proofrun buildsecret`]
+  holds the random value stays in the cell's bundle store. Since GA-12 the first two scans find
+  that shape themselves and nothing is uploaded. [GA-6.5, `proofrun buildsecret`]
 - Limits: the first two scans skip files over 1 MiB, binary files, lockfiles and `ssc.toml`.
   Their name-keyed rule (a credential-like variable name assigned a random-looking value) reads
   only the first 4096 characters of a line; a longer line is minified code or data. Every rule
   runs in time linear in the line, and the control plane's repeat has 30 seconds per bundle,
   past which it refuses the bundle as `BUNDLE_MALFORMED`. Public build values are never flagged.
-  A secret with a shape none of these rules knows passes all three. [secrets.py:3-13, 113-119;
+  A secret with a shape none of these rules knows passes all three. [secrets.py:3-19, 139-145;
   bundles.py:103-118]

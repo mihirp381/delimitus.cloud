@@ -7,6 +7,7 @@ import time
 import pytest
 
 from ssc_bundle.secrets import MAX_LINE_SCAN, MAX_SCAN_BYTES, Finding, entropy, mask, scan
+from ssc_conformance.secret_shapes import SHAPES, Shape, line
 
 AWS_KEY = "AKIA" + "Z7Q3K9XW" + "P2LMN4RT"
 AWS_SECRET = "wJalrXUtnFEMI" + "/K7MDENG/bPxRfiCY" + "EXAMPLEKEY"
@@ -179,8 +180,39 @@ def test_the_name_keyed_rule_reads_only_the_first_4096_characters_of_a_line() ->
         "token ",
         "token=a",
         "a.token.",
+        "ghp_",
+        "github_pat_",
+        "glpat-",
+        "xoxb-",
+        "sk_live_",
+        "sk-ant-",
+        "sk-",
+        "sk-proj-",
+        "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaa",
+        "AIza",
+        "npm_",
+        "SG.",
+        "SG.aaaaaaaaaaaaaaaaaaaaaa.",
     ],
 )
 def test_a_line_of_one_rule_prefix_repeated_is_linear(unit: str) -> None:
     seconds, _ = timed_scan(unit * (LONG // len(unit)))
     assert seconds < 1, f"{seconds:.2f} s"
+
+
+@pytest.mark.parametrize("shape", SHAPES, ids=[s.positive[:6] for s in SHAPES])
+def test_provider_keys_under_any_name_are_found(shape: Shape) -> None:
+    """GA-12 F22: the build's gitleaks finds these under a plain name, so the local scan must
+    too (gates/test_gitleaks_parity.py holds gitleaks to the same fixtures)."""
+    found = one(line(shape.positive))
+    assert rules(found) == [(shape.rule, True)]
+    assert shape.positive not in found[0].masked
+    assert one(line(shape.negative)) == []
+
+
+def test_a_provider_key_deep_in_a_minified_line_is_found() -> None:
+    key = SHAPES[0].positive
+    text = "var a=1;" * 20_000 + f'fetch(u,{{headers:{{Authorization:"token {key}"}}}});' + "b();"
+    seconds, found = timed_scan(text)
+    assert seconds < 1
+    assert rules(found) == [("github_token", True)]

@@ -789,10 +789,11 @@ def build_server(open_client: Opener, sleep: Sleep, wait: float = WAIT_SECONDS) 
         app: AppRef, path: Folder = ".", idempotency_key: IdempotencyKey | None = None
     ) -> CallToolResult:
         """Deploy a folder to the app's preview environment (never prod). The folder is packed
-        and checked on this machine (nothing is sent if it holds a secret), then uploaded,
-        built and deployed. Answers with a `stage`: `live` with preview's `url`, or `building`
-        or `deploying` when that takes long, with what to do `next`. Call again with the same
-        arguments and the returned `idempotency_key`; nothing starts twice."""
+        and checked on this machine (nothing is sent if the local scan finds a secret; the build
+        runs a wider scan and refuses what it finds), then uploaded, built and deployed. Answers
+        with a `stage`: `live` with preview's `url`, or `building` or `deploying` when that takes
+        long, with what to do `next`. Call again with the same arguments and the returned
+        `idempotency_key`; nothing starts twice."""
         key = idempotency_key or fresh_key()
         folder = Path(path).resolve()
         return run(

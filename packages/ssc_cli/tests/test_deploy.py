@@ -401,6 +401,10 @@ def _unlisted_package(root: Path) -> None:
     (root / "requirements.txt").write_text("flask\npytesseract\n")
 
 
+def _localhost_server(root: Path) -> None:
+    (root / "server.js").write_text("require('express')().listen(3000, 'localhost')\n")
+
+
 @pytest.mark.parametrize(
     ("spoil", "code"),
     [
@@ -409,6 +413,7 @@ def _unlisted_package(root: Path) -> None:
         (_link, "BUNDLE_MALFORMED"),
         (_sqlite, "STATE_SQLITE_EPHEMERAL"),
         (_unlisted_package, "ADD_APPROVED_PACKAGE"),
+        (_localhost_server, "PORT_BINDING"),
     ],
 )
 def test_local_refusals_exit_4_before_any_request(cli, api, folder, spoil, code):
@@ -515,6 +520,22 @@ def test_an_unlisted_system_package_is_named_with_how_to_ask(cli, api, folder):
     assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
 
 
+def test_a_server_that_cannot_be_reached_is_refused_before_upload(cli, api, folder):
+    """GA-12 F22: doctor's PORT_BINDING blocks, so the deploy applies it like the other blocks."""
+    _localhost_server(folder)
+    r = cli("deploy", str(folder), "--app", "demo", session=api.session())
+    assert r.code == ExitCode.BLOCKED
+    assert "server.js:1" in r.stderr
+    assert "listens on localhost only" in r.stderr
+    assert "process.env.PORT" in r.stderr
+    assert api.seen == []
+    (folder / ".sscignore").write_text("server.js\n")
+    assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
+    (folder / ".sscignore").unlink()
+    (folder / "server.js").write_text("require('express')().listen(process.env.PORT)\n")
+    assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
+
+
 def test_a_sqlite_build_failure_shows_the_postgres_fix(cli, api, folder):
     api.routes[("GET", f"/v1/builds/{BUILD}")] = [
         _build("failed", failure_code="STATE_SQLITE_EPHEMERAL")
@@ -562,6 +583,29 @@ def test_a_failed_health_check_prints_the_end_of_the_app_log(cli, api, folder):
     assert "  Error: listen EADDRINUSE 0.0.0.0:3000" in r.stderr
     asked = [q for q in api.seen if q.url.path == LOGS]
     assert [q.url.params["source"] for q in asked] == ["app"]
+
+
+@pytest.mark.parametrize(
+    ("last_line", "crashed"),
+    [
+        ("Traceback (most recent call last):", True),
+        ("Error: Cannot find module './db'", True),
+        ("Process exited with code 1", True),
+        ("listening on 127.0.0.1:3000", False),
+    ],
+)
+def test_a_health_check_failure_after_a_start_crash_points_at_the_log(
+    cli, api, folder, last_line, crashed
+):
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("failed", failure_code="HEALTH_CHECK_FAILED")
+    ]
+    api.routes[("GET", LOGS)] = [_log_page("app", "starting", last_line)]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", session=api.session())
+    assert r.code == ExitCode.FAILED
+    crash_fix = "The app stopped while starting; read the log lines above"
+    assert (crash_fix in r.stderr) is crashed
+    assert ("$PORT" in r.stderr) is not crashed
 
 
 def test_the_log_tail_shows_an_app_s_control_characters_as_escapes(cli, api, folder):

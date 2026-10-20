@@ -46,13 +46,15 @@ app from its source in a container. Follow these rules when you change it.
 Every command takes `--json` and then prints one JSON object on stdout; a failure prints
 `{{"error": {{...}}}}` with a stable `code`. Exit codes: 0 ok, 1 refused or failed, 2 bad usage,
 3 no token or token refused, 4 blocked on this machine before anything was sent (`ssc doctor`
-found a blocking problem, or `ssc deploy` found a secret, SQLite on disk, an invalid `ssc.toml`
-or a folder it cannot upload), 5 network error.
+found a blocking problem, or `ssc deploy` found a secret, SQLite on disk, a server that does not
+listen on 0.0.0.0 and $PORT, an invalid `ssc.toml` or a folder it cannot upload), 5 network
+error.
 
 `ssc deploy --app <slug>` deploys the folder to the app's preview environment, never to
-production. It checks the folder first and uploads nothing if it holds a secret. It waits for the
-build; add `--wait` to also wait until the new release is live. A failed build or deployment exits
-1 with the reason as `code` (for example `HEALTH_CHECK_FAILED`) and the next step in the error.
+production. It checks the folder first and uploads nothing if the local scan finds a secret; the
+build runs a wider scan and refuses what it finds. It waits for the build; add `--wait` to also
+wait until the new release is live. A failed build or deployment exits 1 with the reason as
+`code` (for example `HEALTH_CHECK_FAILED`) and the next step in the error.
 `ssc releases` lists the numbered releases and `ssc rollback <app> R<number>` deploys an earlier
 one again, keeping today's sharing and secrets. If the database has run migrations that release
 lacks, it stops with `SCHEMA_AHEAD` and names them; add `--confirm` only when the person agrees
