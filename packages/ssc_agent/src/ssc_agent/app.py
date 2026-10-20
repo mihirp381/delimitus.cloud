@@ -19,7 +19,8 @@ Logs (SSC-024) have ``read``, ``follow`` and ``health`` of one service; the agen
 filter, redacts every line, and keeps the cell under Cloud Logging's quota.
 
 Errors are ``{"code", "message"}``: 404 ``SERVICE_NOT_FOUND``, ``REVISION_NOT_FOUND``,
-``BUILD_NOT_FOUND`` or ``DATABASE_NOT_FOUND``, 400 ``INVALID_REQUEST``, 409 ``DB_TIER_FULL`` or
+``BUILD_NOT_FOUND`` or ``DATABASE_NOT_FOUND``, 400 ``INVALID_REQUEST``, 413 ``INVALID_REQUEST``
+for a body over ``MAX_BODY_BYTES`` (1 MiB, declared or chunked), 409 ``DB_TIER_FULL`` or
 ``SERVICE_LIVE``, 502 ``RUNTIME_ERROR``, ``BUILD_ERROR``, ``SECRETS_ERROR`` or
 ``DATABASE_ERROR``, 503 ``BUILD_NOT_CONFIGURED``, ``SECRETS_NOT_CONFIGURED`` or
 ``DATABASES_NOT_CONFIGURED`` when the agent runs without a builder, secret custody or a Cloud SQL
@@ -44,6 +45,7 @@ environment, asked of the cell's data gateway with the agent's own ID token and 
 without its address. The agent logs the method and the status, never the body.
 """
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Final, cast
@@ -117,12 +119,35 @@ FILES_PREFIX: Final = "/v1/files"
 DATAGW_PREFIX: Final = "/v1/datagw"
 HEALTH_PATH: Final = "/healthz"
 WRONG_CELL: Final = "WRONG_CELL"
+# No call to the agent carries more than a spec or a few names; a larger body is 413.
+MAX_BODY_BYTES: Final = 1024 * 1024
 
 type Handler = Callable[[dict[str, Any]], Awaitable[dict[str, object]]]
 
 
 class _WrongCellError(Exception):
     """A spec for another org's service: this agent's cell is not its cell."""
+
+
+class _BodyTooLargeError(Exception):
+    """A request body over ``MAX_BODY_BYTES``; not a ``ValueError``, so no route makes it 400."""
+
+
+async def _json_body(request: Request, limit: int = MAX_BODY_BYTES) -> object:
+    """The request's JSON, read only up to ``limit`` bytes: a declared ``content-length`` over
+    it, or a chunked body that grows past it, raises :class:`_BodyTooLargeError` (413)."""
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        if not declared.isdigit():
+            raise ValueError("content-length is not a number")
+        if int(declared) > limit:
+            raise _BodyTooLargeError(f"the body is over {limit} bytes")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            raise _BodyTooLargeError(f"the body is over {limit} bytes")
+    return json.loads(body)
 
 
 class _ServiceLiveError(Exception):
@@ -179,7 +204,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
         if handler is None:
             return _error(404, "NOT_FOUND", f"no method {method}")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             result = await handler(cast("dict[str, Any]", body))
@@ -217,7 +242,7 @@ def _build_routes(app: FastAPI, builder: CellBuilder | None) -> None:
         if builder is None:
             return _error(503, "BUILD_NOT_CONFIGURED", "this agent runs no builds")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             fields = cast("dict[str, Any]", body)
@@ -266,7 +291,7 @@ def _secret_routes(app: FastAPI, driver: RuntimeDriver, secrets: SecretCustody |
         if secrets is None:
             return _error(503, "SECRETS_NOT_CONFIGURED", "this agent keeps no secrets")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             name = _str(cast("dict[str, Any]", body), "secret")
@@ -301,7 +326,7 @@ def _database_routes(
         if databases is None:
             return _error(503, "DATABASES_NOT_CONFIGURED", "this agent has no Cloud SQL instance")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             service = _service(cast("dict[str, Any]", body))
@@ -362,7 +387,7 @@ def _file_routes(app: FastAPI, driver: RuntimeDriver, files: CellFiles | None) -
         if files is None:
             return _error(503, "FILES_NOT_CONFIGURED", "this agent has no cell bucket")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             service = _service(cast("dict[str, Any]", body))
@@ -389,7 +414,7 @@ def _log_routes(app: FastAPI, logs: CellLogs) -> None:
         if method not in ("read", "follow", "health"):
             return _error(404, "NOT_FOUND", f"no method {method}")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             fields = cast("dict[str, Any]", body)
@@ -438,7 +463,7 @@ def _usage_routes(app: FastAPI, usage: CellUsage) -> None:
         if method != "read":
             return _error(404, "NOT_FOUND", f"no method {method}")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             window = window_from_wire(cast("dict[str, Any]", body)["window"])
@@ -470,7 +495,7 @@ def _egress_routes(app: FastAPI, egress: ProxyCredentials | None) -> None:
         if egress is None:
             return _error(503, "EGRESS_NOT_CONFIGURED", "this agent has no proxy address")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             issued = await egress.issue(_str(cast("dict[str, Any]", body), "environment_id"))
@@ -500,7 +525,7 @@ def _datagw_routes(app: FastAPI, datagw: DataGateway | None) -> None:
         if datagw is None:
             return _error(503, "DATAGW_NOT_CONFIGURED", "this agent has no data gateway address")
         try:
-            body: object = await request.json()
+            body: object = await _json_body(request)
             if not isinstance(body, dict):
                 raise TypeError("the body is not a JSON object")
             fields = cast("dict[str, Any]", body)
@@ -573,6 +598,11 @@ def _serve_one_org(app: FastAPI, org: str) -> None:
         return _error(403, WRONG_CELL, str(exc))
 
     app.add_exception_handler(_WrongCellError, wrong_spec)
+
+    async def too_large(_request: Request, exc: Exception) -> Response:
+        return _error(413, "INVALID_REQUEST", str(exc))
+
+    app.add_exception_handler(_BodyTooLargeError, too_large)
 
 
 def _error(status: int, code: str, message: str, **extra: object) -> JSONResponse:

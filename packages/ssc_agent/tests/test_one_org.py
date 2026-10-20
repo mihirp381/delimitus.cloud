@@ -2,6 +2,8 @@
 labelled for another org, is refused ``WRONG_CELL`` before anything in the cell changes, and
 ``/healthz`` stays open for the platform's probes."""
 
+from collections.abc import AsyncIterator
+
 import httpx2
 import pytest
 
@@ -107,6 +109,44 @@ async def test_apply_refuses_a_spec_not_labelled_with_the_org(labels: dict[str, 
     assert response.status_code == 403
     assert response.json()["code"] == WRONG_CELL
     assert runtime.calls == []
+
+
+TOO_LARGE = 2 * 1024 * 1024
+
+
+async def _chunks(total: int) -> AsyncIterator[bytes]:
+    sent = 0
+    while sent < total:
+        yield b" " * 65536
+        sent += 65536
+
+
+@pytest.mark.parametrize("path", ["/v1/runtime/apply", "/v1/usage/read", "/v1/logs/read"])
+@pytest.mark.parametrize("chunked", [False, True], ids=["declared", "chunked"])
+async def test_a_body_over_the_cap_is_413_before_anything_runs(path: str, chunked: bool) -> None:
+    runtime = Recording()
+    async with agent(runtime, {ORG_HEADER: ORG}) as client:
+        if chunked:
+            response = await client.post(path, content=_chunks(TOO_LARGE))
+        else:
+            body = b'{"spec": "' + b"x" * TOO_LARGE + b'"}'
+            response = await client.post(
+                path, content=body, headers={"content-type": "application/json"}
+            )
+        assert response.status_code == 413
+        assert response.json()["code"] == "INVALID_REQUEST"
+        assert runtime.calls == []
+        applied = await client.post("/v1/runtime/apply", json={"spec": spec({ORG_LABEL: ORG})})
+    assert applied.status_code == 200, applied.text
+    assert runtime.calls == [f"apply {SERVICE}"]
+
+
+async def test_a_body_that_is_not_json_is_still_400() -> None:
+    async with agent(Recording(), {ORG_HEADER: ORG}) as client:
+        for body in (b"", b"{", b"[]"):
+            response = await client.post("/v1/runtime/apply", content=body)
+            assert response.status_code == 400, body
+            assert response.json()["code"] == "INVALID_REQUEST"
 
 
 def test_create_app_needs_an_org_id() -> None:
