@@ -64,6 +64,14 @@ FIXES: Final = {
     "DEPLOYMENT_STALLED": "The platform failed to finish this deployment three times and "
     "stopped trying. The old version is still serving. Deploy again; if it stalls again, quote "
     "the operation id to support.",
+    "RELEASE_SPEC_UNAVAILABLE": "The platform could not read this release's manifest, so "
+    "nothing was deployed. Deploy again; if it fails again, quote the operation id to support.",
+    "CELL_UNAVAILABLE": "The cell that runs your company's apps is not set up on the platform, "
+    "so nothing was deployed. Tell an org admin, who can ask support to finish setting it up.",
+    "RUNTIME_UNAVAILABLE": "The platform cannot run apps in your company's cell right now, so "
+    "nothing was deployed. Deploy again later; if it keeps failing, tell an org admin.",
+    "RUNTIME_ERROR": "The platform failed while starting the new version and put the old one "
+    "back. Deploy again; if it fails again, quote the operation id to support.",
     **FIX_ITS,
 }
 

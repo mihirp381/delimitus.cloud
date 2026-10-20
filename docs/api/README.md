@@ -121,6 +121,37 @@ deployment that shortens the request timeout (a session app becoming request-bil
 `SNAPSHOT_UNCONFIRMED` when the org's gateway does not confirm the new limit within 60 seconds;
 the previous version keeps serving (SSC-090).
 
+**A failed deployment says why in `failure_code`.** The worker writes one of these
+(`deploy/deployments.py`, `deploy/reaper.py`, `cell/resources.py`); `ssc` prints the next step for
+each (`ssc_cli/wait.py` `FIXES`). The environment keeps what it served before; a first deployment's
+service is scaled to zero.
+
+| `failure_code` | Why |
+|---|---|
+| `APP_NOT_ACTIVE` | The app was not active (disabled, deleting) when the deployment was claimed, or stopped before traffic moved. |
+| `RELEASE_SPEC_UNAVAILABLE` | The release's manifest could not be read. |
+| `APPROVAL_REQUIRED` | A prod deployment whose production gate is not clear: it needs an approval first. |
+| `CELL_UNAVAILABLE` | The org's cell is not configured on this control plane. |
+| `RUNTIME_UNAVAILABLE` | The org's cell has no runtime configured. |
+| `CELL_RESOURCE_FAILED` | A cell resource the manifest needs (the company's database, egress, connections) could not be created; the resource's own code is below. A later deployment asks for it again. |
+| `DATABASE_UNAVAILABLE` | The environment's database could not be made: the cell agent is not configured or failed. |
+| `DB_TIER_FULL` | The company's database has no free place for another app environment. |
+| `EGRESS_UNAVAILABLE` | The proxy credential for the app's outbound hosts could not be made. |
+| `RUNTIME_ERROR` | A runtime call failed; the previous traffic split was put back. |
+| `HEALTH_CHECK_FAILED` | The new revision failed or did not become ready on its health path within 180 seconds. |
+| `SNAPSHOT_UNCONFIRMED` | The org's gateway did not confirm a shorter request timeout or a new proxy credential within 60 seconds. |
+| `DEPLOYMENT_STALLED` | The deployment's job failed three times; the reaper ended it without calling the runtime. |
+
+A cell resource (`GET /v1/cell`) and the warm gateway (`GET /v1/warm`) carry their own
+`failure_code` (`cell/create.py`, `cell/warm.py`):
+
+| `failure_code` | Why |
+|---|---|
+| `CELL_DEPLOYER_FAILED` | Three cell deployer runs failed, did not start, or stayed running or unreadable past three hours. |
+| `CELL_DEPLOYER_UNAVAILABLE` | No cell deployer is configured. |
+| `CELL_RESOURCE_STALLED` | Its job raised on every attempt. |
+| `CELL_RESOURCE_UNVERIFIED` | The runs ended well three times but the cell's agent never found the resource there to use (resources only). |
+
 **A rollback past migrations needs `confirm`** (SSC-043). A release has `latest_migrations`, the
 last migration name per ledger its build found (`prisma`, `alembic`, `django`, `drizzle`,
 `knex`), or null when the build did not read the source. A rollback to a release that lacks
