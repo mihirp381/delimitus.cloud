@@ -11,6 +11,7 @@ import pytest
 from typer.core import TyperGroup
 from typer.main import get_command
 
+from ssc_bundle.ignore import IGNORE_FILE, Ignore
 from ssc_cli.agentpack import guide
 from ssc_cli.agentpack.content import BEGIN, END, STARTER_MANIFEST
 from ssc_cli.config import config_path
@@ -546,3 +547,20 @@ def test_pack_names_the_migration_tools_a_rollback_checks(cli, tmp_path):
     for tool in MIGRATION_TOOLS:
         assert tool in agents, tool
     assert "`migrations_unknown`" in agents
+
+
+def test_starter_ignore_leaves_out_agent_files_but_keeps_the_manifest(cli, tmp_path):
+    """B-12: the agent pack's own files and macOS metadata are not uploaded."""
+    init(cli, tmp_path)
+    ignore = Ignore.load(tmp_path)
+    for path in ("AGENTS.md", "CLAUDE.md", ".mcp.json"):
+        assert ignore.reason(path, is_dir=False) == IGNORE_FILE, path
+    for path in ("._server.js", "src/._db.js"):
+        assert ignore.reason(path, is_dir=False) is not None, path
+    for folder in (".claude", ".cursor"):
+        assert ignore.reason(folder, is_dir=True) == IGNORE_FILE, folder
+    assert ignore.reason("ssc.toml", is_dir=False) is None
+    assert not ignore.would_drop_manifest
+    lines = (tmp_path / ".sscignore").read_text().splitlines()
+    for pattern in ("AGENTS.md", "CLAUDE.md", ".claude/", ".mcp.json", ".cursor/", "._*"):
+        assert pattern in lines, pattern

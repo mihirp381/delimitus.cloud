@@ -320,4 +320,12 @@ __pycache__/
 .env
 .env.*
 *.pem
+# The agent pack and editor settings: instructions for a coding agent, not the app.
+AGENTS.md
+CLAUDE.md
+.claude/
+.mcp.json
+.cursor/
+# macOS metadata.
+._*
 """
