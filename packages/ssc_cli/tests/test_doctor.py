@@ -644,3 +644,18 @@ def test_an_sscignore_pattern_matching_ssc_toml_is_overridden_and_reported(tmp_p
     (f,) = run_doctor(tmp_path)
     assert (f.code, f.severity, f.path) == ("MANIFEST_IGNORED", "warn", ".sscignore")
     assert "ssc.toml" in f.fix
+
+
+def test_a_schedule_longer_than_the_request_timeout_warns_that_the_timeout_grows(tmp_path):
+    def schedule(name: str, seconds: int) -> str:
+        return (
+            f'[[schedules]]\nname = "{name}"\ncron = "0 3 * * *"\npath = "/t"\n'
+            f"timeout_seconds = {seconds}\n"
+        )
+
+    manifest = MANIFEST + schedule("short", 300) + schedule("long", 900)
+    make(tmp_path, {"package.json": PKG, "server.js": SERVER, "ssc.toml": manifest})
+    (f,) = run_doctor(tmp_path)
+    assert (f.code, f.severity, f.path) == ("SCHEDULE_TIMEOUT_LONG", "warn", "ssc.toml")
+    assert "long" in f.message and "900" in f.message and "short" not in f.message
+    assert "every request" in f.fix

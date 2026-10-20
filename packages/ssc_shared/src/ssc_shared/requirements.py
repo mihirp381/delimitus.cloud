@@ -137,6 +137,7 @@ RULES: Final = (
         id="timers",
         text="No scheduler inside the process: instances stop when idle, so its jobs would not "
         "run. Declare timed jobs under [[schedules]] in ssc.toml.",
+        doctor=("SCHEDULE_TIMEOUT_LONG",),
         build=("IN_PROCESS_SCHEDULER",),
     ),
     PlatformRule(

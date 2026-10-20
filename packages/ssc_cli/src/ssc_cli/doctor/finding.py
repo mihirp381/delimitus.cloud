@@ -14,6 +14,7 @@ from ssc_contracts import app_env
 from ssc_contracts.build import SQLITE_ON_DISK
 from ssc_contracts.packages import HOW_TO_ASK
 from ssc_shared.requirements import REQUIREMENT_OF
+from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS
 
 Severity = Literal["block", "warn", "info"]
 DoctorCode = Literal[
@@ -32,6 +33,7 @@ DoctorCode = Literal[
     "SESSION_FRAMEWORK",
     "ADD_APPROVED_PACKAGE",
     "MANIFEST_IGNORED",
+    "SCHEDULE_TIMEOUT_LONG",
 ]
 
 LOCKFILE_STALE: Final = "LOCKFILE_STALE"
@@ -49,6 +51,7 @@ NATIVE_LIBRARY: Final = "NATIVE_LIBRARY"
 SESSION_FRAMEWORK: Final = "SESSION_FRAMEWORK"
 ADD_APPROVED_PACKAGE: Final = "ADD_APPROVED_PACKAGE"
 MANIFEST_IGNORED: Final = "MANIFEST_IGNORED"
+SCHEDULE_TIMEOUT_LONG: Final = "SCHEDULE_TIMEOUT_LONG"
 
 SEVERITY: Final[dict[DoctorCode, Severity]] = {
     LOCKFILE_STALE: "block",
@@ -66,6 +69,7 @@ SEVERITY: Final[dict[DoctorCode, Severity]] = {
     SESSION_FRAMEWORK: "info",
     ADD_APPROVED_PACKAGE: "block",
     MANIFEST_IGNORED: "warn",
+    SCHEDULE_TIMEOUT_LONG: "warn",
 }
 
 FIX: Final[dict[DoctorCode, str]] = {
@@ -135,6 +139,12 @@ FIX: Final[dict[DoctorCode, str]] = {
     MANIFEST_IGNORED: (
         "Remove the pattern from .sscignore, or narrow it so it does not match ssc.toml. The "
         "deploy always uploads ssc.toml from the folder's root, whatever .sscignore says."
+    ),
+    SCHEDULE_TIMEOUT_LONG: (
+        f"Nothing to change if the job needs that long. The app's request timeout grows from "
+        f"{REQUEST_TIMEOUT_SECONDS} seconds to the longest schedule's timeout_seconds for every "
+        f"request, not only the timer's; set timeout_seconds to {REQUEST_TIMEOUT_SECONDS} or "
+        "less to keep the shorter limit."
     ),
 }
 

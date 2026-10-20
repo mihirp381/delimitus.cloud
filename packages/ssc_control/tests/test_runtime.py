@@ -172,6 +172,16 @@ def test_billing_and_timeout_follow_the_session_rule(
         assert desired.concurrency == REQUEST_CONCURRENCY == 80
 
 
+def test_a_long_schedule_raises_the_service_timeout() -> None:
+    schedules = [
+        {"name": "short", "cron": "0 3 * * *", "path": "/s", "timeout_seconds": 60},
+        {"name": "long", "cron": "0 4 * * *", "path": "/l", "timeout_seconds": 600},
+    ]
+    desired = spec_for(manifest(schedules=schedules))
+    assert desired.timeout_seconds == 600
+    assert spec_for(manifest(schedules=schedules[:1])).timeout_seconds == REQUEST_TIMEOUT_SECONDS
+
+
 @pytest.mark.parametrize(
     ("runtime", "framework", "expected"),
     [

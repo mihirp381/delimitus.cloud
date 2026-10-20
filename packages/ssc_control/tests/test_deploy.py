@@ -1482,6 +1482,18 @@ def stored_timeout(b: Bench, env: str) -> int | None:
     return row["request_timeout_seconds"]
 
 
+async def test_a_long_schedule_gives_the_gateway_the_service_timeout(b: Bench) -> None:
+    long = {"name": "long", "cron": "0 3 * * *", "path": "/tasks/long", "timeout_seconds": 600}
+    cell = Cell(b, b.w.preview)
+    release = await build_release(b, b.w.preview, manifest_of(schedules=[long]))
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    assert await run(b, op, replace(b.ports, snapshot=cell)) == "healthy"
+    (revision,) = b.runtime.services[service_name(b.w.preview)].revisions
+    assert revision.timeout_seconds == 600
+    assert stored_timeout(b, b.w.preview) == 600
+    assert await told(b, b.w.preview) == 600
+
+
 async def test_an_unconfirmed_lower_timeout_keeps_the_old_revision(b: Bench) -> None:
     cell = Cell(b, b.w.preview, answering=False)
     ports = replace(b.ports, snapshot=cell)

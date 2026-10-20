@@ -7,7 +7,7 @@ The control plane (``ssc_control.runtime``) decides what should run; the cell ag
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, cast, get_args
@@ -20,6 +20,7 @@ from ssc_contracts.manifest import (
     ResourceClass,
     ResourceClassName,
     Runtime,
+    Schedule,
     is_session_app,
 )
 
@@ -54,12 +55,15 @@ def billing_for(runtime: Runtime, framework: str | None = None) -> Billing:
     return "instance" if is_session_app(runtime, framework) else "request"
 
 
-def timeout_for(runtime: Runtime, framework: str | None = None) -> int:
+def timeout_for(
+    runtime: Runtime, framework: str | None = None, schedules: Iterable[Schedule] = ()
+) -> int:
     """Seconds Cloud Run lets one request run: ``SESSION_TIMEOUT_SECONDS`` for a session app, so
-    one WebSocket can last an hour; ``REQUEST_TIMEOUT_SECONDS`` for any other."""
-    return (
-        SESSION_TIMEOUT_SECONDS if is_session_app(runtime, framework) else REQUEST_TIMEOUT_SECONDS
-    )
+    one WebSocket can last an hour; for any other ``REQUEST_TIMEOUT_SECONDS`` or the longest
+    schedule's ``timeout_seconds``, so a timer call is never cut short."""
+    if is_session_app(runtime, framework):
+        return SESSION_TIMEOUT_SECONDS
+    return max([REQUEST_TIMEOUT_SECONDS, *(s.timeout_seconds for s in schedules)])
 
 
 def check_org(org_id: str) -> str:

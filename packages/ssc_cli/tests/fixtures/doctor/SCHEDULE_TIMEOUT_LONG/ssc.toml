@@ -1,0 +1,7 @@
+schema = "ssc/v1"
+
+[[schedules]]
+name = "nightly"
+cron = "0 3 * * *"
+path = "/tasks/nightly"
+timeout_seconds = 600

@@ -112,7 +112,7 @@ The table itself has no default: a manifest without `[files]` leaves it out of t
 | `path` | string | required | Starts with a single `/`, may carry a `?query`, no `#`, at most 512 characters. |
 | `timezone` | string | `"UTC"` | `UTC` or an IANA zone such as `Europe/London`, checked against the zone database. |
 | `method` | string | `"POST"` | `GET` or `POST`. |
-| `timeout_seconds` | integer | `60` | 1 to 900. A run past it is cancelled and recorded as `timed_out`. The clock starts when the app first answers, not when the call is sent (below). |
+| `timeout_seconds` | integer | `60` | 1 to 900. A run past it is cancelled and recorded as `timed_out`. The clock starts when the app first answers, not when the call is sent (below). Above 300, the app's request timeout (Cloud Run's, and the deadline the gateway tells the app) grows to the longest schedule's for every request, since neither tells timer calls apart (`ssc_shared.runtime.timeout_for`); `ssc doctor` warns with `SCHEDULE_TIMEOUT_LONG`. A session app keeps its 3600. |
 
 Preview timers are stored paused (decision, lane A).
 
