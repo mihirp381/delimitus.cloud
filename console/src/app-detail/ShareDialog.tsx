@@ -1,5 +1,6 @@
 import { useRouteContext } from '@tanstack/react-router';
-import { type FormEvent, useId, useState } from 'react';
+import { type FormEvent, useId, useRef, useState } from 'react';
+import { askCeilingApproval } from '../api/connections';
 import {
   findGroups,
   findPeople,
@@ -8,12 +9,13 @@ import {
   USER_ID_PATTERN,
 } from '../api/directory';
 import {
-  type Approval,
   askShareApproval,
   type Grant,
   type GrantInput,
   type GrantsSnapshot,
   type GrantsUpdate,
+  readShareRequirements,
+  type ShareRequirement,
   updateGrants,
   withGrant,
 } from '../api/grants';
@@ -36,6 +38,34 @@ interface Props {
   readonly onDone: (update: GrantsUpdate, message: string) => void;
 }
 
+/** A change refused with APPROVAL_REQUIRED: the grants it would have set, and what it needs. */
+interface Needed {
+  readonly grants: readonly (Grant | GrantInput)[];
+  readonly requirements: readonly ShareRequirement[];
+}
+
+/** An approval request for the refused change: opened here, or already pending. */
+interface Asked {
+  readonly id: string;
+  readonly kind: string;
+  readonly connection: string | null;
+  readonly state: string;
+}
+
+/** What one requirement asks, and who decides it. */
+function needs(r: { readonly kind: string; readonly connection?: string | null }): string {
+  switch (r.kind) {
+    case 'widen_audience':
+      return 'widen the audience of an app that reaches company data (another org admin decides)';
+    case 'exceed_ceiling':
+      return `exceed the ceiling of connection ${r.connection ?? '?'} (its owner or an org admin decides)`;
+    case 'agent_share':
+      return 'a change made through an agent (another org admin decides)';
+    default:
+      return r.kind;
+  }
+}
+
 const KINDS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'group', label: 'A group' },
   { kind: 'user', label: 'A person' },
@@ -56,15 +86,18 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
   const [role, setRole] = useState<Role>(env.name === 'preview' ? 'builder' : 'user');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [needsApproval, setNeedsApproval] = useState<readonly (Grant | GrantInput)[] | null>(null);
-  const [asked, setAsked] = useState<Approval | null>(null);
+  const [needed, setNeeded] = useState<Needed | null>(null);
+  const [asked, setAsked] = useState<readonly Asked[] | null>(null);
+  /** Bumped whenever the change being made is forgotten, so a late answer is dropped. */
+  const generation = useRef(0);
   const roleId = useId();
   const title = `Share ${ENV_TITLE[env.name].toLowerCase()}`;
 
   /** Forgets a refusal and an approval request, which were for the grant set as it was. */
   function forget() {
+    generation.current += 1;
     setError(null);
-    setNeedsApproval(null);
+    setNeeded(null);
     setAsked(null);
   }
 
@@ -113,15 +146,17 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
     if (!subject || busy) return;
     setBusy(true);
     setError(null);
-    setNeedsApproval(null);
+    setNeeded(null);
     setAsked(null);
+    const mine = generation.current;
+    const target = { appId: app.id, environmentId: env.id };
     let sent: readonly (Grant | GrantInput)[] = [];
     const change = (grants: readonly Grant[]) => {
       sent = withGrant(subject)(grants);
       return sent;
     };
     try {
-      const update = await updateGrants(api, { appId: app.id, environmentId: env.id }, change, seen);
+      const update = await updateGrants(api, target, change, seen);
       onDone(
         update,
         update.state === 'pending'
@@ -130,22 +165,45 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
       );
       close();
     } catch (e) {
-      if (e instanceof ApiProblem && e.code === 'APPROVAL_REQUIRED') setNeedsApproval(sent);
       setError(e);
+      if (e instanceof ApiProblem && e.code === 'APPROVAL_REQUIRED') {
+        // The refusal names nothing; the same grants, checked again, say what to ask for.
+        try {
+          const { requirements } = await readShareRequirements(api, target, sent);
+          if (generation.current === mine) setNeeded({ grants: sent, requirements });
+        } catch (read) {
+          if (generation.current === mine) setError(read);
+        }
+      }
     } finally {
       setBusy(false);
     }
   }
 
+  /** Opens one request per requirement not already pending, for exactly the refused grants. */
   async function ask() {
-    if (!needsApproval || busy) return;
+    if (!needed || busy) return;
     setBusy(true);
+    const target = { appId: app.id, environmentId: env.id };
+    const done: Asked[] = [];
     try {
-      setAsked(await askShareApproval(api, env.id, needsApproval));
+      for (const r of needed.requirements) {
+        const connection = r.connection ?? null;
+        if (r.state === 'pending' && r.approval_id) {
+          done.push({ id: r.approval_id, kind: r.kind, connection, state: 'pending' });
+          continue;
+        }
+        const opened =
+          r.kind === 'exceed_ceiling' && connection
+            ? await askCeilingApproval(api, target, connection, needed.grants)
+            : await askShareApproval(api, env.id, needed.grants);
+        done.push({ id: opened.id, kind: r.kind, connection, state: opened.state });
+      }
       setError(null);
     } catch (e) {
       setError(e);
     } finally {
+      if (done.length > 0) setAsked(done);
       setBusy(false);
     }
   }
@@ -213,24 +271,50 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
           </label>
           {env.name === 'preview' ? <p className="muted">Preview is for builders only.</p> : null}
           {error ? <ProblemNotice error={error} /> : null}
-          {needsApproval && !asked ? (
+          {needed && !asked ? (
             <div className="notice notice-info" role="note">
-              <p>
-                Another admin of the organisation must approve exactly this change. Ask for it
-                here, then share again once it is approved; the request is listed under Approvals.
-              </p>
-              <div>
-                <Button onClick={() => void ask()} disabled={busy}>
-                  Ask for approval
-                </Button>
-              </div>
+              {needed.requirements.length > 0 ? (
+                <>
+                  <p>This change needs approval before it applies:</p>
+                  <ul>
+                    {needed.requirements.map((r) => (
+                      <li key={`${r.kind}:${r.connection ?? ''}`}>
+                        {needs(r)}
+                        {r.state === 'pending' && r.approval_id ? (
+                          <>
+                            {' '}
+                            — already asked: <code>{r.approval_id}</code> (pending)
+                          </>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>
+                    Ask for it here, then share again once every request is approved; requests are
+                    listed under Approvals.
+                  </p>
+                  <div>
+                    <Button onClick={() => void ask()} disabled={busy}>
+                      Ask for approval
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <p>Every approval this change needs is now in. Share again.</p>
+              )}
             </div>
           ) : null}
           {asked ? (
-            <p className="notice notice-success" role="status">
-              Asked for approval: <code>{asked.id}</code> ({asked.state}). Share again once another
-              admin has approved it.
-            </p>
+            <div className="notice notice-success" role="status">
+              <p>Asked for approval. Share again once every request is approved:</p>
+              <ul>
+                {asked.map((a) => (
+                  <li key={a.id}>
+                    <code>{a.id}</code>: {needs(a)} ({a.state})
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
           <div className="actions">
             <Button onClick={close}>Cancel</Button>

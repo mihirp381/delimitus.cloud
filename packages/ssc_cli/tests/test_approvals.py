@@ -201,3 +201,58 @@ def test_a_refusal_is_shown_with_its_code(cli, scripted, fake_problem, code):
     r = cli("approvals", "approve", APR, "-m", "Fine.", "--json", session=scripted.session())
     assert r.code == ExitCode.FAILED
     assert r.json()["error"]["code"] == code
+
+
+ESC = "\x1b"
+
+
+def test_free_text_from_the_api_is_shown_with_controls_escaped(cli, scripted):
+    """B-5: a reason, a name or a problem's text cannot drive the terminal."""
+    detail = _detail(
+        state="denied",
+        decision_reason=f"no{ESC}]52;c;cHduZWQ={ESC}\\",
+        requested_by_name=f"Ada{ESC}[2J",
+    )
+    scripted.add("GET", f"/v1/approvals/{APR}", httpx2.Response(200, json=detail))
+    human = cli("approvals", "show", APR, session=scripted.session())
+    assert human.code == 0, human.stderr
+    assert ESC not in human.stdout
+    assert "Decision: no\\x1b]52;c;cHduZWQ=\\x1b\\" in human.stdout
+    assert "Asked by Ada\\x1b[2J" in human.stdout
+
+    scripted.add(
+        "GET",
+        "/v1/approvals",
+        httpx2.Response(
+            200,
+            json={
+                "approvals": [_approval(requested_by_name=f"Ada{ESC}[2J")],
+                "next_before": None,
+            },
+        ),
+    )
+    listed = cli("approvals", "list", session=scripted.session())
+    assert listed.code == 0, listed.stderr
+    assert ESC not in listed.stdout and "Ada\\x1b[2J" in listed.stdout
+
+
+def test_a_problem_s_title_and_detail_are_shown_with_controls_escaped(cli, scripted):
+    body = {
+        "type": "https://errors.delimitus.com/approval_not_pending",
+        "title": f"Not pending{ESC}[31m",
+        "status": 409,
+        "detail": f"decided{ESC}]0;owned{ESC}\\",
+        "instance": "/v1/x",
+        "code": "APPROVAL_NOT_PENDING",
+        "request_id": "req_test",
+    }
+    scripted.add(
+        "POST",
+        f"/v1/approvals/{APR}/decide",
+        httpx2.Response(409, json=body, headers={"content-type": "application/problem+json"}),
+    )
+    r = cli("approvals", "approve", APR, "-m", "Fine.", session=scripted.session())
+    assert r.code == ExitCode.FAILED
+    assert ESC not in r.stderr
+    assert "Error: Not pending\\x1b[31m" in r.stderr
+    assert "decided\\x1b]0;owned\\x1b\\" in r.stderr

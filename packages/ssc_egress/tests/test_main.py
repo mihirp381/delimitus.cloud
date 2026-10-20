@@ -88,3 +88,20 @@ def test_a_snapshot_max_age_that_is_not_a_positive_number_is_a_settings_error(
     )
     assert done.returncode == 2, done.stderr  # noqa: PLR2004
     assert "SSC_SNAPSHOT_MAX_AGE" in done.stderr
+
+
+@pytest.mark.usefixtures("unredacted_logging")
+def test_the_entrypoint_installs_log_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ssc_shared import redaction  # noqa: PLC0415
+
+    handlers = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        from ssc_egress.__main__ import main  # noqa: PLC0415
+
+        monkeypatch.delenv("SSC_ORG_ID", raising=False)
+        assert not redaction.installed()
+        assert main() == 2  # no SSC_ORG_ID: stops before Envoy
+        assert redaction.installed()
+    finally:
+        for s, h in handlers.items():
+            signal.signal(s, h)

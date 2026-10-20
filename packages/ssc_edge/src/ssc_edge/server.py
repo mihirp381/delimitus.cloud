@@ -46,6 +46,7 @@ from ssc_edge.schedule_token import ScheduleKeys, ScheduleKeysError, parse_timer
 from ssc_edge.session import SessionCodec
 from ssc_edge.streams import Streams
 from ssc_edge.tokens import MetadataTokens
+from ssc_shared import redaction
 from ssc_shared.access import AccessView, ViewHolder
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of
@@ -432,6 +433,7 @@ def main() -> None:
     two minutes when the bucket cannot be reached; ``uvicorn.run`` would wait for it, past the
     supervisor's grace, so the loop is our own."""
     logging.basicConfig(level=logging.INFO)
+    redaction.install()
     port = int(os.environ.get("SSC_AUTHZ_PORT", "9001"))
     config = uvicorn.Config(
         production_app(), host="127.0.0.1", port=port, log_config=None, access_log=False

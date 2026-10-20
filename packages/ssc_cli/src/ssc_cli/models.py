@@ -64,12 +64,22 @@ class GrantsOut(Wire):
     grants: list[GrantOut]
 
 
+class RequirementOut(Wire):
+    """One approval a sharing change needs; ``connection`` is set for ``exceed_ceiling``."""
+
+    kind: str
+    connection: str | None = None
+    approval_id: str | None = None
+    state: str | None = None
+
+
 class GrantsPending(Wire):
     """``202`` from ``PUT .../grants``: the change waits for approval and nothing was applied."""
 
     environment_id: str
     grants_version: int
     approval_ids: list[str]
+    requirements: list[RequirementOut] = []
 
 
 class OperationOut(Wire):
@@ -90,6 +100,7 @@ class OperationAccepted(Wire):
     operation_id: str
     state: str
     notice: str | None = None
+    migrations_unknown: bool = False
 
 
 class UploadTarget(Wire):

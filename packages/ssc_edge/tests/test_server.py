@@ -567,3 +567,27 @@ async def test_the_view_reports_the_age_of_its_last_confirmation(tmp_path: Path)
     assert snap.age_ms() == 0
     clock.t += 61.5
     assert snap.age_ms() == 61_500
+
+
+@pytest.mark.usefixtures("unredacted_logging")
+def test_the_authoriser_entrypoint_installs_log_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ssc_edge.server import main  # noqa: PLC0415
+    from ssc_shared import redaction  # noqa: PLC0415
+
+    monkeypatch.setenv("SSC_AUTHZ_PORT", "not-a-port")
+    assert not redaction.installed()
+    with pytest.raises(ValueError, match="not-a-port"):
+        main()
+    assert redaction.installed()
+
+
+@pytest.mark.usefixtures("unredacted_logging")
+def test_the_gateway_entrypoint_installs_log_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ssc_edge.gateway import main  # noqa: PLC0415
+    from ssc_shared import redaction  # noqa: PLC0415
+
+    monkeypatch.setenv("PORT", "not-a-port")
+    assert not redaction.installed()
+    with pytest.raises(ValueError, match="not-a-port"):
+        main()
+    assert redaction.installed()

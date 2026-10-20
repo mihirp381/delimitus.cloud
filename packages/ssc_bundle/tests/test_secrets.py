@@ -2,10 +2,12 @@
 
 import base64
 import json
+import time
 
 import pytest
 
-from ssc_bundle.secrets import MAX_SCAN_BYTES, Finding, entropy, mask, scan
+from ssc_bundle.secrets import MAX_LINE_SCAN, MAX_SCAN_BYTES, Finding, entropy, mask, scan
+from ssc_conformance.secret_shapes import SHAPES, Shape, line
 
 AWS_KEY = "AKIA" + "Z7Q3K9XW" + "P2LMN4RT"
 AWS_SECRET = "wJalrXUtnFEMI" + "/K7MDENG/bPxRfiCY" + "EXAMPLEKEY"
@@ -120,3 +122,97 @@ def test_mask_never_shows_most_of_a_value() -> None:
 def test_entropy() -> None:
     assert entropy("aaaa") == 0
     assert entropy(GENERIC) >= 4.0
+
+
+LONG = 1024 * 1024
+
+
+def timed_scan(text: str) -> tuple[float, list[Finding]]:
+    start = time.perf_counter()
+    found = one(text)
+    return time.perf_counter() - start, found
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "a" * LONG,
+        "token" * (LONG // 5),
+        "eyJ" + "A" * 1_000_000,
+    ],
+    ids=["a", "token", "jwt-prefix"],
+)
+def test_scan_is_linear(text: str) -> None:
+    """B-1: a one-line 1 MiB file is read in well under a second, so one upload cannot hold
+    the API's GIL (the name-keyed rule once took 33 s on 3 KB of ``token``)."""
+    seconds, found = timed_scan(text)
+    assert seconds < 1, f"{seconds:.2f} s"
+    assert found == []
+
+
+def test_a_secret_at_the_start_of_a_long_line_is_still_found() -> None:
+    seconds, found = timed_scan(f'API_TOKEN = "{GENERIC}";' + "x=1;" * (LONG // 4 - 16))
+    assert seconds < 1
+    assert rules(found) == [("generic_secret_assignment", True)]
+
+
+def test_the_name_keyed_rule_reads_only_the_first_4096_characters_of_a_line() -> None:
+    assert rules(one(" " * 4000 + f'API_TOKEN = "{GENERIC}"')) == [
+        ("generic_secret_assignment", True)
+    ]
+    assert one(" " * MAX_LINE_SCAN + f'API_TOKEN = "{GENERIC}"') == []
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "AKIA",
+        "aws_secret_access_key = ",
+        "-----BEGIN A ",
+        "eyJ",
+        "eyJAAAAAAAAAA.",
+        "eyJAAAAAAAAAA.eyJAAAAAAAAAA.",
+        "sb_secret_",
+        "postgres://",
+        "postgres://u:",
+        "postgres://u:p@",
+        "secret=",
+        "token ",
+        "token=a",
+        "a.token.",
+        "ghp_",
+        "github_pat_",
+        "glpat-",
+        "xoxb-",
+        "sk_live_",
+        "sk-ant-",
+        "sk-",
+        "sk-proj-",
+        "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaa",
+        "AIza",
+        "npm_",
+        "SG.",
+        "SG.aaaaaaaaaaaaaaaaaaaaaa.",
+    ],
+)
+def test_a_line_of_one_rule_prefix_repeated_is_linear(unit: str) -> None:
+    seconds, _ = timed_scan(unit * (LONG // len(unit)))
+    assert seconds < 1, f"{seconds:.2f} s"
+
+
+@pytest.mark.parametrize("shape", SHAPES, ids=[s.positive[:6] for s in SHAPES])
+def test_provider_keys_under_any_name_are_found(shape: Shape) -> None:
+    """GA-12 F22: the build's gitleaks finds these under a plain name, so the local scan must
+    too (gates/test_gitleaks_parity.py holds gitleaks to the same fixtures)."""
+    found = one(line(shape.positive))
+    assert rules(found) == [(shape.rule, True)]
+    assert shape.positive not in found[0].masked
+    assert one(line(shape.negative)) == []
+
+
+def test_a_provider_key_deep_in_a_minified_line_is_found() -> None:
+    key = SHAPES[0].positive
+    text = "var a=1;" * 20_000 + f'fetch(u,{{headers:{{Authorization:"token {key}"}}}});' + "b();"
+    seconds, found = timed_scan(text)
+    assert seconds < 1
+    assert rules(found) == [("github_token", True)]

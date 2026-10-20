@@ -262,7 +262,9 @@
   "ErrorBody": {
     "code": "string",
     "detail": "string",
+    "fix": "string|null",
     "instance": "string|null",
+    "log_tail": "array<string>|null",
     "request_id": "string|null",
     "status": "integer|null",
     "title": "string",
@@ -277,7 +279,7 @@
     "path": "string"
   },
   "Finding": {
-    "code": "string[ADD_APPROVED_PACKAGE,EXTERNAL_SERVICE,LOCKFILE_STALE,MANIFEST_INVALID,MANIFEST_MISSING,NATIVE_LIBRARY,NOT_SINGLE_APP,NO_START_COMMAND,PORT_BINDING,PUBLIC_ENV_AT_BUILD,SECRET_IN_BUNDLE,SESSION_FRAMEWORK,STATE_SQLITE_EPHEMERAL,WRITES_HOME]",
+    "code": "string[ADD_APPROVED_PACKAGE,EXTERNAL_SERVICE,LOCKFILE_STALE,MANIFEST_IGNORED,MANIFEST_INVALID,MANIFEST_MISSING,NATIVE_LIBRARY,NOT_SINGLE_APP,NO_START_COMMAND,PORT_BINDING,PUBLIC_ENV_AT_BUILD,SECRET_IN_BUNDLE,SESSION_FRAMEWORK,STATE_SQLITE_EPHEMERAL,WRITES_HOME]",
     "fix": "string",
     "line": "integer|null",
     "message": "string",
@@ -451,6 +453,7 @@
     "app_id": "string",
     "environment": "string",
     "environment_id": "string",
+    "migrations_unknown": "boolean",
     "operation_id": "string",
     "release_id": "string",
     "release_number": "integer",

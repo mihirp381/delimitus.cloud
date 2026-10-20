@@ -59,12 +59,18 @@ export function signInMessage(error: unknown): string {
 
 /** Only same-site paths are followed after sign-in. */
 export function safeNext(value: unknown): string | undefined {
-  return typeof value === 'string' &&
-    value.startsWith('/') &&
-    !value.startsWith('//') &&
-    !value.includes('\\')
-    ? value
-    : undefined;
+  if (typeof value !== 'string' || !value.startsWith('/') || /[\u0000-\u001f\u007f]/.test(value)) {
+    return undefined;
+  }
+  const origin = window.location.origin;
+  let url: URL;
+  try {
+    url = new URL(value, origin);
+  } catch {
+    return undefined;
+  }
+  if (url.origin !== origin || !url.pathname.startsWith('/')) return undefined;
+  return url.pathname + url.search + url.hash;
 }
 
 interface Pending {

@@ -3,8 +3,11 @@
 The server never trusts the client's packing or scan: it re-reads the stored object, checks its
 size and sha256, inspects the tar (``ssc_bundle.tarcheck``), reads ``ssc.toml`` from the bundle
 itself and repeats the secret scan. Every refusal carries an ``ErrorCode`` and log-only evidence;
-evidence never holds a secret value, masked or not. A build reads the stored bundle once more for
-``ssc_bundle.analyze`` (SSC-015).
+evidence never holds a secret value, masked or not. The tar check and the scan run in a worker
+process of their own with a ``SCAN_SECONDS`` wall-clock budget (B-1): a pathological file can
+neither hold the API's GIL nor leave the request hanging; past the budget the worker is killed
+and the bundle is refused as ``BUNDLE_MALFORMED`` (reason ``scan_timeout``). A build reads the
+stored bundle once more for ``ssc_bundle.analyze`` (SSC-015).
 """
 
 import asyncio
@@ -13,7 +16,9 @@ import hmac
 import re
 import tempfile
 from collections.abc import Mapping
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import IO, Final
 
 from ssc_bundle.analyze import MAX_ANALYZE_BYTES, Analysis, analyze
@@ -33,6 +38,8 @@ The ``bundles/`` prefix is restated in ``infra/ssc_infra/cell.py`` ``WORKER_PREF
 ``BUNDLES_PREFIX``: the API and worker grants reach only there.
 """
 MAX_EVIDENCE_FINDINGS: Final = 20
+SCAN_SECONDS: Final = 30.0
+"""Wall-clock budget for the tar check and secret scan of one uploaded bundle."""
 
 
 def bundle_key(org_id: str, app_id: str, digest: str) -> str:
@@ -50,6 +57,10 @@ class BundleRejectedError(Exception):
         super().__init__(code.value)
         self.code = code
         self.evidence = dict(evidence)
+
+    def __reduce__(self) -> tuple[type[BundleRejectedError], tuple[ErrorCode, dict[str, object]]]:
+        # Raised in the scan's worker process and unpickled in the API's.
+        return (BundleRejectedError, (self.code, self.evidence))
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,9 +89,30 @@ async def check_upload(
         )
     if size > limits.max_bytes:
         raise BundleRejectedError(ErrorCode.BUNDLE_TOO_LARGE, {"reason": "bytes", "size": size})
-    with tempfile.TemporaryFile() as tmp:
-        await _download(store, key, tmp, size=size, sha256=want)
-        return await asyncio.to_thread(_inspect, tmp, limits)
+    # A named file, since the worker process opens it by path (an open file cannot be pickled).
+    tmp = tempfile.NamedTemporaryFile(prefix="ssc-bundle-", suffix=".tar.gz", delete=False)  # noqa: SIM115
+    path = Path(tmp.name)
+    try:
+        with tmp:
+            await _download(store, key, tmp, size=size, sha256=want)
+        return await _inspect_within_budget(path, limits)
+    finally:
+        await asyncio.to_thread(path.unlink, missing_ok=True)
+
+
+async def _inspect_within_budget(path: Path, limits: Limits) -> CheckedBundle:
+    """``_inspect_path`` in a fresh worker process, killed after ``SCAN_SECONDS``."""
+    pool = ProcessPoolExecutor(max_workers=1)
+    try:
+        work = asyncio.get_running_loop().run_in_executor(pool, _inspect_path, str(path), limits)
+        return await asyncio.wait_for(work, SCAN_SECONDS)
+    except TimeoutError:
+        raise BundleRejectedError(
+            ErrorCode.BUNDLE_MALFORMED, {"reason": "scan_timeout", "seconds": SCAN_SECONDS}
+        ) from None
+    finally:
+        pool.kill_workers()
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 async def _download(store: BlobStore, key: str, out: IO[bytes], *, size: int, sha256: str) -> None:
@@ -99,6 +131,12 @@ async def _download(store: BlobStore, key: str, out: IO[bytes], *, size: int, sh
         raise BundleRejectedError(ErrorCode.BUNDLE_DIGEST_MISMATCH, {"reason": "corrupt"}) from None
     if n != size or not hmac.compare_digest(h.hexdigest(), sha256):
         raise BundleRejectedError(ErrorCode.BUNDLE_DIGEST_MISMATCH, {"reason": "read_back"})
+
+
+def _inspect_path(path: str, limits: Limits) -> CheckedBundle:
+    """Runs in the scan's worker process."""
+    with Path(path).open("rb") as f:
+        return _inspect(f, limits)
 
 
 def _inspect(tmp: IO[bytes], limits: Limits) -> CheckedBundle:

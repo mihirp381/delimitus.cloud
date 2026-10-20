@@ -8,7 +8,7 @@ import {
   type LedgerAhead,
   migrationsAhead,
   operationFinished,
-  POLL_MS,
+  pollUntil,
   type Release,
   rollBack,
   runsIn,
@@ -265,7 +265,7 @@ function RollbackProgress({ app, started }: { readonly app: AppOut; readonly sta
     'get',
     '/v1/operations/{operation_id}',
     { params: { path: { operation_id: started.operationId } } },
-    { refetchInterval: (q) => (operationFinished(q.state.data) ? false : POLL_MS) },
+    { refetchInterval: pollUntil(operationFinished) },
   );
   const finished = operationFinished(op.data);
   useEffect(() => {

@@ -139,6 +139,8 @@ def build_vectors() -> dict[str, Any]:  # noqa: PLR0915
     ok("note with 50 groups", sign_note(many, private_key=key_a, kid=KID_A), APP_A, many)
     fresh = _user_note(now=NOW)
     ok("note issued this second", sign_note(fresh, private_key=key_a, kid=KID_A), APP_A, fresh)
+    emoji = _user_note(name="\N{GRINNING FACE}" * 256)
+    ok("name of 256 code points", sign_note(emoji, private_key=key_a, kid=KID_A), APP_A, emoji)
 
     refused(
         "token for app A verified by app B",
@@ -248,6 +250,22 @@ def build_vectors() -> dict[str, Any]:  # noqa: PLR0915
     refused(
         "group that is not a grp_ id",
         _raw_token(dict(note_claims(user), groups=["Finance"]), key_a, header),
+        "bad_claims",
+    )
+    refused(
+        "group id in upper case",
+        _raw_token(dict(note_claims(user), groups=["grp_" + "A" * 20]), key_a, header),
+        "bad_claims",
+    )
+    for claim in ("name", "email", "groups"):
+        refused(
+            f"{claim} sent as null",
+            _raw_token(dict(note_claims(user), **{claim: None}), key_a, header),
+            "bad_claims",
+        )
+    refused(
+        "name of 257 code points",
+        _raw_token(dict(note_claims(user), name="\N{GRINNING FACE}" * 257), key_a, header),
         "bad_claims",
     )
     refused(

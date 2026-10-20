@@ -75,12 +75,18 @@ def host_pattern_problem(pattern: str) -> str | None:
             "must be a DNS host name such as api.example.com, or *.example.com",
         ),
         (not labels[-1][:1].isalpha(), "IP addresses are never allowed; name the host"),
-        (
-            _reaches_storage(pattern),
-            "Cloud Storage is never allowed; an app keeps files with the file broker (SSC-046)",
-        ),
     )
-    return next((problem for failed, problem in checks if failed), None)
+    return next((problem for failed, problem in checks if failed), None) or storage_host_problem(
+        pattern
+    )
+
+
+def storage_host_problem(host: str) -> str | None:
+    """Why ``host`` (or a ``*.`` pattern) may never be allowed because it reaches Cloud Storage,
+    or None."""
+    if _reaches_storage(host):
+        return "Cloud Storage is never allowed; an app keeps files with the file broker (SSC-046)"
+    return None
 
 
 def _reaches_storage(pattern: str) -> bool:

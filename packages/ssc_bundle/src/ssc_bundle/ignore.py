@@ -1,8 +1,11 @@
 """What never goes into a bundle: fixed exclusions, hygiene exclusions, then ``.sscignore``.
 
 ``.git`` is left out as a file too (a worktree or submodule checkout). ``.sscignore`` uses
-gitignore syntax, negation included, but cannot re-include a fixed or hygiene exclusion.
-``dist/`` and ``build/`` are kept: static sites ship them.
+gitignore syntax, negation included, but cannot re-include a fixed or hygiene exclusion, and
+cannot leave out ``ssc.toml`` at the root: the CLI checks the manifest on disk, so the server
+must receive that one, not fall back to the default (B-2). ``dist/`` and ``build/`` are kept:
+static sites ship them. macOS metadata (``._*`` AppleDouble twins, ``__MACOSX/``, ``.DS_Store``)
+is hygiene: never packed, and refused by the server (B-9).
 """
 
 from collections.abc import Iterable
@@ -11,10 +14,17 @@ from typing import Final
 
 from pathspec import GitIgnoreSpec
 
+from ssc_contracts.manifest import MANIFEST_FILE
+
 FIXED_PATTERNS: Final = (".env", ".env.*", "node_modules/", ".git")
-HYGIENE_PATTERNS: Final = (".venv/", "__pycache__/", ".DS_Store")
+HYGIENE_PATTERNS: Final = (".venv/", "__pycache__/", ".DS_Store", "._*", "__MACOSX/")
 IGNORE_FILE: Final = ".sscignore"
 ENV_REASON: Final = ".env"
+
+
+def is_macos_metadata(name: str) -> bool:
+    """A path part macOS writes beside a file: an AppleDouble ``._*`` twin or ``.DS_Store``."""
+    return name.startswith("._") or name == ".DS_Store"
 
 
 def is_env_name(name: str) -> bool:
@@ -47,6 +57,11 @@ class Ignore:
         for pattern, spec in self._fixed:
             if spec.match_file(path):
                 return pattern
-        if self._user.match_file(path):
+        if path != MANIFEST_FILE and self._user.match_file(path):
             return IGNORE_FILE
         return None
+
+    @property
+    def would_drop_manifest(self) -> bool:
+        """Whether a ``.sscignore`` pattern matches ``ssc.toml``, which is packed regardless."""
+        return self._user.match_file(MANIFEST_FILE)

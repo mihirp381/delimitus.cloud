@@ -264,7 +264,9 @@ class ReleasesResult(Shape):
 
 
 class RollbackResult(Shape):
-    """``rollback``: ``state`` is the deployment's, ``pending`` unless ``--wait`` was given."""
+    """``rollback``: ``state`` is the deployment's, ``pending`` unless ``--wait`` was given.
+    ``migrations_unknown``: the app has a database but SSC recognised no migration tool in the
+    release, so the rollback was not checked for migrations it goes back past (B-10)."""
 
     app_id: str
     slug: str
@@ -275,6 +277,7 @@ class RollbackResult(Shape):
     operation_id: str
     state: str
     url: str | None
+    migrations_unknown: bool = False
 
 
 class PromoteResult(Shape):

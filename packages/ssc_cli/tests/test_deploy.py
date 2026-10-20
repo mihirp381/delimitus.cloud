@@ -401,6 +401,10 @@ def _unlisted_package(root: Path) -> None:
     (root / "requirements.txt").write_text("flask\npytesseract\n")
 
 
+def _localhost_server(root: Path) -> None:
+    (root / "server.js").write_text("require('express')().listen(3000, 'localhost')\n")
+
+
 @pytest.mark.parametrize(
     ("spoil", "code"),
     [
@@ -409,6 +413,7 @@ def _unlisted_package(root: Path) -> None:
         (_link, "BUNDLE_MALFORMED"),
         (_sqlite, "STATE_SQLITE_EPHEMERAL"),
         (_unlisted_package, "ADD_APPROVED_PACKAGE"),
+        (_localhost_server, "PORT_BINDING"),
     ],
 )
 def test_local_refusals_exit_4_before_any_request(cli, api, folder, spoil, code):
@@ -515,6 +520,22 @@ def test_an_unlisted_system_package_is_named_with_how_to_ask(cli, api, folder):
     assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
 
 
+def test_a_server_that_cannot_be_reached_is_refused_before_upload(cli, api, folder):
+    """GA-12 F22: doctor's PORT_BINDING blocks, so the deploy applies it like the other blocks."""
+    _localhost_server(folder)
+    r = cli("deploy", str(folder), "--app", "demo", session=api.session())
+    assert r.code == ExitCode.BLOCKED
+    assert "server.js:1" in r.stderr
+    assert "listens on localhost only" in r.stderr
+    assert "process.env.PORT" in r.stderr
+    assert api.seen == []
+    (folder / ".sscignore").write_text("server.js\n")
+    assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
+    (folder / ".sscignore").unlink()
+    (folder / "server.js").write_text("require('express')().listen(process.env.PORT)\n")
+    assert cli("deploy", str(folder), "--app", "demo", session=api.session()).code == 0
+
+
 def test_a_sqlite_build_failure_shows_the_postgres_fix(cli, api, folder):
     api.routes[("GET", f"/v1/builds/{BUILD}")] = [
         _build("failed", failure_code="STATE_SQLITE_EPHEMERAL")
@@ -552,6 +573,31 @@ def test_a_failed_build_prints_the_end_of_its_log(cli, api, folder):
     assert [q.url.params["source"] for q in asked] == ["build"]
 
 
+def test_a_failed_health_check_under_json_carries_the_fix_and_the_log(cli, api, folder):
+    """B-10: --json keeps the Fix line and the log tail as the error's ``fix`` and
+    ``log_tail``; the other keys stay as they were."""
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("failed", failure_code="HEALTH_CHECK_FAILED")
+    ]
+    api.routes[("GET", LOGS)] = [_log_page("app", "starting", "Error: Cannot find module './db'")]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", "--json", session=api.session())
+    assert r.code == ExitCode.FAILED
+    error = r.json()["error"]
+    assert error["code"] == "HEALTH_CHECK_FAILED"
+    assert error["fix"] == "The app stopped while starting; read the log lines above."
+    assert error["log_tail"] == ["starting", "Error: Cannot find module './db'"]
+    assert {"code", "title", "detail", "status", "request_id", "instance", "type"} <= set(error)
+
+
+def test_an_error_without_a_fix_has_null_fix_and_log_under_json(cli, api, folder):
+    api.routes[("GET", f"/v1/builds/{BUILD}")] = [_build("running")]
+    r = cli(
+        "deploy", str(folder), "--app", "demo", "--timeout", "1", "--json", session=api.session()
+    )
+    assert r.code == ExitCode.FAILED
+    assert r.json()["error"]["log_tail"] is None
+
+
 def test_a_failed_health_check_prints_the_end_of_the_app_log(cli, api, folder):
     api.routes[("GET", f"/v1/operations/{DEP}")] = [
         _operation("failed", failure_code="HEALTH_CHECK_FAILED")
@@ -562,6 +608,29 @@ def test_a_failed_health_check_prints_the_end_of_the_app_log(cli, api, folder):
     assert "  Error: listen EADDRINUSE 0.0.0.0:3000" in r.stderr
     asked = [q for q in api.seen if q.url.path == LOGS]
     assert [q.url.params["source"] for q in asked] == ["app"]
+
+
+@pytest.mark.parametrize(
+    ("last_line", "crashed"),
+    [
+        ("Traceback (most recent call last):", True),
+        ("Error: Cannot find module './db'", True),
+        ("Process exited with code 1", True),
+        ("listening on 127.0.0.1:3000", False),
+    ],
+)
+def test_a_health_check_failure_after_a_start_crash_points_at_the_log(
+    cli, api, folder, last_line, crashed
+):
+    api.routes[("GET", f"/v1/operations/{DEP}")] = [
+        _operation("failed", failure_code="HEALTH_CHECK_FAILED")
+    ]
+    api.routes[("GET", LOGS)] = [_log_page("app", "starting", last_line)]
+    r = cli("deploy", str(folder), "--app", "demo", "--wait", session=api.session())
+    assert r.code == ExitCode.FAILED
+    crash_fix = "The app stopped while starting; read the log lines above"
+    assert (crash_fix in r.stderr) is crashed
+    assert ("$PORT" in r.stderr) is not crashed
 
 
 def test_the_log_tail_shows_an_app_s_control_characters_as_escapes(cli, api, folder):
@@ -900,6 +969,7 @@ def test_rollback_by_number_goes_to_the_environment_it_was_built_for(cli, histor
     result = RollbackResult.model_validate(r.json())
     assert (result.environment, result.release_number, result.state) == ("prod", 2, "pending")
     assert result.url == PROD_URL
+    assert result.migrations_unknown is False
     listed = [q for q in history.seen if q.url.path == RELEASES]
     assert dict(listed[0].url.params) == {"limit": "1", "before": "3"}
     posted = [q for q in history.seen if q.method == "POST"]
@@ -981,6 +1051,54 @@ def test_a_rollback_past_migrations_names_them_and_needs_confirm(cli, history, f
     assert r.code == 0, r.stdout
     posted = [q for q in history.seen if q.method == "POST"]
     assert [_body(q).get("confirm") for q in posted] == [None, True]
+
+
+def test_a_rollback_past_migrations_under_json_names_them_in_the_fix(cli, history, fake_problem):
+    """B-10: the migrations were only in the Fix line, which --json dropped."""
+    history.routes[("GET", RELEASES)] = [_page(_release(2, PROD))]
+    history.add("POST", PROD_DEPLOYMENTS, fake_problem(409, "SCHEMA_AHEAD"))
+    ahead = {
+        "environment_id": PROD,
+        "release_id": "rel_00000000000000000002",
+        "ledgers": [{"ledger": "knex", "names": ["20261002_add_total.js"]}],
+    }
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/migrations-ahead"
+    history.add("GET", path, httpx2.Response(200, json=ahead))
+    r = cli("rollback", APP_ID, "R2", "--json", session=history.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "SCHEMA_AHEAD")
+    fix = r.json()["error"]["fix"]
+    assert "knex: 20261002_add_total.js" in fix
+    assert "`ssc rollback demo R2 --env prod --confirm`" in fix
+
+
+def test_a_rollback_whose_migrations_were_not_checked_says_so(cli, history):
+    """B-10: an app with a database whose migration tool SSC does not recognise rolls back
+    unchecked; the answer's migrations_unknown becomes a caution and a JSON key."""
+    accepted = {"operation_id": DEP, "state": "pending", "migrations_unknown": True}
+    unchecked = httpx2.Response(202, json=accepted, headers={"location": f"/v1/operations/{DEP}"})
+    history.routes[("GET", RELEASES)] = [_page(_release(2, PROD))]
+    history.add("POST", PROD_DEPLOYMENTS, unchecked, unchecked)
+    r = cli("rollback", APP_ID, "R2", session=history.session())
+    assert r.code == 0, r.stderr
+    caution = next(line for line in r.stdout.splitlines() if line.startswith("Caution: "))
+    assert "migration tool" in caution
+    assert "not checked" in caution
+    r = cli("rollback", APP_ID, "R2", "--json", session=history.session())
+    assert r.code == 0, r.stdout
+    assert r.json()["migrations_unknown"] is True
+
+
+def test_a_rollback_past_migrations_stays_schema_ahead_when_the_list_is_refused(
+    cli, history, fake_problem
+):
+    """B-4: the migrations named in the fix are a hint; a refused lookup keeps the API's code."""
+    history.routes[("GET", RELEASES)] = [_page(_release(2, PROD))]
+    history.add("POST", PROD_DEPLOYMENTS, fake_problem(409, "SCHEMA_AHEAD"))
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/migrations-ahead"
+    history.add("GET", path, fake_problem(403, "FORBIDDEN"))
+    r = cli("rollback", APP_ID, "R2", "--json", session=history.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "SCHEMA_AHEAD")
+    assert any(q.url.path == path for q in history.seen)
 
 
 # ── promote ─────────────────────────────────────────────────────────────────
@@ -1135,6 +1253,18 @@ def test_promote_refused_for_a_missing_prod_secret_names_it(cli, promoting, fake
     assert "Set API_TOKEN, SMTP_PASSWORD on prod" in fix
     assert "`ssc secret set demo API_TOKEN --env prod`" in fix
     assert ("GET", f"/v1/builds/{BUILD}") not in _calls(promoting)
+
+
+def test_promote_refused_for_a_missing_prod_secret_stays_so_when_secrets_are_hidden(
+    cli, promoting, fake_problem
+):
+    """B-4: the names in the fix are a hint; a refused secret list keeps the API's code."""
+    promoting.routes[("POST", PROMOTE)] = [fake_problem(409, "PROD_SECRET_MISSING")]
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/secrets"
+    promoting.add("GET", path, fake_problem(403, "FORBIDDEN"))
+    r = cli("promote", "demo", "--json", session=promoting.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "PROD_SECRET_MISSING")
+    assert ("GET", path) in _calls(promoting)
 
 
 def test_promote_with_nothing_live_is_the_apis_refusal(cli, promoting, fake_problem):

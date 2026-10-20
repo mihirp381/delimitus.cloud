@@ -162,8 +162,11 @@ describe('the callback', () => {
 
   it('follows only same-site paths', () => {
     expect(safeNext('/apps?x=1')).toBe('/apps?x=1');
-    for (const bad of ['//evil.test', '/\\evil.test', 'https://evil.test', 3]) {
-      expect(safeNext(bad)).toBeUndefined();
+    expect(safeNext('/ok?x=1#y')).toBe('/ok?x=1#y');
+    expect(safeNext('/apps/../ok')).toBe('/ok');
+    const bad = ['//evil', '/\\evil', '/\n//evil', '/\t/evil', '/x\u007f', 'javascript:alert(1)'];
+    for (const value of [...bad, '//evil.test', '/\\evil.test', 'https://evil.test', 3]) {
+      expect(safeNext(value)).toBeUndefined();
     }
   });
 });

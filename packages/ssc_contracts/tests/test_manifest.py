@@ -344,6 +344,9 @@ def test_runtime_rules(body: str, fragment: str | None) -> None:
     assert message is None if fragment is None else fragment in (message or "")
 
 
+STORAGE_REFUSED = "Cloud Storage is never allowed; an app keeps files with the file broker"
+
+
 @pytest.mark.parametrize(
     ("host", "fragment"),
     [
@@ -362,6 +365,10 @@ def test_runtime_rules(body: str, fragment: str | None) -> None:
         ("a_b.example.com", "DNS host name"),
         ("example.com.", "DNS host name"),
         ("a" * 64 + ".com", "DNS host name"),
+        ("storage.googleapis.com", STORAGE_REFUSED),
+        ("bucket.storage.googleapis.com", STORAGE_REFUSED),
+        ("storage.cloud.google.com", STORAGE_REFUSED),
+        ("api.stripe.com", None),
     ],
 )
 def test_egress_host_rules(host: str, fragment: str | None) -> None:
@@ -399,6 +406,13 @@ def test_sets_are_unique_bounded_and_sorted() -> None:
         ("build", 'public_names = ["RAILPACK_DEPLOY_APT_PACKAGES"]', "set by the platform"),
         ("build", 'public_names = ["DATABASE_URL"]', "set by the platform"),
         ("build", 'public_names = ["DB_PASSWORD"]', "looks like a secret"),
+        ("build", 'public_names = ["PGHOST"]', "set by the platform"),
+        ("build", 'public_names = ["HTTPS_PROXY"]', "set by the platform"),
+        ("build", 'public_names = ["NO_PROXY"]', "set by the platform"),
+        ("build", 'public_names = ["DATABASE_CA"]', "set by the platform"),
+        ("build", 'public_names = ["K_SERVICE"]', "set by the platform"),
+        ("build", 'public_names = ["X_GOOGLE_FUNCTION"]', "set by the platform"),
+        ("build", 'public_names = ["VITE_API_URL"]', None),
     ],
 )
 def test_public_build_value_rules(section: str, body: str, fragment: str | None) -> None:

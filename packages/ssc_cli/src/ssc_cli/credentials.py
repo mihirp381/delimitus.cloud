@@ -31,7 +31,9 @@ from ssc_cli.config import APP_DIR_NAME
 from ssc_cli.errors import LOGIN_ENDED, NO_KEYCHAIN, NO_TOKEN, CliError, ExitCode, local_error
 from ssc_cli.login import AuthClient, Tokens
 
-if sys.platform != "win32":
+if sys.platform == "win32":
+    import msvcrt
+else:
     import fcntl
 
 SERVICE: Final = "ssc"
@@ -157,12 +159,26 @@ def _as_login(stored: str) -> Login | None:
 
 @contextmanager
 def _lock() -> Generator[None]:
+    """Hold the login lock file exclusively, so one ``ssc`` process refreshes at a time (B-6).
+
+    On Linux and macOS, ``fcntl.flock`` waits for as long as another process holds the file. On
+    Windows, ``msvcrt.locking`` locks the file's first byte with ``LK_LOCK``, which retries once a
+    second and raises ``OSError`` after ten tries; ``LK_UNLCK`` releases it. Either lock goes when
+    the file is closed, so a process that dies holding it does not hold it on."""
     path = Path(typer.get_app_dir(APP_DIR_NAME)) / LOCK_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:
-        if sys.platform != "win32":
+        if sys.platform == "win32":
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
             fcntl.flock(f, fcntl.LOCK_EX)
-        yield
+            yield
 
 
 def _login_ended(api_url: str, org_id: str | None = None, agent: str | None = None) -> CliError:

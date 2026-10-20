@@ -591,11 +591,39 @@ export interface paths {
          *     for one subject is ``VALIDATION_FAILED``. A quarantined app's sharing is frozen:
          *     ``APP_NOT_ACTIVE``.
          *
-         *     A change that needs approval is not applied: an agent session gets ``202`` and the pending
-         *     approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for.
+         *     A change that needs approval is not applied. An agent session gets ``202`` and the pending
+         *     approval ids (asked for here). A person gets ``409 APPROVAL_REQUIRED``, whose body names
+         *     nothing (the ``Problem`` shape is fixed): they ask ``POST .../grants/requirements`` with the
+         *     same grants which approvals are needed, open one ``POST /v1/approvals`` per requirement
+         *     (``widen_audience`` with ``payload.grants``; ``exceed_ceiling`` with
+         *     ``payload.{connection, grants}``), and repeat this ``PUT`` once all are approved.
          */
         put: operations["put_grants_v1_apps__app_id__environments__environment_id__grants_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/environments/{environment_id}/grants/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Grants Requirements
+         * @description Which approvals replacing the environment's grants with ``grants`` needs, before
+         *     ``PUT .../grants`` would apply it. Same rules, refusals and computation as that ``PUT``
+         *     (without ``If-Match``); it writes nothing and opens no approval. Each requirement not yet
+         *     approved is listed with the newest request for it, if any; ask for the others with
+         *     ``POST /v1/approvals``. An agent session gets the same answer.
+         */
+        post: operations["grants_requirements_v1_apps__app_id__environments__environment_id__grants_requirements_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3041,6 +3069,29 @@ export interface components {
              * @description Unchanged: the version the change will replace.
              */
             grants_version: number;
+            /**
+             * Requirements
+             * @description What each approval in `approval_ids` is for, in the same order.
+             */
+            requirements?: components["schemas"]["RequirementOut"][];
+        };
+        /**
+         * GrantsRequirements
+         * @description What a change to these grants needs approved before ``PUT .../grants`` applies it.
+         */
+        GrantsRequirements: {
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Grants Version
+             * @description The version the answer was computed against.
+             */
+            grants_version: number;
+            /**
+             * Requirements
+             * @description Each approval not yet approved; empty when the change would apply now.
+             */
+            requirements: components["schemas"]["RequirementOut"][];
         };
         /** GroupMatch */
         GroupMatch: {
@@ -3274,7 +3325,7 @@ export interface components {
         LedgerAhead: {
             /**
              * Ledger
-             * @description The migration tool: `prisma`, `alembic`, `django`, `drizzle` or `knex`.
+             * @description The migration tool: `prisma`, `alembic`, `django`, `drizzle`, `knex`, `sequelize`, `typeorm`, `node-pg-migrate` or `flyway`.
              */
             ledger: string;
             /**
@@ -3346,6 +3397,12 @@ export interface components {
         };
         /** OperationAccepted */
         OperationAccepted: {
+            /**
+             * Migrations Unknown
+             * @description True for a rollback of an app that declares a database when the release's build recognised no migration tool: whether the database has migrations the release lacks was not checked.
+             * @default false
+             */
+            migrations_unknown: boolean;
             /**
              * Notice
              * @description What this deployment sets off and waits for, such as the company's database being created the first time an app asks for one.
@@ -3658,6 +3715,32 @@ export interface components {
          * @enum {string}
          */
         RequirementKind: "widen_audience" | "connect_data_source" | "enable_internet_hosts" | "agent_share" | "exceed_ceiling";
+        /**
+         * RequirementOut
+         * @description One approval a sharing change needs, and the newest request for it if there is one.
+         */
+        RequirementOut: {
+            /**
+             * Approval Id
+             * @description The newest request for it; null if never asked.
+             */
+            approval_id: string | null;
+            /**
+             * Connection
+             * @description The connection whose ceiling the change passes, for `exceed_ceiling`; null otherwise.
+             */
+            connection: string | null;
+            /**
+             * Kind
+             * @description `agent_share`, `widen_audience` or `exceed_ceiling`.
+             */
+            kind: string;
+            /**
+             * State
+             * @description That request's state; null if never asked.
+             */
+            state: string | null;
+        };
         /** RunAccepted */
         RunAccepted: {
             /** Run Id */
@@ -6955,6 +7038,107 @@ export interface operations {
             };
             /** @description `PRECONDITION_REQUIRED` */
             428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    grants_requirements_v1_apps__app_id__environments__environment_id__grants_requirements_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrantsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantsRequirements"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

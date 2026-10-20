@@ -1,12 +1,13 @@
 """SSC-014: ``ssc deploy`` refuses locally, before any upload."""
 
+import tarfile
 from pathlib import Path
 
 import pytest
 
 from ssc_bundle.client import Prepared, SecretFoundError, prepare, ship
 from ssc_bundle.limits import BundleTooLargeError, Limits
-from ssc_contracts.manifest import ManifestError
+from ssc_contracts.manifest import ManifestError, load_manifest
 
 AWS_KEY = "AKIA" + "Z7Q3K9XW" + "P2LMN4RT"
 PUBLIC = "q8ZrT2vN" + "x7LpW4mK" + "s9HdB3jF"
@@ -77,3 +78,19 @@ def test_an_invalid_manifest_is_refused_before_packing(tmp_path: Path) -> None:
     with pytest.raises(ManifestError):
         ship(root, dest, spy)
     assert spy.calls == [] and not dest.exists()
+
+
+def test_sscignore_cannot_leave_ssc_toml_out(tmp_path: Path) -> None:
+    """B-2: the CLI validates the manifest on disk, so the server must receive that one."""
+    manifest = 'schema = "ssc/v1"\n\n[runtime]\nport = 3000\n'
+    root = app(
+        tmp_path,
+        {"ssc.toml": manifest, ".sscignore": "ssc.toml\n*.toml\n", "app.py": "x = 1\n"},
+    )
+    dest = tmp_path / "b.tar.gz"
+    prepared = prepare(root, dest)
+    with tarfile.open(dest) as tar:
+        packed = tar.extractfile("ssc.toml")
+        assert packed is not None
+        assert load_manifest(packed.read()) == prepared.manifest
+    assert prepared.manifest.runtime.port == 3000

@@ -197,6 +197,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
   const [error, setError] = useState<unknown>(null);
   const hostId = useId();
   const ackId = useId();
+  const hintId = useId();
   const typed = host.trim().toLowerCase();
   const entry = catalogue.data?.entries.find((e) => e.host === typed) ?? null;
   const highRisk = entry?.high_risk ?? false;
@@ -255,12 +256,17 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
           <span>Host, such as api.example.com or *.example.com</span>
           <input
             id={hostId}
+            aria-describedby={hintId}
             value={host}
             spellCheck={false}
             autoComplete="off"
             onChange={(e) => type(e.target.value)}
           />
         </label>
+        <p id={hintId} className="muted">
+          A wildcard under a shared host reaches every tenant of it; prefer the exact host, such as
+          &lt;bucket&gt;.s3.amazonaws.com.
+        </p>
         {highRisk ? (
           <div className="notice notice-warning" role="note">
             <p>

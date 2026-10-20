@@ -84,10 +84,16 @@ may change some app's sharing: an admin, an owner or a builder.
 **Some changes wait for approval** (decision 016). A `PUT .../grants` made through an agent
 credential, or one that widens the audience of a data-connected app, is not applied until the
 matching approval is approved: an agent session gets `202` with `{environment_id, grants_version,
-approval_ids}` (the requests are opened for it, the version and `ETag` are unchanged) and a person
-gets `409 APPROVAL_REQUIRED`, then asks with `POST /v1/approvals` (`kind: widen_audience`,
-`payload.grants` set to the same desired grants). Once approved, the same `PUT` applies. Decisions
-are made in the console inbox or with `ssc approvals`: `GET /v1/approvals?inbox=true` lists what the
+approval_ids, requirements}` (the requests are opened for it, the version and `ETag` are unchanged;
+`requirements` says what each id is for, `{kind, connection, approval_id, state}` in the same order)
+and a person gets `409 APPROVAL_REQUIRED`. That problem names nothing (the `Problem` body is fixed),
+so the person asks `POST .../grants/requirements` with the same `{grants}` (no `If-Match`; it
+writes nothing) and gets `{environment_id, grants_version, requirements: [{kind, connection,
+approval_id, state}]}`: each approval not yet approved, with the newest request for it if one
+exists (`connection` names the connection for `exceed_ceiling`, else `null`). They open one
+`POST /v1/approvals` per requirement not already pending: `kind: widen_audience` with
+`payload.grants`, `kind: exceed_ceiling` with `payload.{connection, grants}`, the grants being the
+same desired set. Once all are approved, the same `PUT` applies. Decisions are made in the console inbox or with `ssc approvals`: `GET /v1/approvals?inbox=true` lists what the
 caller may decide and `POST /v1/approvals/{id}/decide` takes `{outcome: approved|denied, reason,
 channel}` from a person session (an agent session gets `AGENT_SESSION_REFUSED`, the requester
 `SELF_APPROVAL_REFUSED`). Approving a sharing request applies the grant when every approval it needs is in
@@ -154,11 +160,14 @@ A cell resource (`GET /v1/cell`) and the warm gateway (`GET /v1/warm`) carry the
 
 **A rollback past migrations needs `confirm`** (SSC-043). A release has `latest_migrations`, the
 last migration name per ledger its build found (`prisma`, `alembic`, `django`, `drizzle`,
-`knex`), or null when the build did not read the source. A rollback to a release that lacks
+`knex`, `sequelize`, `typeorm`, `node-pg-migrate`, `flyway`), or null when the build did not read
+the source. A rollback to a release that lacks
 migrations the environment's database may have run is `409 SCHEMA_AHEAD`; its evidence has
 `release_id` and the count per ledger. `GET .../environments/{env}/migrations-ahead?release_id=`
 names them. The same POST with `confirm: true` goes ahead and audits the names
-(`migrations_ahead`, as `ledger:name`). Only `kind: rollback` is checked. A prod deployment of
+(`migrations_ahead`, as `ledger:name`). Only `kind: rollback` is checked. A rollback of an app
+that declares `[state] postgres` whose release has no recognised ledger cannot be checked: its
+`202` says `migrations_unknown: true` (B-10). A prod deployment of
 an environment with a database carries `recovery_point` `{at, lsn}`, recorded before the
 runtime is called. It is the time to restore to if the deployment harms the data
 (`docs/runbooks/ssc-043-restore-database.md`). `lsn` is null when the cell agent did not
@@ -290,7 +299,9 @@ environments with their app slug and whether each has a database; and the databa
 app database, `nearly_full` (two free places or fewer), `tier_full_at` (the last deployment
 refused with `DB_TIER_FULL`) and the paid "bigger database" step (`bigger_tier`, about
 `bigger_tier_monthly_usd` a month). The fixed outbound IP is in `GET /v1/egress` (SSC-053). The
-console's "Your environment" screen reads these three; its figures are not a bill (A6).
+console's "Your environment" screen reads these three; its figures are not a bill (A6). On the
+allowlist, a wildcard under a shared host (`*.s3.amazonaws.com`, `*.github.io`) reaches every
+tenant of it; prefer the exact host, such as `<bucket>.s3.amazonaws.com`.
 
 **The warm option is an org admin's choice** (SSC-092). `GET /v1/warm` answers every production
 environment with whether it is kept warm and whether the usage events suggest it (`suggested`:
@@ -463,11 +474,15 @@ stateless, JSON replies. Code: `api/mcp/`.
   - `request_share(app, env, who, role?)`: `who` is a `usr_` or `grp_` id or `org`; `role`
     defaults to the floor (`user` on prod, `builder` on preview). A grant below the floor is
     `VALIDATION_FAILED` with `status: null`; a subject that already has the role asks nothing
-    (`requested: false`). Otherwise it reads the grants and opens an `agent_share` request
-    (`POST /v1/approvals`) for them with the subject's grant set to the role, re-reading on
-    `PRECONDITION_STALE` (three tries). It never writes grants. The answer lists
-    `not_requested: ["widen_audience"]`: applying the change asks for that when the app is
-    data-connected.
+    (`requested: false`). Otherwise it reads the grants and sends `PUT .../grants` as the agent
+    with the subject's grant set to the role and `If-Match` at the version read, re-reading on
+    `PRECONDITION_STALE` (three tries). The API opens every approval the change needs
+    (`agent_share`; `widen_audience` when the app is data-connected; `exceed_ceiling` per
+    connection whose ceiling the audience passes) and the answer is `{requested: true, applied:
+    false, environment_id, grants_version, approval_ids, requirements, next}`; the last approval
+    applies the change (GA-12 F21). When every approval is already in, the `PUT` applies it and
+    the answer is `{requested: false, applied: true, environment_id, grants_version, next}`.
+    `idempotency_key` is accepted and not needed: asking again answers the same requests.
   - `request_connection(app, connection)`: a `connect_data_source` request on prod; the server
     validates the name.
   - `list_connections()`: `GET /v1/connections` as is: every connection for an org admin,
@@ -477,9 +492,9 @@ stateless, JSON replies. Code: `api/mcp/`.
     for the app's `prod` or `preview`, as is (GA-5.8).
   - `create_app(slug, idempotency_key?)`: `POST /v1/apps` with the body `ssc apps create`
     sends; the caller owns the app. Audited `app.created` with `via_agent` (decision 029).
-  - Asking opens a pending request only; another active admin of the org approves (decision
-    016, founder default D2) and SSC staff record it. The change is applied afterwards by
-    `ssc share` or `PUT .../grants` at the recorded `grants_version`.
+  - Asking opens pending requests only; another active admin of the org approves (decision
+    016, founder default D2), the connection's owner or an admin for `exceed_ceiling`. Approving
+    the last request of a share applies it (SSC-049); nothing else has to run.
   - A `scope: preview` credential (decision 011) can use every read and `deploy`: the bundle
     routes are preview-scope changes and the build and deployment routes name preview.
     `request_share` on preview opens its pending request like any other (founder decision

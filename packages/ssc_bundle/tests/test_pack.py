@@ -192,3 +192,14 @@ def test_oversize_is_refused(tmp_path: Path, limits: Limits, reason: str) -> Non
         pack(src, tmp_path / "b.tar.gz", limits=limits)
     assert e.value.reason == reason
     assert not (tmp_path / "b.tar.gz").exists()
+
+
+def test_macos_metadata_is_left_out(tmp_path: Path) -> None:
+    """B-9: AppleDouble files and Finder's folders never reach the tar."""
+    src = tmp_path / "app"
+    for rel in ("app.py", "._app.py", "lib/._util.py", "lib/util.py", "__MACOSX/._app.py"):
+        write(src, rel)
+    write(src, "lib/.DS_Store")
+    packed = pack(src, tmp_path / "b.tar.gz")
+    assert names(packed.path) == ["app.py", "lib/util.py"]
+    assert packed.excluded == {"._*": 2, "__MACOSX/": 1, ".DS_Store": 1}

@@ -13,7 +13,7 @@ import typer
 from ssc_cli.api import ApiClient
 from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.models import Approval, ApprovalDetail, DiffGrant
-from ssc_cli.output import print_json, say, table
+from ssc_cli.output import print_json, say, table, visible
 from ssc_cli.shapes import (
     ApprovalDecisionResult,
     ApprovalGrantRow,
@@ -118,8 +118,8 @@ def list_approvals(ctx: typer.Context, all_: AllOpt = False, json_mode: JsonOpt 
                     a.id,
                     a.app,
                     a.environment,
-                    KINDS.get(a.kind, a.kind) + (f" {a.subject}" if a.subject else ""),
-                    a.requested_by + (" (agent)" if a.requested_via_agent else ""),
+                    visible(KINDS.get(a.kind, a.kind) + (f" {a.subject}" if a.subject else "")),
+                    visible(a.requested_by) + (" (agent)" if a.requested_via_agent else ""),
                     a.state,
                 )
                 for a in result.approvals
@@ -161,17 +161,19 @@ def show_approval(ctx: typer.Context, approval_id: IdArg, json_mode: JsonOpt = F
     if json_mode:
         print_json(result)
         return
+    # Names, subjects and reasons are people's words: shown escaped (B-5).
     asked = KINDS.get(result.kind, result.kind) + (f" {result.subject}" if result.subject else "")
     asker = result.requested_by + (" (through an agent)" if result.requested_via_agent else "")
+    asked, asker = visible(asked), visible(asker)
     say(f"{result.id}  {result.app} ({result.environment})  {result.state}")
     say(f"Asked by {asker}: {asked}")
     if result.connection:
-        say(f"Data connection: {result.connection}")
+        say(f"Data connection: {visible(result.connection)}")
     for label, rows in (("Add", result.added), ("Remove", result.removed)):
         for g in rows:
-            say(f"  {label} {_who(g)}")
+            say(f"  {label} {visible(_who(g))}")
     if result.decision_reason:
-        say(f"Decision: {result.decision_reason}")
+        say(f"Decision: {visible(result.decision_reason)}")
     if result.state == "pending":
         say(
             f"Decide with `ssc approvals approve {result.id} -m ...` or `reject`."
@@ -200,7 +202,7 @@ def _decide(
     if result.state == "approved" and APPLIED.get(result.applied):
         say(APPLIED[result.applied])
     if result.applied_reason:
-        say(f"Why: {result.applied_reason}")
+        say(f"Why: {visible(result.applied_reason)}")
 
 
 @approvals_app.command("approve")

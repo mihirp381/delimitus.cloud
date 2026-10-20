@@ -9,6 +9,7 @@ Ids, states and the names admins give hosts and connections only: no people's na
 group names, so a document holds no personal data.
 """
 
+import re
 from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import (
@@ -46,7 +47,10 @@ AppStatus = Literal["active", "disabled", "quarantined"]
 UserStatus = Literal["active", "deactivated"]
 ConnectionStatus = Literal["active", "suspended"]
 
-_SUBJECT_PREFIX: Final = {"user": "usr_", "group": "grp_"}
+_SUBJECT_ID: Final = {
+    "user": re.compile(r"usr_[a-z0-9]{20}"),
+    "group": re.compile(r"grp_[a-z0-9]{20}"),
+}
 
 
 class _Frozen(BaseModel):
@@ -77,12 +81,12 @@ class SnapshotGrant(_Frozen):
 
     @model_validator(mode="after")
     def _subject_matches_kind(self) -> Self:
-        prefix = _SUBJECT_PREFIX.get(self.subject_kind)
-        if prefix is None:
+        shape = _SUBJECT_ID.get(self.subject_kind)
+        if shape is None:
             if self.subject_id is not None:
                 raise ValueError("an org-wide grant has no subject_id")
-        elif self.subject_id is None or not self.subject_id.startswith(prefix):
-            raise ValueError(f"a {self.subject_kind} grant needs a {prefix} subject_id")
+        elif self.subject_id is None or not shape.fullmatch(self.subject_id):
+            raise ValueError(f"a {self.subject_kind} grant needs a {shape.pattern[:4]} id")
         return self
 
 
@@ -153,6 +157,8 @@ class SnapshotEgress(_Frozen):
                 raise ValueError(f"host {host!r}: {problem}")
         if len(set(value)) != len(value):
             raise ValueError("a host is listed twice")
+        if list(value) != sorted(value):
+            raise ValueError("hosts must be sorted by byte order")
         return value
 
     @field_validator("credentials")

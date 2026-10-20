@@ -146,6 +146,26 @@ def test_an_environment_with_no_grants_refuses() -> None:
                 ]
             }
         },
+        *(
+            {
+                "grants": {
+                    PROD: [
+                        {
+                            "grant_id": gnt(9),
+                            "role": "user",
+                            "subject_kind": kind,
+                            "subject_id": sid,
+                        }
+                    ]
+                }
+            }
+            for kind, sid in (
+                ("user", "usr_" + "A" * 20),
+                ("user", "usr_short"),
+                ("group", "grp_" + "f" * 21),
+                ("group", "grp_" + "F" * 20),
+            )
+        ),
     ],
 )
 def test_an_invalid_document_is_refused(changes: dict[str, Any]) -> None:
@@ -271,7 +291,7 @@ SHA = "qZk+NkcGgWq6PiVxeFDCbJzQ2J0="
 
 def egress(**changes: Any) -> dict[str, Any]:
     value: dict[str, Any] = {
-        "hosts": ["api.stripe.com", "*.atlassian.net"],
+        "hosts": ["*.atlassian.net", "api.stripe.com"],
         "credentials": {
             PROD: [
                 {"credential_id": "a" * 12, "sha1": SHA},
@@ -291,7 +311,7 @@ def test_egress_is_optional_and_reaches_the_view_byte_for_byte() -> None:
     assert canonical_bytes(parsed.model_dump(mode="json")) == canonical_bytes(raw)
     found = AccessView.from_document(raw).egress
     assert found is not None
-    assert found.hosts == ("api.stripe.com", "*.atlassian.net")
+    assert found.hosts == ("*.atlassian.net", "api.stripe.com")
     assert [c.credential_id for c in found.credentials[PROD]] == ["a" * 12, "b" * 12]
 
 
@@ -302,6 +322,7 @@ def test_egress_is_optional_and_reaches_the_view_byte_for_byte() -> None:
         {"hosts": ["a.b.*.com"]},
         {"hosts": ["api.stripe.com", "api.stripe.com"]},
         {"hosts": ["api.stripe.com:443"]},
+        {"hosts": ["api.stripe.com", "*.atlassian.net"]},
         {"credentials": {"env_" + "x" * 20: [{"credential_id": "a" * 12, "sha1": SHA}]}},
         {"credentials": {PROD: []}},
         {"credentials": {PROD: [{"credential_id": f"{c}" * 12, "sha1": SHA} for c in "abc"]}},

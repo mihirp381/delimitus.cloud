@@ -97,6 +97,10 @@ function parseJson(bytes, what) {
   return value;
 }
 
+function codePoints(s) {
+  return [...s].length;
+}
+
 function isInt(v) {
   return typeof v === 'number' && Number.isInteger(v);
 }
@@ -232,13 +236,14 @@ export function validateNote(c) {
   if (!isInt(c.iat) || !isInt(c.exp) || c.iat < 0 || c.exp < 0) bad('iat/exp are not non-negative integers');
   if (c.exp <= c.iat) bad('exp must be after iat');
   if (c.exp - c.iat > MAX_TTL_SECONDS) bad(`a note lives at most ${MAX_TTL_SECONDS} seconds`);
-  const groups = c.groups ?? [];
+  for (const k of ['groups', 'name', 'email']) if (c[k] === null) bad(`${k} sent as null`);
+  const groups = c.groups === undefined ? [] : c.groups;
   if (!Array.isArray(groups)) bad('groups is not a list');
   if (groups.length > MAX_GROUPS) bad(`more than ${MAX_GROUPS} groups`);
   for (const g of groups) if (typeof g !== 'string' || !RE.grp.test(g)) bad(`not a group id: '${g}'`);
   if (new Set(groups).size !== groups.length) bad('groups repeat');
-  if (c.name !== undefined && (typeof c.name !== 'string' || c.name.length < 1 || c.name.length > 256)) bad('name is not a short string');
-  if (c.email !== undefined && (typeof c.email !== 'string' || c.email.length > 320 || !RE.email.test(c.email))) bad('email is not an address');
+  if (c.name !== undefined && (typeof c.name !== 'string' || codePoints(c.name) < 1 || codePoints(c.name) > 256)) bad('name is not a short string');
+  if (c.email !== undefined && (typeof c.email !== 'string' || codePoints(c.email) > 320 || !RE.email.test(c.email))) bad('email is not an address');
   const isSchedule = c.sub.startsWith('sch_');
   if (isSchedule) {
     if (c.role !== 'schedule') bad("a schedule subject carries role 'schedule'");

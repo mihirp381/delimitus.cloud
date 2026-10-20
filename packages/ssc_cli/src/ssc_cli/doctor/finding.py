@@ -31,6 +31,7 @@ DoctorCode = Literal[
     "NATIVE_LIBRARY",
     "SESSION_FRAMEWORK",
     "ADD_APPROVED_PACKAGE",
+    "MANIFEST_IGNORED",
 ]
 
 LOCKFILE_STALE: Final = "LOCKFILE_STALE"
@@ -47,6 +48,7 @@ SECRET_IN_BUNDLE: Final = "SECRET_IN_BUNDLE"  # noqa: S105  (a doctor code, not 
 NATIVE_LIBRARY: Final = "NATIVE_LIBRARY"
 SESSION_FRAMEWORK: Final = "SESSION_FRAMEWORK"
 ADD_APPROVED_PACKAGE: Final = "ADD_APPROVED_PACKAGE"
+MANIFEST_IGNORED: Final = "MANIFEST_IGNORED"
 
 SEVERITY: Final[dict[DoctorCode, Severity]] = {
     LOCKFILE_STALE: "block",
@@ -63,6 +65,7 @@ SEVERITY: Final[dict[DoctorCode, Severity]] = {
     NATIVE_LIBRARY: "info",
     SESSION_FRAMEWORK: "info",
     ADD_APPROVED_PACKAGE: "block",
+    MANIFEST_IGNORED: "warn",
 }
 
 FIX: Final[dict[DoctorCode, str]] = {
@@ -128,6 +131,10 @@ FIX: Final[dict[DoctorCode, str]] = {
     ADD_APPROVED_PACKAGE: (
         "The build installs system packages only from the platform package list, and the deploy "
         "is refused while one is missing. " + HOW_TO_ASK
+    ),
+    MANIFEST_IGNORED: (
+        "Remove the pattern from .sscignore, or narrow it so it does not match ssc.toml. The "
+        "deploy always uploads ssc.toml from the folder's root, whatever .sscignore says."
     ),
 }
 

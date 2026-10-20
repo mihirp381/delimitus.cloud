@@ -106,6 +106,9 @@ def _signing_key(keys: KeySource, kid: str) -> jwt.PyJWK:
         raise IdentityRefused("unknown_key", f"no key {kid!r} in the JWKS") from e
 
 
+_OPTIONAL: Final = ("groups", "name", "email")
+
+
 def _int_claim(claims: Mapping[str, Any], name: str) -> int:
     value = claims.get(name)
     if isinstance(value, bool) or not isinstance(value, int):
@@ -191,6 +194,9 @@ def check_claims(
         raise IdentityRefused("expired", f"expired {at - exp}s ago")
     if iat > at + leeway:
         raise IdentityRefused("not_yet_valid", f"issued {iat - at}s in the future")
+    nulls = [name for name in _OPTIONAL if name in claims and claims[name] is None]
+    if nulls:
+        raise IdentityRefused("bad_claims", f"{', '.join(nulls)} sent as null")
     try:
         return IdentityNote.model_validate(dict(claims))
     except ValidationError as e:

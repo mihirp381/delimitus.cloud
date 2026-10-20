@@ -14,7 +14,7 @@ import typer
 from ssc_cli.api import ApiClient
 from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.errors import SUBJECT_AMBIGUOUS, USER_NOT_FOUND, ExitCode, local_error
-from ssc_cli.output import print_json, say, table
+from ssc_cli.output import print_json, say, table, visible
 from ssc_cli.shapes import LoginLinkedResult, UnlinkedLoginRow, UnlinkedLoginsResult
 
 REASONS = {"no_match": "no one with this email", "ambiguous_email": "several people, same email"}
@@ -60,7 +60,7 @@ def list_logins(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
             [
                 (
                     u.id,
-                    u.email,
+                    visible(u.email),  # from the identity provider (B-5)
                     REASONS.get(u.reason, u.reason),
                     str(u.attempts),
                     u.last_seen_at,

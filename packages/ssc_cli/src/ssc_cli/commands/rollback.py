@@ -7,7 +7,8 @@ built for one environment is refused in another.
 A rollback does not undo database migrations. When the environment's database may have run
 migrations the release lacks, the API refuses with ``SCHEMA_AHEAD`` until ``--confirm`` (SSC-043);
 its problem carries fixed text, so the migrations are read from ``migrations-ahead`` and named in
-the ``Fix:`` line.
+the ``Fix:`` line (the error's ``fix`` under ``--json``). When the app has a database but SSC
+recognised no migration tool in the release, nothing was checked: a caution says so (B-10).
 """
 
 import re
@@ -31,6 +32,7 @@ from ssc_cli.resolve import environment, resolve_app
 from ssc_cli.shapes import RollbackResult
 from ssc_cli.wait import DEFAULT_TIMEOUT, Budget, wait_for_operation
 from ssc_contracts.errors import ErrorCode
+from ssc_shared.requirements import MIGRATIONS_UNKNOWN
 
 ROLLBACK: Final = "rollback"
 RELEASE_PREFIX: Final = "rel_"
@@ -105,10 +107,13 @@ def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option
         operation_id=op.operation_id,
         state=state,
         url=where.url,
+        migrations_unknown=op.migrations_unknown,
     )
     if json_mode:
         print_json(result)
         return
+    if op.migrations_unknown:
+        say(f"Caution: {MIGRATIONS_UNKNOWN}")
     if state == "healthy":
         say(f"{where.name} of {target.slug} runs {rel.label} again.")
     else:
@@ -121,12 +126,16 @@ def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option
 def _start(
     client: ApiClient, app: AppOut, where: EnvironmentOut, rel: ReleaseOut, *, confirm: bool
 ) -> OperationAccepted:
-    """Post the rollback; on ``SCHEMA_AHEAD``, name the migrations in the fix."""
+    """Post the rollback; on ``SCHEMA_AHEAD``, name the migrations in the fix. The names are a
+    hint: when their lookup is refused, the API's own error stands as it is (B-4)."""
     try:
         return client.create_deployment(app.id, where.id, rel.release_id, ROLLBACK, confirm=confirm)
     except CliError as e:
         if e.body.code == ErrorCode.SCHEMA_AHEAD:
-            ahead = client.migrations_ahead(app.id, where.id, rel.release_id).ledgers
+            try:
+                ahead = client.migrations_ahead(app.id, where.id, rel.release_id).ledgers
+            except CliError:
+                raise e from None
             names = "; ".join(f"{a.ledger}: {', '.join(a.names)}" for a in ahead)
             e.fix = (
                 f"The {where.name} database may have run migrations {rel.label} does not have "

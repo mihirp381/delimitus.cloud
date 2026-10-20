@@ -1,6 +1,6 @@
 import { Link, useRouteContext } from '@tanstack/react-router';
 import { type FormEvent, useEffect, useId, useState } from 'react';
-import { type AppOut, type EnvironmentOut, operationFinished, POLL_MS } from '../api/lifecycle';
+import { type AppOut, type EnvironmentOut, operationFinished, pollUntil } from '../api/lifecycle';
 import { ApiProblem } from '../api/problem';
 import { buildFinished, type CapabilityChange, deployRelease, promote } from '../api/promote';
 import { Badge, type Tone } from '../components/Badge';
@@ -178,7 +178,7 @@ function BuildProgress({
     'get',
     '/v1/builds/{build_id}',
     { params: { path: { build_id: started.buildId } } },
-    { refetchInterval: (q) => (buildFinished(q.state.data) ? false : POLL_MS) },
+    { refetchInterval: pollUntil(buildFinished) },
   );
   const [operationId, setOperationId] = useState<string | null>(null);
   if (build.isPending) return <p className="muted">Starting the build for production…</p>;
@@ -264,7 +264,7 @@ function DeployProgress({
     'get',
     '/v1/operations/{operation_id}',
     { params: { path: { operation_id: operationId } } },
-    { refetchInterval: (q) => (operationFinished(q.state.data) ? false : POLL_MS) },
+    { refetchInterval: pollUntil(operationFinished) },
   );
   const finished = operationFinished(op.data);
   useEffect(() => {

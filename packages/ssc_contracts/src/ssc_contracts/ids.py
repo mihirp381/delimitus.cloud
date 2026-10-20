@@ -1,3 +1,4 @@
+import re
 import secrets
 from typing import Final, Literal, get_args
 
@@ -34,6 +35,7 @@ Prefix = Literal[
 PREFIXES: Final[tuple[str, ...]] = get_args(Prefix)
 _ALPHABET: Final = "abcdefghijklmnopqrstuvwxyz0123456789"
 ID_LENGTH: Final = 20
+_ID: Final = re.compile(rf"([a-z]{{3,4}})_([a-z0-9]{{{ID_LENGTH}}})")
 
 
 def new_id(prefix: Prefix) -> str:
@@ -42,7 +44,7 @@ def new_id(prefix: Prefix) -> str:
 
 
 def prefix_of(value: str) -> str:
-    head, sep, body = value.partition("_")
-    if not sep or len(body) != ID_LENGTH or not body.isalnum() or not body.islower():
+    match = _ID.fullmatch(value)
+    if match is None or match[1] not in PREFIXES:
         raise ValueError(f"not an SSC id: {value!r}")
-    return head
+    return match[1]

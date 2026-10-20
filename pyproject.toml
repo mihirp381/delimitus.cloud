@@ -163,7 +163,7 @@ root = "packages/ssc_app/src"
 pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
-testpaths = ["packages", "conformance"]
+testpaths = ["packages", "conformance", "gates"]
 asyncio_mode = "auto"
 addopts = "-q --import-mode=importlib"
 # Shared test helpers (``ssc_testkit``); test modules cannot import conftest.py.

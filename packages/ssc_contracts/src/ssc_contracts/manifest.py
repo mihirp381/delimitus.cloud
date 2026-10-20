@@ -35,6 +35,7 @@ from pydantic import (
     model_validator,
 )
 
+from ssc_contracts import app_env, egress
 from ssc_contracts.identity import EnvironmentName
 
 SCHEMA_V1: Final = "ssc/v1"
@@ -96,7 +97,8 @@ _ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,127}")
 _PATH_CHARS = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=:@%/-]*")
 _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 _ZONE = re.compile(r"UTC|[A-Z][A-Za-z]+(/[A-Za-z0-9_+-]+){1,2}")
-_RESERVED_ENV = frozenset({"PORT", "HOME", "PATH", "DATABASE_URL"})
+_RESERVED_ENV = app_env.PLATFORM_ENV_NAMES | {"PATH", app_env.DATABASE_CA}
+_RESERVED_PREFIXES = (*app_env.NOT_SECRET_PREFIXES, "RAILPACK_")
 _SECRET_WORDS = ("SECRET", "PASSWORD", "PASSWD", "SERVICE_ROLE", "PRIVATE_KEY")
 _KV_WORDS = frozenset({"kv", "redis", "valkey", "memcached", "keyvalue", "key_value", "cache"})
 _SQLITE_WORDS = frozenset({"sqlite", "sqlite3"})
@@ -151,7 +153,7 @@ def _start_command(value: str) -> str:
 def _public_name(value: str) -> str:
     if not _ENV_NAME.fullmatch(value):
         raise ValueError("must be an upper-case name of A-Z, 0-9 and _, at most 128 characters")
-    if value in _RESERVED_ENV or value.startswith(("SSC_", "RAILPACK_")):
+    if value in _RESERVED_ENV or value.startswith(_RESERVED_PREFIXES):
         raise ValueError("is set by the platform and cannot be a public build value")
     if any(word in value for word in _SECRET_WORDS):
         raise ValueError(
@@ -190,6 +192,9 @@ def _hostname(value: str) -> str:
         raise ValueError("must be a DNS host name such as api.example.com")
     if labels[-1].isdigit():
         raise ValueError("IP addresses are not allowed; name the host")
+    problem = egress.storage_host_problem(value)
+    if problem is not None:
+        raise ValueError(problem)
     return value
 
 

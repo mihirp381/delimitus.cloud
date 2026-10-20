@@ -15,7 +15,8 @@ export function who(g: Grant): string {
 /**
  * One environment's sharing rules and the two ways the app page changes them: Share, whose
  * dialog reports through `applied`, and `remove`. A change is sent against the rules as they
- * were `seen`, so one made on rules that moved since is refused rather than applied. The app is
+ * were `seen`; when they moved since (412), `updateGrants` re-reads them and applies the same
+ * change to what is there now, up to `MAX_ATTEMPTS` PUTs, and only then shows the 412. The app is
  * read again after a change that took effect, which is said in the toast region; one waiting
  * for approval changed nothing yet, and `waiting` says so beside the rules until the next change.
  */

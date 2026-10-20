@@ -12,7 +12,8 @@ from one login ask about once a second in all, which the per-login limit (one a 
 burst of 60) allows.
 """
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Final
 
@@ -74,6 +75,16 @@ FIXES: Final = {
     "back. Deploy again; if it fails again, quote the operation id to support.",
     **FIX_ITS,
 }
+START_CRASH_FIX: Final = "The app stopped while starting; read the log lines above."
+_START_CRASH: Final = re.compile(r"Traceback|Error:|exited")
+
+
+def health_check_fix(log_tail: Iterable[str]) -> str:
+    """``HEALTH_CHECK_FAILED``'s next step: the port text, unless the app log shows the app
+    crashing on start, where the log, not the port, holds the cause (GA-12 F22)."""
+    if any(_START_CRASH.search(line) for line in log_tail):
+        return START_CRASH_FIX
+    return FIXES["HEALTH_CHECK_FAILED"]
 
 
 @dataclass(slots=True)

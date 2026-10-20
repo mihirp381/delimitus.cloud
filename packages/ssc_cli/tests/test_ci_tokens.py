@@ -186,3 +186,13 @@ def test_revoke_ci_of_someone_elses_is_not_found(cli, fake_api, fake_problem, is
     r = cli("token", "revoke-ci", CI_ID, "--json", session=fake_api.session())
     assert r.code == ExitCode.FAILED
     assert ErrorResult.model_validate(r.json()).error.code == "NOT_FOUND"
+
+
+def test_the_token_group_help_names_the_ci_token_commands(cli):
+    """B-8: ``ssc --help`` and ``ssc token --help`` say the group makes CI tokens too."""
+    top = cli("--help")
+    assert "CI token" in " ".join(top.stdout.split())
+    r = cli("token", "--help")
+    assert r.code == 0
+    text = " ".join(r.stdout.split())
+    assert "keychain" in text and "CI token" in text

@@ -170,6 +170,7 @@ async def test_a_rollback_past_a_forward_migration_warns_and_needs_confirm(
 
     r = rollback(b, env, first, confirm=True, **{IDEMPOTENCY_HEADER: key})
     assert r.status_code == 202, r.text
+    assert r.json()["migrations_unknown"] is False
     op = str(r.json()["operation_id"])
     assert await run(b, op, ports) == "healthy"
     started = audit_of(b, op)[0]
@@ -207,6 +208,7 @@ async def test_no_warning_without_a_database_or_with_unknown_migrations(
     assert ahead(b, b.w.preview, first) == []
     back = start_deploy(b, b.w.preview, first, "rollback")
     assert back.status_code == 202, back.text
+    assert back.json()["migrations_unknown"] is False
     assert await run(b, back.json()["operation_id"]) == "healthy"
 
     database_ready(dsns, b.w.org)
@@ -217,7 +219,39 @@ async def test_no_warning_without_a_database_or_with_unknown_migrations(
     later = await release_from(b, tmp_path / "r3", [INIT, ADD_TOTAL])
     await deployed(b, b.w.preview, later, ports)
     assert ahead(b, b.w.preview, unknown) == []
-    assert rollback(b, b.w.preview, unknown).status_code == 202
+    back = rollback(b, b.w.preview, unknown)
+    assert back.status_code == 202, back.text
+    assert back.json()["migrations_unknown"] is True
+
+
+async def test_a_rollback_of_a_database_app_with_no_known_ledger_says_so(
+    b: Bench, dsns: Dsns, tmp_path: Path
+) -> None:
+    """B-10: an app that declares a database but whose migrations no ledger reader recognises
+    rolls back without SCHEMA_AHEAD, and the answer says its migrations were not checked."""
+    database_ready(dsns, b.w.org)
+    ports = with_cell(b.ports, app_databases=FakeAppDatabases())
+    env = b.w.preview
+    bare = await release_from(b, tmp_path / "r1", [])
+    assert rows_of(b.dsn, b.w.org, "select migrations from ssc.release where id = %s", bare) == [
+        {"migrations": {}}
+    ]
+    await deployed(b, env, bare, ports)
+
+    back = rollback(b, env, bare)
+    assert back.status_code == 202, back.text
+    assert back.json()["migrations_unknown"] is True
+    assert await run(b, back.json()["operation_id"], ports) == "healthy"
+    forward = start_deploy(b, env, bare)
+    assert forward.json()["migrations_unknown"] is False
+    assert await run(b, forward.json()["operation_id"], ports) == "healthy"
+
+    known = await release_from(b, tmp_path / "r3", [INIT])
+    await deployed(b, env, known, ports)
+    again = rollback(b, env, known)
+    assert again.status_code == 202, again.text
+    assert again.json()["migrations_unknown"] is False
+    assert_problem(rollback(b, env, bare), ErrorCode.SCHEMA_AHEAD)
 
 
 async def test_migrations_ahead_needs_a_release_of_the_app_and_a_builder(

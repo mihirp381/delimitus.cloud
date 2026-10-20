@@ -75,7 +75,7 @@ from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
 from ssc_shared.fence import CLOSE, OPEN
 from ssc_shared.logs import Health, LogLine, LogPage, LogQuery
-from ssc_shared.requirements import platform_requirements
+from ssc_shared.requirements import MIGRATIONS_UNKNOWN, platform_requirements
 
 SPEC = Path(__file__).resolve().parents[3] / "docs" / "api" / "openapi.json"
 ASK_FIRST = (
@@ -424,6 +424,7 @@ async def test_mutations_audited_as_agent(world: World) -> None:
         "location": f"/v1/operations/{op}",
         "idempotency_key": key,
         "notice": None,
+        "migrations_unknown": False,
     }
     assert again.structured_content == first.structured_content
     assert second.is_error
@@ -520,10 +521,18 @@ async def test_preview_scoped_agent_asks_only_preview_shares(world: World) -> No
         assert r.is_error
         assert r.structured_content["error"]["code"] == "FORBIDDEN"
     assert not asked.is_error, asked.structured_content
-    approval = asked.structured_content["approval"]
-    assert approval["environment_id"] == env_id(world.app, "preview")
-    assert (approval["kind"], approval["state"]) == ("agent_share", "pending")
-    assert approval["requested_via_agent"] is True
+    out = asked.structured_content
+    assert (out["requested"], out["applied"]) == (True, False)
+    assert out["environment_id"] == env_id(world.app, "preview")
+    (requirement,) = out["requirements"]
+    assert (requirement["kind"], requirement["state"]) == ("agent_share", "pending")
+    assert out["approval_ids"] == [requirement["approval_id"]]
+    assert approval_row(world, requirement["approval_id"])[:4] == (
+        env_id(world.app, "preview"),
+        "agent_share",
+        "pending",
+        True,
+    )
     elsewhere = rows(
         world.dsns.app,
         world.org.org_id,
@@ -733,9 +742,9 @@ async def test_no_approve_path(world: World) -> None:
 # ── asking: sharing and connections only open approval requests ─────────────
 
 
-def grants_of(world: World, env: str) -> dict[str, Any]:
+def grants_of(world: World, env: str, app_id: str | None = None) -> dict[str, Any]:
     r = httpx2.get(
-        f"{world.url}/v1/apps/{world.app['id']}/environments/{env}/grants",
+        f"{world.url}/v1/apps/{app_id or world.app['id']}/environments/{env}/grants",
         headers={"Authorization": f"Bearer {world.human}"},
     )
     assert r.status_code == 200, r.text
@@ -743,46 +752,157 @@ def grants_of(world: World, env: str) -> dict[str, Any]:
     return body
 
 
+def human_post(world: World, path: str, body: dict[str, Any], token: str | None = None) -> Any:
+    r = httpx2.post(
+        f"{world.url}{path}",
+        json=body,
+        headers={"Authorization": f"Bearer {token or world.human}", "Idempotency-Key": new_key()},
+    )
+    assert r.status_code in {200, 201}, r.text
+    return r.json()
+
+
+def fresh_app(world: World) -> dict[str, Any]:
+    """An app of its own, so what other tests asked for on mcp-app does not count here."""
+    created: dict[str, Any] = human_post(world, "/v1/apps", {"slug": f"s{new_key()[:12].lower()}"})
+    return created
+
+
+def approval_row(world: World, approval_id: str) -> tuple[Any, ...]:
+    (row,) = rows(
+        world.dsns.app,
+        world.org.org_id,
+        "select environment_id, kind, state, requested_via_agent, payload "
+        "from ssc.approval_request where id = %s",
+        (approval_id,),
+    )
+    return row
+
+
+def approve(world: World, approval_id: str) -> dict[str, Any]:
+    """Another active admin approves, in their own session; the answer says what it applied."""
+    approver = add_account(world.dsns.app, world.org.org_id, "admin")
+    token = mint(world.key, org=world.org.org_id, sub=approver)
+    body = {"outcome": "approved", "reason": "Checked with the team.", "channel": "console"}
+    decided: dict[str, Any] = human_post(world, f"/v1/approvals/{approval_id}/decide", body, token)
+    return decided
+
+
 async def test_request_share_pending(world: World) -> None:
-    prod = env_id(world.app, "prod")
+    app = fresh_app(world)
+    prod = env_id(app, "prod")
     member = add_account(world.dsns.app, world.org.org_id, "member")
-    before = grants_of(world, prod)
-    args = {"app": "mcp-app", "env": "prod", "who": member}
+    before = grants_of(world, prod, app["id"])
+    args = {"app": app["slug"], "env": "prod", "who": member}
     async with session(world.url, world.agent) as client:
         asked = await client.call_tool("request_share", args)
         again = await client.call_tool("request_share", args)
 
     assert not asked.is_error, asked.content
     out = asked.structured_content
-    approval = out["approval"]
-    assert out["requested"] is True
-    assert out["created"] is True
-    assert out["not_requested"] == ["widen_audience"]
+    assert "not_requested" not in out
+    assert (out["requested"], out["applied"]) == (True, False)
+    assert out["environment_id"] == prod
     assert out["grants_version"] == before["grants_version"]
-    assert approval["state"] == "pending"
-    assert approval["kind"] == "agent_share"
-    assert approval["environment_id"] == prod
-    assert approval["requested_via_agent"] is True
-    assert approval["requested_by_user_id"] == world.org.admin_user_id
-    wanted = {"role": "user", "subject_kind": "user", "subject_id": member}
-    assert approval["payload"] == {
-        "grants_version": before["grants_version"],
-        "grants": [*({k: g[k] for k in wanted} for g in before["grants"]), wanted],
+    (requirement,) = out["requirements"]
+    apr = requirement["approval_id"]
+    assert requirement == {
+        "kind": "agent_share",
+        "connection": None,
+        "approval_id": apr,
+        "state": "pending",
     }
-    assert again.structured_content["approval"]["id"] == approval["id"]
-    assert again.structured_content["created"] is False
-    assert grants_of(world, prod) == before
+    assert out["approval_ids"] == [apr]
+    assert "every listed request must be approved" in out["next"]
+    environment, kind, state, via_agent, payload = approval_row(world, apr)
+    assert (environment, kind, state, via_agent) == (prod, "agent_share", "pending", True)
+    wanted = {"role": "user", "subject_kind": "user", "subject_id": member}
+    assert payload == {"grants_version": before["grants_version"], "grants": [wanted]}
+    assert again.structured_content["approval_ids"] == [apr]
+    assert grants_of(world, prod, app["id"]) == before
 
     audit = rows(
         world.dsns.app,
         world.org.org_id,
         "select action, actor_kind, actor_id, actor_via_agent, actor_client_id "
         "from ssc.audit_event where target_id = %s",
-        (approval["id"],),
+        (apr,),
     )
     assert audit == [
         ("approval.requested", "user", world.org.admin_user_id, True, CLIENT_ID),
     ]
+
+
+async def test_request_share_on_a_data_connected_app_asks_for_every_approval(
+    world: World,
+) -> None:
+    """GA-12 F21: an agent's share of a data-connected prod asks for agent_share and
+    widen_audience, and the second approval applies it; nothing else has to run."""
+    app = fresh_app(world)
+    prod = env_id(app, "prod")
+    ask = {"environment_id": prod, "kind": "connect_data_source", "subject_key": "warehouse"}
+    human_post(world, "/v1/approvals", ask)
+    member = add_account(world.dsns.app, world.org.org_id, "member")
+    before = grants_of(world, prod, app["id"])
+    args = {"app": app["slug"], "env": "prod", "who": member}
+    async with session(world.url, world.agent) as client:
+        asked = await client.call_tool("request_share", args)
+        assert not asked.is_error, asked.content
+        out = asked.structured_content
+        assert "not_requested" not in out
+        kinds = [(r["kind"], r["state"]) for r in out["requirements"]]
+        assert kinds == [("agent_share", "pending"), ("widen_audience", "pending")]
+        ids = {r["kind"]: r["approval_id"] for r in out["requirements"]}
+        assert out["approval_ids"] == [ids["agent_share"], ids["widen_audience"]]
+
+        assert approve(world, ids["agent_share"])["applied"] == "waiting"
+        assert grants_of(world, prod, app["id"]) == before
+        assert approve(world, ids["widen_audience"])["applied"] == "applied"
+        after = grants_of(world, prod, app["id"])
+        assert after["grants_version"] == before["grants_version"] + 1
+        assert [(g["role"], g["subject_id"]) for g in after["grants"]] == [("user", member)]
+
+        again = await client.call_tool("request_share", args)
+    assert again.structured_content["requested"] is False
+    assert "already has user" in again.structured_content["next"]
+
+
+async def test_request_share_past_a_ceiling_asks_the_connection_owner(world: World) -> None:
+    app = fresh_app(world)
+    prod = env_id(app, "prod")
+    group = new_id("grp")
+    rows(
+        world.dsns.app,
+        world.org.org_id,
+        "insert into ssc.user_group (id, org_id, directory_ref, display_name) "
+        "values (%s, %s, %s, 'Finance') returning id",
+        (group, world.org.org_id, f"ref-{group}"),
+    )
+    name = f"fin-{new_key()[:8].lower()}"
+    connection = {
+        "name": name,
+        "classification": "confidential",
+        "host": "db.corp.internal",
+        "port": 5432,
+        "database": "warehouse",
+        "owner_user_id": add_account(world.dsns.app, world.org.org_id, "member"),
+        "ceiling": {"audience": "subjects", "subjects": [{"kind": "group", "id": group}]},
+    }
+    human_post(world, "/v1/connections", connection)
+    linked = httpx2.put(
+        f"{world.url}/v1/apps/{app['id']}/environments/{prod}/connections/{name}",
+        json={},
+        headers={"Authorization": f"Bearer {world.human}"},
+    )
+    assert linked.status_code == 200, linked.text
+    async with session(world.url, world.agent) as client:
+        asked = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": "org"}
+        )
+    assert not asked.is_error, asked.content
+    exceed = [r for r in asked.structured_content["requirements"] if r["kind"] == "exceed_ceiling"]
+    assert [(r["connection"], r["state"]) for r in exceed] == [(name, "pending")]
+    assert approval_row(world, exceed[0]["approval_id"])[4]["connection"] == name
 
 
 async def test_request_share_refused_or_not_needed(world: World) -> None:
@@ -810,7 +930,8 @@ async def test_request_share_refused_or_not_needed(world: World) -> None:
         "grants_version": before["grants_version"],
         "next": same.structured_content["next"],
     }
-    grants = wider.structured_content["approval"]["payload"]["grants"]
+    share = next(r for r in wider.structured_content["requirements"] if r["kind"] == "agent_share")
+    grants = approval_row(world, share["approval_id"])[4]["grants"]
     mine = [g for g in grants if g["subject_id"] == member]
     assert mine == [{"role": "builder", "subject_kind": "user", "subject_id": member}]
     assert grants_of(world, prod) == before
@@ -849,10 +970,10 @@ async def test_request_share_rereads_moved_grants(
     prod = env_id(world.app, "prod")
     member = add_account(world.dsns.app, world.org.org_id, "member")
     version = grants_of(world, prod)["grants_version"]
-    real, moved = tools.V1.post, []
+    real, moved = tools.V1.put, []
 
-    async def post(self: tools.V1, path: str, body: dict[str, Any], key: str) -> httpx2.Response:
-        if path == "/v1/approvals" and not moved:
+    async def put(self: tools.V1, path: str, body: dict[str, Any], if_match: str) -> Any:
+        if path.endswith("/grants") and not moved:
             moved.append(path)
             rows(
                 world.dsns.app,
@@ -861,9 +982,9 @@ async def test_request_share_rereads_moved_grants(
                 "returning id",
                 (prod,),
             )
-        return await real(self, path, body, key)
+        return await real(self, path, body, if_match)
 
-    monkeypatch.setattr(tools.V1, "post", post)
+    monkeypatch.setattr(tools.V1, "put", put)
     async with session(world.url, world.agent) as client:
         asked = await client.call_tool(
             "request_share", {"app": "mcp-app", "env": "prod", "who": member}
@@ -871,7 +992,8 @@ async def test_request_share_rereads_moved_grants(
     assert not asked.is_error, asked.content
     assert moved
     assert asked.structured_content["grants_version"] == version + 1
-    assert asked.structured_content["approval"]["payload"]["grants_version"] == version + 1
+    share = next(r for r in asked.structured_content["requirements"] if r["kind"] == "agent_share")
+    assert approval_row(world, share["approval_id"])[4]["grants_version"] == version + 1
 
 
 async def test_request_connection(world: World) -> None:
@@ -1287,6 +1409,43 @@ class AcceptingV1:
         return httpx2.Response(202, json=accepted, headers={"Location": "/v1/operations/x"})
 
 
+class RollingBackV1:
+    """``/v1`` with one app, answering a rollback as the deployments route does."""
+
+    def __init__(self, unknown: bool) -> None:
+        self.unknown = unknown
+
+    async def get(self, path: str) -> dict[str, Any]:
+        return {"id": "app_" + "a" * 20, "slug": "a1", "environments": [ENV_P]}
+
+    async def post(self, path: str, body: dict[str, Any], key: str) -> httpx2.Response:
+        accepted = {
+            "operation_id": "dep_" + "a" * 20,
+            "state": "pending",
+            "notice": None,
+            "migrations_unknown": self.unknown,
+        }
+        return httpx2.Response(202, json=accepted, headers={"Location": "/v1/operations/x"})
+
+
+ENV_P = {"id": "env_" + "p" * 20, "name": "prod"}
+
+
+async def test_a_rollback_whose_migrations_were_not_checked_carries_a_caution() -> None:
+    """B-10: a database app whose migration tool SSC does not recognise rolls back unchecked;
+    the tool's answer says so in ``caution``."""
+    args = ("app_" + "a" * 20, "rel_" + "r" * 20, "prod")
+    unchecked = await tools.rollback_to(
+        cast("tools.V1", RollingBackV1(True)), *args, key="k", confirm=False
+    )
+    checked = await tools.rollback_to(
+        cast("tools.V1", RollingBackV1(False)), *args, key="k", confirm=False
+    )
+    assert unchecked["migrations_unknown"] is True
+    assert unchecked["caution"] == MIGRATIONS_UNKNOWN
+    assert "caution" not in checked
+
+
 async def test_a_deploy_waiting_on_a_creation_says_so() -> None:
     url = "https://mcp-app--preview.example.test"
     app = {
@@ -1368,3 +1527,10 @@ def test_public_url_setting() -> None:
     assert Settings.from_env(env).mcp_audience == "https://api.example.test/mcp"
     env["SSC_MCP_RESOURCE"] = "https://api.delimitus.com/mcp"
     assert Settings.from_env(env).mcp_audience == "https://api.delimitus.com/mcp"
+
+
+def test_the_pack_rules_say_how_to_pack_on_macos():
+    """B-9: a macOS tar adds ``._*`` twins, which the server refuses."""
+    rules = " ".join(tools.pack_instructions(Settings.for_spec())["rules"])
+    assert "COPYFILE_DISABLE=1" in rules
+    assert "`._*` and `.DS_Store` files are refused" in rules

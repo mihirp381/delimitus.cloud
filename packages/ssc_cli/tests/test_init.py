@@ -11,6 +11,7 @@ import pytest
 from typer.core import TyperGroup
 from typer.main import get_command
 
+from ssc_bundle.ignore import IGNORE_FILE, Ignore
 from ssc_cli.agentpack import guide
 from ssc_cli.agentpack.content import BEGIN, END, STARTER_MANIFEST
 from ssc_cli.config import config_path
@@ -23,6 +24,7 @@ from ssc_cli.shapes import ErrorResult, InitResult
 from ssc_contracts import app_env
 from ssc_contracts.connections import AVAILABLE
 from ssc_contracts.manifest import load_manifest
+from ssc_shared.requirements import MIGRATION_TOOLS
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "ssc_cli"
 ROOT = Path(__file__).resolve().parents[3]
@@ -563,3 +565,29 @@ def test_the_identity_rules_read_both_settings_from_the_environment() -> None:
     assert "a `data:` URL" in text
     jwks = text.split("keys.delimitus.com/<cell>/jwks.json", 1)[0][-160:]
     assert "outside a cell" in jwks
+
+
+def test_pack_names_the_migration_tools_a_rollback_checks(cli, tmp_path):
+    """B-10: SCHEMA_AHEAD is not universal; the pack says which tools SSC reads."""
+    init(cli, tmp_path)
+    agents = " ".join((tmp_path / "AGENTS.md").read_text().split())
+    for tool in MIGRATION_TOOLS:
+        assert tool in agents, tool
+    assert "`migrations_unknown`" in agents
+
+
+def test_starter_ignore_leaves_out_agent_files_but_keeps_the_manifest(cli, tmp_path):
+    """B-12: the agent pack's own files and macOS metadata are not uploaded."""
+    init(cli, tmp_path)
+    ignore = Ignore.load(tmp_path)
+    for path in ("AGENTS.md", "CLAUDE.md", ".mcp.json"):
+        assert ignore.reason(path, is_dir=False) == IGNORE_FILE, path
+    for path in ("._server.js", "src/._db.js"):
+        assert ignore.reason(path, is_dir=False) is not None, path
+    for folder in (".claude", ".cursor"):
+        assert ignore.reason(folder, is_dir=True) == IGNORE_FILE, folder
+    assert ignore.reason("ssc.toml", is_dir=False) is None
+    assert not ignore.would_drop_manifest
+    lines = (tmp_path / ".sscignore").read_text().splitlines()
+    for pattern in ("AGENTS.md", "CLAUDE.md", ".claude/", ".mcp.json", ".cursor/", "._*"):
+        assert pattern in lines, pattern
