@@ -14,7 +14,8 @@ mounts (``datagw_connections``) are the customer's own too and are left out. Whe
 ``flags`` output differ, the lazy resources of a differing flag, the proxy's resources for
 ``proxy_ha`` (``naming.PROXY_HA_RESOURCES``), the agent's ``SSC_SQL_INSTANCE`` for ``database``,
 the agent's VPC access and its ``SSC_DATAGW_URL`` and ``SSC_DATAGW_AUDIENCE`` for ``connections``
-(GA-5.8) and the gateway's minimum (``gateway_min``, ``warm``) are left out. The proxy
+(GA-5.8), the agent's ``naming.BUILD_POOL_ENVS`` for ``egress`` and the gateway's minimum
+(``gateway_min``, ``warm``) are left out. The proxy
 template's name is assigned by the cloud. Prints each difference; exit 1 if there is any.
 
 Then, for each cell, the organisation policies in force (SSC-095): the table the platform stack
@@ -133,6 +134,7 @@ FLAG_DEFAULTS: Final[dict[str, Json]] = {
     "proxy_ha": False,
 }
 IPV4: Final = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+BUILD_SHA1: Final = re.compile(r"SSC_BUILD_SHA1=[A-Za-z0-9+/=]+")
 OWN_SETTINGS: Final = {
     "org_id": "<org>",
     "gateway_keyring": "<gateway-keyring>",
@@ -222,6 +224,7 @@ def _own_values(state: Json, label: str) -> Swaps:
         elif res["type"] in TAG_TYPES:
             addresses.append((str(assigned.get("name") or ""), TAG_TYPES[res["type"]]))
     swaps = [(re.compile(re.escape(value)), placeholder) for value, placeholder in found if value]
+    swaps.append((BUILD_SHA1, "SSC_BUILD_SHA1=<build-sha1>"))
     for address, placeholder in addresses:
         if address:
             exact = re.compile(rf"(?<![\d.]){re.escape(address)}(?!\d|\.\d)")
@@ -274,6 +277,15 @@ def _agent_datagw(path: str) -> bool:
     )
 
 
+def _agent_flagged(path: str, flags_differ: Sequence[str]) -> bool:
+    named = f"{path}."
+    return (
+        ("database" in flags_differ and f".envs.{n.SQL_INSTANCE_ENV}." in named)
+        or ("connections" in flags_differ and _agent_datagw(named))
+        or ("egress" in flags_differ and any(f".envs.{e}." in named for e in n.BUILD_POOL_ENVS))
+    )
+
+
 def _flagged(key: str, path: str, flags_differ: Sequence[str]) -> bool:
     """Whether a differing flag names this resource, or this path of it."""
     if any(key in n.LAZY_RESOURCES.get(f, ()) for f in flags_differ):
@@ -281,12 +293,7 @@ def _flagged(key: str, path: str, flags_differ: Sequence[str]) -> bool:
     if "proxy_ha" in flags_differ and key in n.PROXY_HA_RESOURCES:
         return True
     if key == n.AGENT_SERVICE:
-        named = f"{path}."
-        if "database" in flags_differ and f".envs.{n.SQL_INSTANCE_ENV}." in named:
-            return True
-        if "connections" in flags_differ and _agent_datagw(named):
-            return True
-        return False
+        return _agent_flagged(path, flags_differ)
     gateway_min = {"gateway_min", "warm"} & set(flags_differ)
     return bool(gateway_min) and key == n.GATEWAY_SERVICE and path.endswith(n.GATEWAY_MIN_PATH)
 

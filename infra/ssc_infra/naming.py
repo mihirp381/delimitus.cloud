@@ -38,6 +38,13 @@ MIGRATE_SA: Final = "ssc-control-migrate"
 CELL_LABEL_KEY: Final = "ssc-cell"
 APP_PREFIX: Final = "ssc-a-"
 PROBE_SECRET: Final = f"{APP_PREFIX}probe"
+BUILD_PROXY_SECRET: Final = "ssc-build-proxy"  # noqa: S105  (a name)
+BUILD_POOL_ENVS: Final = (
+    "SSC_BUILD_POOL",
+    "SSC_BUILD_PROXY",
+    "SSC_BUILD_PROXY_SECRET",
+    "SSC_BUILD_BUILDKIT_IMAGE",
+)
 PROBE_ALLOWED_SA: Final = f"{APP_PREFIX}probe"
 PROBE_DENIED_SA: Final = "ssc-deny-probe"
 # The two runtime-probe apps (SSC-017): ``a`` runs the probes, ``b`` is the peer it must not reach.
@@ -92,7 +99,7 @@ GATEWAY_MIN_PATH: Final = "template.scaling.minInstanceCount"
 AGENT_SERVICE: Final = f"gcp:cloudrunv2/service:Service::{CELL_AGENT}"
 DEPLOYER_UPDATES: Final[dict[str, frozenset[str]]] = {
     "database": frozenset({AGENT_SERVICE}),
-    "egress": frozenset(),
+    "egress": frozenset({AGENT_SERVICE}),
     "connections": frozenset({AGENT_SERVICE}),
     "warm": frozenset({GATEWAY_SERVICE}),
 }
