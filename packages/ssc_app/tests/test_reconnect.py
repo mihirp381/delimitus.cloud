@@ -197,3 +197,46 @@ def test_a_websocket_is_held_across_the_limit() -> None:
     for code, at, deadline in closes:
         assert code == RESTART_CODE
         assert at < deadline
+
+
+async def test_the_app_s_own_timeout_error_is_not_taken_for_the_deadline() -> None:
+    """A TimeoutError from the events (an ``asyncio.timeout()`` around an upstream call) is the
+    app's to see, with or without a deadline; it never turns into a quiet ``retry:``."""
+
+    async def upstream_times_out() -> AsyncIterator[str]:
+        yield "data: 0\n\n"
+        raise TimeoutError("upstream")
+
+    got: list[bytes] = []
+    with pytest.raises(TimeoutError, match="upstream"):
+        async for chunk in end_before_deadline(upstream_times_out(), {}):
+            got.append(chunk)
+    assert got == [b"data: 0\n\n"]
+    got.clear()
+    with pytest.raises(TimeoutError, match="upstream"):
+        async for chunk in end_before_deadline(upstream_times_out(), stamp(), margin=MARGIN):
+            got.append(chunk)
+    assert got == [b"data: 0\n\n"]
+
+
+async def test_a_stream_ended_by_its_reader_stops_the_events() -> None:
+    """Closing the stream (the browser went away) while it waits for the next event cancels that
+    wait instead of leaving it running."""
+    stopped = asyncio.Event()
+
+    async def slow() -> AsyncIterator[str]:
+        try:
+            yield "data: 0\n\n"
+            await asyncio.sleep(60)
+            yield "data: 1\n\n"
+        finally:
+            stopped.set()
+
+    stream = end_before_deadline(slow(), stamp(), margin=MARGIN)
+    assert await anext(stream) == b"data: 0\n\n"
+    pending = asyncio.ensure_future(anext(stream))
+    await asyncio.sleep(TICK)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    await asyncio.wait_for(stopped.wait(), 1)

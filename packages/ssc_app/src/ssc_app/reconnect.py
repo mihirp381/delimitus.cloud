@@ -79,15 +79,36 @@ async def end_before_deadline(
     stop = None if wait is None else loop.time() + wait
     source = aiter(events)
     while True:
+        # The deadline is told by asyncio.wait's timeout, never by a TimeoutError: one raised by
+        # ``events`` itself is the app's, and must reach it rather than end the stream quietly.
+        task = asyncio.ensure_future(anext(source))
         try:
-            wait = None if stop is None else max(0.0, stop - loop.time())
-            event = await asyncio.wait_for(anext(source), wait)
-        except StopAsyncIteration:
-            return
-        except TimeoutError:
+            done, _ = await asyncio.wait(
+                {task}, timeout=None if stop is None else max(0.0, stop - loop.time())
+            )
+        except BaseException:
+            task.cancel()  # the stream itself was closed or cancelled
+            raise
+        if task not in done:
+            await _cancel(task)
             yield f"retry: {retry_ms}\n\n".encode()
             return
+        try:
+            event = task.result()
+        except StopAsyncIteration:
+            return
         yield event.encode() if isinstance(event, str) else event
+
+
+async def _cancel(task: asyncio.Future[str | bytes]) -> None:
+    """Cancel ``task`` and wait until it has ended, passing on a cancellation of the caller."""
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if current is not None and current.cancelling():
+            raise
 
 
 async def close_before_deadline(
