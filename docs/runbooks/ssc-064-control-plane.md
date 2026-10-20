@@ -113,7 +113,7 @@ pulumi up --stack c-$LABEL
 The preview should change only these, from `ssc-control-staging` to `ssc-control-prod`:
 - `agent-invoker` moves to `ssc-control@ssc-control-prod`;
 - `bucket-control` is deleted if it is still there (SSC-012: only the worker uses the cell bucket);
-- `agent-invoker-worker` and `bucket-control-worker-{bundles,snapshots,anchors}` are new, for `ssc-control-worker@ssc-control-prod`: `storage.objectUser` under `bundles/`, `snapshots/` and `audit-anchors/` only (a cell applied before 2026-10-19 also deletes its bucket-wide `bucket-control-worker`, and replaces `bucket-gateway` with one under `snapshots/` only);
+- `agent-invoker-worker` and `bucket-control-worker-{bundles,snapshots,anchors}` are new, for `ssc-control-worker@ssc-control-prod`: `storage.objectUser` under `bundles/`, `snapshots/` and `audit-anchors/` only (a cell applied before 2026-10-19 also deletes its bucket-wide `bucket-control-worker` and `bucket-agent`, replaces `bucket-gateway` with one under `snapshots/` only, and updates the custom role `sscCellAgentFiles` to add `storage.objects.list`);
 - `bucket-control-api-bundles` is new, for `ssc-control@ssc-control-prod`: `storage.objectUser` under `bundles/` only (source bundles, decision 015);
 - the intake's `SSC_CONTROL_SA`.
 

@@ -182,7 +182,7 @@ DATABASE_PERMISSIONS: Final = (
     "cloudsql.databases.delete",
 )
 USAGE_PERMISSIONS: Final = ("monitoring.timeSeries.list",)
-FILES_PERMISSIONS: Final = ("storage.objects.delete",)
+FILES_PERMISSIONS: Final = ("storage.objects.delete", "storage.objects.list")
 FILES_PREFIX: Final = "files/"
 SNAPSHOTS_PREFIX: Final = "snapshots/"
 # The prefixes the control worker uses in a cell bucket. ssc_infra cannot import ssc_control, so
@@ -803,8 +803,8 @@ class Cell:
             project=self.pid,
             role_id="sscCellAgentFiles",
             title="SSC cell agent: drop app files",
-            description="Deletes an environment's files in the cell bucket, under files/ alone "
-            "(SSC-046).",
+            description="Lists and deletes an environment's files in the cell bucket, under "
+            "files/ alone (SSC-046).",
             permissions=list(FILES_PERMISSIONS),
             opts=self._o(),
         )
@@ -1402,9 +1402,10 @@ class Cell:
         holds ``objectUser`` on ``bundles/``, ``snapshots/`` and ``audit-anchors/`` and on
         nothing else (``bucket-control-worker-<name>``, ``WORKER_PREFIXES``); it lists only
         under those prefixes. The gateway, like ``ssc-data`` and ``ssc-proxy``, reads
-        ``snapshots/`` alone. The agent still holds bucket-wide ``objectViewer``
-        (``bucket-agent``): ``ssc_agent.files.CellFiles.drop`` lists ``files/env_<id>/`` with
-        it, and ``sscCellAgentFiles`` grants only the delete."""
+        ``snapshots/`` alone. The agent holds no read role on the bucket: its
+        ``sscCellAgentFiles`` (``bucket-agent-files``) lists and deletes under ``files/`` alone,
+        all ``ssc_agent.files.CellFiles.drop`` needs. Every grant on the bucket carries a
+        condition."""
         cfg = self.cfg
         self.bucket_ = gcp.storage.Bucket(
             "bucket",
@@ -1427,13 +1428,6 @@ class Cell:
             ],
             force_destroy=cfg.disposable,
             opts=self._o(self.bucket_key_grant),
-        )
-        gcp.storage.BucketIAMMember(
-            "bucket-agent",
-            bucket=self.bucket_.name,
-            role="roles/storage.objectViewer",
-            member=self.agent_sa.member,
-            opts=self._o(),
         )
         for name, (prefix, title) in WORKER_PREFIXES.items():
             gcp.storage.BucketIAMMember(

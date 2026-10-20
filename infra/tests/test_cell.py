@@ -1360,8 +1360,8 @@ def test_only_the_api_gains_the_bundles_prefix(cell_a: list[Declared]) -> None:
     """Source bundles (decision 015): the API signs their URLs as itself, so it reads and
     writes ``bundles/`` and nothing else of the bucket, and the worker builds from them and
     collects them. Every other conditioned grant names a prefix of its own, and the cell's
-    build account holds none: no cell account gains ``bundles/``. Only the agent's grant has
-    no condition: it lists an environment's files with it (``bucket-agent``)."""
+    build account holds none: no cell account gains ``bundles/``. No grant on the bucket is
+    without a condition."""
     bound = [d for d in cell_a if d.type == "gcp:storage/bucketIAMMember:BucketIAMMember"]
     bundles = f"projects/_/buckets/{naming.cell_bucket(A)}/objects/bundles/"
     api = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-control-api-bundles")
@@ -1371,8 +1371,7 @@ def test_only_the_api_gains_the_bundles_prefix(cell_a: list[Declared]) -> None:
         "bucket-control-api-bundles",
     ]
     project = naming.cell_project(A)
-    unconditioned = {d.name for d in bound if "condition" not in d.inputs}
-    assert unconditioned == {"bucket-agent"}
+    assert [d.name for d in bound if "condition" not in d.inputs] == []
     for account in ("ssc-data", "ssc-proxy", "ssc-build"):
         member = f"serviceAccount:{naming.sa_email(account, project)}"
         held = [d for d in bound if d.inputs["member"] == member]
@@ -1382,9 +1381,9 @@ def test_only_the_api_gains_the_bundles_prefix(cell_a: list[Declared]) -> None:
 
 def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Declared]) -> None:
     """Audit anchors sit in the cell bucket under ``audit-anchors/`` (SSC-012): only the control
-    plane's worker may write or delete there, the agent only reads, the gateway, the data
-    gateway and the proxy read ``snapshots/`` alone (SSC-050), app files under ``files/`` are
-    written by the data gateway and deleted by the agent there alone (SSC-046), and no other
+    plane's worker may write or delete there, the gateway, the data gateway and the proxy read
+    ``snapshots/`` alone (SSC-050), app files under ``files/`` are written by the data gateway
+    and listed and deleted by the agent there alone (SSC-046), and no other
     account of the cell holds a storage role or permission anywhere in the project."""
     viewer = "roles/storage.objectViewer"
     on_bucket = {
@@ -1395,7 +1394,6 @@ def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Decl
     project = naming.cell_project(A)
     assert {name: grant for name, grant in on_bucket.items() if grant[1] == viewer} == {
         "bucket-gateway": (f"serviceAccount:{naming.sa_email(naming.GATEWAY, project)}", viewer),
-        "bucket-agent": (f"serviceAccount:{naming.sa_email(naming.CELL_AGENT, project)}", viewer),
         "bucket-data": (f"serviceAccount:{naming.sa_email('ssc-data', project)}", viewer),
         "bucket-proxy": (f"serviceAccount:{naming.sa_email('ssc-proxy', project)}", viewer),
     }
@@ -1445,7 +1443,10 @@ def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Decl
         for d in cell_a
         if d.type == "gcp:projects/iAMCustomRole:IAMCustomRole"
     }
-    assert permissions.pop("sscCellAgentFiles") == ["storage.objects.delete"]
+    assert permissions.pop("sscCellAgentFiles") == [
+        "storage.objects.delete",
+        "storage.objects.list",
+    ]
     assert permissions
     assert not [
         p
@@ -1522,9 +1523,15 @@ def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared])
         f"projects/{naming.cell_project(A)}/roles/sscDeployerRecords",
         on_bucket,
     }
-    assert roles["sscCellAgentFiles"] == ["storage.objects.delete"]
+    assert roles["sscCellAgentFiles"] == ["storage.objects.delete", "storage.objects.list"]
     bound = one(cell_a, "gcp:storage/bucketIAMMember:BucketIAMMember", "bucket-agent-files")
     assert (bound.inputs["member"], bound.inputs["role"]) == (agent, on_bucket)
+    held = [
+        d.name
+        for d in cell_a
+        if d.type.startswith("gcp:storage/bucketIAM") and d.inputs["member"] == agent
+    ]
+    assert held == ["bucket-agent-files"], "the agent holds nothing else on the bucket"
     assert all(p.endswith(".create") for p in roles["sscCellAgentCreate"])
     runtime = roles["sscCellAgentRuntime"]
     assert not any(p.endswith((".delete", ".create")) for p in runtime)

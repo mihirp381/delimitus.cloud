@@ -4,8 +4,9 @@ The data gateway's file broker keeps an environment's files under ``files/<env_i
 agent never reads them. ``drop`` deletes the live ones once the environment's service is gone,
 for the flow that deletes an environment after the database's grace period; the bucket keeps
 each deleted or replaced object as a noncurrent version, which its lifecycle rule removes later
-(``infra/README.md``, "File storage"). The agent lists with its bucket-wide read grant and may
-delete under ``files/`` alone (``sscCellAgentFiles``).
+(``infra/README.md``, "File storage"). The agent may list and delete under ``files/`` alone
+(``sscCellAgentFiles``, conditioned on the object name and the listing's prefix) and reads
+nothing in the bucket.
 """
 
 from collections.abc import Mapping
@@ -48,7 +49,8 @@ class CellFiles:
 
     async def drop(self, service: str) -> int:
         """Delete every live file of ``service``'s environment; how many. Running it again, or
-        on an environment that kept no files, is fine."""
+        on an environment that kept no files, is fine. The listing names ``files/env_<id>/`` as
+        its prefix, the only listing the conditioned files role allows."""
         prefix = environment_files(service)
         names: list[str] = []
         token = ""

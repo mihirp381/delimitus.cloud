@@ -30,8 +30,9 @@ by the founder, 2026-10-08 (GA-6.5).
   signed URL for its bundle. [cell.py `bucket-control-api-bundles`, `WORKER_PREFIXES`]
 - The cell's gateway, data gateway and proxy read `snapshots/` only. [cell.py `bucket-gateway`,
   `bucket-data`, `bucket-proxy`]
-- Limit: the cell agent still holds read access to the whole bucket, `bundles/` included, because
-  it lists an environment's files with it. [cell.py `bucket-agent`; ssc_agent/files.py]
+- The cell agent can list and delete under `files/` only, to remove a deleted environment's
+  files, and reads nothing. [cell.py `bucket-agent-files`, `FILES_PERMISSIONS`;
+  ssc_agent/files.py]
 - The operator's just-in-time grant on the cells folder can read every cell bucket. [decision 012]
 
 ## Secrets in source
