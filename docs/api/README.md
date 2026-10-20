@@ -485,7 +485,8 @@ stateless, JSON replies. Code: `api/mcp/`.
     otherwise those the caller may see; names and classifications, never an address
     (decision 029).
   - `describe_connection(app, environment, connection)`: `GET .../connections/{name}/schema`
-    for the app's `prod` or `preview`, as is (GA-5.8).
+    for the app's `prod` or `preview`, as is (GA-5.8); a `DATA_SNAPSHOT_STALE` refusal's
+    `detail` adds that the link is being published and to retry in a minute.
   - `create_app(slug, idempotency_key?)`: `POST /v1/apps` with the body `ssc apps create`
     sends; the caller owns the app. Audited `app.created` with `via_agent` (decision 029).
   - Asking opens pending requests only; another active admin of the org approves (decision

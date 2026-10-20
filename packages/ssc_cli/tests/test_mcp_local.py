@@ -21,7 +21,14 @@ from ssc_cli.api import ApiClient
 from ssc_cli.commands.deploy import prepare_folder
 from ssc_cli.credentials import Login, store_login
 from ssc_cli.errors import CliError
-from ssc_cli.mcp_local import INSTRUCTIONS, TOOLS, agent_opener, build_server, seg
+from ssc_cli.mcp_local import (
+    INSTRUCTIONS,
+    PUBLISHING_NOTE,
+    TOOLS,
+    agent_opener,
+    build_server,
+    seg,
+)
 from ssc_control.api.mcp import tools as server_tools
 from ssc_control.api.mcp.server import INSTRUCTIONS as SERVER_INSTRUCTIONS
 from ssc_control.api.settings import Settings
@@ -676,6 +683,22 @@ async def test_describe_connection_reads_the_schema_route(fake_api, fake_problem
     assert refused.is_error
     assert refused.structured_content["error"]["code"] == "CONNECTION_NOT_GRANTED"
     assert no_env.structured_content["error"]["code"] == "ENVIRONMENT_NOT_FOUND"
+
+
+async def test_describe_connection_says_a_new_link_is_being_published(fake_api, fake_problem):
+    app = {"id": APP_ID, "slug": "a1", "environments": [{"id": ENV_ID, "name": "prod"}]}
+    path = f"/v1/apps/{APP_ID}/environments/{ENV_ID}/connections/hr/schema"
+    fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
+    fake_api.add("GET", path, fake_problem(503, "DATA_SNAPSHOT_STALE"))
+    async with Client(local_server(fake_api), cache=None) as client:
+        stale = await client.call_tool(
+            "describe_connection", {"app": APP_ID, "environment": "prod", "connection": "hr"}
+        )
+    assert stale.is_error
+    error = stale.structured_content["error"]
+    assert error["code"] == "DATA_SNAPSHOT_STALE"
+    assert error["detail"].endswith(f" {PUBLISHING_NOTE}")
+    assert PUBLISHING_NOTE == server_tools.PUBLISHING_NOTE
 
 
 @pytest.mark.parametrize("path", ["..", "/", "app/../.."])

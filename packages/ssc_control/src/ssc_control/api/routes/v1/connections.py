@@ -15,6 +15,8 @@ What a connection shows an environment, its tables and columns, comes from the c
 gateway through the cell agent (GA-5.8, ``ssc_control.runtime.cell_datagw``), kept five minutes.
 """
 
+import asyncio
+import time
 from datetime import datetime
 from typing import Annotated, Any, Final, Literal, Self
 
@@ -39,8 +41,10 @@ from ssc_control.approvals.service import newest
 from ssc_control.connections import service
 from ssc_control.domain.approval_rules import Requirement, RequirementKind, exceed_subject_key
 from ssc_control.domain.audience import Ceiling, CeilingError, ceiling_json, parse_ceiling
+from ssc_control.ports import SnapshotPort
 from ssc_control.runtime import cell_datagw
-from ssc_control.runtime.cell_datagw import CellSchemaError, SchemaRefusal
+from ssc_control.runtime.cell_datagw import CellSchemaError, CellSchemas, SchemaRefusal
+from ssc_control.snapshot.service import awaited
 
 router = APIRouter()
 
@@ -53,6 +57,9 @@ _OWN_NAMES: Final = text(
     "select distinct subject_key from ssc.approval_request where org_id = :org "
     "and kind = 'connect_data_source' and state = 'approved' and requested_by_user_id = :me"
 )
+PUBLISH_WAIT_SECONDS: Final = 10.0
+PUBLISH_POLL_SECONDS: Final = 0.5
+PUBLISH_RETRY_AFTER_SECONDS: Final = 60
 _GATEWAY_CODES: Final = {
     "CONNECTION_NOT_GRANTED": ErrorCode.CONNECTION_NOT_GRANTED,
     "UNKNOWN_ENVIRONMENT": ErrorCode.CONNECTION_NOT_GRANTED,
@@ -516,14 +523,18 @@ async def get_environment_connection_schema(  # noqa: PLR0913  (FastAPI maps eac
     gateway's refusals pass on with its code: `CONNECTION_NOT_GRANTED` (pending, not linked, or
     not in the snapshot yet), `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`, `DATA_SNAPSHOT_STALE`,
     `CONNECTION_UNAVAILABLE`, `QUERY_TIMEOUT`; `CELL_UNAVAILABLE` when the cell could not be
-    asked. A read, not an audit event (an operator's access is recorded as on every read)."""
+    asked. A ready, linked connection the gateway does not know yet waits up to ten seconds for
+    the cell to have the snapshot holding the link and asks once more, then is
+    `DATA_SNAPSHOT_STALE` with `Retry-After`. A read, not an audit event (an operator's access is
+    recorded as on every read)."""
     visible = await _visible(uow)
     if visible is not None and name not in visible:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
     await _connection(uow, name)
     await _environment(uow, app_id, environment_id)
     await _audit_operator(uow)
-    cache = runtime_of(request).schema_cache
+    rt = runtime_of(request)
+    cache = rt.schema_cache
     key = (uow.org_id, environment_id, name)
     kept = cache.get(key)
     if kept is not None:
@@ -532,7 +543,7 @@ async def get_environment_connection_schema(  # noqa: PLR0913  (FastAPI maps eac
     if cell is None or cell.datagw is None:
         raise Refusal(ErrorCode.CELL_UNAVAILABLE, evidence={"reason": "not_configured"})
     try:
-        schema = await cell.datagw.schema(name, environment_id)
+        schema = await _read_schema(uow, rt.snapshot, cell.datagw, name, environment_id)
     except SchemaRefusal as exc:
         code = _GATEWAY_CODES.get(exc.code, ErrorCode.CELL_UNAVAILABLE)
         raise Refusal(
@@ -544,6 +555,47 @@ async def get_environment_connection_schema(  # noqa: PLR0913  (FastAPI maps eac
         ) from None
     cache.put(key, schema)
     return _schema_out(schema, cached=False)
+
+
+async def _read_schema(
+    uow: UnitOfWork, snapshot: SnapshotPort, datagw: CellSchemas, name: str, environment_id: str
+) -> cell_datagw.Schema:
+    try:
+        return await datagw.schema(name, environment_id)
+    except SchemaRefusal as exc:
+        if exc.code != "CONNECTION_NOT_GRANTED" or not await _ready_link(uow, environment_id, name):
+            raise
+        refused = exc
+    version = await awaited(uow.conn, uow.org_id)
+    if await snapshot.confirmed(uow.org_id, version):
+        raise refused
+    published = await _wait_confirmed(snapshot, uow.org_id, version)
+    try:
+        return await datagw.schema(name, environment_id)
+    except SchemaRefusal as exc:
+        if published or exc.code != "CONNECTION_NOT_GRANTED":
+            raise
+    raise Refusal(
+        ErrorCode.DATA_SNAPSHOT_STALE,
+        evidence={"connection": name, "version": version},
+        headers={"Retry-After": str(PUBLISH_RETRY_AFTER_SECONDS)},
+    )
+
+
+async def _ready_link(uow: UnitOfWork, environment_id: str, name: str) -> bool:
+    return any(
+        link.connection.name == name and link.connection.setup_status == "ready"
+        for link in await service.links(uow.conn, uow.org_id, environment_id)
+    )
+
+
+async def _wait_confirmed(snapshot: SnapshotPort, org_id: str, version: int) -> bool:
+    deadline = time.monotonic() + PUBLISH_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        await asyncio.sleep(PUBLISH_POLL_SECONDS)
+        if await snapshot.confirmed(org_id, version):
+            return True
+    return False
 
 
 @router.put(

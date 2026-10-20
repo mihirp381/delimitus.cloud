@@ -315,6 +315,23 @@ def ahead_note(ledgers: list[Body]) -> str:
     )
 
 
+PUBLISHING_NOTE: Final = (
+    "The connection is linked, but the link is being published; retry in a minute."
+)
+
+
+async def connection_schema(c: V1, app: str, environment: str, connection: str) -> Body:
+    """The schema route; ``DATA_SNAPSHOT_STALE`` says the link is still being published."""
+    found = await resolve_app(c, app)
+    env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(environment_id(found, environment))}"
+    try:
+        return await c.get(f"{env_path}/connections/{seg(connection)}/schema")
+    except Refused as e:
+        if e.error.get("code") == ErrorCode.DATA_SNAPSHOT_STALE:
+            raise Refused({**e.error, "detail": f"{e.error['detail']} {PUBLISHING_NOTE}"}) from None
+        raise
+
+
 async def rollback_to(  # noqa: PLR0913  (the rollback tool's arguments)
     c: V1, app: str, release: str, env: str, *, key: str, confirm: bool
 ) -> Body:
@@ -787,13 +804,7 @@ def _org_tools(
         each table's name, each column's name and type, and the snapshot version they come
         from. Only a connection you may see; the answer is kept five minutes (`cached`)."""
 
-        async def work(c: V1) -> Body:
-            found = await resolve_app(c, app)
-            env_id = environment_id(found, environment)
-            env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}"
-            return await c.get(f"{env_path}/connections/{seg(connection)}/schema")
-
-        return await run(api, ctx, work)
+        return await run(api, ctx, lambda c: connection_schema(c, app, environment, connection))
 
     server.add_tool(create_app, annotations=ask)
     server.add_tool(list_connections, annotations=read)

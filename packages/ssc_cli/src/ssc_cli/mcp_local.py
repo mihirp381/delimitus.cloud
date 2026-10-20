@@ -545,6 +545,23 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
         }
 
 
+PUBLISHING_NOTE: Final = (
+    "The connection is linked, but the link is being published; retry in a minute."
+)
+
+
+def connection_schema(c: ApiClient, app: str, environment: str, connection: str) -> Body:
+    """The schema route; ``DATA_SNAPSHOT_STALE`` says the link is still being published."""
+    found = resolve_app(c, app)
+    env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(environment_id(found, environment))}"
+    try:
+        return c.get_json(f"{env_path}/connections/{seg(connection)}/schema")
+    except CliError as e:
+        if e.body.code == ErrorCode.DATA_SNAPSHOT_STALE:
+            e.body = e.body.model_copy(update={"detail": f"{e.body.detail} {PUBLISHING_NOTE}"})
+        raise
+
+
 def ask_connection(c: ApiClient, *, ref: str, connection: str, key: str) -> Body:
     """Ask for the app's prod environment to use one data connection."""
     found = resolve_app(c, ref)
@@ -745,13 +762,7 @@ def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
         each table's name, each column's name and type, and the snapshot version they come
         from. Only a connection you may see; the answer is kept five minutes (`cached`)."""
 
-        def work(c: ApiClient) -> Body:
-            found = resolve_app(c, app)
-            env_id = environment_id(found, environment)
-            env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}"
-            return c.get_json(f"{env_path}/connections/{seg(connection)}/schema")
-
-        return run(open_client, work)
+        return run(open_client, lambda c: connection_schema(c, app, environment, connection))
 
     server.add_tool(create_app, annotations=ask)
     server.add_tool(list_connections, annotations=read)

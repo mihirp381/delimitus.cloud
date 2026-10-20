@@ -49,7 +49,9 @@ from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.snapshot import SnapshotDoc, SnapshotLimits
 from ssc_control.api import Settings, create_app
+from ssc_control.api.routes.v1 import connections as connections_route
 from ssc_control.api.routes.v1.connections import ConnectionIn, ConnectionOut, ConnectionPatch
+from ssc_control.api.runtime import Runtime
 from ssc_control.api.settings import INTERNAL_AUDIENCE
 from ssc_control.connections import service as connection_service
 from ssc_control.db import bind_org_sync
@@ -1139,8 +1141,11 @@ class Clock:
 class Gateway:
     """The API with one cell whose data gateway is ``fake``, and a cache on ``clock``."""
 
-    def __init__(self, client: TestClient, fake: FakeCellSchemas, clock: Clock) -> None:
+    def __init__(
+        self, client: TestClient, fake: FakeCellSchemas, clock: Clock, runtime: Runtime
+    ) -> None:
         self.client = client
+        self.runtime = runtime
         self.fake = fake
         self.clock = clock
 
@@ -1164,7 +1169,7 @@ def gw(dsns: Dsns, signing_key: SigningKey) -> Iterator[Gateway]:
     with TestClient(app) as c:
         # The runtime is frozen; the cache is swapped for one on the test's clock.
         object.__setattr__(app.state.runtime, "schema_cache", SchemaCache(clock=clock))
-        yield Gateway(c, fake, clock)
+        yield Gateway(c, fake, clock, app.state.runtime)
 
 
 def audit_rows(dsn: str, w: World) -> int:
@@ -1238,6 +1243,82 @@ def test_the_gateway_s_refusals_pass_on_and_are_not_kept(  # noqa: PLR0913  (fix
     assert_problem(gw.schema(world, tokens.admin), code)
     assert_problem(gw.schema(world, tokens.admin), code)
     assert len(gw.fake.calls) == 2
+
+
+class PublishingSnapshot:
+    """Unconfirmed for ``unconfirmed`` checks; then, when ``learns``, the gateway knows the link."""
+
+    def __init__(self, gw: Gateway, unconfirmed: int, *, learns: bool) -> None:
+        self.gw = gw
+        self.unconfirmed = unconfirmed
+        self.learns = learns
+        self.asked: list[int] = []
+
+    async def request(self, conn: object, org_id: str) -> int:
+        raise AssertionError("a read never requests a compile")
+
+    async def confirmed(self, org_id: str, version: int) -> bool:
+        self.asked.append(version)
+        if len(self.asked) <= self.unconfirmed:
+            return False
+        if self.learns:
+            self.gw.fake.answers["finance"] = ORDERS
+        return True
+
+
+def publishing(
+    gw: Gateway, monkeypatch: pytest.MonkeyPatch, unconfirmed: int, *, learns: bool = True
+) -> PublishingSnapshot:
+    snapshot = PublishingSnapshot(gw, unconfirmed, learns=learns)
+    object.__setattr__(gw.runtime, "snapshot", snapshot)
+    monkeypatch.setattr(connections_route, "PUBLISH_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(connections_route, "PUBLISH_WAIT_SECONDS", 0.2)
+    gw.fake.answers["finance"] = SchemaRefusal(403, "CONNECTION_NOT_GRANTED")
+    return snapshot
+
+
+def test_the_first_read_after_a_link_waits_for_the_snapshot(
+    gw: Gateway, world: World, tokens: Tokens, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert create_connection(gw.client, tokens.admin, world.member).status_code == 201
+    ready(gw.client, tokens)
+    assert link(gw.client, world, world.preview, tokens.admin).status_code == 200
+    snapshot = publishing(gw, monkeypatch, 2)
+    first = gw.schema(world, tokens.admin, env=world.preview)
+    assert first.status_code == 200, first.text
+    assert first.json() == {**ORDERS_OUT, "cached": False}
+    assert len(gw.fake.calls) == 2
+    assert len(snapshot.asked) == 3
+    assert len(set(snapshot.asked)) == 1
+
+
+def test_a_link_the_cell_has_not_seen_in_time_is_data_snapshot_stale(
+    gw: Gateway, world: World, tokens: Tokens, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert create_connection(gw.client, tokens.admin, world.member).status_code == 201
+    ready(gw.client, tokens)
+    assert link(gw.client, world, world.preview, tokens.admin).status_code == 200
+    publishing(gw, monkeypatch, 10_000)
+    r = gw.schema(world, tokens.admin, env=world.preview)
+    assert_problem(r, ErrorCode.DATA_SNAPSHOT_STALE)
+    assert r.headers["Retry-After"] == str(connections_route.PUBLISH_RETRY_AFTER_SECONDS)
+    assert len(gw.fake.calls) == 2
+
+
+def test_an_unlinked_pending_or_confirmed_refusal_passes_on_without_waiting(
+    gw: Gateway, world: World, tokens: Tokens, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert create_connection(gw.client, tokens.admin, world.member).status_code == 201
+    snapshot = publishing(gw, monkeypatch, 0, learns=False)
+    env = world.preview
+    assert_problem(gw.schema(world, tokens.admin, env=env), ErrorCode.CONNECTION_NOT_GRANTED)
+    assert link(gw.client, world, env, tokens.admin).status_code == 200
+    assert_problem(gw.schema(world, tokens.admin, env=env), ErrorCode.CONNECTION_NOT_GRANTED)
+    assert snapshot.asked == []
+    ready(gw.client, tokens)
+    assert_problem(gw.schema(world, tokens.admin, env=env), ErrorCode.CONNECTION_NOT_GRANTED)
+    assert len(snapshot.asked) == 1
+    assert len(gw.fake.calls) == 3
 
 
 def test_a_cell_that_cannot_be_asked_is_cell_unavailable(

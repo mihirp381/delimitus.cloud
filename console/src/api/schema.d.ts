@@ -491,7 +491,10 @@ export interface paths {
          *     gateway's refusals pass on with its code: `CONNECTION_NOT_GRANTED` (pending, not linked, or
          *     not in the snapshot yet), `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`, `DATA_SNAPSHOT_STALE`,
          *     `CONNECTION_UNAVAILABLE`, `QUERY_TIMEOUT`; `CELL_UNAVAILABLE` when the cell could not be
-         *     asked. A read, not an audit event (an operator's access is recorded as on every read).
+         *     asked. A ready, linked connection the gateway does not know yet waits up to ten seconds for
+         *     the cell to have the snapshot holding the link and asks once more, then is
+         *     `DATA_SNAPSHOT_STALE` with `Retry-After`. A read, not an audit event (an operator's access is
+         *     recorded as on every read).
          */
         get: operations["get_environment_connection_schema_v1_apps__app_id__environments__environment_id__connections__name__schema_get"];
         put?: never;

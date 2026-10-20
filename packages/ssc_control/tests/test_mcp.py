@@ -1431,6 +1431,31 @@ class RollingBackV1:
 ENV_P = {"id": "env_" + "p" * 20, "name": "prod"}
 
 
+class StaleSchemaV1:
+    """``/v1`` with one app whose schema read is refused ``code``."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+    async def get(self, path: str) -> dict[str, Any]:
+        if path.endswith("/schema"):
+            raise tools.Refused({"code": self.code, "detail": "Retry in a minute."})
+        return {"id": "app_" + "a" * 20, "slug": "a1", "environments": [ENV_P]}
+
+
+async def test_describe_connection_says_a_new_link_is_being_published() -> None:
+    stale = cast("tools.V1", StaleSchemaV1("DATA_SNAPSHOT_STALE"))
+    with pytest.raises(tools.Refused) as caught:
+        await tools.connection_schema(stale, "app_" + "a" * 20, "prod", "finance")
+    assert caught.value.error["code"] == "DATA_SNAPSHOT_STALE"
+    assert caught.value.error["detail"] == f"Retry in a minute. {tools.PUBLISHING_NOTE}"
+    assert "the link is being published; retry in a minute" in tools.PUBLISHING_NOTE
+    other = cast("tools.V1", StaleSchemaV1("CONNECTION_NOT_GRANTED"))
+    with pytest.raises(tools.Refused) as plain:
+        await tools.connection_schema(other, "app_" + "a" * 20, "prod", "finance")
+    assert plain.value.error == {"code": "CONNECTION_NOT_GRANTED", "detail": "Retry in a minute."}
+
+
 async def test_a_rollback_whose_migrations_were_not_checked_carries_a_caution() -> None:
     """B-10: a database app whose migration tool SSC does not recognise rolls back unchecked;
     the tool's answer says so in ``caution``."""

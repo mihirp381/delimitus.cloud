@@ -33,6 +33,7 @@ from ssc_control.github.client import GitHubApp
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.cell_agent import MetadataIdTokens
 from ssc_control.runtime.cells import CellPorts, CellRouter
+from ssc_control.snapshot.service import Snapshots
 from ssc_control.storage import CellStores
 from ssc_control.timers.service import Timers
 from ssc_shared import redaction
@@ -126,6 +127,7 @@ def create_app(  # noqa: PLR0913  (the ports a test replaces, by keyword)
         blob_store=store,
         cell_stores=buckets,
         timers=Timers(),
+        snapshot=Snapshots(db, blob_store=store, cell_stores=buckets),
         cells=cells if cells is not None else owned_cells,
         github=github if github is not None else owned_github,
     )

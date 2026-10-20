@@ -12,7 +12,15 @@ from fastapi import Request
 from ssc_contracts.errors import ErrorCode
 from ssc_control.api.problems import Refusal
 from ssc_control.deploy.gates import approvals_prod_gate
-from ssc_control.ports import MetricsPort, NullMetricsPort, NullTimersPort, ProdGate, TimersPort
+from ssc_control.ports import (
+    MetricsPort,
+    NullMetricsPort,
+    NullSnapshotPort,
+    NullTimersPort,
+    ProdGate,
+    SnapshotPort,
+    TimersPort,
+)
 from ssc_control.runtime.cell_datagw import SchemaCache
 from ssc_control.runtime.cells import CellPorts, CellUnavailableError, OrgCell
 
@@ -44,6 +52,8 @@ class Runtime:
     """Checked when a ``prod`` deployment is posted; the deploy job checks it again."""
     timers: TimersPort = field(default_factory=NullTimersPort)
     """Resumes the schedules the kill switch paused when an app is enabled."""
+    snapshot: SnapshotPort = field(default_factory=NullSnapshotPort)
+    """Whether the org's cell has a snapshot version yet."""
     cells: CellPorts | None = None
     """Each org's cell (decision 030): through its agent, secret grants (SSC-026), app database
     rotation and reads (SSC-040), app logs and health (SSC-024) and where its proxy is
