@@ -40,7 +40,8 @@ members and nothing else:
 The catalogue is `ssc_contracts.errors.CATALOGUE`: one `ErrorCode`, one status, one fixed title
 and one fixed detail. The text never carries field names, ids or SQL. Evidence (what was wrong,
 which constraint fired) is logged as one JSON line under the `request_id`, which every response
-also returns in `X-Request-Id`. There is exactly one renderer (`api/problems.py`); validation
+also returns in `X-Request-Id`. For a validation error that is each error's location and type,
+never the refused input. There is exactly one renderer (`api/problems.py`); validation
 errors, 404s, database errors and unexpected exceptions all go through it. The `Problem` schema is
 a single component in `openapi.json` that every 4xx and 5xx response refers to.
 A request body over 1 MiB (`Settings.max_body_bytes`) is `413 REQUEST_TOO_LARGE` before any route
