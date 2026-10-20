@@ -31,7 +31,7 @@ A full drill takes about 5 hours, mostly waiting for the app to go to zero befor
 
 All steps are by a person, once, in a staging cell with the `connections` and `egress` flags on. Nothing here is created by code.
 
-1. Deploy the drill app: `ssc deploy conformance/kill_drill_app` as a builder. Its `ssc.toml` names the connection `drill-db` and the host `api.github.com`.
+1. As a builder, create the drill app with `ssc apps create kill-drill`, then deploy it with `ssc deploy conformance/kill_drill_app --app kill-drill --wait`. Its `ssc.toml` names the connection `drill-db` and the host `api.github.com`.
 2. Create the connection `drill-db` to a staging Postgres (`infra/README.md`, Data gateway) and grant it to the app. `SELECT pg_sleep(25)` and `SELECT 1` must be allowed.
 3. Put `api.github.com` on the org's egress allowlist (a `*.github.com` entry will do).
 4. Share the app with the person whose session the drill uses (`ssc share`).
