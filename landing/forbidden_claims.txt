@@ -1,0 +1,13 @@
+# Absolute or unproven claims the page never makes. One phrase a line, matched ignoring case and
+# spacing against index.html without its <style> blocks; `packages/ssc_landing/tests/test_claims.py`
+# fails on any match.
+nothing else
+zero trust
+guaranteed
+cannot be breached
+SOC 2
+HIPAA
+compliant
+unlimited
+any cloud
+instantly

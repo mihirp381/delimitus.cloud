@@ -10,6 +10,7 @@ form.
 | `art/` | The horizon mask; `cd landing/art && python3 embed.py` rebuilds it and re-embeds it (needs Pillow and numpy, not part of the workspace) |
 | `CLAIMS.md` | Every claim on the page, its ticket and status, or its public source; the blockers before publishing |
 | `denylist.txt` | Words that never appear on the page |
+| `forbidden_claims.txt` | Absolute or unproven phrases that never appear on the page |
 | `calculator_vectors.json`, `calculator.test.mjs` | The cost calculator's test vectors; `node --test landing/calculator.test.mjs` |
 
 Run it locally:
@@ -20,7 +21,8 @@ SSC_LANDING_ENV=dev SSC_LANDING_PAGE=landing/index.html SSC_LANDING_ORIGIN=http:
 ```
 
 In dev, pilot requests stay in memory. The Python tests (`packages/ssc_landing/tests`) check the
-denylist, the claims ids, the content security policy, the page weight and the no-script table.
+denylist, the forbidden phrases, the claims ids, the content security policy, the page weight and
+the no-script table.
 
 ## Hosting
 
@@ -47,7 +49,9 @@ redirected to the apex by the service.
   400 KB limit, and the system stack is what most visitors already saw while the fonts loaded.
   To self-host them later, embed them as `@font-face` data URIs and add `font-src data:` to the
   policy in `page.py`.
-- **Copy.** Every claim carries `data-claim` and a row in `CLAIMS.md`. Features are worded as
+- **Copy.** Every claim carries `data-claim` and a row in `CLAIMS.md`. Inside a section marked
+  `data-claims`, every paragraph, list item and heading except a `label` carries an id, on itself
+  or on an enclosing element. Features are worded as
   part of the private pilot offer until their tickets are Done. No price for Delimitus.
 - **Weight.** Under 400 KB, bitmaps included.
 - **Motion.** The hero's zoom runs only where the stage fits the screen (at least 1100 × 640),

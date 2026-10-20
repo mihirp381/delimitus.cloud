@@ -7,8 +7,9 @@ Every status was re-checked 2026-10-17 against the GA ticket status lines
 cell, not with a customer. The GA-12 self-test record in `RESULTS.md` (2026-10-13 to 10-14) was not
 yet committed on 2026-10-17; rows citing it say so. Rows still dated earlier are founder decisions
 or landing facts those documents do not cover. An element that makes a claim carries
-`data-claim="<id> ..."`, and `packages/ssc_landing/tests/test_page.py` fails when the ids on the
-page and the ids in the table below differ.
+`data-claim="<id> ..."`, and `packages/ssc_landing/tests/test_claims.py` fails when the ids on
+the page and the ids in the table below differ, when a paragraph, list item or heading in a
+`data-claims` section has no id, or when a phrase in `forbidden_claims.txt` is on the page.
 
 No feature ticket is Done for a customer yet, so the page words every feature as part of the
 private pilot offer ("All of this is part of the private pilot offer.") and never as live today.
@@ -52,7 +53,7 @@ reword the page if a ticket is cut.
 | `no-public` | No public apps; every request needs a company login | Tickets section 8, SSC-085 out of MVP | 2026-10-17: decided; guest users are not in GA ("Not in GA"); apps answer a request with no login with 302 to sign-in (SSC-099, GA-1.6) |
 | `no-domains` | No custom domains | Assumption A1, tickets section 8 | 2026-10-17: decided; custom domains are not in GA ("Not in GA") |
 | `no-webhooks` | No inbound webhooks | Tickets question 7, SSC-085 | 2026-10-17: decided; inbound webhooks (SSC-085) are not in GA ("Not in GA") |
-| `retention` | Form details kept 12 months, used for nothing else, deletion on request | SSC-065: bucket lifecycle rule (`infra/ssc_infra/landing.py`) | `privacy@delimitus.com` receives mail (forwarding set up by the founder, 2026-10-07) |
+| `retention` | Form details kept 12 months, used only to answer the request, deletion on request | SSC-065: bucket lifecycle rule (`infra/ssc_infra/landing.py`) | `privacy@delimitus.com` receives mail (forwarding set up by the founder, 2026-10-07) |
 | `econ-cloud` | Do-it-yourself cloud bill, $129.53 a month plus $9.86 an app; the app line assumes one instance kept warm (minimum instances 1) so the first visit is not slow, a choice the company makes, not ours | See below | Prices fetched again 2026-10-07 from the Cloud Billing Catalog API: every unit price unchanged, so every figure stands |
 | `econ-labour` | IT rate $68 an hour; hours are our estimate | See below | Hours are labelled "our estimate" |
 | `compare` | The comparison table in the cost section: what each way of putting an internal app in front of a team leaves to you; the Delimitus column (login on every request, a cloud account of the company's own, IT-approved read-only data, inventory, logs and kill switch, maintained inside the pilot) | The rows the Delimitus column reuses: `login`, `account`, `data`, `approvals`, `inventory`, `logs`, `kill`, `pilot`; the other columns: `src-redaccess`, `src-marmelab` | 2026-10-17: as those rows; the table says the Delimitus column is part of the private pilot offer |

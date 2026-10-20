@@ -1039,14 +1039,14 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </header>
 
-<section class="hiw" id="how">
+<section class="hiw" id="how" data-claims>
   <div class="wrap">
     <div class="hiw__box">
       <div class="hiw__head">
         <span class="rule"></span>
         <p class="label">How it works</p>
-        <h2 class="h2">From prompt to production.</h2>
-        <p class="lede">Ask your coding agent to deploy. Delimitus does the rest, and IT keeps the last word.</p>
+        <h2 class="h2" data-claim="agent preview">From prompt to production.</h2>
+        <p class="lede" data-claim="agent approvals">Ask your coding agent to deploy. Delimitus does the rest, and IT keeps the last word.</p>
       </div>
       <div class="hiw__body">
         <div class="hiw__list" role="group" aria-label="Steps">
@@ -1073,18 +1073,18 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
               <div class="term__bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="term__title">Coding agent · dock-board</span></div>
               <div class="term__body chat" aria-label="A coding agent deploys an app called dock-board on Delimitus">
                 <p class="chat__me" data-s="1" data-on data-claim="snowflake"><b>You</b>Build an inbound dock scheduler from our Snowflake data and deploy it on Delimitus.</p>
-                <p class="chat__ai" data-s="1" data-on><b>Agent</b>Built dock-board, a Node app. Deploying it with Delimitus.</p>
-                <p class="chat__sys" data-s="2"><b>Delimitus</b></p>
-                <p class="chat__ok" data-s="2">Node app built</p>
-                <p class="chat__ok" data-s="2">No leaked keys found</p>
-                <p class="chat__ok" data-s="2">Carrier API key kept as a secret</p>
-                <p class="chat__ok" data-s="2">Company login on</p>
-                <p class="chat__ok" data-s="2">Live in preview</p>
+                <p class="chat__ai" data-s="1" data-on data-claim="agent langs"><b>Agent</b>Built dock-board, a Node app. Deploying it with Delimitus.</p>
+                <p class="chat__sys" data-s="2" data-claim="agent"><b>Delimitus</b></p>
+                <p class="chat__ok" data-s="2" data-claim="langs">Node app built</p>
+                <p class="chat__ok" data-s="2" data-claim="leaks">No leaked keys found</p>
+                <p class="chat__ok" data-s="2" data-claim="secrets">Carrier API key kept as a secret</p>
+                <p class="chat__ok" data-s="2" data-claim="login">Company login on</p>
+                <p class="chat__ok" data-s="2" data-claim="preview">Live in preview</p>
                 <p class="chat__wait" data-s="3" data-claim="snowflake">Snowflake connection, read-only: waiting for IT</p>
-                <p class="chat__wait" data-s="3">Share with Inbound team: waiting for IT</p>
-                <p class="chat__ai" data-s="3"><b>Agent</b>Deployed to preview:</p>
-                <p class="chat__url" data-s="3">https://dock-board--preview.k4r7tq2m.delimitusapps.com</p>
-                <p class="chat__ai" data-s="3">IT has two requests to approve: the Snowflake connection and sharing with Inbound team.</p>
+                <p class="chat__wait" data-s="3" data-claim="share agents">Share with Inbound team: waiting for IT</p>
+                <p class="chat__ai" data-s="3" data-claim="preview"><b>Agent</b>Deployed to preview:</p>
+                <p class="chat__url" data-s="3" data-claim="https preview">https://dock-board--preview.k4r7tq2m.delimitusapps.com</p>
+                <p class="chat__ai" data-s="3" data-claim="approvals agents">IT has two requests to approve: the Snowflake connection and sharing with Inbound team.</p>
               </div>
             </div>
             <figcaption class="mock-note">Illustration · example app</figcaption>
@@ -1159,13 +1159,13 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </section>
 
-<section class="band" id="example">
+<section class="band" id="example" data-claims>
   <div class="wrap band__grid">
     <div class="band__label"><span class="rule"></span><p class="label">Example</p></div>
     <div class="stack stack--lg">
       <div class="head">
-        <h2 class="h2">One prompt and one approval later, the night shift is using it.</h2>
-        <p class="lede">Dana runs inbound at a distribution centre. She built a dock board with Claude Code, then asked it to deploy.</p>
+        <h2 class="h2" data-claim="approvals share">One prompt and one approval later, the night shift is using it.</h2>
+        <p class="lede" data-claim="tools agent">Dana runs inbound at a distribution centre. She built a dock board with Claude Code, then asked it to deploy.</p>
       </div>
 
       <ol class="convo" aria-label="Dana deploys the dock board">
@@ -1176,7 +1176,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       </ol>
 
       <div class="viewers" id="viewers">
-        <h3 class="viewers__h">Who’s looking?</h3>
+        <h3 class="viewers__h" data-claim="share">Who’s looking?</h3>
         <div class="who" role="group" aria-label="Who’s looking?">
           <button type="button" data-viewer="dana" aria-pressed="true"><span class="who__n">Dana Ortiz</span><span class="who__r">Inbound lead, owner</span><span class="chip chip--live">Can open</span></button>
           <button type="button" data-viewer="sam" aria-pressed="false"><span class="who__n">Sam Whitaker</span><span class="who__r">Night shift supervisor</span><span class="chip chip--live">Can open</span></button>
@@ -1185,7 +1185,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         </div>
         <p class="who__legend" data-claim="share login">Shared with two groups from the company directory, once IT approved. Everyone else is turned away.</p>
 
-        <div class="app" role="group" aria-label="Example app: inbound dock board">
+        <div class="app" role="group" aria-label="Example app: inbound dock board" data-claim="share login">
           <div class="app__url">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
             <span class="mono">dock-board.k4r7tq2m.delimitusapps.com</span>
@@ -1223,41 +1223,41 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
             <p data-bind="deniedText"></p>
           </div>
         </div>
-        <p class="mock-note">Illustration · example data</p>
+        <p class="mock-note" data-claim="names">Illustration · example data</p>
       </div>
     </div>
   </div>
 </section>
 
-<section class="band band--alt" id="works">
+<section class="band band--alt" id="works" data-claims>
   <div class="wrap band__grid">
     <div class="band__label"><span class="rule"></span><p class="label">Works with</p></div>
     <div class="stack stack--lg">
       <div class="head">
-        <h2 class="h2">One deployment target for every coding agent.</h2>
-        <p class="lede">Your team builds wherever they like. When the tool needs to become a company app, their agent deploys it through Delimitus.</p>
+        <h2 class="h2" data-claim="tools">One deployment target for every coding agent.</h2>
+        <p class="lede" data-claim="tools agent">Your team builds wherever they like. When the tool needs to become a company app, their agent deploys it through Delimitus.</p>
       </div>
-      <p class="works__line">Delimitus isn’t another coding agent. <span class="grad">It’s where coding agents deploy company software.</span></p>
+      <p class="works__line" data-claim="agent">Delimitus isn’t another coding agent. <span class="grad">It’s where coding agents deploy company software.</span></p>
       <div class="works">
         <div class="works__col">
-          <h3 class="works__h">Deploys directly</h3>
+          <h3 class="works__h" data-claim="tools">Deploys directly</h3>
           <ul class="works__list" data-claim="tools"><li>Claude Code</li><li>Codex</li><li>Cursor</li></ul>
           <p class="small" data-claim="agent">The agent calls Delimitus from the editor.</p>
         </div>
         <div class="works__col">
-          <h3 class="works__h">Through GitHub</h3>
+          <h3 class="works__h" data-claim="deploy tools">Through GitHub</h3>
           <ul class="works__list" data-claim="tools"><li>Lovable</li><li>Replit</li></ul>
           <p class="small" data-claim="deploy">Sync the project to GitHub. Each push deploys to preview.</p>
         </div>
         <div class="works__col">
-          <h3 class="works__h">Runs on</h3>
+          <h3 class="works__h" data-claim="cloud">Runs on</h3>
           <ul class="works__list" data-claim="cloud"><li>Google Cloud</li></ul>
           <p class="small" data-claim="cloud account">In the US, with each company in a cloud account of its own.</p>
         </div>
         <div class="works__col">
-          <h3 class="works__h">Sign in with</h3>
+          <h3 class="works__h" data-claim="idp">Sign in with</h3>
           <ul class="works__list" data-claim="idp"><li>Okta</li></ul>
-          <p class="small">Your people use the company login they already have.</p>
+          <p class="small" data-claim="idp login">Your people use the company login they already have.</p>
         </div>
       </div>
       <p class="small" data-claim="langs">Python and Node apps.</p>
@@ -1266,18 +1266,18 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </section>
 
-<section class="band" id="get">
+<section class="band" id="get" data-claims>
   <div class="wrap band__grid">
     <div class="band__label"><span class="rule"></span><p class="label">What you get</p></div>
     <div class="stack stack--lg">
       <div class="head">
-        <h2 class="h2">One tool for the agent. <span class="grad">A control plane for IT.</span></h2>
-        <p class="lede">The people who build ask for what they need from the editor. IT sets the rules once and sees every app.</p>
+        <h2 class="h2" data-claim="agents">One tool for the agent. <span class="grad">A control plane for IT.</span></h2>
+        <p class="lede" data-claim="agents approvals inventory">The people who build ask for what they need from the editor. IT sets the rules once and sees every app.</p>
       </div>
       <div class="plane">
         <div class="plane__col">
-          <h3 class="feat__h">The agent gets</h3>
-          <p class="plane__ask"><span class="prompt prompt--sm"><span class="prompt__caret" aria-hidden="true">›</span><span class="prompt__text">Deploy this on Delimitus.</span></span></p>
+          <h3 class="feat__h" data-claim="agent">The agent gets</h3>
+          <p class="plane__ask" data-claim="agent"><span class="prompt prompt--sm"><span class="prompt__caret" aria-hidden="true">›</span><span class="prompt__text">Deploy this on Delimitus.</span></span></p>
           <ul class="feat__list">
             <li data-claim="agent">Deploy</li>
             <li data-claim="preview">Preview, then production</li>
@@ -1294,7 +1294,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <p class="plane__rule">Same rules whether the deployment came from a person or an agent.</p>
         </div>
         <div class="plane__col plane__col--it">
-          <h3 class="feat__h">IT gets</h3>
+          <h3 class="feat__h" data-claim="agents">IT gets</h3>
           <ul class="feat__list">
             <li data-claim="login idp">Company login on every app</li>
             <li data-claim="inventory owner">A list of every app and who owns it</li>
@@ -1307,7 +1307,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           </ul>
         </div>
       </div>
-      <h3 class="sub-h">What operations teams ask their agents for</h3>
+      <h3 class="sub-h" data-claim="tools">What operations teams ask their agents for</h3>
       <div class="stack">
         <div class="tabs" role="tablist" aria-label="Operations examples">
           <button class="tab" role="tab" id="tab-wh" aria-controls="casePanel" aria-selected="true" tabindex="0" data-case="wh">Warehouse</button>
@@ -1317,7 +1317,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <button class="tab" role="tab" id="tab-cx" aria-controls="casePanel" aria-selected="false" tabindex="-1" data-case="cx">Customer operations</button>
         </div>
         <div class="case" id="casePanel" role="tabpanel" aria-labelledby="tab-wh" tabindex="0">
-          <div class="case__l">
+          <div class="case__l" data-claim="tools">
             <p class="case__ask"><span class="caret" aria-hidden="true">&gt;</span><span data-bind="ask">A dock scheduler the inbound team books trucks into.</span></p>
             <p class="case__reads"><b>Asked of</b><span data-bind="tool">Claude Code</span></p>
           </div>
@@ -1329,13 +1329,13 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </section>
 
-<section class="band band--alt" id="security">
+<section class="band band--alt" id="security" data-claims>
   <div class="wrap band__grid">
     <div class="band__label"><span class="rule"></span><p class="label">Security</p></div>
     <div class="stack stack--lg">
       <div class="head">
-        <h2 class="h2">Agents move fast. <span class="grad">Your policies still win.</span></h2>
-        <p class="lede">Five boundaries hold for every app, whoever deployed it.</p>
+        <h2 class="h2" data-claim="agents">Agents move fast. <span class="grad">Your policies still win.</span></h2>
+        <p class="lede" data-claim="login data egress secrets approvals">Five boundaries hold for every app, whoever deployed it.</p>
       </div>
       <div class="sec">
         <article class="sec__card" data-claim="login no-public">
@@ -1460,13 +1460,13 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 </section>
 
 
-<section class="band band--alt" id="limits">
+<section class="band band--alt" id="limits" data-claims>
   <div class="wrap band__grid">
     <div class="band__label"><span class="rule"></span><p class="label">Pilot boundaries</p></div>
     <div class="stack stack--lg">
       <div class="head">
-        <h2 class="h2">Opinionated on purpose.</h2>
-        <p class="lede">We’re starting with the safest, most common shape of internal software.</p>
+        <h2 class="h2" data-claim="no-public no-domains no-webhooks data">Opinionated on purpose.</h2>
+        <p class="lede" data-claim="no-public no-domains no-webhooks data">We’re starting with the safest, most common shape of internal software.</p>
       </div>
       <ul class="limits">
         <li data-claim="no-public"><b>No public apps</b><span>Every request needs a company login.</span></li>
@@ -1478,7 +1478,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </section>
 
-<section class="band" id="faq">
+<section class="band" id="faq" data-claims>
   <div class="wrap band__grid">
     <div class="band__label"><span class="rule"></span><h2 class="label">Questions</h2></div>
     <div class="faq">
@@ -1540,7 +1540,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <button class="btn btn--primary" type="submit">Request a pilot</button>
           <p class="form__status" id="formStatus" role="status" aria-live="polite"></p>
         </div>
-        <p class="form__fine" data-claim="retention">We keep these details for 12 months to answer your request, and use them for nothing else. To have them deleted sooner, write to <a href="mailto:privacy@delimitus.com">privacy@delimitus.com</a>.</p>
+        <p class="form__fine" data-claim="retention">We keep these details for 12 months to answer your request, and use them only for that. To have them deleted sooner, write to <a href="mailto:privacy@delimitus.com">privacy@delimitus.com</a>.</p>
       </form>
       <div class="form__done" id="formDone" tabindex="-1" hidden>
         <strong>Thanks. We have your request.</strong>
