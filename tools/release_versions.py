@@ -132,10 +132,14 @@ def check(root: Path, tag: str | None = None) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--tag", default="", help="the pushed tag; empty skips the tag check")
+    parser.add_argument("--tag", required=True, help="the pushed tag, cli-v<version>")
     parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args(argv)
-    problems = check(args.root, args.tag or None)
+    if not args.tag:
+        # A release is a cli-v* tag (decision 017); an empty one would skip the tag check.
+        print("release_versions: --tag must name the release tag, cli-v<version>", file=sys.stderr)  # noqa: T201
+        return 1
+    problems = check(args.root, args.tag)
     for p in problems:
         print(f"release_versions: {p}", file=sys.stderr)  # noqa: T201
     if not problems:

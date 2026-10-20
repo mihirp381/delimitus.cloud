@@ -1,13 +1,14 @@
 # Publishes ssc-cli, the three packages it depends on and the app helper ssc-app to PyPI, and
 # the node app helpers to npm, with trusted publishing.
 # Off until the founder sets the repository variable SSC_PUBLISH_ENABLED=true, and the npm job
-# until SSC_NPM_PUBLISH_ENABLED=true as well (decision 017).
+# until SSC_NPM_PUBLISH_ENABLED=true as well (decision 017). It runs only for a pushed cli-v* tag
+# on a commit of main: there is no manual run, and the pypi-* and npm environments admit only
+# cli-v* tags (decision 017, amendment 2026-10-19).
 name: release-cli
 
 on:
   push:
     tags: ["cli-v*"]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,7 +23,9 @@ env:
 jobs:
   build:
     name: Build distributions
-    if: vars.SSC_PUBLISH_ENABLED == 'true'
+    if: >-
+      github.ref_type == 'tag' && startsWith(github.ref_name, 'cli-v')
+      && vars.SSC_PUBLISH_ENABLED == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -30,6 +33,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # every branch, so origin/main is there to compare with
+      # A tag on a commit that is not on main publishes nothing.
+      - name: Check the tag is on main
+        run: git merge-base --is-ancestor HEAD origin/main
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.19"
@@ -37,7 +44,7 @@ jobs:
       # naming it.
       - name: Check versions, pins and tag
         env:
-          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: uv run --no-project --python 3.14 python tools/release_versions.py --tag "$RELEASE_TAG"
       - run: uv build --package ssc-contracts --out-dir dist
       - run: uv build --package ssc-app --out-dir dist
@@ -71,7 +78,9 @@ jobs:
   # ssc-app goes before the CLI whose agent pack tells apps to install it.
   publish:
     name: Publish ${{ matrix.package }} to PyPI
-    if: vars.SSC_PUBLISH_ENABLED == 'true'
+    if: >-
+      github.ref_type == 'tag' && startsWith(github.ref_name, 'cli-v')
+      && vars.SSC_PUBLISH_ENABLED == 'true'
     needs: build
     runs-on: ubuntu-24.04
     strategy:
@@ -101,7 +110,9 @@ jobs:
   # identity and attaches provenance itself.
   publish-npm:
     name: Publish @delimitus/${{ matrix.helper }} to npm
-    if: vars.SSC_PUBLISH_ENABLED == 'true' && vars.SSC_NPM_PUBLISH_ENABLED == 'true'
+    if: >-
+      github.ref_type == 'tag' && startsWith(github.ref_name, 'cli-v')
+      && vars.SSC_PUBLISH_ENABLED == 'true' && vars.SSC_NPM_PUBLISH_ENABLED == 'true'
     needs: build
     runs-on: ubuntu-24.04
     strategy:

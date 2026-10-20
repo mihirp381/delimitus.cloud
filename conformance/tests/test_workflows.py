@@ -154,3 +154,28 @@ def test_actions_are_pinned_and_run_steps_have_no_expressions(name: str) -> None
             assert SHA.search(line), f"{name}: {line.strip()}"
     for script in run_scripts(name):
         assert "${{" not in script, f"{name}: {script.strip()}"
+
+
+def test_the_cli_release_publishes_only_from_a_cli_tag_on_main() -> None:
+    """Decision 017: a release is a pushed `cli-v*` tag on a commit of main, nothing else."""
+    lines = code("release-cli.yml")
+    on = lines[lines.index("on:") + 1 : lines.index("permissions:")]
+    assert [line for line in on if line.strip()] == ["  push:", '    tags: ["cli-v*"]']
+    tagged = "github.ref_type == 'tag' && startsWith(github.ref_name, 'cli-v')"
+    for job, body in jobs("release-cli.yml").items():
+        (start,) = [i for i, line in enumerate(body) if line.startswith("    if:")]
+        condition = [body[start]]
+        for line in body[start + 1 :]:
+            if not line.startswith("      "):
+                break
+            condition.append(line)
+        assert tagged in " ".join(part.strip() for part in condition), job
+    build = jobs("release-cli.yml")["build"]
+    assert any(line.split("#")[0].strip() == "fetch-depth: 0" for line in build)
+    scripts = run_scripts("release-cli.yml")
+    assert any("git merge-base --is-ancestor HEAD origin/main" in s for s in scripts)
+    check = [s for s in scripts if "tools/release_versions.py" in s]
+    assert check == [
+        'uv run --no-project --python 3.14 python tools/release_versions.py --tag "$RELEASE_TAG"'
+    ]
+    assert "          RELEASE_TAG: ${{ github.ref_name }}" in build
