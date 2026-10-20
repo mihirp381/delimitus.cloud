@@ -25,6 +25,7 @@ _PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"\bya29\.[0-9A-Za-z_-]{20,}"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
     re.compile(r"\bsk-(ant-|proj-)?[A-Za-z0-9_-]{20,}"),
+    re.compile(r"\bsb_secret_[A-Za-z0-9_-]{16,}"),
 )
 _BEARER: Final = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
 _URL_CREDENTIALS: Final = re.compile(r"([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@", re.I)
