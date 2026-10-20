@@ -5,12 +5,21 @@
 FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
 
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+# Pulumi and its GCP plugin run with the deployer's rights, so both downloads are checked by
+# sha256 (tests/test_dockerfiles.py). A version change needs its checksum changed with it: the
+# CLI's from Pulumi's pulumi-<version>-checksums.txt release asset, the plugin's from the
+# pulumi-gcp release's asset digest.
 ARG PULUMI_VERSION=3.266.0
 ARG PULUMI_GCP_VERSION=9.37.0
 COPY --from=uv /uv /usr/local/bin/uv
-ADD https://get.pulumi.com/releases/sdk/pulumi-v${PULUMI_VERSION}-linux-x64.tar.gz /tmp/pulumi.tar.gz
+ADD --checksum=sha256:05c42a7bf80b9aa0299773f4edd750eb8e1dcd8fbd52d99c3578f38a7de21262 \
+    https://get.pulumi.com/releases/sdk/pulumi-v${PULUMI_VERSION}-linux-x64.tar.gz \
+    /tmp/pulumi.tar.gz
 RUN tar -xzf /tmp/pulumi.tar.gz -C /opt && rm /tmp/pulumi.tar.gz \
     && useradd --uid 10001 --create-home ssc && mkdir -p /app && chown ssc:ssc /app
+ADD --checksum=sha256:bb6da4f2cac369ee6b77fa2e2c31b6641682e7e6d1b843ef5cf8ff106eb0628e --chown=ssc:ssc \
+    https://github.com/pulumi/pulumi-gcp/releases/download/v${PULUMI_GCP_VERSION}/pulumi-resource-gcp-v${PULUMI_GCP_VERSION}-linux-amd64.tar.gz \
+    /tmp/pulumi-gcp.tar.gz
 USER ssc
 WORKDIR /app/infra
 COPY --chown=ssc:ssc pyproject.toml /app/pyproject.toml
@@ -22,5 +31,7 @@ RUN UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR=/tmp/uv-cache \
 COPY --chown=ssc:ssc infra/Pulumi.yaml infra/__main__.py ./
 COPY --chown=ssc:ssc infra/ssc_infra ssc_infra
 RUN echo /app/infra > .venv/lib/python3.14/site-packages/ssc_infra.pth \
-    && PULUMI_HOME=/app/.pulumi /opt/pulumi/pulumi plugin install resource gcp ${PULUMI_GCP_VERSION}
+    && PULUMI_HOME=/app/.pulumi /opt/pulumi/pulumi plugin install resource gcp ${PULUMI_GCP_VERSION} \
+       --file /tmp/pulumi-gcp.tar.gz \
+    && rm /tmp/pulumi-gcp.tar.gz
 ENTRYPOINT ["/app/infra/.venv/bin/python", "-I", "-m", "ssc_infra.deployer"]
