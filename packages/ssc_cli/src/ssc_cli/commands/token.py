@@ -51,7 +51,7 @@ AuthOpt = Annotated[
 
 token_app = typer.Typer(
     name="token",
-    help="Keep the API token in the OS keychain.",
+    help="Create, list and revoke CI tokens; keep the API token in the OS keychain.",
     no_args_is_help=True,
     add_completion=False,
     pretty_exceptions_enable=False,

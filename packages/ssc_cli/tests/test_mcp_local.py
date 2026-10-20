@@ -28,6 +28,7 @@ from ssc_control.api.settings import Settings
 from ssc_shared.fence import CLOSE, OPEN
 from ssc_shared.requirements import platform_requirements
 
+DECISIONS = Path(__file__).resolve().parents[3] / "docs" / "decisions" / "README.md"
 ORG = "org_aaaaaaaaaaaaaaaaaaaa"
 USR = "usr_aaaaaaaaaaaaaaaaaaaa"
 APP_ID = "app_" + "a" * 20
@@ -183,6 +184,14 @@ async def test_tools_mirror_the_api_server(fake_api):
     assert " ".join((mine["create_app"].description or "").split()).startswith(ASK_FIRST)
     for instructions in (INSTRUCTIONS, SERVER_INSTRUCTIONS):
         assert ASK_CLAUSE in instructions
+    # B-8: both tool lists in the decisions name exactly these tools.
+    text = DECISIONS.read_text()
+    remote = text.split("- Agent interface (SSC-048): ", 1)[1].split("\n", 1)[0]
+    remote = remote.split("Tools: ", 1)[1].split("; approving", 1)[0]
+    here = text.split("- `mcp [--json]` (SSC-048 local mode", 1)[1].split("\n", 1)[0]
+    here = here.split("result shapes (", 1)[1].split(")", 1)[0]
+    for listed in (remote, here):
+        assert set(re.findall(r"`([a-z_]+)`", listed)) == set(TOOLS), listed
 
 
 async def test_a_connection_name_never_leaves_the_schema_route(fake_api):
