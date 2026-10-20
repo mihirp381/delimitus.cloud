@@ -179,7 +179,7 @@ RFC 8785 is used for manifest, snapshot and bundle digests only, never for the a
 
 ## Capability diff
 
-`diff_capabilities(manifest, caps)` compares the manifest with what one environment grants (`EnvironmentCapabilities`: `postgres`, `connections`, `egress_hosts`) and returns a `CapabilityDiff` with `blocks` always `false`.
+`diff_capabilities(manifest, caps)` compares the manifest with what one environment grants (`EnvironmentCapabilities`: `postgres`, `connections`, `egress_hosts`) and returns a `CapabilityDiff` with `blocks` always `false`. The control plane grants `postgres` when the environment has its database or the org's instance has a free place for the deploy to make one, and `connections` from the environment's links.
 
 | Kind | Severity | One per | Approver |
 |---|---|---|---|
