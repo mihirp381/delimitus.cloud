@@ -253,3 +253,36 @@ def test_breaking_checker_allows_a_new_optional_request_body(tmp_path: Path) -> 
     new.write_text(json.dumps(spec))
     result = breaking(SPEC, new)
     assert result.returncode == 0, result.stdout
+
+
+def test_the_readme_route_index_lists_every_operation() -> None:
+    readme = (ROOT / "docs" / "api" / "README.md").read_text(encoding="utf-8")
+    spec = json.loads(SPEC.read_text())
+    missing = [
+        f"{method.upper()} {path}"
+        for path, ops in spec["paths"].items()
+        for method in ops
+        if f"| `{method.upper()}` | `{path}` |" not in readme
+    ]
+    assert missing == [], "run: uv run python tools/openapi_check.py --write"
+
+
+def test_the_route_index_check_fails_on_a_stale_readme(tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("# x\n\n<!-- route-index -->\n<!-- /route-index -->\n")
+    result = subprocess.run(
+        [sys.executable, str(TOOLS / "openapi_check.py"), "--readme", str(readme)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "route index" in result.stdout
+
+
+def test_the_readme_names_every_field_a_new_connection_takes() -> None:
+    readme = (ROOT / "docs" / "api" / "README.md").read_text(encoding="utf-8")
+    paragraph = readme.split("`POST /v1/connections`", 1)[1].split("\n\n", 1)[0]
+    fields = json.loads(SPEC.read_text())["components"]["schemas"]["ConnectionIn"]["properties"]
+    assert [f for f in fields if f"`{f}`" not in paragraph] == []
+    assert "older form" in paragraph
