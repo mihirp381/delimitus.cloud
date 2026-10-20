@@ -20,6 +20,20 @@ by the founder, 2026-10-08 (GA-6.5).
   [decision 014]
 - Build logs go to Cloud Logging only. [cloud_build.py:283]
 
+## Who can read source
+
+- An org's source bundles rest under `bundles/` in its own cell's bucket; the control plane keeps
+  no bucket for them. [decision 015, amendments 2026-10-07 and 2026-10-19]
+- The control plane's API account: `bundles/` only, to sign upload URLs and check the upload.
+  The control plane's worker: `bundles/`, `snapshots/` and `audit-anchors/` only, to build,
+  collect, publish snapshots and write audit anchors. A build's `ssc-build` account: the one
+  signed URL for its bundle. [cell.py `bucket-control-api-bundles`, `WORKER_PREFIXES`]
+- The cell's gateway, data gateway and proxy read `snapshots/` only. [cell.py `bucket-gateway`,
+  `bucket-data`, `bucket-proxy`]
+- Limit: the cell agent still holds read access to the whole bucket, `bundles/` included, because
+  it lists an environment's files with it. [cell.py `bucket-agent`; ssc_agent/files.py]
+- The operator's just-in-time grant on the cells folder can read every cell bucket. [decision 012]
+
 ## Secrets in source
 
 - `.env` and `.env.*` files are never uploaded. [ignore.py:14-23]
