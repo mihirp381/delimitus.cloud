@@ -26,6 +26,7 @@ doctor`` on it here, answering with the findings and their fix-its (SSC-093).
 import asyncio
 import hashlib
 import json
+import math
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -180,6 +181,8 @@ IdempotencyKey = Annotated[
     Field(
         min_length=1,
         max_length=200,
+        # It travels as the Idempotency-Key header: visible ASCII only.
+        pattern=r"^[!-~]+$",
         description="Send the same key to retry safely; a new one is made when absent.",
     ),
 ]
@@ -201,10 +204,13 @@ def ok(body: Body) -> CallToolResult:
 
 
 def refused(e: CliError) -> CallToolResult:
-    error = e.body.model_dump()
+    wait = None if e.retry_after is None else max(1, math.ceil(e.retry_after))
+    error = {**e.body.model_dump(), "retry_after": wait}
     text = f"{error['code']}: {error['title']} {error['detail']}"
     if error.get("request_id"):
         text += f" Request id: {error['request_id']}."
+    if wait is not None:
+        text += f" Retry after {wait} seconds."
     if e.fix:
         text += f" Fix: {e.fix}"
     return CallToolResult(
