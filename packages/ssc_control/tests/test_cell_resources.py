@@ -103,7 +103,7 @@ b = test_deploy.b
 STATEFUL = {"state": {"postgres": True}}
 DB = CellResource.DATABASE
 CONNECTIONS = CellResource.CONNECTIONS
-JOB = "projects/ssc-platform-0/locations/us-central1/jobs/ssc-cell-deployer"
+JOB = "projects/example-project/locations/us-central1/jobs/ssc-cell-deployer"
 
 
 @dataclass

@@ -25,7 +25,7 @@ RUN_API: Final = "https://run.googleapis.com/v2"
 METADATA_IDENTITY: Final = (
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 )
-FAKE_JOB: Final = "projects/ssc-platform-0/locations/us-central1/jobs/ssc-cell-deployer"
+FAKE_JOB: Final = "projects/example-project/locations/us-central1/jobs/ssc-cell-deployer"
 CALL_TIMEOUT_SECONDS: Final = 30.0
 TOKEN_MARGIN_SECONDS: Final = 300
 MAX_EXECUTION_NAME: Final = 300
