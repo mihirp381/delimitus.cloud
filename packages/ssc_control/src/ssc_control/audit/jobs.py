@@ -24,7 +24,6 @@ from typing import Final
 from procrastinate import BaseRetryStrategy, Blueprint, JobContext, RetryDecision
 from procrastinate.jobs import Job
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 
 from ssc_control.audit.anchor import daily_key, write_anchor
 from ssc_control.db.bind import bound_org
@@ -90,7 +89,7 @@ def blueprint(*, tick_cron: str = TICK_CRON) -> Blueprint:
                         org_id=org_id,
                         day=day.isoformat(),
                     )
-            except DBAPIError:
+            except Exception:
                 log.exception("anchor defer failed for one org", extra={"org_id": org_id})
                 failed += 1
                 continue

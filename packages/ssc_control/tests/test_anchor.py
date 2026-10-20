@@ -82,6 +82,7 @@ from ssc_control.db import (
 )
 from ssc_control.db.errors import INSUFFICIENT_PRIVILEGE
 from ssc_control.db.migrate import alembic_config
+from ssc_control.db.orgs import all_org_ids
 from ssc_control.runtime.cells import OrgCell, StaticCells
 from ssc_control.storage import cell_stores
 from ssc_control.worker import build_app, queue_conninfo
@@ -648,6 +649,37 @@ async def test_the_tick_anchors_every_org_without_the_days_anchor(
         stored = await read(blob, daily_key(org, today))
         assert parse_anchor(daily_key(org, today), stored, org_id=org).seq == 1
     assert await read(blob, done.object_key) == done.document()
+
+
+async def test_one_orgs_error_does_not_stop_the_tick_for_the_orgs_after_it(
+    dsns: Dsns, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = await asyncio.to_thread(fresh_db, dsns)
+    for name in ("A", "B"):
+        await asyncio.to_thread(make_org, db.app, name)
+    real_key = audit_jobs.daily_key
+    engine = make_engine(db.app)
+    try:
+        first, second = await all_org_ids(engine)
+
+        def key_of(org_id: str, day: date) -> str:
+            if org_id == first:
+                raise ValueError("not a key this org can have")
+            return real_key(org_id, day)
+
+        monkeypatch.setattr(audit_jobs, "daily_key", key_of)
+        await run_tick(db, Ports(engine=engine, blob_store=blob_store(tmp_path)), datetime.now(UTC))
+    finally:
+        await engine.dispose()
+    assert anchor_jobs(db) == [(second, "succeeded")]
+    with psycopg.connect(db.superuser) as conn:
+        ticks = conn.execute(
+            "select status, attempts from procrastinate.procrastinate_jobs where task_name = %s",
+            ("audit:anchor_tick",),
+        ).fetchall()
+    # The tick still fails, so it runs again for the first org (the worker's periodic deferrer
+    # may have added a tick of its own, which behaves the same).
+    assert ticks and set(ticks) == {("todo", 1)}
 
 
 def test_the_anchor_job_retries_forever_backing_off_to_an_hour() -> None:

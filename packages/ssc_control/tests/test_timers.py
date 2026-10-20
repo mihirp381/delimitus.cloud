@@ -82,6 +82,7 @@ from ssc_control.db import (
     make_engine,
     upgrade,
 )
+from ssc_control.db.orgs import all_org_ids
 from ssc_control.deferral import MANUAL_TIMER_PRIORITY
 from ssc_control.lifecycle import kill_switch
 from ssc_control.lifecycle import tasks as lifecycle_tasks
@@ -1641,6 +1642,47 @@ async def test_a_worker_runs_a_manual_run_and_the_sweep_recovers_a_lost_instant(
         tuple(r.values()) for r in rows_of(db.app, w.org, "select next_run_at from ssc.schedule")
     ]
     assert armed_at > now
+
+
+async def test_one_orgs_error_does_not_stop_the_sweep_for_the_orgs_after_it(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = await asyncio.to_thread(fresh_db, dsns)
+    for name in ("A", "B"):
+        await asyncio.to_thread(make_org, db.app, name)
+    real_sweep = timers_jobs.sweep_org
+    swept: list[str] = []
+    engine = make_engine(db.app)
+    try:
+        first, second = await all_org_ids(engine)
+
+        async def sweep_of(conn: AsyncConnection, org_id: str, *, now: datetime) -> int:
+            if org_id == first:
+                raise ValueError("not an org this sweep can read")
+            swept.append(org_id)
+            return await real_sweep(conn, org_id, now=now)
+
+        monkeypatch.setattr(timers_jobs, "sweep_org", sweep_of)
+        app = App(connector=PsycopgConnector(conninfo=queue_conninfo(db.app)))
+        app.add_tasks_from(timers_jobs.blueprint(), namespace="timers")
+        async with app.open_async():
+            now = datetime.now(UTC)
+            await app.configure_task("timers:sweep").defer_async(timestamp=int(now.timestamp()))
+            await app.run_worker_async(
+                additional_context={PORTS_KEY: Ports(engine=engine)},
+                wait=False,
+                install_signal_handlers=False,
+            )
+    finally:
+        await engine.dispose()
+    # The worker's periodic deferrer may add a sweep of its own; every sweep behaves the same.
+    assert set(swept) == {second}
+    with psycopg.connect(db.superuser) as conn:
+        sweeps = conn.execute(
+            "select status from procrastinate.procrastinate_jobs where task_name = %s",
+            ("timers:sweep",),
+        ).fetchall()
+    assert {status for (status,) in sweeps} == {"succeeded"}
 
 
 # ── revision 0013 ────────────────────────────────────────────────────────────

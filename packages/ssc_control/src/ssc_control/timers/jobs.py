@@ -62,7 +62,7 @@ def blueprint(*, sweep_cron: str = SWEEP_CRON) -> Blueprint:
             try:
                 async with bound_org(ports.engine, org_id) as conn:
                     deferred += await sweep_org(conn, org_id, now=ports.clock())
-            except DBAPIError:
+            except Exception:
                 log.exception("timers sweep failed for one org", extra={"org_id": org_id})
         return deferred
 
