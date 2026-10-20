@@ -60,6 +60,12 @@ class Cell:
         default_factory=list[tuple[str, dict[str, str], dict[str, object]]]
     )
     answers: list[tuple[int, bytes]] = field(default_factory=list[tuple[int, bytes]])
+    token_status: int | None = None
+    """The metadata server answers this instead of an ID token."""
+
+
+CUT = -1
+"""As an answer's status: a 200 whose body ends before its ``content-length``."""
 
 
 def refusal(code: str, status: int, **extra: str) -> tuple[int, bytes]:
@@ -73,8 +79,9 @@ def cell() -> Iterator[Cell]:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _answer(self, status: int, body: bytes = b"") -> None:
-            self.send_response(status)
-            self.send_header("content-length", str(len(body)))
+            cut = status == CUT
+            self.send_response(200 if cut else status)
+            self.send_header("content-length", str(len(body) + (100 if cut else 0)))
             self.end_headers()
             self.wfile.write(body)
 
@@ -82,6 +89,8 @@ def cell() -> Iterator[Cell]:
             url = urlsplit(self.path)
             if url.path == REGION_PATH:
                 self._answer(200, f"projects/{NUMBER}/regions/{REGION}".encode())
+            elif url.path == IDENTITY_PATH and state.token_status is not None:
+                self._answer(state.token_status)
             elif url.path == IDENTITY_PATH:
                 audience = parse_qs(url.query)["audience"][0]
                 state.audiences.append(audience)
@@ -263,3 +272,41 @@ def test_the_module_function_describes_on_this_cell(
 ) -> None:
     monkeypatch.setattr(data, "_default", Data(url=cell.url, metadata=cell.url))
     assert [t.name for t in data.describe("finance").tables] == ["public.invoices", "public.empty"]
+
+
+def test_a_metadata_server_that_refuses_the_token_is_unreachable(cell: Cell) -> None:
+    cell.token_status = 403
+    with pytest.raises(DataError) as e:
+        helper(cell).query("finance", "select 1")
+    assert (e.value.code, cell.asked) == ("UNREACHABLE", [])
+    assert "403" in str(e.value)
+    with pytest.raises(DataError) as e:
+        helper(cell).describe("finance")
+    assert e.value.code == "UNREACHABLE"
+
+
+def test_an_answer_cut_short_is_asked_once_more_then_unreachable(cell: Cell) -> None:
+    cell.answers = [(CUT, b'{"col')]
+    assert helper(cell).query("finance", "select 1").row_count == 2
+    assert len(cell.asked) == 2
+    cell.asked.clear()
+    cell.answers = [(CUT, b'{"col'), (CUT, b'{"col')]
+    with pytest.raises(DataError) as e:
+        helper(cell).query("finance", "select 1")
+    assert (e.value.code, len(cell.asked)) == ("UNREACHABLE", 2)
+
+
+def test_a_200_that_is_not_json_is_a_bad_gateway_response(cell: Cell) -> None:
+    cell.answers = [(200, b"<html>hello</html>")]
+    with pytest.raises(DataError) as e:
+        helper(cell).query("finance", "select 1")
+    assert (e.value.code, e.value.status, len(cell.asked)) == ("BAD_GATEWAY_RESPONSE", 200, 1)
+
+
+def test_the_connection_name_is_quoted_in_the_path(cell: Cell) -> None:
+    helper(cell).query("my conn", "select 1")
+    helper(cell).describe("my conn/../x")
+    assert [path for path, _, _ in cell.asked] == [
+        "/v1/connections/my%20conn/query",
+        "/v1/connections/my%20conn%2F..%2Fx/schema",
+    ]

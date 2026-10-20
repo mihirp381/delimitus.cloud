@@ -34,7 +34,7 @@ export interface QueryOptions {
 
 export type Param = string | number | boolean | null;
 
-/** A refusal (the data gateway's code) or `UNREACHABLE`; `sqlstate` for `QUERY_FAILED`. */
+/** A refusal (the data gateway's code), `UNREACHABLE` or `BAD_GATEWAY_RESPONSE`; `sqlstate` for `QUERY_FAILED`. */
 export class DataError extends Error {
   readonly code: string;
   readonly status: number | null;

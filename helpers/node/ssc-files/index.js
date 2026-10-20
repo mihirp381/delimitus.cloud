@@ -36,7 +36,8 @@ const RETRY_STATUSES = new Set([502, 503, 504]);
 /**
  * A refusal or a failure. `code` is the data gateway's (`FILE_NOT_FOUND`,
  * `FILES_QUOTA_EXCEEDED`, `APP_NOT_ACTIVE`, ...), `STORAGE_<status>` when Cloud Storage refused
- * the transfer, or `UNREACHABLE`.
+ * the transfer, `UNREACHABLE` (the gateway, Cloud Storage or the workload token could not be had)
+ * or `BAD_GATEWAY_RESPONSE` (an answer that is not JSON).
  */
 export class FilesError extends Error {
   constructor(code, message, status = null) {
@@ -80,13 +81,26 @@ function expiry(token) {
   }
 }
 
-async function refusal(response) {
+function refusal(status, raw) {
   try {
-    const { error } = await response.json();
-    return new FilesError(String(error.code), String(error.message), response.status);
+    const { error } = JSON.parse(raw);
+    return new FilesError(String(error.code), String(error.message), status);
   } catch {
-    return new FilesError('UNAVAILABLE', `the data gateway answered HTTP ${response.status}`, response.status);
+    return new FilesError('UNAVAILABLE', `the data gateway answered HTTP ${status}`, status);
   }
+}
+
+function answerOf(status, raw) {
+  let answer;
+  try {
+    answer = JSON.parse(raw);
+  } catch {
+    answer = null;
+  }
+  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) {
+    throw new FilesError('BAD_GATEWAY_RESPONSE', "the data gateway's answer is not JSON", status);
+  }
+  return answer;
 }
 
 /**
@@ -150,54 +164,56 @@ export class Files {
   async _ask(op, body) {
     const url = await this._gateway();
     for (const attempt of [1, 2]) {
-      let response;
+      const authorization = await this._bearer(url);
+      let status;
+      let raw;
       try {
-        response = await fetch(`${url}/v1/files/${op}`, {
+        const response = await fetch(`${url}/v1/files/${op}`, {
           method: 'POST',
-          headers: { authorization: await this._bearer(url), 'content-type': 'application/json' },
+          headers: { authorization, 'content-type': 'application/json' },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
         });
+        status = response.status;
+        raw = await response.text();
       } catch (err) {
-        if (err instanceof FilesError) throw err;
         if (attempt === 1) continue;
         throw new FilesError('UNREACHABLE', `data gateway: ${err.name}`);
       }
-      if (RETRY_STATUSES.has(response.status) && attempt === 1) {
-        await response.body?.cancel();
-        continue;
-      }
-      if (response.status !== 200) {
-        const refused = await refusal(response);
+      if (RETRY_STATUSES.has(status) && attempt === 1) continue;
+      if (status !== 200) {
+        const refused = refusal(status, raw);
         // The first delete went through and its answer was lost.
         if (op === 'delete' && attempt === 2 && refused.code === 'FILE_NOT_FOUND') return {};
         throw refused;
       }
-      return response.json();
+      return answerOf(status, raw);
     }
     throw new Error('unreachable');
   }
 
   async _transfer(link, data) {
-    let response;
+    let status;
+    let bytes;
     try {
-      response = await fetch(link.url, {
+      const response = await fetch(link.url, {
         method: link.method,
         headers: link.headers,
         body: data,
         signal: AbortSignal.timeout(TRANSFER_TIMEOUT_MS),
       });
+      status = response.status;
+      bytes = new Uint8Array(await response.arrayBuffer());
     } catch (err) {
       throw new FilesError('UNREACHABLE', `Cloud Storage: ${err.name}`);
     }
-    if (response.status === 404 && link.method === 'GET') {
+    if (status === 404 && link.method === 'GET') {
       throw new FilesError('FILE_NOT_FOUND', 'the file is gone', 404);
     }
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new FilesError(`STORAGE_${response.status}`, 'Cloud Storage refused the transfer', response.status);
+    if (status < 200 || status >= 300) {
+      throw new FilesError(`STORAGE_${status}`, 'Cloud Storage refused the transfer', status);
     }
-    return new Uint8Array(await response.arrayBuffer());
+    return bytes;
   }
 }
 

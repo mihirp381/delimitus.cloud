@@ -22,15 +22,16 @@ idempotent: a retried delete that finds nothing succeeds. Same names and behavio
 helper ``@delimitus/ssc-files``.
 """
 
+import http.client
 import json
 import os
 import threading
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
-from ssc_app.workload import METADATA, TIMEOUT_SECONDS, WorkloadToken
+from ssc_app.workload import METADATA, TIMEOUT_SECONDS, WorkloadToken, WorkloadTokenError
 
 SERVICE: Final = "ssc-datagw"
 REGION_PATH: Final = "/computeMetadata/v1/instance/region"
@@ -47,7 +48,8 @@ Op = Literal["put", "get", "delete"]
 class FilesError(RuntimeError):
     """A refusal or a failure. ``code`` is the data gateway's (``FILE_NOT_FOUND``,
     ``FILES_QUOTA_EXCEEDED``, ``APP_NOT_ACTIVE``, ...), ``STORAGE_<status>`` when Cloud Storage
-    refused the transfer, or ``UNREACHABLE``."""
+    refused the transfer, ``UNREACHABLE`` (the gateway, Cloud Storage or the workload token could
+    not be had) or ``BAD_GATEWAY_RESPONSE`` (an answer that is not JSON)."""
 
     def __init__(self, code: str, message: str, status: int | None = None) -> None:
         super().__init__(f"{code}: {message}")
@@ -63,7 +65,7 @@ def gateway_url(metadata: str = METADATA) -> str:
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310
             answer = response.read().decode().strip()
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
         raise FilesError("UNREACHABLE", f"metadata server: {type(exc).__name__}") from None
     parts = answer.split("/")
     if len(parts) != 4 or parts[0] != "projects" or parts[2] != "regions":  # noqa: PLR2004
@@ -80,6 +82,16 @@ def _send(
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
+
+
+def _answer(status: int, raw: bytes) -> dict[str, Any]:
+    try:
+        answer = json.loads(raw)
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict):
+        raise FilesError("BAD_GATEWAY_RESPONSE", "the data gateway's answer is not JSON", status)
+    return cast(dict[str, Any], answer)
 
 
 def _refusal(status: int, raw: bytes) -> FilesError:
@@ -123,15 +135,18 @@ class Files:
         url, tokens = self._target()
         raw_body = json.dumps(body).encode()
         for attempt in (1, 2):
-            headers = {
-                "authorization": f"Bearer {tokens.get()}",
-                "content-type": "application/json",
-            }
+            try:
+                headers = {
+                    "authorization": f"Bearer {tokens.get()}",
+                    "content-type": "application/json",
+                }
+            except WorkloadTokenError as exc:
+                raise FilesError("UNREACHABLE", f"workload token: {exc}") from None
             try:
                 status, raw = _send(
                     "POST", f"{url}/v1/files/{op}", headers, raw_body, GATEWAY_TIMEOUT_SECONDS
                 )
-            except (urllib.error.URLError, OSError) as exc:
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
                 if attempt == 1:
                     continue
                 raise FilesError("UNREACHABLE", f"data gateway: {type(exc).__name__}") from None
@@ -142,7 +157,7 @@ class Files:
                 if op == "delete" and attempt == 2 and refused.code == "FILE_NOT_FOUND":
                     return {}  # the first delete went through and its answer was lost
                 raise refused
-            return json.loads(raw)
+            return _answer(status, raw)
         raise AssertionError
 
     def _transfer(self, link: Mapping[str, Any], data: bytes | None) -> bytes:
@@ -150,7 +165,7 @@ class Files:
             status, raw = _send(
                 link["method"], link["url"], link["headers"], data, TRANSFER_TIMEOUT_SECONDS
             )
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise FilesError("UNREACHABLE", f"Cloud Storage: {type(exc).__name__}") from None
         if status == 404 and link["method"] == "GET":  # noqa: PLR2004
             raise FilesError("FILE_NOT_FOUND", "the file is gone", status)

@@ -39,8 +39,9 @@ const RETRY_STATUSES = new Set([502, 503, 504]);
 
 /**
  * A refusal or a failure. `code` is the data gateway's (`CONNECTION_NOT_GRANTED`,
- * `CONNECTION_SUSPENDED`, `QUERY_REFUSED`, `QUERY_FAILED`, `DAILY_BUDGET_SPENT`, ...) or
- * `UNREACHABLE`; `sqlstate` is the database's for `QUERY_FAILED` when it gave one.
+ * `CONNECTION_SUSPENDED`, `QUERY_REFUSED`, `QUERY_FAILED`, `DAILY_BUDGET_SPENT`, ...),
+ * `UNREACHABLE` (the gateway or the workload token could not be had) or `BAD_GATEWAY_RESPONSE`
+ * (an answer that is not JSON); `sqlstate` is the database's for `QUERY_FAILED` when it gave one.
  */
 export class DataError extends Error {
   constructor(code, message, status = null, sqlstate = null) {
@@ -85,13 +86,26 @@ function expiry(token) {
   }
 }
 
-async function refusal(response) {
+function refusal(status, raw) {
   try {
-    const { error } = await response.json();
-    return new DataError(String(error.code), String(error.message), response.status, error.sqlstate ?? null);
+    const { error } = JSON.parse(raw);
+    return new DataError(String(error.code), String(error.message), status, error.sqlstate ?? null);
   } catch {
-    return new DataError('UNAVAILABLE', `the data gateway answered HTTP ${response.status}`, response.status);
+    return new DataError('UNAVAILABLE', `the data gateway answered HTTP ${status}`, status);
   }
+}
+
+function answerOf(status, raw) {
+  let answer;
+  try {
+    answer = JSON.parse(raw);
+  } catch {
+    answer = null;
+  }
+  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) {
+    throw new DataError('BAD_GATEWAY_RESPONSE', "the data gateway's answer is not JSON", status);
+  }
+  return answer;
 }
 
 /**
@@ -119,26 +133,25 @@ export class Data {
     for (const attempt of [1, 2]) {
       const headers = { authorization: await this._bearer(url), 'content-type': 'application/json' };
       if (identity !== undefined) headers[IDENTITY_HEADER] = identity;
-      let response;
+      let status;
+      let raw;
       try {
-        response = await fetch(`${url}/v1/connections/${name}/query`, {
+        const response = await fetch(`${url}/v1/connections/${encodeURIComponent(name)}/query`, {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
         });
+        status = response.status;
+        raw = await response.text();
       } catch (err) {
-        if (err instanceof DataError) throw err;
         if (err.name === 'TimeoutError') throw new DataError('UNREACHABLE', 'data gateway: TimeoutError');
         if (attempt === 1) continue;
         throw new DataError('UNREACHABLE', `data gateway: ${err.name}`);
       }
-      if (RETRY_STATUSES.has(response.status) && attempt === 1) {
-        await response.body?.cancel();
-        continue;
-      }
-      if (response.status !== 200) throw await refusal(response);
-      const answer = await response.json();
+      if (RETRY_STATUSES.has(status) && attempt === 1) continue;
+      if (status !== 200) throw refusal(status, raw);
+      const answer = answerOf(status, raw);
       return {
         columns: answer.columns,
         rows: answer.rows,

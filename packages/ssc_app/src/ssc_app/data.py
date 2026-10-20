@@ -29,17 +29,19 @@ data gateway cannot be reached or answers 502, 503 or 504; a query that timed ou
 names and behaviour as the Node helper ``@delimitus/ssc-data``, which has no ``describe`` yet.
 """
 
+import http.client
 import json
 import os
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from ssc_app.files import RETRY_STATUSES, URL_VARIABLE, FilesError, gateway_url
-from ssc_app.workload import METADATA, WorkloadToken
+from ssc_app.workload import METADATA, WorkloadToken, WorkloadTokenError
 
 QUERY_TIMEOUT_SECONDS: Final = 60.0
 """Longer than the data gateway's 30 s query limit plus its start from zero."""
@@ -48,8 +50,10 @@ IDENTITY_HEADER: Final = "x-ssc-identity"
 
 class DataError(RuntimeError):
     """A refusal or a failure. ``code`` is the data gateway's (``CONNECTION_NOT_GRANTED``,
-    ``CONNECTION_SUSPENDED``, ``QUERY_REFUSED``, ``QUERY_FAILED``, ``DAILY_BUDGET_SPENT``, ...) or
-    ``UNREACHABLE``; ``sqlstate`` is the database's for ``QUERY_FAILED`` when it gave one."""
+    ``CONNECTION_SUSPENDED``, ``QUERY_REFUSED``, ``QUERY_FAILED``, ``DAILY_BUDGET_SPENT``, ...),
+    ``UNREACHABLE`` (the gateway or the workload token could not be had) or
+    ``BAD_GATEWAY_RESPONSE`` (an answer that is not JSON); ``sqlstate`` is the database's for
+    ``QUERY_FAILED`` when it gave one."""
 
     def __init__(
         self, code: str, message: str, status: int | None = None, sqlstate: str | None = None
@@ -91,6 +95,11 @@ class Schema:
     tables: list[Table]
 
 
+def _quote(name: str) -> str:
+    """The connection name as one path segment."""
+    return urllib.parse.quote(name, safe="")
+
+
 def _send(url: str, headers: Mapping[str, str], body: bytes | None) -> tuple[int, bytes]:
     """POST ``body``, or GET when it is None."""
     method = "GET" if body is None else "POST"
@@ -100,6 +109,16 @@ def _send(url: str, headers: Mapping[str, str], body: bytes | None) -> tuple[int
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
+
+
+def _answer(status: int, raw: bytes) -> dict[str, Any]:
+    try:
+        answer = json.loads(raw)
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict):
+        raise DataError("BAD_GATEWAY_RESPONSE", "the data gateway's answer is not JSON", status)
+    return cast(dict[str, Any], answer)
 
 
 def _refusal(status: int, raw: bytes) -> DataError:
@@ -135,7 +154,7 @@ class Data:
         asks = {"max_rows": max_rows, "max_bytes": max_bytes, "timeout_ms": timeout_ms}
         body: dict[str, Any] = {"sql": sql, "params": list(params)}
         body.update({k: v for k, v in asks.items() if v is not None})
-        answer = self._ask(f"{name}/query", json.dumps(body).encode(), identity)
+        answer = self._ask(f"{_quote(name)}/query", json.dumps(body).encode(), identity)
         return QueryResult(
             columns=answer["columns"],
             rows=answer["rows"],
@@ -147,7 +166,7 @@ class Data:
 
     def describe(self, name: str) -> Schema:
         """The tables of connection ``name`` and their columns. ``DataError`` for a refusal."""
-        answer = self._ask(f"{name}/schema", None, None)
+        answer = self._ask(f"{_quote(name)}/schema", None, None)
         return Schema(
             connection=answer["connection"],
             kind=answer["kind"],
@@ -159,7 +178,10 @@ class Data:
         cannot be reached or starts."""
         url, tokens = self._target()
         for attempt in (1, 2):
-            headers = {"authorization": f"Bearer {tokens.get()}"}
+            try:
+                headers = {"authorization": f"Bearer {tokens.get()}"}
+            except WorkloadTokenError as exc:
+                raise DataError("UNREACHABLE", f"workload token: {exc}") from None
             if body is not None:
                 headers["content-type"] = "application/json"
             if identity is not None:
@@ -168,7 +190,7 @@ class Data:
                 status, raw = _send(f"{url}/v1/connections/{path}", headers, body)
             except TimeoutError:
                 raise DataError("UNREACHABLE", "data gateway: TimeoutError") from None
-            except (urllib.error.URLError, OSError) as exc:
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
                 if attempt == 1:
                     continue
                 raise DataError("UNREACHABLE", f"data gateway: {type(exc).__name__}") from None
@@ -176,7 +198,7 @@ class Data:
                 continue
             if status != 200:  # noqa: PLR2004
                 raise _refusal(status, raw)
-            return json.loads(raw)
+            return _answer(status, raw)
         raise AssertionError
 
     def _target(self) -> tuple[str, WorkloadToken]:

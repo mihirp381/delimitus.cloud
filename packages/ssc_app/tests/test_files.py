@@ -2,6 +2,7 @@
 server, the data gateway and Cloud Storage, so a link it hands out points back at itself."""
 
 import base64
+import http.client
 import http.server
 import json
 import threading
@@ -40,8 +41,16 @@ class Cell:
     storage_status: int | None = None
     objects: dict[str, tuple[bytes, str]] = field(default_factory=dict[str, tuple[bytes, str]])
     sent_headers: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    token_status: int | None = None
+    """The metadata server answers this instead of an ID token."""
+    storage_cut: bool = False
+    """Cloud Storage's download ends before its ``content-length``."""
     lose_delete_answer: int | None = None
     """Delete the file, then answer this status instead of 200, once (a lost response)."""
+
+
+CUT = -1
+"""As a gateway answer's status: a 200 whose body ends before its ``content-length``."""
 
 
 def refusal(code: str, status: int = 404) -> tuple[int, bytes]:
@@ -55,10 +64,11 @@ def cell() -> Iterator[Cell]:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _answer(self, status: int, body: bytes = b"", **headers: str) -> None:
-            self.send_response(status)
+            cut = status == CUT
+            self.send_response(200 if cut else status)
             for k, v in headers.items():
                 self.send_header(k.replace("_", "-"), v)
-            self.send_header("content-length", str(len(body)))
+            self.send_header("content-length", str(len(body) + (100 if cut else 0)))
             self.end_headers()
             self.wfile.write(body)
 
@@ -71,6 +81,8 @@ def cell() -> Iterator[Cell]:
                 self._answer(403)
             elif url.path == REGION_PATH:
                 self._answer(200, state.region.encode())
+            elif url.path == IDENTITY_PATH and state.token_status is not None:
+                self._answer(state.token_status)
             elif url.path == IDENTITY_PATH:
                 audience = parse_qs(url.query)["audience"][0]
                 state.audiences.append(audience)
@@ -123,7 +135,8 @@ def cell() -> Iterator[Cell]:
                 self._answer(state.storage_status or 404)
                 return
             data, kind = state.objects[name]
-            self._answer(200, data, content_type=kind, content_disposition="attachment")
+            status = CUT if state.storage_cut else 200
+            self._answer(status, data, content_type=kind, content_disposition="attachment")
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             return
@@ -274,3 +287,50 @@ def test_a_retried_get_that_finds_nothing_is_still_file_not_found(cell: Cell) ->
     with pytest.raises(FilesError) as e:
         helper(cell).get("never.txt")
     assert (e.value.code, len(cell.asked)) == ("FILE_NOT_FOUND", 2)
+
+
+def test_a_metadata_server_that_refuses_the_token_is_unreachable(cell: Cell) -> None:
+    cell.token_status = 403
+    with pytest.raises(FilesError) as e:
+        helper(cell).put("a.txt", b"x")
+    assert (e.value.code, cell.asked) == ("UNREACHABLE", [])
+    assert "403" in str(e.value)
+    with pytest.raises(FilesError) as e:
+        helper(cell).delete("a.txt")
+    assert e.value.code == "UNREACHABLE"
+
+
+def test_an_answer_cut_short_is_asked_once_more_then_unreachable(cell: Cell) -> None:
+    cell.gateway_answers = [(CUT, b'{"url')]
+    helper(cell).put("a.txt", b"x")
+    assert len(cell.asked) == 2
+    cell.asked.clear()
+    cell.gateway_answers = [(CUT, b'{"url'), (CUT, b'{"url')]
+    with pytest.raises(FilesError) as e:
+        helper(cell).put("a.txt", b"x")
+    assert (e.value.code, len(cell.asked)) == ("UNREACHABLE", 2)
+
+
+def test_a_200_that_is_not_json_is_a_bad_gateway_response(cell: Cell) -> None:
+    cell.gateway_answers = [(200, b"<html>hello</html>")]
+    with pytest.raises(FilesError) as e:
+        helper(cell).put("a.txt", b"x")
+    assert (e.value.code, e.value.status, len(cell.asked)) == ("BAD_GATEWAY_RESPONSE", 200, 1)
+
+
+def test_a_download_cut_short_is_unreachable(cell: Cell) -> None:
+    cell.objects["a.txt"] = (b"hello", "text/plain")
+    cell.storage_cut = True
+    with pytest.raises(FilesError) as e:
+        helper(cell).get("a.txt")
+    assert e.value.code == "UNREACHABLE"
+
+
+def test_a_region_cut_short_is_unreachable(cell: Cell, monkeypatch: pytest.MonkeyPatch) -> None:
+    def short(*args: object, **kwargs: object) -> object:
+        raise http.client.IncompleteRead(b"proj")
+
+    monkeypatch.setattr(files.urllib.request, "urlopen", short)
+    with pytest.raises(FilesError) as e:
+        gateway_url(cell.url)
+    assert e.value.code == "UNREACHABLE"

@@ -32,6 +32,8 @@ class Metadata:
     asked: list[dict[str, list[str]]] = field(default_factory=list[dict[str, list[str]]])
     status: int = 200
     body: str | None = None
+    cut: bool = False
+    """Answer with a ``content-length`` longer than the body."""
 
 
 @pytest.fixture
@@ -52,6 +54,8 @@ def metadata() -> Iterator[Metadata]:
                 claims |= {"email": "ssc-a-x@p.iam.gserviceaccount.com", "email_verified": True}
             body = (state.body if state.body is not None else _token(claims)).encode()
             self.send_response(state.status)
+            if state.cut:
+                self.send_header("content-length", str(len(body) + 100))
             self.end_headers()
             self.wfile.write(body)
 
@@ -109,3 +113,9 @@ def test_a_metadata_server_that_fails_or_answers_garbage_is_an_error(
 def test_no_metadata_server_is_an_error() -> None:
     with pytest.raises(WorkloadTokenError, match="unreachable"):
         WorkloadToken(audience=AUDIENCE, metadata="http://127.0.0.1:9").get()
+
+
+def test_a_token_cut_short_is_an_error(metadata: Metadata) -> None:
+    metadata.cut = True
+    with pytest.raises(WorkloadTokenError, match="unreachable"):
+        WorkloadToken(audience=AUDIENCE, metadata=metadata.url, clock=lambda: NOW).get()

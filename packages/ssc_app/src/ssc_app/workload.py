@@ -13,6 +13,7 @@ gateway and send it; this is the part that must ask for the token correctly.
 """
 
 import base64
+import http.client
 import json
 import threading
 import time
@@ -78,5 +79,5 @@ class WorkloadToken:
                 return response.read().decode().strip()
         except urllib.error.HTTPError as exc:
             raise WorkloadTokenError(f"metadata server answered HTTP {exc.code}") from None
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise WorkloadTokenError(f"metadata server unreachable: {type(exc).__name__}") from None

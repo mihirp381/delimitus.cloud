@@ -18,6 +18,7 @@ function refusal(code, status = 404) {
 }
 
 const cell = {};
+const CUT = -1;
 
 function reset() {
   Object.assign(cell, {
@@ -29,6 +30,8 @@ function reset() {
     objects: new Map(),
     sent: [],
     loseDeleteAnswer: null,
+    tokenStatus: null,
+    storageCut: false,
   });
 }
 
@@ -42,6 +45,12 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const body = await readAll(req);
   const answer = (status, data = '', headers = {}) => {
+    if (status === CUT) {
+      // A 200 whose body ends before its content-length.
+      res.writeHead(200, { ...headers, 'content-length': Buffer.byteLength(data) + 100 });
+      res.write(data);
+      return setTimeout(() => res.destroy(), 20);
+    }
     res.writeHead(status, headers);
     res.end(data);
   };
@@ -55,11 +64,12 @@ const server = createServer(async (req, res) => {
     }
     if (cell.storageStatus !== null || !cell.objects.has(name)) return answer(cell.storageStatus ?? 404);
     const [data, kind] = cell.objects.get(name);
-    return answer(200, data, { 'content-type': kind, 'content-disposition': 'attachment' });
+    return answer(cell.storageCut ? CUT : 200, data, { 'content-type': kind, 'content-disposition': 'attachment' });
   }
   if (req.method === 'GET') {
     if (req.headers['metadata-flavor'] !== 'Google') return answer(403);
     if (url.pathname === REGION_PATH) return answer(200, cell.region);
+    if (url.pathname === IDENTITY_PATH && cell.tokenStatus !== null) return answer(cell.tokenStatus);
     if (url.pathname === IDENTITY_PATH) {
       const audience = url.searchParams.get('audience');
       assert.equal(url.searchParams.get('format'), 'full');
@@ -194,6 +204,34 @@ test('a retried get that finds nothing is still FILE_NOT_FOUND', async () => {
   cell.gatewayAnswers = [[503, 'starting']];
   await rejects(helper().get('never.txt'), 'FILE_NOT_FOUND');
   assert.equal(cell.asked.length, 2);
+});
+
+test('a metadata server that refuses the token is UNREACHABLE', async () => {
+  cell.tokenStatus = 403;
+  await assert.rejects(helper().put('a.txt', 'x'), (err) => err instanceof FilesError && err.code === 'UNREACHABLE' && /403/.test(err.message));
+  assert.equal(cell.asked.length, 0);
+});
+
+test('an answer cut short is asked once more, then UNREACHABLE', async () => {
+  cell.gatewayAnswers = [[CUT, '{"url']];
+  await helper().put('a.txt', 'x');
+  assert.equal(cell.asked.length, 2);
+  cell.asked = [];
+  cell.gatewayAnswers = [[CUT, '{"url'], [CUT, '{"url']];
+  await rejects(helper().put('a.txt', 'x'), 'UNREACHABLE');
+  assert.equal(cell.asked.length, 2);
+});
+
+test('a 200 that is not JSON is BAD_GATEWAY_RESPONSE', async () => {
+  cell.gatewayAnswers = [[200, '<html>hello</html>']];
+  await assert.rejects(helper().put('a.txt', 'x'), (err) => err instanceof FilesError && err.code === 'BAD_GATEWAY_RESPONSE' && err.status === 200);
+  assert.equal(cell.asked.length, 1);
+});
+
+test('a download cut short is UNREACHABLE', async () => {
+  cell.objects.set('a.txt', [Buffer.from('hello'), 'text/plain']);
+  cell.storageCut = true;
+  await rejects(helper().get('a.txt'), 'UNREACHABLE');
 });
 
 test('a CommonJS app can require the package by its name', () => {

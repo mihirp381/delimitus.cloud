@@ -28,9 +28,10 @@ function refusal(code, status, extra = {}) {
 }
 
 const cell = {};
+const CUT = -1;
 
 function reset() {
-  Object.assign(cell, { region: `projects/${NUMBER}/regions/${REGION}`, audiences: [], asked: [], answers: [] });
+  Object.assign(cell, { region: `projects/${NUMBER}/regions/${REGION}`, audiences: [], asked: [], answers: [], tokenStatus: null });
 }
 
 const server = createServer(async (req, res) => {
@@ -39,12 +40,19 @@ const server = createServer(async (req, res) => {
   for await (const chunk of req) chunks.push(chunk);
   const body = Buffer.concat(chunks).toString();
   const answer = (status, data = '') => {
+    if (status === CUT) {
+      // A 200 whose body ends before its content-length.
+      res.writeHead(200, { 'content-length': Buffer.byteLength(data) + 100 });
+      res.write(data);
+      return setTimeout(() => res.destroy(), 20);
+    }
     res.writeHead(status);
     res.end(data);
   };
   if (req.method === 'GET') {
     if (req.headers['metadata-flavor'] !== 'Google') return answer(403);
     if (url.pathname === REGION_PATH) return answer(200, cell.region);
+    if (url.pathname === IDENTITY_PATH && cell.tokenStatus !== null) return answer(cell.tokenStatus);
     if (url.pathname === IDENTITY_PATH) {
       const audience = url.searchParams.get('audience');
       assert.equal(url.searchParams.get('format'), 'full');
@@ -144,6 +152,34 @@ test('the variable names the gateway', async () => {
   const result = await new Data({ metadata: cell.base }).query('finance', 'select 1', [1], { maxRows: 5 });
   assert.equal(result.rowCount, 2);
   assert.equal(cell.asked[0][2].max_rows, 5);
+});
+
+test('a metadata server that refuses the token is UNREACHABLE', async () => {
+  cell.tokenStatus = 403;
+  await assert.rejects(helper().query('finance', 'select 1'), (err) => err instanceof DataError && err.code === 'UNREACHABLE' && /403/.test(err.message));
+  assert.equal(cell.asked.length, 0);
+});
+
+test('an answer cut short is asked once more, then UNREACHABLE', async () => {
+  cell.answers = [[CUT, '{"col']];
+  assert.equal((await helper().query('finance', 'select 1')).rowCount, 2);
+  assert.equal(cell.asked.length, 2);
+  cell.asked = [];
+  cell.answers = [[CUT, '{"col'], [CUT, '{"col']];
+  await rejects(helper().query('finance', 'select 1'), 'UNREACHABLE');
+  assert.equal(cell.asked.length, 2);
+});
+
+test('a 200 that is not JSON is BAD_GATEWAY_RESPONSE', async () => {
+  cell.answers = [[200, '<html>hello</html>']];
+  await assert.rejects(helper().query('finance', 'select 1'), (err) => err instanceof DataError && err.code === 'BAD_GATEWAY_RESPONSE' && err.status === 200);
+  assert.equal(cell.asked.length, 1);
+});
+
+test('the connection name is quoted in the path', async () => {
+  await helper().query('my conn', 'select 1');
+  await helper().query('my conn/../x', 'select 1');
+  assert.deepEqual(cell.asked.map(([path]) => path), ['/v1/connections/my%20conn/query', '/v1/connections/my%20conn%2F..%2Fx/query']);
 });
 
 test('a CommonJS app can require the package by its name', () => {
