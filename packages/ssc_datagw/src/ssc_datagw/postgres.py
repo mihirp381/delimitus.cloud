@@ -26,7 +26,7 @@ with ``pg_terminate_backend`` from a second connection as the same role, which m
 own sessions, so a statement that ignores the cancel does not run on.
 
 A new instance's outbound calls through Cloud NAT may not connect for its first 20 to 37 s
-(``spikes/proofrun`` T6). For :data:`WARMUP_SECONDS` after the process starts, a connect that
+(SSC-051, proof-run test T6). For :data:`WARMUP_SECONDS` after the process starts, a connect that
 times out is tried again, each attempt cut to :data:`WARMUP_CONNECT_SECONDS`, until it connects
 or the gateway's deadline cancels the read. Any other failure, and a time-out after warm-up,
 is ``UpstreamUnavailableError`` at once.

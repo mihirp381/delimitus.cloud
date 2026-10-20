@@ -33,11 +33,7 @@
 -- to the user stays, and the readback at the end shows it. It is safe to run
 -- again, which is how a new key or another schema lands.
 --
--- Run on a live trial account on 2026-10-08 (GA-5.6). Its first form read the schema list
--- through one RESULTSET with two cursors, one to check the names and one to grant; the second
--- cursor granted nothing and the script still ended with "granted on 1 schema(s)". The role held
--- USAGE on the database and no schema, so every read was 002003 (object does not exist). Now
--- the names are checked by one query, the grants walk a cursor of their own, and the script
+-- The names are checked by one query, the grants walk a cursor of their own, and the script
 -- fails unless it granted every schema it was given.
 
 USE ROLE ACCOUNTADMIN;

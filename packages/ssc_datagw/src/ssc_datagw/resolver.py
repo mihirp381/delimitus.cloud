@@ -4,8 +4,8 @@ A cell's VPC answers every public name with a sinkhole address: the no-internet 
 apps off the internet (``infra/README.md``, "DNS"). A response policy belongs to the whole VPC,
 so the data gateway, which shares the VPC's resolver, got the sinkhole too: a Snowflake account,
 an Airtable base or a database named by its DNS name resolved to 192.0.2.1 and the connect timed
-out (``CONNECTION_UNAVAILABLE``, ``cannot connect: TimeoutError``; found on proof cell 2,
-2026-10-08). The three first sandbox sources never met it: Cloud SQL was named by address, and
+out (``CONNECTION_UNAVAILABLE``, ``cannot connect: TimeoutError``; observed on a new
+instance's first calls through Cloud NAT). A source named by address never meets it, and
 BigQuery and Cloud Storage are on the VPC's Google bypass list.
 
 The egress proxy had the same problem and answers it by resolving each allowed host through

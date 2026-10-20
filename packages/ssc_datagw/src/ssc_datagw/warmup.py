@@ -1,4 +1,4 @@
-"""A new instance's first connects may not get through (SSC-051, ``spikes/proofrun`` T6).
+"""A new instance's first connects may not get through (SSC-051, proof-run test T6).
 
 A new instance's outbound calls through Cloud NAT may not connect for its first 20 to 37 s. For
 :data:`WARMUP_SECONDS` after the process starts, a connect that times out is tried again, each
