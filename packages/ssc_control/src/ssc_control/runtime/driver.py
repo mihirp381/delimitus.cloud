@@ -170,7 +170,7 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
         resource_class=runtime.class_,
         env=plain,
         billing=billing,
-        timeout_seconds=timeout_for(runtime, framework),
+        timeout_seconds=timeout_for(runtime, framework, manifest.schedules),
         concurrency=SESSION_CONCURRENCY if session else REQUEST_CONCURRENCY,
         min_instances=1 if warm and env.name == "prod" else 0,
         max_instances=max_instances_for(manifest, framework),

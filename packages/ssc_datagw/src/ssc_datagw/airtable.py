@@ -176,16 +176,16 @@ def airtable_request(sql: str, table: str | None) -> tuple[str, str | None, str 
     and the formula is the rest, unchanged. With ``table`` the query's table must be it."""
     found = _REQUEST.fullmatch(sql)
     if found is None:
-        raise QueryRefusedError(NOT_A_READ)
+        raise QueryRefusedError(NOT_A_READ, reason="unsupported_statement")
     name, view, formula = found.group("table", "view", "formula")
     if (
         not _name(name)
         or (view is not None and not _name(view))
         or (formula is not None and not _plain(formula, FORMULA_CHARS))
     ):
-        raise QueryRefusedError(NOT_A_READ)
+        raise QueryRefusedError(NOT_A_READ, reason="unsupported_statement")
     if table is not None and name != table:
-        raise QueryRefusedError(OTHER_TABLE)
+        raise QueryRefusedError(OTHER_TABLE, reason="other_database")
     return name, view, formula
 
 
@@ -417,7 +417,9 @@ class AirtableConnector:
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         request = airtable_request(query.sql, self._target.table)
         if query.params:
-            raise QueryRefusedError("an Airtable read takes no parameters")
+            raise QueryRefusedError(
+                "an Airtable read takes no parameters", reason="unsupported_statement"
+            )
         headers = {
             "Accept": "application/json",
             "User-Agent": user_agent(query.tag),

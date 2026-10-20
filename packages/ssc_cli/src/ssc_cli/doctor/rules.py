@@ -35,6 +35,7 @@ from ssc_cli.doctor.finding import (
     NOT_SINGLE_APP,
     PORT_BINDING,
     PUBLIC_ENV_AT_BUILD,
+    SCHEDULE_TIMEOUT_LONG,
     SECRET_IN_BUNDLE,
     SESSION_FRAMEWORK,
     STATE_SQLITE_EPHEMERAL,
@@ -52,6 +53,7 @@ from ssc_contracts.manifest import (
     load_manifest,
     session_framework,
 )
+from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS
 
 SKIP_DIRS: Final = frozenset(
     {
@@ -847,6 +849,23 @@ def session_framework_rule(t: Tree) -> list[Finding]:
     ]
 
 
+def schedule_timeout_long(t: Tree) -> list[Finding]:
+    m = _loaded_manifest(t)
+    long = [s for s in m.schedules if s.timeout_seconds > REQUEST_TIMEOUT_SECONDS]
+    if not long or is_session_app(m.runtime, analyze(t.packed(), m).framework):
+        return []
+    return [
+        finding(
+            SCHEDULE_TIMEOUT_LONG,
+            MANIFEST_FILE,
+            f"Schedule {s.name} may run {s.timeout_seconds} seconds, longer than the "
+            f"{REQUEST_TIMEOUT_SECONDS}-second request timeout, so the app's service timeout "
+            f"grows to {max(x.timeout_seconds for x in long)} seconds.",
+        )
+        for s in long
+    ]
+
+
 Rule = Callable[[Tree], Iterable[Finding]]
 
 RULES: Final[tuple[Rule, ...]] = (
@@ -864,4 +883,5 @@ RULES: Final[tuple[Rule, ...]] = (
     native_library,
     session_framework_rule,
     add_approved_package,
+    schedule_timeout_long,
 )

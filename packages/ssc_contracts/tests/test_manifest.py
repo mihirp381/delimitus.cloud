@@ -884,6 +884,7 @@ PINNED_DIGESTS: dict[str, tuple[str, str]] = {
     ),
 }
 DOCTOR_FIXTURES = Path(__file__).resolve().parents[3] / "packages/ssc_cli/tests/fixtures/doctor"
+SCHEDULE_FIXTURE_DIGEST = "sha256:cd6b0b89580c340fc8f6d39d30112401c3155cc137ec03785e6802a11bcddaed"
 
 
 @pytest.mark.parametrize("name", PINNED_DIGESTS)
@@ -900,11 +901,15 @@ def test_the_base_manifest_keeps_its_digest() -> None:
 
 def test_the_doctor_fixture_manifests_keep_their_digests() -> None:
     files = sorted(DOCTOR_FIXTURES.glob("*/ssc.toml"))
-    valid = [f for f in files if f.parent.name != "MANIFEST_INVALID"]
-    assert len(valid) == len(files) - 1 >= 7
+    own = {"SCHEDULE_TIMEOUT_LONG": SCHEDULE_FIXTURE_DIGEST}
+    valid = [f for f in files if f.parent.name not in {"MANIFEST_INVALID", *own}]
+    assert len(valid) == len(files) - 1 - len(own) >= 7
     want = PINNED_DIGESTS["schema only"][1]
     for path in valid:
         assert manifest_digest(load_manifest(path.read_bytes())) == want, path
+    for name, digest in own.items():
+        path = DOCTOR_FIXTURES / name / "ssc.toml"
+        assert manifest_digest(load_manifest(path.read_bytes())) == digest, path
 
 
 def test_files_is_asked_for_by_its_table_alone() -> None:

@@ -95,6 +95,7 @@ ALLOWLIST = {
     "rollback",
     "deploy",
     "request_share",
+    "find_groups",
     "list_connections",
     "describe_connection",
     "request_connection",
@@ -141,6 +142,18 @@ def add_account(dsn: str, org: str, role: str) -> str:
         (uid, org, role),
     )
     return uid
+
+
+def add_group(dsn: str, org: str, name: str) -> str:
+    gid = new_id("grp")
+    rows(
+        dsn,
+        org,
+        "insert into ssc.user_group (id, org_id, directory_ref, display_name) "
+        "values (%s, %s, %s, %s) returning id",
+        (gid, org, f"ref-{gid}", name),
+    )
+    return gid
 
 
 def add_grant(dsn: str, org: str, env: str, user: str, role: str, by: str) -> None:
@@ -341,6 +354,7 @@ async def test_tool_set_is_the_allowlist(world: World) -> None:
         "get_app",
         "get_status",
         "list_releases",
+        "find_groups",
         "list_connections",
         "describe_connection",
         "get_logs",
@@ -867,6 +881,63 @@ async def test_request_share_on_a_data_connected_app_asks_for_every_approval(
     assert "already has user" in again.structured_content["next"]
 
 
+def pending_of(world: World, env: str) -> list[tuple[str, str]]:
+    r = httpx2.get(
+        f"{world.url}/v1/approvals",
+        params={"state": "pending", "environment_id": env},
+        headers={"Authorization": f"Bearer {world.human}"},
+    )
+    assert r.status_code == 200, r.text
+    return sorted((a["kind"], a["id"]) for a in r.json()["approvals"])
+
+
+async def test_a_second_share_supersedes_the_pending_one(world: World) -> None:
+    app = fresh_app(world)
+    prod = env_id(app, "prod")
+    first, second = (add_account(world.dsns.app, world.org.org_id, "member") for _ in range(2))
+    async with session(world.url, world.agent) as client:
+        one = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": first}
+        )
+        two = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": second}
+        )
+        again = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": second}
+        )
+    (old,) = one.structured_content["approval_ids"]
+    (new,) = two.structured_content["approval_ids"]
+    assert two.structured_content["superseded"] == [old]
+    assert approval_row(world, old)[2] == "cancelled"
+    assert pending_of(world, prod) == [("agent_share", new)]
+    grants = approval_row(world, new)[4]["grants"]
+    assert sorted(g["subject_id"] for g in grants) == sorted([first, second])
+    assert again.structured_content["approval_ids"] == [new]
+    assert "superseded" not in again.structured_content
+    assert approve(world, new)["applied"] == "applied"
+    after = grants_of(world, prod, app["id"])
+    assert sorted(g["subject_id"] for g in after["grants"]) == sorted([first, second])
+
+
+async def test_a_second_share_supersedes_every_request_of_the_first(world: World) -> None:
+    app = fresh_app(world)
+    prod = env_id(app, "prod")
+    ask = {"environment_id": prod, "kind": "connect_data_source", "subject_key": "warehouse"}
+    human_post(world, "/v1/approvals", ask)
+    first, second = (add_account(world.dsns.app, world.org.org_id, "member") for _ in range(2))
+    async with session(world.url, world.agent) as client:
+        one = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": first}
+        )
+        two = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": second}
+        )
+    old = one.structured_content["approval_ids"]
+    assert sorted(two.structured_content["superseded"]) == sorted(old)
+    pending = [k for k, _ in pending_of(world, prod) if k != "connect_data_source"]
+    assert pending == ["agent_share", "widen_audience"]
+
+
 async def test_request_share_past_a_ceiling_asks_the_connection_owner(world: World) -> None:
     app = fresh_app(world)
     prod = env_id(app, "prod")
@@ -935,6 +1006,43 @@ async def test_request_share_refused_or_not_needed(world: World) -> None:
     mine = [g for g in grants if g["subject_id"] == member]
     assert mine == [{"role": "builder", "subject_kind": "user", "subject_id": member}]
     assert grants_of(world, prod) == before
+
+
+async def test_find_groups_matches_the_start_of_a_name(world: World) -> None:
+    tag = new_key()[:8]
+    payroll = add_group(world.dsns.app, world.org.org_id, f"Payroll {tag}")
+    ops = add_group(world.dsns.app, world.org.org_id, f"PAYROLL {tag} ops")
+    add_group(world.dsns.app, world.org.org_id, f"Sales {tag}")
+    async with session(world.url, world.agent) as client:
+        found = await client.call_tool("find_groups", {"name": f"payroll {tag}"})
+    assert not found.is_error, found.content
+    assert sorted(g["id"] for g in found.structured_content["groups"]) == sorted([payroll, ops])
+
+
+async def test_request_share_takes_a_group_s_name(world: World) -> None:
+    tag = new_key()[:8]
+    group = add_group(world.dsns.app, world.org.org_id, f"Audit {tag}")
+    twins = sorted(add_group(world.dsns.app, world.org.org_id, f"Twins {tag}") for _ in range(2))
+    app = fresh_app(world)
+    async with session(world.url, world.agent) as client:
+        named = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": f"audit {tag}"}
+        )
+        missing = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": f"Nobody {tag}"}
+        )
+        several = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": f"Twins {tag}"}
+        )
+    assert not named.is_error, named.content
+    (apr,) = named.structured_content["approval_ids"]
+    wanted = {"role": "user", "subject_kind": "group", "subject_id": group}
+    assert approval_row(world, apr)[4]["grants"] == [wanted]
+    assert missing.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert f"no group named 'Nobody {tag}'" in missing.structured_content["error"]["detail"]
+    assert several.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    detail = several.structured_content["error"]["detail"]
+    assert all(t in detail for t in twins)
 
 
 async def test_request_share_never_lowers_a_role(world: World) -> None:
@@ -1429,6 +1537,31 @@ class RollingBackV1:
 
 
 ENV_P = {"id": "env_" + "p" * 20, "name": "prod"}
+
+
+class StaleSchemaV1:
+    """``/v1`` with one app whose schema read is refused ``code``."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+    async def get(self, path: str) -> dict[str, Any]:
+        if path.endswith("/schema"):
+            raise tools.Refused({"code": self.code, "detail": "Retry in a minute."})
+        return {"id": "app_" + "a" * 20, "slug": "a1", "environments": [ENV_P]}
+
+
+async def test_describe_connection_says_a_new_link_is_being_published() -> None:
+    stale = cast("tools.V1", StaleSchemaV1("DATA_SNAPSHOT_STALE"))
+    with pytest.raises(tools.Refused) as caught:
+        await tools.connection_schema(stale, "app_" + "a" * 20, "prod", "finance")
+    assert caught.value.error["code"] == "DATA_SNAPSHOT_STALE"
+    assert caught.value.error["detail"] == f"Retry in a minute. {tools.PUBLISHING_NOTE}"
+    assert "the link is being published; retry in a minute" in tools.PUBLISHING_NOTE
+    other = cast("tools.V1", StaleSchemaV1("CONNECTION_NOT_GRANTED"))
+    with pytest.raises(tools.Refused) as plain:
+        await tools.connection_schema(other, "app_" + "a" * 20, "prod", "finance")
+    assert plain.value.error == {"code": "CONNECTION_NOT_GRANTED", "detail": "Retry in a minute."}
 
 
 async def test_a_rollback_whose_migrations_were_not_checked_carries_a_caution() -> None:

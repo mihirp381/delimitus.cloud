@@ -179,9 +179,14 @@ def test_lookups_are_checked_as_the_api_checks_them():
     e = email["schema"]
     assert (email["name"], e["pattern"]) == ("email", f"^{share.EMAIL.pattern}$")
     assert (e["minLength"], e["maxLength"]) == (share.MIN_EMAIL, share.MAX_EMAIL)
-    (name,) = paths["/v1/groups"]["get"]["parameters"]
+    name, match = paths["/v1/groups"]["get"]["parameters"]
     assert (name["name"], name["schema"]["minLength"]) == ("name", 1)
     assert name["schema"]["maxLength"] == share.MAX_GROUP_NAME
+    assert (match["name"], match["required"], match["schema"]["default"]) == (
+        "match",
+        False,
+        "whole",
+    )
 
 
 def test_admin_and_access_values_match_the_api(server):

@@ -29,6 +29,7 @@ from fastapi import APIRouter, Header, Query, Request, Response
 from pydantic import Field, ValidationError
 from sqlalchemy import RowMapping, text
 
+from ssc_contracts import app_database
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.capabilities import CapabilityDiff, EnvironmentCapabilities, diff_capabilities
 from ssc_contracts.cells import CellResourceState
@@ -43,6 +44,7 @@ from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.cell.resources import needs_for, notice_for, states, waiting_on
+from ssc_control.connections import service as connections
 from ssc_control.deploy import ledgers
 from ssc_control.deploy.tasks import defer_build, defer_deployment
 from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
@@ -53,6 +55,9 @@ from ssc_shared.runtime import Billing, billing_for
 router = APIRouter()
 
 MAX_PAGE: Final = 100
+PLACES_TOTAL: Final = app_database.ceiling(
+    app_database.BASE_TIER_MAX_CONNECTIONS, app_database.SUPERUSER_RESERVE
+)
 _NO_UPPER_BOUND: Final = 2**31 - 1
 
 ActorKindName = Literal["user", "workload", "schedule", "operator", "integration"]
@@ -284,7 +289,10 @@ _SELECT_BUILD = text(
     "left join ssc.release r on r.org_id = b.org_id and r.id = b.release_id "
     "where b.org_id = :org and b.id = :id"
 )
-_SELECT_CONNECTION_NAMES = text("select name from ssc.connection where org_id = :org")
+_SELECT_HAS_DATABASE = text(
+    "select exists (select 1 from ssc.app_database where org_id = :org and environment_id = :env)"
+    ", (select count(*) from ssc.app_database where org_id = :org)"
+)
 _SELECT_EGRESS_HOSTS = text("select host from ssc.egress_host where org_id = :org")
 _RELEASE_COLUMNS = (
     "select r.id as release_id, r.number, r.image_digest, r.manifest_digest, r.source_digest, "
@@ -347,19 +355,25 @@ async def _environment(uow: UnitOfWork, app_id: str, environment_id: str) -> Row
     return env
 
 
-async def _capability_diff(uow: UnitOfWork, manifest: object) -> CapabilityDiff:
-    """The manifest against the environment: the org's connections by name and its egress
-    allowlist (SSC-053); no Postgres until SSC-040."""
+async def _capability_diff(
+    uow: UnitOfWork, environment_id: str, manifest: object
+) -> CapabilityDiff:
+    """The manifest against the environment: its database or a free place on the org's
+    instance (as ``deployment_policy`` counts them), its linked connections and the org's egress
+    allowlist (SSC-053)."""
     try:
         parsed = Manifest.model_validate(manifest)
     except ValidationError as e:
         raise Refusal(ErrorCode.INTERNAL, evidence={"reason": "stored_manifest_invalid"}) from e
-    names = (await uow.conn.execute(_SELECT_CONNECTION_NAMES, {"org": uow.org_id})).scalars()
+    params = {"org": uow.org_id, "env": environment_id}
+    has_database, used = (await uow.conn.execute(_SELECT_HAS_DATABASE, params)).one()
+    linked = await connections.links(uow.conn, uow.org_id, environment_id)
     listed = (await uow.conn.execute(_SELECT_EGRESS_HOSTS, {"org": uow.org_id})).scalars()
     return diff_capabilities(
         parsed,
         EnvironmentCapabilities(
-            connections=frozenset(str(n) for n in names),
+            postgres=bool(has_database) or int(used) < PLACES_TOTAL,
+            connections=frozenset(link.connection.name for link in linked),
             egress_hosts=frozenset(str(h) for h in listed),
         ),
     )
@@ -712,7 +726,7 @@ async def start_build(
         raise Refusal(ErrorCode.REFERENCE_NOT_FOUND, evidence={"bundle_id": bundle_id})
     if bundle[0] != "stored":
         raise Refusal(ErrorCode.BUNDLE_NOT_UPLOADED, evidence={"bundle_id": bundle_id})
-    diff = await _capability_diff(uow, bundle[1])
+    diff = await _capability_diff(uow, environment_id, bundle[1])
     build_id = new_id("bld")
     await uow.conn.execute(
         _INSERT_BUILD,
@@ -755,7 +769,8 @@ async def get_build(build_id: Id, uow: UserUoW) -> BuildOut:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"build_id": build_id})
     await require_builder(uow, row["environment_id"])
     fields = {k: v for k, v in row.items() if k != "manifest"}
-    return BuildOut(**fields, capability_diff=await _capability_diff(uow, row["manifest"]))
+    diff = await _capability_diff(uow, row["environment_id"], row["manifest"])
+    return BuildOut(**fields, capability_diff=diff)
 
 
 # ── releases ─────────────────────────────────────────────────────────────────

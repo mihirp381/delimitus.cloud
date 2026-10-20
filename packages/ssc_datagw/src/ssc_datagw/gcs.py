@@ -253,7 +253,9 @@ class GcsConnector:
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         op, argument = s3_request(query.sql, self._target.prefix)
         if query.params:
-            raise QueryRefusedError("a GCS read takes no parameters")
+            raise QueryRefusedError(
+                "a GCS read takes no parameters", reason="unsupported_statement"
+            )
         headers = {
             "User-Agent": user_agent(query.tag),
             "Authorization": f"Bearer {self._signer.token(AUDIENCE)}",

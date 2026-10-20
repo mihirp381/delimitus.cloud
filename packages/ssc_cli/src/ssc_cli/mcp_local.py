@@ -26,6 +26,7 @@ doctor`` on it here, answering with the findings and their fix-its (SSC-093).
 import asyncio
 import hashlib
 import json
+import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -76,6 +77,7 @@ TOOLS: Final = (
     "rollback",
     "deploy",
     "request_share",
+    "find_groups",
     "list_connections",
     "describe_connection",
     "request_connection",
@@ -139,9 +141,14 @@ Folder = Annotated[
 Who = Annotated[
     str,
     Field(
-        pattern=r"^(usr_[a-z0-9]{20}|grp_[a-z0-9]{20}|org)$",
-        description="A user (`usr_...`), a group (`grp_...`), or `org` for everyone in the org.",
+        min_length=1,
+        max_length=200,
+        description="A user (`usr_...`), a group (`grp_...`) or its exact name (find_groups), "
+        "or `org` for everyone in the org.",
     ),
+]
+GroupName = Annotated[
+    str, Field(min_length=1, max_length=200, description="The start of a group's name.")
 ]
 ConnectionName = Annotated[
     str,
@@ -478,10 +485,30 @@ def deploy_folder(  # noqa: PLR0913  (keyword-only)
     return {**base, **step, **deployed}
 
 
+SUBJECT_ID: Final = re.compile(r"^(usr|grp)_[a-z0-9]{20}$")
+
+
 def subject_of(who: str) -> tuple[str, str | None]:
     if who == "org":
         return "org", None
     return ("user" if who.startswith("usr_") else "group"), who
+
+
+def resolved_who(c: ApiClient, who: str) -> str:
+    """``who``, with a group's name replaced by the id of the one group of that name."""
+    if who == "org" or SUBJECT_ID.match(who):
+        return who
+    groups = c.get_json(f"/v1/groups?{urlencode({'name': who})}")["groups"]
+    if len(groups) == 1:
+        return str(groups[0]["id"])
+    raise local_error("VALIDATION_FAILED", "No single group.", group_problem(who, groups))
+
+
+def group_problem(who: str, groups: list[Body]) -> str:
+    if not groups:
+        return f"There is no group named {who!r}. Call find_groups to see the org's groups."
+    ids = ", ".join(str(g["id"]) for g in groups)
+    return f"{len(groups)} groups are named {who!r}: {ids}. Pass the id of the one you mean."
 
 
 SHARE_PENDING_NEXT: Final = (
@@ -492,23 +519,65 @@ SHARE_PENDING_NEXT: Final = (
 )
 
 
+SUPERSEDED_REASON: Final = "Superseded by a newer share request from the same requester."
+SHARE_KINDS: Final = frozenset({"agent_share", "widen_audience", "exceed_ceiling"})
+type GrantKey = tuple[str, str, str | None]
+
+
+def grant_keys(grants: list[Body]) -> list[GrantKey]:
+    return [(g["role"], g["subject_kind"], g["subject_id"]) for g in grants]
+
+
+def my_pending_shares(c: ApiClient, env_id: str) -> list[Body]:
+    """The caller's pending share requests on the environment, newest first."""
+    me = c.get_json("/v1/whoami")["subject"]
+    query = urlencode({"state": "pending", "environment_id": env_id, "limit": 200})
+    found = c.get_json(f"/v1/approvals?{query}")["approvals"]
+    return [a for a in found if a["kind"] in SHARE_KINDS and a["requested_by_user_id"] == me]
+
+
+def with_grant(base: list[GrantKey], wanted: GrantKey) -> list[GrantKey]:
+    held = next((g for g in base if (g[1], g[2]) == (wanted[1], wanted[2])), None)
+    if held is not None and RANK[held[0]] >= RANK[wanted[0]]:
+        return base
+    return [g for g in base if (g[1], g[2]) != (wanted[1], wanted[2])] + [wanted]
+
+
+def supersede(c: ApiClient, share: Body, pending: list[Body]) -> list[str]:
+    """Cancel ``share`` and the requests opened with it for the same grants."""
+    same = set(grant_keys(share["payload"]["grants"]))
+    gone = [share["id"]] + [
+        a["id"]
+        for a in pending
+        if a["kind"] != "agent_share" and set(grant_keys(a["payload"].get("grants", []))) == same
+    ]
+    for approval_id in gone:
+        body = {"reason": SUPERSEDED_REASON}
+        c.post_json(f"/v1/approvals/{seg(approval_id)}/cancel", body, fresh_key())
+    return gone
+
+
 def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -> Body:
-    """``PUT`` the grants plus ``who`` at ``role`` as the agent; the API asks for each approval."""
+    """``PUT`` the grants plus ``who`` at ``role`` as the agent; the API asks for each approval.
+    The caller's pending share on the environment is folded in and cancelled (``superseded``)."""
     found = resolve_app(c, ref)
     env_id = environment_id(found, env)
-    kind, subject = subject_of(who)
+    kind, subject = subject_of(resolved_who(c, who))
     floor = FLOOR[Env(env)].value
-    wanted = (role or floor, kind, subject)
+    wanted: GrantKey = (role or floor, kind, subject)
     if RANK[wanted[0]] < RANK[floor]:
         raise local_error(
             "VALIDATION_FAILED",
             "Below the environment's floor.",
             f"A {wanted[0]!r} grant on {env} gives no access; preview is for builders.",
         )
+    pending: list[Body] | None = None
+    share: Body | None = None
+    superseded: list[str] = []
     attempt = 0
     while True:
         current, etag = c.get_grants(found["id"], env_id)
-        existing = [(g.role, g.subject_kind, g.subject_id) for g in current.grants]
+        existing: list[GrantKey] = [(g.role, g.subject_kind, g.subject_id) for g in current.grants]
         held = next((g for g in existing if (g[1], g[2]) == (kind, subject)), None)
         if held is not None and RANK[held[0]] >= RANK[wanted[0]]:
             return {
@@ -517,7 +586,15 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
                 "grants_version": current.grants_version,
                 "next": f"{who} already has {held[0]} on {env}. Nothing to ask for.",
             }
-        desired = [g for g in existing if (g[1], g[2]) != (kind, subject)] + [wanted]
+        if pending is None:
+            pending = my_pending_shares(c, env_id)
+            share = next((a for a in pending if a["kind"] == "agent_share"), None)
+        base = existing
+        if share is not None and share["payload"]["grants_version"] == current.grants_version:
+            base = grant_keys(share["payload"]["grants"])
+        desired = with_grant(base, wanted)
+        if share is not None and not superseded and set(desired) != set(base):
+            superseded = supersede(c, share, pending)
         grants = [GrantIn(role=r, subject_kind=k, subject_id=s) for r, k, s in desired]
         try:
             out = c.put_grants(found["id"], env_id, grants, etag)
@@ -526,6 +603,7 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
             if e.body.code != "PRECONDITION_STALE" or attempt == SHARE_ATTEMPTS:
                 raise
             continue
+        extra: Body = {"superseded": superseded} if superseded else {}
         if isinstance(out, GrantsPending):
             return {
                 "requested": True,
@@ -534,6 +612,7 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
                 "grants_version": out.grants_version,
                 "approval_ids": out.approval_ids,
                 "requirements": [q.model_dump() for q in out.requirements],
+                **extra,
                 "next": SHARE_PENDING_NEXT,
             }
         return {
@@ -541,8 +620,26 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
             "applied": True,
             "environment_id": env_id,
             "grants_version": out.grants_version,
+            **extra,
             "next": f"{who} now has {wanted[0]} on {env}.",
         }
+
+
+PUBLISHING_NOTE: Final = (
+    "The connection is linked, but the link is being published; retry in a minute."
+)
+
+
+def connection_schema(c: ApiClient, app: str, environment: str, connection: str) -> Body:
+    """The schema route; ``DATA_SNAPSHOT_STALE`` says the link is still being published."""
+    found = resolve_app(c, app)
+    env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(environment_id(found, environment))}"
+    try:
+        return c.get_json(f"{env_path}/connections/{seg(connection)}/schema")
+    except CliError as e:
+        if e.body.code == ErrorCode.DATA_SNAPSHOT_STALE:
+            e.body = e.body.model_copy(update={"detail": f"{e.body.detail} {PUBLISHING_NOTE}"})
+        raise
 
 
 def ask_connection(c: ApiClient, *, ref: str, connection: str, key: str) -> Body:
@@ -745,15 +842,16 @@ def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
         each table's name, each column's name and type, and the snapshot version they come
         from. Only a connection you may see; the answer is kept five minutes (`cached`)."""
 
-        def work(c: ApiClient) -> Body:
-            found = resolve_app(c, app)
-            env_id = environment_id(found, environment)
-            env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}"
-            return c.get_json(f"{env_path}/connections/{seg(connection)}/schema")
+        return run(open_client, lambda c: connection_schema(c, app, environment, connection))
 
-        return run(open_client, work)
+    def find_groups(name: GroupName) -> CallToolResult:
+        """The org's groups whose name starts with `name`, ignoring case: id, name and active
+        member count, at most 20. Share with one through request_share(who=its id)."""
+        query = urlencode({"name": name, "match": "prefix"})
+        return run(open_client, lambda c: c.get_json(f"/v1/groups?{query}"))
 
     server.add_tool(create_app, annotations=ask)
+    server.add_tool(find_groups, annotations=read)
     server.add_tool(list_connections, annotations=read)
     server.add_tool(describe_connection, annotations=read)
     return server
@@ -869,7 +967,8 @@ def build_server(
         company data; `exceed_ceiling` per data connection whose ceiling the audience passes)
         and lists them in `requirements`. Other people decide them; the last approval applies
         the change, and the sharing rules stay as they are until then. `idempotency_key` is
-        accepted but not needed: asking again answers the same pending requests."""
+        accepted but not needed: asking again answers the same pending requests. Your pending
+        share on the environment is folded into a new one and cancelled (`superseded`)."""
         del idempotency_key
         return run(open_client, lambda c: ask_share(c, ref=app, env=env, who=who, role=role))
 

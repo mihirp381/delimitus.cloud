@@ -43,7 +43,7 @@ from pytds import tds_base  # pyright: ignore[reportMissingTypeStubs]
 from sqlglot.errors import SqlglotError
 from sqlglot.tokens import TokenType
 
-from ssc_datagw.classify import tsql_refusal
+from ssc_datagw.classify import reason_of, tsql_refusal
 from ssc_datagw.connectors import (
     DESCRIBE_TAG,
     MAX_COLUMNS,
@@ -276,7 +276,9 @@ def placeholders(sql: str) -> list[tuple[int, int]]:
     try:
         tokens = sqlglot.tokenize(sql, read="tsql")
     except SqlglotError as exc:
-        raise QueryRefusedError("the statement does not parse") from exc
+        raise QueryRefusedError(
+            "the statement does not parse", reason="unsupported_statement"
+        ) from exc
     return [(t.start, t.end) for t in tokens if t.token_type == TokenType.PLACEHOLDER]
 
 
@@ -527,7 +529,7 @@ class SqlServerConnector:
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         reason = self._classify(query.sql)
         if reason is not None:
-            raise QueryRefusedError(reason)
+            raise QueryRefusedError(reason, reason=reason_of(reason))
         async with self._read(query) as cursor:
             yield cursor
 

@@ -41,15 +41,18 @@ const RETRY_STATUSES = new Set([502, 503, 504]);
  * A refusal or a failure. `code` is the data gateway's (`CONNECTION_NOT_GRANTED`,
  * `CONNECTION_SUSPENDED`, `QUERY_REFUSED`, `QUERY_FAILED`, `DAILY_BUDGET_SPENT`, ...),
  * `UNREACHABLE` (the gateway or the workload token could not be had) or `BAD_GATEWAY_RESPONSE`
- * (an answer that is not JSON); `sqlstate` is the database's for `QUERY_FAILED` when it gave one.
+ * (an answer that is not JSON); `sqlstate` is the database's for `QUERY_FAILED` when it gave one;
+ * `reason` is a `QUERY_REFUSED`'s (`other_database`, `not_read_only`, `multiple_statements`,
+ * `unsupported_statement`).
  */
 export class DataError extends Error {
-  constructor(code, message, status = null, sqlstate = null) {
+  constructor(code, message, status = null, sqlstate = null, reason = null) {
     super(`${code}: ${message}`);
     this.name = 'DataError';
     this.code = code;
     this.status = status;
     this.sqlstate = sqlstate;
+    this.reason = reason;
   }
 }
 
@@ -89,7 +92,13 @@ function expiry(token) {
 function refusal(status, raw) {
   try {
     const { error } = JSON.parse(raw);
-    return new DataError(String(error.code), String(error.message), status, error.sqlstate ?? null);
+    return new DataError(
+      String(error.code),
+      String(error.message),
+      status,
+      error.sqlstate ?? null,
+      error.reason ?? null,
+    );
   } catch {
     return new DataError('BAD_GATEWAY_RESPONSE', `the data gateway answered HTTP ${status}`, status);
   }

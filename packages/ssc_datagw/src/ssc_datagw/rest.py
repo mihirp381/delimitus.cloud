@@ -138,7 +138,7 @@ def request_path(sql: str) -> str:
         or "#" in sql
         or ".." in unquote(path).split("/")
     ):
-        raise QueryRefusedError(NOT_A_GET)
+        raise QueryRefusedError(NOT_A_GET, reason="unsupported_statement")
     return sql
 
 
@@ -327,11 +327,13 @@ class RestConnector:
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         path = request_path(query.sql)
         if query.params:
-            raise QueryRefusedError("a REST read takes no parameters")
+            raise QueryRefusedError(
+                "a REST read takes no parameters", reason="unsupported_statement"
+            )
         try:
             url = httpx2.URL(self._base + path)
         except httpx2.InvalidURL:
-            raise QueryRefusedError(NOT_A_GET) from None
+            raise QueryRefusedError(NOT_A_GET, reason="unsupported_statement") from None
         seconds = max(1, query.timeout_ms) / 1000
         client = httpx2.AsyncClient(
             verify=self._tls,

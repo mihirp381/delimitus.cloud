@@ -480,8 +480,9 @@ async def test_the_connections_sheet_prefixes_a_bare_range_and_refuses_another(
     await read(connector, ask("ORDERS"))
     assert source.seen.ranges == ["'Orders'!A2:B3", "'Orders'!A1:B2", "'Orders'"]
     for sql in ("Odd!A1:B2", "Odd", "'Orders 2'!A1"):
-        with pytest.raises(QueryRefusedError, match="^the range names another sheet"):
+        with pytest.raises(QueryRefusedError, match="^the range names another sheet") as refused:
             await read(connector, ask(sql))
+        assert refused.value.reason == "other_database"
     assert len(source.seen.ranges) == 3, "nothing refused was sent"
 
 

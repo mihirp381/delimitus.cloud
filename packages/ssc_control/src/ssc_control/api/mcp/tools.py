@@ -41,6 +41,7 @@ sets the warm flag (SSC-092) or a cell resource flag (SSC-087), which only a per
 
 import hashlib
 import json
+import re
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Final, Literal, cast
@@ -82,6 +83,7 @@ TOOLS: Final = (
     "rollback",
     "deploy",
     "request_share",
+    "find_groups",
     "list_connections",
     "describe_connection",
     "request_connection",
@@ -123,9 +125,14 @@ SizeBytes = Annotated[int, Field(gt=0, le=2**53 - 1, description="Length of the 
 Who = Annotated[
     str,
     Field(
-        pattern=r"^(usr_[a-z0-9]{20}|grp_[a-z0-9]{20}|org)$",
-        description="A user (`usr_...`), a group (`grp_...`), or `org` for everyone in the org.",
+        min_length=1,
+        max_length=200,
+        description="A user (`usr_...`), a group (`grp_...`) or its exact name (find_groups), "
+        "or `org` for everyone in the org.",
     ),
+]
+GroupName = Annotated[
+    str, Field(min_length=1, max_length=200, description="The start of a group's name.")
 ]
 ConnectionName = Annotated[
     str,
@@ -313,6 +320,23 @@ def ahead_note(ledgers: list[Body]) -> str:
         f"The database may have run: {named or 'none listed'}. If the release works with them, "
         "call rollback again with confirm=true; otherwise deploy a fix forward."
     )
+
+
+PUBLISHING_NOTE: Final = (
+    "The connection is linked, but the link is being published; retry in a minute."
+)
+
+
+async def connection_schema(c: V1, app: str, environment: str, connection: str) -> Body:
+    """The schema route; ``DATA_SNAPSHOT_STALE`` says the link is still being published."""
+    found = await resolve_app(c, app)
+    env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(environment_id(found, environment))}"
+    try:
+        return await c.get(f"{env_path}/connections/{seg(connection)}/schema")
+    except Refused as e:
+        if e.error.get("code") == ErrorCode.DATA_SNAPSHOT_STALE:
+            raise Refused({**e.error, "detail": f"{e.error['detail']} {PUBLISHING_NOTE}"}) from None
+        raise
 
 
 async def rollback_to(  # noqa: PLR0913  (the rollback tool's arguments)
@@ -564,11 +588,31 @@ async def deploy_to_preview(  # noqa: PLR0913  (keyword-only)
     return {**base, **step}
 
 
+SUBJECT_ID: Final = re.compile(r"^(usr|grp)_[a-z0-9]{20}$")
+
+
 def subject_of(who: str) -> tuple[str, str | None]:
-    """``(subject_kind, subject_id)`` for a ``Who``."""
+    """``(subject_kind, subject_id)`` for a ``Who`` that is ``org`` or an id."""
     if who == "org":
         return "org", None
     return ("user" if who.startswith("usr_") else "group"), who
+
+
+async def resolved_who(c: V1, who: str) -> str:
+    """``who``, with a group's name replaced by the id of the one group of that name."""
+    if who == "org" or SUBJECT_ID.match(who):
+        return who
+    groups = (await c.get(f"/v1/groups?{urlencode({'name': who})}"))["groups"]
+    if len(groups) == 1:
+        return str(groups[0]["id"])
+    raise Refused(local_error("VALIDATION_FAILED", "No single group.", group_problem(who, groups)))
+
+
+def group_problem(who: str, groups: list[Body]) -> str:
+    if not groups:
+        return f"There is no group named {who!r}. Call find_groups to see the org's groups."
+    ids = ", ".join(str(g["id"]) for g in groups)
+    return f"{len(groups)} groups are named {who!r}: {ids}. Pass the id of the one you mean."
 
 
 def grant_body(key: GrantKey) -> Body:
@@ -584,11 +628,49 @@ SHARE_PENDING_NEXT: Final = (
 )
 
 
+SUPERSEDED_REASON: Final = "Superseded by a newer share request from the same requester."
+SHARE_KINDS: Final = frozenset({"agent_share", "widen_audience", "exceed_ceiling"})
+
+
+def grant_keys(grants: list[Body]) -> list[GrantKey]:
+    return [(g["role"], g["subject_kind"], g["subject_id"]) for g in grants]
+
+
+async def my_pending_shares(c: V1, env_id: str) -> list[Body]:
+    """The caller's pending share requests on the environment, newest first."""
+    me = (await c.get("/v1/whoami"))["subject"]
+    query = urlencode({"state": "pending", "environment_id": env_id, "limit": 200})
+    found = (await c.get(f"/v1/approvals?{query}"))["approvals"]
+    return [a for a in found if a["kind"] in SHARE_KINDS and a["requested_by_user_id"] == me]
+
+
+def with_grant(base: list[GrantKey], wanted: GrantKey) -> list[GrantKey]:
+    held = next((g for g in base if (g[1], g[2]) == (wanted[1], wanted[2])), None)
+    if held is not None and grant_rules.RANK[held[0]] >= grant_rules.RANK[wanted[0]]:
+        return base
+    return [g for g in base if (g[1], g[2]) != (wanted[1], wanted[2])] + [wanted]
+
+
+async def supersede(c: V1, share: Body, pending: list[Body]) -> list[str]:
+    """Cancel ``share`` and the requests opened with it for the same grants."""
+    same = set(grant_keys(share["payload"]["grants"]))
+    gone = [share["id"]] + [
+        a["id"]
+        for a in pending
+        if a["kind"] != "agent_share" and set(grant_keys(a["payload"].get("grants", []))) == same
+    ]
+    for approval_id in gone:
+        body = {"reason": SUPERSEDED_REASON}
+        await c.post(f"/v1/approvals/{seg(approval_id)}/cancel", body, fresh_key())
+    return gone
+
+
 async def ask_share(c: V1, *, ref: str, env: str, who: str, role: str | None) -> Body:
-    """``PUT`` the grants plus ``who`` at ``role`` as the agent; the API asks for each approval."""
+    """``PUT`` the grants plus ``who`` at ``role`` as the agent; the API asks for each approval.
+    The caller's pending share on the environment is folded in and cancelled (``superseded``)."""
     found = await resolve_app(c, ref)
     env_id = environment_id(found, env)
-    kind, subject = subject_of(who)
+    kind, subject = subject_of(await resolved_who(c, who))
     wanted: GrantKey = (role or grant_rules.floor_of(env), kind, subject)
     problems = grant_rules.validate(env, [wanted])
     if problems:
@@ -600,13 +682,14 @@ async def ask_share(c: V1, *, ref: str, env: str, who: str, role: str | None) ->
             )
         )
     path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}/grants"
+    pending: list[Body] | None = None
+    share: Body | None = None
+    superseded: list[str] = []
     attempt = 0
     while True:
         current = await c.get(path)
         version = current["grants_version"]
-        existing: list[GrantKey] = [
-            (g["role"], g["subject_kind"], g["subject_id"]) for g in current["grants"]
-        ]
+        existing = grant_keys(current["grants"])
         held = next((g for g in existing if (g[1], g[2]) == (kind, subject)), None)
         if held is not None and grant_rules.RANK[held[0]] >= grant_rules.RANK[wanted[0]]:
             return {
@@ -615,7 +698,15 @@ async def ask_share(c: V1, *, ref: str, env: str, who: str, role: str | None) ->
                 "grants_version": version,
                 "next": f"{who} already has {held[0]} on {env}. Nothing to ask for.",
             }
-        desired = [g for g in existing if (g[1], g[2]) != (kind, subject)] + [wanted]
+        if pending is None:
+            pending = await my_pending_shares(c, env_id)
+            share = next((a for a in pending if a["kind"] == "agent_share"), None)
+        base = existing
+        if share is not None and share["payload"]["grants_version"] == version:
+            base = grant_keys(share["payload"]["grants"])
+        desired = with_grant(base, wanted)
+        if share is not None and not superseded and set(desired) != set(base):
+            superseded = await supersede(c, share, pending)
         try:
             r = await c.put(path, {"grants": [grant_body(g) for g in desired]}, f'"{version}"')
         except Refused as e:
@@ -624,6 +715,7 @@ async def ask_share(c: V1, *, ref: str, env: str, who: str, role: str | None) ->
                 raise
             continue
         out: Body = r.json()
+        extra: Body = {"superseded": superseded} if superseded else {}
         if r.status_code == 202:  # noqa: PLR2004  (accepted: waiting for approval)
             return {
                 "requested": True,
@@ -632,6 +724,7 @@ async def ask_share(c: V1, *, ref: str, env: str, who: str, role: str | None) ->
                 "grants_version": out["grants_version"],
                 "approval_ids": out["approval_ids"],
                 "requirements": out.get("requirements", []),
+                **extra,
                 "next": SHARE_PENDING_NEXT,
             }
         return {
@@ -639,6 +732,7 @@ async def ask_share(c: V1, *, ref: str, env: str, who: str, role: str | None) ->
             "applied": True,
             "environment_id": env_id,
             "grants_version": out["grants_version"],
+            **extra,
             "next": f"{who} now has {wanted[0]} on {env}.",
         }
 
@@ -787,15 +881,16 @@ def _org_tools(
         each table's name, each column's name and type, and the snapshot version they come
         from. Only a connection you may see; the answer is kept five minutes (`cached`)."""
 
-        async def work(c: V1) -> Body:
-            found = await resolve_app(c, app)
-            env_id = environment_id(found, environment)
-            env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(env_id)}"
-            return await c.get(f"{env_path}/connections/{seg(connection)}/schema")
+        return await run(api, ctx, lambda c: connection_schema(c, app, environment, connection))
 
-        return await run(api, ctx, work)
+    async def find_groups(name: GroupName, ctx: Context) -> CallToolResult:
+        """The org's groups whose name starts with `name`, ignoring case: id, name and active
+        member count, at most 20. Share with one through request_share(who=its id)."""
+        query = urlencode({"name": name, "match": "prefix"})
+        return await run(api, ctx, lambda c: c.get(f"/v1/groups?{query}"))
 
     server.add_tool(create_app, annotations=ask)
+    server.add_tool(find_groups, annotations=read)
     server.add_tool(list_connections, annotations=read)
     server.add_tool(describe_connection, annotations=read)
 
@@ -905,7 +1000,8 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         company data; `exceed_ceiling` per data connection whose ceiling the audience passes)
         and lists them in `requirements`. Other people decide them; the last approval applies
         the change, and the sharing rules stay as they are until then. `idempotency_key` is
-        accepted but not needed: asking again answers the same pending requests."""
+        accepted but not needed: asking again answers the same pending requests. Your pending
+        share on the environment is folded into a new one and cancelled (`superseded`)."""
         del idempotency_key
         return await run(api, ctx, lambda c: ask_share(c, ref=app, env=env, who=who, role=role))
 

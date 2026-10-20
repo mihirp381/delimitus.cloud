@@ -471,7 +471,9 @@ stateless, JSON replies. Code: `api/mcp/`.
   - `set_secret(app, env, name)`: takes no value. It checks the name and answers `set: false`
     with the `ssc secret set <slug> <NAME> --env <env>` command for the person to run, where the
     value is typed; no value passes through the API or an agent (SSC-026).
-  - `request_share(app, env, who, role?)`: `who` is a `usr_` or `grp_` id or `org`; `role`
+  - `request_share(app, env, who, role?)`: `who` is a `usr_` or `grp_` id, `org`, or a group's
+    exact name, looked up with `GET /v1/groups?name=` (`VALIDATION_FAILED` naming the ids when
+    none or several have it); `role`
     defaults to the floor (`user` on prod, `builder` on preview). A grant below the floor is
     `VALIDATION_FAILED` with `status: null`; a subject that already has the role asks nothing
     (`requested: false`). Otherwise it reads the grants and sends `PUT .../grants` as the agent
@@ -483,13 +485,19 @@ stateless, JSON replies. Code: `api/mcp/`.
     applies the change (GA-12 F21). When every approval is already in, the `PUT` applies it and
     the answer is `{requested: false, applied: true, environment_id, grants_version, next}`.
     `idempotency_key` is accepted and not needed: asking again answers the same requests.
+    When the caller already has a pending share on the environment, the new `PUT` holds its
+    grants plus the new one, and that request and those opened with it for the same grants are
+    cancelled first; the answer lists them in `superseded`.
+  - `find_groups(name)`: `GET /v1/groups?name=&match=prefix`, the org's groups whose name
+    starts with `name`, at most 20.
   - `request_connection(app, connection)`: a `connect_data_source` request on prod; the server
     validates the name.
   - `list_connections()`: `GET /v1/connections` as is: every connection for an org admin,
     otherwise those the caller may see; names and classifications, never an address
     (decision 029).
   - `describe_connection(app, environment, connection)`: `GET .../connections/{name}/schema`
-    for the app's `prod` or `preview`, as is (GA-5.8).
+    for the app's `prod` or `preview`, as is (GA-5.8); a `DATA_SNAPSHOT_STALE` refusal's
+    `detail` adds that the link is being published and to retry in a minute.
   - `create_app(slug, idempotency_key?)`: `POST /v1/apps` with the body `ssc apps create`
     sends; the caller owns the app. Audited `app.created` with `via_agent` (decision 029).
   - Asking opens pending requests only; another active admin of the org approves (decision

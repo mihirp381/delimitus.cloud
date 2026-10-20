@@ -98,8 +98,9 @@ agent's on the person's behalf. Connect once:
 
 The tools: `get_platform_requirements`, `get_org_deployment_policy`, `preflight`, `list_apps`,
 `create_app`, `get_app`, `get_status`, `list_releases`, `rollback`, `deploy` (to preview only),
-`get_logs`, `set_secret`, `request_share`, `list_connections`, `describe_connection` (the columns
-an environment sees through a connection) and `request_connection`. Call
+`get_logs`, `set_secret`, `request_share`, `find_groups` (a group's id from the start of its
+name), `list_connections`, `describe_connection` (the columns an environment sees through a
+connection) and `request_connection`. Call
 `get_platform_requirements` first: it gives the rules below and the platform package list, the
 same ones `ssc doctor` checks. `get_org_deployment_policy` says which internet hosts and data
 connections you may use, what waits for approval and whether the company's database has room. Run
@@ -126,10 +127,11 @@ finding marked `block`.
 the extra (`uv tool install 'ssc-cli[mcp]'`) and an agent's login, kept apart from the person's
 own; its calls are recorded the same way. Set it up once:
 
-- Claude Code: `ssc login --org <org id> --agent claude-code`, then `claude mcp add ssc -- ssc mcp`
-- Codex: `ssc login --org <org id> --agent codex`, then `codex mcp add ssc -- ssc mcp`, and set
-  `tool_timeout_sec = 1500` under `[mcp_servers.ssc]` in `~/.codex/config.toml`; the default of
-  60 seconds is shorter than a build.
+- Claude Code: `ssc login --org <org id> --agent claude-code`, then
+  `claude mcp add ssc-local -- ssc mcp`
+- Codex: `ssc login --org <org id> --agent codex`, then `codex mcp add ssc-local -- ssc mcp`, and
+  set `tool_timeout_sec = 1500` under `[mcp_servers.ssc-local]` in `~/.codex/config.toml`; the
+  default of 60 seconds is shorter than a build.
 - Cursor: `ssc login --org <org id> --agent cursor`, then in `.cursor/mcp.json` (named
   `ssc-local`, so `ssc init --force` leaves it):
 

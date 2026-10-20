@@ -66,7 +66,7 @@ def _hs256() -> str:
 
 def _alg_none() -> str:
     claims = jwt.decode(google_token(), options={"verify_signature": False})
-    return jwt.encode(claims, None, algorithm="none", headers={"kid": "google-1"})
+    return jwt.encode(claims, "", algorithm="none", headers={"kid": "google-1"})
 
 
 FORGED = {

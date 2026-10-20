@@ -41,6 +41,8 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.tokens import Token, TokenType
 
+from ssc_datagw.connectors import RefusedReason
+
 DENIED: Final = frozenset(
     {
         "currval",
@@ -535,3 +537,24 @@ def snowflake_refusal(sql: str, database: str) -> str | None:
         (why for node in root.walk() if (why := _snowflake_object(node, database)) is not None),
         None,
     )
+
+
+_REASONS: Final[tuple[tuple[str, RefusedReason], ...]] = (
+    ("the text is not exactly one statement", "multiple_statements"),
+    ("the statement holds another statement", "multiple_statements"),
+    ("the statement names another ", "other_database"),
+    ("the statement calls a function in another database", "other_database"),
+    ("the statement reads the SNOWFLAKE database", "other_database"),
+    ("the statement is not a SELECT", "not_read_only"),
+    ("the statement contains ", "not_read_only"),
+    ("the statement advances a sequence", "not_read_only"),
+    ("the statement calls a function that is refused", "not_read_only"),
+)
+
+
+def reason_of(text: str) -> RefusedReason:
+    """The app-facing reason for a classifier's ``text``."""
+    for start, reason in _REASONS:
+        if text.startswith(start):
+            return reason
+    return "unsupported_statement"

@@ -546,7 +546,10 @@ async def _lower_timeout(
             spec = await ports.release_specs.get(
                 conn, org_id=org_id, app_id=dep.app_id, release_id=str(live)
             )
-            longest = max(longest, timeout_for(spec.manifest.runtime, spec.framework))
+            longest = max(
+                longest,
+                timeout_for(spec.manifest.runtime, spec.framework, spec.manifest.schedules),
+            )
         except ReleaseSpecUnavailableError:
             log.warning("live release has no spec", extra={"deployment_id": dep.id})
     if seconds >= longest:

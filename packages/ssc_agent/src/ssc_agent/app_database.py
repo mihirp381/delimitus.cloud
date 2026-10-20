@@ -19,9 +19,10 @@ deployment records before it starts so a restore can go back to it (SSC-043); it
 server functions on ``postgres``, never the app's database. ``drop`` frees the place again
 (SSC-042): it stops the login, ends the sessions the login role still holds (a database with a
 session open cannot be dropped), gives the database back to ``cloudsqlsuperuser`` (the Admin API
-drops no database another role owns), drops the database and both roles,
-and deletes the database secrets. It is safe to re-run, and the agent's route refuses it while
-the environment's service still runs.
+drops no database another role owns), gives what the two roles own to ``cloudsqlsuperuser`` and
+drops their grants in the app database and in ``postgres`` (``REASSIGN OWNED``, ``DROP OWNED``),
+drops the database and both roles, and deletes the database secrets. It is safe to re-run, and
+the agent's route refuses it while the environment's service still runs.
 
 The password is made here and goes nowhere but the cell's Secret Manager, as new versions of
 ``DATABASE_URL`` and ``PGPASSWORD``: the role gets a SCRAM verifier computed here, so no SQL
@@ -153,6 +154,18 @@ def _new_salt() -> bytes:
     return secrets.token_bytes(16)
 
 
+def _disowned(roles: Sequence[str]) -> list[str]:
+    """Give what ``roles`` own in the batch's database to the admin, then drop their grants."""
+    listed = ", ".join(roles)
+    return [
+        f"SET ROLE {ADMIN_ROLE}",
+        *(f"GRANT {r} TO {ADMIN_ROLE} WITH INHERIT TRUE" for r in roles),
+        f"REASSIGN OWNED BY {listed} TO {ADMIN_ROLE}",
+        f"DROP OWNED BY {listed}",
+        *(f"REVOKE {r} FROM {ADMIN_ROLE}" for r in roles),
+    ]
+
+
 class CellAppDatabases:
     """App databases on the cell's instance, their secrets in the cell's Secret Manager."""
 
@@ -219,7 +232,7 @@ class CellAppDatabases:
                 [
                     f"SET ROLE {ADMIN_ROLE}",
                     f"ALTER ROLE {name} NOLOGIN",
-                    f"GRANT {name} TO {ADMIN_ROLE}",
+                    f"GRANT {name} TO {ADMIN_ROLE} WITH INHERIT TRUE",
                     f"SELECT pg_terminate_backend(pid, {TERMINATE_WAIT_MS}) "  # noqa: S608  (constant SQL fragments; names are validated)
                     f"FROM pg_stat_activity WHERE usename = '{name}'",
                     f"REVOKE {name} FROM {ADMIN_ROLE}",
@@ -238,13 +251,16 @@ class CellAppDatabases:
                     f"REVOKE {owner} FROM {ADMIN_ROLE}",
                 ],
             )
+        roles = [r for r, kept in ((name, state["has_login"]), (owner, state["has_owner"])) if kept]
+        if roles and state["has_database"]:
+            await self._sql.run(name, _disowned(roles))
         if state["has_database"]:
             await self._sql.drop_database(name)
-        if state["has_login"] or state["has_owner"]:
+        if roles:
             await self._sql.run(
                 "postgres",
                 [
-                    f"SET ROLE {ADMIN_ROLE}",
+                    *_disowned(roles),
                     f"DROP ROLE IF EXISTS {name}",
                     f"DROP ROLE IF EXISTS {owner}",
                 ],

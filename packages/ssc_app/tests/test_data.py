@@ -178,7 +178,11 @@ def test_a_refusal_names_its_code_and_is_not_asked_again(cell: Cell) -> None:
     cell.answers = [refusal("QUERY_FAILED", 422, sqlstate="42P01")]
     with pytest.raises(DataError) as e:
         helper(cell).query("finance", "select * from nowhere")
-    assert (e.value.code, e.value.sqlstate) == ("QUERY_FAILED", "42P01")
+    assert (e.value.code, e.value.sqlstate, e.value.reason) == ("QUERY_FAILED", "42P01", None)
+    cell.answers = [refusal("QUERY_REFUSED", 422, reason="not_read_only")]
+    with pytest.raises(DataError) as e:
+        helper(cell).query("finance", "delete from orders")
+    assert (e.value.code, e.value.reason) == ("QUERY_REFUSED", "not_read_only")
 
 
 def test_the_data_gateway_is_asked_once_more_while_it_starts(cell: Cell) -> None:

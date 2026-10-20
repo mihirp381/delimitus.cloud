@@ -548,8 +548,11 @@ async def test_another_table_than_the_connections_is_refused_before_the_source(
 ) -> None:
     connector = fake.connector(table="Orders")
     for sql in ("Many", "orders", "tblA1b2C3d4E5f6G7"):
-        with pytest.raises(QueryRefusedError, match="^the query's table is not the connection"):
+        with pytest.raises(
+            QueryRefusedError, match="^the query's table is not the connection"
+        ) as refused:
             await read(connector, ask(sql))
+        assert refused.value.reason == "other_database"
     assert fake.seen.requests == []
     _, rows = await read(connector, ask("Orders where {Paid}"))
     assert len(rows) == 3

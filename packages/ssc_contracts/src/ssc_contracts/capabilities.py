@@ -20,10 +20,14 @@ ChangeKind = Literal[
 SEVERITY_RANK: Final[Mapping[Severity, int]] = MappingProxyType({"high": 0, "medium": 1, "low": 2})
 MAX_LISTED_CHANGES: Final = 20
 ORG_ADMIN: Final = "org admin"
+TIER_FULL_CONSEQUENCE: Final = (
+    "Your company's database has no room for another app environment: the deploy fails with "
+    "DB_TIER_FULL until an org admin frees a place or moves to the bigger database."
+)
 
 _CONSEQUENCE: Final[Mapping[ChangeKind, str]] = MappingProxyType(
     {
-        "postgres_missing": "No Postgres here yet: DATABASE_URL is unset and database calls fail.",
+        "postgres_missing": TIER_FULL_CONSEQUENCE,
         "connection_missing": "Not granted here: calls through it are refused until it is granted.",
         "egress_host_missing": "Outbound calls to this host are blocked until it is allowed.",
         "schedules_declared": "This timer calls the app after deploy; preview timers start paused.",
@@ -52,8 +56,9 @@ class _Frozen(BaseModel):
 
 
 class EnvironmentCapabilities(_Frozen):
-    """What one environment grants today. ``egress_hosts`` are allowlist patterns
-    (``ssc_contracts.egress``): ``*.example.com`` grants ``api.example.com``."""
+    """What one environment grants today. ``postgres``: it has its database, or the org's
+    instance has a free place for the deploy to make one. ``egress_hosts`` are allowlist
+    patterns (``ssc_contracts.egress``): ``*.example.com`` grants ``api.example.com``."""
 
     postgres: bool = False
     connections: frozenset[str] = frozenset()

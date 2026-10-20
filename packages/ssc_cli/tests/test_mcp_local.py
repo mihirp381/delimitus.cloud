@@ -21,7 +21,14 @@ from ssc_cli.api import ApiClient
 from ssc_cli.commands.deploy import prepare_folder
 from ssc_cli.credentials import Login, store_login
 from ssc_cli.errors import CliError
-from ssc_cli.mcp_local import INSTRUCTIONS, TOOLS, agent_opener, build_server, seg
+from ssc_cli.mcp_local import (
+    INSTRUCTIONS,
+    PUBLISHING_NOTE,
+    TOOLS,
+    agent_opener,
+    build_server,
+    seg,
+)
 from ssc_control.api.mcp import tools as server_tools
 from ssc_control.api.mcp.server import INSTRUCTIONS as SERVER_INSTRUCTIONS
 from ssc_control.api.settings import Settings
@@ -354,12 +361,59 @@ async def test_request_share_never_lowers_a_role(fake_api):
     assert all(q.method == "GET" for q in fake_api.seen)
 
 
-def share_app(fake_api: Any, *grants_answers: httpx2.Response) -> tuple[str, str]:
+def share_app(
+    fake_api: Any, *grants_answers: httpx2.Response, pending: list[Any] | None = None
+) -> tuple[str, str]:
     """An app whose prod has one builder grant, answering GET grants in this order."""
     app = {"id": APP_ID, "slug": "a1", "environments": [{"id": ENV_ID, "name": "prod"}]}
     fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
     fake_api.add("GET", f"/v1/apps/{APP_ID}/environments/{ENV_ID}/grants", *grants_answers)
+    fake_api.add("GET", "/v1/whoami", whoami(True))
+    page = {"approvals": pending or [], "next_before": None}
+    fake_api.add("GET", "/v1/approvals", httpx2.Response(200, json=page))
     return APP_ID, f"/v1/apps/{APP_ID}/environments/{ENV_ID}/grants"
+
+
+def pending_share(approval_id: str, kind: str, grants: list[Any], by: str = USR) -> Any:
+    payload: dict[str, Any] = {"grants": grants}
+    if kind == "agent_share":
+        payload["grants_version"] = 3
+    return {"id": approval_id, "kind": kind, "requested_by_user_id": by, "payload": payload}
+
+
+async def test_a_second_share_supersedes_the_pending_one(fake_api):
+    held = {"role": "builder", "subject_kind": "user", "subject_id": USR}
+    first = {"role": "user", "subject_kind": "user", "subject_id": "usr_" + "b" * 20}
+    second = {"role": "user", "subject_kind": "user", "subject_id": "usr_" + "c" * 20}
+    pending = [
+        pending_share("apr_old", "agent_share", [held, first]),
+        pending_share("apr_wide", "widen_audience", [held, first]),
+        pending_share("apr_else", "agent_share", [held], by="usr_" + "d" * 20),
+    ]
+    app_id, path = share_app(fake_api, grants_at(3), pending=pending)
+    for gone in ("apr_old", "apr_wide"):
+        fake_api.add("POST", f"/v1/approvals/{gone}/cancel", httpx2.Response(200, json={}))
+    asked = {"environment_id": ENV_ID, "grants_version": 3, "approval_ids": ["apr_new"]}
+    fake_api.add("PUT", path, httpx2.Response(202, json=asked))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": second["subject_id"]}
+        )
+    assert not r.is_error, r.content
+    assert r.structured_content["superseded"] == ["apr_old", "apr_wide"]
+    posts = [q for q in fake_api.seen if q.method == "POST"]
+    assert [q.url.path for q in posts] == [
+        "/v1/approvals/apr_old/cancel",
+        "/v1/approvals/apr_wide/cancel",
+    ]
+    (put,) = [q for q in fake_api.seen if q.method == "PUT"]
+    assert json.loads(put.content)["grants"] == [held, first, second]
+    listed = next(q for q in fake_api.seen if q.url.path == "/v1/approvals")
+    assert dict(listed.url.params) == {
+        "state": "pending",
+        "environment_id": ENV_ID,
+        "limit": "200",
+    }
 
 
 def grants_at(version: int) -> httpx2.Response:
@@ -369,6 +423,54 @@ def grants_at(version: int) -> httpx2.Response:
         json={"environment_id": ENV_ID, "grants_version": version, "grants": [held]},
         headers={"etag": f'"{version}"'},
     )
+
+
+GRP = "grp_" + "g" * 20
+
+
+def groups(*ids: str) -> httpx2.Response:
+    found = [{"id": i, "name": "Audit", "member_count": 1} for i in ids]
+    return httpx2.Response(200, json={"groups": found})
+
+
+async def test_find_groups_asks_for_names_starting_with_it(fake_api):
+    fake_api.add("GET", "/v1/groups", groups(GRP))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("find_groups", {"name": "aud"})
+    assert r.structured_content == {"groups": [{"id": GRP, "name": "Audit", "member_count": 1}]}
+    (q,) = fake_api.seen
+    assert (q.url.path, dict(q.url.params)) == ("/v1/groups", {"name": "aud", "match": "prefix"})
+
+
+async def test_request_share_takes_a_group_s_name(fake_api):
+    app_id, path = share_app(fake_api, grants_at(3))
+    fake_api.add("GET", "/v1/groups", groups(GRP), groups(), groups(GRP, "grp_" + "h" * 20))
+    fake_api.add(
+        "PUT",
+        path,
+        httpx2.Response(200, json={"environment_id": ENV_ID, "grants_version": 4, "grants": []}),
+    )
+    async with Client(local_server(fake_api), cache=None) as client:
+        named = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": "Audit"}
+        )
+        missing = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": "Nobody"}
+        )
+        several = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": "Audit"}
+        )
+    assert named.structured_content["applied"] is True
+    put = next(q for q in fake_api.seen if q.method == "PUT")
+    assert {"role": "user", "subject_kind": "group", "subject_id": GRP} in json.loads(put.content)[
+        "grants"
+    ]
+    lookup = next(q for q in fake_api.seen if q.url.path == "/v1/groups")
+    assert dict(lookup.url.params) == {"name": "Audit"}
+    assert missing.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert "no group named 'Nobody'" in missing.structured_content["error"]["detail"]
+    assert several.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert "grp_" + "h" * 20 in several.structured_content["error"]["detail"]
 
 
 async def test_request_share_puts_the_grants_and_reports_every_requirement(fake_api):
@@ -676,6 +778,22 @@ async def test_describe_connection_reads_the_schema_route(fake_api, fake_problem
     assert refused.is_error
     assert refused.structured_content["error"]["code"] == "CONNECTION_NOT_GRANTED"
     assert no_env.structured_content["error"]["code"] == "ENVIRONMENT_NOT_FOUND"
+
+
+async def test_describe_connection_says_a_new_link_is_being_published(fake_api, fake_problem):
+    app = {"id": APP_ID, "slug": "a1", "environments": [{"id": ENV_ID, "name": "prod"}]}
+    path = f"/v1/apps/{APP_ID}/environments/{ENV_ID}/connections/hr/schema"
+    fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
+    fake_api.add("GET", path, fake_problem(503, "DATA_SNAPSHOT_STALE"))
+    async with Client(local_server(fake_api), cache=None) as client:
+        stale = await client.call_tool(
+            "describe_connection", {"app": APP_ID, "environment": "prod", "connection": "hr"}
+        )
+    assert stale.is_error
+    error = stale.structured_content["error"]
+    assert error["code"] == "DATA_SNAPSHOT_STALE"
+    assert error["detail"].endswith(f" {PUBLISHING_NOTE}")
+    assert PUBLISHING_NOTE == server_tools.PUBLISHING_NOTE
 
 
 @pytest.mark.parametrize("path", ["..", "/", "app/../.."])

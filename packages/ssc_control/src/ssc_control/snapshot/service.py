@@ -32,6 +32,12 @@ _CONFIRMED = text(
     "where k.org_id = :org and k.version >= :version and o.cell_label = k.cell_label"
 )
 
+_AWAITED = text(
+    "select coalesce(max(version), 0) + case when exists (select 1 from "
+    "procrastinate.procrastinate_jobs where queueing_lock = :lock and status in ('todo', 'doing')) "
+    "then 1 else 0 end from ssc.access_snapshot where org_id = :org"
+)
+
 
 def compile_lock(org_id: str) -> str:
     """The Procrastinate ``lock`` and ``queueing_lock`` of the org's compile job."""
@@ -49,6 +55,12 @@ async def mark_dirty(conn: AsyncConnection, org_id: str) -> int:
         org_id=org_id,
     )
     return int((await conn.execute(NEXT_VERSION, {"org": org_id})).scalar_one())
+
+
+async def awaited(conn: AsyncConnection, org_id: str) -> int:
+    """The version holding every committed change: the next while a compile waits or runs."""
+    row = await conn.execute(_AWAITED, {"org": org_id, "lock": compile_lock(org_id)})
+    return int(row.scalar_one())
 
 
 async def record_ack(conn: AsyncConnection, org_id: str, *, cell_label: str, version: int) -> None:

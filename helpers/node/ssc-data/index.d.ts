@@ -34,12 +34,28 @@ export interface QueryOptions {
 
 export type Param = string | number | boolean | null;
 
-/** A refusal (the data gateway's code), `UNREACHABLE` or `BAD_GATEWAY_RESPONSE`; `sqlstate` for `QUERY_FAILED`. */
+export type RefusedReason =
+  | 'other_database'
+  | 'not_read_only'
+  | 'multiple_statements'
+  | 'unsupported_statement';
+
+/**
+ * A refusal (the data gateway's code), `UNREACHABLE` or `BAD_GATEWAY_RESPONSE`; `sqlstate` for
+ * `QUERY_FAILED`, `reason` for `QUERY_REFUSED`.
+ */
 export class DataError extends Error {
   readonly code: string;
   readonly status: number | null;
   readonly sqlstate: string | null;
-  constructor(code: string, message: string, status?: number | null, sqlstate?: string | null);
+  readonly reason: RefusedReason | null;
+  constructor(
+    code: string,
+    message: string,
+    status?: number | null,
+    sqlstate?: string | null,
+    reason?: RefusedReason | null,
+  );
 }
 
 /** `https://ssc-datagw-<project number>.<region>.run.app` of the cell this app runs in. */

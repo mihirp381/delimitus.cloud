@@ -76,6 +76,7 @@ from ssc_datagw.connectors import (
     Query,
     QueryFailedError,
     QueryRefusedError,
+    RefusedReason,
     Table,
     UpstreamUnavailableError,
     encoded_size,
@@ -237,7 +238,8 @@ class FileBody(BaseModel):
 
 
 class RefusedError(Exception):
-    """One refusal: ``code`` in :data:`ERRORS`. ``reason`` goes to the log only."""
+    """One refusal: ``code`` in :data:`ERRORS`. ``reason`` goes to the log only; ``refused`` is
+    the app-facing reason of a ``QUERY_REFUSED``."""
 
     def __init__(
         self,
@@ -246,12 +248,14 @@ class RefusedError(Exception):
         reason: str = "",
         stage: Stage | None = None,
         sqlstate: str | None = None,
+        refused: RefusedReason | None = None,
     ) -> None:
         super().__init__(code)
         self.code = code
         self.reason = reason
         self.stage: Stage | None = stage
         self.sqlstate = sqlstate
+        self.refused: RefusedReason | None = refused
 
 
 async def _read_capped(request: Request, cap: int) -> bytes:
@@ -365,7 +369,12 @@ def _request_id(header: str | None) -> str:
 
 
 def error_body(
-    code: str, request_id: str, *, stage: Stage | None = None, sqlstate: str | None = None
+    code: str,
+    request_id: str,
+    *,
+    stage: Stage | None = None,
+    sqlstate: str | None = None,
+    refused: RefusedReason | None = None,
 ) -> dict[str, Any]:
     entry = ERRORS[code]
     error: dict[str, Any] = {
@@ -376,6 +385,8 @@ def error_body(
     }
     if sqlstate is not None:
         error["sqlstate"] = sqlstate
+    if refused is not None:
+        error["reason"] = refused
     return {"error": error, "request_id": request_id}
 
 
@@ -426,7 +437,11 @@ class DataGateway:
             record["outcome"] = "served"
         except RefusedError as refused:
             body = error_body(
-                refused.code, request_id, stage=refused.stage, sqlstate=refused.sqlstate
+                refused.code,
+                request_id,
+                stage=refused.stage,
+                sqlstate=refused.sqlstate,
+                refused=refused.refused,
             )
             status = ERRORS[refused.code].status
             record.update(outcome=refused.code, reason=refused.reason)
@@ -452,7 +467,11 @@ class DataGateway:
             record["outcome"] = "served"
         except RefusedError as refused:
             body = error_body(
-                refused.code, request_id, stage=refused.stage, sqlstate=refused.sqlstate
+                refused.code,
+                request_id,
+                stage=refused.stage,
+                sqlstate=refused.sqlstate,
+                refused=refused.refused,
             )
             status = ERRORS[refused.code].status
             record.update(outcome=refused.code, reason=refused.reason)
@@ -520,7 +539,7 @@ class DataGateway:
         except TimeoutError as exc:
             raise RefusedError("QUERY_TIMEOUT") from exc
         except QueryRefusedError as exc:
-            raise RefusedError("QUERY_REFUSED", reason=str(exc)) from exc
+            raise RefusedError("QUERY_REFUSED", reason=str(exc), refused=exc.reason) from exc
         except QueryFailedError as exc:
             raise RefusedError("QUERY_FAILED", reason=str(exc), sqlstate=exc.sqlstate) from exc
         except UpstreamUnavailableError as exc:
@@ -754,7 +773,7 @@ class DataGateway:
         except TimeoutError as exc:
             raise RefusedError("QUERY_TIMEOUT") from exc
         except QueryRefusedError as exc:
-            raise RefusedError("QUERY_REFUSED", reason=str(exc)) from exc
+            raise RefusedError("QUERY_REFUSED", reason=str(exc), refused=exc.reason) from exc
         except QueryFailedError as exc:
             raise RefusedError("QUERY_FAILED", reason=str(exc), sqlstate=exc.sqlstate) from exc
         except UpstreamUnavailableError as exc:

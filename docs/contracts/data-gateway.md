@@ -53,7 +53,7 @@ Every refusal has one body, and the first check that refuses answers:
 {"error": {"code": "CONNECTION_SUSPENDED", "stage": "admission", "message": "...", "fix_owner": "admin"}, "request_id": "..."}
 ```
 
-`sqlstate` is added for `QUERY_FAILED` when the database gave one. `message` is fixed per code; nothing from the statement, its parameters or the database's own message is returned.
+`sqlstate` is added for `QUERY_FAILED` when the database gave one. `reason` is added for `QUERY_REFUSED`, one of four values: `other_database` (the statement names another database, project, server or sheet than the connection's), `not_read_only` (not a read: a write, `NOTIFY`, `SET`, a sequence advance, a refused function), `multiple_statements` (more than one statement), `unsupported_statement` (anything else the classifier refuses: text it cannot parse, a refused string form, a refused view, a query the connector's grammar does not take, parameters a connector does not take). The classifier's own text, quoted in the connector sections below, goes to the log only. `message` is fixed per code; nothing from the statement, its parameters or the database's own message is returned.
 
 | Code | Status | Stage | Fix owner | When |
 |---|---|---|---|---|
@@ -69,7 +69,7 @@ Every refusal has one body, and the first check that refuses answers:
 | `VALIDATION_FAILED` | 422 | request | app | The body is not a query as above, or not a file request ([Files](#files)). |
 | `DAILY_BUDGET_SPENT` | 429 | limits | admin | The grant has used today's rows or bytes; resets at 00:00 UTC. |
 | `CONCURRENCY_LIMIT` | 429 | limits | app | Every slot of the grant stayed taken for 2 s. |
-| `QUERY_REFUSED` | 422 | classify | app | The connector's classifier refused the statement (not one plain read). |
+| `QUERY_REFUSED` | 422 | classify | app | The connector's classifier refused the statement (not one plain read); `reason` says which way. |
 | `QUERY_FAILED` | 422 | execute | app | The database refused the statement. |
 | `QUERY_TIMEOUT` | 408 | execute | app | The read ran past `timeout_ms` plus a 2 s grace. |
 | `CONNECTION_UNAVAILABLE` | 503 | execute | platform | The source could not be reached, the cell has no `SSC_CONNECTION_*` for it or one of another kind than the snapshot's, or the session is not what it must be (see the Postgres connector). |

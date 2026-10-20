@@ -69,6 +69,7 @@ from ssc_cli.models import (
     GrantsIn,
     GrantsOut,
     GrantsPending,
+    GrantsRequirements,
     GroupMatches,
     HealthOut,
     KillSwitchAccepted,
@@ -231,6 +232,13 @@ class ApiClient:
         if r.status_code == 202:
             return _parse(r, GrantsPending)
         return _parse(r, GrantsOut)
+
+    def grant_requirements(
+        self, app_id: str, environment_id: str, grants: list[GrantIn]
+    ) -> GrantsRequirements:
+        """The approvals replacing the grants with ``grants`` still needs; writes nothing."""
+        path = f"{_grants_path(app_id, environment_id)}/requirements"
+        return _parse(self._send("POST", path, body=GrantsIn(grants=grants)), GrantsRequirements)
 
     def create_bundle(self, app_id: str, body: BundleCreate) -> BundleOut:
         """The bundle recorded by digest: ``upload`` is set while its bytes are still needed."""

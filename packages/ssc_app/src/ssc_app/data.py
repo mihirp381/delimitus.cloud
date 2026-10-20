@@ -53,15 +53,22 @@ class DataError(RuntimeError):
     ``CONNECTION_SUSPENDED``, ``QUERY_REFUSED``, ``QUERY_FAILED``, ``DAILY_BUDGET_SPENT``, ...),
     ``UNREACHABLE`` (the gateway or the workload token could not be had) or
     ``BAD_GATEWAY_RESPONSE`` (an answer that is not JSON); ``sqlstate`` is the database's for
-    ``QUERY_FAILED`` when it gave one."""
+    ``QUERY_FAILED`` when it gave one; ``reason`` is a ``QUERY_REFUSED``'s (``other_database``,
+    ``not_read_only``, ``multiple_statements``, ``unsupported_statement``)."""
 
     def __init__(
-        self, code: str, message: str, status: int | None = None, sqlstate: str | None = None
+        self,
+        code: str,
+        message: str,
+        status: int | None = None,
+        sqlstate: str | None = None,
+        reason: str | None = None,
     ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.status = status
         self.sqlstate = sqlstate
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +131,13 @@ def _answer(status: int, raw: bytes) -> dict[str, Any]:
 def _refusal(status: int, raw: bytes) -> DataError:
     try:
         error = json.loads(raw)["error"]
-        return DataError(str(error["code"]), str(error["message"]), status, error.get("sqlstate"))
+        return DataError(
+            str(error["code"]),
+            str(error["message"]),
+            status,
+            error.get("sqlstate"),
+            error.get("reason"),
+        )
     except (ValueError, KeyError, TypeError):
         return DataError("BAD_GATEWAY_RESPONSE", f"the data gateway answered HTTP {status}", status)
 

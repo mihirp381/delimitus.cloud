@@ -129,7 +129,12 @@ test('a refusal names its code and is not asked again', async () => {
   cell.answers = [refusal('QUERY_FAILED', 422, { sqlstate: '42P01' })];
   await assert.rejects(
     helper().query('finance', 'select * from nowhere'),
-    (err) => err.code === 'QUERY_FAILED' && err.sqlstate === '42P01',
+    (err) => err.code === 'QUERY_FAILED' && err.sqlstate === '42P01' && err.reason === null,
+  );
+  cell.answers = [refusal('QUERY_REFUSED', 422, { reason: 'not_read_only' })];
+  await assert.rejects(
+    helper().query('finance', 'delete from orders'),
+    (err) => err.code === 'QUERY_REFUSED' && err.reason === 'not_read_only',
   );
 });
 

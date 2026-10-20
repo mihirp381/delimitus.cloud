@@ -564,7 +564,10 @@ async def test_done_when_the_gateway_serves_a_capped_read_and_refuses_the_matrix
     body = served.json()
     assert [r[0] for r in body["rows"]] == [1, 2, 3, 4, 5]
     assert (body["truncated"], body["truncated_reason"]) == (True, "max_rows")
-    assert refused.json()["error"]["code"] == "QUERY_REFUSED"
+    assert (refused.json()["error"]["code"], refused.json()["error"]["reason"]) == (
+        "QUERY_REFUSED",
+        "not_read_only",
+    )
     assert (failed.json()["error"]["code"], failed.json()["error"]["sqlstate"]) == (
         "QUERY_FAILED",
         "42501",

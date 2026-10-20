@@ -73,6 +73,12 @@ class RequirementOut(Wire):
     state: str | None = None
 
 
+class GrantsRequirements(Wire):
+    environment_id: str
+    grants_version: int
+    requirements: list[RequirementOut]
+
+
 class GrantsPending(Wire):
     """``202`` from ``PUT .../grants``: the change waits for approval and nothing was applied."""
 

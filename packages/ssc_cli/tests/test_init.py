@@ -330,6 +330,10 @@ def test_guide_gives_the_remote_server():
     assert re.search(r"\{[a-z_]+\}", text) is None
     (local,) = re.findall(r"(?s)```json\n(.*?)```", guide([], url))
     assert json.loads(local) == {"mcpServers": {"ssc-local": {"command": "ssc", "args": ["mcp"]}}}
+    assert "`claude mcp add ssc-local -- ssc mcp`" in text
+    assert "`codex mcp add ssc-local -- ssc mcp`" in text
+    assert "`[mcp_servers.ssc-local]`" in text
+    assert "mcp add ssc -- " not in text
 
 
 # ── only real commands ──────────────────────────────────────────────────────
