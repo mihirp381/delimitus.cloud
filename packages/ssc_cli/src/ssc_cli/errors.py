@@ -49,6 +49,8 @@ LOGIN_ENDED: Final = "LOGIN_ENDED"
 BAD_SECRET_INPUT: Final = "BAD_SECRET_INPUT"  # noqa: S105  (an error code, not a secret)
 FILE_EXISTS: Final = "FILE_EXISTS"
 CI_TOKEN_REFUSED: Final = "CI_TOKEN_REFUSED"  # noqa: S105  (an error code, not a secret)
+FOLDER_OUTSIDE_WORKSPACE: Final = "FOLDER_OUTSIDE_WORKSPACE"
+FOLDER_NOT_APP: Final = "FOLDER_NOT_APP"
 LOCAL_CODES: Final = frozenset(
     {
         NO_TOKEN,
@@ -80,6 +82,8 @@ LOCAL_CODES: Final = frozenset(
         BAD_SECRET_INPUT,
         FILE_EXISTS,
         CI_TOKEN_REFUSED,
+        FOLDER_OUTSIDE_WORKSPACE,
+        FOLDER_NOT_APP,
     }
 )
 

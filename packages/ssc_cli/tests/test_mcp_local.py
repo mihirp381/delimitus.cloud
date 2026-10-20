@@ -64,7 +64,7 @@ def _no_sleep(_: float) -> None:
     return None
 
 
-def local_server(fake_api: Any) -> MCPServer:
+def local_server(fake_api: Any, root: Path | None = None) -> MCPServer:
     def open_client() -> ApiClient:
         return ApiClient(
             "https://api.test",
@@ -73,7 +73,7 @@ def local_server(fake_api: Any) -> MCPServer:
             sleep=_no_sleep,
         )
 
-    return build_server(open_client, _no_sleep)
+    return build_server(open_client, _no_sleep, root=root)
 
 
 def api_server() -> MCPServer:
@@ -241,7 +241,7 @@ async def test_blocked_folder_sends_nothing(fake_api, tmp_path: Path):
         "environments": [{"id": "env_" + "p" * 20, "name": "preview", "url": None}],
     }
     fake_api.add("GET", f"/v1/apps/{app_id}", httpx2.Response(200, json=app))
-    async with Client(local_server(fake_api), cache=None) as client:
+    async with Client(local_server(fake_api, tmp_path), cache=None) as client:
         r = await client.call_tool("deploy", {"app": app_id, "path": str(folder)})
     assert r.is_error
     assert r.structured_content["error"]["code"] == "MANIFEST_INVALID"
@@ -353,7 +353,7 @@ async def test_an_agent_deploy_that_changes_billing_is_refused_here(fake_api, tm
     (folder / "main.py").write_text("print('hi')\n")
     app = {"id": APP_ID, "slug": "a1", "environments": [{"id": ENV_ID, "name": "preview"}]}
     fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
-    async with Client(local_server(fake_api), cache=None) as client:
+    async with Client(local_server(fake_api, tmp_path), cache=None) as client:
         r = await client.call_tool("deploy", {"app": APP_ID, "path": str(folder)})
     assert r.is_error
     error = r.structured_content["error"]
@@ -390,7 +390,7 @@ async def test_a_deploy_waiting_on_a_creation_says_so_and_does_not_wait(fake_api
         f"/v1/apps/{APP_ID}/environments/{ENV_ID}/deployments",
         httpx2.Response(202, json=accepted, headers={"Location": "/v1/o"}),
     )
-    async with Client(local_server(fake_api), cache=None) as client:
+    async with Client(local_server(fake_api, tmp_path), cache=None) as client:
         r = await client.call_tool("deploy", {"app": APP_ID, "path": str(folder)})
     assert not r.is_error, r.content
     out = r.structured_content
@@ -451,7 +451,7 @@ async def test_preflight_runs_the_doctor_here_and_sends_nothing(fake_api, tmp_pa
     (folder / "ssc.toml").write_text('schema = "ssc/v1"\n')
     (folder / "requirements.txt").write_text("flask\npytesseract\n")
     (folder / "app.py").write_text('app.run(host="0.0.0.0", port=int(os.environ["PORT"]))\n')
-    async with Client(local_server(fake_api), cache=None) as client:
+    async with Client(local_server(fake_api, tmp_path), cache=None) as client:
         blocked = await client.call_tool("preflight", {"path": str(folder)})
         (folder / "requirements.txt").write_text("flask\npdf2image\n")
         passed = await client.call_tool("preflight", {"path": str(folder)})
@@ -555,3 +555,46 @@ async def test_describe_connection_reads_the_schema_route(fake_api, fake_problem
     assert refused.is_error
     assert refused.structured_content["error"]["code"] == "CONNECTION_NOT_GRANTED"
     assert no_env.structured_content["error"]["code"] == "ENVIRONMENT_NOT_FOUND"
+
+
+@pytest.mark.parametrize("path", ["..", "/", "app/../.."])
+async def test_a_folder_outside_where_ssc_mcp_started_is_refused(fake_api, tmp_path: Path, path):
+    """B-7: the agent names folders inside the workspace only."""
+    root = tmp_path / "work"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "ssc.toml").write_text('schema = "ssc/v1"\n')
+    (tmp_path / "ssc.toml").write_text('schema = "ssc/v1"\n')
+    async with Client(local_server(fake_api, root), cache=None) as client:
+        deployed = await client.call_tool("deploy", {"app": APP_ID, "path": path})
+        checked = await client.call_tool("preflight", {"path": path})
+    for r in (deployed, checked):
+        assert r.is_error
+        assert r.structured_content["error"]["code"] == "FOLDER_OUTSIDE_WORKSPACE"
+    assert fake_api.seen == []
+
+
+async def test_a_folder_without_ssc_toml_is_refused(fake_api, tmp_path: Path):
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    (folder / "main.py").write_text("print('hi')\n")
+    async with Client(local_server(fake_api, tmp_path), cache=None) as client:
+        deployed = await client.call_tool("deploy", {"app": APP_ID, "path": "notes"})
+        checked = await client.call_tool("preflight", {"path": str(folder)})
+    for r in (deployed, checked):
+        assert r.is_error
+        assert r.structured_content["error"]["code"] == "FOLDER_NOT_APP"
+    assert fake_api.seen == []
+
+
+async def test_the_workspace_is_where_the_server_started(fake_api, tmp_path: Path, monkeypatch):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "ssc.toml").write_text('schema = "ssc/v1"\n')
+    monkeypatch.chdir(tmp_path / "app")
+    server = local_server(fake_api)
+    monkeypatch.chdir(tmp_path)
+    async with Client(server, cache=None) as client:
+        inside = await client.call_tool("preflight", {"path": "."})
+        outside = await client.call_tool("preflight", {"path": ".."})
+    assert not inside.is_error, inside.content
+    assert inside.structured_content["path"] == str((tmp_path / "app").resolve())
+    assert outside.structured_content["error"]["code"] == "FOLDER_OUTSIDE_WORKSPACE"

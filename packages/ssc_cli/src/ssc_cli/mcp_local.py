@@ -46,6 +46,8 @@ from ssc_cli.errors import (
     AGENT_TOKEN_REQUIRED,
     APP_NOT_FOUND,
     ENVIRONMENT_NOT_FOUND,
+    FOLDER_NOT_APP,
+    FOLDER_OUTSIDE_WORKSPACE,
     WAIT_TIMED_OUT,
     CliError,
     ExitCode,
@@ -56,6 +58,7 @@ from ssc_cli.session import Session
 from ssc_cli.wait import Budget, wait_for_build, wait_for_operation
 from ssc_contracts.app_env import secret_name_problem
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.manifest import MANIFEST_FILE
 from ssc_shared.fence import fence
 from ssc_shared.logs import MAX_LINES, MAX_SINCE_SECONDS
 from ssc_shared.redaction import redact
@@ -127,7 +130,9 @@ Folder = Annotated[
     Field(
         min_length=1,
         max_length=4096,
-        description="The app folder, holding ssc.toml; relative to where `ssc mcp` started.",
+        description="The app folder, holding ssc.toml, inside the folder where `ssc mcp` "
+        "started; relative to it, or absolute. Folders outside it, and folders without "
+        "ssc.toml, are refused.",
     ),
 ]
 Who = Annotated[
@@ -607,6 +612,38 @@ PREFLIGHT_BLOCKED: Final = (
 )
 
 
+def workspace_folder(root: Path, path: str) -> Path:
+    """The app folder ``path`` names, relative to ``root`` (where ``ssc mcp`` started, resolved
+    once), refused when it resolves outside ``root`` or holds no ``ssc.toml`` (B-7): an agent
+    deploys and checks the apps of its workspace only."""
+    folder = (root / path).resolve()
+    if not folder.is_relative_to(root):
+        raise local_error(
+            FOLDER_OUTSIDE_WORKSPACE,
+            "The folder is outside the workspace.",
+            f"{path} is not inside {root}, where `ssc mcp` started. Name a folder inside it.",
+            ExitCode.USAGE,
+        )
+    if folder.is_dir() and not (folder / MANIFEST_FILE).is_file():
+        raise local_error(
+            FOLDER_NOT_APP,
+            "The folder is not an app.",
+            f"{folder} holds no {MANIFEST_FILE}. Name the app's folder, the one holding "
+            f"{MANIFEST_FILE}.",
+            ExitCode.USAGE,
+        )
+    return folder
+
+
+def in_workspace(root: Path, path: str, then: Callable[[Path], CallToolResult]) -> CallToolResult:
+    """``then`` on the folder ``workspace_folder`` finds, or its refusal as a tool error."""
+    try:
+        folder = workspace_folder(root, path)
+    except CliError as e:
+        return refused(e)
+    return then(folder)
+
+
 def preflight_folder(folder: Path) -> Body:
     """``ssc doctor`` on the folder, as the ``preflight`` tool answers it."""
     if not folder.is_dir():
@@ -624,7 +661,7 @@ def preflight_folder(folder: Path) -> Body:
     }
 
 
-def _deployability(open_client: Opener) -> MCPServer:
+def _deployability(open_client: Opener, root: Path) -> MCPServer:
     """The server with the three tools an agent calls before it deploys (SSC-093), first."""
     server = MCPServer(name="ssc", instructions=INSTRUCTIONS)
     read = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -647,11 +684,14 @@ def _deployability(open_client: Opener) -> MCPServer:
         """Check a folder before deploying it, as `ssc doctor` does, on this machine: each
         finding with its code, severity (`block`, `warn` or `info`), file and line, the rule it
         checks and how to fix it. Deploy only once nothing blocks."""
-        folder = Path(path).resolve()
-        try:
-            return ok(preflight_folder(folder))
-        except CliError as e:
-            return refused(e)
+
+        def check(folder: Path) -> CallToolResult:
+            try:
+                return ok(preflight_folder(folder))
+            except CliError as e:
+                return refused(e)
+
+        return in_workspace(root, path, check)
 
     server.add_tool(get_platform_requirements, annotations=read)
     server.add_tool(get_org_deployment_policy, annotations=read)
@@ -714,9 +754,14 @@ def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
     return server
 
 
-def build_server(open_client: Opener, sleep: Sleep, wait: float = WAIT_SECONDS) -> MCPServer:
-    """The stdio server with the sixteen tools, each opening its own client."""
-    server = _org_tools(_deployability(open_client), open_client)
+def build_server(
+    open_client: Opener, sleep: Sleep, wait: float = WAIT_SECONDS, root: Path | None = None
+) -> MCPServer:
+    """The stdio server with the sixteen tools, each opening its own client. ``root``, the
+    current folder unless given, is resolved here once: ``deploy`` and ``preflight`` take
+    folders inside it only."""
+    root = (Path.cwd() if root is None else root).resolve()
+    server = _org_tools(_deployability(open_client, root), open_client)
     read = ToolAnnotations(read_only_hint=True, open_world_hint=False)
     ask = ToolAnnotations(
         read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
@@ -795,10 +840,13 @@ def build_server(open_client: Opener, sleep: Sleep, wait: float = WAIT_SECONDS) 
         long, with what to do `next`. Call again with the same arguments and the returned
         `idempotency_key`; nothing starts twice."""
         key = idempotency_key or fresh_key()
-        folder = Path(path).resolve()
-        return run(
-            open_client,
-            lambda c: deploy_folder(c, ref=app, folder=folder, key=key, sleep=sleep, wait=wait),
+        return in_workspace(
+            root,
+            path,
+            lambda folder: run(
+                open_client,
+                lambda c: deploy_folder(c, ref=app, folder=folder, key=key, sleep=sleep, wait=wait),
+            ),
         )
 
     def request_share(
