@@ -3,7 +3,8 @@
 Schedules come from the manifest and change only with a deploy; here a person who may change the
 environment lists them, reads their runs, pauses and resumes them and runs one now. A manual run
 answers ``202`` with a ``Location`` to poll; the worker dispatches it. Preview schedules are
-stored paused and only run this way.
+stored paused and only run this way. An agent credential is ``AGENT_SESSION_REFUSED`` on each
+change, before any lookup.
 """
 
 from datetime import UTC, datetime
@@ -289,6 +290,7 @@ async def get_run(
     responses=problem_responses(
         *POST_COMMON,
         ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
         ErrorCode.NOT_FOUND,
         ErrorCode.SCHEDULE_DELETED,
         ErrorCode.APP_NOT_ACTIVE,
@@ -300,6 +302,8 @@ async def run_now(app_id: Id, environment_id: Id, schedule_id: Id, uow: UserUoW)
 
     ``TIMER_RUN_IN_FLIGHT`` while a manual run waits or any run is running; ``APP_NOT_ACTIVE``
     while the app is disabled or quarantined."""
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     user_id = await _environment(uow, app_id, environment_id)
     try:
         run_id = await service.request_run(
@@ -328,12 +332,18 @@ async def run_now(app_id: Id, environment_id: Id, schedule_id: Id, uow: UserUoW)
     response_model=ScheduleOut,
     dependencies=[UserIdempotent],
     responses=problem_responses(
-        *POST_COMMON, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND, ErrorCode.SCHEDULE_DELETED
+        *POST_COMMON,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
+        ErrorCode.NOT_FOUND,
+        ErrorCode.SCHEDULE_DELETED,
     ),
 )
 async def pause_schedule(app_id: Id, environment_id: Id, schedule_id: Id, uow: UserUoW) -> Response:
     """Pause by hand until a person resumes it. A schedule SSC paused becomes paused by hand;
     one already paused by hand, or in preview, is left as it is."""
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     await _environment(uow, app_id, environment_id)
     try:
         await service.pause(
@@ -355,6 +365,7 @@ async def pause_schedule(app_id: Id, environment_id: Id, schedule_id: Id, uow: U
     responses=problem_responses(
         *POST_COMMON,
         ErrorCode.FORBIDDEN,
+        ErrorCode.AGENT_SESSION_REFUSED,
         ErrorCode.NOT_FOUND,
         ErrorCode.SCHEDULE_DELETED,
         ErrorCode.SCHEDULE_CANNOT_RESUME,
@@ -366,6 +377,8 @@ async def resume_schedule(
     """Arm it again from now; the caller becomes whose authority it runs on. An active schedule
     is left as it is. ``SCHEDULE_CANNOT_RESUME`` in preview, while the kill switch holds the
     schedule, while the app is not active, and while the app's owner is not active."""
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     user_id = await _environment(uow, app_id, environment_id)
     try:
         await service.resume(

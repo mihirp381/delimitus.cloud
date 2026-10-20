@@ -118,8 +118,7 @@ def test_every_marked_route_is_known() -> None:
 
 
 def test_every_other_write_is_listed() -> None:
-    listed = adversarial.AGENT_MAY.keys() | adversarial.UNDECIDED.keys()
-    assert adversarial.unmarked_writes(SPEC) == listed
+    assert adversarial.unmarked_writes(SPEC) == adversarial.AGENT_MAY.keys()
 
 
 @pytest.mark.parametrize("key", MARKED)
@@ -145,24 +144,6 @@ def test_the_person_gets_past_the_agent_check(arena: Arena, key: str) -> None:
     probe = KNOWN[key](arena.a.ids)
     with arena.v1(arena.a.human) as c:
         assert got_of(send(c, probe)) != problem("AGENT_SESSION_REFUSED")
-
-
-# A route's agent check comes before its lookup, so an app that does not exist changes nothing.
-UNDECIDED_PROBES: dict[str, Callable[[Arena], tuple[str, str, dict[str, Any]]]] = {
-    "kill-switch": lambda w: ("POST", f"/v1/apps/app_{ZERO}/kill-switch", {"mode": "disable"}),
-    "enable": lambda w: ("POST", f"/v1/apps/app_{ZERO}/enable", {}),
-    "owner": lambda w: ("PUT", f"/v1/apps/app_{ZERO}/owner", {"user_id": w.a.org.admin_user_id}),
-}
-
-
-@pytest.mark.xfail(strict=True, reason="finding: no agent check on kill-switch, enable, owner")
-@pytest.mark.parametrize("name", sorted(UNDECIDED_PROBES))
-def test_undecided_writes_refuse_an_agent_session(arena: Arena, name: str) -> None:
-    method, path, body = UNDECIDED_PROBES[name](arena)
-    before = arena.snapshot()
-    got = got_of(call(arena.url, arena.a.api.access, method, path, body))
-    assert changed(before, arena.snapshot()) == []
-    assert got == problem("AGENT_SESSION_REFUSED")
 
 
 # ── 2. the victim's refs through every tool ─────────────────────────────────

@@ -24,13 +24,16 @@ can do no more than that person, and every write is audited as the person with
 
 ## What an agent cannot do
 
-Every route below answers an agent credential with `403 AGENT_SESSION_REFUSED`, even when the
-person is an org admin, and changes nothing. They are the routes whose responses in
-`openapi.json` name that code:
+The rule: the agent interface's tools are the only agent surface. A `/v1` write that does not
+back one of them answers an agent credential with `403 AGENT_SESSION_REFUSED`, even when the
+person is an org admin, before any lookup, and changes nothing. They are the routes whose
+responses in `openapi.json` name that code:
 
 - Decide an approval request (`/decide`); recording a decision (`/decision`) is for SSC staff
   only, and a staff agent is refused too.
 - Promote to prod, warm an app, link or unlink a repository, delete an app.
+- Pull an app's kill switch, enable a stopped app, give an app to another member.
+- Pause or resume a schedule, or run one now.
 - Set or delete a secret, change who may read one, rotate a database password.
 - Create or change a data connection, attach or detach one from an environment.
 - Change the egress allowlist, the agent policy, a cell resource, or a CI token.
@@ -41,12 +44,12 @@ on every one of them (the matrix checks this too).
 
 ## What the matrix proves
 
-Offline, against two orgs on one control plane, with an agent of org A attacking org B. 402
+Offline, against two orgs on one control plane, with an agent of org A attacking org B. 411
 cases:
 
 | Group | What it checks | Cases |
 |---|---|---|
-| 1. Refused routes | each route above, with an API agent token: `AGENT_SESSION_REFUSED` and no row changed in either org; the test fails when a route that names the code is missing from the probe map, or when a new write is neither refused nor listed | 46 |
+| 1. Refused routes | each route above, with an API agent token: `AGENT_SESSION_REFUSED` and no row changed in either org; the test fails when a route that names the code is missing from the probe map, or when a new write is neither refused nor listed | 55 |
 | 2. Another org | every tool with B's app ids, release, operation, connection, secret name, user and bundle digest: not found or refused, nothing of B's in the answer; for B's slug, connection, secret name and user the answer is the one for a name that exists nowhere; B's digest does not skip A's upload | 25 |
 | 3. Hostile input | every string argument of every tool, and three `/v1` inputs, with 1 MiB, control characters, `../../`, `${HOME}`, `$(id)`, a JSON object, 64 characters and a trailing dot: a validation refusal or `413`, never a `500`, and never written to the logs | 287 |
 | 4. Credentials | an MCP token on `/v1`, an API token, a CI token or a refresh token on `/mcp`, a refresh token as a bearer, B's ids in A's token, a token after `/revoke`: `401` (with `resource_metadata` on `/mcp`) or not found | 9 |
@@ -89,13 +92,11 @@ Fixed in this change, each with a test:
   but with `200` and a tool error instead of the `401` that tells the client to sign in again.
 - An `idempotency_key` with a control character made the tool fail with `INTERNAL`.
 - A `422` wrote the refused input into the API's refusal log.
+- `POST /v1/apps/{id}/kill-switch`, `POST /v1/apps/{id}/enable`, `PUT /v1/apps/{id}/owner` and
+  schedule pause, resume and run accepted an agent credential.
 
 Open:
 
-- `POST /v1/apps/{id}/kill-switch`, `POST /v1/apps/{id}/enable` and `PUT /v1/apps/{id}/owner`
-  accept an agent credential. Schedule pause, resume and run do too. None of them is marked as
-  refused or listed as allowed on purpose; the matrix keeps them as failing probes until that
-  is decided.
 - `request_share` opens an approval request for a user id that is not in the org (another
   org's included). Nothing changes until an admin approves, and applying the grants refuses the
   unknown user, but the request is created. The answer is the same as for an id that exists

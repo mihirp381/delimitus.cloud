@@ -81,6 +81,23 @@ KNOWN: Final[Mapping[str, Callable[[Ids], Probe]]] = {
     "POST /v1/apps/{app_id}/delete": lambda i: Probe(
         "POST", f"/v1/apps/{i.app}/delete", {"confirm": f"not-{i.slug}"}
     ),
+    # The agent check comes before the lookup, so an app that does not exist changes nothing.
+    "POST /v1/apps/{app_id}/enable": lambda _: Probe("POST", f"/v1/apps/app_{ZERO}/enable"),
+    "POST /v1/apps/{app_id}/kill-switch": lambda _: Probe(
+        "POST", f"/v1/apps/app_{ZERO}/kill-switch", {"mode": "disable"}
+    ),
+    "PUT /v1/apps/{app_id}/owner": lambda i: Probe(
+        "PUT", f"/v1/apps/app_{ZERO}/owner", {"user_id": i.user}
+    ),
+    "POST /v1/apps/{app_id}/environments/{environment_id}/schedules/{schedule_id}/pause": (
+        lambda i: Probe("POST", f"{_env(i, i.preview)}/schedules/sch_{ZERO}/pause")
+    ),
+    "POST /v1/apps/{app_id}/environments/{environment_id}/schedules/{schedule_id}/resume": (
+        lambda i: Probe("POST", f"{_env(i, i.preview)}/schedules/sch_{ZERO}/resume")
+    ),
+    "POST /v1/apps/{app_id}/environments/{environment_id}/schedules/{schedule_id}/runs": (
+        lambda i: Probe("POST", f"{_env(i, i.preview)}/schedules/sch_{ZERO}/runs")
+    ),
     "PUT /v1/apps/{app_id}/environments/{environment_id}/connections/{name}": lambda i: Probe(
         "PUT", f"{_env(i, i.preview)}/connections/{NO_CONNECTION}", {}
     ),
@@ -143,21 +160,6 @@ AGENT_MAY: Final[Mapping[str, str]] = {
     "POST /v1/apps/{app_id}/environments/{environment_id}/builds": "deploy",
     "POST /v1/apps/{app_id}/environments/{environment_id}/deployments": "deploy, rollback",
     "PUT /v1/apps/{app_id}/environments/{environment_id}/grants": "opens agent_share requests",
-}
-
-UNDECIDED: Final[Mapping[str, str]] = {
-    "POST /v1/apps/{app_id}/kill-switch": "an agent session stops the app",
-    "POST /v1/apps/{app_id}/enable": "an agent session starts a stopped app again",
-    "PUT /v1/apps/{app_id}/owner": "an agent session gives the app to another member",
-    "POST /v1/apps/{app_id}/environments/{environment_id}/schedules/{schedule_id}/pause": (
-        "an agent session pauses a schedule"
-    ),
-    "POST /v1/apps/{app_id}/environments/{environment_id}/schedules/{schedule_id}/resume": (
-        "an agent session resumes a schedule"
-    ),
-    "POST /v1/apps/{app_id}/environments/{environment_id}/schedules/{schedule_id}/runs": (
-        "an agent session runs a job now"
-    ),
 }
 
 
@@ -280,7 +282,7 @@ def refusals(c: httpx2.Client, spec: Mapping[str, Any], ids: Ids) -> list[Row]:
             continue
         probe = build(ids)
         out.append(judged("1", key, problem(probe.expected), got_of(send(c, probe))))
-    for key in sorted(unmarked_writes(spec) - AGENT_MAY.keys() - UNDECIDED.keys()):
+    for key in sorted(unmarked_writes(spec) - AGENT_MAY.keys()):
         out.append(Row("1", key, "refused or listed", "unlisted write", FAIL))
     return out
 

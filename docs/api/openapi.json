@@ -8882,7 +8882,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {
@@ -11238,7 +11238,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {
@@ -11388,7 +11388,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {
@@ -11681,7 +11681,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {
@@ -12770,7 +12770,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {
@@ -12988,7 +12988,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "404": {
             "content": {
