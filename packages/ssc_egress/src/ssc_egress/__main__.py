@@ -46,6 +46,7 @@ from typing import Final, NoReturn  # noqa: E402
 from ssc_contracts.egress import PROXY_PORT  # noqa: E402
 from ssc_egress.envoy import EgressConfig, Policy, bootstrap, envoy_args  # noqa: E402
 from ssc_egress.runner import MAX_AGE_SECONDS, ListenerWriter, follow  # noqa: E402
+from ssc_shared import redaction  # noqa: E402
 from ssc_shared.access import ViewHolder  # noqa: E402
 from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of  # noqa: E402
 from ssc_shared.snapshot_feed import SnapshotFeed  # noqa: E402
@@ -128,6 +129,7 @@ def _exit(code: int) -> NoReturn:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
+    redaction.install()
     try:
         org_id = _need(os.environ, "SSC_ORG_ID")
         bucket = _need(os.environ, "SSC_CELL_BUCKET")

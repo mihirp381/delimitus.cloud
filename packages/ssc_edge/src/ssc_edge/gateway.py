@@ -22,6 +22,7 @@ from typing import Final
 import httpx2
 
 from ssc_edge.envoy import EnvoyConfig, render
+from ssc_shared import redaction
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ def _stop(*procs: subprocess.Popen[bytes]) -> None:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
+    redaction.install()
     port = int(os.environ.get("PORT", "8080"))
     authz_port = int(os.environ.get("SSC_AUTHZ_PORT", "9001"))
     stream_port = int(os.environ.get("SSC_STREAM_PORT", "9002"))

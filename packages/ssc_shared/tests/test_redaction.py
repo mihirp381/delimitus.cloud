@@ -2,6 +2,7 @@
 assembled at run time and fake."""
 
 import logging
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -40,10 +41,60 @@ def test_a_known_credential_format_is_masked(secret: str) -> None:
         (f"password: {FAKE}", f"password: {MASK}"),
         (f'{{"api_key": "{FAKE}"}}', f'{{"api_key": "{MASK}"}}'),
         (f"db_passwd='{FAKE}'", f"db_passwd='{MASK}'"),
+        (f"Cookie: session={FAKE}; theme=dark", f"Cookie: {MASK}"),
+        (f"set-cookie: sid={FAKE}; HttpOnly", f"set-cookie: {MASK}"),
+        (f"Authorization: Token {FAKE}", f"Authorization: Token {MASK}"),
+        (f"authorization: AWS4-HMAC-SHA256 {FAKE}", f"authorization: AWS4-HMAC-SHA256 {MASK}"),
+        (f"GET /o?X-Goog-Signature={FAKE}&a=1", f"GET /o?X-Goog-Signature={MASK}&a=1"),
+        (f"GET /o?a=1&X-Amz-Signature={FAKE}", f"GET /o?a=1&X-Amz-Signature={MASK}"),
+        (f"GET /o?Signature={FAKE} 200", f"GET /o?Signature={MASK} 200"),
+        (f"GET /o?x=1&sig={FAKE}", f"GET /o?x=1&sig={MASK}"),
+        (f"x-goog-signature: {FAKE}", f"x-goog-signature: {MASK}"),
+        (f"X-Amz-Signature: {FAKE}", f"X-Amz-Signature: {MASK}"),
+        (f"Signature: {FAKE}", f"Signature: {MASK}"),
+        (f"glpat-{FAKE}", MASK),
+        ("npm_" + "a1B2" * 9, MASK),
+        (f"posting to https://hooks.slack.com/services/T0/B0/{FAKE}", f"posting to {MASK}"),
+        (f"postgres://ssc:p@ss:{FAKE}@db/ssc", f"postgres://ssc:{MASK}@db/ssc"),
+        (f'password: "two words {FAKE}"', f'password: "{MASK}"'),
+        (f"secret='with space {FAKE}'", f"secret='{MASK}'"),
+        (f'{{"token": "a b c {FAKE}"}}', f'{{"token": "{MASK}"}}'),
     ],
 )
 def test_a_secret_in_context_is_masked(text: str, masked: str) -> None:
     assert redact(text) == masked
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "the cookie banner was dismissed",
+        "cookies: 3 set",
+        "authorization failed for usr_abc",
+        "Authorization header missing",
+        "GET /search?signed=1&q=sigma&design=2",
+        "signature: ok",
+        "glpat-short",
+        "npm_install finished",
+        "see https://hooks.slack.com/ for webhooks",
+        "https://example.com:8080/a@b",
+        'password: "abc"',
+        "mailto:ana@example.com",
+    ],
+)
+def test_a_lookalike_is_left_alone(text: str) -> None:
+    assert redact(text) == text
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["token" * 20000, "a" * 100000, "Cookie: " + "a=b; " * 20000],
+    ids=["token", "a", "cookie"],
+)
+def test_a_long_line_is_redacted_quickly(line: str) -> None:
+    started = time.perf_counter()
+    redact(line)
+    assert time.perf_counter() - started < 0.05
 
 
 def test_ordinary_text_is_left_alone() -> None:
