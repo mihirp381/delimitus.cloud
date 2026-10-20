@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 import httpx2
 import pytest
 
+from ssc_cli.api import BACKOFF
 from ssc_cli.credentials import (
     SERVICE,
     Login,
@@ -318,8 +319,56 @@ def test_a_refresh_is_not_sent_twice_when_the_auth_host_may_have_used_it():
 
 
 def test_the_auth_host_is_asked_at_most_four_times():
-    sent, transport = _flaky(httpx2.Response(502))
+    # 503 is the one status a refresh is retried on (B-3).
+    sent, transport = _flaky(httpx2.Response(503))
     with AuthClient(AUTH, transport=transport, sleep=lambda _: None) as auth:
         with pytest.raises(CliError):
             auth.refresh("ssc_rt.org.secret")
     assert len(sent) == 4
+
+
+@pytest.mark.parametrize("status", [502, 504])
+def test_a_refresh_is_not_sent_twice_after_a_gateway_answer(status):
+    """B-3: a 502 or 504 may come after the auth host used the refresh token."""
+    sent, transport = _flaky(httpx2.Response(status), tokens(2))
+    with AuthClient(AUTH, transport=transport, sleep=lambda _: None) as auth:
+        with pytest.raises(CliError):
+            auth.refresh("ssc_rt.org.secret")
+    assert sent == ["/token"]
+
+
+def test_a_refresh_is_sent_again_after_a_503():
+    slept: list[float] = []
+    sent, transport = _flaky(httpx2.Response(503), tokens(2))
+    with AuthClient(AUTH, transport=transport, sleep=slept.append) as auth:
+        got = auth.refresh("ssc_rt.org.secret")
+    assert sent == ["/token", "/token"]
+    assert got is not None and got.access_token == "access-2"
+    assert slept == [BACKOFF[0]]
+
+
+def test_a_refresh_is_sent_again_when_the_connection_never_opened():
+    sent, transport = _flaky(httpx2.ConnectError, tokens(2))
+    with AuthClient(AUTH, transport=transport, sleep=lambda _: None) as auth:
+        got = auth.refresh("ssc_rt.org.secret")
+    assert sent == ["/token", "/token"]
+    assert got is not None and got.refresh_token == f"ssc_rt.{ORG}.refresh-2"
+
+
+@pytest.mark.parametrize("status", [502, 504])
+def test_a_ci_token_is_not_asked_for_twice_after_a_gateway_answer(status):
+    """B-3: the auth host may have created the token before the gateway gave up."""
+    sent, transport = _flaky(httpx2.Response(status), httpx2.Response(200, json={}))
+    with AuthClient(AUTH, transport=transport, sleep=lambda _: None) as auth:
+        with pytest.raises(CliError):
+            auth.create_ci_token("access-1", "ci", 30)
+    assert sent == ["/ci-tokens"]
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_device_polling_is_retried_after_a_gateway_answer(status):
+    sent, transport = _flaky(httpx2.Response(status), tokens(1))
+    with AuthClient(AUTH, transport=transport, sleep=lambda _: None) as auth:
+        got = auth.poll("devicesecret")
+    assert sent == ["/token", "/token"]
+    assert not isinstance(got, str) and got.access_token == "access-1"

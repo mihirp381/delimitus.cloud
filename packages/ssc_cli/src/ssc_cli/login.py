@@ -7,10 +7,13 @@ label ``api`` swapped for ``auth`` (``https://api.delimitus.com`` -> ``https://a
 CI tokens (GA-7.7): ``POST /ci-tokens`` takes the person's own access token as a bearer and a
 JSON body, and answers a ``preview``-scoped token for a repository secret.
 
-Every post is retried, up to three times, only where the auth host did no work: ``429`` after
-``Retry-After``, ``502``, ``503`` and ``504`` with backoff, and a connection that never opened. A
-refresh token is used once and a second use ends the login, so a ``500`` or a connection lost
-mid-request is not retried. A CI token's ``429`` is not retried: its limit is an hour.
+Every post is retried, up to three times, where the auth host did no work: a connection that
+never opened, with backoff, and an answer that says so. For the device grant, its polling and
+revocation, that answer is ``429`` (after ``Retry-After``), ``502``, ``503`` or ``504``. A refresh
+token is used once and a second use ends the login, and a CI token is created once, so a refresh
+and ``POST /ci-tokens`` are retried after ``503`` only: a ``502`` or ``504`` from a gateway may
+come after the auth host did the work (B-3), and a ``500`` or a connection lost mid-request is
+never retried. A CI token's ``429`` is not retried: its limit is an hour.
 """
 
 import os
@@ -38,6 +41,10 @@ ENV_AUTH_URL: Final = "SSC_AUTH_URL"
 DEVICE_GRANT: Final = "urn:ietf:params:oauth:grant-type:device_code"
 RATE_LIMITED: Final = 429
 NOT_REACHED: Final = frozenset({502, 503, 504})
+DEVICE_RETRIED: Final = NOT_REACHED | {RATE_LIMITED}
+"""Statuses a device-grant, polling or revocation post is sent again after."""
+ONCE_ONLY_RETRIED: Final = frozenset({503})
+"""Statuses a refresh or CI-token post is sent again after: the auth host did not do the work."""
 
 PollError = Literal["authorization_pending", "slow_down", "access_denied", "expired_token"]
 _POLL_ERRORS: Final = frozenset(
@@ -133,7 +140,11 @@ class AuthClient:
 
     def refresh(self, refresh_token: str) -> Tokens | None:
         """New tokens, or None when the login has ended."""
-        r = self._post("/token", {"grant_type": "refresh_token", "refresh_token": refresh_token})
+        r = self._post(
+            "/token",
+            {"grant_type": "refresh_token", "refresh_token": refresh_token},
+            retry_statuses=ONCE_ONLY_RETRIED,
+        )
         if self._error(r) is not None:
             return None
         return self._parse(r, Tokens)
@@ -149,7 +160,7 @@ class AuthClient:
             "/ci-tokens",
             json={"label": label, "days": days},
             headers={"Authorization": f"Bearer {access_token}"},
-            retry_rate_limited=False,
+            retry_statuses=ONCE_ONLY_RETRIED,
         )
         if r.status_code in _CI_REFUSALS:
             raise _ci_refused(r.status_code)
@@ -162,9 +173,8 @@ class AuthClient:
         *,
         json: object = None,
         headers: Mapping[str, str] | None = None,
-        retry_rate_limited: bool = True,
+        retry_statuses: frozenset[int] = DEVICE_RETRIED,
     ) -> httpx2.Response:
-        retried = NOT_REACHED | {RATE_LIMITED} if retry_rate_limited else NOT_REACHED
         for wait in (*BACKOFF, None):
             try:
                 r = self._http.post(
@@ -180,7 +190,7 @@ class AuthClient:
                 continue
             except httpx2.TransportError as e:
                 raise self._unreachable(e) from e
-            if wait is None or r.status_code not in retried:
+            if wait is None or r.status_code not in retry_statuses:
                 return r
             self._sleep(_retry_after(r) if r.status_code == RATE_LIMITED else wait)
         raise AssertionError("unreachable")
