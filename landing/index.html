@@ -1164,15 +1164,16 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     <div class="band__label"><span class="rule"></span><p class="label">Example</p></div>
     <div class="stack stack--lg">
       <div class="head">
-        <h2 class="h2" data-claim="approvals share">One prompt and one approval later, the night shift is using it.</h2>
+        <h2 class="h2" data-claim="approvals share">One prompt and two approvals later, the night shift is using it.</h2>
         <p class="lede" data-claim="tools agent">Dana runs inbound at a distribution centre. She built a dock board with Claude Code, then asked it to deploy.</p>
       </div>
 
       <ol class="convo" aria-label="Dana deploys the dock board">
         <li class="convo__msg convo__msg--me" data-claim="agent"><span class="convo__who">Dana to Claude Code</span><p>The dock board looks good. Deploy it on Delimitus and share it with Inbound and Night shift.</p></li>
-        <li class="convo__msg" data-claim="agents share"><span class="convo__who">Claude Code</span><p>Deployed. I’ve asked to share it with Inbound team and Night shift. IT approves that, not me.</p></li>
+        <li class="convo__msg" data-claim="agents share data"><span class="convo__who">Claude Code</span><p>Deployed. The board reads company data, so sharing it takes two approvals: the share request and widening the audience. Another admin of your company approves both, not me.</p></li>
         <li class="convo__event" data-claim="preview"><span class="chip">Dana</span><span>Promoted it to production after a look in preview.</span></li>
-        <li class="convo__event" data-claim="approvals"><span class="chip chip--live">IT approved</span><span>Shared with Inbound team and Night shift.</span></li>
+        <li class="convo__event" data-claim="approvals"><span class="chip chip--live">Admin approved</span><span>The share request.</span></li>
+        <li class="convo__event" data-claim="approvals share"><span class="chip chip--live">Admin approved</span><span>Widening the audience. Shared with Inbound team and Night shift.</span></li>
       </ol>
 
       <div class="viewers" id="viewers">

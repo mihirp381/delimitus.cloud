@@ -233,3 +233,19 @@ def test_the_egress_example_does_not_promise_a_per_app_allowlist() -> None:
     text = _text_without_styles()
     assert "Reaches only the internet hosts your admin allowed" in text
     assert "tracking site and nothing else" not in text
+
+
+def test_the_example_share_applies_only_after_both_approvals() -> None:
+    """A data-connected production app: the share and the audience widening are both approved."""
+    convo = re.search(r'<ol class="convo".*?</ol>', HTML, flags=re.S)
+    assert convo is not None
+    events = re.findall(r'<li class="convo__event"[^>]*>(.*?)</li>', convo[0])
+    approved = [e for e in events if "Admin approved" in e]
+    assert len(approved) == 2
+    assert "share request" in approved[0]
+    assert "Widening the audience" in approved[1]
+    assert events[-1] == approved[1]
+    assert [e for e in events if "Shared with" in e] == [approved[1]]
+    assert "One prompt and two approvals later" in HTML
+    register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
+    assert "F21 fixed in code on 2026-10-20" in register
