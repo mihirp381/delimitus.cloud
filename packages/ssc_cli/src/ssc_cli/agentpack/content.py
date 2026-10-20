@@ -127,16 +127,17 @@ finding marked `block`.
 the extra (`uv tool install 'ssc-cli[mcp]'`) and an agent's login, kept apart from the person's
 own; its calls are recorded the same way. Set it up once:
 
-- Claude Code: `ssc login --org <org id> --agent claude-code`, then `claude mcp add ssc -- ssc mcp`
-- Codex: `ssc login --org <org id> --agent codex`, then `codex mcp add ssc -- ssc mcp`, and set
-  `tool_timeout_sec = 1500` under `[mcp_servers.ssc]` in `~/.codex/config.toml`; the default of
-  60 seconds is shorter than a build.
+- Claude Code: `ssc login --org <org id> --agent claude-code`, then
+  `claude mcp add ssc-local -- ssc mcp`
+- Codex: `ssc login --org <org id> --agent codex`, then `codex mcp add ssc-local -- ssc mcp`, and
+  set `tool_timeout_sec = 1500` under `[mcp_servers.ssc-local]` in `~/.codex/config.toml`; the
+  default of 60 seconds is shorter than a build.
 - Cursor: `ssc login --org <org id> --agent cursor`, then in `.cursor/mcp.json`:
 
 ```json
 {{
   "mcpServers": {{
-    "ssc": {{
+    "ssc-local": {{
       "command": "ssc",
       "args": ["mcp"]
     }}
