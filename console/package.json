@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/check-dist.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "gen:api": "openapi-typescript ../docs/api/openapi.json -o src/api/schema.d.ts",

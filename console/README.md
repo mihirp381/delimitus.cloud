@@ -44,6 +44,9 @@ into the console's sign-in page.
 
 The token sign-in form exists only in `npm run dev` and in builds made with
 `VITE_SSC_DEV_LOGIN=1`; `test/devlogin-absent.test.ts` checks the build output.
+`npm run build` ends with `scripts/check-dist.mjs`, which fails when `dist/` holds the dev login
+or a local address, as a stray `.env`, `.env.local` or `.env.production` would cause; the
+console image's build context leaves those files out.
 
 ## Production sign-in
 

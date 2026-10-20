@@ -13,6 +13,8 @@
 **/node_modules
 **/.DS_Store
 **/tests
+console/.env
+console/.env.*
 console/dist
 console/dist-e2e
 console/test-results
