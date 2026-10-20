@@ -1027,6 +1027,19 @@ def test_a_rollback_past_migrations_names_them_and_needs_confirm(cli, history, f
     assert [_body(q).get("confirm") for q in posted] == [None, True]
 
 
+def test_a_rollback_past_migrations_stays_schema_ahead_when_the_list_is_refused(
+    cli, history, fake_problem
+):
+    """B-4: the migrations named in the fix are a hint; a refused lookup keeps the API's code."""
+    history.routes[("GET", RELEASES)] = [_page(_release(2, PROD))]
+    history.add("POST", PROD_DEPLOYMENTS, fake_problem(409, "SCHEMA_AHEAD"))
+    path = f"/v1/apps/{APP_ID}/environments/{PROD}/migrations-ahead"
+    history.add("GET", path, fake_problem(403, "FORBIDDEN"))
+    r = cli("rollback", APP_ID, "R2", "--json", session=history.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "SCHEMA_AHEAD")
+    assert any(q.url.path == path for q in history.seen)
+
+
 # ── promote ─────────────────────────────────────────────────────────────────
 
 LIVE = "dep_livelivelivelivelive"
@@ -1179,6 +1192,18 @@ def test_promote_refused_for_a_missing_prod_secret_names_it(cli, promoting, fake
     assert "Set API_TOKEN, SMTP_PASSWORD on prod" in fix
     assert "`ssc secret set demo API_TOKEN --env prod`" in fix
     assert ("GET", f"/v1/builds/{BUILD}") not in _calls(promoting)
+
+
+def test_promote_refused_for_a_missing_prod_secret_stays_so_when_secrets_are_hidden(
+    cli, promoting, fake_problem
+):
+    """B-4: the names in the fix are a hint; a refused secret list keeps the API's code."""
+    promoting.routes[("POST", PROMOTE)] = [fake_problem(409, "PROD_SECRET_MISSING")]
+    path = f"/v1/apps/{APP_ID}/environments/{PREVIEW}/secrets"
+    promoting.add("GET", path, fake_problem(403, "FORBIDDEN"))
+    r = cli("promote", "demo", "--json", session=promoting.session())
+    assert (r.code, _error(r)["code"]) == (ExitCode.FAILED, "PROD_SECRET_MISSING")
+    assert ("GET", path) in _calls(promoting)
 
 
 def test_promote_with_nothing_live_is_the_apis_refusal(cli, promoting, fake_problem):

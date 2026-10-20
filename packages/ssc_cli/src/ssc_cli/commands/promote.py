@@ -150,12 +150,16 @@ def _promote(
     source: str | None,
 ) -> str:
     """The prod build's id. ``PROD_SECRET_MISSING`` names the secrets to set on prod: the API's
-    problem carries fixed text only, so the names come from the two secret lists."""
+    problem carries fixed text only, so the names come from the two secret lists. The names are a
+    hint: when a list is refused, the API's own error stands as it is (B-4)."""
     try:
         return client.promote(app.id, source).build_id
     except CliError as e:
         if e.body.code == PROD_SECRET_MISSING:
-            missing = _missing_secrets(client, app, preview, prod)
+            try:
+                missing = _missing_secrets(client, app, preview, prod)
+            except CliError:
+                missing = []
             if missing:
                 e.fix = (
                     f"Set {', '.join(missing)} on prod, for example `ssc secret set {app.slug} "

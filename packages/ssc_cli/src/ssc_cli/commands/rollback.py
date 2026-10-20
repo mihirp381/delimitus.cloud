@@ -121,12 +121,16 @@ def rollback(  # noqa: PLR0913, PLR0917  (Typer maps each parameter to an option
 def _start(
     client: ApiClient, app: AppOut, where: EnvironmentOut, rel: ReleaseOut, *, confirm: bool
 ) -> OperationAccepted:
-    """Post the rollback; on ``SCHEMA_AHEAD``, name the migrations in the fix."""
+    """Post the rollback; on ``SCHEMA_AHEAD``, name the migrations in the fix. The names are a
+    hint: when their lookup is refused, the API's own error stands as it is (B-4)."""
     try:
         return client.create_deployment(app.id, where.id, rel.release_id, ROLLBACK, confirm=confirm)
     except CliError as e:
         if e.body.code == ErrorCode.SCHEMA_AHEAD:
-            ahead = client.migrations_ahead(app.id, where.id, rel.release_id).ledgers
+            try:
+                ahead = client.migrations_ahead(app.id, where.id, rel.release_id).ledgers
+            except CliError:
+                raise e from None
             names = "; ".join(f"{a.ledger}: {', '.join(a.names)}" for a in ahead)
             e.fix = (
                 f"The {where.name} database may have run migrations {rel.label} does not have "
