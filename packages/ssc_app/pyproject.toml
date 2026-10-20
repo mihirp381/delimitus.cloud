@@ -18,3 +18,7 @@ build-backend = "uv_build"
 [tool.deptry]
 known_first_party = ["ssc_contracts", "ssc_shared", "ssc_bundle", "ssc_control", "ssc_edge", "ssc_datagw", "ssc_egress", "ssc_cli", "ssc_app", "ssc_conformance"]
 ignore = ["DEP002", "DEP004"]  # DEP002 re-enabled in SSC-011 once packages hold real code
+
+[tool.uv.build-backend]
+# A leftover from a patch or an editor never ships in the sdist (the wheel takes only src/).
+source-exclude = ["*.orig", "*.rej", "*.bak"]
