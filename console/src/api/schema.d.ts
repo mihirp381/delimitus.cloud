@@ -10249,8 +10249,10 @@ export interface operations {
     find_groups_v1_groups_get: {
         parameters: {
             query: {
-                /** @description Matched whole, ignoring case. */
+                /** @description Ignoring case. */
                 name: string;
+                /** @description `prefix`: names starting with `name`, at most 20. */
+                match?: "whole" | "prefix";
             };
             header?: never;
             path?: never;

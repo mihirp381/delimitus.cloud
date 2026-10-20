@@ -98,8 +98,9 @@ agent's on the person's behalf. Connect once:
 
 The tools: `get_platform_requirements`, `get_org_deployment_policy`, `preflight`, `list_apps`,
 `create_app`, `get_app`, `get_status`, `list_releases`, `rollback`, `deploy` (to preview only),
-`get_logs`, `set_secret`, `request_share`, `list_connections`, `describe_connection` (the columns
-an environment sees through a connection) and `request_connection`. Call
+`get_logs`, `set_secret`, `request_share`, `find_groups` (a group's id from the start of its
+name), `list_connections`, `describe_connection` (the columns an environment sees through a
+connection) and `request_connection`. Call
 `get_platform_requirements` first: it gives the rules below and the platform package list, the
 same ones `ssc doctor` checks. `get_org_deployment_policy` says which internet hosts and data
 connections you may use, what waits for approval and whether the company's database has room. Run

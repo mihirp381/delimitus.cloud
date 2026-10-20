@@ -467,7 +467,9 @@ stateless, JSON replies. Code: `api/mcp/`.
   - `set_secret(app, env, name)`: takes no value. It checks the name and answers `set: false`
     with the `ssc secret set <slug> <NAME> --env <env>` command for the person to run, where the
     value is typed; no value passes through the API or an agent (SSC-026).
-  - `request_share(app, env, who, role?)`: `who` is a `usr_` or `grp_` id or `org`; `role`
+  - `request_share(app, env, who, role?)`: `who` is a `usr_` or `grp_` id, `org`, or a group's
+    exact name, looked up with `GET /v1/groups?name=` (`VALIDATION_FAILED` naming the ids when
+    none or several have it); `role`
     defaults to the floor (`user` on prod, `builder` on preview). A grant below the floor is
     `VALIDATION_FAILED` with `status: null`; a subject that already has the role asks nothing
     (`requested: false`). Otherwise it reads the grants and sends `PUT .../grants` as the agent
@@ -479,6 +481,8 @@ stateless, JSON replies. Code: `api/mcp/`.
     applies the change (GA-12 F21). When every approval is already in, the `PUT` applies it and
     the answer is `{requested: false, applied: true, environment_id, grants_version, next}`.
     `idempotency_key` is accepted and not needed: asking again answers the same requests.
+  - `find_groups(name)`: `GET /v1/groups?name=&match=prefix`, the org's groups whose name
+    starts with `name`, at most 20.
   - `request_connection(app, connection)`: a `connect_data_source` request on prod; the server
     validates the name.
   - `list_connections()`: `GET /v1/connections` as is: every connection for an org admin,

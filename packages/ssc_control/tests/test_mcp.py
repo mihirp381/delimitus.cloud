@@ -95,6 +95,7 @@ ALLOWLIST = {
     "rollback",
     "deploy",
     "request_share",
+    "find_groups",
     "list_connections",
     "describe_connection",
     "request_connection",
@@ -141,6 +142,18 @@ def add_account(dsn: str, org: str, role: str) -> str:
         (uid, org, role),
     )
     return uid
+
+
+def add_group(dsn: str, org: str, name: str) -> str:
+    gid = new_id("grp")
+    rows(
+        dsn,
+        org,
+        "insert into ssc.user_group (id, org_id, directory_ref, display_name) "
+        "values (%s, %s, %s, %s) returning id",
+        (gid, org, f"ref-{gid}", name),
+    )
+    return gid
 
 
 def add_grant(dsn: str, org: str, env: str, user: str, role: str, by: str) -> None:
@@ -341,6 +354,7 @@ async def test_tool_set_is_the_allowlist(world: World) -> None:
         "get_app",
         "get_status",
         "list_releases",
+        "find_groups",
         "list_connections",
         "describe_connection",
         "get_logs",
@@ -935,6 +949,43 @@ async def test_request_share_refused_or_not_needed(world: World) -> None:
     mine = [g for g in grants if g["subject_id"] == member]
     assert mine == [{"role": "builder", "subject_kind": "user", "subject_id": member}]
     assert grants_of(world, prod) == before
+
+
+async def test_find_groups_matches_the_start_of_a_name(world: World) -> None:
+    tag = new_key()[:8]
+    payroll = add_group(world.dsns.app, world.org.org_id, f"Payroll {tag}")
+    ops = add_group(world.dsns.app, world.org.org_id, f"PAYROLL {tag} ops")
+    add_group(world.dsns.app, world.org.org_id, f"Sales {tag}")
+    async with session(world.url, world.agent) as client:
+        found = await client.call_tool("find_groups", {"name": f"payroll {tag}"})
+    assert not found.is_error, found.content
+    assert sorted(g["id"] for g in found.structured_content["groups"]) == sorted([payroll, ops])
+
+
+async def test_request_share_takes_a_group_s_name(world: World) -> None:
+    tag = new_key()[:8]
+    group = add_group(world.dsns.app, world.org.org_id, f"Audit {tag}")
+    twins = sorted(add_group(world.dsns.app, world.org.org_id, f"Twins {tag}") for _ in range(2))
+    app = fresh_app(world)
+    async with session(world.url, world.agent) as client:
+        named = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": f"audit {tag}"}
+        )
+        missing = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": f"Nobody {tag}"}
+        )
+        several = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": f"Twins {tag}"}
+        )
+    assert not named.is_error, named.content
+    (apr,) = named.structured_content["approval_ids"]
+    wanted = {"role": "user", "subject_kind": "group", "subject_id": group}
+    assert approval_row(world, apr)[4]["grants"] == [wanted]
+    assert missing.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert f"no group named 'Nobody {tag}'" in missing.structured_content["error"]["detail"]
+    assert several.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    detail = several.structured_content["error"]["detail"]
+    assert all(t in detail for t in twins)
 
 
 async def test_request_share_never_lowers_a_role(world: World) -> None:

@@ -41,6 +41,7 @@ sets the warm flag (SSC-092) or a cell resource flag (SSC-087), which only a per
 
 import hashlib
 import json
+import re
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Final, Literal, cast
@@ -82,6 +83,7 @@ TOOLS: Final = (
     "rollback",
     "deploy",
     "request_share",
+    "find_groups",
     "list_connections",
     "describe_connection",
     "request_connection",
@@ -123,9 +125,14 @@ SizeBytes = Annotated[int, Field(gt=0, le=2**53 - 1, description="Length of the 
 Who = Annotated[
     str,
     Field(
-        pattern=r"^(usr_[a-z0-9]{20}|grp_[a-z0-9]{20}|org)$",
-        description="A user (`usr_...`), a group (`grp_...`), or `org` for everyone in the org.",
+        min_length=1,
+        max_length=200,
+        description="A user (`usr_...`), a group (`grp_...`) or its exact name (find_groups), "
+        "or `org` for everyone in the org.",
     ),
+]
+GroupName = Annotated[
+    str, Field(min_length=1, max_length=200, description="The start of a group's name.")
 ]
 ConnectionName = Annotated[
     str,
@@ -581,11 +588,31 @@ async def deploy_to_preview(  # noqa: PLR0913  (keyword-only)
     return {**base, **step}
 
 
+SUBJECT_ID: Final = re.compile(r"^(usr|grp)_[a-z0-9]{20}$")
+
+
 def subject_of(who: str) -> tuple[str, str | None]:
-    """``(subject_kind, subject_id)`` for a ``Who``."""
+    """``(subject_kind, subject_id)`` for a ``Who`` that is ``org`` or an id."""
     if who == "org":
         return "org", None
     return ("user" if who.startswith("usr_") else "group"), who
+
+
+async def resolved_who(c: V1, who: str) -> str:
+    """``who``, with a group's name replaced by the id of the one group of that name."""
+    if who == "org" or SUBJECT_ID.match(who):
+        return who
+    groups = (await c.get(f"/v1/groups?{urlencode({'name': who})}"))["groups"]
+    if len(groups) == 1:
+        return str(groups[0]["id"])
+    raise Refused(local_error("VALIDATION_FAILED", "No single group.", group_problem(who, groups)))
+
+
+def group_problem(who: str, groups: list[Body]) -> str:
+    if not groups:
+        return f"There is no group named {who!r}. Call find_groups to see the org's groups."
+    ids = ", ".join(str(g["id"]) for g in groups)
+    return f"{len(groups)} groups are named {who!r}: {ids}. Pass the id of the one you mean."
 
 
 def grant_body(key: GrantKey) -> Body:
@@ -605,7 +632,7 @@ async def ask_share(c: V1, *, ref: str, env: str, who: str, role: str | None) ->
     """``PUT`` the grants plus ``who`` at ``role`` as the agent; the API asks for each approval."""
     found = await resolve_app(c, ref)
     env_id = environment_id(found, env)
-    kind, subject = subject_of(who)
+    kind, subject = subject_of(await resolved_who(c, who))
     wanted: GrantKey = (role or grant_rules.floor_of(env), kind, subject)
     problems = grant_rules.validate(env, [wanted])
     if problems:
@@ -806,7 +833,14 @@ def _org_tools(
 
         return await run(api, ctx, lambda c: connection_schema(c, app, environment, connection))
 
+    async def find_groups(name: GroupName, ctx: Context) -> CallToolResult:
+        """The org's groups whose name starts with `name`, ignoring case: id, name and active
+        member count, at most 20. Share with one through request_share(who=its id)."""
+        query = urlencode({"name": name, "match": "prefix"})
+        return await run(api, ctx, lambda c: c.get(f"/v1/groups?{query}"))
+
     server.add_tool(create_app, annotations=ask)
+    server.add_tool(find_groups, annotations=read)
     server.add_tool(list_connections, annotations=read)
     server.add_tool(describe_connection, annotations=read)
 

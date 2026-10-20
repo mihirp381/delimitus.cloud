@@ -15269,15 +15269,31 @@
         "operationId": "find_groups_v1_groups_get",
         "parameters": [
           {
-            "description": "Matched whole, ignoring case.",
+            "description": "Ignoring case.",
             "in": "query",
             "name": "name",
             "required": true,
             "schema": {
-              "description": "Matched whole, ignoring case.",
+              "description": "Ignoring case.",
               "maxLength": 200,
               "minLength": 1,
               "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`prefix`: names starting with `name`, at most 20.",
+            "in": "query",
+            "name": "match",
+            "required": false,
+            "schema": {
+              "default": "whole",
+              "description": "`prefix`: names starting with `name`, at most 20.",
+              "enum": [
+                "whole",
+                "prefix"
+              ],
+              "title": "Match",
               "type": "string"
             }
           }

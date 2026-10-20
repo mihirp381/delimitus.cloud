@@ -378,6 +378,54 @@ def grants_at(version: int) -> httpx2.Response:
     )
 
 
+GRP = "grp_" + "g" * 20
+
+
+def groups(*ids: str) -> httpx2.Response:
+    found = [{"id": i, "name": "Audit", "member_count": 1} for i in ids]
+    return httpx2.Response(200, json={"groups": found})
+
+
+async def test_find_groups_asks_for_names_starting_with_it(fake_api):
+    fake_api.add("GET", "/v1/groups", groups(GRP))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool("find_groups", {"name": "aud"})
+    assert r.structured_content == {"groups": [{"id": GRP, "name": "Audit", "member_count": 1}]}
+    (q,) = fake_api.seen
+    assert (q.url.path, dict(q.url.params)) == ("/v1/groups", {"name": "aud", "match": "prefix"})
+
+
+async def test_request_share_takes_a_group_s_name(fake_api):
+    app_id, path = share_app(fake_api, grants_at(3))
+    fake_api.add("GET", "/v1/groups", groups(GRP), groups(), groups(GRP, "grp_" + "h" * 20))
+    fake_api.add(
+        "PUT",
+        path,
+        httpx2.Response(200, json={"environment_id": ENV_ID, "grants_version": 4, "grants": []}),
+    )
+    async with Client(local_server(fake_api), cache=None) as client:
+        named = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": "Audit"}
+        )
+        missing = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": "Nobody"}
+        )
+        several = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": "Audit"}
+        )
+    assert named.structured_content["applied"] is True
+    put = next(q for q in fake_api.seen if q.method == "PUT")
+    assert {"role": "user", "subject_kind": "group", "subject_id": GRP} in json.loads(put.content)[
+        "grants"
+    ]
+    lookup = next(q for q in fake_api.seen if q.url.path == "/v1/groups")
+    assert dict(lookup.url.params) == {"name": "Audit"}
+    assert missing.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert "no group named 'Nobody'" in missing.structured_content["error"]["detail"]
+    assert several.structured_content["error"]["code"] == "VALIDATION_FAILED"
+    assert "grp_" + "h" * 20 in several.structured_content["error"]["detail"]
+
+
 async def test_request_share_puts_the_grants_and_reports_every_requirement(fake_api):
     """GA-12 F21: the API opens every approval the change needs; the tool names each."""
     other = "usr_" + "b" * 20
