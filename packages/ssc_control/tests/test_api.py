@@ -571,12 +571,19 @@ def test_grant_for_unknown_user_is_a_reference_problem(world: World) -> None:
 
 def test_inconsistent_grant_subject_is_a_validation_problem(world: World) -> None:
     app = create_app_via_api(world, "bad-grant")
-    r = world.client.put(
-        grants_url(app),
-        json={"grants": [{"role": "user", "subject_kind": "org", "subject_id": new_id("usr")}]},
-        headers=auth(world.user_token, **{"If-Match": '"1"'}),
-    )
-    assert_problem(r, ErrorCode.VALIDATION_FAILED)
+    for kind, subject in (
+        ("org", new_id("usr")),
+        ("user", "not-an-id"),
+        ("user", "usr_" + "A" * 20),
+        ("user", new_id("grp")),
+        ("group", new_id("usr")),
+    ):
+        r = world.client.put(
+            grants_url(app),
+            json={"grants": [{"role": "user", "subject_kind": kind, "subject_id": subject}]},
+            headers=auth(world.user_token, **{"If-Match": '"1"'}),
+        )
+        assert_problem(r, ErrorCode.VALIDATION_FAILED)
 
 
 # ── deployments are long-running operations ──────────────────────────────────

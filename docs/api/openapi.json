@@ -3783,6 +3783,7 @@
           "subject_id": {
             "anyOf": [
               {
+                "pattern": "^(usr|grp)_[a-z0-9]{20}$",
                 "type": "string"
               },
               {

@@ -17,10 +17,10 @@ Approving the last open requirement of a change applies it (:func:`apply_approve
 Each grant a change actually adds records one ``share`` metrics event (SSC-028).
 """
 
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, Self
 
 from fastapi import APIRouter, Header, Response
-from pydantic import Field, ValidationError
+from pydantic import Field, StringConstraints, ValidationError, model_validator
 from sqlalchemy import text
 
 from ssc_contracts.audit import AuditAction
@@ -64,12 +64,24 @@ _SHARING = frozenset(
 )
 
 
+SubjectId = Annotated[str, StringConstraints(pattern=r"^(usr|grp)_[a-z0-9]{20}$")]
+_SUBJECT_KIND_OF: Final = {"usr": "user", "grp": "group"}
+
+
 class GrantIn(Strict):
     role: Literal["builder", "user"]
     subject_kind: Literal["user", "group", "org"]
-    subject_id: str | None = Field(
+    subject_id: SubjectId | None = Field(
         default=None, description="A `usr_` or `grp_` id; absent when subject_kind is `org`."
     )
+
+    @model_validator(mode="after")
+    def _id_names_its_kind(self) -> Self:
+        if self.subject_id is not None and (
+            _SUBJECT_KIND_OF[self.subject_id[:3]] != self.subject_kind
+        ):
+            raise ValueError("a usr_ id names a user and a grp_ id a group")
+        return self
 
 
 class GrantsIn(Strict):
