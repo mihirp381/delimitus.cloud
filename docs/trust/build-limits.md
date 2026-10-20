@@ -39,7 +39,7 @@ by the founder, 2026-10-08 (GA-6.5).
 
 - `.env` and `.env.*` files are never uploaded. [ignore.py:14-23]
 - `ssc deploy` scans the folder before upload; a finding uploads nothing. The control plane
-  repeats the scan on the stored bundle. [deploy.py:301-309; bundles.py:100-121]
+  repeats the scan on the stored bundle. [deploy.py:301-309; bundles.py:142-166]
 - The build then runs gitleaks 8.30.1: its default rules (except `jwt`, since a Supabase anon key
   is public) plus SSC's rules for Supabase keys and database URLs with a password. A finding stops
   the build before anything is built: no image, no release, no deployment. Findings are printed
@@ -51,5 +51,9 @@ by the founder, 2026-10-08 (GA-6.5).
   The value appeared in no command output, build log line or audit row. The stored bundle that
   holds the random value stays in the cell's bundle store. [GA-6.5, `proofrun buildsecret`]
 - Limits: the first two scans skip files over 1 MiB, binary files, lockfiles and `ssc.toml`.
-  Public build values are never flagged. A secret with a shape none of these rules knows passes
-  all three. [secrets.py:3-5, 101-107]
+  Their name-keyed rule (a credential-like variable name assigned a random-looking value) reads
+  only the first 4096 characters of a line; a longer line is minified code or data. Every rule
+  runs in time linear in the line, and the control plane's repeat has 30 seconds per bundle,
+  past which it refuses the bundle as `BUNDLE_MALFORMED`. Public build values are never flagged.
+  A secret with a shape none of these rules knows passes all three. [secrets.py:3-13, 113-119;
+  bundles.py:103-118]

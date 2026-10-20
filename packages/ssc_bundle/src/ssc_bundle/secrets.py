@@ -4,6 +4,13 @@ A finding carries a masked value only. Files over 1 MiB, binary files, lockfiles
 are skipped, and exact values of declared public build values are never flagged. A finding with
 ``blocking=False`` is a warning: a database URL whose password is a placeholder or whose host is
 local (``localhost``, a compose service name).
+
+Every rule runs in time linear in the line (B-1): each run of a character class is bounded or
+cannot overlap the next element, and a rule that can start inside a run is anchored to the run's
+start, so one long line cannot hold the process. The name-keyed assignment rule reads only the
+first ``MAX_LINE_SCAN`` (4096) characters of a line: a longer line is a minified asset or data,
+not a config assignment. The rules for self-identifying values (AWS keys, private key blocks,
+JWTs, Supabase keys, database URLs) read the whole line.
 """
 
 import base64
@@ -18,6 +25,8 @@ from typing import Final, cast
 from ssc_contracts.manifest import MANIFEST_FILE, Manifest
 
 MAX_SCAN_BYTES: Final = 1024 * 1024
+MAX_LINE_SCAN: Final = 4096
+"""Characters of a line the name-keyed assignment rule reads."""
 BINARY_PROBE_BYTES: Final = 8192
 MIN_GENERIC_LENGTH: Final = 24
 MIN_GENERIC_ENTROPY: Final = 4.0
@@ -44,17 +53,20 @@ _AWS_KEY = re.compile(r"(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])")
 _AWS_SECRET = re.compile(
     r"(?i)aws_?secret_?access_?key[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9/+=]{40})(?![A-Za-z0-9/+=])"
 )
-_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")
-_JWT = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.(eyJ[A-Za-z0-9_-]{8,})\.[A-Za-z0-9_-]{16,}")
-_SB_SECRET = re.compile(r"sb_secret_[A-Za-z0-9_-]{16,}")
+_PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z0-9]{1,32} ){0,8}PRIVATE KEY(?: BLOCK)?-----")
+_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,4096}+\.(eyJ[A-Za-z0-9_-]{8,4096}+)"
+    r"\.[A-Za-z0-9_-]{16,4096}"
+)
+_SB_SECRET = re.compile(r"(?<![A-Za-z0-9_-])sb_secret_[A-Za-z0-9_-]{16,4096}")
 _SB_PUBLISHABLE = re.compile(r"sb_publishable_[A-Za-z0-9_-]{16,}")
 _DB_URL = re.compile(
     r"\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?)://"
     r"[^\s:/@\"'`<>]*:([^\s@/\"'`<>]+)@([^\s/:?#\"'`<>,;]+)"
 )
 _ASSIGNMENT = re.compile(
-    r"(?i)[A-Za-z0-9_.-]*(?:secret|token|api_?key|passw(?:or)?d|private)[A-Za-z0-9_.-]*"
-    r"[\"']?\s*(?::=|=>|=|:)\s*[\"'`]?([A-Za-z0-9+/=_.~-]{24,})"
+    r"(?i)(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]{0,64}(?:secret|token|api_?key|passw(?:or)?d|private)"
+    r"[A-Za-z0-9_.-]{0,64}[\"']?\s*(?::=|=>|=|:)\s*[\"'`]?([A-Za-z0-9+/=_.~-]{24,})"
 )
 _PLACEHOLDER = re.compile(
     r"(?i)^(?:password|passwd|pass|pwd|secret|changeme|change_me|example|test|postgres|root"
@@ -122,7 +134,7 @@ def _scan_line(path: str, number: int, line: str, allowed: Collection[str]) -> l
         password, host = m.group(1), m.group(2).lower()
         hits.append(("db_url_with_password", password, not _harmless(password, host)))
     seen = {value for _, value, _ in hits}
-    for m in _ASSIGNMENT.finditer(line):
+    for m in _ASSIGNMENT.finditer(line, 0, MAX_LINE_SCAN):
         value = m.group(1)
         if value not in seen and _generic_secret(value):
             hits.append(("generic_secret_assignment", value, True))

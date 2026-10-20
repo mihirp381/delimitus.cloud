@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import tarfile
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -34,6 +35,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import psycopg
 import pytest
+import slow_scan
 from fastapi.testclient import TestClient
 from httpx import Response
 from psycopg.rows import dict_row
@@ -57,6 +59,7 @@ from ssc_control.api import Settings, create_app
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.routes.blobs import blob_store_for, cell_stores_for
 from ssc_control.db import NewOrg, bind_org_sync, bound_org, create_org, make_engine
+from ssc_control.deploy import bundles
 from ssc_control.deploy.bundle_gc import GRACE, LOCK_CLASS, Collected, collect_org
 from ssc_control.deploy.bundles import bundle_key
 from ssc_control.runtime.specs import (
@@ -679,6 +682,24 @@ def test_a_service_role_key_is_a_secret_in_bundle(
         assert_problem(complete(b, bundle_id), ErrorCode.SECRET_IN_BUNDLE)
     assert "src/db.js" in caplog.text
     assert key not in caplog.text and key[-12:] not in caplog.text
+    assert bundles_of(b)[0]["state"] == "pending"
+
+
+def test_a_scan_past_its_budget_is_refused_as_malformed(
+    b: Bench, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """B-1: the tar check and secret scan run in a worker process with a wall-clock budget, so
+    one pathological upload can neither hold the API's GIL nor leave the request hanging."""
+    monkeypatch.setattr(bundles, "SCAN_SECONDS", 2.0)
+    monkeypatch.setattr(bundles, "_inspect_path", slow_scan.sleeping_inspect)
+    bundle_id = uploaded(b, tar_gz({"app.py": b"x\n"}))
+    start = time.perf_counter()
+    with caplog.at_level(logging.WARNING):
+        r = complete(b, bundle_id)
+    elapsed = time.perf_counter() - start
+    assert_problem(r, ErrorCode.BUNDLE_MALFORMED)
+    assert elapsed < 2.0 + 3.0, f"{elapsed:.1f} s"
+    assert "scan_timeout" in caplog.text
     assert bundles_of(b)[0]["state"] == "pending"
 
 
