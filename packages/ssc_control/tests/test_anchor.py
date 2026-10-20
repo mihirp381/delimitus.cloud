@@ -53,6 +53,7 @@ from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control import storage
 from ssc_control.audit import Actor, NewEvent, append_event, canonical_bytes
+from ssc_control.audit import anchor as audit_anchor
 from ssc_control.audit import jobs as audit_jobs
 from ssc_control.audit.__main__ import main, run_verify
 from ssc_control.audit.anchor import (
@@ -528,6 +529,28 @@ def test_reanchor_refuses_a_tampered_chain_and_writes_nothing(
     with pytest.raises(SystemExit) as e:
         main(["reanchor", "--org", org, "--restored-to", "2026-09-01T00:00:00", "--ref", "x"])
     assert e.value.code == 2  # a restore point without an offset is a usage error
+
+
+def test_reanchor_refuses_an_object_already_at_its_key_without_a_traceback(
+    dsns: Dsns, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    org = org_with_events(dsns)
+    blob = blob_store(tmp_path)
+    daily = asyncio.run(anchor_of(dsns.app, org, blob))
+    # A daily anchor that agrees with the chain, sitting where the restore anchor would go.
+    key = f"audit-anchors/{org}/restore-taken.json"
+    asyncio.run(blob.put(key, replace(daily, object_key=key).document()))
+    monkeypatch.setattr(audit_anchor, "restore_key", lambda org_id, anchored_at: key)
+    restored_to = db_now(dsns)
+    fs_env(monkeypatch, tmp_path, dsns)
+    at = restored_to.isoformat()
+    assert main(["reanchor", "--org", org, "--restored-to", at, "--ref", "INC-8"]) == 1
+    out, err = capsys.readouterr()
+    assert out == f"refused: {key} holds a daily anchor\n"
+    assert "Traceback" not in err
+    assert rows(dsns, org, "select reason from ssc.audit_anchor") == [("daily",)]
+    assert rows(dsns, org, "select max(seq) from ssc.audit_event") == [(6,)]
+    assert asyncio.run(keys(blob, org)) == sorted([daily.object_key, key])
 
 
 # ── the CLI ──────────────────────────────────────────────────────────────────

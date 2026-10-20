@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_control.audit.anchor import (
     STALE_AFTER,
     Anchor,
-    AnchorConflictError,
+    AnchorError,
     AnchorReport,
     ReanchorRefusedError,
     reanchor,
@@ -183,7 +183,7 @@ def _anchor(parser: argparse.ArgumentParser, dsn: str, args: argparse.Namespace)
     stores = _stores(parser)
     try:
         anchor = asyncio.run(run_anchor(dsn, args.org, stores))
-    except AnchorConflictError as exc:
+    except AnchorError as exc:
         _say(f"refused: {exc}")
         return 1
     _say(f"anchored: seq {anchor.seq} at {anchor.object_key}")
@@ -200,6 +200,9 @@ def _reanchor(parser: argparse.ArgumentParser, dsn: str, args: argparse.Namespac
         for line in _chain_lines(exc.chain) + _anchor_lines(exc.anchors):
             _say(line)
         _say("refused: nothing written")
+        return 1
+    except AnchorError as exc:
+        _say(f"refused: {exc}")
         return 1
     except ValueError as exc:
         parser.error(str(exc))
