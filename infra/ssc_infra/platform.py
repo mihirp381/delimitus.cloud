@@ -489,6 +489,12 @@ def build() -> None:
     sandbox = _folder(n.SANDBOX_FOLDER, n.SANDBOX_FOLDER, org, opts)
 
     deployer_image = config.get("deployer_image")
+    # The deployer decrypts every stack's state and holds run.admin on the cells folder: like
+    # every other image setting, a digest in the platform registry, never a tag or elsewhere.
+    if deployer_image is not None and not control.PINNED_IMAGE.fullmatch(deployer_image):
+        raise ValueError(
+            f"deployer_image must be {n.platform_registry()}/ssc-cell-deployer@sha256:<digest>"
+        )
     cfg = control.read_config(config, deployer=deployer_image is not None)
     staging_billed = config.get_bool("control_staging_billing")
     controls = {

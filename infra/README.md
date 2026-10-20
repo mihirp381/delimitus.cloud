@@ -100,7 +100,7 @@ The control plane turns on a cell's `database`, `egress` or `connections` flag w
 
 **Live steps** (operator, not run by SSC-087):
 1. `pulumi up --stack platform`: the identity, its roles and the registry.
-2. Build and push `infra/deployer/Dockerfile` (from the repository root) to `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-cell-deployer`, then `pulumi config set --stack platform deployer_image <image@digest>` and `pulumi up --stack platform` again: the job and the control plane's grants.
+2. Build and push `infra/deployer/Dockerfile` (from the repository root) to `us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/ssc-cell-deployer`, then `pulumi config set --stack platform deployer_image <image@digest>` and `pulumi up --stack platform` again: the job and the control plane's grants. A tag, or an image outside that registry, fails the stack before apply, as for every other image setting.
 3. Re-apply each existing cell once (`pulumi up --stack c-<label>`) so its state exports `config`.
 4. The platform stack sets the two worker settings above on the control plane's worker once `deployer_image` is set (SSC-064).
 5. Deploy a stateful app into an empty staging cell, then run `cell_diff` and `pulumi preview --stack c-<label> --expect-no-changes`.

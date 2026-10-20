@@ -440,6 +440,21 @@ def test_no_deployer_job_until_its_image_is_named(declared: list[Declared]) -> N
     )
 
 
+@pytest.mark.parametrize(
+    "image",
+    [
+        f"us-central1-docker.pkg.dev/{naming.BOOTSTRAP_PROJECT}/ssc-platform/deployer:latest",
+        f"docker.io/x/y@sha256:{'0' * 64}",
+        f"us-central1-docker.pkg.dev/{naming.BOOTSTRAP_PROJECT}/other/deployer@sha256:{'0' * 64}",
+        f"us-central1-docker.pkg.dev/{naming.BOOTSTRAP_PROJECT}/ssc-platform/deployer@sha256:0",
+    ],
+)
+def test_the_deployer_image_must_be_pinned_in_the_platform_registry(image: str) -> None:
+    """The job holds state decrypt and folder-wide run.admin: no tag, no foreign registry."""
+    with pytest.raises(Exception, match="deployer_image must be"):
+        run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER, "deployer_image": image})
+
+
 def test_the_worker_may_only_start_the_deployer_job_and_read_it() -> None:
     """The worker runs the cell jobs (SSC-087), so it alone starts the job (SSC-064)."""
     declared = run(
