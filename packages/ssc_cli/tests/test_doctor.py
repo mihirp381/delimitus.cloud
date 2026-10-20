@@ -626,3 +626,12 @@ def test_a_system_package_off_the_platform_list_blocks_as_the_build_does(
 def test_a_listed_system_package_is_not_reported(tmp_path):
     make(tmp_path, {"requirements.txt": "flask\npdf2image\n", "app.py": FLASK_OK})
     assert codes(tmp_path) == []
+
+
+@pytest.mark.parametrize("pattern", ["ssc.toml", "*.toml", "**/*.toml"])
+def test_an_sscignore_pattern_matching_ssc_toml_is_overridden_and_reported(tmp_path, pattern):
+    make(tmp_path, {"package.json": PKG, "server.js": SERVER, ".sscignore": pattern + "\n"})
+    assert "ssc.toml" in packed_files(tmp_path)
+    (f,) = run_doctor(tmp_path)
+    assert (f.code, f.severity, f.path) == ("MANIFEST_IGNORED", "warn", ".sscignore")
+    assert "ssc.toml" in f.fix

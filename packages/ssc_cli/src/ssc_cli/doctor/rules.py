@@ -21,12 +21,13 @@ from pathlib import Path
 from typing import Final, cast
 
 from ssc_bundle.analyze import MAX_ANALYZE_BYTES, analyze, package_needs, sqlite_on_disk
-from ssc_bundle.ignore import Ignore
+from ssc_bundle.ignore import IGNORE_FILE, Ignore
 from ssc_bundle.secrets import allowed_values, scan
 from ssc_cli.doctor.finding import (
     ADD_APPROVED_PACKAGE,
     EXTERNAL_SERVICE,
     LOCKFILE_STALE,
+    MANIFEST_IGNORED,
     MANIFEST_INVALID,
     MANIFEST_MISSING,
     NATIVE_LIBRARY,
@@ -729,6 +730,19 @@ def manifest(t: Tree) -> list[Finding]:
     return []
 
 
+def manifest_ignored(t: Tree) -> list[Finding]:
+    """B-2: ``.sscignore`` cannot leave ``ssc.toml`` out; say so when one of its patterns tries."""
+    if MANIFEST_FILE not in t.files or not Ignore.load(t.root).would_drop_manifest:
+        return []
+    return [
+        finding(
+            MANIFEST_IGNORED,
+            IGNORE_FILE,
+            "A pattern here matches ssc.toml, which the deploy uploads anyway.",
+        )
+    ]
+
+
 def _loaded_manifest(t: Tree) -> Manifest:
     """The manifest the platform would use, or the defaults if it is missing or invalid."""
     data = t.data(MANIFEST_FILE, MAX_MANIFEST_BYTES + 1)
@@ -844,6 +858,7 @@ RULES: Final[tuple[Rule, ...]] = (
     writes_home,
     not_single_app,
     manifest,
+    manifest_ignored,
     state_sqlite_ephemeral,
     secret_in_bundle,
     native_library,

@@ -156,7 +156,7 @@ RULES: Final = (
         id="manifest",
         text='ssc.toml starts with schema = "ssc/v1" and is strict: an unknown key or a value of '
         "the wrong type is refused. Without one the app gets the defaults, with no database.",
-        doctor=("MANIFEST_MISSING", "MANIFEST_INVALID"),
+        doctor=("MANIFEST_MISSING", "MANIFEST_INVALID", "MANIFEST_IGNORED"),
     ),
     PlatformRule(
         id="public-build-values",

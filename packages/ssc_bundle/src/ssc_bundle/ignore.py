@@ -1,8 +1,10 @@
 """What never goes into a bundle: fixed exclusions, hygiene exclusions, then ``.sscignore``.
 
 ``.git`` is left out as a file too (a worktree or submodule checkout). ``.sscignore`` uses
-gitignore syntax, negation included, but cannot re-include a fixed or hygiene exclusion.
-``dist/`` and ``build/`` are kept: static sites ship them.
+gitignore syntax, negation included, but cannot re-include a fixed or hygiene exclusion, and
+cannot leave out ``ssc.toml`` at the root: the CLI checks the manifest on disk, so the server
+must receive that one, not fall back to the default (B-2). ``dist/`` and ``build/`` are kept:
+static sites ship them.
 """
 
 from collections.abc import Iterable
@@ -10,6 +12,8 @@ from pathlib import Path
 from typing import Final
 
 from pathspec import GitIgnoreSpec
+
+from ssc_contracts.manifest import MANIFEST_FILE
 
 FIXED_PATTERNS: Final = (".env", ".env.*", "node_modules/", ".git")
 HYGIENE_PATTERNS: Final = (".venv/", "__pycache__/", ".DS_Store")
@@ -47,6 +51,11 @@ class Ignore:
         for pattern, spec in self._fixed:
             if spec.match_file(path):
                 return pattern
-        if self._user.match_file(path):
+        if path != MANIFEST_FILE and self._user.match_file(path):
             return IGNORE_FILE
         return None
+
+    @property
+    def would_drop_manifest(self) -> bool:
+        """Whether a ``.sscignore`` pattern matches ``ssc.toml``, which is packed regardless."""
+        return self._user.match_file(MANIFEST_FILE)
