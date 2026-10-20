@@ -14,7 +14,7 @@ tools image, pinned by digest:
    SSC-093), installed in the build and in the image. A Dockerfile in the source is never used.
    The plan reads every ``--env`` value as a BuildKit secret, so each one is also written where
    the ``build`` step mounts secrets from; one missing fails the build (cell 1, 2026-10-07).
-4. ``build``: the Railpack frontend in a BuildKit container of its own (``BUILDKIT_IMAGE``),
+4. ``build``: the Railpack frontend in a BuildKit container of its own (``buildkit_image``),
    both pinned by digest. On failure the log is classified (``PRIVATE_REGISTRY``,
    ``DEPENDENCY_UNRESOLVED``).
 5. ``harden``: a platform-written layer on top: user 10001, ``HOME=/tmp``.
@@ -22,7 +22,7 @@ tools image, pinned by digest:
 Cloud Build pushes the image through ``images:``, so the digest in ``results.images`` is the one
 the registry holds. A step reports its reason through its exit code (``EXIT_CODES``); a step that
 fails another way is ``BUILD_EXITED_NONZERO`` for the app's build and ``BUILD_DRIVER_ERROR`` for
-the platform's steps. Build egress is open in the MVP (decision 014, SSC-015 amendment).
+the platform's steps. Build egress is open unless the cell has a private pool (SSC-076).
 
 Cloud Build substitutes ``$NAME`` in a build's strings, so every ``$`` in a step is written as
 ``$$`` (``_literal``); no SSC value reaches a step except through its environment.
@@ -42,10 +42,12 @@ import httpx2
 from ssc_contracts.build import (
     BUILD_DEPENDENCY_UNRESOLVED,
     BUILD_EXITED_NONZERO,
+    BUILD_HOST_NOT_ALLOWED,
     BUILD_NO_ENTRYPOINT,
     BUILD_PRIVATE_REGISTRY,
     SECRET_IN_BUNDLE,
 )
+from ssc_contracts.egress import BUILD_HOSTS, BUILD_NO_PROXY_VALUE, BUILD_PROXY_PORT, BUILD_USER
 from ssc_shared.build import (
     BuildDriverError,
     BuildNotFoundError,
@@ -75,6 +77,7 @@ BUILDKIT_IMAGE: Final = (
 )
 """The Railpack frontend needs BuildKit's merge op, which the Docker daemon on Cloud Build's
 workers does not support, so the app builds in this BuildKit container instead."""
+PROXY_TOKEN_ENV: Final = "SSC_BUILD_PROXY_TOKEN"  # noqa: S105  (a variable's name)
 EXIT_CODES: Final[Mapping[int, str]] = {
     10: SECRET_IN_BUNDLE,
     11: BUILD_DEPENDENCY_UNRESOLVED,
@@ -82,7 +85,18 @@ EXIT_CODES: Final[Mapping[int, str]] = {
     13: BUILD_NO_ENTRYPOINT,
     14: BUILD_EXITED_NONZERO,
     15: BUILD_DRIVER_ERROR,
+    16: BUILD_HOST_NOT_ALLOWED,
 }
+HOST_NOT_ALLOWED: Final = (
+    r"CONNECT tunnel failed, response 403|Received HTTP code 403 from proxy after CONNECT"
+    r"|Tunnel connection failed: 403|ProxyError.*403"
+    r"|tunnel error: unsuccessful|unsuccessful tunnel"
+    r"|tunneling socket could not be established, statusCode=403"
+    rf"|Forbidden \[IP: [0-9.]+ {BUILD_PROXY_PORT}\]"
+    r'|"https?://[^"]*": Forbidden'
+    r"|build network refused"
+)
+"""ERE, case-insensitive; checked before ``PRIVATE_REGISTRY``, which also matches a 403."""
 PRIVATE_REGISTRY: Final = (
     r"NameResolutionError|Failed to resolve|Could not resolve host"
     r"|getaddrinfo (ENOTFOUND|EAI_AGAIN)|npm (error|ERR!) code E40[13]"
@@ -102,8 +116,16 @@ DEPENDENCY_UNRESOLVED: Final = (
 """ERE, case-insensitive: a name or version that does not exist, or a stale lock file."""
 STEP_IDS: Final = ("fetch", "scan", "plan", "build", "harden")
 APP_STEPS: Final = frozenset({"build"})
+PROXIED_STEPS: Final = frozenset({"plan", "build"})
 
-_PINNED = re.compile(r"[a-z0-9.-]+(?::\d+)?(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}")
+_PINNED = re.compile(
+    r"[a-z0-9.-]+(?::\d+)?(?:/[a-z0-9._-]+)+(?::[a-z0-9._-]+)?@sha256:[0-9a-f]{64}"
+)
+_WORKER_POOL = re.compile(
+    r"projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/workerPools/[a-z0-9-]+"
+)
+_PROXY = re.compile(r"[a-z0-9.-]+:\d{1,5}")
+_SECRET_VERSION = re.compile(r"projects/[a-z0-9-]+/secrets/[A-Za-z0-9_-]+/versions/(?:latest|\d+)")
 _EMAIL = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com")
 _CLOUD_BUILD_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _EXIT_STATUS = re.compile(r"non-zero status:\s*(\d+)")
@@ -141,6 +163,15 @@ while IFS= read -r -d '' pair; do
 done < <(printf '%s' "$SSC_PUBLIC_ENV" | base64 -d)
 railpack "${args[@]}" || exit 13
 """
+PLAN_PROXY: Final = f"""proxy="http://{BUILD_USER}:$SSC_BUILD_PROXY_TOKEN@$SSC_BUILD_PROXY"
+export HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" https_proxy="$proxy" http_proxy="$proxy"
+export NO_PROXY="$SSC_BUILD_NO_PROXY" no_proxy="$SSC_BUILD_NO_PROXY"
+for name in HTTPS_PROXY HTTP_PROXY https_proxy http_proxy NO_PROXY no_proxy; do
+  args+=(--env "$name=${{!name}}")
+  printf '%s' "${{!name}}" > "/workspace/.ssc/secrets/$name"
+done
+"""
+"""After the public values, so the platform's proxy settings win."""
 BUILD: Final = """set -uo pipefail
 docker buildx create --name ssc --driver docker-container \\
   --driver-opt "image=$SSC_BUILDKIT" --bootstrap --use || exit 15
@@ -161,6 +192,21 @@ printf 'FROM ssc-app:built\\nUSER %s\\nENV HOME=/tmp\\n' "$SSC_APP_USER" \\
   > /workspace/.ssc/harden/Dockerfile
 DOCKER_BUILDKIT=1 docker build --progress=plain --tag "$SSC_IMAGE" /workspace/.ssc/harden
 """
+BUILD_CREATE_PROXIED: Final = f"""proxy="http://{BUILD_USER}:$SSC_BUILD_PROXY_TOKEN@$SSC_BUILD_PROXY"
+docker buildx create --name ssc --driver docker-container \\
+  --driver-opt "image=$SSC_BUILDKIT" --driver-opt "env.HTTPS_PROXY=$proxy" \\
+  --driver-opt "env.HTTP_PROXY=$proxy" --driver-opt "\\"env.NO_PROXY=$SSC_BUILD_NO_PROXY\\"" \\
+  --bootstrap --use || exit 15
+"""
+"""``--driver-opt`` is CSV, so the comma-separated ``NO_PROXY`` is quoted."""
+BUILD_REFUSED: Final = """grep -Eqi "$SSC_HOST_NOT_ALLOWED" /workspace/.ssc/build.log && exit 16
+while IFS= read -r line; do
+  host="${line##*://}"
+  case " $SSC_BUILD_HOSTS " in *" $host "*) ;; *) exit 16 ;; esac
+done < <(grep -Eio '403 Forbidden - [A-Z]+ https?://[^/:" ]+' /workspace/.ssc/build.log \\
+  | tr '[:upper:]' '[:lower:]')
+"""
+"""npm reports a proxy refusal as the host's own ``403 Forbidden``."""
 SCRIPTS: Final[Mapping[str, str]] = {
     "fetch": FETCH,
     "scan": SCAN,
@@ -168,6 +214,19 @@ SCRIPTS: Final[Mapping[str, str]] = {
     "build": BUILD,
     "harden": HARDEN,
 }
+_PRIVATE_GREP: Final = 'grep -Eqi "$SSC_PRIVATE_REGISTRY"'
+_RAILPACK: Final = 'railpack "${args[@]}" || exit 13\n'
+_CREATE: Final = BUILD[BUILD.index("docker buildx create") : BUILD.index("args=(")]
+
+
+def pooled_scripts() -> Mapping[str, str]:
+    return {
+        **SCRIPTS,
+        "plan": PLAN.replace(_RAILPACK, PLAN_PROXY + _RAILPACK),
+        "build": BUILD.replace(_CREATE, BUILD_CREATE_PROXIED).replace(
+            _PRIVATE_GREP, BUILD_REFUSED + _PRIVATE_GREP
+        ),
+    }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -181,13 +240,27 @@ class CellBuildConfig:
     service_account: str  # ssc-build@<p>.iam.gserviceaccount.com
     tools_image: str  # bash, curl, coreutils, tar, docker CLI, gitleaks 8.30, railpack 0.40
     frontend_image: str  # ghcr.io/railwayapp/railpack-frontend, the same Railpack version
+    worker_pool: str | None = None  # projects/<p>/locations/<r>/workerPools/ssc-builds
+    proxy: str | None = None  # <proxy address>:BUILD_PROXY_PORT
+    proxy_secret: str | None = None  # projects/<p>/secrets/<id>/versions/latest
+    buildkit_image: str = BUILDKIT_IMAGE
 
     def __post_init__(self) -> None:
-        for name in ("tools_image", "frontend_image"):
+        for name in ("tools_image", "frontend_image", "buildkit_image"):
             if not _PINNED.fullmatch(getattr(self, name)):
                 raise ValueError(f"{name} must be pinned by digest (name@sha256:...)")
         if not _EMAIL.fullmatch(self.service_account):
             raise ValueError(f"not a service account email: {self.service_account!r}")
+        pool = (self.worker_pool, self.proxy, self.proxy_secret)
+        if any(v is not None for v in pool) and any(v is None for v in pool):
+            raise ValueError("worker_pool, proxy and proxy_secret are set together or not at all")
+        for value, pattern, what in (
+            (self.worker_pool, _WORKER_POOL, "a worker pool name"),
+            (self.proxy, _PROXY, "a proxy host:port"),
+            (self.proxy_secret, _SECRET_VERSION, "a Secret Manager version name"),
+        ):
+            if value is not None and not pattern.fullmatch(value):
+                raise ValueError(f"not {what}: {value!r}")
 
     @property
     def parent(self) -> str:
@@ -249,7 +322,7 @@ def gitleaks_config(public_values: Iterable[str]) -> str:
 
 def build_config(cell: CellBuildConfig, build: CellBuild) -> Json:
     """The Cloud Build ``Build`` resource for ``build``. Pure."""
-    env_of: Mapping[str, Mapping[str, str]] = {
+    env_of: dict[str, dict[str, str]] = {
         "fetch": {"SSC_BUNDLE_URL": build.bundle_url, "SSC_BUNDLE_SHA256": build.bundle_sha256},
         "scan": {"SSC_GITLEAKS_CONFIG": _b64(gitleaks_config(build.public_env.values()))},
         "plan": {
@@ -259,19 +332,35 @@ def build_config(cell: CellBuildConfig, build: CellBuild) -> Json:
         },
         "build": {
             "SSC_FRONTEND": cell.frontend_image,
-            "SSC_BUILDKIT": BUILDKIT_IMAGE,
+            "SSC_BUILDKIT": cell.buildkit_image,
             "SSC_PRIVATE_REGISTRY": PRIVATE_REGISTRY,
             "SSC_DEPENDENCY_UNRESOLVED": DEPENDENCY_UNRESOLVED,
         },
         "harden": {"SSC_APP_USER": APP_USER, "SSC_IMAGE": cell.image(build.build_id)},
     }
+    scripts = SCRIPTS
+    options: Json = {"logging": "CLOUD_LOGGING_ONLY"}
+    pooled: Json = {}
+    if cell.worker_pool is not None and cell.proxy is not None:
+        scripts = pooled_scripts()
+        options["pool"] = {"name": cell.worker_pool}
+        proxied = {"SSC_BUILD_PROXY": cell.proxy, "SSC_BUILD_NO_PROXY": BUILD_NO_PROXY_VALUE}
+        env_of["plan"] |= proxied
+        env_of["build"] |= proxied | {
+            "SSC_HOST_NOT_ALLOWED": HOST_NOT_ALLOWED,
+            "SSC_BUILD_HOSTS": " ".join(BUILD_HOSTS),
+        }
+        pooled["availableSecrets"] = {
+            "secretManager": [{"versionName": cell.proxy_secret, "env": PROXY_TOKEN_ENV}]
+        }
     steps = [
         {
             "id": step,
             "name": cell.tools_image,
             "entrypoint": "bash",
-            "args": ["-c", _literal(SCRIPTS[step])],
+            "args": ["-c", _literal(scripts[step])],
             "env": [_literal(f"{k}={v}") for k, v in env_of[step].items()],
+            **({"secretEnv": [PROXY_TOKEN_ENV]} if pooled and step in PROXIED_STEPS else {}),
             **({"waitFor": [STEP_IDS[i - 1]]} if i else {"waitFor": ["-"]}),
         }
         for i, step in enumerate(STEP_IDS)
@@ -280,10 +369,11 @@ def build_config(cell: CellBuildConfig, build: CellBuild) -> Json:
         "steps": steps,
         "images": [cell.image(build.build_id)],
         "serviceAccount": f"projects/{cell.project}/serviceAccounts/{cell.service_account}",
-        "options": {"logging": "CLOUD_LOGGING_ONLY"},
+        "options": options,
         "timeout": BUILD_TIMEOUT,
         "queueTtl": QUEUE_TTL,
         "tags": [BUILD_TAG, build.build_id],
+        **pooled,
     }
 
 

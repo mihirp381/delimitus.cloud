@@ -10,8 +10,10 @@ Their `origin.json` says `source: synthetic`, `redistribution: shareable`. The t
 `.env.example` files are left out: ssc never uploads a `.env` file. The secrets in
 `cs-flask-hello` are Delimitus' redacted stand-ins and stay, so the scans have input.
 
-`sqlite-on-disk`, `dash-app`, `unlisted-native-library` and `listed-native-library` are SSC's
-own: SQLite on disk is refused, a Dash app is a session app without `sessions = true`, a
-dependency that needs a system package off the platform package list (pytesseract needs
-tesseract-ocr) is refused with `ADD_APPROVED_PACKAGE` (SSC-093), and one that needs a listed
-package (pdf2image needs poppler-utils) builds with that package installed.
+`sqlite-on-disk`, `dash-app`, `unlisted-native-library`, `listed-native-library` and
+`egress-exfil` are SSC's own: SQLite on disk is refused, a Dash app is a session app without
+`sessions = true`, a dependency that needs a system package off the platform package list
+(pytesseract needs tesseract-ocr) is refused with `ADD_APPROVED_PACKAGE` (SSC-093), one that
+needs a listed package (pdf2image needs poppler-utils) builds with that package installed, and
+an npm `postinstall` script that reaches past the package registries is refused by the build
+network with `BUILD_HOST_NOT_ALLOWED` (SSC-076).

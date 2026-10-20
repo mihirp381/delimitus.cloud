@@ -4,10 +4,12 @@ Configuration, all required and set by the cell stack: ``SSC_CELL_PROJECT``,
 ``SSC_CELL_REGION``, ``SSC_CELL_NETWORK``, ``SSC_CELL_SUBNETWORK``, ``SSC_IMAGE_REPOSITORY``,
 ``SSC_GATEWAY_SA``, and ``SSC_ORG_ID``, the one org this cell serves (decision 030). Builds
 (SSC-015) need all of ``SSC_BUILD_SA``, ``SSC_BUILD_TOOLS_IMAGE`` and
-``SSC_BUILD_FRONTEND_IMAGE``, or none, and then the agent refuses builds. Exits 2 when one is
-missing or malformed. Secrets (SSC-026) need nothing more: they live in the cell's project and
-region. App databases (SSC-040) need ``SSC_SQL_INSTANCE``, the name of the cell's Cloud SQL
-instance; unset, the agent refuses them. App logs (SSC-024) need ``SSC_LOG_VIEW``, the full names
+``SSC_BUILD_FRONTEND_IMAGE``, or none, and then the agent refuses builds. A private build pool
+(SSC-076) adds all of ``SSC_BUILD_POOL``, ``SSC_BUILD_PROXY`` and ``SSC_BUILD_PROXY_SECRET``, or
+none, and ``SSC_BUILD_BUILDKIT_IMAGE``. Exits 2 when one is missing or malformed. Secrets
+(SSC-026) need nothing more: they live in the cell's project and region. App databases
+(SSC-040) need ``SSC_SQL_INSTANCE``, the name of the cell's Cloud SQL instance; unset, the agent
+refuses them. App logs (SSC-024) need ``SSC_LOG_VIEW``, the full names
 of the cell's log views (``projects/<p>/locations/<l>/buckets/<b>/views/<v>``), separated by
 commas; unset, the agent refuses log reads and health uses the service alone. Log records are
 redacted (``ssc_shared.redaction``). App usage (SSC-028) needs ``SSC_USAGE_SOURCE=monitoring``,
@@ -63,6 +65,12 @@ BUILD_ENV: Final = {
     "tools_image": "SSC_BUILD_TOOLS_IMAGE",
     "frontend_image": "SSC_BUILD_FRONTEND_IMAGE",
 }
+POOL_ENV: Final = {
+    "worker_pool": "SSC_BUILD_POOL",
+    "proxy": "SSC_BUILD_PROXY",
+    "proxy_secret": "SSC_BUILD_PROXY_SECRET",
+}
+BUILDKIT_ENV: Final = "SSC_BUILD_BUILDKIT_IMAGE"
 SQL_INSTANCE_ENV: Final = "SSC_SQL_INSTANCE"
 LOG_VIEW_ENV: Final = "SSC_LOG_VIEW"
 USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
@@ -96,12 +104,19 @@ def build_config_from_env(env: Mapping[str, str], cell: CellRuntime) -> CellBuil
         return None
     if missing:
         raise ConfigError(f"missing {', '.join(missing)}")
+    pool = {field: env[name] for field, name in POOL_ENV.items() if env.get(name)}
+    if pool and len(pool) < len(POOL_ENV):
+        unset = [name for field, name in POOL_ENV.items() if field not in pool]
+        raise ConfigError(f"missing {', '.join(unset)}")
+    buildkit = {"buildkit_image": env[BUILDKIT_ENV]} if env.get(BUILDKIT_ENV) else {}
     try:
         return CellBuildConfig(
             project=cell.project,
             region=cell.region,
             image_repository=cell.image_repository,
             **{field: env[name] for field, name in BUILD_ENV.items()},
+            **pool,
+            **buildkit,
         )
     except ValueError as exc:
         raise ConfigError(str(exc)) from None
