@@ -44,7 +44,7 @@ on every one of them (the matrix checks this too).
 
 ## What the matrix proves
 
-Offline, against two orgs on one control plane, with an agent of org A attacking org B. 413
+Offline, against two orgs on one control plane, with an agent of org A attacking org B. 414
 cases:
 
 | Group | What it checks | Cases |
@@ -55,7 +55,7 @@ cases:
 | 4. Credentials | an MCP token on `/v1`, an API token, a CI token or a refresh token on `/mcp`, a refresh token as a bearer, B's ids in A's token, a token after `/revoke`: `401` (with `resource_metadata` on `/mcp`) or not found | 9 |
 | 5. Secrets | `set_secret` has no value argument; `get_logs` masks Supabase secret keys, service-role JWTs, database URLs with passwords, GitHub tokens, AWS keys and JWTs; app, status and connection answers carry no address, no `HTTPS_PROXY` and no `SSC_CONNECTION_*` value | 14 |
 | 6. Approvals | decide or record a decision on its own request, on someone else's or on B's; withdraw someone else's or B's; promote, warm, repo link, egress, new connection, delete app, link login | 14 |
-| 7. Rate limits | the 61st `list_apps` in a burst is `RATE_LIMITED`; a second credential of the same person is not limited; the first recovers after waiting; `/v1` sends `Retry-After` | 3 |
+| 7. Rate limits | the 61st `list_apps` in a burst is `RATE_LIMITED`; a second credential of the same person is not limited; the first recovers after waiting; `/v1` sends `Retry-After` and a tool refusal `retry_after`, `null` when there is no wait | 4 |
 | 8. Idempotency | the same key with another deploy body is `IDEMPOTENCY_KEY_REUSED`; the same key and body returns the stored answer and leaves one audit row | 2 |
 | 9. Audit | agent writes are recorded as the person, `via_agent: true`, with the `client_id`; refused calls leave no row | 2 |
 
@@ -97,10 +97,10 @@ Fixed in this change, each with a test:
 - `request_share`, and an agent's grants change, opened an approval request for a user or group
   the org does not have (another org's included). Both are now refused, with the same answer as
   for an id that exists nowhere.
+- A rate-limited tool call carried `RATE_LIMITED` but not the wait; it now carries
+  `retry_after`, the seconds `/v1` sends in `Retry-After`.
 
-Open:
+Kept on purpose:
 
-- A rate-limited tool call carries `RATE_LIMITED` but not the wait: `Retry-After` is on `/v1`
-  answers only.
-- An agent may withdraw its own approval request. This follows decision 016; the T4 brief
-  expected a refusal.
+- An agent may withdraw its own approval request (decision 016). The T4 brief expected a
+  refusal; the matrix checks the decision.

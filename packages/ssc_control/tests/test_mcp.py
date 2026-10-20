@@ -551,7 +551,16 @@ async def test_tool_error_carries_the_request_id(world: World) -> None:
     result = r.json()["result"]
     assert result["isError"] is True
     error = result["structuredContent"]["error"]
-    assert set(error) == {"type", "title", "status", "detail", "instance", "code", "request_id"}
+    assert set(error) == {
+        "type",
+        "title",
+        "status",
+        "detail",
+        "instance",
+        "code",
+        "request_id",
+        "retry_after",
+    }
     assert error["code"] == "NOT_FOUND"
     assert error["request_id"] == r.headers["X-Request-Id"]
     assert error["request_id"] in result["content"][0]["text"]

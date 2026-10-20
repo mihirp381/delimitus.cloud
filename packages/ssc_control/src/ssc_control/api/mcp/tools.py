@@ -210,7 +210,13 @@ def local_error(code: str, title: str, detail: str, status: int | None = None) -
         "request_id": None,
         "instance": None,
         "type": None,
+        "retry_after": None,
     }
+
+
+def _retry_after(r: httpx2.Response) -> int | None:
+    value = r.headers.get("Retry-After", "")
+    return int(value) if value.isdigit() else None
 
 
 def _checked(r: httpx2.Response) -> httpx2.Response:
@@ -221,7 +227,7 @@ def _checked(r: httpx2.Response) -> httpx2.Response:
     except ValueError:
         body = None
     if isinstance(body, dict) and "code" in body:
-        raise Refused(cast("Body", body))
+        raise Refused({**cast("Body", body), "retry_after": _retry_after(r)})
     raise Refused(
         local_error(
             "BAD_RESPONSE",
@@ -286,6 +292,8 @@ def refused(error: Body) -> CallToolResult:
     text = f"{error['code']}: {error['title']} {error['detail']}"
     if error.get("request_id"):
         text += f" Request id: {error['request_id']}."
+    if error.get("retry_after") is not None:
+        text += f" Retry after {error['retry_after']} seconds."
     return CallToolResult(
         content=[TextContent(type="text", text=text)],
         structured_content={"error": error},

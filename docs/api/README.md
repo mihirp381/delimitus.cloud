@@ -492,7 +492,8 @@ stateless, JSON replies. Code: `api/mcp/`.
 - **Refusals** are tool results with `isError: true` and structured content `{"error": {...}}`:
   the problem's seven members for an API refusal, or `APP_NOT_FOUND`, `ENVIRONMENT_NOT_FOUND`
   or `VALIDATION_FAILED` with `status: null` for one found before calling the API (the same
-  shape as `ssc --json`).
+  shape as `ssc --json`), plus `retry_after`: the seconds of the API's `Retry-After` (on
+  `RATE_LIMITED`, say), else `null`.
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
   step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052;
   `list_connections` is the route's own view), the warm flag (SSC-092),

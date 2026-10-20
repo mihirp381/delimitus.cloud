@@ -699,15 +699,25 @@ def test_v1_rate_limit_says_when_to_retry(arena: Arena, limited: str) -> None:
     assert v1_status(limited, api.access) == "200"
 
 
-@pytest.mark.xfail(strict=True, reason="finding: the tool error drops Retry-After")
 def test_mcp_rate_limit_says_when_to_retry(arena: Arena, limited: str) -> None:
     one, _ = logins(arena, limited)
     for _ in range(60):
         mcp_post(limited, one, rpc_call("list_apps", {}))
-    r = mcp_post(limited, one, rpc_call("list_apps", {}))
-    error = r.json()["result"]["structuredContent"]["error"]
+    result = mcp_post(limited, one, rpc_call("list_apps", {})).json()["result"]
+    error = result["structuredContent"]["error"]
     assert error["code"] == "RATE_LIMITED"
-    assert "Retry-After" in r.headers or "retry_after" in error
+    wait = error["retry_after"]
+    assert isinstance(wait, int)
+    assert wait >= 1
+    assert f"Retry after {wait} seconds." in result["content"][0]["text"]
+    time.sleep(wait + 0.5)
+    assert mcp_post(limited, one, rpc_call("list_apps", {})).json()["result"]["isError"] is False
+
+
+def test_a_refusal_without_a_wait_says_none(arena: Arena) -> None:
+    error = arena.rpc("get_app", {"app": f"app_{ZERO}"})["structuredContent"]["error"]
+    assert error["code"] == "NOT_FOUND"
+    assert error["retry_after"] is None
 
 
 # ── 8. idempotency ───────────────────────────────────────────────────────────
