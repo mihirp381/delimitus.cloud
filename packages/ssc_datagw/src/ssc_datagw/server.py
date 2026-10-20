@@ -253,6 +253,20 @@ class RefusedError(Exception):
         self.sqlstate = sqlstate
 
 
+async def _read_capped(request: Request, cap: int) -> bytes:
+    """The request body, read chunk by chunk and refused as ``BODY_TOO_LARGE`` as soon as it
+    passes ``cap`` bytes: a chunked body declares no length, so the declared-length check
+    alone would let it be buffered whole first."""
+    parts: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > cap:
+            raise RefusedError("BODY_TOO_LARGE")
+        parts.append(chunk)
+    return b"".join(parts)
+
+
 class Workloads(Protocol):
     async def verify(
         self, authorization: str | None, *, agent: bool = False, environment: str | None = None
@@ -539,9 +553,7 @@ class DataGateway:
         refused = environment_refusal(view, workload.env_id)
         if refused is not None or view is None:
             raise RefusedError(refused or "DATA_SNAPSHOT_STALE")
-        raw = await request.body()
-        if len(raw) > MAX_BODY:
-            raise RefusedError("BODY_TOO_LARGE")
+        raw = await _read_capped(request, MAX_BODY)
         try:
             body = FileBody.model_validate_json(raw)
         except ValidationError as exc:
@@ -700,9 +712,7 @@ class DataGateway:
         return note.sub, "verified"
 
     async def _body(self, request: Request) -> QueryBody:
-        raw = await request.body()
-        if len(raw) > MAX_BODY:
-            raise RefusedError("BODY_TOO_LARGE")
+        raw = await _read_capped(request, MAX_BODY)
         try:
             return QueryBody.model_validate_json(raw)
         except ValidationError as exc:

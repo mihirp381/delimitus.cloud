@@ -461,6 +461,24 @@ async def test_a_body_that_is_not_json_is_refused(tmp_path: Path) -> None:
     assert (r.status_code, error(r)["code"]) == (422, "VALIDATION_FAILED")
 
 
+async def test_a_chunked_body_over_the_cap_is_refused_before_it_is_read_whole(
+    tmp_path: Path,
+) -> None:
+    pulled = 0
+
+    async def chunks() -> AsyncGenerator[bytes]:
+        nonlocal pulled
+        for _ in range(64):
+            pulled += 1
+            yield b" " * (64 * 1024)
+
+    async with running(tmp_path) as w:
+        r = await w.http.post("/v1/files/put", content=chunks(), headers=bearer())
+    assert (r.status_code, error(r)["code"]) == (413, "BODY_TOO_LARGE")
+    assert "content-length" not in r.request.headers
+    assert pulled < 32
+
+
 async def test_a_stale_snapshot_gives_no_link(tmp_path: Path) -> None:
     async with running(tmp_path) as w:
         assert (await w.ask("put")).status_code == 200

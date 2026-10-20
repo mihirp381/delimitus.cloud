@@ -57,7 +57,7 @@ Every refusal has one body, and the first check that refuses answers:
 
 | Code | Status | Stage | Fix owner | When |
 |---|---|---|---|---|
-| `BODY_TOO_LARGE` | 413 | request | app | The body is over 1 MB. |
+| `BODY_TOO_LARGE` | 413 | request | app | The body is over 1 MB: a declared `Content-Length` over it is refused before anything else, and a chunked body as soon as what has arrived passes it, never read whole. |
 | `UNAUTHENTICATED` | 401 | workload | app | No token, or not a Google-signed token for this audience from an app account of this cell (on the schema route also the cell agent's, with a well-formed `X-SSC-Environment`). Checked before the body is read. |
 | `UNAVAILABLE` | 503 | workload | platform | Google's keys could not be fetched and none are cached; also any unexpected failure (stage `execute`). |
 | `DATA_SNAPSHOT_STALE` | 503 | admission | platform | No snapshot read confirmed in the last 120 s. |

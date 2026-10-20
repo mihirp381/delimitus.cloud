@@ -534,6 +534,40 @@ async def test_a_body_that_is_not_json_or_too_large_is_refused(tmp_path: Path) -
     assert (large.status_code, error(large)["code"]) == (413, "BODY_TOO_LARGE")
 
 
+class Chunks:
+    """A request body sent chunked (no ``Content-Length``), counting the chunks pulled."""
+
+    def __init__(self, body: bytes, size: int = 64 * 1024) -> None:
+        self.parts = [body[i : i + size] for i in range(0, len(body), size)]
+        self.pulled = 0
+
+    async def __aiter__(self) -> AsyncGenerator[bytes]:
+        for part in self.parts:
+            self.pulled += 1
+            yield part
+
+
+async def test_a_chunked_body_over_the_cap_is_refused_before_it_is_read_whole(
+    tmp_path: Path,
+) -> None:
+    large = Chunks(b" " * (4 * MAX_BODY))
+    async with running(tmp_path) as w:
+        r = await w.http.post("/v1/connections/sales/query", content=large, headers=bearer())
+    assert (r.status_code, error(r)["code"]) == (413, "BODY_TOO_LARGE")
+    assert "content-length" not in r.request.headers
+    assert large.pulled < len(large.parts) / 2
+    assert w.connector.queries == []
+
+
+async def test_a_chunked_body_under_the_cap_is_served(tmp_path: Path) -> None:
+    body = Chunks(json.dumps({"sql": SQL, "params": [0]}).encode(), size=8)
+    async with running(tmp_path) as w:
+        r = await w.http.post("/v1/connections/sales/query", content=body, headers=bearer())
+    assert r.status_code == 200
+    assert "content-length" not in r.request.headers
+    assert body.pulled == len(body.parts)
+
+
 async def test_the_daily_budget_cuts_then_refuses_per_grant(tmp_path: Path) -> None:
     connector = FakeConnector(rows=rows(3))
     async with running(tmp_path, connector=connector, grant_limits={"daily_rows": 5}) as w:
