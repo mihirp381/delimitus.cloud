@@ -299,7 +299,9 @@ environments with their app slug and whether each has a database; and the databa
 app database, `nearly_full` (two free places or fewer), `tier_full_at` (the last deployment
 refused with `DB_TIER_FULL`) and the paid "bigger database" step (`bigger_tier`, about
 `bigger_tier_monthly_usd` a month). The fixed outbound IP is in `GET /v1/egress` (SSC-053). The
-console's "Your environment" screen reads these three; its figures are not a bill (A6).
+console's "Your environment" screen reads these three; its figures are not a bill (A6). On the
+allowlist, a wildcard under a shared host (`*.s3.amazonaws.com`, `*.github.io`) reaches every
+tenant of it; prefer the exact host, such as `<bucket>.s3.amazonaws.com`.
 
 **The warm option is an org admin's choice** (SSC-092). `GET /v1/warm` answers every production
 environment with whether it is kept warm and whether the usage events suggest it (`suggested`:
