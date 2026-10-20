@@ -10,8 +10,8 @@ npm install @delimitus/ssc-identity
 import { IdentityRefused, IdentityVerifier } from '@delimitus/ssc-identity';
 
 const verifier = new IdentityVerifier({
-  audience: 'https://quiet-river-7f3k.delimitusapps.com',   // this app's exact origin
-  keys: process.env.SSC_IDENTITY_KEYS_URL,  // a data: URL in a cell; or a JWKS URL or object
+  audience: process.env.SSC_APP_ORIGIN,     // this app's exact origin, preview's included
+  keys: process.env.SSC_IDENTITY_KEYS_URL,  // a data: URL in a cell; outside one a JWKS URL or object
 });
 
 const note = await verifier.fromHeaders(req.headers);

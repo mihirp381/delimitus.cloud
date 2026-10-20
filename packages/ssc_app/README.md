@@ -14,8 +14,8 @@ import os
 from ssc_app.identity import IdentityRefused, IdentityVerifier
 
 verifier = IdentityVerifier(
-    audience="https://quiet-river-7f3k.delimitusapps.com",  # this app's exact origin
-    keys=os.environ["SSC_IDENTITY_KEYS_URL"],  # a data: URL in a cell; or a JWKS URL or dict
+    audience=os.environ["SSC_APP_ORIGIN"],  # this app's exact origin, preview's included
+    keys=os.environ["SSC_IDENTITY_KEYS_URL"],  # data: URL in a cell; else JWKS URL or dict
 )
 note = verifier.from_headers(request.headers)
 note.sub  # "usr_…" or "sch_…": key on this
@@ -75,6 +75,12 @@ from ssc_app import data
 result = data.query("finance", "select id, total from invoices where year = $1", [2026])
 for row in result.rows:  # a list in column order
     ...
+
+schema = data.describe("finance")  # describe(name) -> Schema(connection, kind, tables)
+for table in schema.tables:  # Table(name, columns), each column {name, type, db_type}
+    ...
 ```
+
+`data.describe(name)` names the tables of a granted connection and their columns, typed as a query types them (none for a file not yet read); the data gateway keeps a description five minutes, and a refusal is a `DataError` as for a query.
 
 The statement follows the connection's kind: one `SELECT` for `postgres` (`$1`, `$2`, ... placeholders) and for `mysql`, `sqlserver`, `bigquery` and `snowflake` (`?` placeholders); and, with no parameters, an A1 range for `gsheets`, `list <prefix>` or `get <key>` for `s3` and `gcs`, `<table>[ view <view>][ where <formula>]` for `airtable` and a GET path for `rest`. `max_rows`, `max_bytes` and `timeout_ms` only narrow what the platform, the connection and the grant allow; `result.truncated` and `result.truncated_reason` say the gateway stopped reading early. To act for the signed-in user pass the request's `X-SSC-Identity` value as `identity=`; without it the app acts for itself. A decimal is a string and a timestamp is ISO 8601. Errors are `DataError` with the data gateway's `code` (`CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`, `QUERY_REFUSED`, `QUERY_FAILED` with a `sqlstate`, `DAILY_BUDGET_SPENT`, ...), `UNREACHABLE` (the gateway or the app's own ID token could not be had) or `BAD_GATEWAY_RESPONSE` (an answer that is not JSON); a query is tried once more on a lost connection or a 502, 503 or 504, and one that timed out is not. The Node helper `@delimitus/ssc-data` has the same names with `maxRows`, `maxBytes` and `timeoutMs`. Contract: `docs/contracts/data-gateway.md`.

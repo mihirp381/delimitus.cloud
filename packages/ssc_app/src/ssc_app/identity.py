@@ -1,9 +1,11 @@
 """Read the identity note the SSC gateway attaches to every request as ``X-SSC-Identity``.
 
+    import os
+
     from ssc_app.identity import IdentityVerifier
 
-    verifier = IdentityVerifier(audience="https://quiet-river-7f3k.delimitusapps.com",
-                                keys="https://keys.delimitus.com/cell-01/jwks.json")
+    verifier = IdentityVerifier(audience=os.environ["SSC_APP_ORIGIN"],
+                                keys=os.environ["SSC_IDENTITY_KEYS_URL"])
     note = verifier.from_headers(request.headers)
     who = note.sub          # key on this
     label = note.name       # display only
@@ -15,6 +17,10 @@ Two rules:
 * **Verify once, when the request arrives.** Do not re-verify inside a long WebSocket or event
   stream; the note expires after five minutes and ending open streams is the platform kill
   switch's job. Re-verifying mid-stream only breaks the stream.
+
+In a cell the platform hands the app its origin in ``SSC_APP_ORIGIN`` and the cell JWKS inline,
+as a ``data:`` URL, in ``SSC_IDENTITY_KEYS_URL``. Outside a cell, ``keys`` may be the JWKS URL
+(``https://keys.delimitus.com/<cell>/jwks.json``) or the JWKS itself.
 
 Every refusal is an :class:`IdentityRefused` carrying one code from :data:`REFUSAL_CODES`. Treat
 all of them the same way: the request is not from a signed-in user of this app.

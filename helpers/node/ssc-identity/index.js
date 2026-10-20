@@ -3,8 +3,8 @@
  *
  *   import { IdentityVerifier } from '@delimitus/ssc-identity';
  *   const verifier = new IdentityVerifier({
- *     audience: 'https://quiet-river-7f3k.delimitusapps.com',
- *     keys: 'https://keys.delimitus.com/cell-01/jwks.json',
+ *     audience: process.env.SSC_APP_ORIGIN,
+ *     keys: process.env.SSC_IDENTITY_KEYS_URL,
  *   });
  *   const note = await verifier.fromHeaders(req.headers);
  *   const who = note.sub;     // key on this
@@ -16,6 +16,10 @@
  *  - Verify once, when the request arrives. Do not re-verify inside a long WebSocket or event
  *    stream: the note expires after five minutes and ending open streams is the platform kill
  *    switch's job. Re-verifying mid-stream only breaks the stream.
+ *
+ * In a cell the platform hands the app its origin in `SSC_APP_ORIGIN` and the cell JWKS inline, as
+ * a `data:` URL, in `SSC_IDENTITY_KEYS_URL`. Outside a cell, `keys` may be the JWKS URL
+ * (`https://keys.delimitus.com/<cell>/jwks.json`) or the JWKS itself.
  *
  * Every refusal is an `IdentityRefused` with a `code` from `REFUSAL_CODES`. Treat them all the
  * same way: the request is not from a signed-in user of this app.
