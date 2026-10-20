@@ -33,6 +33,7 @@ from ssc_control.identity import __main__ as cli
 from ssc_control.identity import connections, operator, sync
 from ssc_control.identity.connections import ConnectError
 from ssc_control.identity.rules import JoinRule
+from ssc_shared import redaction
 
 OP = Actor(kind=ActorKind.OPERATOR, id="op_dana")
 LABEL = "qwrtplkjhgfd"
@@ -594,3 +595,10 @@ async def test_run_create_org_prints_the_org_and_the_founder_result(
     err = capsys.readouterr().err
     assert "usr_" in err
     assert "(subject 00ufounder): ok" in err
+
+
+@pytest.mark.usefixtures("unredacted_logging")
+def test_the_identity_entrypoint_installs_log_redaction() -> None:
+    assert not redaction.installed()
+    assert cli.main(["sync"]) == 2
+    assert redaction.installed()

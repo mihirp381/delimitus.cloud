@@ -17,6 +17,7 @@ from ssc_contracts.audit import ActorKind
 from ssc_control.audit.chain import Actor
 from ssc_control.db import bound_org, check_org_id, make_engine
 from ssc_control.github.links import BindError, bind_installation
+from ssc_shared import redaction
 
 
 def _installation(value: str) -> int:
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     p_bind.add_argument("--operator", required=True)
     p_bind.add_argument("--installation", type=_installation, required=True)
     args = parser.parse_args(argv)
+    redaction.install()
     dsn = os.environ.get("SSC_DATABASE_DSN")
     if not dsn:
         sys.stderr.write("SSC_DATABASE_DSN is not set\n")

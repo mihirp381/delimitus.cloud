@@ -63,6 +63,7 @@ from ssc_control.db import (
     sqlalchemy_url,
 )
 from ssc_control.db.catalog import FORBIDDEN_COLUMN_NAMES, PII_COLUMN_NAMES
+from ssc_shared import redaction
 
 BASE = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -780,3 +781,12 @@ def test_grant_removed_records_the_view_not_the_row_id(api: Api) -> None:
         "subject_id": None,
     }
     assert asyncio.run(run_verify(api.dsns.app, api.org.org_id)).ok
+
+
+@pytest.mark.usefixtures("unredacted_logging")
+def test_the_audit_entrypoint_installs_log_redaction() -> None:
+    assert not redaction.installed()
+    with pytest.raises(SystemExit) as exited:  # no SSC_DATABASE_DSN: argparse's error
+        main(["verify", "--org", new_id("org")])
+    assert exited.value.code == 2
+    assert redaction.installed()

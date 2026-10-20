@@ -44,6 +44,7 @@ from ssc_control.storage import (
     cell_stores_from_env,
     org_store,
 )
+from ssc_shared import redaction
 from ssc_shared.blobstore import BlobStore
 
 DSN_ENV = "SSC_DATABASE_DSN"
@@ -223,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     reanchor_cmd.add_argument("--restored-to", required=True, type=rfc3339)
     reanchor_cmd.add_argument("--ref", required=True, help="the incident or change ticket")
     args = parser.parse_args(argv)
+    redaction.install()
     dsn = os.environ.get(DSN_ENV)
     if not dsn:
         parser.error(f"{DSN_ENV} is not set")

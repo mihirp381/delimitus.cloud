@@ -104,6 +104,13 @@ def restored() -> Iterator[logging.Logger]:
         h.filters[:] = f
 
 
+def test_installed_says_whether_install_ran(restored: logging.Logger) -> None:
+    logging.setLogRecordFactory(logging.LogRecord)
+    assert not redaction.installed()
+    redaction.install()
+    assert redaction.installed()
+
+
 def test_install_redacts_every_record_and_is_idempotent(restored: logging.Logger) -> None:
     seen: list[str] = []
 

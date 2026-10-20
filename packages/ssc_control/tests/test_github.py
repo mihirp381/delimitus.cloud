@@ -100,6 +100,7 @@ from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.runtime.fake import FakeRuntimeDriver
 from ssc_control.runtime.specs import BundleReleaseSpecs
 from ssc_control.worker import CompositionError, Ports, github_from_env
+from ssc_shared import redaction
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
 from ssc_shared.hosts import app_origin
@@ -1207,3 +1208,11 @@ def test_the_unpacker_drops_the_top_folder(tmp_path: Path) -> None:
     dest.mkdir()
     unpack(tarball, dest, Limits())
     assert files_of(dest) == {"ssc.toml": MANIFEST, "src/app.py": b"print(1)\n"}
+
+
+@pytest.mark.usefixtures("unredacted_logging")
+def test_the_github_entrypoint_installs_log_redaction() -> None:
+    assert not redaction.installed()
+    argv = ["bind", "--org", new_id("org"), "--operator", "op", "--installation", "1"]
+    assert main(argv) == 2
+    assert redaction.installed()

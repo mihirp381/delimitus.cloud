@@ -34,6 +34,7 @@ from ssc_control.audit.chain import Actor
 from ssc_control.db import all_org_ids, bound_org, check_org_id, make_engine
 from ssc_control.identity import connections, operator, sync
 from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
+from ssc_shared import redaction
 
 INTERVAL_SECONDS: Final = 60
 log = logging.getLogger("ssc.identity")
@@ -207,6 +208,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    redaction.install()
     if args.command == "serve":
         serve(args.host, args.port)
         return 0

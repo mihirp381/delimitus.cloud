@@ -88,6 +88,11 @@ class _RedactingFactory:
         return redact_record(self.inner(*args, **kwargs))
 
 
+def installed() -> bool:
+    """Whether :func:`install` has run in this process (the record factory redacts)."""
+    return isinstance(logging.getLogRecordFactory(), _RedactingFactory)
+
+
 def install() -> None:
     """Redact every log record this process creates from now on, and every record the root
     logger's handlers emit. Calling it twice is harmless."""
