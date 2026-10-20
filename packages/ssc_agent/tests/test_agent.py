@@ -1,5 +1,8 @@
 """The agent's configuration, metadata tokens, and the pure parts of the Cloud Run driver."""
 
+import base64
+import json
+
 import httpx2
 import pytest
 
@@ -20,7 +23,13 @@ from ssc_agent.cloud_run import (  # pyright: ignore[reportPrivateUsage]
     _readiness,
     _traffic,
 )
-from ssc_agent.metadata import MetadataAccessTokens, MetadataError
+from ssc_agent.metadata import (
+    EARLY_SECONDS,
+    MIN_CACHE_SECONDS,
+    MetadataAccessTokens,
+    MetadataError,
+    MetadataIdTokens,
+)
 
 FULL = {name: f"value-{field}" for field, name in ENV.items()}
 
@@ -84,6 +93,51 @@ async def test_access_token_failure_names_no_token() -> None:
     )
     with pytest.raises(MetadataError, match="HTTPStatusError"):
         await tokens()
+
+
+def _id_token(exp: float | None) -> str:
+    def part(doc: dict[str, object]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(doc).encode()).rstrip(b"=").decode()
+
+    claims: dict[str, object] = {"aud": "https://gw.test"}
+    if exp is not None:
+        claims["exp"] = exp
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.c2ln"
+
+
+@pytest.mark.parametrize(
+    ("exp_in", "refresh_after"),
+    [
+        (600.0, 600 - EARLY_SECONDS),  # a token that lives ten minutes is kept five
+        (7200.0, 3600 - EARLY_SECONDS),  # never longer than an ID token lives
+        (60.0, MIN_CACHE_SECONDS),  # one nearly expired is kept only the floor
+        (None, MIN_CACHE_SECONDS),  # and so is one whose exp cannot be read
+    ],
+)
+async def test_an_id_token_is_cached_until_its_own_exp_less_five_minutes(
+    exp_in: float | None, refresh_after: float
+) -> None:
+    now = [5000.0]
+    wall = 1_800_000_000.0
+    calls: list[httpx2.Request] = []
+
+    def metadata(request: httpx2.Request) -> httpx2.Response:
+        calls.append(request)
+        return httpx2.Response(200, text=_id_token(None if exp_in is None else wall + exp_in))
+
+    tokens = MetadataIdTokens(
+        "https://gw.test",
+        httpx2.AsyncClient(transport=httpx2.MockTransport(metadata)),
+        monotonic=lambda: now[0],
+        wall=lambda: wall,
+    )
+    await tokens()
+    now[0] += refresh_after - 1
+    await tokens()
+    assert len(calls) == 1
+    now[0] += 2
+    await tokens()
+    assert len(calls) == 2  # noqa: PLR2004
 
 
 def test_proto3_zeros_compare_equal() -> None:
