@@ -9,7 +9,7 @@ no handler or formatter configured afterwards can skip it.
 import logging
 import re
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Final
 
 MASK: Final = "[redacted]"
@@ -44,17 +44,35 @@ def redact(text: str) -> str:
     return _ASSIGNMENT.sub(lambda m: f"{m.group(1)}{m.group(4)}{m.group(5)}{MASK}", text)
 
 
+_Args = tuple[object, ...] | Mapping[str, object] | None
+
+
+def _redact_args(args: _Args) -> _Args:
+    if isinstance(args, tuple):
+        return tuple(redact(a) if isinstance(a, str) else a for a in args)
+    if args is None:
+        return None
+    return {k: redact(v) if isinstance(v, str) else v for k, v in args.items()}
+
+
 def redact_record(record: logging.LogRecord) -> logging.LogRecord:
-    """Redact a record in place: its message with arguments merged in, its exception text, its
-    stack and every string attribute added through ``extra``. A message with nothing to redact
-    keeps its arguments, which some formatters (uvicorn's access log) read."""
+    """Redact a record in place: its message and each string argument, its exception text, its
+    stack and every string attribute added through ``extra``. Arguments stay a tuple or mapping
+    of the same shape, which some formatters (uvicorn's access log) unpack. They are merged into
+    the message when it cannot be formatted or a secret survives formatting (split between
+    message and argument, or inside a non-string argument)."""
     try:
-        message, merged = record.getMessage(), False
+        message = record.getMessage()
     except TypeError, ValueError:
-        message, merged = f"{record.msg} {record.args}", True
-    redacted = redact(message)
-    if merged or redacted != message or not isinstance(record.msg, str):
-        record.msg = redacted
+        message = None
+    if message is not None and isinstance(record.msg, str) and redact(message) != message:
+        record.msg, record.args = redact(record.msg), _redact_args(record.args)
+        try:
+            message = record.getMessage()
+        except TypeError, ValueError:
+            message = None
+    if message is None or not isinstance(record.msg, str) or redact(message) != message:
+        record.msg = redact(f"{record.msg} {record.args}" if message is None else message)
         record.args = None
     if record.exc_info and not record.exc_text:
         record.exc_text = "".join(traceback.format_exception(*record.exc_info)).rstrip("\n")

@@ -92,6 +92,33 @@ def test_a_record_with_bad_arguments_is_still_redacted() -> None:
     assert FAKE not in rec.getMessage()
 
 
+def test_an_access_log_record_keeps_its_arguments_when_one_is_redacted() -> None:
+    from uvicorn.logging import AccessFormatter  # noqa: PLC0415
+
+    rec = record('%s - "%s %s HTTP/%s" %d', "1.2.3.4", "GET", "/x?token=abcdefgh", "1.1", 200)
+    redact_record(rec)
+    assert rec.args == ("1.2.3.4", "GET", f"/x?token={MASK}", "1.1", 200)
+    line = AccessFormatter().format(rec)
+    assert MASK in line
+    assert "abcdefgh" not in line
+
+
+def test_a_record_with_named_arguments_keeps_them() -> None:
+    named = {"who": "ana", "what": f"Bearer {FAKE}"}
+    rec = logging.LogRecord(
+        "ssc", logging.INFO, __file__, 1, "%(who)s sent %(what)s", (named,), None
+    )
+    redact_record(rec)
+    assert rec.args == {"who": "ana", "what": f"Bearer {MASK}"}
+    assert rec.getMessage() == f"ana sent Bearer {MASK}"
+
+
+def test_a_secret_split_between_message_and_argument_is_still_redacted() -> None:
+    rec = record("password=%s", FAKE)
+    redact_record(rec)
+    assert FAKE not in rec.getMessage()
+
+
 @pytest.fixture
 def restored() -> Iterator[logging.Logger]:
     root = logging.getLogger()
