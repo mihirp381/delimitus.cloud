@@ -14,7 +14,9 @@ signal it has no handler for, so without it that stop waited out the stop timeou
 ``SIGKILL``. ``main`` then exits 0 without starting Envoy, or ``_serve`` stops at once.
 
 Settings: ``SSC_ORG_ID`` and ``SSC_CELL_BUCKET`` (required), ``SSC_PROXY_PORT`` (default
-``PROXY_PORT``), ``SSC_ENVOY_BIN`` (default ``envoy``) and ``STORAGE_EMULATOR_HOST`` (tests).
+``PROXY_PORT``), ``SSC_SNAPSHOT_MAX_AGE`` (seconds without a confirmed snapshot before the proxy
+refuses every tunnel, default ``MAX_AGE_SECONDS``, 300, as the gateway's), ``SSC_ENVOY_BIN``
+(default ``envoy``) and ``STORAGE_EMULATOR_HOST`` (tests).
 """
 
 import signal
@@ -33,6 +35,7 @@ signal.signal(signal.SIGINT, _early_stop)
 import asyncio  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
+import math  # noqa: E402
 import os  # noqa: E402
 import subprocess  # noqa: E402
 import tempfile  # noqa: E402
@@ -42,7 +45,7 @@ from typing import Final, NoReturn  # noqa: E402
 
 from ssc_contracts.egress import PROXY_PORT  # noqa: E402
 from ssc_egress.envoy import EgressConfig, Policy, bootstrap, envoy_args  # noqa: E402
-from ssc_egress.runner import ListenerWriter, follow  # noqa: E402
+from ssc_egress.runner import MAX_AGE_SECONDS, ListenerWriter, follow  # noqa: E402
 from ssc_shared.access import ViewHolder  # noqa: E402
 from ssc_shared.blobstore_gcs import GcsBlobStore, bucket_of  # noqa: E402
 from ssc_shared.snapshot_feed import SnapshotFeed  # noqa: E402
@@ -63,6 +66,19 @@ def _need(env: Mapping[str, str], key: str) -> str:
     return value
 
 
+def _max_age(env: Mapping[str, str]) -> float:
+    raw = env.get("SSC_SNAPSHOT_MAX_AGE", "").strip()
+    if not raw:
+        return MAX_AGE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not (math.isfinite(value) and value > 0):
+        raise SettingsError("SSC_SNAPSHOT_MAX_AGE is a number of seconds above 0")
+    return value
+
+
 def _start(env: Mapping[str, str]) -> tuple[EgressConfig, ListenerWriter, subprocess.Popen[bytes]]:
     work = Path(tempfile.mkdtemp(prefix="ssc-egress-"))
     cfg = EgressConfig(port=int(env.get("SSC_PROXY_PORT", str(PROXY_PORT))), lds_dir=str(work))
@@ -77,7 +93,11 @@ def _start(env: Mapping[str, str]) -> tuple[EgressConfig, ListenerWriter, subpro
 
 
 async def _serve(
-    org_id: str, bucket: str, writer: ListenerWriter, envoy: subprocess.Popen[bytes]
+    org_id: str,
+    bucket: str,
+    writer: ListenerWriter,
+    envoy: subprocess.Popen[bytes],
+    max_age: float,
 ) -> bool:
     """Follows the snapshot until a signal (True) or Envoy's exit (False)."""
     stop = asyncio.Event()
@@ -88,7 +108,7 @@ async def _serve(
         stop.set()
     holder = ViewHolder(org_id)
     feed = SnapshotFeed(GcsBlobStore(bucket_of(bucket)), holder)
-    await follow(feed, holder, writer, stop=stop, envoy=envoy)
+    await follow(feed, holder, writer, stop=stop, envoy=envoy, max_age=max_age)
     return stop.is_set()
 
 
@@ -111,6 +131,7 @@ def main() -> int:
     try:
         org_id = _need(os.environ, "SSC_ORG_ID")
         bucket = _need(os.environ, "SSC_CELL_BUCKET")
+        max_age = _max_age(os.environ)
     except SettingsError as exc:
         log.error("%s", exc)
         return 2
@@ -121,7 +142,7 @@ def main() -> int:
     log.info("egress proxy serving on port %s", cfg.port)
     loop = asyncio.new_event_loop()
     try:
-        stopped = loop.run_until_complete(_serve(org_id, bucket, writer, envoy))
+        stopped = loop.run_until_complete(_serve(org_id, bucket, writer, envoy, max_age))
     finally:
         _stop(envoy)
         loop.close()

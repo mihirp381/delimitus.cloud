@@ -1,5 +1,6 @@
 """The proxy follows the snapshot: a changed allowlist or credential rewrites the listener, an
-unchanged one never does, and a failing feed keeps the last good listener (SSC-053)."""
+unchanged one never does, and a failing feed keeps the last good listener until no poll has
+confirmed the snapshot for ``max_age``; then it refuses every tunnel until a good poll (SSC-053)."""
 
 import asyncio
 import json
@@ -12,6 +13,8 @@ from ssc_egress.envoy import LDS_FILE, EgressConfig, Policy, policy_of
 from ssc_egress.runner import ListenerWriter, follow
 from ssc_shared.access import ViewHolder
 from ssc_shared.snapshot_feed import SnapshotFeed, latest_key
+
+MAX_AGE = 60.0
 
 
 def listener_of(lds_dir: Path) -> dict[str, Any]:
@@ -52,11 +55,15 @@ async def test_follow_writes_each_change_and_only_active_environments_credential
     lds = tmp_path / "lds"
     lds.mkdir()
     holder = ViewHolder(ORG)
-    feed = SnapshotFeed(blobs, holder)
+    clock = [0.0]
+    feed = SnapshotFeed(blobs, holder, monotonic=lambda: clock[0])
     writer = ListenerWriter(EgressConfig(lds_dir=str(lds)))
     writer.write(Policy())
+    empty = writer.version
     stop = asyncio.Event()
-    task = asyncio.create_task(follow(feed, holder, writer, stop=stop, interval=0.01))
+    task = asyncio.create_task(
+        follow(feed, holder, writer, stop=stop, interval=0.01, max_age=MAX_AGE)
+    )
 
     async def until(check: Any) -> None:
         async with asyncio.timeout(5):
@@ -85,7 +92,16 @@ async def test_follow_writes_each_change_and_only_active_environments_credential
     await blobs.delete(latest_key(ORG))
     await asyncio.sleep(0.1)
     assert feed.failures > 0
-    assert writer.version == third
+    assert writer.version == third  # within max_age the last good listener stays
+
+    clock[0] = MAX_AGE + 1  # no poll has confirmed the snapshot for longer than max_age
+    await until(lambda: writer.version == empty)
+    assert routes(lds) == ["no-credentials", "no-credentials-plain"]
+    assert users(lds) == []
+
+    await publish(blobs, snapshot(3, hosts=("api.allowed.test",)))  # the pointer is back
+    await until(lambda: writer.version == third)
+    assert routes(lds) == ["allow-0", "refuse", "not-connect"]
     stop.set()
     await task
 

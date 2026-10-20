@@ -65,3 +65,26 @@ def test_a_stop_during_the_imports_exits_zero_without_starting_envoy(
     log = "".join(line for line in lines if not line.startswith("import time:"))
     assert code == 0, log
     assert "stopped before the proxy started" in log
+
+
+@pytest.mark.parametrize("value", ["soon", "0", "-5", "nan"])
+def test_a_snapshot_max_age_that_is_not_a_positive_number_is_a_settings_error(
+    tmp_path: Path, value: str
+) -> None:
+    env = os.environ | {
+        "SSC_ORG_ID": ORG,
+        "SSC_CELL_BUCKET": "ssc-c-test-cell",
+        "SSC_SNAPSHOT_MAX_AGE": value,
+        "SSC_ENVOY_BIN": str(tmp_path / "no-envoy"),
+    }
+    done = subprocess.run(  # noqa: S603  (this interpreter and our own module)
+        [sys.executable, "-m", "ssc_egress"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert done.returncode == 2, done.stderr  # noqa: PLR2004
+    assert "SSC_SNAPSHOT_MAX_AGE" in done.stderr
