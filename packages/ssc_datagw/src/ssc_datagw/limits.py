@@ -117,6 +117,7 @@ class Slots:
         self._wait = wait
         self._used: dict[str, int] = {}
         self._freed = asyncio.Condition()
+        self._waking: set[asyncio.Task[None]] = set()
 
     def used(self, grant: str) -> int:
         return self._used.get(grant, 0)
@@ -140,5 +141,13 @@ class Slots:
                 self._used[grant] = left
             else:
                 self._used.pop(grant, None)
-            async with self._freed:
-                self._freed.notify_all()
+            # Shielded: a cancellation while the wake waits for the lock (a client gone under
+            # contention) must not leave the waiters asleep beside a free slot.
+            waking = asyncio.ensure_future(self._wake())
+            self._waking.add(waking)
+            waking.add_done_callback(self._waking.discard)
+            await asyncio.shield(waking)
+
+    async def _wake(self) -> None:
+        async with self._freed:
+            self._freed.notify_all()

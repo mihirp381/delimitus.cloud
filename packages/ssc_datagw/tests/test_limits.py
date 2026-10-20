@@ -137,3 +137,42 @@ async def test_a_cancelled_holder_frees_its_slot() -> None:
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     assert slots.used("g") == 0
+
+
+async def test_a_holder_cancelled_while_it_waits_to_wake_the_waiters_still_wakes_them() -> None:
+    # A client that disconnects twice under contention: the holder is cancelled, and cancelled
+    # again while its release waits for the condition's lock, which another task holds.
+    slots = Slots(wait=1.0)
+    locked, unlock = asyncio.Event(), asyncio.Event()
+
+    async def hold() -> None:
+        async with slots.hold("g", 1):
+            await asyncio.Event().wait()
+
+    async def block() -> None:
+        async with slots._freed:  # noqa: SLF001
+            locked.set()
+            await unlock.wait()
+
+    holder = asyncio.create_task(hold())
+    await asyncio.sleep(0)
+    waiter = asyncio.create_task(hold())
+    await asyncio.sleep(0)
+    blocker = asyncio.create_task(block())
+    await locked.wait()
+    holder.cancel()
+    await asyncio.sleep(0)
+    holder.cancel()
+    await asyncio.gather(holder, return_exceptions=True)
+    assert slots.used("g") == 0
+    unlock.set()
+    await blocker
+    for _ in range(20):
+        if slots.used("g") == 1:
+            break
+        await asyncio.sleep(0.01)
+    assert slots.used("g") == 1
+    assert not waiter.done()
+    waiter.cancel()
+    await asyncio.gather(waiter, return_exceptions=True)
+    assert slots.used("g") == 0
