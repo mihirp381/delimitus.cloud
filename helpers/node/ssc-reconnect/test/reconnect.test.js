@@ -294,6 +294,57 @@ test('the announced restart still reconnects at once', () => {
   );
 });
 
+test('a deadline beyond what setTimeout can hold does not end the stream at once', async () => {
+  const warnings = [];
+  const onWarning = (warning) => warnings.push(warning.name);
+  process.on('warning', onWarning);
+  let ended = false;
+  const res = { once() {}, write() {}, end: () => (ended = true) };
+  const cancel = endBeforeDeadline(res, { [DEADLINE_HEADER]: String(Math.floor(Date.now() / 1000) + 60 * 86400) });
+  try {
+    await sleep(50);
+  } finally {
+    cancel();
+    process.off('warning', onWarning);
+  }
+  assert.equal(ended, false);
+  assert.deepEqual(warnings, []);
+});
+
+test('a WebSocket that throws when made counts as a failed attempt and is tried again', () => {
+  let made = 0;
+  let gaveUp = null;
+  withFakeSockets(({ sockets, waits, next }) => {
+    const Fake = globalThis.WebSocket;
+    globalThis.WebSocket = class extends Fake {
+      constructor(url) {
+        made += 1;
+        if (made <= 2) throw new SyntaxError('bad url');
+        super(url);
+      }
+    };
+    const socket = globalThis.sscSocket('wss://x/ws', { delayMs: 100, attempts: 5 });
+    assert.equal(socket.socket, null);
+    assert.equal(socket.send('x'), false);
+    assert.deepEqual(waits, [50]);
+    next();
+    assert.deepEqual(waits, [50, 100]);
+    next();
+    assert.equal(sockets.length, 1);
+    globalThis.WebSocket = class {
+      constructor() {
+        throw new SyntaxError('bad url');
+      }
+    };
+    globalThis.sscSocket(() => 'wss://x/ws', { delayMs: 1, attempts: 2, onclose: (event) => (gaveUp = event) });
+    next();
+    next();
+  }, { random: () => 0 });
+  assert.equal(made, 3);
+  assert.equal(gaveUp?.code, 1006);
+  assert.equal(gaveUp?.wasClean, false);
+});
+
 test('browserClient() is the shipped browser file', () => {
   assert.equal(browserClient(), readFileSync(new URL('../browser.js', import.meta.url), 'utf8'));
 });

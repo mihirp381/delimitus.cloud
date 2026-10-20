@@ -126,7 +126,7 @@ def _refusal(status: int, raw: bytes) -> DataError:
         error = json.loads(raw)["error"]
         return DataError(str(error["code"]), str(error["message"]), status, error.get("sqlstate"))
     except (ValueError, KeyError, TypeError):
-        return DataError("UNAVAILABLE", f"the data gateway answered HTTP {status}", status)
+        return DataError("BAD_GATEWAY_RESPONSE", f"the data gateway answered HTTP {status}", status)
 
 
 class Data:
@@ -184,7 +184,7 @@ class Data:
                 raise DataError("UNREACHABLE", f"workload token: {exc}") from None
             if body is not None:
                 headers["content-type"] = "application/json"
-            if identity is not None:
+            if identity:
                 headers[IDENTITY_HEADER] = identity
             try:
                 status, raw = _send(f"{url}/v1/connections/{path}", headers, body)

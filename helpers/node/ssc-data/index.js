@@ -91,7 +91,7 @@ function refusal(status, raw) {
     const { error } = JSON.parse(raw);
     return new DataError(String(error.code), String(error.message), status, error.sqlstate ?? null);
   } catch {
-    return new DataError('UNAVAILABLE', `the data gateway answered HTTP ${status}`, status);
+    return new DataError('BAD_GATEWAY_RESPONSE', `the data gateway answered HTTP ${status}`, status);
   }
 }
 
@@ -132,7 +132,7 @@ export class Data {
     const url = await this._gateway();
     for (const attempt of [1, 2]) {
       const headers = { authorization: await this._bearer(url), 'content-type': 'application/json' };
-      if (identity !== undefined) headers[IDENTITY_HEADER] = identity;
+      if (typeof identity === 'string' && identity !== '') headers[IDENTITY_HEADER] = identity;
       let status;
       let raw;
       try {

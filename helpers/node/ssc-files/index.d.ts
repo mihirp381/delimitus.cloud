@@ -15,7 +15,7 @@ export interface Link {
   request_id: string;
 }
 
-/** A refusal (the data gateway's code), `STORAGE_<status>`, `UNREACHABLE` or `BAD_GATEWAY_RESPONSE`. */
+/** A refusal (the data gateway's code), `STORAGE_<status>`, `FILE_TOO_LARGE`, `UNREACHABLE` or `BAD_GATEWAY_RESPONSE`. */
 export class FilesError extends Error {
   readonly code: string;
   readonly status: number | null;

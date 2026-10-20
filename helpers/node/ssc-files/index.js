@@ -36,8 +36,9 @@ const RETRY_STATUSES = new Set([502, 503, 504]);
 /**
  * A refusal or a failure. `code` is the data gateway's (`FILE_NOT_FOUND`,
  * `FILES_QUOTA_EXCEEDED`, `APP_NOT_ACTIVE`, ...), `STORAGE_<status>` when Cloud Storage refused
- * the transfer, `UNREACHABLE` (the gateway, Cloud Storage or the workload token could not be had)
- * or `BAD_GATEWAY_RESPONSE` (an answer that is not JSON).
+ * the transfer, `FILE_TOO_LARGE` (over the link's `max_bytes`, nothing sent), `UNREACHABLE`
+ * (the gateway, Cloud Storage or the workload token could not be had) or `BAD_GATEWAY_RESPONSE`
+ * (an answer that is not JSON).
  */
 export class FilesError extends Error {
   constructor(code, message, status = null) {
@@ -81,12 +82,20 @@ function expiry(token) {
   }
 }
 
+/** The size of a body `put` takes, in bytes; null for anything else, which `fetch` judges. */
+function byteLength(data) {
+  if (typeof data === 'string') return Buffer.byteLength(data);
+  if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) return data.byteLength;
+  if (typeof Blob !== 'undefined' && data instanceof Blob) return data.size;
+  return null;
+}
+
 function refusal(status, raw) {
   try {
     const { error } = JSON.parse(raw);
     return new FilesError(String(error.code), String(error.message), status);
   } catch {
-    return new FilesError('UNAVAILABLE', `the data gateway answered HTTP ${status}`, status);
+    return new FilesError('BAD_GATEWAY_RESPONSE', `the data gateway answered HTTP ${status}`, status);
   }
 }
 
@@ -115,9 +124,17 @@ export class Files {
     this._token = null;
   }
 
-  /** Store `data` as `name`, replacing a file of that name. */
+  /**
+   * Store `data` as `name`, replacing a file of that name. `FilesError` `FILE_TOO_LARGE`, before
+   * anything is sent, when `data` is over the link's `max_bytes`.
+   */
   async put(name, data, { contentType = DEFAULT_CONTENT_TYPE } = {}) {
-    await this._transfer(await this.link('put', name, { contentType }), data);
+    const link = await this.link('put', name, { contentType });
+    const size = byteLength(data);
+    if (Number.isInteger(link.max_bytes) && size !== null && size > link.max_bytes) {
+      throw new FilesError('FILE_TOO_LARGE', `${size} bytes is over the ${link.max_bytes} byte limit`);
+    }
+    await this._transfer(link, data);
   }
 
   /** The bytes of `name`; `FilesError` `FILE_NOT_FOUND` when there is none. */

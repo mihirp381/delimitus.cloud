@@ -167,9 +167,11 @@ async function importKey(jwk) {
 }
 
 /**
- * Verify one note and return its claims, or throw `IdentityRefused`.
+ * Verify one note and return its claims, or throw `IdentityRefused`. `keys` is the JWKS object; a
+ * URL is for `IdentityVerifier`, which fetches it once and caches it (here it would be fetched on
+ * every call).
  * @param {string | null | undefined} token
- * @param {{audience: string, keys: object | string | KeySet, issuer?: string, now?: number, leeway?: number}} options
+ * @param {{audience: string, keys: object | KeySet, issuer?: string, now?: number, leeway?: number}} options
  */
 export async function verify(token, { audience, keys, issuer, now, leeway = DEFAULT_LEEWAY_SECONDS }) {
   if (token === null || token === undefined || token === '') throw new IdentityRefused('missing', `no ${IDENTITY_HEADER} header`);

@@ -32,6 +32,7 @@ function reset() {
     loseDeleteAnswer: null,
     tokenStatus: null,
     storageCut: false,
+    maxBytes: 25 * 1024 * 1024,
   });
 }
 
@@ -99,6 +100,7 @@ const server = createServer(async (req, res) => {
       method: op === 'put' ? 'PUT' : 'GET',
       headers: op === 'put' ? { 'content-type': contentType, 'x-check': 'signed' } : {},
       expires_at: '2026-10-03T12:10:00Z',
+      ...(op === 'put' ? { max_bytes: cell.maxBytes } : {}),
     }),
   );
 });
@@ -158,7 +160,7 @@ test('the data gateway is asked once more while it starts', async () => {
   assert.equal(cell.asked.length, 2);
   cell.asked = [];
   cell.gatewayAnswers = [[504, ''], [502, '']];
-  await rejects(helper().remove('a.txt'), 'UNAVAILABLE');
+  await rejects(helper().remove('a.txt'), 'BAD_GATEWAY_RESPONSE');
   assert.equal(cell.asked.length, 2);
 });
 
@@ -232,6 +234,16 @@ test('a download cut short is UNREACHABLE', async () => {
   cell.objects.set('a.txt', [Buffer.from('hello'), 'text/plain']);
   cell.storageCut = true;
   await rejects(helper().get('a.txt'), 'UNREACHABLE');
+});
+
+test('a file over the link\'s limit is refused before it is sent', async () => {
+  cell.maxBytes = 4;
+  for (const body of ['12345', new Uint8Array(5), new Uint8Array(5).buffer, new Blob(['12345']), 'é123']) {
+    await rejects(helper().put('a.txt', body), 'FILE_TOO_LARGE');
+  }
+  assert.deepEqual([cell.sent.length, cell.objects.size], [0, 0]);
+  await helper().put('a.txt', '1234');
+  assert.equal(cell.objects.get('a.txt')[0].toString(), '1234');
 });
 
 test('a CommonJS app can require the package by its name', () => {

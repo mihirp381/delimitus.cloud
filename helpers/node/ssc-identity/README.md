@@ -22,6 +22,8 @@ note.role    // 'builder' | 'user' | 'schedule'
 note.groups  // ['grp_…'], at most 50
 ```
 
+Make one `IdentityVerifier` per process: it fetches a JWKS URL once and caches it. The top-level `verify(token, { audience, keys })` takes the JWKS as an object only; the URL form is for `IdentityVerifier`.
+
 Two rules:
 
 - **Key on `sub`, never on `email`.** `email` and `name` are display strings the company directory can change; `sub` never changes.

@@ -139,7 +139,7 @@ test('the data gateway is asked once more while it starts', async () => {
   assert.equal(cell.asked.length, 2);
   cell.asked = [];
   cell.answers = [[502, ''], [504, '']];
-  await rejects(helper().query('finance', 'select 1'), 'UNAVAILABLE');
+  await rejects(helper().query('finance', 'select 1'), 'BAD_GATEWAY_RESPONSE');
   assert.equal(cell.asked.length, 2);
 });
 
@@ -180,6 +180,12 @@ test('the connection name is quoted in the path', async () => {
   await helper().query('my conn', 'select 1');
   await helper().query('my conn/../x', 'select 1');
   assert.deepEqual(cell.asked.map(([path]) => path), ['/v1/connections/my%20conn/query', '/v1/connections/my%20conn%2F..%2Fx/query']);
+});
+
+test('a null or empty identity is not sent', async () => {
+  await helper().query('finance', 'select 1', [], { identity: null });
+  await helper().query('finance', 'select 1', [], { identity: '' });
+  for (const [, headers] of cell.asked) assert.equal(headers['x-ssc-identity'], undefined);
 });
 
 test('a CommonJS app can require the package by its name', () => {

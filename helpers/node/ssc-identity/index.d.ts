@@ -38,8 +38,8 @@ export interface IdentityNote {
 export interface VerifyOptions {
   /** This app's exact origin, `https://host`, no path. */
   audience: string;
-  /** The cell JWKS, or its URL (`<issuer>/jwks.json`). */
-  keys: Jwks | string;
+  /** The cell JWKS. A URL (`data:` or `https:`) is for `IdentityVerifier`, which fetches and caches it. */
+  keys: Jwks;
   issuer?: string;
   /** Unix seconds; for tests. */
   now?: number;
@@ -55,6 +55,7 @@ export class IdentityVerifier {
   readonly audience: string;
   readonly issuer: string | undefined;
   readonly leeway: number;
+  /** `keys`: the JWKS, or its URL: a `data:` URL in a cell (`SSC_IDENTITY_KEYS_URL`), `https:` outside one. */
   constructor(options: { audience: string; keys: Jwks | string; issuer?: string; leeway?: number });
   verify(token: string | null | undefined, options?: { now?: number }): Promise<IdentityNote>;
   fromHeaders(headers: Headers | Record<string, string | string[] | undefined> | null | undefined, options?: { now?: number }): Promise<IdentityNote>;

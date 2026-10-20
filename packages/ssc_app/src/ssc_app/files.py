@@ -48,8 +48,9 @@ Op = Literal["put", "get", "delete"]
 class FilesError(RuntimeError):
     """A refusal or a failure. ``code`` is the data gateway's (``FILE_NOT_FOUND``,
     ``FILES_QUOTA_EXCEEDED``, ``APP_NOT_ACTIVE``, ...), ``STORAGE_<status>`` when Cloud Storage
-    refused the transfer, ``UNREACHABLE`` (the gateway, Cloud Storage or the workload token could
-    not be had) or ``BAD_GATEWAY_RESPONSE`` (an answer that is not JSON)."""
+    refused the transfer, ``FILE_TOO_LARGE`` (over the link's ``max_bytes``, nothing sent),
+    ``UNREACHABLE`` (the gateway, Cloud Storage or the workload token could not be had) or
+    ``BAD_GATEWAY_RESPONSE`` (an answer that is not JSON)."""
 
     def __init__(self, code: str, message: str, status: int | None = None) -> None:
         super().__init__(f"{code}: {message}")
@@ -99,7 +100,9 @@ def _refusal(status: int, raw: bytes) -> FilesError:
         error = json.loads(raw)["error"]
         return FilesError(str(error["code"]), str(error["message"]), status)
     except (ValueError, KeyError, TypeError):
-        return FilesError("UNAVAILABLE", f"the data gateway answered HTTP {status}", status)
+        return FilesError(
+            "BAD_GATEWAY_RESPONSE", f"the data gateway answered HTTP {status}", status
+        )
 
 
 class Files:
@@ -113,8 +116,13 @@ class Files:
         self._lock = threading.Lock()
 
     def put(self, name: str, data: bytes, *, content_type: str = DEFAULT_CONTENT_TYPE) -> None:
-        """Store ``data`` as ``name``, replacing a file of that name."""
+        """Store ``data`` as ``name``, replacing a file of that name. ``FilesError``
+        ``FILE_TOO_LARGE``, before anything is sent, when ``data`` is over the link's
+        ``max_bytes``."""
         link = self.link("put", name, content_type=content_type)
+        limit = link.get("max_bytes")
+        if isinstance(limit, int) and len(data) > limit:
+            raise FilesError("FILE_TOO_LARGE", f"{len(data)} bytes is over the {limit} byte limit")
         self._transfer(link, data)
 
     def get(self, name: str) -> bytes:

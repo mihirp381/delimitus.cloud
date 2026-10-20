@@ -189,7 +189,7 @@ def test_the_data_gateway_is_asked_once_more_while_it_starts(cell: Cell) -> None
     cell.answers = [(502, b""), (504, b"")]
     with pytest.raises(DataError) as e:
         helper(cell).query("finance", "select 1")
-    assert (e.value.code, e.value.status, len(cell.asked)) == ("UNAVAILABLE", 504, 2)
+    assert (e.value.code, e.value.status, len(cell.asked)) == ("BAD_GATEWAY_RESPONSE", 504, 2)
 
 
 def test_a_gateway_that_cannot_be_reached_is_an_error(cell: Cell) -> None:
@@ -310,3 +310,9 @@ def test_the_connection_name_is_quoted_in_the_path(cell: Cell) -> None:
         "/v1/connections/my%20conn/query",
         "/v1/connections/my%20conn%2F..%2Fx/schema",
     ]
+
+
+def test_an_empty_identity_is_not_sent(cell: Cell) -> None:
+    helper(cell).query("finance", "select 1", identity="")
+    ((_, headers, _),) = cell.asked
+    assert "x-ssc-identity" not in headers

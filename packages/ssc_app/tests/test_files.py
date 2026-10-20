@@ -45,6 +45,7 @@ class Cell:
     """The metadata server answers this instead of an ID token."""
     storage_cut: bool = False
     """Cloud Storage's download ends before its ``content-length``."""
+    max_bytes: int = 25 * 1024 * 1024
     lose_delete_answer: int | None = None
     """Delete the file, then answer this status instead of 200, once (a lost response)."""
 
@@ -118,6 +119,8 @@ def cell() -> Iterator[Cell]:
                 else {},
                 "expires_at": "2026-10-03T12:10:00Z",
             }
+            if op == "put":
+                link["max_bytes"] = state.max_bytes
             self._answer(200, json.dumps(link).encode())
 
         def do_PUT(self) -> None:
@@ -208,7 +211,7 @@ def test_the_data_gateway_is_asked_once_more_while_it_starts(cell: Cell) -> None
     cell.gateway_answers = [(504, b""), (502, b"")]
     with pytest.raises(FilesError) as e:
         helper(cell).delete("a.txt")
-    assert (e.value.code, e.value.status, len(cell.asked)) == ("UNAVAILABLE", 502, 2)
+    assert (e.value.code, e.value.status, len(cell.asked)) == ("BAD_GATEWAY_RESPONSE", 502, 2)
 
 
 def test_a_refusal_is_not_asked_again(cell: Cell) -> None:
@@ -334,3 +337,12 @@ def test_a_region_cut_short_is_unreachable(cell: Cell, monkeypatch: pytest.Monke
     with pytest.raises(FilesError) as e:
         gateway_url(cell.url)
     assert e.value.code == "UNREACHABLE"
+
+
+def test_a_file_over_the_link_s_limit_is_refused_before_it_is_sent(cell: Cell) -> None:
+    cell.max_bytes = 4
+    with pytest.raises(FilesError) as e:
+        helper(cell).put("a.txt", b"12345")
+    assert (e.value.code, cell.sent_headers, cell.objects) == ("FILE_TOO_LARGE", [], {})
+    helper(cell).put("a.txt", b"1234")
+    assert cell.objects["a.txt"][0] == b"1234"

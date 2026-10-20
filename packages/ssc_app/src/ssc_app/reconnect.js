@@ -40,10 +40,29 @@
       if (onclose) onclose(event);
     }
 
+    function closed(event) {
+      if (stopped) return;
+      const restart = event.code === RESTART_CODE || event.code === NO_STATUS;
+      if (event.wasClean && !restart) return stop(event);
+      if (openedAt !== 0 && Date.now() - openedAt >= maxDelayMs) failures = 0;
+      // Jittered, so the many sockets of one instance do not all come back at the same moment.
+      const backoff = Math.min(maxDelayMs, delayMs * 2 ** failures);
+      const wait = restart && failures === 0 ? 0 : backoff * (0.5 + Math.random() / 2);
+      failures += 1;
+      if (failures > attempts) return stop(event);
+      timer = setTimeout(open, wait);
+    }
+
     function open() {
       timer = null;
       openedAt = 0;
-      ws = new WebSocket(typeof url === 'function' ? url() : url, protocols);
+      try {
+        ws = new WebSocket(typeof url === 'function' ? url() : url, protocols);
+      } catch (error) {
+        // A URL the browser refuses, or `url()` throwing: an unclean drop, tried again likewise.
+        ws = null;
+        return closed({ code: 1006, reason: String(error), wasClean: false, error });
+      }
       ws.onopen = (event) => {
         openedAt = Date.now();
         if (onopen) onopen(event);
@@ -51,18 +70,7 @@
       ws.onmessage = (event) => {
         if (onmessage) onmessage(event);
       };
-      ws.onclose = (event) => {
-        if (stopped) return;
-        const restart = event.code === RESTART_CODE || event.code === NO_STATUS;
-        if (event.wasClean && !restart) return stop(event);
-        if (openedAt !== 0 && Date.now() - openedAt >= maxDelayMs) failures = 0;
-        // Jittered, so the many sockets of one instance do not all come back at the same moment.
-        const backoff = Math.min(maxDelayMs, delayMs * 2 ** failures);
-        const wait = restart && failures === 0 ? 0 : backoff * (0.5 + Math.random() / 2);
-        failures += 1;
-        if (failures > attempts) return stop(event);
-        timer = setTimeout(open, wait);
-      };
+      ws.onclose = closed;
     }
 
     open();

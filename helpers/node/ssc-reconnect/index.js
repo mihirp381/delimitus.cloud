@@ -27,6 +27,7 @@ export const DEADLINE_HEADER = 'X-SSC-Request-Deadline';
 export const RESTART_CODE = 1012;
 export const DEFAULT_MARGIN_SECONDS = 30;
 export const DEFAULT_RETRY_MS = 1000;
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 function header(headers) {
   if (!headers) return null;
@@ -62,7 +63,8 @@ export function secondsToWait(left, margin = DEFAULT_MARGIN_SECONDS) {
 function before(stream, headers, margin, action) {
   const wait = secondsToWait(secondsLeft(headers), margin);
   if (wait === null) return () => {};
-  const timer = setTimeout(action, wait * 1000);
+  // setTimeout holds at most 2^31 - 1 ms (about 24.8 days); a longer wait would fire at once.
+  const timer = setTimeout(action, Math.min(wait * 1000, MAX_TIMEOUT_MS));
   const cancel = () => clearTimeout(timer);
   if (typeof stream.once === 'function') stream.once('close', cancel);
   else if (typeof stream.addEventListener === 'function') stream.addEventListener('close', cancel, { once: true });
