@@ -7,8 +7,9 @@ with the next version, and audits ``org.updated`` on the ``egress_host`` target.
 turns on the cell's ``egress`` resource (SSC-087), which brings the proxy machine; one already
 on is left as it is. Removing a host leaves the resource on: removing one is a runbook step.
 
-The org row is locked (``FOR NO KEY UPDATE``) while the count is checked, so two admins adding
-at once never pass ``MAX_HOSTS``, which the snapshot refuses.
+The org row is locked (``FOR NO KEY UPDATE``) while the host is inserted and the count checked,
+so two admins adding at once never pass ``MAX_HOSTS``, which the snapshot refuses. A host already
+listed is no change even on a full list.
 """
 
 from dataclasses import dataclass
@@ -102,16 +103,19 @@ async def allow(  # noqa: PLR0913  (keyword-only)
     if problem is not None:
         raise EgressHostError(f"{host!r}: {problem}", {"host": host, "problem": problem})
     await conn.execute(_LOCK_ORG, {"org": org_id})
-    if int((await conn.execute(_COUNT, {"org": org_id})).scalar_one()) >= MAX_HOSTS:
-        raise EgressHostError(f"the allowlist holds {MAX_HOSTS} hosts", {"max_hosts": MAX_HOSTS})
     params = {
         "org": org_id,
         "host": host,
         "by": actor.id if actor.kind is ActorKind.USER else None,
         "request": approval_request_id,
     }
+    # Insert first, so a host already listed is False on a full list too. A caller may commit
+    # after the refusal (an approval stands without its host), so the new row is deleted first.
     if (await conn.execute(_INSERT, params)).first() is None:
         return False
+    if int((await conn.execute(_COUNT, {"org": org_id})).scalar_one()) > MAX_HOSTS:
+        await conn.execute(_DELETE, {"org": org_id, "host": host})
+        raise EgressHostError(f"the allowlist holds {MAX_HOSTS} hosts", {"max_hosts": MAX_HOSTS})
     await mark_dirty(conn, org_id)
     await resources.request(
         conn,

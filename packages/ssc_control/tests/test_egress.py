@@ -47,6 +47,7 @@ from test_cell_resources import approve, done, jobs
 from test_deploy import (
     Bench,
     build_release,
+    execute,
     get,
     manifest_of,
     operation,
@@ -60,7 +61,7 @@ from ssc_agent.egress import ProxyCredentials
 from ssc_contracts.app_env import HTTPS_PROXY, NODE_USE_ENV_PROXY
 from ssc_contracts.audit import ActorKind
 from ssc_contracts.cells import CellResource
-from ssc_contracts.egress import CATALOGUE, PLAIN_ENV, token_digest
+from ssc_contracts.egress import CATALOGUE, MAX_HOSTS, PLAIN_ENV, token_digest
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
@@ -283,6 +284,38 @@ async def test_a_host_that_is_not_an_entry_is_refused(
         assert logged_evidence(caplog, r)["host"] == host
     assert listed(b) == []
     assert egress_audit(b) == []
+
+
+async def test_a_full_allowlist_takes_a_listed_host_again_but_no_new_one(
+    b: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Re-allowing a listed host on a full list changes nothing, by an admin or an approval; a
+    new host is refused, and one an approval brings is not left listed past ``MAX_HOSTS``."""
+    caplog.set_level(logging.INFO)
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.egress_host (org_id, host) "
+        "select %s, 'h' || g || '.example.com' from generate_series(1, %s) g",
+        b.w.org,
+        MAX_HOSTS - 1,
+    )
+    assert put_host(b, "api.stripe.com", b.t.admin).status_code == 200
+    assert len(listed(b)) == MAX_HOSTS
+    audited = len(egress_audit(b))
+    again = put_host(b, "api.stripe.com", b.t.admin)
+    assert again.status_code == 200, again.text
+    await approve(b, RequirementKind.ENABLE_INTERNET_HOSTS, "api.stripe.com")
+    assert "approved host not allowed" not in caplog.text
+    new = put_host(b, "api.github.com", b.t.admin)
+    assert_problem(new, ErrorCode.VALIDATION_FAILED)
+    assert logged_evidence(caplog, new) == {"max_hosts": MAX_HOSTS}
+    await approve(b, RequirementKind.ENABLE_INTERNET_HOSTS, "api.github.com")
+    assert "approved host not allowed" in caplog.text
+    hosts = [r["host"] for r in listed(b)]
+    assert len(hosts) == MAX_HOSTS
+    assert "api.github.com" not in hosts
+    assert len(egress_audit(b)) == audited
 
 
 async def test_a_high_risk_host_needs_acknowledging(
