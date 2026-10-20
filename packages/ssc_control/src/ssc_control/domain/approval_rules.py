@@ -121,7 +121,13 @@ def widening_needs_approval(
     before: Collection[GrantKey],
     after: Collection[GrantKey],
 ) -> Requirement | None:
-    """Showing a data-connected app to more people needs ``widen_audience`` for the new set."""
+    """Showing a data-connected app to more people needs ``widen_audience`` for the new set.
+
+    Widening an environment whose data connection is only declared by a
+    ``connect_data_source`` request needs ``widen_audience``; once a connection is linked
+    (SSC-052) its ceiling governs the audience: inside it nobody is asked, past it the
+    connection owner decides ``exceed_ceiling``.
+    """
     match _profile(profile):
         case "internal":
             if not data_connected or not widens(before, after):
