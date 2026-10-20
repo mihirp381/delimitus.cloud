@@ -1,12 +1,14 @@
 """Fail if console/package-lock.json pins any npm version published less than MIN_AGE_DAYS ago.
 
 It also fails on a package fetched from anywhere but the npm registry, since the age rule
-cannot see it. Exceptions live in docs/lock-exceptions.toml, in the same format as
-tools/lock_age_check.py: [[exception]] name, version, reason, expires.
+cannot see it, and on a package the registry does not answer for after three retries
+(``lock_age_check.RETRY_DELAYS``). Exceptions live in docs/lock-exceptions.toml, in the same
+format as tools/lock_age_check.py: [[exception]] name, version, reason, expires.
 """
 
 import json
 import sys
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -14,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from lock_age_check import MIN_AGE_DAYS, load_exceptions
+from lock_age_check import MIN_AGE_DAYS, RETRY_DELAYS, Sleep, load_exceptions, retried
 
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = "https://registry.npmjs.org/"
@@ -45,7 +47,9 @@ def locked_packages(lock: dict) -> tuple[list[tuple[str, str]], list[str]]:
     return sorted(found), elsewhere
 
 
-def main(lock_path: Path, exceptions_path: Path, fetch: Fetch = publish_times) -> int:
+def main(
+    lock_path: Path, exceptions_path: Path, fetch: Fetch = publish_times, sleep: Sleep = time.sleep
+) -> int:
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=MIN_AGE_DAYS)
     exceptions = load_exceptions(exceptions_path, now)
@@ -55,19 +59,20 @@ def main(lock_path: Path, exceptions_path: Path, fetch: Fetch = publish_times) -
         print(f"FAIL {where}: not from {REGISTRY}")  # noqa: T201
         failures += 1
 
-    def times(name: str) -> dict[str, str] | Exception:
-        try:
-            return fetch(name)
-        except Exception as exc:  # noqa: BLE001
-            return exc
+    def times(name: str) -> tuple[dict[str, str] | None, list[Exception]]:
+        return retried(lambda: fetch(name), sleep)
 
     names = sorted({name for name, _ in packages})
     with ThreadPoolExecutor(max_workers=8) as pool:
         by_name = dict(zip(names, pool.map(times, names), strict=True))
     for name, version in packages:
-        known = by_name[name]
-        if isinstance(known, Exception):
-            print(f"WARN {name}@{version}: could not query the registry ({known})")  # noqa: T201
+        known, errors = by_name[name]
+        for exc in errors:
+            print(f"WARN {name}@{version}: could not query the registry ({exc})")  # noqa: T201
+        if known is None or len(errors) > len(RETRY_DELAYS):
+            attempts = len(errors)
+            print(f"FAIL {name}@{version}: no answer from the registry after {attempts} attempts")  # noqa: T201
+            failures += 1
             continue
         stamp = known.get(version)
         if stamp is None:

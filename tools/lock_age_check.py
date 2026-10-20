@@ -5,10 +5,15 @@ Exceptions live in docs/lock-exceptions.toml: [[exception]] name, version, reaso
 ``--uploads FILE`` reads upload times from a JSON object of ``"name==version": "<ISO time>"``
 instead of PyPI, and ``--now TIME`` fixes the clock. The CI gate fixture uses both, so the planted
 violation stays a violation however old the fixture gets and needs no network.
+
+A package whose upload time cannot be learnt fails: PyPI not answering after three retries
+(``RETRY_DELAYS``), or listing no file for the version. A gate that passed whenever PyPI was
+unreachable would admit anything.
 """
 
 import argparse
 import json
+import time
 import tomllib
 import urllib.request
 from collections.abc import Callable
@@ -16,7 +21,24 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 MIN_AGE_DAYS = 7
+RETRY_DELAYS = (1, 2, 4)
 ROOT = Path(__file__).resolve().parent.parent
+
+type Sleep = Callable[[float], None]
+
+
+def retried[T](call: Callable[[], T], sleep: Sleep) -> tuple[T | None, list[Exception]]:
+    """``call()``, tried again after each of ``RETRY_DELAYS`` seconds while it raises: its
+    answer (``None`` if every attempt raised) and the error of each failed attempt."""
+    errors: list[Exception] = []
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return call(), errors
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+            if delay is not None:
+                sleep(delay)
+    return None, errors
 
 
 def upload_time(name: str, version: str) -> datetime | None:
@@ -57,6 +79,7 @@ def main(
     *,
     now: datetime | None = None,
     uploads: Callable[[str, str], datetime | None] = upload_time,
+    sleep: Sleep = time.sleep,
 ) -> int:
     now = now or datetime.now(UTC)
     cutoff = now - timedelta(days=MIN_AGE_DAYS)
@@ -68,12 +91,18 @@ def main(
         if "registry" not in source:
             continue
         name, version = pkg["name"].lower(), pkg["version"]
-        try:
-            uploaded = uploads(name, version)
-        except Exception as exc:  # noqa: BLE001
+        uploaded, errors = retried(lambda: uploads(name, version), sleep)  # noqa: B023
+        for exc in errors:
             print(f"WARN {name}=={version}: could not query PyPI ({exc})")  # noqa: T201
+        if len(errors) > len(RETRY_DELAYS):
+            print(f"FAIL {name}=={version}: no answer from PyPI after {len(errors)} attempts")  # noqa: T201
+            failures += 1
             continue
-        if uploaded is None or uploaded <= cutoff:
+        if uploaded is None:
+            print(f"FAIL {name}=={version}: PyPI lists no upload for this version")  # noqa: T201
+            failures += 1
+            continue
+        if uploaded <= cutoff:
             continue
         age = (now - uploaded).days
         if (name, version) in exceptions:
