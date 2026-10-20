@@ -69,6 +69,7 @@ REFUSAL_CODES: Final[frozenset[str]] = frozenset(
     )
 )
 DEFAULT_LEEWAY_SECONDS: Final = 30
+JWKS_TIMEOUT_SECONDS: Final = 5.0
 
 KeySource = Mapping[str, Any] | jwt.PyJWKSet | jwt.PyJWKClient
 
@@ -89,6 +90,12 @@ def _signing_key(keys: KeySource, kid: str) -> jwt.PyJWK:
             return keys.get_signing_key(kid)
         key_set = keys if isinstance(keys, jwt.PyJWKSet) else jwt.PyJWKSet.from_dict(dict(keys))
         return key_set[kid]
+    except (jwt.PyJWKClientConnectionError, ValueError, OSError) as e:
+        # Endpoint down, timed out, or answering something that is not JSON (a ValueError). The
+        # message names the failure, never the URL.
+        raise IdentityRefused(
+            "unknown_key", f"JWKS unavailable: {type(e.__cause__ or e).__name__}"
+        ) from e
     except (KeyError, jwt.PyJWKClientError, jwt.PyJWKSetError, jwt.PyJWKError) as e:
         raise IdentityRefused("unknown_key", f"no key {kid!r} in the JWKS") from e
 
@@ -227,7 +234,7 @@ class IdentityVerifier:
         # The set is cached ``lifespan`` seconds and no per-kid cache sits on top: PyJWT's
         # ``cache_keys`` never expires, so a key removed from the JWKS would stay trusted.
         self._keys: KeySource = (
-            jwt.PyJWKClient(keys, lifespan=300)
+            jwt.PyJWKClient(keys, lifespan=300, timeout=JWKS_TIMEOUT_SECONDS)
             if isinstance(keys, str)
             else jwt.PyJWKSet.from_dict(dict(keys))
         )

@@ -4,6 +4,7 @@ import base64
 import http.server
 import importlib.util
 import json
+import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -239,3 +240,28 @@ def test_a_key_removed_from_the_jwks_is_refused_once_the_set_is_refetched(
             v.verify(token, now=VECTORS["now"])
         assert e.value.code == "unknown_key"
         assert v.verify(CASES["user note signed by the second key"]["token"], now=VECTORS["now"])
+
+
+def _closed_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_jwks_endpoint_down_is_unknown_key() -> None:
+    v = IdentityVerifier(
+        audience=VECTORS["audiences"]["app_a"], keys=f"http://127.0.0.1:{_closed_port()}/jwks.json"
+    )
+    with pytest.raises(IdentityRefused) as e:
+        v.verify(CASES["user note"]["token"], now=VECTORS["now"])
+    assert e.value.code == "unknown_key"
+
+
+def test_jwks_endpoint_answering_html_is_unknown_key() -> None:
+    page = b"<html><body>502 Bad Gateway</body></html>"
+    with _jwks_server(lambda: (200, "text/html", page)) as url:
+        v = IdentityVerifier(audience=VECTORS["audiences"]["app_a"], keys=url)
+        with pytest.raises(IdentityRefused) as e:
+            v.verify(CASES["user note"]["token"], now=VECTORS["now"])
+    assert e.value.code == "unknown_key"
+    assert url not in str(e.value)

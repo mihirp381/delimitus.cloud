@@ -118,3 +118,70 @@ test('a key removed from the JWKS is refused once the set is refetched', async (
     server.close();
   }
 });
+
+async function jwksServer(answer) {
+  let hits = 0;
+  const server = createServer((req, res) => {
+    hits += 1;
+    answer(req, res);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { url: `http://127.0.0.1:${server.address().port}/jwks.json`, hits: () => hits, close: () => server.close() };
+}
+
+test('a JWKS endpoint that is down refuses with unknown_key, not a raw error', async () => {
+  const s = await jwksServer(() => {});
+  const { url } = s;
+  s.close();
+  await new Promise((r) => setTimeout(r, 10));
+  const v = new IdentityVerifier({ audience: VECTORS.audiences.app_a, keys: url });
+  await assert.rejects(v.verify(CASES['user note'].token, { now: VECTORS.now }), (e) => {
+    assert.ok(e instanceof IdentityRefused, `${e}`);
+    assert.equal(e.code, 'unknown_key');
+    assert.ok(!e.message.includes(url));
+    return true;
+  });
+});
+
+test('a JWKS endpoint answering HTML refuses with unknown_key, not a SyntaxError', async () => {
+  const s = await jwksServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<html><body>502 Bad Gateway</body></html>');
+  });
+  try {
+    const v = new IdentityVerifier({ audience: VECTORS.audiences.app_a, keys: s.url });
+    await assert.rejects(v.verify(CASES['user note'].token, { now: VECTORS.now }), (e) => e instanceof IdentityRefused && e.code === 'unknown_key');
+  } finally {
+    s.close();
+  }
+});
+
+test('a JWKS that is not a key set refuses with unknown_key', async () => {
+  const s = await jwksServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"not":"a jwks"}');
+  });
+  try {
+    const v = new IdentityVerifier({ audience: VECTORS.audiences.app_a, keys: s.url });
+    await assert.rejects(v.verify(CASES['user note'].token, { now: VECTORS.now }), (e) => e instanceof IdentityRefused && e.code === 'unknown_key');
+  } finally {
+    s.close();
+  }
+});
+
+test('ten concurrent verifies on a cold verifier fetch the JWKS once', async () => {
+  const s = await jwksServer((_req, res) => {
+    setTimeout(() => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(VECTORS.jwks));
+    }, 50);
+  });
+  try {
+    const v = new IdentityVerifier({ audience: VECTORS.audiences.app_a, keys: s.url });
+    const notes = await Promise.all(Array.from({ length: 10 }, () => v.verify(CASES['user note'].token, { now: VECTORS.now })));
+    assert.equal(notes.length, 10);
+    assert.equal(s.hits(), 1);
+  } finally {
+    s.close();
+  }
+});

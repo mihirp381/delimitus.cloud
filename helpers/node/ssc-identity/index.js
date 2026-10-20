@@ -34,6 +34,7 @@ export const IDENTITY_ALG = 'ES256';
 export const MAX_TTL_SECONDS = 300;
 export const MAX_GROUPS = 50;
 export const DEFAULT_LEEWAY_SECONDS = 30;
+const JWKS_TIMEOUT_MS = 5000;
 
 export const REFUSAL_CODES = Object.freeze([
   'missing',
@@ -102,6 +103,7 @@ class KeySet {
   #keys = new Map();
   #fetchedAt = 0;
   #lifespanMs = 300_000;
+  #inflight = null;
 
   constructor(keys) {
     if (typeof keys === 'string') this.#url = keys;
@@ -117,10 +119,31 @@ class KeySet {
     this.#fetchedAt = Date.now();
   }
 
-  async #refresh() {
-    const res = await fetch(this.#url, { headers: { accept: 'application/json' } });
-    if (!res.ok) throw new IdentityRefused('unknown_key', `JWKS fetch returned ${res.status}`);
-    this.#load(await res.json());
+  /** One fetch per staleness: concurrent callers share the request in flight. */
+  #refresh() {
+    this.#inflight ??= this.#fetch().finally(() => {
+      this.#inflight = null;
+    });
+    return this.#inflight;
+  }
+
+  async #fetch() {
+    try {
+      const res = await fetch(this.#url, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(JWKS_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        await res.body?.cancel();
+        throw new IdentityRefused('unknown_key', `JWKS unavailable: HTTP ${res.status}`);
+      }
+      this.#load(await res.json());
+    } catch (err) {
+      if (err instanceof IdentityRefused) throw err;
+      // Endpoint down (TypeError), timed out, not JSON (SyntaxError) or not a key set. The
+      // message names the failure, never the URL.
+      throw new IdentityRefused('unknown_key', `JWKS unavailable: ${err?.name ?? 'Error'}`);
+    }
   }
 
   async get(kid) {
