@@ -680,7 +680,8 @@ class DataGateway:
         self, view: AccessView, env_id: str, token: str | None
     ) -> tuple[str | None, UserContext]:
         """Who the app is acting for. No note is ``app_only``; a note must verify for this
-        environment, and a user in it must still be active."""
+        environment, and a user in it must still be active and the note minted no earlier than
+        the user's ``sessions_not_before``."""
         if not token:
             return None, "app_only"
         env = view.environments[env_id]
@@ -709,6 +710,9 @@ class DataGateway:
             return note.sub, "schedule"
         if note.sub not in view.active_users:
             raise RefusedError("IDENTITY_REFUSED", reason="the user is not active")
+        not_before = view.not_before.get(note.sub)
+        if not_before is not None and note.iat < not_before:
+            raise RefusedError("IDENTITY_REFUSED", reason="the session was revoked")
         return note.sub, "verified"
 
     async def _body(self, request: Request) -> QueryBody:

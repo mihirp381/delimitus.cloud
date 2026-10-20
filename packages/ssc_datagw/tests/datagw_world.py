@@ -154,8 +154,12 @@ def snapshot(
     sales_limits: dict[str, int] | None = None,
     grant_limits: dict[str, int] | None = None,
     connections: bool = True,
+    ada_not_before: int | None = None,
 ) -> dict[str, Any]:
     env = {"floor": "user"}
+    ada: dict[str, Any] = {"status": "active"}
+    if ada_not_before is not None:
+        ada["sessions_not_before"] = ada_not_before
     doc: dict[str, Any] = {
         "format": FORMAT_V1,
         "org_id": ORG,
@@ -169,7 +173,7 @@ def snapshot(
         "hosts": {"ledger": PROD, "ledger--preview": PREVIEW, "payroll": PAY},
         "grants": {},
         "groups_by_user": {},
-        "users": {ADA: {"status": "active"}, BEN: {"status": "deactivated"}},
+        "users": {ADA: ada, BEN: {"status": "deactivated"}},
         "ceiling": None,
     }
     if connections:

@@ -15,6 +15,7 @@ from typing import Any
 import httpx2
 import pytest
 from datagw_world import (
+    ADA,
     AGENT,
     AUDIENCE,
     BEN,
@@ -500,6 +501,30 @@ async def test_a_note_that_does_not_verify_for_the_environment_is_refused(
         "user",
     )
     assert w.connector.queries == []
+
+
+async def test_a_note_minted_before_the_users_sessions_were_revoked_is_refused(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ssc_datagw.server")
+    revoked = int(time.time()) - 60
+    async with running(tmp_path, ada_not_before=revoked) as w:
+        before = await w.ask(headers={IDENTITY_HEADER: note(iat=revoked - 1, exp=revoked + 299)})
+        at = await w.ask(headers={IDENTITY_HEADER: note(iat=revoked, exp=revoked + 300)})
+        after = await w.ask(headers={IDENTITY_HEADER: note()})
+    assert (before.status_code, error(before)["code"], error(before)["stage"]) == (
+        401,
+        "IDENTITY_REFUSED",
+        "user",
+    )
+    assert (at.status_code, after.status_code) == (200, 200)
+    refused, *served = records(caplog)
+    assert (refused["outcome"], refused["reason"]) == (
+        "IDENTITY_REFUSED",
+        "the session was revoked",
+    )
+    assert [(r["user"], r["user_context"]) for r in served] == [(ADA, "verified")] * 2
+    assert len(w.connector.queries) == 2
 
 
 BAD_BODIES: dict[str, Any] = {
