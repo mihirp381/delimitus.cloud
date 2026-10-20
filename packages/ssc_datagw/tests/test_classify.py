@@ -31,6 +31,9 @@ READS = [
     "SELECT row_number() OVER (PARTITION BY a ORDER BY b) FROM reporting.t",
     "SELECT * FROM reporting.orders WHERE note ILIKE $1",
     "SELECT 1;",
+    "select * from public.pg_stat_activity_copy",
+    "select * from reporting.pg_locks_history",
+    "SELECT pg_backend_pid()",
 ]
 
 REFUSED = {
@@ -92,6 +95,32 @@ REFUSED = {
     "empty": "",
     "comment only": "-- nothing",
     "garbage": "SELEC 1 FROM",
+    # Every app granted the connection logs in as the same role, so these show another app's
+    # statements, parameters and tag.
+    "pg_stat_activity": "select query from pg_stat_activity",
+    "pg_stat_activity qualified": "SELECT query FROM pg_catalog.pg_stat_activity",
+    "pg_stat_activity upper case": "SELECT * FROM PG_STAT_ACTIVITY",
+    "pg_stat_activity joined": "SELECT a.query FROM reporting.t JOIN pg_stat_activity a ON true",
+    "pg_stat_activity in a cte": "WITH a AS (SELECT * FROM pg_stat_activity) SELECT * FROM a",
+    "pg_stat_statements": "SELECT query FROM pg_stat_statements",
+    "pg_stat_statements qualified": "SELECT query FROM public.pg_stat_statements",
+    "pg_stat_statements_info": "SELECT * FROM pg_stat_statements_info",
+    "pg_stat_ssl": "SELECT * FROM pg_stat_ssl",
+    "pg_stat_gssapi": "SELECT * FROM pg_stat_gssapi",
+    "pg_prepared_statements": "SELECT statement FROM pg_prepared_statements",
+    "pg_cursors": "SELECT statement FROM pg_cursors",
+    "pg_locks": "SELECT * FROM pg_catalog.pg_locks",
+    "pg_replication_origin_status": "SELECT * FROM pg_replication_origin_status",
+    "pg_stat_get_activity": "SELECT * FROM pg_stat_get_activity(NULL)",
+    "pg_stat_get_activity in the select list": "SELECT pg_stat_get_activity(1)",
+    "pg_stat_statements function": "SELECT * FROM pg_stat_statements(true)",
+    "pg_stat_statements_info function": "SELECT pg_stat_statements_info()",
+    "pg_stat_get_backend_activity": "SELECT pg_stat_get_backend_activity(1)",
+    "pg_stat_get_backend_client_addr": "SELECT pg_stat_get_backend_client_addr(1)",
+    "pg_prepared_statement function": "SELECT * FROM pg_prepared_statement()",
+    "pg_cursor function": "SELECT * FROM pg_cursor()",
+    "pg_lock_status function": "SELECT * FROM pg_lock_status()",
+    "pg_show_replication_origin_status": "SELECT * FROM pg_show_replication_origin_status()",
 }
 
 
@@ -113,6 +142,58 @@ def test_the_reason_names_the_construct_and_never_quotes_the_statement() -> None
     assert refusal("SELECT $$x$$") == "the statement uses a dollar-quoted string"
     assert (refusal("NOTIFY ssc") or "").startswith("the statement is not a SELECT")
     assert refusal("SELECT ts_stat('x')") == "the statement calls a function that is refused"
+
+
+MYSQL_READS = [
+    "SELECT id FROM reporting.orders WHERE id = ?",
+    "SELECT * FROM reporting.processlist",
+    "SELECT * FROM information_schema.tables",
+    "SELECT * FROM information_schema.columns WHERE table_schema = 'reporting'",
+    "SELECT * FROM mysys.session",
+    "SELECT * FROM sys_audit.session",
+    "SELECT * FROM reporting.sys",
+    "SELECT * FROM reporting.performance_schema_copy",
+]
+
+MYSQL_REFUSED = {
+    # Every app granted the connection logs in as the same user; the process list's INFO
+    # carries another app's statement with its parameters inlined, and its tag.
+    "processlist": "SELECT info FROM information_schema.processlist",
+    "processlist upper case": "SELECT INFO FROM INFORMATION_SCHEMA.PROCESSLIST",
+    "processlist quoted": "SELECT info FROM `information_schema`.`processlist`",
+    "processlist joined": (
+        "SELECT p.info FROM reporting.t JOIN information_schema.processlist p ON true"
+    ),
+    "innodb_trx": "SELECT trx_query FROM information_schema.innodb_trx",
+    "performance_schema threads": "SELECT processlist_info FROM performance_schema.threads",
+    "performance_schema statements": (
+        "SELECT sql_text FROM performance_schema.events_statements_current"
+    ),
+    "performance_schema upper case": "SELECT * FROM PERFORMANCE_SCHEMA.events_statements_history",
+    "sys session": "SELECT current_statement FROM sys.session",
+    "sys processlist": "SELECT * FROM `sys`.`processlist`",
+    "sys statement analysis": "SELECT query FROM SYS.statement_analysis",
+    "show processlist": "SHOW PROCESSLIST",
+    "show full processlist": "SHOW FULL PROCESSLIST",
+    "show engine innodb status": "SHOW ENGINE INNODB STATUS",
+}
+
+
+@pytest.mark.parametrize("sql", MYSQL_READS)
+def test_mysql_one_plain_read_passes(sql: str) -> None:
+    assert mysql_refusal(sql) is None
+
+
+@pytest.mark.parametrize("case", sorted(MYSQL_REFUSED))
+def test_mysql_refuses_anything_else(case: str) -> None:
+    assert mysql_refusal(MYSQL_REFUSED[case]) is not None
+
+
+def test_session_views_are_refused_as_views() -> None:
+    reason = "the statement reads a view that is refused"
+    assert refusal("SELECT query FROM pg_stat_activity") == reason
+    assert mysql_refusal("SELECT info FROM information_schema.processlist") == reason
+    assert mysql_refusal("SELECT * FROM performance_schema.threads") == reason
 
 
 def test_mysql_refuses_a_sleep_which_would_end_quietly_instead_of_timing_out() -> None:

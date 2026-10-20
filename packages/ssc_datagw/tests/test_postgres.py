@@ -95,6 +95,8 @@ MATRIX = {
     "query_to_xml": XML_WRITE,
     "notify": "NOTIFY ssc",
     "pg_terminate_backend": "SELECT pg_terminate_backend(pg_backend_pid())",
+    "pg_stat_activity": "SELECT query FROM pg_stat_activity",
+    "pg_stat_get_activity": "SELECT * FROM pg_stat_get_activity(NULL)",
 }
 DATABASE_REFUSES = {
     "set transaction read write": ("SET TRANSACTION READ WRITE", "25001"),

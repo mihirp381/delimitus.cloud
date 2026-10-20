@@ -14,6 +14,10 @@ parameter. A function name that is not a plain identifier (a ``U&"..."`` name Po
 is refused for the same reason. Anything sqlglot cannot parse is refused. The session behind the
 check forces ``standard_conforming_strings`` on, so plain strings lex alike in both.
 
+Every app granted a connection logs in as the same role, so the views that show other
+sessions' statements are refused by their path (:data:`POSTGRES_DENIED_PATHS`,
+:data:`MYSQL_DENIED_PATHS`), as BigQuery's and Snowflake's job history are.
+
 What the check misses, the database stops: every read runs in a read-only transaction as a role
 with ``SELECT`` only (``postgres_setup.sql``, ``mysql_setup.sql``) and ends in ``ROLLBACK``.
 
@@ -65,6 +69,13 @@ DENIED: Final = frozenset(
         "cursor_to_xmlschema",
         "pg_stat_file",
         "pg_prewarm",
+        "pg_stat_get_activity",
+        "pg_stat_statements",
+        "pg_stat_statements_info",
+        "pg_prepared_statement",
+        "pg_cursor",
+        "pg_lock_status",
+        "pg_show_replication_origin_status",
     }
 )
 """Functions refused by name, compared in lower case and without their schema."""
@@ -84,6 +95,7 @@ DENIED_PREFIXES: Final = (
     "pg_create_",
     "pg_drop_",
     "pg_copy_",
+    "pg_stat_get_backend_",
 )
 DENIED_SUFFIXES: Final = ("_to_xml", "_to_xmlschema", "_to_xml_and_xmlschema")
 MYSQL_DENIED: Final = frozenset(
@@ -164,18 +176,36 @@ class Dialect:
         )
 
 
+POSTGRES_DENIED_PATHS: Final = re.compile(
+    r"(^|\.)(pg_stat_activity|pg_stat_statements|pg_stat_statements_info|pg_stat_ssl"
+    r"|pg_stat_gssapi|pg_prepared_statements|pg_cursors|pg_locks"
+    r"|pg_replication_origin_status)$"
+)
+"""Views that show other sessions' statements, parameters, tags or client addresses, matched
+on the last segment of the path in any schema (``pg_stat_statements`` lives where its
+extension was made). Every app granted a connection logs in as the same role, so another
+app's sessions are this role's own. The functions behind them are on :data:`DENIED`."""
+MYSQL_DENIED_PATHS: Final = re.compile(
+    r"^(information_schema\.(processlist|innodb_trx)|performance_schema\..+|sys\..+)$"
+)
+"""``INFORMATION_SCHEMA.PROCESSLIST`` and ``INNODB_TRX``, and anything in the
+``performance_schema`` and ``sys`` schemas (named exactly): they show other sessions'
+statements, whose parameters :func:`ssc_datagw.mysql.bind` has inlined, and their tags.
+``SHOW PROCESSLIST`` and ``SHOW ENGINE INNODB STATUS`` are not a ``SELECT``."""
 POSTGRES: Final = Dialect(
     read="postgres",
     denied=DENIED,
     denied_prefixes=DENIED_PREFIXES,
     denied_suffixes=DENIED_SUFFIXES,
     unsafe_strings=_UNSAFE_STRINGS,
+    denied_paths=POSTGRES_DENIED_PATHS,
 )
 MYSQL: Final = Dialect(
     read="mysql",
     denied=MYSQL_DENIED,
     denied_prefixes=MYSQL_DENIED_PREFIXES,
     executable_comments=True,
+    denied_paths=MYSQL_DENIED_PATHS,
 )
 
 
@@ -301,7 +331,8 @@ def _qualifiers(node: exp.Func) -> list[str]:
 
 
 def _scope_refusal(node: exp.Expression, dialect: Dialect, project: str | None) -> str | None:
-    """Why a table or function reaches outside what the connection reads (BigQuery)."""
+    """Why a table or function reaches outside what the connection reads: a view on the
+    dialect's ``denied_paths``, or (BigQuery) another project or a refused qualifier."""
     if isinstance(node, exp.Table):
         if project is not None and node.catalog and node.catalog.lower() != project.lower():
             return OTHER_PROJECT

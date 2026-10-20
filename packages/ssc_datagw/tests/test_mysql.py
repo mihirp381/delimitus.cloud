@@ -104,6 +104,10 @@ MATRIX = {
     "lock in a mariadb executable comment": "SELECT 1 /*M!100000 , GET_LOCK('x', 1) */",
     "share lock behind bare dashes": "SELECT id FROM reporting.orders WHERE id = 1--1 FOR SHARE",
     "lock behind bare dashes": "SELECT 1--1, GET_LOCK('x', 1)",
+    "process list": "SELECT info FROM information_schema.processlist",
+    "show processlist": "SHOW FULL PROCESSLIST",
+    "performance_schema": "SELECT sql_text FROM performance_schema.events_statements_current",
+    "sys": "SELECT current_statement FROM sys.session",
 }
 DATABASE_REFUSES = {
     "temp table": ("CREATE TEMPORARY TABLE t (x INT)", "25006"),
@@ -446,9 +450,20 @@ async def test_a_read_past_its_statement_timeout_times_out(db: Db) -> None:
 
 
 async def test_the_tag_lands_in_the_process_list(db: Db) -> None:
-    sql = "SELECT info FROM information_schema.processlist WHERE id = CONNECTION_ID()"
-    _, rows = await read(MySqlConnector(db.target()), ask(sql, tag="ledger/prod"))
-    assert str(rows[0][0]).startswith("/* ledger/prod */")
+    # The process list is refused to the connection (another app's statements show there), so
+    # the DBA's view is the admin's.
+    task = asyncio.create_task(
+        read(MySqlConnector(db.target()), ask(SLOW, timeout_ms=60_000, tag="ledger/prod"))
+    )
+    running = "SELECT info FROM information_schema.processlist WHERE user = %s AND info LIKE %s"
+    try:
+        async with db.connect() as admin:
+            info = await until(lambda: scalar(admin, running, USER, "%JOIN reporting.orders f%"))
+        assert str(info).startswith("/* ledger/prod */")
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 async def test_done_when_a_cancelled_read_ends_its_query(db: Db) -> None:
