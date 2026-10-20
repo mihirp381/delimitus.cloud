@@ -804,7 +804,15 @@ async def fail_stuck(conn: AsyncConnection, org_id: str, deployment_id: str, cod
     if row is None or (await conn.execute(_FAIL_STUCK, params | {"code": code})).rowcount == 0:
         return False
     dep = _deployment(deployment_id, row)
-    await _audit(conn, org_id, dep, _FAILED[dep.kind], state="failed", code=code)
+    await _audit(
+        conn,
+        org_id,
+        dep,
+        _FAILED[dep.kind],
+        state="failed",
+        code=code,
+        before_state=str(row.state),
+    )
     log.info("deployment failed", extra={"deployment_id": dep.id, "code": code})
     return True
 
@@ -818,7 +826,10 @@ async def _audit(  # noqa: PLR0913  (keyword-only)
     state: str,
     code: str | None,
     policy_decision_id: str | None = None,
+    before_state: str = "running",
 ) -> None:
+    """``before_state`` is what the deployment was in: ``running`` once claimed, while only the
+    reaper (:func:`fail_stuck`) ends one that may still be ``pending``."""
     await append_event(
         conn,
         NewEvent(
@@ -827,7 +838,7 @@ async def _audit(  # noqa: PLR0913  (keyword-only)
             actor=dep.actor,
             target_kind="deployment",
             target_id=dep.id,
-            before={"state": "running"},
+            before={"state": before_state},
             after={
                 "state": state,
                 "failure_code": code,

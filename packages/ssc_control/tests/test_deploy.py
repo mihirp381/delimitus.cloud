@@ -1853,6 +1853,21 @@ async def test_a_deployment_that_keeps_failing_is_failed_and_frees_its_environme
     assert b.runtime.calls == []
 
 
+@pytest.mark.parametrize("state", ["pending", "running"])
+async def test_a_stalled_deployment_is_audited_from_the_state_it_was_in(
+    b: Bench, state: str
+) -> None:
+    release = await build_release(b, b.w.preview)
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    execute(b.dsn, b.w.org, "update ssc.deployment set state = %s where id = %s", state, op)
+    for _ in range(reaper.MAX_ATTEMPTS):
+        end_jobs(b.dsn, f"dep:{op}", "failed")
+        assert await sweep(b) == 1
+    (failed,) = [a for a in audit_of(b, op) if a["action"] == "deploy.failed"]
+    assert failed["before"] == {"state": state}
+    assert (failed["after"]["state"], failed["after"]["failure_code"]) == ("failed", reaper.STALLED)
+
+
 async def test_a_deployment_waiting_for_a_cell_resource_is_left_alone(b: Bench) -> None:
     release = await build_release(b, b.w.preview)
     op = start_deploy(b, b.w.preview, release).json()["operation_id"]

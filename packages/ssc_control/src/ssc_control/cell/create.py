@@ -76,7 +76,7 @@ _FAILED = text(
     "where org_id = :org and resource = :res and state in ('requested', 'creating')"
 )
 _WAITERS = text(
-    "select w.deployment_id, d.environment_id, d.state from ssc.cell_resource_waiter w "
+    "select w.deployment_id, d.environment_id, d.state, d.kind from ssc.cell_resource_waiter w "
     "join ssc.deployment d on d.org_id = w.org_id and d.id = w.deployment_id "
     "where w.org_id = :org and w.resource = :res order by w.created_at, w.deployment_id"
 )
@@ -225,15 +225,19 @@ async def _later(
 
 
 async def wake(conn: AsyncConnection, org_id: str, resource: CellResource) -> list[str]:
-    """Re-defer every deployment waiting for ``resource``; forget waiters no longer in flight.
-    The deployment ids re-deferred."""
+    """Re-defer every deployment waiting for ``resource``, a rollback at its priority, as the
+    reaper does; forget waiters no longer in flight. The deployment ids re-deferred."""
     woken: list[str] = []
-    for dep_id, env_id, state in (
+    for dep_id, env_id, state, kind in (
         await conn.execute(_WAITERS, {"org": org_id, "res": resource.value})
     ).all():
         if state in ("pending", "running"):
             await defer_deployment(
-                conn, org_id=org_id, environment_id=str(env_id), deployment_id=str(dep_id)
+                conn,
+                org_id=org_id,
+                environment_id=str(env_id),
+                deployment_id=str(dep_id),
+                rollback=kind == "rollback",
             )
             woken.append(str(dep_id))
         else:

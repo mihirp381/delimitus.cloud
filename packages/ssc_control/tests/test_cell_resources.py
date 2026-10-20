@@ -50,6 +50,7 @@ from test_deploy import (
     SpyGate,
     blip,
     build_release,
+    execute,
     get,
     job_context,
     manifest_of,
@@ -83,6 +84,7 @@ from ssc_control.cell.deployer import (
 )
 from ssc_control.cell.resources import CELL_RESOURCE_FAILED
 from ssc_control.db import bound_org
+from ssc_control.deferral import ROLLBACK_PRIORITY
 from ssc_control.domain.approval_rules import Requirement, RequirementKind
 from ssc_control.metrics import record_once
 from ssc_control.ports import MetricKind
@@ -162,7 +164,7 @@ def jobs(b: Bench, queueing_lock: str, status: str = "todo") -> list[dict[str, A
     return rows_of(
         b.dsn,
         b.w.org,
-        "select task_name, lock, args from procrastinate.procrastinate_jobs "
+        "select task_name, lock, args, priority from procrastinate.procrastinate_jobs "
         "where queueing_lock = %s and status = %s",
         queueing_lock,
         status,
@@ -255,6 +257,18 @@ async def test_a_stateful_deploy_into_an_empty_cell_creates_the_database_and_con
     again = await stateful_deploy(cell, b.w.preview)
     assert await run(b, again, cell.ports) == "healthy"
     assert cell.fake.runs == [(cell.label, DB)]
+
+
+async def test_a_waiting_rollback_is_woken_at_the_rollback_priority(cell: Cell) -> None:
+    """``wake`` re-defers a rollback as the reaper does, ahead of forward deploys."""
+    b = cell.b
+    op = await stateful_deploy(cell, b.w.preview)
+    execute(b.dsn, b.w.org, "update ssc.deployment set kind = 'rollback' where id = %s", op)
+    assert await run(b, op, cell.ports) == "running"
+    assert waiters(b) == [op]
+    await finish_creation(cell)
+    (woken,) = jobs(b, f"dep:{op}")
+    assert (woken["lock"], woken["priority"]) == (f"env:{b.w.preview}", ROLLBACK_PRIORITY)
 
 
 async def test_a_stateless_deploy_asks_for_nothing(cell: Cell) -> None:
