@@ -13,6 +13,12 @@ export type LedgerAhead = components['schemas']['LedgerAhead'];
 /** How often a running kill switch, removal or rollback is read again. */
 export const POLL_MS = 1000;
 
+/** A `refetchInterval` that stops once the data is finished or the read failed. */
+export function pollUntil<T>(finished: (data: T | undefined) => boolean) {
+  return (q: { state: { status: string; data: T | undefined } }): number | false =>
+    q.state.status === 'error' || finished(q.state.data) ? false : POLL_MS;
+}
+
 /**
  * Pulls the kill switch (admins only). The answer is 202 while the steps run; the run id comes
  * from the body, because a replayed request may not repeat the `Location` header.

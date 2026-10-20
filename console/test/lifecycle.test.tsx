@@ -1100,6 +1100,26 @@ describe('rollback', () => {
     expect(api.of('GET', APP_PATH).length).toBeGreaterThan(1);
   });
 
+  it('stops polling the operation once its read fails', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        [`GET ${APP_PATH}/releases`]: releases,
+        [`GET ${APP_PATH}/environments/${PROD}/deployments`]: deployments,
+        [`POST ${APP_PATH}/environments/${PROD}/deployments`]: () => json(202, { operation_id: OP, state: 'pending' }),
+        [`GET /v1/operations/${OP}`]: () => problem(500, 'INTERNAL', 'Something broke.'),
+      }),
+      signedIn(),
+    );
+    const { prod, dialog } = await openRollback();
+    fireEvent.click(await within(dialog).findByRole('radio', { name: /R2/ }));
+    await confirmIn(dialog, 'Roll back');
+    await within(prod).findByText(/INTERNAL/, {}, { timeout: 8000 });
+    const reads = api.of('GET', `/v1/operations/${OP}`).length;
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(api.of('GET', `/v1/operations/${OP}`).length).toBe(reads);
+  }, 15000);
+
   it('shows a refusal such as RELEASE_ENVIRONMENT_MISMATCH in the dialog', async () => {
     start(
       `/apps/${APP_ID}`,

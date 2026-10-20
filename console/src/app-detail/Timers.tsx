@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useRouteContext } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
-import { POLL_MS } from '../api/lifecycle';
+import { pollUntil } from '../api/lifecycle';
 import {
   listRuns,
   PAUSE_TEXT,
@@ -247,7 +247,7 @@ function RunProgress({
   const run = useQuery({
     queryKey: ['timer-run', started.target.environmentId, started.target.scheduleId, started.runId],
     queryFn: ({ signal }) => readRun(api, started.target, started.runId, signal),
-    refetchInterval: (q) => (runFinished(q.state.data) ? false : POLL_MS),
+    refetchInterval: pollUntil(runFinished),
   });
   const finished = runFinished(run.data);
   const told = useRef(false);
