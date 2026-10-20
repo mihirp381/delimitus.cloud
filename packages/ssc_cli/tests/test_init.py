@@ -327,7 +327,7 @@ def test_guide_gives_the_remote_server():
     assert text.index("served at") < text.index("#### The local server: `ssc mcp`")
     assert re.search(r"\{[a-z_]+\}", text) is None
     (local,) = re.findall(r"(?s)```json\n(.*?)```", guide([], url))
-    assert json.loads(local) == {"mcpServers": {"ssc": {"command": "ssc", "args": ["mcp"]}}}
+    assert json.loads(local) == {"mcpServers": {"ssc-local": {"command": "ssc", "args": ["mcp"]}}}
 
 
 # ── only real commands ──────────────────────────────────────────────────────
@@ -536,3 +536,30 @@ def test_pack_says_how_an_app_reads_a_data_connection(cli, tmp_path):
     ):
         assert fact in agents, fact
         assert source in limits, source
+
+
+def test_the_local_cursor_server_has_its_own_name(cli, tmp_path: Path) -> None:
+    text = guide([], MCP_URL)
+    (local,) = re.findall(r"(?s)```json\n(.*?)```", text)
+    snippet = json.loads(local)
+    assert list(snippet["mcpServers"]) == ["ssc-local"]
+    (tmp_path / ".cursor").mkdir()
+    (tmp_path / ".cursor/mcp.json").write_text(json.dumps(snippet))
+    init(cli, tmp_path, "--force")
+    servers = json.loads((tmp_path / ".cursor/mcp.json").read_text())["mcpServers"]
+    assert servers["ssc-local"] == snippet["mcpServers"]["ssc-local"]
+
+
+def test_init_help_names_every_file_it_writes(cli) -> None:
+    text = " ".join(cli("init", "--help").stdout.split())
+    for name in ("AGENTS.md", "CLAUDE.md", "MCP settings", "ssc.toml", ".sscignore"):
+        assert name in text, name
+
+
+def test_the_identity_rules_read_both_settings_from_the_environment() -> None:
+    text = " ".join(guide([], MCP_URL).split())
+    assert f'os.environ["{app_env.IDENTITY_KEYS_URL}"]' in text
+    assert f'os.environ["{app_env.APP_ORIGIN}"]' in text
+    assert "a `data:` URL" in text
+    jwks = text.split("keys.delimitus.com/<cell>/jwks.json", 1)[0][-160:]
+    assert "outside a cell" in jwks

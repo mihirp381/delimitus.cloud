@@ -124,12 +124,13 @@ own; its calls are recorded the same way. Set it up once:
 - Codex: `ssc login --org <org id> --agent codex`, then `codex mcp add ssc -- ssc mcp`, and set
   `tool_timeout_sec = 1500` under `[mcp_servers.ssc]` in `~/.codex/config.toml`; the default of
   60 seconds is shorter than a build.
-- Cursor: `ssc login --org <org id> --agent cursor`, then in `.cursor/mcp.json`:
+- Cursor: `ssc login --org <org id> --agent cursor`, then in `.cursor/mcp.json` (named
+  `ssc-local`, so `ssc init --force` leaves it):
 
 ```json
 {{
   "mcpServers": {{
-    "ssc": {{
+    "ssc-local": {{
       "command": "ssc",
       "args": ["mcp"]
     }}
@@ -210,10 +211,11 @@ own; its calls are recorded the same way. Set it up once:
 - Node: `import {{ IdentityVerifier }} from '@delimitus/ssc-identity'`, then
   `await new IdentityVerifier({{ audience, keys }}).fromHeaders(req.headers)`.
 - Key users on `note.sub`, never on email or name, which can change.
-- Take `audience` from the `{app_origin}` environment variable, the app's own exact origin
-  (such as `https://expenses.qtbvkmrdhpsc.delimitusapps.com`, and
+- Take `audience` from `os.environ["{app_origin}"]` (Node: `process.env.{app_origin}`), the
+  app's own exact origin (such as `https://expenses.qtbvkmrdhpsc.delimitusapps.com`, and
   `https://expenses--preview.qtbvkmrdhpsc.delimitusapps.com` in preview), and `keys` from
-  `{keys_url}`, the JWKS address (`https://keys.delimitus.com/<cell>/jwks.json`). Never
+  `os.environ["{keys_url}"]`, which in a cell holds the keys as a `data:` URL. Only code
+  outside a cell passes the JWKS address, `https://keys.delimitus.com/<cell>/jwks.json`. Never
   hard-code either. While one is unset, treat every request as not signed in.
 - Treat every refusal as "not a signed-in user": answer 401 and never echo the note.
 
