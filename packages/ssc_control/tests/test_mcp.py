@@ -200,10 +200,14 @@ class PlantedLogs:
 
 
 @contextmanager
-def serving(settings_for: Callable[[str], Settings], blobs: Path | None = None) -> Iterator[str]:
+def serving(
+    settings_for: Callable[[str], Settings],
+    blobs: Path | None = None,
+    logs: PlantedLogs | None = None,
+) -> Iterator[str]:
     """``create_app`` under uvicorn on a free port, in a thread; yields its base URL. With
     ``blobs``, bundles go to a filesystem store there, served at ``<url>/blobs``. The cell's
-    logs are :class:`PlantedLogs`."""
+    logs are ``logs``, else :class:`PlantedLogs`."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     sock.listen(128)
@@ -212,7 +216,7 @@ def serving(settings_for: Callable[[str], Settings], blobs: Path | None = None) 
     if blobs is not None:
         signer = UrlSigner({"k1": b"k" * 32}, active="k1", clock=SystemClock())
         store = FsBlobStore(blobs, signer=signer, base_url=f"{url}/blobs")
-    cells = StaticCells(OrgCell(label=STATIC_LABEL, logs=PlantedLogs()))
+    cells = StaticCells(OrgCell(label=STATIC_LABEL, logs=logs or PlantedLogs()))
     app = create_app(settings_for(url), None, store, cells=cells)
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
@@ -926,10 +930,6 @@ async def test_request_connection(world: World) -> None:
     assert bad.structured_content is None  # refused by the tool's own argument pattern
 
 
-async def test_create_app_once_per_key_and_audited_as_agent(world: World) -> None:
-    async with session(world.url, world.agent) as client:
-        made = await client.call_tool("create_app", {"slug": "mcp-made", "idempotency_key": "k-1"})
-        again = await client.call_tool("create_app", {"slug": "mcp-made", "idempotency_key": "k-1"})
 @pytest.mark.parametrize(
     ("tool", "args"),
     [
@@ -948,6 +948,10 @@ async def test_an_idempotency_key_is_visible_ascii(
     assert bad.structured_content is None
 
 
+async def test_create_app_once_per_key_and_audited_as_agent(world: World) -> None:
+    async with session(world.url, world.agent) as client:
+        made = await client.call_tool("create_app", {"slug": "mcp-made", "idempotency_key": "k-1"})
+        again = await client.call_tool("create_app", {"slug": "mcp-made", "idempotency_key": "k-1"})
         taken = await client.call_tool("create_app", {"slug": "mcp-made"})
         bad = await client.call_tool("create_app", {"slug": "Not A Slug"})
     assert not made.is_error, made.content
