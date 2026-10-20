@@ -273,3 +273,13 @@ def test_only_the_tools_proven_live_are_shown_deploying_directly() -> None:
     assert row is not None
     assert TOOLS in row[0]
     assert "not proven end to end" in row[0]
+
+
+def test_every_approval_names_who_approves() -> None:
+    text = _text_without_styles()
+    assert not re.search(r"(?i)\b(after|once|until) (an |the )?approv", text)
+    assert not re.search(
+        r"(?i)\b(once|after) IT approved|connections IT approved|lead approves", text
+    )
+    assert "Only an admin can approve" not in text
+    assert text.count("another admin of your company") >= 5
