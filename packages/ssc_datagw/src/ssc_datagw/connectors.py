@@ -19,7 +19,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Final, Protocol, cast
+from typing import Final, Literal, Protocol, cast
 from uuid import UUID
 
 type Scalar = str | int | float | bool | None
@@ -122,8 +122,18 @@ def grouped(rows: Iterable[tuple[str, Column]]) -> list[Table]:
     return [Table(name, columns) for name, columns in tables.items()]
 
 
+type RefusedReason = Literal[
+    "other_database", "not_read_only", "multiple_statements", "unsupported_statement"
+]
+
+
 class QueryRefusedError(Exception):
-    """The statement is not a plain read (the connector's classifier). The message is fixed."""
+    """The statement is not a plain read (the connector's classifier). The message is fixed and
+    goes to the log; ``reason`` goes back to the app."""
+
+    def __init__(self, message: str, *, reason: RefusedReason) -> None:
+        super().__init__(message)
+        self.reason: RefusedReason = reason
 
 
 class QueryFailedError(Exception):

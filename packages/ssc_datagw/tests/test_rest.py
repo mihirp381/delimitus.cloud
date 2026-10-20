@@ -480,8 +480,9 @@ def test_request_path_refuses_the_rest(path: str) -> None:
 
 async def test_params_are_refused_before_the_source() -> None:
     connector = RestConnector(RestTarget(base_url="https://localhost:9"))
-    with pytest.raises(QueryRefusedError, match="^a REST read takes no parameters$"):
+    with pytest.raises(QueryRefusedError, match="^a REST read takes no parameters$") as refused:
         await read(connector, ask("/orders", 1))
+    assert refused.value.reason == "unsupported_statement"
 
 
 def test_columns_take_their_type_from_the_first_non_null_value() -> None:

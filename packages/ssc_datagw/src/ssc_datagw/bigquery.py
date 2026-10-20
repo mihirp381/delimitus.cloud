@@ -45,7 +45,7 @@ from sqlglot import tokenize
 from sqlglot.errors import SqlglotError
 from sqlglot.tokens import TokenType
 
-from ssc_datagw.classify import bigquery_refusal
+from ssc_datagw.classify import bigquery_refusal, reason_of
 from ssc_datagw.connectors import (
     DESCRIBE_TAG,
     MAX_COLUMNS,
@@ -673,7 +673,7 @@ class BigQueryConnector:
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         reason = bigquery_refusal(query.sql, self._target.project)
         if reason is not None:
-            raise QueryRefusedError(reason)
+            raise QueryRefusedError(reason, reason=reason_of(reason))
         count = placeholders(query.sql)
         if count != len(query.params):
             raise QueryFailedError(

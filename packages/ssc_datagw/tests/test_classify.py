@@ -8,6 +8,7 @@ from ssc_datagw.classify import (
     TSQL_STATEMENT_WORDS,
     bigquery_refusal,
     mysql_refusal,
+    reason_of,
     refusal,
     snowflake_refusal,
     tsql_refusal,
@@ -589,3 +590,29 @@ def test_snowflake_reasons_name_the_construct() -> None:
 def test_the_snowflake_database_is_refused_even_when_it_is_the_connections() -> None:
     assert snowflake_refusal("SELECT * FROM snowflake.s.t", "SNOWFLAKE") is not None
     assert snowflake_refusal("SELECT * FROM reporting.s.t", "Reporting") is None
+
+
+REASONS = {
+    "SELECT 1; SELECT 2": "multiple_statements",
+    "NOTIFY ssc": "not_read_only",
+    "SELECT 1 AS x INTO TEMP t": "not_read_only",
+    "SELECT nextval('s')": "not_read_only",
+    "SELECT E'x'": "unsupported_statement",
+    "SELECT (": "unsupported_statement",
+}
+
+
+@pytest.mark.parametrize("sql", sorted(REASONS))
+def test_a_refusal_has_one_of_four_reasons(sql: str) -> None:
+    assert reason_of(refusal(sql) or "") == REASONS[sql]
+
+
+def test_another_database_is_its_own_reason() -> None:
+    assert reason_of(bigquery_refusal("SELECT * FROM other.d.t", "mine") or "") == "other_database"
+    assert reason_of(tsql_refusal("SELECT * FROM other.dbo.t") or "") == "other_database"
+    assert reason_of(tsql_refusal("SELECT 1; SELECT 2") or "") == "multiple_statements"
+    assert reason_of(snowflake_refusal("SELECT * FROM other.s.t", "MINE") or "") == "other_database"
+    assert (
+        reason_of(snowflake_refusal("SELECT * FROM snowflake.s.t", "MINE") or "")
+        == "other_database"
+    )

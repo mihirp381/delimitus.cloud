@@ -208,17 +208,17 @@ def s3_request(sql: str, prefix: str) -> tuple[Literal["list", "get"], str]:
     segment; a key ends in a readable extension."""
     found = _REQUEST.fullmatch(sql)
     if found is None:
-        raise QueryRefusedError(NOT_A_READ)
+        raise QueryRefusedError(NOT_A_READ, reason="unsupported_statement")
     op = cast("Literal['list', 'get']", found.group(1).lower())
     argument = found.group(2)
     if argument is None:
         if op != "list":
-            raise QueryRefusedError(NOT_A_READ)
+            raise QueryRefusedError(NOT_A_READ, reason="unsupported_statement")
         argument = ""
     try:
         size = len(argument.encode())
     except UnicodeEncodeError:
-        raise QueryRefusedError(NOT_A_READ) from None
+        raise QueryRefusedError(NOT_A_READ, reason="unsupported_statement") from None
     if (
         size > ARGUMENT_BYTES
         or argument.startswith("/")
@@ -227,9 +227,9 @@ def s3_request(sql: str, prefix: str) -> tuple[Literal["list", "get"], str]:
         or not argument.startswith(prefix)
         or (op == "get" and not argument)
     ):
-        raise QueryRefusedError(NOT_A_READ)
+        raise QueryRefusedError(NOT_A_READ, reason="unsupported_statement")
     if op == "get" and _extension(argument) not in EXTENSIONS:
-        raise QueryRefusedError(NOT_READABLE)
+        raise QueryRefusedError(NOT_READABLE, reason="unsupported_statement")
     return op, argument
 
 
@@ -505,7 +505,9 @@ class S3Connector:
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         op, argument = s3_request(query.sql, self._target.prefix)
         if query.params:
-            raise QueryRefusedError("an S3 read takes no parameters")
+            raise QueryRefusedError(
+                "an S3 read takes no parameters", reason="unsupported_statement"
+            )
         seconds = max(1, query.timeout_ms) / 1000
         client = httpx2.AsyncClient(
             verify=self._tls,

@@ -49,15 +49,23 @@ IDENTITY_HEADER: Final = "x-ssc-identity"
 class DataError(RuntimeError):
     """A refusal or a failure. ``code`` is the data gateway's (``CONNECTION_NOT_GRANTED``,
     ``CONNECTION_SUSPENDED``, ``QUERY_REFUSED``, ``QUERY_FAILED``, ``DAILY_BUDGET_SPENT``, ...) or
-    ``UNREACHABLE``; ``sqlstate`` is the database's for ``QUERY_FAILED`` when it gave one."""
+    ``UNREACHABLE``; ``sqlstate`` is the database's for ``QUERY_FAILED`` when it gave one;
+    ``reason`` is a ``QUERY_REFUSED``'s (``other_database``, ``not_read_only``,
+    ``multiple_statements``, ``unsupported_statement``)."""
 
     def __init__(
-        self, code: str, message: str, status: int | None = None, sqlstate: str | None = None
+        self,
+        code: str,
+        message: str,
+        status: int | None = None,
+        sqlstate: str | None = None,
+        reason: str | None = None,
     ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.status = status
         self.sqlstate = sqlstate
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +113,13 @@ def _send(url: str, headers: Mapping[str, str], body: bytes | None) -> tuple[int
 def _refusal(status: int, raw: bytes) -> DataError:
     try:
         error = json.loads(raw)["error"]
-        return DataError(str(error["code"]), str(error["message"]), status, error.get("sqlstate"))
+        return DataError(
+            str(error["code"]),
+            str(error["message"]),
+            status,
+            error.get("sqlstate"),
+            error.get("reason"),
+        )
     except (ValueError, KeyError, TypeError):
         return DataError("UNAVAILABLE", f"the data gateway answered HTTP {status}", status)
 

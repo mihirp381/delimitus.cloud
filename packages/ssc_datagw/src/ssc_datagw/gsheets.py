@@ -114,16 +114,16 @@ def a1_range(sql: str, sheet: str | None) -> str:
     sent as ``sheet`` spells it; without, a bare range reads the first tab."""
     found = None if len(sql) > RANGE_CHARS else RANGE.fullmatch(sql) or TAB.fullmatch(sql)
     if found is None:
-        raise QueryRefusedError(NOT_A_RANGE)
+        raise QueryRefusedError(NOT_A_RANGE, reason="unsupported_statement")
     groups = found.groupdict()
     named, cells = groups.get("sheet"), groups.get("cells")
     if named is not None and named.startswith("'"):
         named = named[1:-1].replace("''", "'")
         if len(named) > SHEET_CHARS:
-            raise QueryRefusedError(NOT_A_RANGE)
+            raise QueryRefusedError(NOT_A_RANGE, reason="unsupported_statement")
     if sheet is not None:
         if named is not None and named.casefold() != sheet.casefold():
-            raise QueryRefusedError(OTHER_SHEET)
+            raise QueryRefusedError(OTHER_SHEET, reason="other_database")
         named = sheet
     if named is None:
         return cast("str", cells)
@@ -312,7 +312,9 @@ class GsheetsConnector:
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         cells = a1_range(query.sql, self._target.sheet)
         if query.params:
-            raise QueryRefusedError("a Google Sheets read takes no parameters")
+            raise QueryRefusedError(
+                "a Google Sheets read takes no parameters", reason="unsupported_statement"
+            )
         headers = self._headers()
         seconds = max(1, query.timeout_ms) / 1000
         client = self._client()

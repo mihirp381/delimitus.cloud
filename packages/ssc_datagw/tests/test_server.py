@@ -648,7 +648,13 @@ async def test_a_concurrency_of_zero_runs_nothing(tmp_path: Path) -> None:
 
 
 CONNECTOR_ERRORS = {
-    "refused": (QueryRefusedError("two statements"), 422, "QUERY_REFUSED", "classify", None),
+    "refused": (
+        QueryRefusedError("two statements", reason="multiple_statements"),
+        422,
+        "QUERY_REFUSED",
+        "classify",
+        None,
+    ),
     "failed": (
         QueryFailedError('relation "x" does not exist', sqlstate="42P01"),
         422,
@@ -680,6 +686,24 @@ async def test_connector_errors_map_to_their_codes(tmp_path: Path, case: str) ->
         sqlstate,
     )
     assert str(exc) not in r.text
+
+
+async def test_a_refused_query_names_its_reason_and_never_the_classifiers_text(
+    tmp_path: Path,
+) -> None:
+    exc = QueryRefusedError("the statement contains Delete", reason="not_read_only")
+    async with running(tmp_path, connector=FakeConnector(error=exc)) as w:
+        r = await w.ask()
+    assert (r.status_code, error(r)["code"], error(r)["reason"]) == (
+        422,
+        "QUERY_REFUSED",
+        "not_read_only",
+    )
+    assert "Delete" not in r.text
+    exc = QueryFailedError("boom", sqlstate="42P01")
+    async with running(tmp_path, connector=FakeConnector(error=exc)) as w:
+        r = await w.ask()
+    assert "reason" not in error(r)
 
 
 async def test_a_query_past_its_time_limit_is_ended(tmp_path: Path) -> None:

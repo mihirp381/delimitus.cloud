@@ -46,7 +46,7 @@ from uuid import UUID
 import asyncpg  # pyright: ignore[reportMissingTypeStubs]
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from ssc_datagw.classify import refusal
+from ssc_datagw.classify import reason_of, refusal
 from ssc_datagw.connectors import (
     DESCRIBE_TAG,
     MAX_COLUMNS,
@@ -343,7 +343,7 @@ class PostgresConnector:
     async def open(self, query: Query) -> AsyncGenerator[_Cursor]:
         reason = self._classify(query.sql)
         if reason is not None:
-            raise QueryRefusedError(reason)
+            raise QueryRefusedError(reason, reason=reason_of(reason))
         async with self._read(query) as cursor:
             yield cursor
 

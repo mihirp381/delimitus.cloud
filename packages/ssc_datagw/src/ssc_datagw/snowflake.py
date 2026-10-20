@@ -56,7 +56,7 @@ from sqlglot import tokenize
 from sqlglot.errors import SqlglotError
 from sqlglot.tokens import TokenType
 
-from ssc_datagw.classify import snowflake_refusal
+from ssc_datagw.classify import reason_of, snowflake_refusal
 from ssc_datagw.connectors import (
     DESCRIBE_TAG,
     MAX_COLUMNS,
@@ -651,7 +651,7 @@ class SnowflakeConnector:
         t = self._target
         reason = snowflake_refusal(query.sql, t.database)
         if reason is not None:
-            raise QueryRefusedError(reason)
+            raise QueryRefusedError(reason, reason=reason_of(reason))
         count = placeholders(query.sql)
         if count != len(query.params):
             raise QueryFailedError(
