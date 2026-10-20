@@ -28,3 +28,39 @@ def test_the_kill_drill_creates_the_app_before_deploying_it() -> None:
     create = text.index("`ssc apps create kill-drill`")
     deploy = text.index("`ssc deploy conformance/kill_drill_app --app kill-drill --wait`")
     assert create < deploy
+
+
+README = DOCS.parent / "README.md"
+
+
+def _section(text: str, heading: str) -> str:
+    return text.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_readme_gives_the_customer_path_before_the_source_path() -> None:
+    text = README.read_text(encoding="utf-8")
+    assert text.index("\n## Using SSC\n") < text.index("\n## Get started from source\n")
+    section = _section(text, "## Using SSC")
+    for fact in ("org id", "Okta", "console"):
+        assert fact in section, fact
+    steps = [
+        "uv tool install 'ssc-cli[mcp]'",
+        "ssc login --org",
+        "ssc init",
+        "ssc apps create",
+        "ssc deploy . --app",
+        "ssc promote",
+    ]
+    places = [section.index(s) for s in steps]
+    assert places == sorted(places)
+    assert "--wait" in section.split("ssc deploy . --app", 1)[1].splitlines()[0]
+    for where in ("ssc status", "ssc logs", "--source build", "Fix:", "exit code"):
+        assert where in section, where
+    assert "(docs/support/how-to-get-help.md)" in section
+
+
+def test_the_readme_says_who_promotes() -> None:
+    text = " ".join(README.read_text(encoding="utf-8").split())
+    assert "human-controlled approval path" not in text
+    assert "Coding agents cannot promote" in text
+    assert "a builder of the app promotes" in text
