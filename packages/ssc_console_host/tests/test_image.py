@@ -51,3 +51,18 @@ def test_the_matcher_reads_negation_and_globs() -> None:
     assert not sent("console/.env.local", rules)
     assert sent("console/.env", rules)
     assert not sent("infra/x.py", rules)
+
+
+def runtime_copies(dockerfile: str) -> list[str]:
+    """The ``COPY`` lines of the last stage, the one that ships."""
+    last = re.split(r"^FROM ", dockerfile, flags=re.M)[-1]
+    return [" ".join(line.split()[1:]) for line in last.splitlines() if line.startswith("COPY ")]
+
+
+def test_the_console_image_ships_only_the_venv_and_the_build() -> None:
+    dockerfile = (HOST / "Dockerfile").read_text(encoding="utf-8")
+    assert runtime_copies(dockerfile) == [
+        "--from=builder /app/.venv /app/.venv",
+        "--from=console /console/dist /app/dist",
+    ]
+    assert all("@sha256:" in line for line in re.findall(r"^FROM .*", dockerfile, flags=re.M))

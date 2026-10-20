@@ -1,5 +1,6 @@
 """SSC-065: what delimitus.com answers, and the abuse limits on the pilot request form."""
 
+import re
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -252,3 +253,14 @@ def test_settings_refuse_a_plain_http_origin_in_production() -> None:
                 "SSC_LANDING_ORIGIN": "http://delimitus.com",
             }
         )
+
+
+def test_the_image_ships_only_the_venv_and_the_page() -> None:
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    last = re.split(r"^FROM ", dockerfile, flags=re.M)[-1]
+    copies = [" ".join(ln.split()[1:]) for ln in last.splitlines() if ln.startswith("COPY ")]
+    assert copies == [
+        "--from=builder /app/.venv /app/.venv",
+        "landing/index.html /app/landing/index.html",
+    ]
+    assert all("@sha256:" in line for line in re.findall(r"^FROM .*", dockerfile, flags=re.M))

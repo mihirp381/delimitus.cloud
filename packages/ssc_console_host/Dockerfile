@@ -24,21 +24,26 @@ RUN npm run build
 
 FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
 
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS builder
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
-    UV_PROJECT_ENVIRONMENT=/app/.venv \
-    PATH=/app/.venv/bin:$PATH
-RUN useradd --uid 10001 ssc && mkdir -p /app && chown ssc:ssc /app
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+WORKDIR /src
+COPY pyproject.toml uv.lock ./
+COPY packages packages
+COPY conformance/pyproject.toml conformance/pyproject.toml
+RUN UV_CACHE_DIR=/tmp/uv-cache uv sync --locked --no-dev --no-editable --package ssc-console-host
+
+# Only the installed environment and the build ship; no source tree. Owned by root: the service
+# can read them and never change them.
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+RUN useradd --uid 10001 ssc
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=console /console/dist /app/dist
 USER ssc
 WORKDIR /app
-COPY --chown=ssc:ssc pyproject.toml uv.lock ./
-COPY --chown=ssc:ssc packages packages
-COPY --chown=ssc:ssc conformance/pyproject.toml conformance/pyproject.toml
-RUN UV_CACHE_DIR=/tmp/uv-cache uv sync --locked --no-dev --no-editable --package ssc-console-host && rm -rf /tmp/uv-cache
-# Owned by root: the service can read the build and never change it.
-COPY --from=console /console/dist /app/dist
-ENV PORT=8080 \
+ENV PATH=/app/.venv/bin:$PATH \
+    PORT=8080 \
     SSC_CONSOLE_DIST=/app/dist
 CMD ["python", "-m", "ssc_console_host"]
