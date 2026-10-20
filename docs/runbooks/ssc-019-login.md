@@ -59,6 +59,17 @@ Pass: `whoami` fails with `LOGIN_ENDED` or `UNAUTHENTICATED` within 5 minutes of
 
 Pass: `whoami` names the same `usr_` id as before, and the count is unchanged. The new email shows in the same `psql` with `select email from ssc.user_account where id = '<usr_…>'`.
 
+## If a sign-in says "Too many tries"
+
+The auth host's abuse limits (decision 024, amendment of 2026-10-19; table in
+`docs/trust/identity-limits.md`) answer `429`: in a browser, the "Too many tries" page; at
+`/token`, `/revoke` and `/internal/redeem`, `{"error": "invalid_request", "error_description":
+"too many token requests"}` with `retry-after: 3600`. The `auth` log has one warning naming the
+route and the address or org (`/login refused: too many requests for address …`), never a code
+or token. Rerunning the checks above many times from one machine can reach them: wait up to an
+hour or restart `auth`, which keeps its counts only in memory. There is no operator override in
+production; the person waits up to an hour or signs in from another network.
+
 ## Record
 
 Copy the times, the `usr_` ids and the pass or fail lines into the SSC-019 status in the tickets file. Stop both servers with Ctrl-C; `.ssc-dev/` keeps the state for a rerun.

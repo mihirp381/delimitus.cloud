@@ -31,6 +31,34 @@ none is a promise beyond what is written here.
 - Google Workspace (not in V1): the login matches by email, so after a rename the login fails
   until the directory catches up, and an address-shaped subject cannot be linked by hand.
 
+## Abuse limits
+
+The auth host counts sign-in requests in a sliding hour, before it reads the database or calls
+WorkOS, by the address the control load balancer saw (decision 024, amendment of 2026-10-19).
+
+| Route | Counted | Limit an hour | Answer when over |
+|---|---|---|---|
+| `GET /login` | every call, per address, then per org | 60 per address, 600 per org | the "Too many tries" page, `429` |
+| `GET /callback` | every call, per address | 60 | the page, `429` |
+| `GET /callback` | refused sign-ins only, per address | 20, then the next call is answered without WorkOS or an audit row | the page, `429` |
+| `POST /device` (the user code) | every call, per address, then per org | 10 per address, 60 per org | the page, `429` |
+| `POST /token` | every call, per address | 2 000 | `429` JSON |
+| `POST /token` | `invalid_grant` answers only, per address | 30, then none until the hour slides | `429` JSON |
+| `POST /revoke` | every call, per address | 60 | `429` JSON |
+| `POST /internal/redeem` | codes not redeemed, per org | 60, then none for that org | `429` JSON |
+
+- The `429` JSON is `{"error": "invalid_request", "error_description": "too many token requests"}`
+  with `retry-after: 3600`.
+- A command-line login polls `/token` every 5 s for at most 10 minutes, 120 calls, so several
+  logins behind one network address stay well inside 2 000.
+- The counts are kept in each auth-host instance's memory. At most two instances run, so a
+  client can reach at most double each limit; a restart starts the counts again.
+- Everyone behind one network address (an office NAT) shares that address's counts.
+- A person who is limited waits up to an hour, or signs in from another network. There is no
+  operator override.
+- `/register`, the work-email step, `/device/authorize` and `/ci-tokens` keep their own limits
+  (`ssc_control.identity.limits`).
+
 ## Changing directories
 
 - Rebinding an org to a new directory does not carry people over: they are new people in SSC,
