@@ -191,8 +191,8 @@ The [infrastructure guide](infra/README.md) covers cloud configuration and live 
   out of version control. Commit the generated OpenAPI spec, console API client, route tree,
   and design tokens, which CI checks against their sources.
 - Keep new documentation links relative to the repository and list new guides in
-  [docs/README.md](docs/README.md). Local planning material under the ignored
-  `Cloud_for_small_soft/` directory is not available to someone cloning the repository.
+  [docs/README.md](docs/README.md). Planning files kept outside the repository are not
+  available to someone cloning it.
 
 ## Contracts and changes
 
@@ -218,10 +218,3 @@ amendments in [docs/decisions/README.md](docs/decisions/README.md).
 
 Use a focused branch and describe the resulting behaviour and relevant validation in the
 change description.
-
-## Related repositories and test data
-
-- The related Delimitus repository at `../Ristretto-python-conversion` is reference-only for
-  patterns and tests. Do not modify it as part of SSC work.
-- Do not use `RISTRETTO_*_LIVE` flags or create resources in GCP project `ristretto-506621`.
-- The 161-app corpus is for internal testing only.

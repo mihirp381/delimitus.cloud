@@ -68,4 +68,4 @@ feature or making a product claim.
 - Research harnesses and proof-run records are kept on an internal archive branch, not on main.
 
 Keep this index current when adding a guide. Published documentation should resolve from a
-fresh clone; local planning files under `Cloud_for_small_soft/` are outside the versioned docs.
+fresh clone; planning files kept outside the repository are outside the versioned docs.
