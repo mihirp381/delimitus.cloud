@@ -6,6 +6,8 @@ export type Grant = components['schemas']['GrantOut'];
 export type GrantInput = components['schemas']['GrantIn'];
 export type Grants = components['schemas']['GrantsOut'];
 export type GrantsPending = components['schemas']['GrantsPending'];
+export type ShareRequirement = components['schemas']['RequirementOut'];
+export type ShareRequirements = components['schemas']['GrantsRequirements'];
 
 /**
  * The rules after a change, or, when the change waits for approval (a `202`, decision 016), the
@@ -95,6 +97,24 @@ export async function updateGrants(
       current = await readGrants(api, target);
     }
   }
+}
+
+/**
+ * Which approvals replacing the environment's grants with `grants` still needs (K-1). A refused
+ * PUT's APPROVAL_REQUIRED names nothing, so the console asks this with the same grants; it writes
+ * nothing and opens no approval.
+ */
+export async function readShareRequirements(
+  api: ApiClient,
+  target: GrantsTarget,
+  grants: readonly (Grant | GrantInput)[],
+): Promise<ShareRequirements> {
+  return must(
+    await api.POST(`${PATH}/requirements`, {
+      params: { path: { app_id: target.appId, environment_id: target.environmentId } },
+      body: { grants: grants.map(toInput) },
+    }),
+  );
 }
 
 /** The change that removes one grant, matched by identity rather than by id. */

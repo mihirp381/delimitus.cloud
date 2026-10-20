@@ -10,13 +10,15 @@ data-connected app, applies only once the matching approval is approved (decisio
 change that widens the audience beyond the ceiling of a data connection the environment uses
 (``exceed_ceiling``, SSC-052), decided by the connection's owner or an org admin. Until then an
 agent session gets ``202`` with the pending approval ids and a person gets ``APPROVAL_REQUIRED``;
-the grants and their version stay as they were.
+the grants and their version stay as they were. ``POST .../grants/requirements`` runs the same check
+on the same grants and says which approvals are missing, writing nothing (K-1).
 
 Approving the last open requirement of a change applies it (:func:`apply_approved`, SSC-049).
 
 Each grant a change actually adds records one ``share`` metrics event (SSC-028).
 """
 
+from dataclasses import dataclass
 from typing import Annotated, Any, Final, Literal, Self
 
 from fastapi import APIRouter, Header, Response
@@ -27,8 +29,9 @@ from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.api.authz import can_build, require_builder
+from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
-from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
+from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import (
     ETAG,
     IF_MATCH,
@@ -101,6 +104,28 @@ class GrantsOut(Strict):
     grants: list[GrantOut]
 
 
+class RequirementOut(Strict):
+    """One approval a sharing change needs, and the newest request for it if there is one."""
+
+    kind: str = Field(description="`agent_share`, `widen_audience` or `exceed_ceiling`.")
+    connection: str | None = Field(
+        description="The connection whose ceiling the change passes, for `exceed_ceiling`; "
+        "null otherwise."
+    )
+    approval_id: str | None = Field(description="The newest request for it; null if never asked.")
+    state: str | None = Field(description="That request's state; null if never asked.")
+
+
+class GrantsRequirements(Strict):
+    """What a change to these grants needs approved before ``PUT .../grants`` applies it."""
+
+    environment_id: str
+    grants_version: int = Field(description="The version the answer was computed against.")
+    requirements: list[RequirementOut] = Field(
+        description="Each approval not yet approved; empty when the change would apply now."
+    )
+
+
 class GrantsPending(Strict):
     """An agent session's change, waiting for another admin. Nothing was applied."""
 
@@ -116,6 +141,11 @@ _LOCK_ENV = text(
 _SHARE_APP_STATUS = text("select status from ssc.app where org_id = :org and id = :app for share")
 _SHARING_FROZEN: Final = frozenset({"quarantined", "deleting", "deleted"})
 """The statuses in which an app's sharing takes no change: quarantined (SSC-025), or going."""
+_READ_ENV = text(
+    "select id, grants_version, profile, name from ssc.environment "
+    "where org_id = :org and app_id = :app and id = :env"
+)
+_APP_STATUS = text("select status from ssc.app where org_id = :org and id = :app")
 _SELECT_ENV = text(
     "select id, grants_version from ssc.environment "
     "where org_id = :org and app_id = :app and id = :env"
@@ -428,6 +458,85 @@ async def apply_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcom
     return "applied", None
 
 
+@dataclass(frozen=True)
+class _Assessed:
+    """A change to one environment's grants, checked, and what it needs approved."""
+
+    name: str
+    current: int
+    existing: dict[GrantKey, GrantOut]
+    desired: dict[GrantKey, GrantIn]
+    exceeded: tuple[str, ...]
+    needed: list[Requirement]
+    found: dict[Requirement, ApprovalRow]
+
+    @property
+    def open_(self) -> list[Requirement]:
+        """The requirements without an approved request."""
+        return [r for r in self.needed if r not in self.found or self.found[r].state != "approved"]
+
+    def out(self, req: Requirement, row: ApprovalRow | None) -> RequirementOut:
+        names = {exceed_subject_key(n, set(self.desired)): n for n in self.exceeded}
+        return RequirementOut(
+            kind=req.kind.value,
+            connection=names.get(req.subject_key)
+            if req.kind is RequirementKind.EXCEED_CEILING
+            else None,
+            approval_id=None if row is None else row.id,
+            state=None if row is None else row.state,
+        )
+
+
+async def _assess(
+    uow: UnitOfWork,
+    app_id: str,
+    environment_id: str,
+    grants: list[GrantIn],
+    *,
+    expected: int | None,
+) -> _Assessed:
+    """The part of a grants change that ``PUT`` and ``POST .../requirements`` share, so the two
+    never drift: who may, the freeze, the floors and ceilings, and the approvals needed. With
+    ``expected`` (the PUT) the environment is locked ``FOR UPDATE`` and must be at that version;
+    without it the rows are read without a lock."""
+    for g in grants:
+        if (g.subject_kind == "org") != (g.subject_id is None):
+            raise Refusal(ErrorCode.VALIDATION_FAILED, evidence={"grant": g.model_dump()})
+    params = {"org": uow.org_id, "app": app_id, "env": environment_id}
+    env = (await uow.conn.execute(_READ_ENV if expected is None else _LOCK_ENV, params)).first()
+    if env is None:
+        raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
+    await require_builder(uow, environment_id)
+    # Sharing freeze (SSC-025). FOR SHARE waits for a kill switch pulled at the same moment,
+    # or a removal asked for (GA-12).
+    app_status = _APP_STATUS if expected is None else _SHARE_APP_STATUS
+    status = (await uow.conn.execute(app_status, params)).scalar()
+    if status in _SHARING_FROZEN:
+        raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"app_id": app_id, "status": status})
+    current = int(env[1])
+    if expected is not None and current != expected:
+        raise Refusal(
+            ErrorCode.PRECONDITION_STALE, evidence={"expected": expected, "current": current}
+        )
+    existing = {_grant_key(g): g for g in (await _grants_out(uow, environment_id, current)).grants}
+    desired = {_grant_key(g): g for g in grants}
+    ceilings = await connections.ceilings(uow.conn, uow.org_id, environment_id, set(desired))
+    exceeded = _check_rules(
+        grant_rules.SharingTarget(environment_id, str(env[3]), str(env[2])), desired, ceilings
+    )
+    needed, found = await _approvals_for(
+        uow,
+        environment_id=environment_id,
+        profile=str(env[2]),
+        version=current,
+        existing=set(existing),
+        desired=desired,
+        exceeded=exceeded,
+        via_agent=uow.principal.is_agent,
+    )
+    return _Assessed(str(env[3]), current, existing, desired, exceeded, needed, found)
+
+
 async def _grants_out(uow: UnitOfWork, env_id: str, version: int) -> GrantsOut:
     rows = (await uow.conn.execute(_SELECT_GRANTS, {"org": uow.org_id, "env": env_id})).mappings()
     return GrantsOut(
@@ -498,51 +607,24 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
     for one subject is ``VALIDATION_FAILED``. A quarantined app's sharing is frozen:
     ``APP_NOT_ACTIVE``.
 
-    A change that needs approval is not applied: an agent session gets ``202`` and the pending
-    approval ids (asked for here); a person gets ``APPROVAL_REQUIRED`` naming what to ask for."""
+    A change that needs approval is not applied. An agent session gets ``202`` and the pending
+    approval ids (asked for here). A person gets ``409 APPROVAL_REQUIRED``, whose body names
+    nothing (the ``Problem`` shape is fixed): they ask ``POST .../grants/requirements`` with the
+    same grants which approvals are needed, open one ``POST /v1/approvals`` per requirement
+    (``widen_audience`` with ``payload.grants``; ``exceed_ceiling`` with
+    ``payload.{connection, grants}``), and repeat this ``PUT`` once all are approved."""
     expected = parse_if_match(if_match)
     by = require_user(uow)
-    for g in body.grants:
-        if (g.subject_kind == "org") != (g.subject_id is None):
-            raise Refusal(ErrorCode.VALIDATION_FAILED, evidence={"grant": g.model_dump()})
-    env = (
-        await uow.conn.execute(_LOCK_ENV, {"org": uow.org_id, "app": app_id, "env": environment_id})
-    ).first()
-    if env is None:
-        raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
-    await require_builder(uow, environment_id)
-    # Sharing freeze (SSC-025). FOR SHARE waits for a kill switch pulled at the same moment,
-    # or a removal asked for (GA-12).
-    status = (
-        await uow.conn.execute(_SHARE_APP_STATUS, {"org": uow.org_id, "app": app_id})
-    ).scalar()
-    if status in _SHARING_FROZEN:
-        raise Refusal(ErrorCode.APP_NOT_ACTIVE, evidence={"app_id": app_id, "status": status})
-    current = int(env[1])
-    if current != expected:
-        raise Refusal(
-            ErrorCode.PRECONDITION_STALE, evidence={"expected": expected, "current": current}
-        )
-    existing = {_grant_key(g): g for g in (await _grants_out(uow, environment_id, current)).grants}
-    desired = {_grant_key(g): g for g in body.grants}
-    ceilings = await connections.ceilings(uow.conn, uow.org_id, environment_id, set(desired))
-    exceeded = _check_rules(
-        grant_rules.SharingTarget(environment_id, str(env[3]), str(env[2])), desired, ceilings
-    )
-    needed, found = await _approvals_for(
-        uow,
-        environment_id=environment_id,
-        profile=str(env[2]),
-        version=current,
-        existing=set(existing),
-        desired=desired,
-        exceeded=exceeded,
-        via_agent=uow.principal.is_agent,
-    )
-    open_ = [r for r in needed if r not in found or found[r].state != "approved"]
+    change = await _assess(uow, app_id, environment_id, body.grants, expected=expected)
+    current, open_ = change.current, change.open_
     if open_ and uow.principal.is_agent:
         asked = await _ask(
-            uow, environment_id, open_, desired=desired, version=current, exceeded=exceeded
+            uow,
+            environment_id,
+            open_,
+            desired=change.desired,
+            version=current,
+            exceeded=change.exceeded,
         )
         pending = GrantsPending(
             environment_id=environment_id, grants_version=current, approval_ids=asked
@@ -557,8 +639,8 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
                     {
                         "kind": r.kind.value,
                         "subject_key": r.subject_key,
-                        "approval_id": found[r].id if r in found else None,
-                        "state": found[r].state if r in found else None,
+                        "approval_id": change.found[r].id if r in change.found else None,
+                        "state": change.found[r].state if r in change.found else None,
                     }
                     for r in open_
                 ],
@@ -568,14 +650,40 @@ async def put_grants(  # noqa: PLR0913  (FastAPI maps each parameter to the requ
         uow,
         app_id=app_id,
         environment_id=environment_id,
-        environment_name=str(env[3]),
-        existing=existing,
-        desired=desired,
-        needed=needed,
-        found=found,
-        exceeded=exceeded,
+        environment_name=change.name,
+        existing=change.existing,
+        desired=change.desired,
+        needed=change.needed,
+        found=change.found,
+        exceeded=change.exceeded,
         by=by,
         via_agent=uow.principal.is_agent,
         source_tool=source_tool_of(uow.principal, source_tool),
     )
     return uow.reply(await _grants_out(uow, environment_id, version), headers={ETAG: etag(version)})
+
+
+@router.post(
+    "/apps/{app_id}/environments/{environment_id}/grants/requirements",
+    response_model=GrantsRequirements,
+    dependencies=[UserIdempotent],
+    responses=problem_responses(
+        *POST_COMMON, ErrorCode.NOT_FOUND, ErrorCode.FORBIDDEN, ErrorCode.APP_NOT_ACTIVE
+    ),
+)
+async def grants_requirements(
+    app_id: Id, environment_id: Id, body: GrantsIn, uow: UserUoW
+) -> Response:
+    """Which approvals replacing the environment's grants with ``grants`` needs, before
+    ``PUT .../grants`` would apply it. Same rules, refusals and computation as that ``PUT``
+    (without ``If-Match``); it writes nothing and opens no approval. Each requirement not yet
+    approved is listed with the newest request for it, if any; ask for the others with
+    ``POST /v1/approvals``. An agent session gets the same answer."""
+    require_user(uow)
+    change = await _assess(uow, app_id, environment_id, body.grants, expected=None)
+    answer = GrantsRequirements(
+        environment_id=environment_id,
+        grants_version=change.current,
+        requirements=[change.out(r, change.found.get(r)) for r in change.open_],
+    )
+    return uow.reply(answer)

@@ -1,5 +1,5 @@
 import { type ApiClient, must } from './client';
-import { type Approval, readGrants, toInput } from './grants';
+import { type Approval, type Grant, type GrantInput, readGrants, toInput } from './grants';
 import type { components } from './schema';
 
 export type Connection = components['schemas']['ConnectionOut'];
@@ -270,21 +270,24 @@ export async function detachConnection(
 
 /**
  * Asks for the environment to use `connection` with an audience wider than its ceiling
- * (`exceed_ceiling`, decided by the connection's owner or an org admin). The request names the
- * environment's grants as they are now, which the attach is checked against.
+ * (`exceed_ceiling`, decided by the connection's owner or an org admin). The request names
+ * `grants` when given: the desired set a sharing change was refused for, which the server's
+ * requirement is keyed on. Without it, the environment's grants as they are now, which an attach
+ * is checked against.
  */
 export async function askCeilingApproval(
   api: ApiClient,
   target: EnvironmentTarget,
   connection: string,
+  grants?: readonly (Grant | GrantInput)[],
 ): Promise<Approval> {
-  const { grants } = await readGrants(api, target);
+  const named = grants ?? (await readGrants(api, target)).grants.grants;
   return must(
     await api.POST('/v1/approvals', {
       body: {
         environment_id: target.environmentId,
         kind: 'exceed_ceiling',
-        payload: { connection, grants: grants.grants.map(toInput) },
+        payload: { connection, grants: named.map(toInput) },
       },
     }),
   );

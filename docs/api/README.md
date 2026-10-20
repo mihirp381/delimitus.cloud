@@ -85,8 +85,14 @@ may change some app's sharing: an admin, an owner or a builder.
 credential, or one that widens the audience of a data-connected app, is not applied until the
 matching approval is approved: an agent session gets `202` with `{environment_id, grants_version,
 approval_ids}` (the requests are opened for it, the version and `ETag` are unchanged) and a person
-gets `409 APPROVAL_REQUIRED`, then asks with `POST /v1/approvals` (`kind: widen_audience`,
-`payload.grants` set to the same desired grants). Once approved, the same `PUT` applies. Decisions
+gets `409 APPROVAL_REQUIRED`. That problem names nothing (the `Problem` body is fixed), so the person
+asks `POST .../grants/requirements` with the same `{grants}` (no `If-Match`; it writes nothing) and
+gets `{environment_id, grants_version, requirements: [{kind, connection, approval_id, state}]}`:
+each approval not yet approved, with the newest request for it if one exists (`connection` names
+the connection for `exceed_ceiling`, else `null`). They open one `POST /v1/approvals` per
+requirement not already pending: `kind: widen_audience` with `payload.grants`, `kind:
+exceed_ceiling` with `payload.{connection, grants}`, the grants being the same desired set. Once all
+are approved, the same `PUT` applies. Decisions
 are made in the console inbox or with `ssc approvals`: `GET /v1/approvals?inbox=true` lists what the
 caller may decide and `POST /v1/approvals/{id}/decide` takes `{outcome: approved|denied, reason,
 channel}` from a person session (an agent session gets `AGENT_SESSION_REFUSED`, the requester

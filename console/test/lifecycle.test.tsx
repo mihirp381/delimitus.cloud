@@ -95,6 +95,18 @@ function echoGrants(env: string, version: number): Handler {
     );
 }
 
+const SHARED = [
+  { role: 'user', subject_kind: 'org' },
+  { role: 'user', subject_kind: 'group', subject_id: GROUP },
+];
+const WIDEN = { kind: 'widen_audience', connection: null, approval_id: null, state: null };
+const EXCEED = { kind: 'exceed_ceiling', connection: 'finance', approval_id: null, state: null };
+
+/** The requirements check answering `list` for prod at version 3. */
+function required(list: readonly object[]): Handler {
+  return () => json(200, { environment_id: PROD, grants_version: 3, requirements: list });
+}
+
 async function openShare(envName: 'Production' | 'Preview') {
   const panel = await screen.findByRole('region', { name: 'Who has access' }, { timeout: FIRST_RENDER_MS });
   await waitFor(() => expect(within(panel).queryByText('Loading access…')).toBeNull());
@@ -279,6 +291,7 @@ describe('share dialog', () => {
       `/apps/${APP_ID}?tab=access`,
       page({
         [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.'),
+        [`POST ${PROD_GRANTS}/requirements`]: required([WIDEN]),
         'POST /v1/approvals': ({ body }) =>
           json(201, { id: 'apr_bbbbbbbbbbbbbbbbbbbb', state: 'pending', ...(body as object) }),
       }),
@@ -288,24 +301,112 @@ describe('share dialog', () => {
     fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: GROUP } });
     await submitShare(dialog);
     expect((await within(dialog).findByRole('alert')).textContent).toContain('APPROVAL_REQUIRED');
-    expect(within(dialog).getByRole('note').textContent).toContain('Another admin of the organisation must approve');
+    const note = await within(dialog).findByRole('note');
+    expect(note.textContent).toContain('This change needs approval before it applies');
+    expect(note.textContent).toContain('another org admin');
+    const check = api.of('POST', `${PROD_GRANTS}/requirements`)[0];
+    expect(check?.body).toEqual({ grants: SHARED });
+    expect(check?.headers.get('If-Match')).toBeNull();
+    expect(api.of('POST', '/v1/approvals')).toHaveLength(0);
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Ask for approval' }));
     });
     const ask = api.of('POST', '/v1/approvals')[0];
     expect(ask?.headers.get('Idempotency-Key')).toBeTruthy();
-    expect(ask?.body).toEqual({
-      environment_id: PROD,
-      kind: 'widen_audience',
-      payload: {
-        grants: [
-          { role: 'user', subject_kind: 'org' },
-          { role: 'user', subject_kind: 'group', subject_id: GROUP },
-        ],
-      },
-    });
-    expect((await within(dialog).findByRole('status')).textContent).toContain('apr_bbbbbbbbbbbbbbbbbbbb');
+    expect(ask?.body).toEqual({ environment_id: PROD, kind: 'widen_audience', payload: { grants: SHARED } });
+    expect(api.of('POST', '/v1/approvals')).toHaveLength(1);
+    const status = await within(dialog).findByRole('status');
+    expect(status.textContent).toContain('apr_bbbbbbbbbbbbbbbbbbbb');
+    expect(status.textContent).toContain('widen the audience');
     expect(within(dialog).queryByRole('note')).toBeNull();
+  });
+
+  it('asks the connection owner when the change passes a ceiling, with the grants it was refused for', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}?tab=access`,
+      page({
+        [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.'),
+        [`POST ${PROD_GRANTS}/requirements`]: required([EXCEED]),
+        'POST /v1/approvals': ({ body }) =>
+          json(201, { id: 'apr_cccccccccccccccccccc', state: 'pending', ...(body as object) }),
+      }),
+      signedIn(),
+    );
+    const { dialog } = await openShare('Production');
+    fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: GROUP } });
+    await submitShare(dialog);
+    expect((await within(dialog).findByRole('note')).textContent).toContain('finance');
+    const reads = api.of('GET', PROD_GRANTS).length;
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Ask for approval' }));
+    });
+    expect(api.of('POST', '/v1/approvals').map((c) => c.body)).toEqual([
+      { environment_id: PROD, kind: 'exceed_ceiling', payload: { connection: 'finance', grants: SHARED } },
+    ]);
+    // The desired grants, not the ones in force: the approval must match the refused PUT.
+    expect(api.of('GET', PROD_GRANTS)).toHaveLength(reads);
+    const status = await within(dialog).findByRole('status');
+    expect(status.textContent).toContain('apr_cccccccccccccccccccc');
+    expect(status.textContent).toContain('finance');
+  });
+
+  it('asks for every approval the change needs', async () => {
+    let n = 0;
+    const { api } = start(
+      `/apps/${APP_ID}?tab=access`,
+      page({
+        [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.'),
+        [`POST ${PROD_GRANTS}/requirements`]: required([WIDEN, EXCEED]),
+        'POST /v1/approvals': ({ body }) => {
+          n += 1;
+          return json(201, { id: `apr_${String(n).repeat(20)}`, state: 'pending', ...(body as object) });
+        },
+      }),
+      signedIn(),
+    );
+    const { dialog } = await openShare('Production');
+    fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: GROUP } });
+    await submitShare(dialog);
+    await within(dialog).findByRole('note');
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Ask for approval' }));
+    });
+    expect(api.of('POST', '/v1/approvals').map((c) => c.body)).toEqual([
+      { environment_id: PROD, kind: 'widen_audience', payload: { grants: SHARED } },
+      { environment_id: PROD, kind: 'exceed_ceiling', payload: { connection: 'finance', grants: SHARED } },
+    ]);
+    const items = within(await within(dialog).findByRole('status')).getAllByRole('listitem');
+    expect(items.map((i) => i.textContent)).toEqual([
+      expect.stringContaining('apr_11111111111111111111'),
+      expect.stringContaining('apr_22222222222222222222'),
+    ]);
+  });
+
+  it('does not ask again for an approval already pending, and shows it as pending', async () => {
+    const pending = { ...WIDEN, approval_id: 'apr_dddddddddddddddddddd', state: 'pending' };
+    const { api } = start(
+      `/apps/${APP_ID}?tab=access`,
+      page({
+        [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.'),
+        [`POST ${PROD_GRANTS}/requirements`]: required([pending, EXCEED]),
+        'POST /v1/approvals': ({ body }) =>
+          json(201, { id: 'apr_eeeeeeeeeeeeeeeeeeee', state: 'pending', ...(body as object) }),
+      }),
+      signedIn(),
+    );
+    const { dialog } = await openShare('Production');
+    fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: GROUP } });
+    await submitShare(dialog);
+    expect((await within(dialog).findByRole('note')).textContent).toContain('apr_dddddddddddddddddddd');
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Ask for approval' }));
+    });
+    expect(api.of('POST', '/v1/approvals').map((c) => (c.body as { kind: string }).kind)).toEqual(['exceed_ceiling']);
+    const items = within(await within(dialog).findByRole('status')).getAllByRole('listitem');
+    expect(items.map((i) => i.textContent)).toEqual([
+      expect.stringMatching(/apr_dddddddddddddddddddd.*pending/),
+      expect.stringMatching(/apr_eeeeeeeeeeeeeeeeeeee.*pending/),
+    ]);
   });
 
   it('asks for a whole email address before searching people', async () => {
@@ -395,7 +496,10 @@ describe('share dialog', () => {
   ])('forgets an APPROVAL_REQUIRED refusal when %s changes', async (_, edit) => {
     const { api } = start(
       `/apps/${APP_ID}?tab=access`,
-      page({ [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.') }),
+      page({
+        [`PUT ${PROD_GRANTS}`]: () => problem(409, 'APPROVAL_REQUIRED', 'This change needs an approval first.'),
+        [`POST ${PROD_GRANTS}/requirements`]: required([WIDEN]),
+      }),
       signedIn(),
     );
     const { dialog } = await openShare('Production');
