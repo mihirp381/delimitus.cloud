@@ -1054,7 +1054,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
             <span class="hiw__n" aria-hidden="true">1</span>
             <span class="hiw__t">Ask your agent</span>
             <span class="hiw__d" data-claim="agent">Tell your coding agent to deploy on Delimitus. It calls Delimitus from the editor, so nobody learns a new tool.</span>
-            <span class="hiw__chips" data-claim="tools"><span class="chip">Claude Code</span><span class="chip">Codex</span><span class="chip">Cursor</span></span>
+            <span class="hiw__chips" data-claim="tools"><span class="chip">Claude Code</span><span class="chip">Codex</span></span>
           </button>
           <button class="hiw__item" type="button" data-step="2" aria-pressed="false">
             <span class="hiw__n" aria-hidden="true">2</span>
@@ -1241,12 +1241,12 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <p class="works__line" data-claim="agent">Delimitus isn’t another coding agent. <span class="grad">It’s where coding agents deploy company software.</span></p>
       <div class="works">
         <div class="works__col">
-          <h3 class="works__h" data-claim="tools">Deploys directly</h3>
-          <ul class="works__list" data-claim="tools"><li>Claude Code</li><li>Codex</li><li>Cursor</li></ul>
-          <p class="small" data-claim="agent">The agent calls Delimitus from the editor.</p>
+          <h3 class="works__h" data-claim="tools">Deploys directly today</h3>
+          <ul class="works__list" data-claim="tools"><li>Claude Code</li><li>Codex</li></ul>
+          <p class="small" data-claim="agent tools">The agent calls Delimitus from the editor. Cursor connects through the same MCP server.</p>
         </div>
         <div class="works__col">
-          <h3 class="works__h" data-claim="deploy tools">Through GitHub</h3>
+          <h3 class="works__h" data-claim="deploy tools">Through a GitHub push</h3>
           <ul class="works__list" data-claim="tools"><li>Lovable</li><li>Replit</li></ul>
           <p class="small" data-claim="deploy">Sync the project to GitHub. Each push deploys to preview.</p>
         </div>
@@ -1493,7 +1493,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       </details>
       <details>
         <summary>Which tools can I build with?</summary>
-        <p data-claim="tools agent langs deploy">Claude Code, Codex and Cursor deploy directly: the agent calls Delimitus from the editor. Lovable and Replit apps deploy through GitHub. Python and Node apps.</p>
+        <p data-claim="tools agent langs deploy">Claude Code and Codex deploy directly today; Cursor through the same MCP server; Lovable and Replit through a GitHub push. The agent calls Delimitus from the editor. Python and Node apps.</p>
       </details>
       <details>
         <summary>Can an agent get around IT?</summary>
@@ -1609,13 +1609,13 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   var CASES = {
     wh:    { ask: "A dock scheduler the inbound team books trucks into.", tool: "Claude Code",
              get: ["Its own database for the bookings", "A timer that rolls the schedule over at midnight", "Shared with the Inbound team group"] },
-    field: { ask: "A job log where technicians attach photos from the site.", tool: "Cursor",
+    field: { ask: "A job log where technicians attach photos from the site.", tool: "Cursor, through the same MCP server",
              get: ["File storage for the photos", "Only the field technicians group can open it", "Production after the service lead approves"] },
     fleet: { ask: "A board of late deliveries, with the carrier’s tracking beside each.", tool: "Codex",
              get: ["Read-only access to the dispatch database", "Reaches only the internet hosts your admin allowed", "The tracking API key kept as a secret, not in the code"] },
-    fac:   { ask: "A form anyone can use to report a broken door or a leak.", tool: "Lovable, through GitHub",
+    fac:   { ask: "A form anyone can use to report a broken door or a leak.", tool: "Lovable, through a GitHub push",
              get: ["Shared with the whole company", "A photo stored with each report", "When the owner moves on, IT hands the app to someone else"] },
-    cx:    { ask: "A returns queue that sorts each return by reason and order value.", tool: "Replit, through GitHub",
+    cx:    { ask: "A returns queue that sorts each return by reason and order value.", tool: "Replit, through a GitHub push",
              get: ["Read-only access to the orders database", "Logs that show why a return was held", "One command rolls back a bad update"] }
   };
 

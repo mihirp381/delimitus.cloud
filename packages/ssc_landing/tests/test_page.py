@@ -249,3 +249,27 @@ def test_the_example_share_applies_only_after_both_approvals() -> None:
     assert "One prompt and two approvals later" in HTML
     register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
     assert "F21 fixed in code on 2026-10-20" in register
+
+
+TOOLS = (
+    "Claude Code and Codex deploy directly today; Cursor through the same MCP server; "
+    "Lovable and Replit through a GitHub push."
+)
+
+
+def test_only_the_tools_proven_live_are_shown_deploying_directly() -> None:
+    assert TOOLS in HTML
+    direct = re.search(
+        r'Deploys directly today</h3>\s*<ul class="works__list"[^>]*>(.*?)</ul>', HTML
+    )
+    assert direct is not None
+    assert re.findall(r"<li>(.*?)</li>", direct[1]) == ["Claude Code", "Codex"]
+    chips = re.search(r'<span class="hiw__chips"[^>]*>(.*?)</span>\s*</button>', HTML, flags=re.S)
+    assert chips is not None
+    assert "Cursor" not in chips[1]
+    assert "Claude Code, Codex and Cursor deploy directly" not in HTML
+    register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
+    row = re.search(r"^\| `tools` \|.*$", register, flags=re.M)
+    assert row is not None
+    assert TOOLS in row[0]
+    assert "not proven end to end" in row[0]
