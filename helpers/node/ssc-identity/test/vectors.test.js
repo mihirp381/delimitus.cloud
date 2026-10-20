@@ -96,3 +96,25 @@ test('a CommonJS app can require the package by its name', () => {
   const helper = createRequire(import.meta.url)('@delimitus/ssc-identity');
   assert.equal(typeof helper.IdentityVerifier, 'function');
 });
+
+test('a key removed from the JWKS is refused once the set is refetched', async (t) => {
+  const [keyA, keyB] = VECTORS.jwks.keys;
+  let served = { keys: [keyA] };
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(served));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    const v = new IdentityVerifier({ audience: VECTORS.audiences.app_a, keys: `http://127.0.0.1:${server.address().port}/jwks.json` });
+    const token = CASES['user note'].token;
+    assert.match((await v.verify(token, { now: VECTORS.now })).sub, /^usr_/);
+    served = { keys: [keyB] };
+    t.mock.timers.tick(301_000);
+    await assert.rejects(v.verify(token, { now: VECTORS.now }), (e) => e instanceof IdentityRefused && e.code === 'unknown_key');
+    assert.ok(await v.verify(CASES['user note signed by the second key'].token, { now: VECTORS.now }));
+  } finally {
+    server.close();
+  }
+});

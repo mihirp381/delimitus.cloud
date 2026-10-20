@@ -224,8 +224,10 @@ class IdentityVerifier:
         self.leeway = leeway
         if isinstance(keys, str) and keys.startswith("data:"):
             keys = _inline_jwks(keys)
+        # The set is cached ``lifespan`` seconds and no per-kid cache sits on top: PyJWT's
+        # ``cache_keys`` never expires, so a key removed from the JWKS would stay trusted.
         self._keys: KeySource = (
-            jwt.PyJWKClient(keys, cache_keys=True, lifespan=300)
+            jwt.PyJWKClient(keys, lifespan=300)
             if isinstance(keys, str)
             else jwt.PyJWKSet.from_dict(dict(keys))
         )

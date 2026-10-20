@@ -5,6 +5,9 @@ import http.server
 import importlib.util
 import json
 import threading
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -191,3 +194,48 @@ def test_key_sources_accept_pyjwkset() -> None:
         keys=key_set,
         now=VECTORS["now"],
     )
+
+
+@contextmanager
+def _jwks_server(answer: Callable[[], tuple[int, str, bytes]]) -> Iterator[str]:
+    """A local JWKS endpoint; ``answer`` gives the status, content type and body of each GET."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            status, content_type, body = answer()
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/jwks.json"
+    finally:
+        server.shutdown()
+
+
+def test_a_key_removed_from_the_jwks_is_refused_once_the_set_is_refetched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rotation or compromise: once the operator drops a key and the cached set expires, a note
+    signed with it is refused, even though that kid verified earlier in this process."""
+    key_a, key_b = VECTORS["jwks"]["keys"]
+    served = {"keys": [key_a]}
+    with _jwks_server(lambda: (200, "application/json", json.dumps(served).encode())) as url:
+        v = IdentityVerifier(audience=VECTORS["audiences"]["app_a"], keys=url)
+        token = CASES["user note"]["token"]
+        assert jwt.get_unverified_header(token)["kid"] == key_a["kid"]
+        assert v.verify(token, now=VECTORS["now"]).sub.startswith("usr_")
+        served = {"keys": [key_b]}
+        later = time.monotonic() + 301
+        monkeypatch.setattr(time, "monotonic", lambda: later)
+        with pytest.raises(IdentityRefused) as e:
+            v.verify(token, now=VECTORS["now"])
+        assert e.value.code == "unknown_key"
+        assert v.verify(CASES["user note signed by the second key"]["token"], now=VECTORS["now"])
