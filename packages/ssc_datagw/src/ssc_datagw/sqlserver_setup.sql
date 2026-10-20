@@ -83,8 +83,20 @@ WHERE LTRIM(RTRIM(value)) <> N'';
 EXEC (@sql);
 
 -- The check: as the user, nothing beyond reading.
-DECLARE @wider int;
+-- write_grants counts a grant made to the user, to public (principal 0) or to any role the user
+-- belongs to, directly or through another role, as the gateway's read-back does.
+DECLARE @wider int, @write_grants int;
 EXECUTE AS USER = @user;
+WITH ssc_roles AS (
+    SELECT DATABASE_PRINCIPAL_ID() AS pid
+    UNION ALL
+    SELECT rm.role_principal_id FROM sys.database_role_members AS rm
+    JOIN ssc_roles AS r ON rm.member_principal_id = r.pid
+)
+SELECT @write_grants = COUNT(*) FROM sys.database_permissions AS p
+WHERE p.state IN ('G', 'W')
+  AND p.permission_name IN (N'INSERT', N'UPDATE', N'DELETE', N'ALTER', N'CONTROL', N'EXECUTE')
+  AND (p.grantee_principal_id IN (SELECT pid FROM ssc_roles) OR p.grantee_principal_id = 0);
 SET @wider = ISNULL(IS_MEMBER(N'db_owner'), 1) + ISNULL(IS_MEMBER(N'db_datawriter'), 1)
     + ISNULL(IS_MEMBER(N'db_ddladmin'), 1)
     + ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'INSERT'), 1)
@@ -93,10 +105,7 @@ SET @wider = ISNULL(IS_MEMBER(N'db_owner'), 1) + ISNULL(IS_MEMBER(N'db_datawrite
     + ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'ALTER'), 1)
     + ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'CONTROL'), 1)
     + ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'EXECUTE'), 1)
-    + (SELECT COUNT(*) FROM sys.database_permissions
-       WHERE grantee_principal_id = DATABASE_PRINCIPAL_ID() AND state IN ('G', 'W')
-         AND permission_name IN (N'INSERT', N'UPDATE', N'DELETE', N'ALTER', N'CONTROL',
-                                 N'EXECUTE'));
+    + ISNULL(@write_grants, 1);
 REVERT;
 IF @wider > 0
     THROW 50004, N'the user may still write, alter or execute: revoke those grants and run again', 1;

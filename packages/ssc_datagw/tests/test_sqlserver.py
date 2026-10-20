@@ -668,6 +668,55 @@ async def test_the_setup_script_stops_on_a_grant_it_did_not_make(db: Db) -> None
         assert code == 0, out
 
 
+INHERITED_GRANTS = {
+    "to public": (
+        "GRANT INSERT ON SCHEMA::dbo TO public",
+        "REVOKE INSERT ON SCHEMA::dbo TO public",
+    ),
+    "to a role": (
+        "CREATE ROLE ssc_loaders; GRANT UPDATE ON SCHEMA::reporting TO ssc_loaders; "
+        f"ALTER ROLE ssc_loaders ADD MEMBER {LOGIN}",
+        f"ALTER ROLE ssc_loaders DROP MEMBER {LOGIN}; DROP ROLE ssc_loaders",
+    ),
+    "to a role of a role": (
+        "CREATE ROLE ssc_outer; CREATE ROLE ssc_inner; "
+        "GRANT DELETE ON OBJECT::reporting.orders TO ssc_outer; "
+        f"ALTER ROLE ssc_outer ADD MEMBER ssc_inner; ALTER ROLE ssc_inner ADD MEMBER {LOGIN}",
+        f"ALTER ROLE ssc_inner DROP MEMBER {LOGIN}; ALTER ROLE ssc_outer DROP MEMBER ssc_inner; "
+        "DROP ROLE ssc_inner; DROP ROLE ssc_outer",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(INHERITED_GRANTS))
+async def test_a_write_grant_inherited_from_public_or_a_role_is_refused(db: Db, case: str) -> None:
+    grant, undo = INHERITED_GRANTS[case]
+    code, out = db.sqlcmd("-d", "reporting", "-Q", grant)
+    assert code == 0, out
+    try:
+        with pytest.raises(UpstreamUnavailableError) as e:
+            await read(SqlServerConnector(db.target()), ask("SELECT 1"))
+        assert str(e.value) == "the login holds a grant beyond SELECT"
+    finally:
+        code, out = db.sqlcmd("-d", "reporting", "-Q", undo)
+        assert code == 0, out
+    _, rows = await read(SqlServerConnector(db.target()), ask("SELECT 1 AS one"))
+    assert list(rows[0]) == [1]
+
+
+async def test_the_setup_script_stops_on_a_write_grant_to_public(db: Db) -> None:
+    grant, undo = INHERITED_GRANTS["to public"]
+    code, out = db.sqlcmd("-d", "reporting", "-Q", grant)
+    assert code == 0, out
+    try:
+        code, out = db.setup(login=LOGIN, schemas="reporting", password=PASSWORD)
+        assert code != 0
+        assert "may still write" in out
+    finally:
+        code, out = db.sqlcmd("-d", "reporting", "-Q", undo)
+        assert code == 0, out
+
+
 async def test_the_setup_script_refuses_a_missing_schema(db: Db) -> None:
     code, out = db.setup(login=LOGIN, schemas="reporting,nowhere", password=PASSWORD)
     assert code != 0
@@ -780,7 +829,7 @@ READBACK_OK = Readback(
     can_alter=0,
     can_control=0,
     can_execute=0,
-    direct_grants=0,
+    write_grants=0,
 )
 
 
@@ -802,8 +851,14 @@ READBACK_OK = Readback(
         ({"ddladmin": 1}, "the login may create or alter objects"),
         ({"can_alter": 1}, "the login may create or alter objects"),
         ({"can_execute": 1}, "the login may execute procedures"),
-        ({"direct_grants": 2}, "the login holds a grant beyond SELECT"),
-        ({"direct_grants": None}, "the login holds a grant beyond SELECT"),
+        ({"write_grants": 2}, "the login holds a grant beyond SELECT"),
+        ({"write_grants": None}, "the login holds a grant beyond SELECT"),
+        # One INSERT granted to public or to a role the user belongs to, which the database-wide
+        # checks do not see: the read-back walks the roles and counts it.
+        (
+            {"write_grants": 1, "can_insert": 0, "datawriter": 0},
+            "the login holds a grant beyond SELECT",
+        ),
     ],
 )
 def test_a_session_that_is_not_the_one_asked_for_is_refused(

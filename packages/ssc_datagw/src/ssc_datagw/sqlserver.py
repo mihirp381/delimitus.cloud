@@ -76,6 +76,12 @@ SESSION: Final = (
 )
 _WIDER: Final = "('INSERT', 'UPDATE', 'DELETE', 'ALTER', 'CONTROL', 'EXECUTE')"
 READBACK: Final = f"""
+WITH ssc_roles AS (
+    SELECT DATABASE_PRINCIPAL_ID() AS pid
+    UNION ALL
+    SELECT rm.role_principal_id FROM sys.database_role_members AS rm
+    JOIN ssc_roles AS r ON rm.member_principal_id = r.pid
+)
 SELECT @@SPID AS spid,
        DB_NAME() AS database_name,
        IS_SRVROLEMEMBER('sysadmin') AS sysadmin,
@@ -88,12 +94,16 @@ SELECT @@SPID AS spid,
        HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER') AS can_alter,
        HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CONTROL') AS can_control,
        HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'EXECUTE') AS can_execute,
-       (SELECT COUNT(*) FROM sys.database_permissions
-        WHERE grantee_principal_id = DATABASE_PRINCIPAL_ID() AND state IN ('G', 'W')
-          AND permission_name IN {_WIDER}) AS direct_grants
+       (SELECT COUNT(*) FROM sys.database_permissions AS p
+        WHERE p.state IN ('G', 'W') AND p.permission_name IN {_WIDER}
+          AND (p.grantee_principal_id IN (SELECT pid FROM ssc_roles)
+               OR p.grantee_principal_id = 0)) AS write_grants
 """  # noqa: S608  (built from constants only)
 """What the session is and what the login may do. ``HAS_PERMS_BY_NAME`` on the database does not
-see a grant on one schema or object, so those made to the login's user are counted too."""
+see a grant on one schema or object, so those are counted too: made to the login's user, to
+``public`` (principal 0) or to any role the user belongs to, directly or through another role.
+Fixed roles hold no rows in ``sys.database_permissions``, so ``db_datareader`` counts nothing;
+``db_datawriter`` and the others are checked by name."""
 LOCK_TIMEOUT: Final = 1222
 SQLSTATE: Final = {
     208: "42P01",  # no such object
@@ -219,7 +229,7 @@ class Readback:
     can_alter: int | None
     can_control: int | None
     can_execute: int | None
-    direct_grants: int | None
+    write_grants: int | None
 
 
 def _on(value: int | None) -> bool:
@@ -244,7 +254,7 @@ def session_problem(database: str, row: Readback) -> str | None:
         ),
         (_on(row.ddladmin) or _on(row.can_alter), "the login may create or alter objects"),
         (_on(row.can_execute), "the login may execute procedures"),
-        (_on(row.direct_grants), "the login holds a grant beyond SELECT"),
+        (_on(row.write_grants), "the login holds a grant beyond SELECT"),
     )
     return next((why for failed, why in checks if failed), None)
 
