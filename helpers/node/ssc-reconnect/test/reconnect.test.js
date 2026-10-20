@@ -211,6 +211,89 @@ test('the browser client stops on a clean close and gives up when it cannot get 
   }
 });
 
+/**
+ * Run `body` with a fake WebSocket and a setTimeout that records each wait instead of waiting.
+ * `body` gets the sockets made so far and the recorded waits; `next()` runs the scheduled open.
+ */
+function withFakeSockets(body, { random } = {}) {
+  const sockets = [];
+  const waits = [];
+  let scheduled = null;
+  const saved = { WebSocket: globalThis.WebSocket, setTimeout: globalThis.setTimeout, random: Math.random };
+  globalThis.WebSocket = class {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      sockets.push(this);
+    }
+    close() {}
+  };
+  globalThis.setTimeout = (fn, ms) => {
+    waits.push(ms);
+    scheduled = fn;
+    return 0;
+  };
+  if (random) Math.random = random;
+  try {
+    return body({
+      sockets,
+      waits,
+      next() {
+        const fn = scheduled;
+        scheduled = null;
+        fn();
+      },
+    });
+  } finally {
+    Object.assign(globalThis, { WebSocket: saved.WebSocket, setTimeout: saved.setTimeout });
+    Math.random = saved.random;
+  }
+}
+
+const drop = { code: 1006, wasClean: false };
+
+test('the pause after an unclean drop is jittered between half and all of the backoff', () => {
+  const delayMs = 250;
+  const maxDelayMs = 10000;
+  const backoff = (n) => Math.min(maxDelayMs, delayMs * 2 ** n);
+  for (const [random, share] of [
+    [() => 0, 0.5],
+    [() => 0.999999, 1],
+  ]) {
+    withFakeSockets(
+      ({ sockets, waits, next }) => {
+        globalThis.sscSocket('wss://x/ws', { delayMs, maxDelayMs, attempts: 20 });
+        for (let n = 0; n < 10; n += 1) {
+          sockets.at(-1).onclose(drop);
+          next();
+        }
+        waits.forEach((wait, n) => assert.ok(Math.abs(wait - share * backoff(n)) < 1, `wait ${n} is ${wait}`));
+      },
+      { random },
+    );
+  }
+  withFakeSockets(({ sockets, waits, next }) => {
+    globalThis.sscSocket('wss://x/ws', { delayMs, maxDelayMs, attempts: 200 });
+    for (let n = 0; n < 100; n += 1) {
+      sockets.at(-1).onclose(drop);
+      next();
+    }
+    waits.forEach((wait, n) => assert.ok(backoff(n) / 2 <= wait && wait <= backoff(n), `wait ${n} is ${wait}`));
+    assert.ok(waits.slice(10).some((wait) => wait < maxDelayMs * 0.9), 'the waits at the cap are spread');
+  });
+});
+
+test('the announced restart still reconnects at once', () => {
+  withFakeSockets(
+    ({ sockets, waits }) => {
+      globalThis.sscSocket('wss://x/ws');
+      sockets[0].onclose({ code: RESTART_CODE, wasClean: true });
+      assert.deepEqual(waits, [0]);
+    },
+    { random: () => 0 },
+  );
+});
+
 test('browserClient() is the shipped browser file', () => {
   assert.equal(browserClient(), readFileSync(new URL('../browser.js', import.meta.url), 'utf8'));
 });
