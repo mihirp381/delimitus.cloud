@@ -16,7 +16,8 @@ from ssc_conformance import org_policies as op
 PROJECT = "ssc-c-test"
 FOLDER = "111"
 OPERATOR = "user:someone@example.com"
-EXPECTED = json.loads(op.EXPECTED.read_text(encoding="utf-8"))
+TAG_ENV = {op.TAG_KEY_ENV: "tagKeys/1", op.TAG_VALUE_ENV: "tagValues/2"}
+EXPECTED = op.load_expected(TAG_ENV)
 TAG = "resource.matchTagId('tagKeys/1', 'tagValues/2')"
 
 type Json = dict[str, Any]
@@ -37,8 +38,8 @@ def live(constraint: str, spec: Json) -> Json:
             ]
             main["parameters"] = {**spec["parameters"], "allowedMemberSubjects": subjects}
         rules = [main]
-    if spec["tag_exception"]:
-        rules.append({"enforce": False, "condition": {"expression": TAG}})
+    if spec["exception"]:
+        rules.append({"enforce": False, "condition": {"expression": spec["exception"]}})
     return {"name": f"folders/{FOLDER}/policies/{constraint}", "spec": {"rules": rules}}
 
 
@@ -69,7 +70,7 @@ async def run(
     client = httpx2.AsyncClient(transport=transport(folder, project or [], **kw))
     reader = cloud.CloudReader(token, client=client)
     try:
-        return await op.check(reader, PROJECT, FOLDER)
+        return await op.check(reader, PROJECT, FOLDER, expected=EXPECTED)
     finally:
         await reader.aclose()
 
@@ -81,7 +82,7 @@ async def test_the_folder_as_declared_passes_and_is_listed() -> None:
     assert "| gcp.resourceLocations | allow global, in:us-central1-locations |" in text
     assert "| compute.restrictSharedVpcHostProjects | deny all |" in text
     assert "allowedMemberSubjects <operator>" in text
-    assert "off where the public-invoker tag is" in text
+    assert f"off where {TAG}" in text
 
 
 async def test_policies_come_back_in_pages() -> None:
@@ -140,6 +141,70 @@ async def test_a_loosened_policy_fails_naming_it(constraint: str, change: Any, n
     assert named in result.reason
 
 
+async def test_an_exception_on_another_tag_fails() -> None:
+    other = "resource.matchTagId('tagKeys/1', 'tagValues/3')"
+    result, _ = await run(
+        _loosened(
+            "iam.managed.allowedPolicyMembers", lambda r: r[1]["condition"].update(expression=other)
+        )
+    )
+    assert result.status == ev.FAIL
+    assert "expected enforced; allowedMemberSubjects <operator>" in result.reason
+    assert f"off where {other}" in result.reason
+
+
+async def test_a_second_exception_fails() -> None:
+    def add(rules: list[Json]) -> None:
+        rules.append({"enforce": False, "condition": {"expression": "true"}})
+
+    result, _ = await run(_loosened("iam.managed.allowedPolicyMembers", add))
+    assert result.status == ev.FAIL
+    assert "unrecognised (2 conditional rules)" in result.reason
+
+
+async def test_a_policy_inheriting_from_its_parent_fails() -> None:
+    policies = folder_policies()
+    for p in policies:
+        if p["name"].endswith("/gcp.resourceLocations"):
+            p["spec"]["inheritFromParent"] = True
+    result, _ = await run(policies)
+    assert result.status == ev.FAIL
+    assert result.reason.startswith("gcp.resourceLocations: expected allow")
+    assert result.reason.endswith("; inherits from the parent")
+
+
+def test_the_tag_comes_from_the_environment() -> None:
+    expression = EXPECTED["iam.managed.allowedPolicyMembers"]["exception"]
+    assert expression == TAG
+    raw = json.loads(op.EXPECTED.read_text(encoding="utf-8"))
+    assert raw["iam.managed.allowedPolicyMembers"]["exception"] == (
+        "resource.matchTagId('${SSC_PUBLIC_TAG_KEY}', '${SSC_PUBLIC_TAG_VALUE}')"
+    )
+
+
+@pytest.mark.parametrize(
+    ("environ", "named"),
+    [
+        ({}, "SSC_PUBLIC_TAG_KEY, SSC_PUBLIC_TAG_VALUE"),
+        ({"SSC_PUBLIC_TAG_KEY": "tagKeys/1"}, "SSC_PUBLIC_TAG_VALUE"),
+        ({"SSC_PUBLIC_TAG_KEY": "tagKeys/1", "SSC_PUBLIC_TAG_VALUE": "2"}, "SSC_PUBLIC_TAG_VALUE"),
+        (
+            {"SSC_PUBLIC_TAG_KEY": "1')", "SSC_PUBLIC_TAG_VALUE": "tagValues/2"},
+            "SSC_PUBLIC_TAG_KEY",
+        ),
+    ],
+)
+def test_the_tag_must_be_set_and_well_formed(environ: dict[str, str], named: str) -> None:
+    with pytest.raises(cloud.CloudReadError, match=named):
+        op.load_expected(environ)
+
+
+async def test_the_run_needs_the_public_tag() -> None:
+    environ = {op.PROJECT_ENV: PROJECT, op.FOLDER_ENV: FOLDER}
+    with pytest.raises(cloud.CloudReadError, match=op.TAG_KEY_ENV):
+        await op.main_async(environ)
+
+
 async def test_a_policy_gone_from_the_folder_fails() -> None:
     folder = [p for p in folder_policies() if not p["name"].endswith("sql.restrictPublicIp")]
     result, _ = await run(folder)
@@ -185,12 +250,14 @@ def test_the_operator_is_any_user_and_other_members_are_kept() -> None:
 def test_the_expected_file_names_one_policy_per_cell_constraint() -> None:
     assert len(EXPECTED) == 10
     assert all(
-        set(spec) == {"mode", "values", "parameters", "tag_exception"} for spec in EXPECTED.values()
+        set(spec) == {"mode", "values", "parameters", "exception", "inherit_from_parent"}
+        for spec in EXPECTED.values()
     )
     assert all(spec["values"] == sorted(spec["values"]) for spec in EXPECTED.values())
-    assert [c for c, s in EXPECTED.items() if s["tag_exception"]] == [
+    assert [c for c, s in EXPECTED.items() if s["exception"] is not None] == [
         "iam.managed.allowedPolicyMembers"
     ]
+    assert all(spec["inherit_from_parent"] is False for spec in EXPECTED.values())
 
 
 async def test_the_run_adds_its_result_to_the_cells_evidence_file(
@@ -199,6 +266,7 @@ async def test_the_run_adds_its_result_to_the_cells_evidence_file(
     monkeypatch.setenv("SSC_ACCESS_TOKEN", "token")
     path = tmp_path / "evidence.json"
     environ = {op.PROJECT_ENV: PROJECT, op.FOLDER_ENV: FOLDER, ev.EVIDENCE_ENV: str(path)}
+    environ |= TAG_ENV
     client = httpx2.AsyncClient(transport=transport(copy.deepcopy(folder_policies()), []))
     result, _ = await op.main_async(environ, client=client)
     assert result.status == ev.OK

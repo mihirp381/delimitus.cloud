@@ -13,8 +13,10 @@ name: nightly
 # The cells are the repository variable SSC_NIGHT_CELLS, a JSON array with one object per cell
 # (e2e/isolation/README.md); with one cell every cross-cell line says "skipped, no peer cell",
 # and setting the variable SSC_NIGHT_NEED_PEER makes that a failure. Also variables
-# SSC_NIGHTLY_WIF_PROVIDER, SSC_PROBE_DIGEST, SSC_NIGHT_FOLDER_ID and the drill's
-# SSC_DRILL_WIF_PROVIDER and SSC_DRILL_SERVICE_ACCOUNT; secrets SSC_NIGHT_CELL1_PASSWORD and
+# SSC_NIGHTLY_WIF_PROVIDER, SSC_PROBE_DIGEST, SSC_NIGHT_FOLDER_ID, SSC_PUBLIC_TAG_KEY and
+# SSC_PUBLIC_TAG_VALUE (the public-invoker tag's tagKeys/<id> and tagValues/<id>, from the
+# platform stack's public_invoker_tag; the organisation-policy check fails without them) and the
+# drill's SSC_DRILL_WIF_PROVIDER and SSC_DRILL_SERVICE_ACCOUNT; secrets SSC_NIGHT_CELL1_PASSWORD and
 # SSC_NIGHT_CELL2_PASSWORD, the test admin's password in the first and second cell.
 # The job is inert until SSC_NIGHT_CELLS is set.
 on:
@@ -110,6 +112,8 @@ jobs:
         env:
           SSC_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           SSC_NIGHT_FOLDER_ID: ${{ vars.SSC_NIGHT_FOLDER_ID }}
+          SSC_PUBLIC_TAG_KEY: ${{ vars.SSC_PUBLIC_TAG_KEY }}
+          SSC_PUBLIC_TAG_VALUE: ${{ vars.SSC_PUBLIC_TAG_VALUE }}
         run: uv run python -m ssc_conformance.org_policies
       - name: Evidence
         if: ${{ !cancelled() }}

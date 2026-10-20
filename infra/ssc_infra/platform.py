@@ -625,6 +625,8 @@ def build() -> None:
     pulumi.export("apps_zone_name_servers", zones["apps"].name_servers)
     pulumi.export("platform_zone_name_servers", zones["platform"].name_servers)
     pulumi.export("public_invoker_tag", tag[1])
+    # With the value, the nightly's SSC_PUBLIC_TAG_KEY and SSC_PUBLIC_TAG_VALUE (SSC-056).
+    pulumi.export("public_invoker_tag_key", tag[0])
     pulumi.export("cell_policies", policies.summaries(rules))
     pulumi.export(
         "cell_deployer",

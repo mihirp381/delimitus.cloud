@@ -4,16 +4,23 @@ Lists the policies set on the ``ssc-cells`` folder and on the cell project, as `
 over REST, and compares them with ``expected_org_policies.json``. The folder must set exactly
 those constraints with exactly those values, and the project none of its own, so no cell can
 loosen a policy (SSC-095). The infra tests hold the file equal to what the platform stack
-declares; the operator is written ``<operator>`` in it and is any ``user:`` here. The listing
-goes to stdout and the job summary, and any difference to the page as a failure.
+declares; the operator is written ``<operator>`` in it and is any ``user:`` here. The one
+exception rule must carry the platform's exact condition, ``resource.matchTagId(...)`` on the
+public-invoker tag, whose ids the file writes ``${SSC_PUBLIC_TAG_KEY}`` and
+``${SSC_PUBLIC_TAG_VALUE}`` and the run takes from those variables; and no policy may inherit
+from the parent. The listing goes to stdout and the job summary, and any difference to the page
+as a failure.
 
 Configuration and exit status as ``ssc_conformance.least_privilege``: ``SSC_PROBE_PROJECT``,
-``SSC_NIGHT_FOLDER_ID``, ``SSC_EVIDENCE_FILE``. A 403 is ``skipped (no read access)``.
+``SSC_NIGHT_FOLDER_ID``, ``SSC_EVIDENCE_FILE``, and ``SSC_PUBLIC_TAG_KEY`` (``tagKeys/<id>``)
+and ``SSC_PUBLIC_TAG_VALUE`` (``tagValues/<id>``), the platform stack's ``public_invoker_tag``.
+A 403 is ``skipped (no read access)``.
 """
 
 import asyncio
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -30,6 +37,12 @@ from ssc_conformance.least_privilege import FOLDER_ENV, PROJECT_ENV
 EXPECTED: Final = Path(__file__).with_name("expected_org_policies.json")
 OPERATOR: Final = "<operator>"
 SUBJECTS: Final = "allowedMemberSubjects"
+TAG_KEY_ENV: Final = "SSC_PUBLIC_TAG_KEY"
+TAG_VALUE_ENV: Final = "SSC_PUBLIC_TAG_VALUE"
+TAG_FORMS: Final = {
+    TAG_KEY_ENV: re.compile(r"tagKeys/[0-9]+"),
+    TAG_VALUE_ENV: re.compile(r"tagValues/[0-9]+"),
+}
 
 type Json = dict[str, Any]
 
@@ -44,10 +57,34 @@ def _parameters(value: object) -> dict[str, list[str]]:
     return shaped
 
 
+def load_expected(environ: Mapping[str, str], path: Path = EXPECTED) -> dict[str, Json]:
+    """The expected file with the public-invoker tag's ids put in from ``environ``."""
+    raw = path.read_text(encoding="utf-8")
+    wanted = [name for name in TAG_FORMS if f"${{{name}}}" in raw]
+    missing = [name for name in wanted if not environ.get(name)]
+    if missing:
+        raise cloud.CloudReadError(
+            f"missing {', '.join(missing)}: the public-invoker tag's key and value ids "
+            "(tagKeys/<id>, tagValues/<id>; the platform stack's public_invoker_tag)"
+        )
+    bad = [name for name in wanted if not TAG_FORMS[name].fullmatch(environ[name])]
+    if bad:
+        raise cloud.CloudReadError(
+            f"{', '.join(bad)} must be tagKeys/<number> and tagValues/<number> respectively"
+        )
+    expected = cast(dict[str, Json], json.loads(raw))
+    for spec in expected.values():
+        if isinstance(spec.get("exception"), str):
+            for name in wanted:
+                spec["exception"] = spec["exception"].replace(f"${{{name}}}", environ[name])
+    return expected
+
+
 def normalise(policy: Json) -> Json:
     """One live policy in the form of the expected file: ``mode`` (``enforce``, ``deny_all`` or
-    ``allow``, else a description of what it is), its sorted ``values``, its ``parameters``, and
-    whether a second rule turns it off where the public-invoker tag is bound."""
+    ``allow``, else a description of what it is), its sorted ``values``, its ``parameters``, the
+    condition of the one rule that turns it off (``None`` without one, else a description), and
+    whether it inherits from the parent."""
     spec = cast(Json, policy.get("spec") or {})
     rules = cloud.objects(spec.get("rules"))
     plain = [r for r in rules if not r.get("condition")]
@@ -62,11 +99,18 @@ def normalise(policy: Json) -> Json:
         mode = "enforce"
     else:
         mode = f"unrecognised ({len(plain)} unconditional rules)"
+    if not tagged:
+        exception = None
+    elif len(tagged) == 1 and tagged[0].get("enforce") is False:
+        exception = str(cast(Json, tagged[0].get("condition") or {}).get("expression", ""))
+    else:
+        exception = f"unrecognised ({len(tagged)} conditional rules)"
     return {
         "mode": mode,
         "values": values,
         "parameters": _parameters(main.get("parameters")),
-        "tag_exception": bool(tagged) and all(r.get("enforce") is False for r in tagged),
+        "exception": exception,
+        "inherit_from_parent": spec.get("inheritFromParent") is True,
     }
 
 
@@ -80,7 +124,9 @@ def summary(spec: Mapping[str, Any]) -> str:
     )
     for name, values in spec["parameters"].items():
         text += f"; {name} {', '.join(values)}"
-    return text + ("; off where the public-invoker tag is" if spec["tag_exception"] else "")
+    if spec["exception"] is not None:
+        text += f"; off where {spec['exception']}"
+    return text + ("; inherits from the parent" if spec["inherit_from_parent"] else "")
 
 
 def problems(
@@ -114,16 +160,15 @@ async def check(
     project: str,
     folder: str,
     *,
-    expected: Mapping[str, Any] | None = None,
+    expected: Mapping[str, Any],
 ) -> tuple[Result, str]:
     """The proof's result and the folder's listing; the listing is empty when unread."""
-    want = expected or json.loads(EXPECTED.read_text(encoding="utf-8"))
     try:
         on_folder = await reader.org_policies("folders", folder)
         on_project = await reader.org_policies("projects", project)
     except cloud.NoReadAccessError:
         return Result(matrix.ORG_POLICIES, ev.SKIPPED, ev.NO_READ_ACCESS), ""
-    differences = problems(on_folder, on_project, want)
+    differences = problems(on_folder, on_project, expected)
     status = ev.FAIL if differences else ev.OK
     return Result(matrix.ORG_POLICIES, status, "; ".join(differences)), listing(on_folder)
 
@@ -135,9 +180,10 @@ async def main_async(
     if missing:
         raise cloud.CloudReadError(f"missing {', '.join(missing)}")
     project = environ[PROJECT_ENV]
+    expected = load_expected(environ)
     reader = cloud.CloudReader(nightly.gcloud_access_tokens(), client=client)
     try:
-        result, text = await check(reader, project, environ[FOLDER_ENV])
+        result, text = await check(reader, project, environ[FOLDER_ENV], expected=expected)
     finally:
         await reader.aclose()
     if path := environ.get(ev.EVIDENCE_ENV):

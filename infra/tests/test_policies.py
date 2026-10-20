@@ -414,12 +414,13 @@ def test_the_expected_deny_is_what_the_stacks_declare(
     assert expected == declared_deny(full, platform)
 
 
-def _spec(rules: list[dict[str, Any]]) -> dict[str, Any]:
-    """One constraint's declared rules as the nightly's expected form: the mode, its values,
-    its parameters and whether the public-invoker tag turns it off."""
-    main, *exception = rules
-    tagged = bool(exception)
+def _spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """One constraint's declared spec as the nightly's expected form: the mode, its values, its
+    parameters, the condition under which the public-invoker tag turns it off, and whether it
+    inherits from the parent."""
+    main, *exception = spec["rules"]
     assert exception == [] or (exception[0]["enforce"] == "FALSE" and "condition" in exception[0])
+    condition = exception[0]["condition"]["expression"] if exception else None
     parameters = {
         name: sorted(values) for name, values in json.loads(main.get("parameters") or "{}").items()
     }
@@ -430,17 +431,30 @@ def _spec(rules: list[dict[str, Any]]) -> dict[str, Any]:
     else:
         assert main["enforce"] == "TRUE"
         mode, values = "enforce", []
-    return {"mode": mode, "values": values, "parameters": parameters, "tag_exception": tagged}
+    return {
+        "mode": mode,
+        "values": values,
+        "parameters": parameters,
+        "exception": condition,
+        "inherit_from_parent": spec.get("inheritFromParent") is True,
+    }
 
 
 def declared_org_policies(platform: list[Declared]) -> dict[str, Any]:
+    """The cells folder's policies, with the operator and the public-invoker tag's ids written
+    as the expected file writes them."""
     cells = one(platform, "gcp:organizations/folder:Folder", "ssc-cells").outputs["folderId"]
     found = {
-        d.inputs["name"].rsplit("/", 1)[-1]: _spec(d.inputs["spec"]["rules"])
+        d.inputs["name"].rsplit("/", 1)[-1]: _spec(d.inputs["spec"])
         for d in platform
         if d.type == "gcp:orgpolicy/policy:Policy" and d.inputs["parent"] == f"folders/{cells}"
     }
-    return json.loads(json.dumps(found).replace(naming.OPERATOR, "<operator>"))
+    key = one(platform, "gcp:tags/tagKey:TagKey").outputs["name"]
+    value = one(platform, "gcp:tags/tagValue:TagValue").outputs["name"]
+    text = json.dumps(found).replace(naming.OPERATOR, "<operator>")
+    text = text.replace(f"'tagKeys/{key}'", "'${SSC_PUBLIC_TAG_KEY}'")
+    text = text.replace(f"'tagValues/{value}'", "'${SSC_PUBLIC_TAG_VALUE}'")
+    return json.loads(text)
 
 
 def test_the_expected_org_policies_are_what_the_platform_stack_declares(

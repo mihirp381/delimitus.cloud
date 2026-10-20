@@ -343,7 +343,7 @@ def test_the_tag_and_the_policy_table_are_exported(monkeypatch: pytest.MonkeyPat
     exported: dict[str, Any] = {}
     monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
     run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER})
-    assert {"public_invoker_tag", "cell_policies"} <= set(exported)
+    assert {"public_invoker_tag", "public_invoker_tag_key", "cell_policies"} <= set(exported)
     assert exported["cell_policies"] == policies.summaries(policies.cell_rules(naming.OPERATOR))
     assert exported["cell_policies"]["compute.vmExternalIpAccess"] == "deny all"
 

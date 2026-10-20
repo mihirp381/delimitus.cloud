@@ -529,6 +529,8 @@ The cell deployer (SSC-087) is the second binder: it applies cell stacks, and th
 
 `tests/test_policies.py` checks a full cell's resources against the same table, with one planted violation per policy. `cell_diff` lists the policies in force on each cell.
 
+**Nightly check** (SSC-056). `python -m ssc_conformance.org_policies`, a step of `nightly.yml`, lists the policies on the `ssc-cells` folder and on the probe cell's project and compares them with `conformance/ssc_conformance/expected_org_policies.json`, which `tests/test_policies.py` holds equal to this stack's declaration. The exception rule must carry exactly `resource.matchTagId('<key id>', '<value id>')` of the public-invoker tag, and no policy may inherit from its parent (`inheritFromParent`). The file writes the tag's ids as `${SSC_PUBLIC_TAG_KEY}` and `${SSC_PUBLIC_TAG_VALUE}`; set the repository variables of those names to the platform stack's outputs `public_invoker_tag_key` (`tagKeys/<id>`) and `public_invoker_tag` (`tagValues/<id>`). Without them the check fails, naming them. Its other variables are `SSC_NIGHT_FOLDER_ID` and the cell's project from `SSC_NIGHT_CELLS`.
+
 ## First run
 
 You need these org roles:
