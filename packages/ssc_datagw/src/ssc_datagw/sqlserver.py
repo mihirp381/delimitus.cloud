@@ -410,6 +410,8 @@ class SqlServerConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one SQL Server connection. ``classify``
     replaces the classifier (tests that prove what the database refuses by itself)."""
 
+    kind: Literal["sqlserver"] = "sqlserver"
+
     def __init__(
         self,
         target: SqlServerTarget,

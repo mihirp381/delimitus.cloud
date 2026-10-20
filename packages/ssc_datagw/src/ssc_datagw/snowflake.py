@@ -510,6 +510,8 @@ class SnowflakeConnector:
     ``base_url``, ``clock`` and ``poll_seconds`` replace the network, Snowflake, the time and
     the poll's pause (tests)."""
 
+    kind: Literal["snowflake"] = "snowflake"
+
     def __init__(  # noqa: PLR0913  (the target and its test seams)
         self,
         target: SnowflakeTarget,

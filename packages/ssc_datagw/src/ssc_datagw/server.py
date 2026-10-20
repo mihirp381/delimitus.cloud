@@ -60,6 +60,7 @@ from pydantic import (
 )
 
 from ssc_contracts.identity import IDENTITY_HEADER
+from ssc_contracts.snapshot import SnapshotConnection
 from ssc_datagw import resolver
 from ssc_datagw.admission import (
     Admitted,
@@ -486,11 +487,7 @@ class DataGateway:
         now = self._clock()
         kept = self._schemas.get(connection.connection_id)
         if kept is None or now - kept.at >= self._schema_seconds:
-            connector = self._connectors.get(connection.connection_id)
-            if connector is None:
-                raise RefusedError(
-                    "CONNECTION_UNAVAILABLE", reason="no connector for the connection"
-                )
+            connector = self._connector(connection)
             timeout_ms = compose(connection.limits, admitted.grant.limits).timeout_ms
             tables = await self._described(connector, timeout_ms)
             kept = Described(now, [_table(t) for t in tables])
@@ -502,6 +499,18 @@ class DataGateway:
             "tables": kept.tables,
             "snapshot_version": view.version,
         }
+
+    def _connector(self, connection: SnapshotConnection) -> Connector:
+        """The connector for an admitted connection, refused unless its target is of the kind
+        the snapshot says the connection is (an absent kind is ``postgres``)."""
+        connector = self._connectors.get(connection.connection_id)
+        if connector is None:
+            raise RefusedError("CONNECTION_UNAVAILABLE", reason="no connector for the connection")
+        if connector.kind != connection.kind:
+            raise RefusedError(
+                "CONNECTION_UNAVAILABLE", reason="the connection's kind does not match its target"
+            )
+        return connector
 
     async def _described(self, connector: Connector, timeout_ms: int) -> list[Table]:
         """The connector's tables under ``timeout_ms`` plus the grace; its errors as a query's."""
@@ -630,9 +639,7 @@ class DataGateway:
             budget = self._budget.remaining(admitted.grant_key, limits)
         except BudgetSpentError as exc:
             raise RefusedError("DAILY_BUDGET_SPENT") from exc
-        connector = self._connectors.get(admitted.connection.connection_id)
-        if connector is None:
-            raise RefusedError("CONNECTION_UNAVAILABLE", reason="no connector for the connection")
+        connector = self._connector(admitted.connection)
         read = Query(
             sql=query.sql,
             params=query.params,

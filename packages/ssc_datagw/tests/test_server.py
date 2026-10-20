@@ -697,6 +697,41 @@ async def test_a_connection_without_a_connector_is_unavailable(tmp_path: Path) -
     assert (r.status_code, error(r)["code"]) == (503, "CONNECTION_UNAVAILABLE")
 
 
+KIND_MISMATCHES = {
+    "a mysql target for a postgres connection": ({}, "mysql"),
+    "a postgres target for a mysql connection": ({"sales_kind": "mysql"}, "postgres"),
+    "an s3 target for a bigquery connection": ({"sales_kind": "bigquery"}, "s3"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(KIND_MISMATCHES))
+async def test_a_target_of_another_kind_than_the_connection_is_unavailable(
+    tmp_path: Path, case: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ssc_datagw.server")
+    changes, kind = KIND_MISMATCHES[case]
+    connector = FakeConnector(rows=rows(2), kind=kind)
+    async with running(tmp_path, connector=connector, **changes) as w:
+        query = await w.ask()
+        schema = await w.describe()
+    for r in (query, schema):
+        assert (r.status_code, error(r)["code"]) == (503, "CONNECTION_UNAVAILABLE")
+    assert (connector.queries, connector.described) == ([], [])
+    reasons = {r["reason"] for r in records(caplog)} | {
+        r["reason"] for r in records(caplog, "schema")
+    }
+    assert reasons == {"the connection's kind does not match its target"}
+
+
+async def test_a_target_of_the_connections_kind_is_served(tmp_path: Path) -> None:
+    connector = FakeConnector(rows=rows(2), kind="mysql")
+    async with running(tmp_path, connector=connector, sales_kind="mysql") as w:
+        query = await w.ask()
+        schema = await w.describe()
+    assert (query.status_code, schema.status_code) == (200, 200)
+    assert schema.json()["kind"] == "mysql"
+
+
 async def test_no_google_keys_is_unavailable(tmp_path: Path) -> None:
     async with running(tmp_path, google_down=True) as w:
         r = await w.ask()

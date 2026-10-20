@@ -174,6 +174,8 @@ class GcsConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one bucket and prefix. ``transport`` and
     ``base_url`` replace the network and Google (tests)."""
 
+    kind: Literal["gcs"] = "gcs"
+
     def __init__(
         self,
         target: GcsTarget,

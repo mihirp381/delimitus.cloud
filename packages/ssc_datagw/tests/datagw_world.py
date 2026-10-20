@@ -155,6 +155,7 @@ def snapshot(
     grant_limits: dict[str, int] | None = None,
     connections: bool = True,
     ada_not_before: int | None = None,
+    sales_kind: str | None = None,
 ) -> dict[str, Any]:
     env = {"floor": "user"}
     ada: dict[str, Any] = {"status": "active"}
@@ -185,6 +186,8 @@ def snapshot(
         }
         if sales_limits is not None:
             sales_doc["limits"] = sales_limits
+        if sales_kind is not None:
+            sales_doc["kind"] = sales_kind
         doc["connections"] = {
             "sales": sales_doc,
             "hr": {"connection_id": HR, "status": "active", "grants": {PAY: {}}},
@@ -216,6 +219,7 @@ class FakeConnector:
     row or the description, as a slow query. ``described`` is each description's ``timeout_ms``."""
 
     rows: Sequence[Sequence[object]] = ()
+    kind: str = "postgres"
     error: Exception | None = None
     hold: asyncio.Event | None = None
     queries: list[Query] = field(default_factory=list[Query])

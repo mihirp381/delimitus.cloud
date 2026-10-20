@@ -92,6 +92,12 @@ class Cursor(Protocol):
 
 
 class Connector(Protocol):
+    @property
+    def kind(self) -> str:
+        """The connection kind this connector serves (``postgres``, ``mysql``, ...), which the
+        gateway compares with the snapshot's kind for the connection."""
+        ...
+
     def open(self, query: Query) -> AbstractAsyncContextManager[Cursor]: ...
 
     async def describe(self, *, schemas: Sequence[str] | None, timeout_ms: int) -> Sequence[Table]:

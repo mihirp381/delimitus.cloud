@@ -298,6 +298,8 @@ class RestConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one REST source. ``transport`` replaces
     the network (tests)."""
 
+    kind: Literal["rest"] = "rest"
+
     def __init__(
         self,
         target: RestTarget,

@@ -251,6 +251,8 @@ class GsheetsConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one spreadsheet. ``transport`` and
     ``base_url`` replace the network and Google (tests)."""
 
+    kind: Literal["gsheets"] = "gsheets"
+
     def __init__(
         self,
         target: GsheetsTarget,

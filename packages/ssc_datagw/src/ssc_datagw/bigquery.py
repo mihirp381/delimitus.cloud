@@ -516,6 +516,8 @@ class BigQueryConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one BigQuery dataset. ``transport`` and
     ``base_url`` replace the network and Google (tests)."""
 
+    kind: Literal["bigquery"] = "bigquery"
+
     def __init__(
         self,
         target: BigQueryTarget,

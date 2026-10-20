@@ -278,6 +278,8 @@ class PostgresConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one Postgres connection. ``classify``
     replaces the classifier (tests that prove what the database refuses by itself)."""
 
+    kind: Literal["postgres"] = "postgres"
+
     def __init__(
         self,
         target: PostgresTarget,

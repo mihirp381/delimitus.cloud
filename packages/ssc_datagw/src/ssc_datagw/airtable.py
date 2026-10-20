@@ -346,6 +346,8 @@ class AirtableConnector:
     ``transport`` and ``sleep`` replace Airtable, its trust, the network and the pause between
     pages (tests); a customer sets none of them."""
 
+    kind: Literal["airtable"] = "airtable"
+
     def __init__(  # noqa: PLR0913  (the target and its test seams)
         self,
         target: AirtableTarget,

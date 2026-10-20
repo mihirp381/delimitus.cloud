@@ -419,6 +419,8 @@ class MySqlConnector:
     """A :class:`ssc_datagw.connectors.Connector` for one MySQL connection. ``classify``
     replaces the classifier (tests that prove what the database refuses by itself)."""
 
+    kind: Literal["mysql"] = "mysql"
+
     def __init__(
         self,
         target: MySqlTarget,

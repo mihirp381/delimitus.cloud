@@ -416,6 +416,8 @@ class S3Connector:
     """A :class:`ssc_datagw.connectors.Connector` for one bucket and prefix. ``transport``
     replaces the network and ``page_keys`` the list page size (tests)."""
 
+    kind: Literal["s3"] = "s3"
+
     def __init__(  # noqa: PLR0913  (the target and its test seams)
         self,
         target: S3Target,

@@ -37,6 +37,11 @@ def test_the_gateway_serves_exactly_the_kinds_the_control_plane_lets_a_customer_
     assert set(REGISTRY) == AVAILABLE
 
 
+def test_each_connector_says_the_kind_it_serves() -> None:
+    for kind, entry in REGISTRY.items():
+        assert getattr(entry.connect, "kind", None) == kind
+
+
 def test_a_connection_without_a_kind_is_postgres_as_before_ga_5() -> None:
     target = parse_target(json.dumps(TARGET))
     assert target == PostgresTarget.model_validate({**TARGET, "kind": "postgres"})
