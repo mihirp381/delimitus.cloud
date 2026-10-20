@@ -32,6 +32,6 @@ Each call asks the data gateway for a signed link with the app's own identity, t
 - Files are not scanned for viruses.
 - When the app is disabled, no new link is given.
 
-Errors are `FilesError` with a `code`: the data gateway's (`FILE_NOT_FOUND`, `FILES_QUOTA_EXCEEDED`, `APP_NOT_ACTIVE`, `VALIDATION_FAILED`, ...), `STORAGE_<status>` when Cloud Storage refused the transfer, or `UNREACHABLE`. The data gateway starts from zero, so a call to it is tried once more on a timeout, a lost connection or a 502, 503 or 504.
+Errors are `FilesError` with a `code`: the data gateway's (`FILE_NOT_FOUND`, `FILES_QUOTA_EXCEEDED`, `APP_NOT_ACTIVE`, `VALIDATION_FAILED`, ...), `STORAGE_<status>` when Cloud Storage refused the transfer, or `UNREACHABLE`. The data gateway starts from zero, so a call to it is tried once more on a timeout, a lost connection or a 502, 503 or 504. `remove` is idempotent: a retried remove that finds nothing succeeds.
 
 The gateway's address comes from the metadata server; `SSC_DATAGW_URL` replaces it. The Python helper is `ssc_app.files`, with the same names (`delete` for `remove`). The contract is `docs/contracts/data-gateway.md#files`.

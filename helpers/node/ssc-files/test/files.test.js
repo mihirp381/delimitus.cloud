@@ -28,6 +28,7 @@ function reset() {
     storageStatus: null,
     objects: new Map(),
     sent: [],
+    loseDeleteAnswer: null,
   });
 }
 
@@ -72,7 +73,13 @@ const server = createServer(async (req, res) => {
   if (cell.gatewayAnswers.length) return answer(...cell.gatewayAnswers.shift());
   const { name, content_type: contentType } = JSON.parse(body);
   if (op === 'delete') {
-    return cell.objects.delete(name) ? answer(200, '{"deleted":true}') : answer(...refusal('FILE_NOT_FOUND'));
+    if (!cell.objects.delete(name)) return answer(...refusal('FILE_NOT_FOUND'));
+    if (cell.loseDeleteAnswer !== null) {
+      const status = cell.loseDeleteAnswer;
+      cell.loseDeleteAnswer = null;
+      return answer(status, 'upstream connect error');
+    }
+    return answer(200, '{"deleted":true}');
   }
   if (op === 'get' && !cell.objects.has(name)) return answer(...refusal('FILE_NOT_FOUND'));
   return answer(
@@ -167,6 +174,26 @@ test('the variable names the gateway', async () => {
   await files.put('notes/a.txt', 'hello', { contentType: 'text/plain' });
   assert.equal(Buffer.from(await files.get('notes/a.txt')).toString(), 'hello');
   assert.deepEqual(cell.audiences, [cell.base]);
+});
+
+test('a retried remove that finds nothing succeeds', async () => {
+  // The data gateway deleted the file but its answer was lost (503); the retry finds nothing.
+  cell.objects.set('a.txt', [Buffer.from('x'), 'text/plain']);
+  cell.loseDeleteAnswer = 503;
+  await helper().remove('a.txt');
+  assert.equal(cell.objects.size, 0);
+  assert.deepEqual(cell.asked.map(([op]) => op), ['delete', 'delete']);
+});
+
+test('a remove of a file that never existed is FILE_NOT_FOUND', async () => {
+  await assert.rejects(helper().remove('never.txt'), (err) => err.code === 'FILE_NOT_FOUND' && err.status === 404);
+  assert.equal(cell.asked.length, 1);
+});
+
+test('a retried get that finds nothing is still FILE_NOT_FOUND', async () => {
+  cell.gatewayAnswers = [[503, 'starting']];
+  await rejects(helper().get('never.txt'), 'FILE_NOT_FOUND');
+  assert.equal(cell.asked.length, 2);
 });
 
 test('a CommonJS app can require the package by its name', () => {

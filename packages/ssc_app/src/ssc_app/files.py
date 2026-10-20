@@ -17,8 +17,9 @@ credentials. A file is at most 25 MB, a name is ``/``-separated segments of lett
 The data gateway's address comes from the metadata server: Cloud Run's ``instance/region``
 names the project number and the region, and the gateway is ``ssc-datagw`` there.
 ``SSC_DATAGW_URL`` or ``url=`` replaces it. The data gateway runs from zero, so a call to it is
-tried once more when it cannot be reached, times out, or answers 502, 503 or 504. Same names and
-behaviour as the Node helper ``@delimitus/ssc-files``.
+tried once more when it cannot be reached, times out, or answers 502, 503 or 504. Delete is
+idempotent: a retried delete that finds nothing succeeds. Same names and behaviour as the Node
+helper ``@delimitus/ssc-files``.
 """
 
 import json
@@ -109,7 +110,8 @@ class Files:
         return self._transfer(self.link("get", name), None)
 
     def delete(self, name: str) -> None:
-        """Remove ``name``; ``FilesError`` ``FILE_NOT_FOUND`` when there is none."""
+        """Remove ``name``; ``FilesError`` ``FILE_NOT_FOUND`` when there is none. Delete is
+        idempotent: a retried delete that finds nothing succeeds."""
         self._ask("delete", {"name": name})
 
     def link(self, op: Literal["put", "get"], name: str, **body: str) -> dict[str, Any]:
@@ -136,7 +138,10 @@ class Files:
             if status in RETRY_STATUSES and attempt == 1:
                 continue
             if status != 200:  # noqa: PLR2004
-                raise _refusal(status, raw)
+                refused = _refusal(status, raw)
+                if op == "delete" and attempt == 2 and refused.code == "FILE_NOT_FOUND":
+                    return {}  # the first delete went through and its answer was lost
+                raise refused
             return json.loads(raw)
         raise AssertionError
 

@@ -16,8 +16,9 @@
  * The data gateway's address comes from the metadata server: Cloud Run's `instance/region` names
  * the project number and the region, and the gateway is `ssc-datagw` there. `SSC_DATAGW_URL` or
  * `{ url }` replaces it. The data gateway runs from zero, so a call to it is tried once more when
- * it cannot be reached, times out, or answers 502, 503 or 504. Same names and behaviour as the
- * Python helper `ssc_app.files`, where `remove` is `delete`.
+ * it cannot be reached, times out, or answers 502, 503 or 504. Remove is idempotent: a retried
+ * remove that finds nothing succeeds. Same names and behaviour as the Python helper
+ * `ssc_app.files`, where `remove` is `delete`.
  */
 
 export const SERVICE = 'ssc-datagw';
@@ -110,7 +111,10 @@ export class Files {
     return this._transfer(await this.link('get', name), undefined);
   }
 
-  /** Remove `name`; `FilesError` `FILE_NOT_FOUND` when there is none. */
+  /**
+   * Remove `name`; `FilesError` `FILE_NOT_FOUND` when there is none. Remove is idempotent: a
+   * retried remove that finds nothing succeeds.
+   */
   async remove(name) {
     await this._ask('delete', { name });
   }
@@ -163,7 +167,12 @@ export class Files {
         await response.body?.cancel();
         continue;
       }
-      if (response.status !== 200) throw await refusal(response);
+      if (response.status !== 200) {
+        const refused = await refusal(response);
+        // The first delete went through and its answer was lost.
+        if (op === 'delete' && attempt === 2 && refused.code === 'FILE_NOT_FOUND') return {};
+        throw refused;
+      }
       return response.json();
     }
     throw new Error('unreachable');

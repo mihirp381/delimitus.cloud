@@ -40,6 +40,8 @@ class Cell:
     storage_status: int | None = None
     objects: dict[str, tuple[bytes, str]] = field(default_factory=dict[str, tuple[bytes, str]])
     sent_headers: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    lose_delete_answer: int | None = None
+    """Delete the file, then answer this status instead of 200, once (a lost response)."""
 
 
 def refusal(code: str, status: int = 404) -> tuple[int, bytes]:
@@ -87,6 +89,10 @@ def cell() -> Iterator[Cell]:
             name = body["name"]
             if op == "delete":
                 found = state.objects.pop(name, None) is not None
+                if found and state.lose_delete_answer is not None:
+                    self._answer(state.lose_delete_answer, b"upstream connect error")
+                    state.lose_delete_answer = None
+                    return
                 self._answer(*((200, b'{"deleted": true}') if found else refusal("FILE_NOT_FOUND")))
                 return
             if op == "get" and name not in state.objects:
@@ -245,3 +251,26 @@ def test_the_variable_names_the_gateway_for_the_module_functions(
     files.delete("notes/a.txt")
     assert cell.objects == {}
     assert cell.audiences == [cell.url]
+
+
+def test_a_retried_delete_that_finds_nothing_succeeds(cell: Cell) -> None:
+    """The data gateway deleted the file but its answer was lost (503), so the retry finds
+    nothing: delete is idempotent and returns normally."""
+    cell.objects["a.txt"] = (b"x", "text/plain")
+    cell.lose_delete_answer = 503
+    helper(cell).delete("a.txt")
+    assert cell.objects == {}
+    assert [op for op, _, _ in cell.asked] == ["delete", "delete"]
+
+
+def test_a_delete_of_a_file_that_never_existed_is_file_not_found(cell: Cell) -> None:
+    with pytest.raises(FilesError) as e:
+        helper(cell).delete("never.txt")
+    assert (e.value.code, e.value.status, len(cell.asked)) == ("FILE_NOT_FOUND", 404, 1)
+
+
+def test_a_retried_get_that_finds_nothing_is_still_file_not_found(cell: Cell) -> None:
+    cell.gateway_answers = [(503, b"starting")]
+    with pytest.raises(FilesError) as e:
+        helper(cell).get("never.txt")
+    assert (e.value.code, len(cell.asked)) == ("FILE_NOT_FOUND", 2)
