@@ -12,7 +12,7 @@ console says so and offers the gateway in the same step.
 """
 
 from datetime import UTC, datetime
-from typing import Final, Literal
+from typing import Annotated, Final, Literal
 
 from fastapi import APIRouter
 from pydantic import Field
@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from ssc_contracts.cells import WARM_ENVIRONMENT_MONTHLY_USD, WARM_GATEWAY_MONTHLY_USD
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.text import PRINTABLE
 from ssc_control.api.authz import require_admin
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
@@ -76,7 +77,7 @@ class WarmOut(Strict):
 
 
 class WarmIn(Strict):
-    environment_ids: list[str] = Field(
+    environment_ids: list[Annotated[str, Field(pattern=PRINTABLE)]] = Field(
         max_length=warm.MAX_ENVIRONMENTS,
         description="The production environments to keep warm; every other is not.",
     )

@@ -282,6 +282,8 @@ async def test_a_host_that_is_not_an_entry_is_refused(
         r = put_host(b, host, b.t.admin)
         assert_problem(r, ErrorCode.VALIDATION_FAILED)
         assert logged_evidence(caplog, r)["host"] == host
+    for nul in (put_host(b, "api.stripe.com%00", b.t.admin), delete_host(b, "x%00", b.t.admin)):
+        assert_problem(nul, ErrorCode.VALIDATION_FAILED)
     assert listed(b) == []
     assert egress_audit(b) == []
 

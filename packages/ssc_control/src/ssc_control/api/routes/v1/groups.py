@@ -9,6 +9,7 @@ from pydantic import Field
 from sqlalchemy import text
 
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.text import PRINTABLE
 from ssc_control.api.authz import require_sharer
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.common import Strict
@@ -58,7 +59,9 @@ def _escaped(name: str) -> str:
 )
 async def find_groups(
     uow: UserUoW,
-    name: Annotated[str, Query(min_length=1, max_length=200, description="Ignoring case.")],
+    name: Annotated[
+        str, Query(min_length=1, max_length=200, pattern=PRINTABLE, description="Ignoring case.")
+    ],
     match: Annotated[
         Literal["whole", "prefix"],
         Query(description=f"`prefix`: names starting with `name`, at most {PREFIX_LIMIT}."),

@@ -16,6 +16,7 @@ from pydantic import Field
 
 from ssc_contracts.egress import CATALOGUE, MAX_HOSTS, catalogue_entry
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.text import PRINTABLE
 from ssc_control.api.authz import require_admin
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
@@ -33,6 +34,7 @@ Host = Annotated[
     str,
     Path(
         max_length=255,
+        pattern=PRINTABLE,
         description="A lower-case host name, or `*.` and a name for exactly one label more.",
     ),
 ]

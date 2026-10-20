@@ -205,6 +205,7 @@ async def test_members_agents_previews_and_a_wrong_cost_are_refused(
     assert_problem(put_warm(b, [b.w.preview], shown=10), ErrorCode.VALIDATION_FAILED)
     unknown = new_id("env")
     assert_problem(put_warm(b, [unknown], shown=10), ErrorCode.REFERENCE_NOT_FOUND)
+    assert_problem(put_warm(b, [f"{unknown}\x00"], shown=10), ErrorCode.VALIDATION_FAILED)
     assert_problem(put_warm(b, [b.w.prod], gateway=True, shown=10), ErrorCode.VALIDATION_FAILED)
     assert rows_of(b.dsn, b.w.org, "select id from ssc.environment where warm") == []
     assert rows_of(b.dsn, b.w.org, "select org_id from ssc.warm_gateway where wanted") == []

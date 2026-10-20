@@ -52,7 +52,7 @@ from ssc_contracts.ids import PREFIXES, prefix_of
 MAX_STALE_RETRIES: Final = 3
 SUBJECT_KINDS: Final = {"usr": "user", "grp": "group"}
 # What GET /v1/users?email= and GET /v1/groups?name= accept.
-EMAIL: Final = re.compile(r"[^@\s]+@[^@\s]+")
+EMAIL: Final = re.compile(r"[^@\s\x00-\x1f\x7f]+@[^@\s\x00-\x1f\x7f]+")
 MIN_EMAIL: Final = 3
 MAX_EMAIL: Final = 320
 MAX_GROUP_NAME: Final = 200

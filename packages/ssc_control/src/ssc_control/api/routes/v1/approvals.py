@@ -19,6 +19,7 @@ from ssc_contracts.audit import AuditAction
 from ssc_contracts.egress import host_pattern_problem
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.manifest import Hostname, Name
+from ssc_contracts.text import PRINTABLE_LINES
 from ssc_control.api.auth import PrincipalKind
 from ssc_control.api.authz import require_builder
 from ssc_control.api.idempotency import UserIdempotent
@@ -52,7 +53,7 @@ router = APIRouter()
 EnvId = Annotated[str, Field(pattern=r"^env_[a-z0-9]{20}$")]
 AprId = Annotated[str, Field(pattern=r"^apr_[a-z0-9]{20}$")]
 UsrId = Annotated[str, Field(pattern=r"^usr_[a-z0-9]{20}$")]
-Reason = Annotated[str, Field(min_length=1, max_length=500)]
+Reason = Annotated[str, Field(min_length=1, max_length=500, pattern=PRINTABLE_LINES)]
 
 _NAME: Final = TypeAdapter[str](Name)
 _HOST: Final = TypeAdapter[str](Hostname)

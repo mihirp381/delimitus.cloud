@@ -721,6 +721,8 @@ def test_admins_find_people_by_email(
         assert find(world.admin_token, miss).json() == {"users": []}
     for bad in (None, "", "no-at-sign", "a@b@c", "sp ace@example.com", "x" * 320 + "@e.c"):
         assert_problem(find(world.admin_token, bad), ErrorCode.VALIDATION_FAILED)
+    for bad in ("ada\x00@example.com", "ada@example.com\x00", "ada\x7f@example.com"):
+        assert_problem(find(world.admin_token, bad), ErrorCode.VALIDATION_FAILED)
 
     # Only an active admin with a user credential; an admin's agent session counts.
     agent = mint(signing_key, org=world.org, sub=world.admin, agent=True, client_id="cli_x")

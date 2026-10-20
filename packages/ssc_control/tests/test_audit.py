@@ -668,8 +668,22 @@ def test_search_needs_a_credential(api: Api) -> None:
         {"action": "made.up"},
         {"actor_kind": "robot"},
         {"unknown": "1"},
+        {"actor_id": "usr_\x00"},
+        {"target_kind": "app\x00"},
+        {"target_id": "app_\x00"},
     ],
-    ids=["limit 0", "limit 501", "before_seq 0", "naive since", "action", "actor kind", "extra"],
+    ids=[
+        "limit 0",
+        "limit 501",
+        "before_seq 0",
+        "naive since",
+        "action",
+        "actor kind",
+        "extra",
+        "nul actor id",
+        "nul target kind",
+        "nul target id",
+    ],
 )
 def test_search_validates_its_query(api: Api, params: dict[str, object]) -> None:
     assert_problem(search(api, **params), ErrorCode.VALIDATION_FAILED)

@@ -22,11 +22,12 @@ from ssc_cli.output import print_json, say
 from ssc_cli.resolve import resolve_app
 from ssc_cli.shapes import RepoDisconnected, RepoResult, RequiredCheckRow
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.text import PRINTABLE
 
 REPOSITORY: Final = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 BRANCH: Final = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
 WORKFLOW: Final = re.compile(r"^\.github/workflows/[A-Za-z0-9._/-]+\.ya?ml$")
-CHECK_NAME: Final = re.compile(r"^[^\x00-\x1f\x7f]+$")
+CHECK_NAME: Final = re.compile(PRINTABLE)
 MAX_CHECKS: Final = 10
 MAX_WORKFLOW: Final = 255
 MAX_NAME: Final = 200

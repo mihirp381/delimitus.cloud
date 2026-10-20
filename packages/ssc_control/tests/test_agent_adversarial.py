@@ -413,7 +413,7 @@ V1_INJECTIONS = [
     for route in ("create-app.slug", "approval.subject_key", "app-path")
     for payload in HOSTILE
     if not (route == "app-path" and payload in ("one-mib", "json-object", "control-chars"))
-]
+] + [pytest.param("groups.name", "control-chars", id="groups.name-control-chars")]
 
 
 def v1_hostile(w: Arena, route: str, value: Any) -> httpx2.Response:
@@ -423,6 +423,12 @@ def v1_hostile(w: Arena, route: str, value: Any) -> httpx2.Response:
     if route == "approval.subject_key":
         ask = {"environment_id": env_id(w.a.app, "preview"), "kind": "connect_data_source"}
         return call(w.url, token, "POST", "/v1/approvals", {**ask, "subject_key": value})
+    if route == "groups.name":
+        return httpx2.get(
+            f"{w.url}/v1/groups",
+            params={"name": value},
+            headers={"Authorization": f"Bearer {token}"},
+        )
     return httpx2.get(f"{w.url}/v1/apps/{value}", headers={"Authorization": f"Bearer {token}"})
 
 
@@ -435,8 +441,13 @@ def test_hostile_v1_input_is_refused_and_never_echoed(
         r = v1_hostile(arena, route, HOSTILE[payload])
     assert 400 <= r.status_code < 500, r.text[:300]
     assert changed(before, arena.snapshot()) == []
+    logged = caplog.text
+    if route == "groups.name":
+        logged = "\n".join(
+            r.getMessage() for r in caplog.records if not r.name.startswith(("httpx2", "httpcore2"))
+        )
     if payload in ECHOED and route != "app-path":
-        assert ECHOED[payload] not in caplog.text
+        assert ECHOED[payload] not in logged
 
 
 @pytest.mark.parametrize("tool", sorted(t for t, a in STRING_ARGS.items() if "app" in a))

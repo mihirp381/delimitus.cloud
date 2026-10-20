@@ -60,6 +60,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ssc_contracts.app_env import secret_name_problem
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.text import PRINTABLE
 from ssc_control.api.auth import MCP_CALL_SCOPE_KEY
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.problems import REQUEST_ID_HEADER, REQUEST_ID_SCOPE_KEY
@@ -123,7 +124,6 @@ Digest = Annotated[
     ),
 ]
 SizeBytes = Annotated[int, Field(gt=0, le=2**53 - 1, description="Length of the `.tar.gz`.")]
-PRINTABLE: Final = r"^[^\x00-\x1f\x7f]+$"
 Who = Annotated[
     str,
     Field(

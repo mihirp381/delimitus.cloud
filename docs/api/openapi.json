@@ -1728,6 +1728,7 @@
             "default": "Withdrawn by the requester.",
             "maxLength": 500,
             "minLength": 1,
+            "pattern": "^[^\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]+$",
             "title": "Reason",
             "type": "string"
           }
@@ -2943,6 +2944,7 @@
           "reason": {
             "maxLength": 500,
             "minLength": 1,
+            "pattern": "^[^\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]+$",
             "title": "Reason",
             "type": "string"
           }
@@ -4955,6 +4957,7 @@
           "reason": {
             "maxLength": 500,
             "minLength": 1,
+            "pattern": "^[^\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]+$",
             "title": "Reason",
             "type": "string"
           }
@@ -6515,6 +6518,7 @@
           "environment_ids": {
             "description": "The production environments to keep warm; every other is not.",
             "items": {
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
               "type": "string"
             },
             "maxItems": 200,
@@ -13757,6 +13761,7 @@
                 {
                   "maxLength": 200,
                   "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
                   "type": "string"
                 },
                 {
@@ -13775,6 +13780,7 @@
                 {
                   "maxLength": 200,
                   "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
                   "type": "string"
                 },
                 {
@@ -13793,6 +13799,7 @@
                 {
                   "maxLength": 200,
                   "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
                   "type": "string"
                 },
                 {
@@ -13986,6 +13993,7 @@
                 {
                   "maxLength": 200,
                   "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
                   "type": "string"
                 },
                 {
@@ -14004,6 +14012,7 @@
                 {
                   "maxLength": 200,
                   "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
                   "type": "string"
                 },
                 {
@@ -14022,6 +14031,7 @@
                 {
                   "maxLength": 200,
                   "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
                   "type": "string"
                 },
                 {
@@ -15086,6 +15096,7 @@
             "schema": {
               "description": "A lower-case host name, or `*.` and a name for exactly one label more.",
               "maxLength": 255,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
               "title": "Host",
               "type": "string"
             }
@@ -15180,6 +15191,7 @@
             "schema": {
               "description": "A lower-case host name, or `*.` and a name for exactly one label more.",
               "maxLength": 255,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
               "title": "Host",
               "type": "string"
             }
@@ -15277,6 +15289,7 @@
               "description": "Ignoring case.",
               "maxLength": 200,
               "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
               "title": "Name",
               "type": "string"
             }
@@ -16087,7 +16100,7 @@
               "description": "Matched whole, ignoring case. Deactivated people are included.",
               "maxLength": 320,
               "minLength": 3,
-              "pattern": "^[^@\\s]+@[^@\\s]+$",
+              "pattern": "^[^@\\s\\x00-\\x1f\\x7f]+@[^@\\s\\x00-\\x1f\\x7f]+$",
               "title": "Email",
               "type": "string"
             }

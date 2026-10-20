@@ -26,6 +26,7 @@ from sqlalchemy import text
 
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.text import PRINTABLE
 from ssc_control.api.authz import require_app_builder, require_builder
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
@@ -74,7 +75,7 @@ class RequiredCheckIn(Strict):
     name: str = Field(
         min_length=1,
         max_length=200,
-        pattern=r"^[^\x00-\x1f\x7f]+$",
+        pattern=PRINTABLE,
         description="The check run's name as GitHub shows it on the commit.",
     )
     workflow: str = Field(

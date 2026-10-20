@@ -62,3 +62,8 @@ def test_a_prefix_match_answers_at_most_twenty(client: TestClient, world: World)
     found = names(find(client, world, "bulk", "prefix"))
     assert found == [f"Bulk {i:02d}" for i in range(20)]
     assert len(names(find(client, world, "Bulk 20"))) == 1
+
+
+def test_a_nul_in_the_name_is_refused(client: TestClient, world: World) -> None:
+    for match in (None, "prefix"):
+        assert_problem(find(client, world, "Fin\x00ance", match), ErrorCode.VALIDATION_FAILED)

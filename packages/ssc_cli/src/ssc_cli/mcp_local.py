@@ -61,6 +61,7 @@ from ssc_cli.wait import Budget, wait_for_build, wait_for_operation
 from ssc_contracts.app_env import secret_name_problem
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.manifest import MANIFEST_FILE
+from ssc_contracts.text import PRINTABLE
 from ssc_shared.fence import fence
 from ssc_shared.logs import MAX_LINES, MAX_SINCE_SECONDS
 from ssc_shared.redaction import redact
@@ -139,7 +140,6 @@ Folder = Annotated[
         "ssc.toml, are refused.",
     ),
 ]
-PRINTABLE: Final = r"^[^\x00-\x1f\x7f]+$"
 Who = Annotated[
     str,
     Field(

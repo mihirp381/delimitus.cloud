@@ -9,6 +9,7 @@ from pydantic import AwareDatetime, Field
 
 from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.text import PRINTABLE
 from ssc_control.api.auth import UserPrincipal
 from ssc_control.api.authz import require_admin
 from ssc_control.api.problems import Refusal, request_id_of
@@ -23,7 +24,7 @@ from ssc_control.db.bind import bound_org
 
 router = APIRouter()
 
-Ref = Annotated[str, Field(min_length=1, max_length=200)]
+Ref = Annotated[str, Field(min_length=1, max_length=200, pattern=PRINTABLE)]
 EXPORT_CONTENT: Final = {media: {"schema": {"type": "string"}} for media in MEDIA_TYPES.values()}
 
 

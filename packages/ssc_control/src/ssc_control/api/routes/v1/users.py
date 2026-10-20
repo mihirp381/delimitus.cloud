@@ -46,7 +46,7 @@ async def find_users(
         Query(
             min_length=3,
             max_length=320,
-            pattern=r"^[^@\s]+@[^@\s]+$",
+            pattern=r"^[^@\s\x00-\x1f\x7f]+@[^@\s\x00-\x1f\x7f]+$",
             description="Matched whole, ignoring case. Deactivated people are included.",
         ),
     ],

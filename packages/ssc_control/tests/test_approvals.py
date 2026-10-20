@@ -843,6 +843,9 @@ def test_only_an_operator_records_decisions(
         client, f"/v1/approvals/{new_id('apr')}/decision", tokens.operator, decision(world.approver)
     )
     assert_problem(missing, ErrorCode.NOT_FOUND)
+    nul = {**decision(world.approver), "reason": "Yes\x00"}
+    nul_reason = post(client, f"/v1/approvals/{apr}/decision", tokens.operator, nul)
+    assert_problem(nul_reason, ErrorCode.VALIDATION_FAILED)
 
 
 def test_a_decision_is_recorded_once_and_replays(

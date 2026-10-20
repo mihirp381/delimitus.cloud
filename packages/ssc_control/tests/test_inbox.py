@@ -252,8 +252,17 @@ def test_you_cannot_decide_your_own_request_or_without_a_reason(
         decide(client, apr, tokens.approver, {"outcome": "approved", "reason": ""}),
         ErrorCode.VALIDATION_FAILED,
     )
+    assert_problem(
+        decide(client, apr, tokens.approver, {"outcome": "approved", "reason": "Fine\x00"}),
+        ErrorCode.VALIDATION_FAILED,
+    )
+    assert_problem(
+        post(client, f"/v1/approvals/{apr}/cancel", tokens.admin, {"reason": "No\x00"}),
+        ErrorCode.VALIDATION_FAILED,
+    )
     assert_problem(decide(client, apr, tokens.operator), ErrorCode.FORBIDDEN)
-    assert decide(client, apr, tokens.approver).status_code == 200
+    multiline = {"outcome": "approved", "reason": "Fine by me.\r\n\tFor a month."}
+    assert decide(client, apr, tokens.approver, multiline).status_code == 200
     assert_problem(decide(client, apr, tokens.approver), ErrorCode.APPROVAL_NOT_PENDING)
 
 
