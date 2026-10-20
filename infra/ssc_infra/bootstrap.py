@@ -1,16 +1,20 @@
 """Make what Pulumi itself needs before it can run: the ``ssc-platform`` folder (logs in-region
 first), the ``ssc-platform-0`` project, its APIs, the state bucket and the secrets key. Then the
 ``platform`` stack with the folder's ID in its config. Safe to run again, and on a fresh clone,
-where it rewrites the stack files (they are not committed).
+where it rewrites the stack files (they are not committed). The organisation and billing account
+come from ``SSC_ORG_ID`` and ``SSC_BILLING_ACCOUNT``.
 
-    uv run python -m ssc_infra.bootstrap
+    SSC_ORG_ID=... SSC_BILLING_ACCOUNT=... uv run python -m ssc_infra.bootstrap
 """
 
+import os
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
+from ssc_infra import account
 from ssc_infra import naming as n
 from ssc_infra.run import CommandError, gcloud, gcloud_json, pulumi
 
@@ -45,13 +49,25 @@ def say(msg: str) -> None:
     print(msg, file=sys.stderr)  # noqa: T201
 
 
-def platform_folder() -> str:
+def account_env(environ: Mapping[str, str]) -> tuple[str, str]:
+    values: list[str] = []
+    for var, key in (("SSC_ORG_ID", "org_id"), ("SSC_BILLING_ACCOUNT", "billing_account")):
+        if not environ.get(var):
+            raise CommandError(f"{var} is not set")
+        try:
+            values.append(account.check(key, environ[var]))
+        except ValueError as exc:
+            raise CommandError(f"{var}: {exc}") from None
+    return values[0], values[1]
+
+
+def platform_folder(org_id: str) -> str:
     found: list[dict[str, object]] = (
         gcloud_json(
             "resource-manager",
             "folders",
             "list",
-            f"--organization={n.ORG_ID}",
+            f"--organization={org_id}",
             f"--filter=displayName={n.PLATFORM_FOLDER}",
         )
         or []
@@ -67,7 +83,7 @@ def platform_folder() -> str:
         "folders",
         "create",
         f"--display-name={n.PLATFORM_FOLDER}",
-        f"--organization={n.ORG_ID}",
+        f"--organization={org_id}",
     )
     return str(made["name"]).removeprefix("folders/")
 
@@ -78,7 +94,7 @@ def log_location(folder_id: str) -> None:
     )
 
 
-def project(folder_id: str) -> None:
+def project(folder_id: str, billing_account: str) -> None:
     exists = (
         gcloud(
             "projects",
@@ -99,7 +115,7 @@ def project(folder_id: str) -> None:
             "--labels=ssc-managed=bootstrap",
         )
     gcloud(
-        "billing", "projects", "link", n.BOOTSTRAP_PROJECT, f"--billing-account={n.BILLING_ACCOUNT}"
+        "billing", "projects", "link", n.BOOTSTRAP_PROJECT, f"--billing-account={billing_account}"
     )
     gcloud("services", "enable", *PLATFORM_APIS, f"--project={n.BOOTSTRAP_PROJECT}")
 
@@ -175,9 +191,10 @@ def main(argv: list[str]) -> int:
         if argv:
             say(__doc__ or "")
             return 2
-        folder_id = platform_folder()
+        org_id, billing_account = account_env(os.environ)
+        folder_id = platform_folder(org_id)
         log_location(folder_id)
-        project(folder_id)
+        project(folder_id, billing_account)
         state_bucket()
         secrets_key()
         platform_stack(folder_id)

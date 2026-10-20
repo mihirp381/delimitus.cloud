@@ -7,13 +7,15 @@ loosen a policy (SSC-095). The infra tests hold the file equal to what the platf
 declares; the operator is written ``<operator>`` in it and is any ``user:`` here. The one
 exception rule must carry the platform's exact condition, ``resource.matchTagId(...)`` on the
 public-invoker tag, whose ids the file writes ``${SSC_PUBLIC_TAG_KEY}`` and
-``${SSC_PUBLIC_TAG_VALUE}`` and the run takes from those variables; and no policy may inherit
+``${SSC_PUBLIC_TAG_VALUE}`` and the run takes from those variables, as it takes the organisation
+in the principal set from ``${SSC_ORG_ID}``; and no policy may inherit
 from the parent. The listing goes to stdout and the job summary, and any difference to the page
 as a failure.
 
 Configuration and exit status as ``ssc_conformance.least_privilege``: ``SSC_PROBE_PROJECT``,
 ``SSC_NIGHT_FOLDER_ID``, ``SSC_EVIDENCE_FILE``, and ``SSC_PUBLIC_TAG_KEY`` (``tagKeys/<id>``)
-and ``SSC_PUBLIC_TAG_VALUE`` (``tagValues/<id>``), the platform stack's ``public_invoker_tag``.
+and ``SSC_PUBLIC_TAG_VALUE`` (``tagValues/<id>``), the platform stack's ``public_invoker_tag``,
+and ``SSC_ORG_ID``, the organisation's numeric id.
 A 403 is ``skipped (no read access)``.
 """
 
@@ -39,9 +41,11 @@ OPERATOR: Final = "<operator>"
 SUBJECTS: Final = "allowedMemberSubjects"
 TAG_KEY_ENV: Final = "SSC_PUBLIC_TAG_KEY"
 TAG_VALUE_ENV: Final = "SSC_PUBLIC_TAG_VALUE"
-TAG_FORMS: Final = {
-    TAG_KEY_ENV: re.compile(r"tagKeys/[0-9]+"),
-    TAG_VALUE_ENV: re.compile(r"tagValues/[0-9]+"),
+ORG_ENV: Final = "SSC_ORG_ID"
+FORMS: Final = {
+    TAG_KEY_ENV: (re.compile(r"tagKeys/[0-9]+"), "tagKeys/<number>"),
+    TAG_VALUE_ENV: (re.compile(r"tagValues/[0-9]+"), "tagValues/<number>"),
+    ORG_ENV: (re.compile(r"[0-9]+"), "the organisation's numeric id"),
 }
 
 type Json = dict[str, Any]
@@ -58,26 +62,22 @@ def _parameters(value: object) -> dict[str, list[str]]:
 
 
 def load_expected(environ: Mapping[str, str], path: Path = EXPECTED) -> dict[str, Json]:
-    """The expected file with the public-invoker tag's ids put in from ``environ``."""
+    """The expected file with the tag's ids and the org id put in from ``environ``."""
     raw = path.read_text(encoding="utf-8")
-    wanted = [name for name in TAG_FORMS if f"${{{name}}}" in raw]
+    wanted = [name for name in FORMS if f"${{{name}}}" in raw]
     missing = [name for name in wanted if not environ.get(name)]
     if missing:
         raise cloud.CloudReadError(
             f"missing {', '.join(missing)}: the public-invoker tag's key and value ids "
-            "(tagKeys/<id>, tagValues/<id>; the platform stack's public_invoker_tag)"
+            "(tagKeys/<id>, tagValues/<id>; the platform stack's public_invoker_tag) and the "
+            "organisation's numeric id"
         )
-    bad = [name for name in wanted if not TAG_FORMS[name].fullmatch(environ[name])]
+    bad = [name for name in wanted if not FORMS[name][0].fullmatch(environ[name])]
     if bad:
-        raise cloud.CloudReadError(
-            f"{', '.join(bad)} must be tagKeys/<number> and tagValues/<number> respectively"
-        )
-    expected = cast(dict[str, Json], json.loads(raw))
-    for spec in expected.values():
-        if isinstance(spec.get("exception"), str):
-            for name in wanted:
-                spec["exception"] = spec["exception"].replace(f"${{{name}}}", environ[name])
-    return expected
+        raise cloud.CloudReadError("; ".join(f"{name} must be {FORMS[name][1]}" for name in bad))
+    for name in wanted:
+        raw = raw.replace(f"${{{name}}}", environ[name])
+    return cast(dict[str, Json], json.loads(raw))
 
 
 def normalise(policy: Json) -> Json:

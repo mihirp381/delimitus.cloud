@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 import pulumi
 import pulumi_gcp as gcp
 
-from ssc_infra import alerts, control, policies
+from ssc_infra import account, alerts, control, policies
 from ssc_infra import naming as n
 from ssc_infra.policies import LOCATIONS, PUBLIC_TAG_KEY, PUBLIC_TAG_VALUE, Rule
 
@@ -28,7 +28,6 @@ BUDGET_THRESHOLDS = (
 TAG_USER = "roles/resourcemanager.tagUser"
 JIT_ROLE = "roles/writer"
 JIT_MAX = "3600s"
-PAM_AGENT = f"serviceAccount:service-org-{n.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
 PAM_AGENT_ROLE = "roles/privilegedaccessmanager.folderServiceAgent"
 # What the nightly least-privilege and organisation-policy checks (SSC-056) read on the cells
 # folder: who holds roles there, which deny policies apply, and the effective org policies.
@@ -100,7 +99,7 @@ def _location_policy(name: str, folder_id: pulumi.Input[str], opts: pulumi.Resou
 
 
 def _public_tag(
-    binders: Sequence[pulumi.Input[str]], opts: pulumi.ResourceOptions
+    org: str, binders: Sequence[pulumi.Input[str]], opts: pulumi.ResourceOptions
 ) -> tuple[pulumi.Output[str], pulumi.Output[str]]:
     """The tag that marks the resources allowed a public member: each cell's gateway and secret
     intake services (``policies.PUBLIC_SERVICES``). Only ``binders`` (the operator and the cell
@@ -108,7 +107,7 @@ def _public_tag(
     by the next run. Returns the tag key and value IDs."""
     key = gcp.tags.TagKey(
         "public-invoker-key",
-        parent=f"organizations/{n.ORG_ID}",
+        parent=org,
         short_name=PUBLIC_TAG_KEY,
         description="Bound only to a cell's gateway service: lifts domain-restricted sharing.",
         opts=opts,
@@ -199,6 +198,7 @@ def sa_principal(email: pulumi.Input[str]) -> pulumi.Output[str]:
 def _nightly(
     project: pulumi.Input[str],
     control: gcp.serviceaccount.Account,
+    repository: str,
     opts: pulumi.ResourceOptions,
 ) -> gcp.serviceaccount.Account:
     """The nightly probe run (SSC-017): GitHub Actions on ``main`` of this repository, running
@@ -225,8 +225,7 @@ def _nightly(
         opts=after,
     )
     workflows = ", ".join(
-        f'"{n.GITHUB_REPOSITORY}/{w}@refs/heads/main"'
-        for w in (n.NIGHTLY_WORKFLOW, n.KILL_DRILL_WORKFLOW)
+        f'"{repository}/{w}@refs/heads/main"' for w in (n.NIGHTLY_WORKFLOW, n.KILL_DRILL_WORKFLOW)
     )
     gcp.iam.WorkloadIdentityPoolProvider(
         "github-provider",
@@ -240,8 +239,7 @@ def _nightly(
             "attribute.workflow_ref": "assertion.workflow_ref",
         },
         attribute_condition=(
-            f'assertion.repository == "{n.GITHUB_REPOSITORY}" '
-            f"&& assertion.workflow_ref in [{workflows}]"
+            f'assertion.repository == "{repository}" && assertion.workflow_ref in [{workflows}]'
         ),
         oidc=gcp.iam.WorkloadIdentityPoolProviderOidcArgs(
             issuer_uri="https://token.actions.githubusercontent.com"
@@ -262,7 +260,7 @@ def _nightly(
         member=pulumi.Output.concat(
             "principalSet://iam.googleapis.com/",
             pool.name,
-            f"/attribute.repository/{n.GITHUB_REPOSITORY}",
+            f"/attribute.repository/{repository}",
         ),
         opts=opts,
     )
@@ -471,22 +469,22 @@ def _alerts(
 def build() -> None:
     config = pulumi.Config()
     platform_folder = config.require("platform_folder_id")
-    operator = config.get("operator") or n.OPERATOR
+    acct = account.from_config(config)
+    operator = acct.operator
     opts = pulumi.ResourceOptions(provider=provider())
-    org = f"organizations/{n.ORG_ID}"
 
     _location_policy(n.PLATFORM_FOLDER, platform_folder, opts)
 
-    cells = _folder(n.CELLS_FOLDER, n.CELLS_FOLDER, org, opts)
+    cells = _folder(n.CELLS_FOLDER, n.CELLS_FOLDER, acct.org, opts)
     deployer = _deployer(opts)
     _deployer_cells(deployer, cells, opts)
-    rules = policies.cell_rules(operator, config.get_object("peering_allowed"))
-    tag = _public_tag([operator, deployer.member], opts)
+    rules = policies.cell_rules(operator, acct.org_id, config.get_object("peering_allowed"))
+    tag = _public_tag(acct.org, [operator, deployer.member], opts)
     _cell_policies(cells.folder_id, rules, tag, opts)
     stages = {
         stage: _folder(f"{n.CELLS_FOLDER}-{stage}", stage, cells.name, opts) for stage in n.STAGES
     }
-    sandbox = _folder(n.SANDBOX_FOLDER, n.SANDBOX_FOLDER, org, opts)
+    sandbox = _folder(n.SANDBOX_FOLDER, n.SANDBOX_FOLDER, acct.org, opts)
 
     deployer_image = config.get("deployer_image")
     # The deployer decrypts every stack's state and holds run.admin on the cells folder: like
@@ -495,12 +493,13 @@ def build() -> None:
         raise ValueError(
             f"deployer_image must be {n.platform_registry()}/ssc-cell-deployer@sha256:<digest>"
         )
-    cfg = control.read_config(config, deployer=deployer_image is not None)
+    cfg = control.read_config(config, acct, deployer=deployer_image is not None)
     staging_billed = config.get_bool("control_staging_billing")
     controls = {
         stage: control.ControlProject(
             stage,
             platform_folder,
+            acct.billing_account,
             opts,
             billed=stage != "staging" or staging_billed is not False or "staging" in cfg.stages,
         )
@@ -509,7 +508,7 @@ def build() -> None:
     }
     staging = controls["staging"]
 
-    nightly = _nightly(staging.project.project_id, staging.api, opts)
+    nightly = _nightly(staging.project.project_id, staging.api, acct.github_repository, opts)
     zones = _zones(
         {"apps-zone-cell-deployer": operator, "apps-zone-deployer": deployer.member}, opts
     )
@@ -551,7 +550,11 @@ def build() -> None:
     )
 
     pam_agent = gcp.folder.IAMMember(
-        "cells-pam-agent", folder=cells.name, role=PAM_AGENT_ROLE, member=PAM_AGENT, opts=opts
+        "cells-pam-agent",
+        folder=cells.name,
+        role=PAM_AGENT_ROLE,
+        member=account.pam_agent(acct.org_id),
+        opts=opts,
     )
     for name, role in NIGHTLY_FOLDER_ROLES.items():
         gcp.folder.IAMMember(name, folder=cells.name, role=role, member=nightly.member, opts=opts)
@@ -585,7 +588,7 @@ def build() -> None:
 
     gcp.billing.Budget(
         "ssc-monthly",
-        billing_account=n.BILLING_ACCOUNT,
+        billing_account=acct.billing_account,
         display_name=f"SSC ${BUDGET_USD} a month",
         amount=gcp.billing.BudgetAmountArgs(
             specified_amount=gcp.billing.BudgetAmountSpecifiedAmountArgs(

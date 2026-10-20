@@ -8,10 +8,7 @@ from ssc_shared.hosts import check_cell_label
 
 type Stage = Literal["prod", "staging"]
 
-ORG_ID: Final = "878392300952"
-BILLING_ACCOUNT: Final = "0103B6-DAEFDE-DA776C"
 REGION: Final = "us-central1"
-OPERATOR: Final = "user:mihirp381@gmail.com"
 
 PLATFORM_FOLDER: Final = "ssc-platform"
 CELLS_FOLDER: Final = "ssc-cells"
@@ -46,7 +43,6 @@ PROBE_RUNNER: Final = "ssc-probe-runner"
 NIGHTLY_SA: Final = "ssc-nightly"
 DEPLOYER: Final = "ssc-cell-deployer"
 PLATFORM_REPOSITORY: Final = "ssc-platform"
-GITHUB_REPOSITORY: Final = "mihirp381/delimitus.cloud"
 NIGHTLY_WORKFLOW: Final = ".github/workflows/nightly.yml"
 KILL_DRILL_WORKFLOW: Final = ".github/workflows/kill-drill.yml"
 SECRET_READ: Final = "secretmanager.googleapis.com/versions.access"  # noqa: S105

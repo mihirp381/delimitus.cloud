@@ -10,7 +10,7 @@ import pulumi
 import pytest
 
 import mockcloud
-from mockcloud import Declared, as_export, entry_address, one, project_number, run
+from mockcloud import ACCOUNT, Declared, as_export, entry_address, one, project_number, run
 from ssc_infra import cell, cell_diff, naming, platform
 from ssc_shared import logs, snapshot_feed
 from ssc_shared.hosts import check_apps_domain, parse_app_host, slug_problem
@@ -800,7 +800,7 @@ def test_only_the_gateway_decrypts_with_its_key_and_only_the_operator_seals(
     }
     assert grants == {
         ("serviceAccount:ssc-gateway", "roles/cloudkms.cryptoKeyDecrypter"),
-        (naming.OPERATOR.split("@")[0], "roles/cloudkms.cryptoKeyEncrypter"),
+        (ACCOUNT.operator.split("@")[0], "roles/cloudkms.cryptoKeyEncrypter"),
     }
 
 
@@ -2046,9 +2046,9 @@ def test_the_budget_alert_is_on_the_project_and_its_billing_account() -> None:
     assert budget["amount"]["specifiedAmount"]["units"] == str(cell.CELL_BUDGET_USD)
 
 
-def test_the_billing_account_defaults_to_ours(empty_b: list[Declared]) -> None:
+def test_the_billing_account_is_the_configured_one(empty_b: list[Declared]) -> None:
     project = one(empty_b, "gcp:organizations/project:Project").inputs
-    assert project["billingAccount"] == naming.BILLING_ACCOUNT
+    assert project["billingAccount"] == ACCOUNT.billing_account
 
 
 @pytest.fixture(scope="module")

@@ -5,7 +5,8 @@
 
 It does what ``infra/README.md`` and the proof run's T1 and T3 do by hand, in order, and prints
 each step with the time it took and the total, so the operator sees where the minutes go. The
-settings file is a JSON object of stack settings (``gateway_image`` and ``org_id`` are required;
+settings file is a JSON object of stack settings (``gateway_image``, ``org_id``, ``billing_account``
+and ``operator`` are required;
 the sealed keyring, its JWKS and ``probe_digest`` are produced here, never given). The org goes
 in the first apply, which the agent needs (decision 030); settings that apply cannot take yet
 (the gateway's, and the images that need the gateway) are set in step 4.
@@ -46,6 +47,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
+from ssc_infra import account
 from ssc_infra import naming as n
 from ssc_infra.cell import APP_IMAGE, CUSTOMER_ORG
 from ssc_infra.control import PINNED_IMAGE
@@ -103,6 +105,7 @@ SETTINGS: Final = frozenset(
         "datagw_connections",
         "proxy_image",
         "oncall_email",
+        "operator",
         "warm",
         "database",
         "egress",
@@ -336,9 +339,12 @@ def validate(opts: Options) -> None:
             f"settings {', '.join(unknown)} are not taken here; stage and probe are set, and "
             "gateway_keyring, gateway_jwks and probe_digest are produced"
         )
-    missing = [key for key in ("gateway_image", "org_id") if not opts.settings.get(key)]
+    required = ("gateway_image", "org_id", "billing_account", "operator")
+    missing = [key for key in required if not opts.settings.get(key)]
     if missing:
         raise ValueError(f"settings must include {', '.join(missing)}")
+    for key in ("billing_account", "operator"):
+        account.check(key, opts.settings[key])
     if not PINNED_IMAGE.fullmatch(opts.settings["gateway_image"]):
         raise ValueError(f"gateway_image must be {n.platform_registry()}/<image>@sha256:<digest>")
     if not CUSTOMER_ORG.fullmatch(opts.settings["org_id"]):

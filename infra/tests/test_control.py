@@ -33,7 +33,7 @@ from typing import Any
 import pulumi
 import pytest
 
-from mockcloud import Declared, entry_address, one, run
+from mockcloud import ACCOUNT, Declared, entry_address, one, run
 from ssc_infra import control, naming
 from ssc_shared import hosts
 
@@ -176,7 +176,7 @@ def test_prod_is_made_only_once_configured(released: list[Declared]) -> None:
     for project in projects.values():
         assert project["folderId"] == PLATFORM_FOLDER
         assert project["deletionPolicy"] == "PREVENT"
-        assert project["billingAccount"] == naming.BILLING_ACCOUNT
+        assert project["billingAccount"] == ACCOUNT.billing_account
     staging = one(released, "gcp:organizations/project:Project", "control-staging")
     assert staging.inputs["projectId"] == "ssc-control-staging"
 

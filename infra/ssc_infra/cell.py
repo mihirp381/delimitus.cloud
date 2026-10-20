@@ -18,6 +18,7 @@ from typing import Final, cast
 import pulumi
 import pulumi_gcp as gcp
 
+from ssc_infra import account as stack_account
 from ssc_infra import alerts
 from ssc_infra import naming as n
 from ssc_infra.control import PINNED_IMAGE, PLACEHOLDER_IMAGE, public_jwks_kids
@@ -214,6 +215,7 @@ class CellConfig:
     agent_image: str | None
     probe_digest: str | None
     billing_account: str
+    operator: str
     database: bool
     egress: bool
     connections: bool
@@ -275,6 +277,7 @@ class CellConfig:
             "agent_image": self.agent_image,
             "probe_digest": self.probe_digest,
             "billing_account": self.billing_account,
+            "operator": self.operator,
             "build_tools_image": self.build_tools_image,
             "build_frontend_image": self.build_frontend_image,
             "gateway_image": self.gateway_image,
@@ -313,7 +316,8 @@ def read_config(stack: str) -> CellConfig:
         gateway_max=_int_or(config.get_int("gateway_max"), 20),
         agent_image=agent_image,
         probe_digest=config.get("probe_digest"),
-        billing_account=config.get("billing_account") or n.BILLING_ACCOUNT,
+        billing_account=stack_account.require(config, "billing_account"),
+        operator=stack_account.require(config, "operator"),
         database=config.get_bool("database") or False,
         egress=config.get_bool("egress") or False,
         connections=config.get_bool("connections") or False,
@@ -882,7 +886,7 @@ class Cell:
             "operator-gateway-key",
             crypto_key_id=self.gateway_key.id,
             role="roles/cloudkms.cryptoKeyEncrypter",
-            member=n.OPERATOR,
+            member=self.cfg.operator,
             opts=self._o(),
         )
         self.bucket_key = gcp.kms.CryptoKey(
@@ -2238,7 +2242,7 @@ class Cell:
                 f"probe-operator-{name}",
                 service_account_id=sa.name,
                 role="roles/iam.serviceAccountTokenCreator",
-                member=n.OPERATOR,
+                member=self.cfg.operator,
                 opts=self._o(),
             )
 

@@ -11,13 +11,13 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from ssc_infra import naming as n
+from ssc_infra.account import org_principals
 
 type Inputs = Mapping[str, Any]
 type Resource = tuple[str, str, Inputs]
 
 LOCATIONS: Final = "in:us-central1-locations"
 GLOBAL: Final = "global"
-ORG_PRINCIPALS: Final = f"//cloudresourcemanager.googleapis.com/organizations/{n.ORG_ID}"
 GOOGLE_PRODUCERS: Final = "under:organizations/433637338589"
 PUBLIC_TAG_KEY: Final = "ssc-public-invoker"
 PUBLIC_TAG_VALUE: Final = "gateway"
@@ -81,10 +81,12 @@ class Rule:
         return text
 
 
-def cell_rules(operator: str, peering: Sequence[str] | None = None) -> tuple[Rule, ...]:
-    """The table. ``operator`` is the one person who may hold roles in a cell; ``peering`` the
-    networks a cell network may peer with, by default Google's service producers (Cloud SQL's
-    private services access)."""
+def cell_rules(
+    operator: str, org_id: str, peering: Sequence[str] | None = None
+) -> tuple[Rule, ...]:
+    """The table. ``operator`` is the one person who may hold roles in a cell, besides the
+    principals of organisation ``org_id``; ``peering`` the networks a cell network may peer with,
+    by default Google's service producers (Cloud SQL's private services access)."""
     return (
         Rule("locations", "gcp.resourceLocations", allowed=(LOCATIONS, GLOBAL)),
         Rule("public-access-prevention", "storage.publicAccessPrevention", enforce=True),
@@ -94,7 +96,7 @@ def cell_rules(operator: str, peering: Sequence[str] | None = None) -> tuple[Rul
             enforce=True,
             parameters={
                 "allowedMemberSubjects": (operator,),
-                "allowedPrincipalSets": (ORG_PRINCIPALS,),
+                "allowedPrincipalSets": (org_principals(org_id),),
             },
             tag_exception=True,
         ),

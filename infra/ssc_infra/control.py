@@ -20,6 +20,7 @@ import pulumi_gcp as gcp
 
 from ssc_infra import console, landing
 from ssc_infra import naming as n
+from ssc_infra.account import Account, operator_email
 from ssc_shared.hosts import check_cell_label
 
 PLACEHOLDER_IMAGE: Final = "us-docker.pkg.dev/cloudrun/container/hello"
@@ -281,7 +282,7 @@ class ControlConfig:
     timer_key_id: str | None = None
     landing: bool = False
     landing_image: str | None = None
-    landing_notify_email: str = n.OPERATOR.removeprefix("user:")
+    landing_notify_email: str = ""
     console_image: str | None = None
     mail: MailConfig | None = None
     mail_records: tuple[MailRecord, ...] = ()
@@ -383,7 +384,14 @@ def mail_config(
     return mail, records
 
 
-def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
+def _landing_notify(config: pulumi.Config, acct: Account, *, on: bool) -> str:
+    notify = config.get("landing_notify_email") or operator_email(acct.operator)
+    if on and not notify:
+        raise ValueError("landing needs landing_notify_email when the operator is not a user")
+    return notify
+
+
+def read_config(config: pulumi.Config, acct: Account, *, deployer: bool) -> ControlConfig:
     raw = cast(object, config.get_object("control_stages") or [])
     if not isinstance(raw, list):
         raise ValueError(f"control_stages must be a list of {', '.join(n.STAGES)}")
@@ -422,6 +430,7 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
     if console_image is not None and not PINNED_IMAGE.fullmatch(console_image):
         raise ValueError(f"console_image must be {n.platform_registry()}/<image>@sha256:<digest>")
     mail, records = mail_config(config, console_image, public)
+    notify = _landing_notify(config, acct, on=on)
     github = bool(config.get_bool("github"))
     if github and public is None:
         raise ValueError("github needs a control stage (control_stages)")
@@ -437,7 +446,7 @@ def read_config(config: pulumi.Config, *, deployer: bool) -> ControlConfig:
         timer_key_id=timer_key_id,
         landing=on,
         landing_image=landing_image,
-        landing_notify_email=config.get("landing_notify_email") or n.OPERATOR.removeprefix("user:"),
+        landing_notify_email=notify,
         console_image=console_image,
         mail=mail,
         mail_records=records,
@@ -551,6 +560,7 @@ class ControlProject:
         self,
         stage: n.Stage,
         folder: pulumi.Input[str],
+        billing_account: str,
         opts: pulumi.ResourceOptions,
         *,
         billed: bool = True,
@@ -561,7 +571,7 @@ class ControlProject:
             project_id=n.control_project(stage),
             name=n.control_project(stage),
             folder_id=folder,
-            billing_account=n.BILLING_ACCOUNT if billed else None,
+            billing_account=billing_account if billed else None,
             auto_create_network=False,
             deletion_policy="PREVENT",
             opts=opts,

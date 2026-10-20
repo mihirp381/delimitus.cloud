@@ -25,6 +25,8 @@ PROBE_IMAGE = f"{n.platform_registry()}/ssc-probe@{PROBE_DIGEST}"
 SETTINGS = {
     "gateway_image": GATEWAY_IMAGE,
     "org_id": "org_" + "c" * 20,
+    "billing_account": "AAAAAA-BBBBBB-CCCCCC",
+    "operator": "user:operator@example.com",
     "datagw_image": f"{n.platform_registry()}/ssc-datagw@sha256:" + "d" * 64,
     "oncall_email": "ops@example.com",
 }
@@ -412,7 +414,15 @@ def test_the_settings_must_name_the_gateway_image_and_the_org(world: World, tmp_
     only = tmp_path / "only.json"
     only.write_text(json.dumps({"oncall_email": "a@b.c"}))
     assert onboard.main([*ARGV, "--settings", str(only)], world.tools()) == 2
-    assert "must include gateway_image, org_id" in world.err[0]
+    assert "must include gateway_image, org_id, billing_account, operator" in world.err[0]
+
+
+def test_a_malformed_operator_is_refused_without_echoing_it(world: World, tmp_path: Path) -> None:
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(SETTINGS | {"operator": "someone@example.com"}))
+    assert onboard.main([*ARGV, "--settings", str(bad)], world.tools()) == 2
+    assert "operator must be" in world.err[0]
+    assert "someone@example.com" not in world.err[0]
 
 
 def test_the_dry_run_prints_every_step_with_its_commands_and_runs_none(world: World) -> None:

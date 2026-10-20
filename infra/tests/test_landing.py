@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from mockcloud import Declared, entry_address, one, run
+from mockcloud import ACCOUNT, Declared, entry_address, one, run
 from ssc_infra import control, landing, naming
 
 PLATFORM_FOLDER = "333333333333"
@@ -259,7 +259,7 @@ def test_the_founder_is_told_without_personal_data(full: list[Declared]) -> None
     }
     (channel,) = channels.values()
     assert channel["type"] == "email"
-    assert channel["labels"] == {"email_address": naming.OPERATOR.removeprefix("user:")}
+    assert channel["labels"] == {"email_address": ACCOUNT.operator.removeprefix("user:")}
     alerts = {
         d.name: d.inputs
         for d in full

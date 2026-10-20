@@ -9,6 +9,7 @@ import pulumi
 from pulumi.runtime import config as runtime_config
 
 from ssc_infra import cell, naming, platform
+from ssc_infra.account import Account
 
 FOLDERS = {"prod": "111111111111", "staging": "222222222222"}
 NIGHTLY = naming.sa_email(naming.NIGHTLY_SA, naming.control_project("staging"))
@@ -18,6 +19,20 @@ WORKERS = {
 }
 PUBLIC_TAG = "tagValues/555555555555"
 DEPLOYER = naming.sa_email(naming.DEPLOYER, naming.BOOTSTRAP_PROJECT)
+ACCOUNT = Account(
+    org_id="000000000000",
+    billing_account="AAAAAA-BBBBBB-CCCCCC",
+    operator="user:operator@example.com",
+    github_repository="example-org/example-repo",
+)
+PLATFORM_CONFIG = {
+    "org_id": ACCOUNT.org_id,
+    "billing_account": ACCOUNT.billing_account,
+    "operator": ACCOUNT.operator,
+    "github_repository": ACCOUNT.github_repository,
+}
+CELL_CONFIG = {"billing_account": ACCOUNT.billing_account, "operator": ACCOUNT.operator}
+"""What every stack's config holds in these tests; a cell's ``org_id`` is the customer's."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +165,9 @@ def run(
     recorder = Recorder(platform_outputs)
     asyncio.set_event_loop(asyncio.new_event_loop())  # 3.14 makes no loop implicitly
     pulumi.runtime.set_mocks(recorder, project=naming.PROJECT, stack=stack, preview=False)
-    runtime_config.set_all_config({f"{naming.PROJECT}:{k}": v for k, v in (config or {}).items()})
+    base = PLATFORM_CONFIG if stack == naming.PLATFORM_STACK else CELL_CONFIG
+    values = base | (config or {})
+    runtime_config.set_all_config({f"{naming.PROJECT}:{k}": v for k, v in values.items()})
 
     @pulumi.runtime.test
     def program() -> None:

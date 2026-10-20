@@ -7,7 +7,7 @@ import pulumi
 import pytest
 
 import mockcloud
-from mockcloud import Declared, one, run
+from mockcloud import ACCOUNT, Declared, one, run
 from ssc_infra import naming, platform, policies
 
 PLATFORM_FOLDER = "333333333333"
@@ -119,9 +119,9 @@ def test_only_the_operator_and_the_org_may_hold_roles_in_a_cell(declared: list[D
     enforced, exception = members["spec"]["rules"]
     assert enforced["enforce"] == "TRUE"
     assert json.loads(enforced["parameters"]) == {
-        "allowedMemberSubjects": [naming.OPERATOR],
+        "allowedMemberSubjects": [ACCOUNT.operator],
         "allowedPrincipalSets": [
-            f"//cloudresourcemanager.googleapis.com/organizations/{naming.ORG_ID}"
+            f"//cloudresourcemanager.googleapis.com/organizations/{ACCOUNT.org_id}"
         ],
     }
     key = one(declared, "gcp:tags/tagKey:TagKey").outputs["name"]
@@ -140,7 +140,7 @@ def test_only_the_operator_and_the_deployer_may_bind_the_public_invoker_tag(
 ) -> None:
     key = one(declared, "gcp:tags/tagKey:TagKey")
     assert (key.inputs["parent"], key.inputs["shortName"]) == (
-        f"organizations/{naming.ORG_ID}",
+        f"organizations/{ACCOUNT.org_id}",
         "ssc-public-invoker",
     )
     value = one(declared, "gcp:tags/tagValue:TagValue")
@@ -152,7 +152,7 @@ def test_only_the_operator_and_the_deployer_may_bind_the_public_invoker_tag(
     assert binders == {
         "tagValue": f"tagValues/{value.outputs['name']}",
         "role": "roles/resourcemanager.tagUser",
-        "members": [naming.OPERATOR, DEPLOYER_MEMBER],
+        "members": [ACCOUNT.operator, DEPLOYER_MEMBER],
     }
     assert not [d for d in declared if d.type == "gcp:tags/tagValueIamMember:TagValueIamMember"]
 
@@ -175,7 +175,7 @@ def test_staff_access_is_just_in_time(declared: list[Declared]) -> None:
     jit = one(declared, "gcp:privilegedaccessmanager/entitlement:entitlement").inputs
     assert jit["maxRequestDuration"] == "3600s"
     assert "approvalWorkflow" not in jit
-    assert jit["eligibleUsers"] == [{"principals": [naming.OPERATOR]}]
+    assert jit["eligibleUsers"] == [{"principals": [ACCOUNT.operator]}]
     assert jit["requesterJustificationConfig"] == {"unstructured": {}}
     assert (
         jit["privilegedAccess"]["gcpIamAccess"]["resourceType"]
@@ -211,7 +211,7 @@ def test_the_control_project_is_protected(declared: list[Declared]) -> None:
     assert project["projectId"] == "ssc-control-staging"
     assert project["folderId"] == PLATFORM_FOLDER
     assert project["deletionPolicy"] == "PREVENT"
-    assert project["billingAccount"] == naming.BILLING_ACCOUNT
+    assert project["billingAccount"] == ACCOUNT.billing_account
 
 
 def test_staging_may_run_without_billing_while_it_has_no_control_plane() -> None:
@@ -233,7 +233,7 @@ def test_staging_may_run_without_billing_while_it_has_no_control_plane() -> None
         },
     )
     project = one(staged, "gcp:organizations/project:Project").inputs
-    assert project["billingAccount"] == naming.BILLING_ACCOUNT
+    assert project["billingAccount"] == ACCOUNT.billing_account
 
 
 def test_the_pam_service_agent_manages_the_cells_folder(declared: list[Declared]) -> None:
@@ -241,7 +241,7 @@ def test_the_pam_service_agent_manages_the_cells_folder(declared: list[Declared]
     assert grant["role"] == "roles/privilegedaccessmanager.folderServiceAgent"
     assert (
         grant["member"]
-        == f"serviceAccount:service-org-{naming.ORG_ID}@gcp-sa-pam.iam.gserviceaccount.com"
+        == f"serviceAccount:service-org-{ACCOUNT.org_id}@gcp-sa-pam.iam.gserviceaccount.com"
     )
     assert grant["folder"] == _folders(declared)["ssc-cells"].outputs["name"]
 
@@ -270,8 +270,8 @@ def test_only_the_nightly_and_drill_workflows_on_main_become_the_nightly_account
 ) -> None:
     provider = one(declared, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider")
     condition = provider.inputs["attributeCondition"]
-    assert f'assertion.repository == "{naming.GITHUB_REPOSITORY}"' in condition
-    repo = naming.GITHUB_REPOSITORY
+    assert f'assertion.repository == "{ACCOUNT.github_repository}"' in condition
+    repo = ACCOUNT.github_repository
     assert (
         f'assertion.workflow_ref in ["{repo}/.github/workflows/nightly.yml@refs/heads/main", '
         f'"{repo}/.github/workflows/kill-drill.yml@refs/heads/main"]' in condition
@@ -282,7 +282,7 @@ def test_only_the_nightly_and_drill_workflows_on_main_become_the_nightly_account
     }
     assert members["nightly-wif"]["role"] == "roles/iam.workloadIdentityUser"
     assert members["nightly-wif"]["member"].endswith(
-        f"/workloadIdentityPools/ssc-github/attribute.repository/{naming.GITHUB_REPOSITORY}"
+        f"/workloadIdentityPools/ssc-github/attribute.repository/{ACCOUNT.github_repository}"
     )
     tokens = members["nightly-control-id-tokens"]
     assert tokens["role"] == "roles/iam.serviceAccountOpenIdTokenCreator"
@@ -318,7 +318,7 @@ def test_cell_stacks_may_write_records_only_in_the_apps_zone(declared: list[Decl
         if d.type == "gcp:dns/dnsManagedZoneIamMember:DnsManagedZoneIamMember"
     ]
     assert {(g["project"], g["managedZone"], g["member"]) for g in grants} == {
-        (naming.BOOTSTRAP_PROJECT, naming.APPS_ZONE, naming.OPERATOR),
+        (naming.BOOTSTRAP_PROJECT, naming.APPS_ZONE, ACCOUNT.operator),
         (naming.BOOTSTRAP_PROJECT, naming.APPS_ZONE, DEPLOYER_MEMBER),
     }
     assert grants[0]["role"] == grants[1]["role"]
@@ -344,7 +344,9 @@ def test_the_tag_and_the_policy_table_are_exported(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(pulumi, "export", lambda name, value: exported.__setitem__(name, value))
     run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER})
     assert {"public_invoker_tag", "public_invoker_tag_key", "cell_policies"} <= set(exported)
-    assert exported["cell_policies"] == policies.summaries(policies.cell_rules(naming.OPERATOR))
+    assert exported["cell_policies"] == policies.summaries(
+        policies.cell_rules(ACCOUNT.operator, ACCOUNT.org_id)
+    )
     assert exported["cell_policies"]["compute.vmExternalIpAccess"] == "deny all"
 
 
@@ -427,8 +429,8 @@ def test_the_operator_keeps_its_grants(declared: list[Declared]) -> None:
         one(declared, "gcp:projects/iAMCustomRole:IAMCustomRole", "apps-zone-records").outputs[
             "name"
         ],
-    ) in _grants_to(declared, naming.OPERATOR)
-    assert ("tags/tagValueIamBinding", platform.TAG_USER) in _grants_to(declared, naming.OPERATOR)
+    ) in _grants_to(declared, ACCOUNT.operator)
+    assert ("tags/tagValueIamBinding", platform.TAG_USER) in _grants_to(declared, ACCOUNT.operator)
 
 
 def test_no_deployer_job_until_its_image_is_named(declared: list[Declared]) -> None:

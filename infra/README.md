@@ -13,6 +13,8 @@ State lives in `gs://ssc-platform-0-pulumi`, and secrets are encrypted with the 
 
 Stack files (`Pulumi.<stack>.yaml`) are not committed: each holds a data key that the secret scanner flags. On a fresh clone, `bootstrap` (and `bootstrap cell <label>`) writes them again with the KMS secrets provider and the stack's config.
 
+The account is stack config, never source (`ssc_infra/account.py` checks each value's shape and names the key, not the value, when one is wrong). The platform stack requires `org_id` (the organisation's numeric id), `billing_account` (`XXXXXX-XXXXXX-XXXXXX`), `operator` (`user:`, `group:` or `serviceAccount:` and an address) and `github_repository` (`<owner>/<name>`, whose nightly and drill workflows may act as `ssc-nightly`). A cell stack requires `billing_account` and `operator`; its `org_id` is the customer's (Gateway, below). A stack made before these keys were required needs them set before its next apply, the cell deployer's included, or the apply stops naming the missing key.
+
 ## Cell flags
 
 Five settings in a cell stack's config, all off by default. Turning one on adds only the resources named here (`naming.LAZY_RESOURCES`); the firewall rules and addresses they use exist from onboarding.
@@ -30,7 +32,7 @@ pulumi config set --stack c-<label> database true
 pulumi up --stack c-<label>
 ```
 
-Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below; `org_id` may also be set alone, and `agent_image` needs it: the agent serves that org only, as `SSC_ORG_ID`, decision 030), `timer_jwks` (Timer calls, under Gateway), `datagw_image` and `datagw_connections` (Data gateway, below), `proxy_image` and `proxy_ha` (Egress proxy, below), `oncall_email` (Alerts and on call, below), `gateway_max` (20) and `billing_account` (defaults to the one SSC account; set it to link a new cell to another account, SSC-089).
+Other settings: `stage` (`staging` or `prod`), `probe`, `probe_digest`, `agent_image`, `build_tools_image` and `build_frontend_image` (Builds, below), `gateway_image`, `gateway_keyring`, `gateway_jwks` and `org_id` (Gateway, below; `org_id` may also be set alone, and `agent_image` needs it: the agent serves that org only, as `SSC_ORG_ID`, decision 030), `timer_jwks` (Timer calls, under Gateway), `datagw_image` and `datagw_connections` (Data gateway, below), `proxy_image` and `proxy_ha` (Egress proxy, below), `oncall_email` (Alerts and on call, below), `gateway_max` (20), and the required `billing_account` (the account the cell's project is linked to, SSC-089) and `operator`.
 
 The stack exports `flags`, so `cell_diff` compares two cells with different flags without their flagged resources.
 
@@ -507,7 +509,7 @@ The platform stack applies one table (`policies.cell_rules`) to the `ssc-cells` 
 | --- | --- | --- |
 | `gcp.resourceLocations` | allow `in:us-central1-locations`, `global` | Anything outside `us-central1`. `global` is for the entry's certificate, DNS authorisation and certificate map; global Compute resources are exempt anyway. `ssc-platform` keeps the region alone. |
 | `storage.publicAccessPrevention` | enforced | A public object or bucket. Nothing in a cell needs one: public keys are served from `keys.delimitus.com/<label>/jwks.json`, not a cell bucket. |
-| `iam.managed.allowedPolicyMembers` | enforced; members: the operator and principals of organisation 878392300952 | A role for anyone outside the organisation, `allUsers` included. **One exception**, below. |
+| `iam.managed.allowedPolicyMembers` | enforced; members: the operator and principals of the organisation | A role for anyone outside the organisation, `allUsers` included. **One exception**, below. |
 | `iam.disableServiceAccountKeyCreation` | enforced | Service account keys. |
 | `iam.automaticIamGrantsForDefaultServiceAccounts` | enforced | Google granting `roles/editor` to a new project's Compute Engine and App Engine default accounts. The agent may run a service or a build as any account in its project, so an Editor default account would let it change the cell bucket, audit anchors included (SSC-012). It stops new grants only; an existing project keeps one until it is removed. |
 | `compute.restrictVpcPeering` | allow `under:organizations/433637338589` | Peering with anything but Google's service producers, which Cloud SQL's private services access needs. Set `peering_allowed` in the platform stack's config if the first cell's peering is refused. |
@@ -529,7 +531,7 @@ The cell deployer (SSC-087) is the second binder: it applies cell stacks, and th
 
 `tests/test_policies.py` checks a full cell's resources against the same table, with one planted violation per policy. `cell_diff` lists the policies in force on each cell.
 
-**Nightly check** (SSC-056). `python -m ssc_conformance.org_policies`, a step of `nightly.yml`, lists the policies on the `ssc-cells` folder and on the probe cell's project and compares them with `conformance/ssc_conformance/expected_org_policies.json`, which `tests/test_policies.py` holds equal to this stack's declaration. The exception rule must carry exactly `resource.matchTagId('<key id>', '<value id>')` of the public-invoker tag, and no policy may inherit from its parent (`inheritFromParent`). The file writes the tag's ids as `${SSC_PUBLIC_TAG_KEY}` and `${SSC_PUBLIC_TAG_VALUE}`; set the repository variables of those names to the platform stack's outputs `public_invoker_tag_key` (`tagKeys/<id>`) and `public_invoker_tag` (`tagValues/<id>`). Without them the check fails, naming them. Its other variables are `SSC_NIGHT_FOLDER_ID` and the cell's project from `SSC_NIGHT_CELLS`.
+**Nightly check** (SSC-056). `python -m ssc_conformance.org_policies`, a step of `nightly.yml`, lists the policies on the `ssc-cells` folder and on the probe cell's project and compares them with `conformance/ssc_conformance/expected_org_policies.json`, which `tests/test_policies.py` holds equal to this stack's declaration. The exception rule must carry exactly `resource.matchTagId('<key id>', '<value id>')` of the public-invoker tag, and no policy may inherit from its parent (`inheritFromParent`). The file writes the tag's ids as `${SSC_PUBLIC_TAG_KEY}` and `${SSC_PUBLIC_TAG_VALUE}`; set the repository variables of those names to the platform stack's outputs `public_invoker_tag_key` (`tagKeys/<id>`) and `public_invoker_tag` (`tagValues/<id>`). The organisation in the principal set is written `${SSC_ORG_ID}`; set that variable to the organisation's numeric id. Without them the check fails, naming them. Its other variables are `SSC_NIGHT_FOLDER_ID` and the cell's project from `SSC_NIGHT_CELLS`.
 
 ## First run
 
@@ -545,8 +547,12 @@ You also need Application Default Credentials. Bootstrap is safe to run again; r
 
 ```
 cd infra && uv sync
+export SSC_ORG_ID=<numeric org id> SSC_BILLING_ACCOUNT=<XXXXXX-XXXXXX-XXXXXX>
 uv run python -m ssc_infra.bootstrap            # folder, project, APIs, bucket, key, platform stack
 export PULUMI_BACKEND_URL=gs://ssc-platform-0-pulumi
+for key in org_id billing_account operator github_repository; do
+  pulumi config set --stack platform $key <value>
+done
 pulumi up --stack platform
 ```
 
@@ -554,6 +560,8 @@ pulumi up --stack platform
 
 ```
 uv run python -m ssc_infra.bootstrap cell testcell01 --probe
+pulumi config set --stack c-testcell01 billing_account <XXXXXX-XXXXXX-XXXXXX>
+pulumi config set --stack c-testcell01 operator <user:you@example.com>
 pulumi up --stack c-testcell01
 ```
 
@@ -567,7 +575,7 @@ uv run python -m ssc_infra.onboard <label> ... --resume       # continue a stack
 uv run python -m ssc_infra.onboard <label> ... --from-step 5  # start at step 5 (implies --resume)
 ```
 
-`settings.json` is a JSON object of stack settings (or give single ones with `--set key=value`). `gateway_image` and `org_id` are required. `stage` and `probe` are set for you, and the sealed keyring, its JWKS and `probe_digest` are made by the command: they are refused in the settings. Run it from the repository root with `gcloud`, `pulumi` and `docker` signed in (the last to the cell's Artifact Registry: `gcloud auth configure-docker us-central1-docker.pkg.dev`).
+`settings.json` is a JSON object of stack settings (or give single ones with `--set key=value`). `gateway_image`, `org_id`, `billing_account` and `operator` are required. `stage` and `probe` are set for you, and the sealed keyring, its JWKS and `probe_digest` are made by the command: they are refused in the settings. Run it from the repository root with `gcloud`, `pulumi` and `docker` signed in (the last to the cell's Artifact Registry: `gcloud auth configure-docker us-central1-docker.pkg.dev`).
 
 The steps print as `[n/9]` with each step's time and the running total, and a line every 30 seconds while `pulumi up` runs (resources done, resources in flight).
 

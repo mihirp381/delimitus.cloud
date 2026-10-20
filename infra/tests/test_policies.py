@@ -8,11 +8,11 @@ from typing import Any
 
 import pytest
 
-from mockcloud import FOLDERS, PUBLIC_TAG, Declared, as_export, one, run
+from mockcloud import ACCOUNT, FOLDERS, PUBLIC_TAG, Declared, as_export, one, run
 from ssc_infra import cell_diff, naming, policies
 from ssc_infra.run import CommandError
 
-RULES = policies.cell_rules(naming.OPERATOR)
+RULES = policies.cell_rules(ACCOUNT.operator, ACCOUNT.org_id)
 FULL = {
     "probe": "true",
     "probe_digest": "sha256:" + "c" * 64,
@@ -480,7 +480,8 @@ def declared_org_policies(platform: list[Declared]) -> dict[str, Any]:
     }
     key = one(platform, "gcp:tags/tagKey:TagKey").outputs["name"]
     value = one(platform, "gcp:tags/tagValue:TagValue").outputs["name"]
-    text = json.dumps(found).replace(naming.OPERATOR, "<operator>")
+    text = json.dumps(found).replace(ACCOUNT.operator, "<operator>")
+    text = text.replace(f"organizations/{ACCOUNT.org_id}", "organizations/${SSC_ORG_ID}")
     text = text.replace(f"'tagKeys/{key}'", "'${SSC_PUBLIC_TAG_KEY}'")
     text = text.replace(f"'tagValues/{value}'", "'${SSC_PUBLIC_TAG_VALUE}'")
     return json.loads(text)

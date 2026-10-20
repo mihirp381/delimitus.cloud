@@ -55,7 +55,7 @@
         "<operator>"
       ],
       "allowedPrincipalSets": [
-        "//cloudresourcemanager.googleapis.com/organizations/878392300952"
+        "//cloudresourcemanager.googleapis.com/organizations/${SSC_ORG_ID}"
       ]
     },
     "values": []

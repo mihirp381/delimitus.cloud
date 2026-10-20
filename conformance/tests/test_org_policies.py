@@ -16,8 +16,12 @@ from ssc_conformance import org_policies as op
 PROJECT = "ssc-c-test"
 FOLDER = "111"
 OPERATOR = "user:someone@example.com"
-TAG_ENV = {op.TAG_KEY_ENV: "tagKeys/1", op.TAG_VALUE_ENV: "tagValues/2"}
-EXPECTED = op.load_expected(TAG_ENV)
+EXPECTED_ENV = {
+    op.TAG_KEY_ENV: "tagKeys/1",
+    op.TAG_VALUE_ENV: "tagValues/2",
+    op.ORG_ENV: "000000000000",
+}
+EXPECTED = op.load_expected(EXPECTED_ENV)
 TAG = "resource.matchTagId('tagKeys/1', 'tagValues/2')"
 
 type Json = dict[str, Any]
@@ -182,19 +186,27 @@ def test_the_tag_comes_from_the_environment() -> None:
     )
 
 
+def test_the_org_comes_from_the_environment() -> None:
+    sets = EXPECTED["iam.managed.allowedPolicyMembers"]["parameters"]["allowedPrincipalSets"]
+    assert sets == ["//cloudresourcemanager.googleapis.com/organizations/000000000000"]
+    raw = json.loads(op.EXPECTED.read_text(encoding="utf-8"))
+    assert raw["iam.managed.allowedPolicyMembers"]["parameters"]["allowedPrincipalSets"] == [
+        "//cloudresourcemanager.googleapis.com/organizations/${SSC_ORG_ID}"
+    ]
+
+
 @pytest.mark.parametrize(
     ("environ", "named"),
     [
-        ({}, "SSC_PUBLIC_TAG_KEY, SSC_PUBLIC_TAG_VALUE"),
+        ({}, "SSC_PUBLIC_TAG_KEY, SSC_PUBLIC_TAG_VALUE, SSC_ORG_ID"),
         ({"SSC_PUBLIC_TAG_KEY": "tagKeys/1"}, "SSC_PUBLIC_TAG_VALUE"),
-        ({"SSC_PUBLIC_TAG_KEY": "tagKeys/1", "SSC_PUBLIC_TAG_VALUE": "2"}, "SSC_PUBLIC_TAG_VALUE"),
-        (
-            {"SSC_PUBLIC_TAG_KEY": "1')", "SSC_PUBLIC_TAG_VALUE": "tagValues/2"},
-            "SSC_PUBLIC_TAG_KEY",
-        ),
+        (EXPECTED_ENV | {"SSC_PUBLIC_TAG_VALUE": "2"}, "SSC_PUBLIC_TAG_VALUE"),
+        (EXPECTED_ENV | {"SSC_PUBLIC_TAG_KEY": "1')"}, "SSC_PUBLIC_TAG_KEY"),
+        ({k: v for k, v in EXPECTED_ENV.items() if k != "SSC_ORG_ID"}, "missing SSC_ORG_ID"),
+        (EXPECTED_ENV | {"SSC_ORG_ID": "organizations/1"}, "SSC_ORG_ID"),
     ],
 )
-def test_the_tag_must_be_set_and_well_formed(environ: dict[str, str], named: str) -> None:
+def test_the_tag_and_org_must_be_set_and_well_formed(environ: dict[str, str], named: str) -> None:
     with pytest.raises(cloud.CloudReadError, match=named):
         op.load_expected(environ)
 
@@ -266,7 +278,7 @@ async def test_the_run_adds_its_result_to_the_cells_evidence_file(
     monkeypatch.setenv("SSC_ACCESS_TOKEN", "token")
     path = tmp_path / "evidence.json"
     environ = {op.PROJECT_ENV: PROJECT, op.FOLDER_ENV: FOLDER, ev.EVIDENCE_ENV: str(path)}
-    environ |= TAG_ENV
+    environ |= EXPECTED_ENV
     client = httpx2.AsyncClient(transport=transport(copy.deepcopy(folder_policies()), []))
     result, _ = await op.main_async(environ, client=client)
     assert result.status == ev.OK
