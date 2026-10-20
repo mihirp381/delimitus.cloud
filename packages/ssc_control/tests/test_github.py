@@ -1172,6 +1172,8 @@ def _entry(name: str, kind: bytes = tarfile.REGTYPE, link: str = "") -> tarfile.
         ([_entry("top/fifo", tarfile.FIFOTYPE)], "special_file"),
         ([_entry("top/dev", tarfile.CHRTYPE)], "special_file"),
         ([_entry("top/a"), _entry("top/a")], "case_collision"),
+        ([_entry("top/a"), _entry("top/a/", tarfile.DIRTYPE)], "case_collision"),
+        ([_entry("top/a"), _entry("top/a/b/", tarfile.DIRTYPE)], "unwritable"),
     ],
 )
 def test_the_unpacker_refuses_unsafe_sources(

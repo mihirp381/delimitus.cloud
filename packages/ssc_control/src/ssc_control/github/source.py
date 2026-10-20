@@ -74,7 +74,7 @@ def unpack(tarball: Path, dest: Path, limits: Limits) -> None:
                     continue
                 target = dest / rel
                 if member.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
+                    _mkdir(target, rel)
                     continue
                 if member.issym() or member.islnk():
                     raise BundleMalformedError("link", "links are not packed", path=rel)
@@ -91,6 +91,19 @@ def unpack(tarball: Path, dest: Path, limits: Limits) -> None:
                 _write(tar, member, target, rel)
     except (tarfile.TarError, EOFError, zlib.error) as exc:
         raise BundleMalformedError("not_tar_gz", "the source is not a tar.gz") from exc
+
+
+def _mkdir(target: Path, rel: str) -> None:
+    """A folder entry; one where a file was unpacked is refused, as ``_write`` refuses a file
+    where one was, so the job fails the check run instead of retrying an ``OSError``."""
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except FileExistsError:
+        raise BundleMalformedError(
+            "case_collision", "two entries share a name, in case or form", path=rel
+        ) from None
+    except OSError as exc:
+        raise BundleMalformedError("unwritable", "the entry cannot be unpacked", path=rel) from exc
 
 
 def _write(tar: tarfile.TarFile, member: tarfile.TarInfo, target: Path, rel: str) -> None:
