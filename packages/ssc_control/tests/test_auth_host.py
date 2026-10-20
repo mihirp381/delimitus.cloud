@@ -463,6 +463,31 @@ async def test_logout_revokes_the_command_line_session(rig: Rig) -> None:
     assert (await rig.http.post("/revoke", data={"token": "junk"})).status_code == 200
 
 
+async def test_revoke_issues_no_new_refresh_token(rig: Rig) -> None:
+    """``/revoke`` uses the refresh token up and ends its session; it does not first rotate it
+    (a new refresh row) as a refresh does."""
+    got = await device_login(rig)
+    sid = Verifier(rig.signer.jwks(), AUTH).verify(got["access_token"], USER_AUDIENCE).session_id
+    assert sid is not None
+    held = "select count(*), count(used_at) from ssc.refresh_token where session_id = :sid"
+    assert [tuple(r) for r in await rig.w.rows(held, sid=sid)] == [(1, 0)]
+    assert (await rig.http.post("/revoke", data={"token": got["refresh_token"]})).status_code == 200
+    assert await rig.w.live(sid) is None
+    assert [tuple(r) for r in await rig.w.rows(held, sid=sid)] == [(1, 1)]
+    revoked = await rig.w.audit(AuditAction.TOKEN_REVOKED)
+    assert [(r[1], r[2]["reason"]) for r in revoked] == [(sid, "logout")]
+
+
+async def test_revoking_a_used_refresh_token_ends_its_session(rig: Rig) -> None:
+    got = await device_login(rig)
+    first = got["refresh_token"]
+    r = await rig.http.post("/token", data={"grant_type": "refresh_token", "refresh_token": first})
+    sid = Verifier(rig.signer.jwks(), AUTH).verify(r.json()["access_token"], USER_AUDIENCE)
+    assert sid.session_id is not None and await rig.w.live(sid.session_id) is not None
+    assert (await rig.http.post("/revoke", data={"token": first})).status_code == 200
+    assert await rig.w.live(sid.session_id) is None, "a reused token ends the session"
+
+
 async def test_the_device_form_refuses_a_cross_site_post_and_unknown_codes(rig: Rig) -> None:
     start = (await rig.http.post("/device/authorize", data={"org": rig.w.org})).json()
     form = {"org": rig.w.org, "user_code": start["user_code"]}
@@ -513,6 +538,37 @@ async def test_an_agent_login_names_the_agent_and_every_token_carries_it(rig: Ri
     assert again.status_code == 200
     renewed = verifier.verify(again.json()["access_token"], USER_AUDIENCE)
     assert renewed.is_agent and renewed.client_id == "claude-code"
+
+
+async def test_an_agent_sessions_refresh_naming_another_client_is_refused(rig: Rig) -> None:
+    """A refresh that names a ``client_id`` must name the agent the session was opened for;
+    one that names none is answered as before."""
+    start = (
+        await rig.http.post("/device/authorize", data={"org": rig.w.org, "agent": "claude-code"})
+    ).json()
+    form = {"org": rig.w.org, "user_code": start["user_code"], "agent": "claude-code"}
+    r = await rig.http.post("/device", data=form)
+    rig.w.wo.profile("agent-code", FOUNDER_IDP, "ada@example.com")
+    await rig.through_workos(r, "agent-code")
+    got = await rig.http.post(
+        "/token", data={"grant_type": DEVICE_GRANT, "device_code": start["device_code"]}
+    )
+    assert got.status_code == 200, got.text
+    refresh = {"grant_type": "refresh_token", "refresh_token": got.json()["refresh_token"]}
+    same = await rig.http.post("/token", data={**refresh, "client_id": "claude-code"})
+    assert same.status_code == 200, same.text
+    refresh["refresh_token"] = same.json()["refresh_token"]
+    other = await rig.http.post("/token", data={**refresh, "client_id": "other-agent"})
+    assert (other.status_code, other.json()) == (400, {"error": "invalid_grant"})
+
+
+async def test_a_person_sessions_refresh_may_name_a_client(rig: Rig) -> None:
+    got = await device_login(rig)
+    refresh = {"grant_type": "refresh_token", "refresh_token": got["refresh_token"]}
+    named = await rig.http.post("/token", data={**refresh, "client_id": "anything"})
+    assert named.status_code == 200, named.text
+    bare = {**refresh, "refresh_token": named.json()["refresh_token"]}
+    assert (await rig.http.post("/token", data=bare)).status_code == 200
 
 
 async def test_a_person_login_is_never_an_agent_and_a_bad_agent_name_is_refused(rig: Rig) -> None:

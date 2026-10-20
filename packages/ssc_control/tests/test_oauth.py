@@ -483,6 +483,24 @@ async def test_a_code_presented_again_ends_its_session(
     assert refresh.json() == {"error": "invalid_grant"}
 
 
+async def test_an_mcp_client_refreshes_naming_its_own_client_id(rig: OAuthRig) -> None:
+    """An MCP client's session keeps an agent name from its registration (``claude-code``), not
+    its OAuth ``client_id``; a refresh naming the OAuth ``client_id``, as public clients send it,
+    is answered."""
+    client_id = await rig.register()
+    verifier, challenge = pkce()
+    got = await rig.token(client_id, await rig.code(client_id, challenge), verifier)
+    assert got.status_code == 200, got.text
+    form = {
+        "grant_type": "refresh_token",
+        "refresh_token": got.json()["refresh_token"],
+        "client_id": client_id,
+    }
+    refreshed = await rig.http.post("/token", data=form)
+    assert refreshed.status_code == 200, refreshed.text
+    assert rig.verify(refreshed.json()["access_token"]).client_id == "claude-code"
+
+
 async def test_an_expired_code_is_refused(rig: OAuthRig) -> None:
     client_id = await rig.register()
     verifier, challenge = pkce()

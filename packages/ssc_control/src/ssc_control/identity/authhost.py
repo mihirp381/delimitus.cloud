@@ -567,14 +567,18 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             org_id, live.user_id, live.id, refresh, live.agent_client_id, s.api_audience
         )
 
-    async def refresh_token(raw: str) -> JSONResponse:
+    async def refresh_token(raw: str, client_id: str | None) -> JSONResponse:
         parsed = tokens.org_of(raw, tokens.REFRESH_PREFIX)
         if parsed is None:
             return _oauth_error("invalid_grant")
         org_id = parsed[0]
         async with bound_org(host.engine, org_id) as conn:
             done = await tokens.rotate_refresh(
-                conn, org_id, raw, actor=Actor(ActorKind.INTEGRATION, "refresh")
+                conn,
+                org_id,
+                raw,
+                actor=Actor(ActorKind.INTEGRATION, "refresh"),
+                client_id=client_id,
             )
         if done is None:
             return _oauth_error("invalid_grant")
@@ -594,7 +598,7 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         if grant_type == DEVICE_GRANT:
             return await device_token(form.get("device_code", ""))
         if grant_type == "refresh_token":
-            return await refresh_token(form.get("refresh_token", ""))
+            return await refresh_token(form.get("refresh_token", ""), form.get("client_id"))
         if grant_type == "authorization_code":
             return await oauth_flow.code_token(form)
         return _oauth_error("unsupported_grant_type")
@@ -606,16 +610,13 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         if parsed is not None:
             org_id = parsed[0]
             async with bound_org(host.engine, org_id) as conn:
-                done = await tokens.rotate_refresh(
+                sid = await tokens.session_of_refresh(
                     conn, org_id, raw, actor=Actor(ActorKind.INTEGRATION, "refresh")
                 )
-                if done is not None:
+                live = None if sid is None else await sessions.live_session(conn, org_id, sid)
+                if live is not None:
                     await sessions.revoke_session(
-                        conn,
-                        org_id,
-                        done.session_id,
-                        "logout",
-                        actor=Actor(ActorKind.USER, done.user_id),
+                        conn, org_id, live.id, "logout", actor=Actor(ActorKind.USER, live.user_id)
                     )
         return Response(status_code=200, headers={"cache-control": "no-store"})
 

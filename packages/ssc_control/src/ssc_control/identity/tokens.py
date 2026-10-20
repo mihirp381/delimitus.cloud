@@ -28,7 +28,13 @@ from ssc_contracts.ids import new_id
 from ssc_control.api.auth import ALGORITHM, API_TOKEN_TYP
 from ssc_control.audit.chain import Actor
 from ssc_control.db.bind import check_org_id
-from ssc_control.identity.sessions import digest, live_session, new_secret, revoke_session
+from ssc_control.identity.sessions import (
+    LiveSession,
+    digest,
+    live_session,
+    new_secret,
+    revoke_session,
+)
 
 ACCESS_SECONDS: Final = 300
 REFRESH_PREFIX: Final = "ssc_rt"  # noqa: S105  (a token prefix, not a secret)
@@ -149,10 +155,11 @@ class Refreshed:
     token_audience: str | None = None
 
 
-async def rotate_refresh(
+async def _use_refresh(
     conn: AsyncConnection, org_id: str, token: str, *, actor: Actor
-) -> Refreshed | None:
-    """A new refresh token for a live session, or None. A reused token revokes its session."""
+) -> LiveSession | None:
+    """Use up an unused refresh token: its live session, or None. A reused token revokes its
+    session."""
     hashed = digest(token)
     session_id = (
         await conn.execute(_USE_REFRESH, {"org": org_id, "hash": hashed})
@@ -167,8 +174,43 @@ async def rotate_refresh(
     live = await live_session(conn, org_id, str(session_id))
     if live is None or live.kind not in {"cli", "console"}:
         return None
+    return live
+
+
+async def rotate_refresh(
+    conn: AsyncConnection,
+    org_id: str,
+    token: str,
+    *,
+    actor: Actor,
+    client_id: str | None = None,
+) -> Refreshed | None:
+    """A new refresh token for a live session, or None. A reused token revokes its session.
+
+    ``client_id``, when the request names one, must be the agent a device-flow session was opened
+    for; an MCP client's session (one with a ``token_audience``) keeps an agent name taken from
+    its registration, not its OAuth ``client_id``, so it is not compared."""
+    live = await _use_refresh(conn, org_id, token, actor=actor)
+    if live is None:
+        return None
+    if (
+        client_id is not None
+        and live.agent_client_id is not None
+        and live.token_audience is None
+        and client_id != live.agent_client_id
+    ):
+        return None
     refresh = await issue_refresh(conn, org_id, live.id)
     return Refreshed(live.user_id, live.id, refresh, live.agent_client_id, live.token_audience)
+
+
+async def session_of_refresh(
+    conn: AsyncConnection, org_id: str, token: str, *, actor: Actor
+) -> str | None:
+    """The live session of an unused refresh token, using the token up without issuing another
+    (``/revoke``); None otherwise. A reused token revokes its session, as on a refresh."""
+    live = await _use_refresh(conn, org_id, token, actor=actor)
+    return None if live is None else live.id
 
 
 # ── device grants (RFC 8628) ─────────────────────────────────────────────────
