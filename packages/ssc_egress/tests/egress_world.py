@@ -26,7 +26,7 @@ SIGNING_KEY = ("egress-" + "test-" + "signing-" + "key-").encode() * 2
 def snapshot(
     version: int = 1,
     *,
-    hosts: tuple[str, ...] = ("api.allowed.test", "*.wild.test"),
+    hosts: tuple[str, ...] = ("*.wild.test", "api.allowed.test"),
     **changes: Any,
 ) -> dict[str, Any]:
     doc: dict[str, Any] = {
