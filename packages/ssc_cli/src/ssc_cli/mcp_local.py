@@ -519,23 +519,65 @@ SHARE_PENDING_NEXT: Final = (
 )
 
 
+SUPERSEDED_REASON: Final = "Superseded by a newer share request from the same requester."
+SHARE_KINDS: Final = frozenset({"agent_share", "widen_audience", "exceed_ceiling"})
+type GrantKey = tuple[str, str, str | None]
+
+
+def grant_keys(grants: list[Body]) -> list[GrantKey]:
+    return [(g["role"], g["subject_kind"], g["subject_id"]) for g in grants]
+
+
+def my_pending_shares(c: ApiClient, env_id: str) -> list[Body]:
+    """The caller's pending share requests on the environment, newest first."""
+    me = c.get_json("/v1/whoami")["subject"]
+    query = urlencode({"state": "pending", "environment_id": env_id, "limit": 200})
+    found = c.get_json(f"/v1/approvals?{query}")["approvals"]
+    return [a for a in found if a["kind"] in SHARE_KINDS and a["requested_by_user_id"] == me]
+
+
+def with_grant(base: list[GrantKey], wanted: GrantKey) -> list[GrantKey]:
+    held = next((g for g in base if (g[1], g[2]) == (wanted[1], wanted[2])), None)
+    if held is not None and RANK[held[0]] >= RANK[wanted[0]]:
+        return base
+    return [g for g in base if (g[1], g[2]) != (wanted[1], wanted[2])] + [wanted]
+
+
+def supersede(c: ApiClient, share: Body, pending: list[Body]) -> list[str]:
+    """Cancel ``share`` and the requests opened with it for the same grants."""
+    same = set(grant_keys(share["payload"]["grants"]))
+    gone = [share["id"]] + [
+        a["id"]
+        for a in pending
+        if a["kind"] != "agent_share" and set(grant_keys(a["payload"].get("grants", []))) == same
+    ]
+    for approval_id in gone:
+        body = {"reason": SUPERSEDED_REASON}
+        c.post_json(f"/v1/approvals/{seg(approval_id)}/cancel", body, fresh_key())
+    return gone
+
+
 def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -> Body:
-    """``PUT`` the grants plus ``who`` at ``role`` as the agent; the API asks for each approval."""
+    """``PUT`` the grants plus ``who`` at ``role`` as the agent; the API asks for each approval.
+    The caller's pending share on the environment is folded in and cancelled (``superseded``)."""
     found = resolve_app(c, ref)
     env_id = environment_id(found, env)
     kind, subject = subject_of(resolved_who(c, who))
     floor = FLOOR[Env(env)].value
-    wanted = (role or floor, kind, subject)
+    wanted: GrantKey = (role or floor, kind, subject)
     if RANK[wanted[0]] < RANK[floor]:
         raise local_error(
             "VALIDATION_FAILED",
             "Below the environment's floor.",
             f"A {wanted[0]!r} grant on {env} gives no access; preview is for builders.",
         )
+    pending: list[Body] | None = None
+    share: Body | None = None
+    superseded: list[str] = []
     attempt = 0
     while True:
         current, etag = c.get_grants(found["id"], env_id)
-        existing = [(g.role, g.subject_kind, g.subject_id) for g in current.grants]
+        existing: list[GrantKey] = [(g.role, g.subject_kind, g.subject_id) for g in current.grants]
         held = next((g for g in existing if (g[1], g[2]) == (kind, subject)), None)
         if held is not None and RANK[held[0]] >= RANK[wanted[0]]:
             return {
@@ -544,7 +586,15 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
                 "grants_version": current.grants_version,
                 "next": f"{who} already has {held[0]} on {env}. Nothing to ask for.",
             }
-        desired = [g for g in existing if (g[1], g[2]) != (kind, subject)] + [wanted]
+        if pending is None:
+            pending = my_pending_shares(c, env_id)
+            share = next((a for a in pending if a["kind"] == "agent_share"), None)
+        base = existing
+        if share is not None and share["payload"]["grants_version"] == current.grants_version:
+            base = grant_keys(share["payload"]["grants"])
+        desired = with_grant(base, wanted)
+        if share is not None and not superseded and set(desired) != set(base):
+            superseded = supersede(c, share, pending)
         grants = [GrantIn(role=r, subject_kind=k, subject_id=s) for r, k, s in desired]
         try:
             out = c.put_grants(found["id"], env_id, grants, etag)
@@ -553,6 +603,7 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
             if e.body.code != "PRECONDITION_STALE" or attempt == SHARE_ATTEMPTS:
                 raise
             continue
+        extra: Body = {"superseded": superseded} if superseded else {}
         if isinstance(out, GrantsPending):
             return {
                 "requested": True,
@@ -561,6 +612,7 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
                 "grants_version": out.grants_version,
                 "approval_ids": out.approval_ids,
                 "requirements": [q.model_dump() for q in out.requirements],
+                **extra,
                 "next": SHARE_PENDING_NEXT,
             }
         return {
@@ -568,6 +620,7 @@ def ask_share(c: ApiClient, *, ref: str, env: str, who: str, role: str | None) -
             "applied": True,
             "environment_id": env_id,
             "grants_version": out.grants_version,
+            **extra,
             "next": f"{who} now has {wanted[0]} on {env}.",
         }
 
@@ -914,7 +967,8 @@ def build_server(
         company data; `exceed_ceiling` per data connection whose ceiling the audience passes)
         and lists them in `requirements`. Other people decide them; the last approval applies
         the change, and the sharing rules stay as they are until then. `idempotency_key` is
-        accepted but not needed: asking again answers the same pending requests."""
+        accepted but not needed: asking again answers the same pending requests. Your pending
+        share on the environment is folded into a new one and cancelled (`superseded`)."""
         del idempotency_key
         return run(open_client, lambda c: ask_share(c, ref=app, env=env, who=who, role=role))
 

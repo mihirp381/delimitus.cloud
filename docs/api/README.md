@@ -481,6 +481,9 @@ stateless, JSON replies. Code: `api/mcp/`.
     applies the change (GA-12 F21). When every approval is already in, the `PUT` applies it and
     the answer is `{requested: false, applied: true, environment_id, grants_version, next}`.
     `idempotency_key` is accepted and not needed: asking again answers the same requests.
+    When the caller already has a pending share on the environment, the new `PUT` holds its
+    grants plus the new one, and that request and those opened with it for the same grants are
+    cancelled first; the answer lists them in `superseded`.
   - `find_groups(name)`: `GET /v1/groups?name=&match=prefix`, the org's groups whose name
     starts with `name`, at most 20.
   - `request_connection(app, connection)`: a `connect_data_source` request on prod; the server

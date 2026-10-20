@@ -361,12 +361,59 @@ async def test_request_share_never_lowers_a_role(fake_api):
     assert all(q.method == "GET" for q in fake_api.seen)
 
 
-def share_app(fake_api: Any, *grants_answers: httpx2.Response) -> tuple[str, str]:
+def share_app(
+    fake_api: Any, *grants_answers: httpx2.Response, pending: list[Any] | None = None
+) -> tuple[str, str]:
     """An app whose prod has one builder grant, answering GET grants in this order."""
     app = {"id": APP_ID, "slug": "a1", "environments": [{"id": ENV_ID, "name": "prod"}]}
     fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
     fake_api.add("GET", f"/v1/apps/{APP_ID}/environments/{ENV_ID}/grants", *grants_answers)
+    fake_api.add("GET", "/v1/whoami", whoami(True))
+    page = {"approvals": pending or [], "next_before": None}
+    fake_api.add("GET", "/v1/approvals", httpx2.Response(200, json=page))
     return APP_ID, f"/v1/apps/{APP_ID}/environments/{ENV_ID}/grants"
+
+
+def pending_share(approval_id: str, kind: str, grants: list[Any], by: str = USR) -> Any:
+    payload: dict[str, Any] = {"grants": grants}
+    if kind == "agent_share":
+        payload["grants_version"] = 3
+    return {"id": approval_id, "kind": kind, "requested_by_user_id": by, "payload": payload}
+
+
+async def test_a_second_share_supersedes_the_pending_one(fake_api):
+    held = {"role": "builder", "subject_kind": "user", "subject_id": USR}
+    first = {"role": "user", "subject_kind": "user", "subject_id": "usr_" + "b" * 20}
+    second = {"role": "user", "subject_kind": "user", "subject_id": "usr_" + "c" * 20}
+    pending = [
+        pending_share("apr_old", "agent_share", [held, first]),
+        pending_share("apr_wide", "widen_audience", [held, first]),
+        pending_share("apr_else", "agent_share", [held], by="usr_" + "d" * 20),
+    ]
+    app_id, path = share_app(fake_api, grants_at(3), pending=pending)
+    for gone in ("apr_old", "apr_wide"):
+        fake_api.add("POST", f"/v1/approvals/{gone}/cancel", httpx2.Response(200, json={}))
+    asked = {"environment_id": ENV_ID, "grants_version": 3, "approval_ids": ["apr_new"]}
+    fake_api.add("PUT", path, httpx2.Response(202, json=asked))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool(
+            "request_share", {"app": app_id, "env": "prod", "who": second["subject_id"]}
+        )
+    assert not r.is_error, r.content
+    assert r.structured_content["superseded"] == ["apr_old", "apr_wide"]
+    posts = [q for q in fake_api.seen if q.method == "POST"]
+    assert [q.url.path for q in posts] == [
+        "/v1/approvals/apr_old/cancel",
+        "/v1/approvals/apr_wide/cancel",
+    ]
+    (put,) = [q for q in fake_api.seen if q.method == "PUT"]
+    assert json.loads(put.content)["grants"] == [held, first, second]
+    listed = next(q for q in fake_api.seen if q.url.path == "/v1/approvals")
+    assert dict(listed.url.params) == {
+        "state": "pending",
+        "environment_id": ENV_ID,
+        "limit": "200",
+    }
 
 
 def grants_at(version: int) -> httpx2.Response:

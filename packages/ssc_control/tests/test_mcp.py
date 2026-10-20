@@ -881,6 +881,63 @@ async def test_request_share_on_a_data_connected_app_asks_for_every_approval(
     assert "already has user" in again.structured_content["next"]
 
 
+def pending_of(world: World, env: str) -> list[tuple[str, str]]:
+    r = httpx2.get(
+        f"{world.url}/v1/approvals",
+        params={"state": "pending", "environment_id": env},
+        headers={"Authorization": f"Bearer {world.human}"},
+    )
+    assert r.status_code == 200, r.text
+    return sorted((a["kind"], a["id"]) for a in r.json()["approvals"])
+
+
+async def test_a_second_share_supersedes_the_pending_one(world: World) -> None:
+    app = fresh_app(world)
+    prod = env_id(app, "prod")
+    first, second = (add_account(world.dsns.app, world.org.org_id, "member") for _ in range(2))
+    async with session(world.url, world.agent) as client:
+        one = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": first}
+        )
+        two = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": second}
+        )
+        again = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": second}
+        )
+    (old,) = one.structured_content["approval_ids"]
+    (new,) = two.structured_content["approval_ids"]
+    assert two.structured_content["superseded"] == [old]
+    assert approval_row(world, old)[2] == "cancelled"
+    assert pending_of(world, prod) == [("agent_share", new)]
+    grants = approval_row(world, new)[4]["grants"]
+    assert sorted(g["subject_id"] for g in grants) == sorted([first, second])
+    assert again.structured_content["approval_ids"] == [new]
+    assert "superseded" not in again.structured_content
+    assert approve(world, new)["applied"] == "applied"
+    after = grants_of(world, prod, app["id"])
+    assert sorted(g["subject_id"] for g in after["grants"]) == sorted([first, second])
+
+
+async def test_a_second_share_supersedes_every_request_of_the_first(world: World) -> None:
+    app = fresh_app(world)
+    prod = env_id(app, "prod")
+    ask = {"environment_id": prod, "kind": "connect_data_source", "subject_key": "warehouse"}
+    human_post(world, "/v1/approvals", ask)
+    first, second = (add_account(world.dsns.app, world.org.org_id, "member") for _ in range(2))
+    async with session(world.url, world.agent) as client:
+        one = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": first}
+        )
+        two = await client.call_tool(
+            "request_share", {"app": app["slug"], "env": "prod", "who": second}
+        )
+    old = one.structured_content["approval_ids"]
+    assert sorted(two.structured_content["superseded"]) == sorted(old)
+    pending = [k for k, _ in pending_of(world, prod) if k != "connect_data_source"]
+    assert pending == ["agent_share", "widen_audience"]
+
+
 async def test_request_share_past_a_ceiling_asks_the_connection_owner(world: World) -> None:
     app = fresh_app(world)
     prod = env_id(app, "prod")
