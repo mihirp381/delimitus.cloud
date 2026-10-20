@@ -63,7 +63,7 @@ def test_a_public_name_is_resolved_by_the_lookup_and_shaped_by_the_original() ->
     "host",
     [
         "10.21.0.5",
-        "34.134.19.137",
+        "203.0.113.7",
         "::1",
         "localhost",
         "metadata.google.internal",

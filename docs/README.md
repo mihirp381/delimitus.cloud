@@ -45,7 +45,6 @@ checks, use [CONTRIBUTING.md](../CONTRIBUTING.md); for code navigation, use the
 | [Support and on call](runbooks/ssc-062-support-and-on-call.md) | Alerts, diagnosis, escalation, and status notes. |
 | [Cost reconciliation](runbooks/ssc-096-cost-reconciliation.md) | Compare usage records with cloud billing. |
 | [Kill switch drill](kill-switch-drill.md) | Measure app shutdown and revocation. |
-| [Second test customer](runbooks/ssc-101-test-customer.md) | Set up another cell and verify customer isolation. |
 
 ## Known limits
 

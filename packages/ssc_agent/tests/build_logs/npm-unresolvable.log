@@ -9,9 +9,9 @@
 #14 npm install
 #14 0.256 npm warn config production Use `--omit=dev` instead.
 #14 0.775 npm error code E404
-#14 0.775 npm error 404 Not Found - GET https://registry.npmjs.org/this-package-does-not-exist-ristretto-control - Not found
+#14 0.775 npm error 404 Not Found - GET https://registry.npmjs.org/this-package-does-not-exist-ssc-fixture - Not found
 #14 0.775 npm error 404
-#14 0.775 npm error 404  The requested resource 'this-package-does-not-exist-ristretto-control@^9.9.9' could not be found or you do not have permission to access it.
+#14 0.775 npm error 404  The requested resource 'this-package-does-not-exist-ssc-fixture@^9.9.9' could not be found or you do not have permission to access it.
 #14 0.775 npm error 404
 #14 0.775 npm error 404 Note that you can also install from a
 #14 0.775 npm error 404 tarball, folder, http url, or git url.
@@ -24,9 +24,9 @@
  > npm install:
 0.256 npm warn config production Use `--omit=dev` instead.
 0.775 npm error code E404
-0.775 npm error 404 Not Found - GET https://registry.npmjs.org/this-package-does-not-exist-ristretto-control - Not found
+0.775 npm error 404 Not Found - GET https://registry.npmjs.org/this-package-does-not-exist-ssc-fixture - Not found
 0.775 npm error 404
-0.775 npm error 404  The requested resource 'this-package-does-not-exist-ristretto-control@^9.9.9' could not be found or you do not have permission to access it.
+0.775 npm error 404  The requested resource 'this-package-does-not-exist-ssc-fixture@^9.9.9' could not be found or you do not have permission to access it.
 0.775 npm error 404
 0.775 npm error 404 Note that you can also install from a
 0.775 npm error 404 tarball, folder, http url, or git url.

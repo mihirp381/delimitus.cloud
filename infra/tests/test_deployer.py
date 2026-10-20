@@ -130,7 +130,7 @@ def _deployer(
         [LABEL, "database=false"],
         [LABEL, "--yes"],
         [LABEL, "Database"],
-        ["ristretto-506621", "database"],
+        ["forbidden-000000", "database"],
         ["Testcell05", "database"],
         ["../testcell05", "egress"],
         ["testcell05 --target x", "egress"],

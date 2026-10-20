@@ -1,9 +1,9 @@
 /**
- * Layer 1: raw colour scales. The neutral ramp is copied from the Delimitus UI tokens
- * (Ristretto-python-conversion `frontend/ui/src/tokens/primitives.ts` at ef688e9b); the rest are
- * the landing page's colours (`landing/index.html`, `:root`), so the console and delimitus.com
- * read as one product. The landing is light only: each `*_NIGHT` scale is the same hue taken to
- * a lighter step for text on the dark surfaces, with a deep tint for its soft background.
+ * Layer 1: raw colour scales. Colours and type come from the Delimitus UI tokens: the neutral ramp
+ * from those, the rest from the landing page's colours (`landing/index.html`, `:root`), so the
+ * console and delimitus.com read as one product. The landing is light only: each `*_NIGHT` scale
+ * is the same hue taken to a lighter step for text on the dark surfaces, with a deep tint for its
+ * soft background.
  *
  * No component may reference this file. `test/tokens.test.ts` scans the source to enforce it,
  * and this is the only place a hex literal is allowed.
