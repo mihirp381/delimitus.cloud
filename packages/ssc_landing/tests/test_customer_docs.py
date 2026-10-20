@@ -31,16 +31,20 @@ def test_the_kill_drill_creates_the_app_before_deploying_it() -> None:
 
 
 README = DOCS.parent / "README.md"
+CONTRIBUTING = DOCS.parent / "CONTRIBUTING.md"
 
 
 def _section(text: str, heading: str) -> str:
     return text.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
 
 
-def test_the_readme_gives_the_customer_path_before_the_source_path() -> None:
+def test_the_readme_gives_the_customer_path_and_contributing_the_source_path() -> None:
     text = README.read_text(encoding="utf-8")
-    assert text.index("\n## Using SSC\n") < text.index("\n## Get started from source\n")
-    section = _section(text, "## Using SSC")
+    assert "## Get started from source" not in text
+    assert "git clone" not in text
+    assert "\n### Get started from source\n" in CONTRIBUTING.read_text(encoding="utf-8")
+    assert "(CONTRIBUTING.md)" in text
+    section = _section(text, "## Quick start")
     for fact in ("org id", "Okta", "console"):
         assert fact in section, fact
     steps = [

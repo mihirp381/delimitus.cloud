@@ -13,7 +13,9 @@ Node helpers, and infrastructure have their own tooling. Start with the
 | Node.js | CI uses 24.x. The console requires `^22.22.2`, `^24.15.0`, or `>=26.0.0`; helpers require Node 22+. |
 | Docker | Running for database and browser tests; the root suite uses PostgreSQL 17 and 18. |
 
-Run from the repository root:
+### Get started from source
+
+Clone the repository, then run from its root:
 
 ```sh
 uv sync --all-packages --locked
@@ -171,6 +173,26 @@ uv run python tools/lock_age_check.py infra/uv.lock
 The [infrastructure guide](infra/README.md) covers cloud configuration and live checks.
 
 ## Repository and dependency rules
+
+| Path | Purpose |
+| --- | --- |
+| [packages/](packages/) | Python workspace: contracts, shared code, control plane, cell services, CLI, app helper, and site hosts. |
+| [console/](console/README.md) | React admin console, generated API client, unit tests, and browser tests. |
+| [landing/](landing/README.md) | Public page, pilot request form assets, claims, and browser tests. |
+| [helpers/node/](helpers/node/) | Node helpers for identity, reconnecting streams, files, and data queries. |
+| [infra/](infra/README.md) | Separate Pulumi project for the platform and customer cells. |
+| [conformance/](conformance/) | Shared contract tests, protocol vectors, build fixtures, and runtime probes. |
+| [e2e/isolation/](e2e/isolation/README.md) | Browser and API tests of customer isolation. |
+| [gates/](gates/) | Planted violations that prove the CI gates catch failures. |
+| [tools/](tools/) | Development stack, dependency checks, API checks, and release tooling. |
+| [docs/](docs/README.md) | Architecture, contracts, decisions, runbooks, pilot notes, and known limits. |
+| [.github/](.github/) | CI, nightly checks, the release workflow for the CLI and the app helpers, and the preview deploy action. |
+
+The root [pyproject.toml](pyproject.toml) defines the workspace and quality gates;
+[uv.lock](uv.lock) records its dependencies. Infrastructure has its own project file and
+lockfile. For cloud deployment, use the [infrastructure guide](infra/README.md) and
+[control plane runbook](docs/runbooks/ssc-064-control-plane.md); for support and the rest of the
+operating procedures, start at the [documentation index](docs/README.md).
 
 - Keep product Python code in `packages/<package>/src/<module>/`, with tests in that package's
   `tests/`. Shared black-box checks and vectors belong in `conformance/`; operational
