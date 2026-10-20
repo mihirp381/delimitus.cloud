@@ -16,6 +16,8 @@ job) brings them together, one step per job like ``create.create_step``:
    ``warm=false``, record its execution and what it sets.
 2. a run in flight: read it. Running: look again in ``POLL_SECONDS``. Failed: after
    ``MAX_ATTEMPTS`` attempts ``CELL_DEPLOYER_FAILED``, before that another run after a back-off.
+   A run that cannot be read counts as running, and running (or unreadable) past
+   ``RUN_DEADLINE_SECONDS`` since it was recorded counts as failed.
    Succeeded: ``applied`` is what it set; if the admin changed ``wanted`` meanwhile, another run.
 
 With no deployer configured it fails at once with ``CELL_DEPLOYER_UNAVAILABLE``; a job that runs
@@ -50,6 +52,10 @@ from ssc_control.db.bind import bound_org
 from ssc_control.worker_ports import Ports
 
 log = logging.getLogger(__name__)
+
+RUN_DEADLINE_SECONDS: Final = 3 * 3600.0
+"""How long after it was recorded a run may stay running or unreadable before it counts as
+failed. A Cloud Run job execution has its own, far shorter, task timeout."""
 
 TARGET_KIND: Final = "warm"
 MAX_ENVIRONMENTS: Final = 200
@@ -99,6 +105,11 @@ _AGAIN = text("update ssc.warm_gateway set attempts = 0, updated_at = now() wher
 _RETRY = text(
     "update ssc.warm_gateway set execution = null, execution_wants = null, last_error = :error, "
     "updated_at = now() where org_id = :org and execution is not distinct from cast(:exec as text)"
+)
+# ``updated_at`` is set when the run is recorded and not again while it is polled.
+_OVERDUE = text(
+    "select updated_at < now() - make_interval(secs => cast(:secs as double precision)) "
+    "from ssc.warm_gateway where org_id = :org and execution = :exec"
 )
 _FAILED = text(
     "update ssc.warm_gateway set execution = null, execution_wants = null, failure_code = :code, "
@@ -294,13 +305,18 @@ async def _poll(ports: Ports, org_id: str, execution: str) -> str:
     deployer = ports.cell_deployer
     if deployer is None:
         raise AssertionError("checked by gateway_step")
+    unread: str | None = None
     try:
         status = await deployer.status(execution)
     except CellDeployerError as exc:
         log.warning("cell deployer status unknown", extra={"org_id": org_id, "error": str(exc)})
-        status = "running"
-    if status == "failed":
-        return await _attempt_failed(ports, org_id, execution, "the deployer run failed")
+        status, unread = "running", f"the run could not be read: {exc}"
+    failed = "the deployer run failed" if status == "failed" else None
+    if status == "running" and await _overdue(ports, org_id, execution):
+        failed = unread or "the run did not finish in time"
+        log.warning("cell deployer run overdue", extra={"org_id": org_id, "error": failed})
+    if failed is not None:
+        return await _attempt_failed(ports, org_id, execution, failed)
     params = {"org": org_id, "exec": execution}
     async with bound_org(ports.engine, org_id) as conn:
         if status == "running":
@@ -318,6 +334,13 @@ async def _poll(ports: Ports, org_id: str, execution: str) -> str:
             await defer_warm_gateway(conn, org_id=org_id)
             return "turning_on" if wanted else "turning_off"
     return "on" if applied else "off"
+
+
+async def _overdue(ports: Ports, org_id: str, execution: str) -> bool:
+    """Whether ``execution`` was recorded more than ``RUN_DEADLINE_SECONDS`` ago."""
+    params = {"org": org_id, "exec": execution, "secs": RUN_DEADLINE_SECONDS}
+    async with bound_org(ports.engine, org_id) as conn:
+        return bool((await conn.execute(_OVERDUE, params)).scalar())
 
 
 async def _attempt_failed(ports: Ports, org_id: str, execution: str | None, error: str) -> str:

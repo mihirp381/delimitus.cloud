@@ -56,7 +56,7 @@ from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.cell import create, tasks, warm
 from ssc_control.cell import jobs as cell_jobs
-from ssc_control.cell.deployer import FakeCellDeployer
+from ssc_control.cell.deployer import CellDeployerError, ExecutionStatus, FakeCellDeployer
 from ssc_control.db import bound_org
 from ssc_control.metrics.warm_hint import WarmHint, hint_working_days, warm_hints, working_days
 from ssc_control.runtime.fake import changed
@@ -293,6 +293,45 @@ async def test_gateway_runs_that_keep_failing_end_failed(cell: Warm) -> None:
     assert await cell.step() == "turning_on"
     cell.fake.finish()
     assert await cell.step() == "on"
+
+
+class Unreadable(FakeCellDeployer):
+    """Its runs start, but their status cannot be read: a 403, a 5xx, a lost execution."""
+
+    async def status(self, execution: str) -> ExecutionStatus:
+        raise CellDeployerError("cell deployer status: HTTP 403")
+
+
+async def test_an_unreadable_gateway_run_is_polled_until_the_deadline_then_fails(
+    cell: Warm,
+) -> None:
+    b = cell.b
+    cell.ports = replace(cell.ports, cell_deployer=Unreadable())
+    assert put_warm(b, [], gateway=True, shown=10).status_code == 200
+    assert await cell.step() == "turning_on"
+    for _ in range(2):
+        assert await cell.step() == "turning_on"
+    (row,) = rows_of(b.dsn, b.w.org, "select * from ssc.warm_gateway")
+    assert (row["attempts"], row["failure_code"]) == (1, None)
+    assert row["execution"] is not None
+    for attempt in range(1, create.MAX_ATTEMPTS + 1):
+        execute(
+            b.dsn,
+            b.w.org,
+            "update ssc.warm_gateway set updated_at = now() - make_interval(secs => %s)",
+            warm.RUN_DEADLINE_SECONDS + 60,
+        )
+        if attempt < create.MAX_ATTEMPTS:
+            assert await cell.step() == "turning_on"
+            (row,) = rows_of(b.dsn, b.w.org, "select * from ssc.warm_gateway")
+            assert (row["attempts"], row["execution"]) == (attempt, None)
+            assert row["last_error"] == (
+                "the run could not be read: cell deployer status: HTTP 403"
+            )
+            assert await cell.step() == "turning_on"
+    assert await cell.step() == "failed"
+    gateway = get(b, "/v1/warm", b.t.admin).json()["gateway"]
+    assert gateway == {"warm": True, "state": "failed", "failure_code": "CELL_DEPLOYER_FAILED"}
 
 
 async def test_a_gateway_job_out_of_attempts_ends_failed_not_turning_on(

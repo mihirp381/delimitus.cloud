@@ -8,9 +8,12 @@ Each step locks the resource's row, does one thing and, unless the resource is `
    another run next time; the deployer waits out or recovers from the first (its state lock).
 2. ``creating`` with a run: read it. Running: look again in ``POLL_SECONDS``. Failed: after
    ``MAX_ATTEMPTS`` attempts the resource is ``failed`` with ``CELL_DEPLOYER_FAILED``, before
-   that a new run after a back-off. Succeeded: ask the cell whether the resource is there to
-   use (``verify``). It is: ``ready``. It is not: the attempt failed like a failed run, with the
-   cell's reason in ``last_error``, and ``CELL_RESOURCE_UNVERIFIED`` once the attempts are spent.
+   that a new run after a back-off. A run that cannot be read counts as running, and running
+   (or unreadable) past ``RUN_DEADLINE_SECONDS`` since the resource's first attempt counts as
+   failed, so a lost or endless run cannot keep the resource and its waiters for ever.
+   Succeeded: ask the cell whether the resource is there to use (``verify``). It is: ``ready``.
+   It is not: the attempt failed like a failed run, with the cell's reason in ``last_error``,
+   and ``CELL_RESOURCE_UNVERIFIED`` once the attempts are spent.
    ``ready`` is final, so it is never written on the deployer's word alone.
 3. ``ready`` or ``failed``: one transaction audits it (only when this step made it so), in the
    name of whoever asked for the resource, and re-defers every deployment waiting for it. The
@@ -51,6 +54,9 @@ CELL_DEPLOYER_FAILED: Final = "CELL_DEPLOYER_FAILED"
 CELL_DEPLOYER_UNAVAILABLE: Final = "CELL_DEPLOYER_UNAVAILABLE"
 CELL_RESOURCE_STALLED: Final = "CELL_RESOURCE_STALLED"
 CELL_RESOURCE_UNVERIFIED: Final = "CELL_RESOURCE_UNVERIFIED"
+RUN_DEADLINE_SECONDS: Final = 3 * 3600.0
+"""How long after its first attempt a resource's run may stay running or unreadable before the
+attempt counts as failed. A Cloud Run job execution has its own, far shorter, task timeout."""
 
 _LABEL = text("select cell_label from ssc.org where id = :org")
 _ATTEMPT = text(
@@ -66,6 +72,10 @@ _RETRY = text(
     "update ssc.cell_resource set execution = null, last_error = :error "
     "where org_id = :org and resource = :res and state = 'creating' "
     "and execution is not distinct from cast(:exec as text)"
+)
+_OVERDUE = text(
+    "select started_at < now() - make_interval(secs => cast(:secs as double precision)) "
+    "from ssc.cell_resource where org_id = :org and resource = :res"
 )
 _READY = text(
     "update ssc.cell_resource set state = 'ready', ready_at = now(), last_error = null "
@@ -145,11 +155,16 @@ async def _poll(ports: Ports, org_id: str, resource: CellResource, execution: st
     deployer = ports.cell_deployer
     if deployer is None:
         raise AssertionError("checked by create_step")
+    unread: str | None = None
     try:
         status = await deployer.status(execution)
     except CellDeployerError as exc:
         log.warning("cell deployer status unknown", extra={"org_id": org_id, "error": str(exc)})
-        status = "running"
+        status, unread = "running", f"the run could not be read: {exc}"
+    if status == "running" and await _overdue(ports, org_id, resource):
+        error = unread or "the run did not finish in time"
+        log.warning("cell deployer run overdue", extra={"org_id": org_id, "error": error})
+        return await _attempt_failed(ports, org_id, resource, execution, error)
     if status == "failed":
         return await _attempt_failed(ports, org_id, resource, execution, "the deployer run failed")
     if status == "succeeded":
@@ -180,6 +195,13 @@ async def _poll(ports: Ports, org_id: str, resource: CellResource, execution: st
         await wake(conn, org_id, resource)
         await _audit(conn, org_id, row, AuditAction.CELL_RESOURCE_READY, "ready", None)
     return CellResourceState.READY.value
+
+
+async def _overdue(ports: Ports, org_id: str, resource: CellResource) -> bool:
+    """Whether the resource's first attempt began more than ``RUN_DEADLINE_SECONDS`` ago."""
+    params = {"org": org_id, "res": resource.value, "secs": RUN_DEADLINE_SECONDS}
+    async with bound_org(ports.engine, org_id) as conn:
+        return bool((await conn.execute(_OVERDUE, params)).scalar())
 
 
 async def _attempt_failed(  # noqa: PLR0913, PLR0917

@@ -77,6 +77,7 @@ from ssc_control.cell.deployer import (
     DEPLOYER_JOB_ENV,
     CellDeployerError,
     CloudRunCellDeployer,
+    ExecutionStatus,
     FakeCellDeployer,
     cell_deployer_from_env,
     deployer_args,
@@ -559,6 +560,72 @@ async def test_a_deployer_that_will_not_start_is_retried(cell: Cell) -> None:
     assert row["last_error"] == "cell deployer: HTTP 503"
     assert await cell.step() == "creating"
     assert len(cell.fake.runs) == 1
+
+
+class Unreadable(FakeCellDeployer):
+    """Its runs start, but their status cannot be read: a 403, a 5xx, a lost execution."""
+
+    async def status(self, execution: str) -> ExecutionStatus:
+        raise CellDeployerError("cell deployer status: HTTP 403")
+
+
+def past_the_deadline(b: Bench, resource: CellResource = DB) -> None:
+    execute(
+        b.dsn,
+        b.w.org,
+        "update ssc.cell_resource set started_at = now() - make_interval(secs => %s) "
+        "where resource = %s",
+        create.RUN_DEADLINE_SECONDS + 60,
+        resource.value,
+    )
+
+
+async def test_an_unreadable_run_is_polled_until_the_deadline_then_fails_its_waiters(
+    cell: Cell,
+) -> None:
+    b = cell.b
+    cell.ports = replace(cell.ports, cell_deployer=Unreadable())
+    op = await stateful_deploy(cell, b.w.preview)
+    assert await run(b, op, cell.ports) == "running"
+    assert await cell.step() == "creating"
+    # Within the deadline an unreadable run is looked at again, and again.
+    for _ in range(2):
+        assert await cell.step() == "creating"
+        row = resources_of(b)["database"]
+        assert (row["state"], row["attempts"], row["failure_code"]) == ("creating", 1, None)
+        assert row["execution"] is not None
+        assert len(jobs(b, create_lock(b))) == 1
+    # Past it, each poll ends the attempt; after the last attempt the resource fails.
+    past_the_deadline(b)
+    for attempt in range(1, create.MAX_ATTEMPTS):
+        assert await cell.step() == "creating"
+        row = resources_of(b)["database"]
+        assert (row["attempts"], row["execution"]) == (attempt, None)
+        assert row["last_error"] == "the run could not be read: cell deployer status: HTTP 403"
+        assert await cell.step() == "creating"
+    assert await cell.step() == "failed"
+    row = resources_of(b)["database"]
+    assert (row["state"], row["failure_code"]) == ("failed", create.CELL_DEPLOYER_FAILED)
+    assert row["attempts"] == create.MAX_ATTEMPTS
+    assert cell_audit(b)[-1]["action"] == "cell.resource_failed"
+    assert len(jobs(b, f"dep:{op}")) == 1
+    assert await run(b, op, cell.ports) == "failed"
+    assert operation(b, op)["failure_code"] == CELL_RESOURCE_FAILED
+    assert waiters(b) == []
+
+
+async def test_a_run_still_running_past_the_deadline_ends_its_attempt(cell: Cell) -> None:
+    b = cell.b
+    op = await stateful_deploy(cell, b.w.preview)
+    assert await run(b, op, cell.ports) == "running"
+    assert await cell.step() == "creating"
+    past_the_deadline(b)
+    assert await cell.step() == "creating"
+    row = resources_of(b)["database"]
+    assert (row["attempts"], row["execution"]) == (1, None)
+    assert row["last_error"] == "the run did not finish in time"
+    assert await cell.step() == "creating"
+    assert len(cell.fake.runs) == 2
 
 
 # ── a run that ends well is not believed ─────────────────────────────────────
