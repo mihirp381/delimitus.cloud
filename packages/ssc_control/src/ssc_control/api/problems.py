@@ -106,6 +106,85 @@ class RequestIdMiddleware:
         await self.app(scope, receive, send_with_id)
 
 
+class _BodyTooLargeError(Exception):
+    """Raised into the app by :class:`BodyLimitMiddleware` once the body passes the limit."""
+
+
+def _declared_length(scope: Scope) -> int | None:
+    for name, value in scope.get("headers") or ():
+        if name.lower() == b"content-length":
+            text = value.decode("latin-1").strip()
+            return int(text) if text.isdigit() else None
+    return None
+
+
+class BodyLimitMiddleware:
+    """Refuses a request body over ``max_bytes`` with ``REQUEST_TOO_LARGE``.
+
+    A declared ``Content-Length`` over the limit is refused before the app runs; otherwise the
+    body is counted as the app reads it, and past the limit the app's reads fail, whatever it
+    answers is dropped and the problem is sent instead (if the app had already started its
+    response, the response is cut short). Paths under ``exempt`` carry their own limits. Add it
+    before ``RequestIdMiddleware`` so it runs inside it and the problem carries the request id.
+    """
+
+    def __init__(self, app: ASGIApp, *, max_bytes: int, exempt: tuple[str, ...] = ()) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+        self.exempt = exempt
+
+    def _is_exempt(self, path: str) -> bool:
+        return any(path == p or path.startswith(p.rstrip("/") + "/") for p in self.exempt)
+
+    async def _refuse(self, scope: Scope, receive: Receive, send: Send, reason: str) -> None:
+        response = render(
+            Request(scope),
+            ErrorCode.REQUEST_TOO_LARGE,
+            evidence={"reason": reason, "limit": self.max_bytes},
+        )
+        await response(scope, receive, send)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http" or self._is_exempt(str(scope.get("path", ""))):
+            await self.app(scope, receive, send)
+            return
+        declared = _declared_length(scope)
+        if declared is not None and declared > self.max_bytes:
+            await self._refuse(scope, receive, send, "content_length")
+            return
+        received = 0
+        over = False
+        started = False
+
+        async def counted_receive() -> Message:
+            nonlocal received, over
+            if over:
+                raise _BodyTooLargeError
+            message = await receive()
+            if message.get("type") == "http.request":
+                received += len(message.get("body") or b"")
+                if received > self.max_bytes:
+                    over = True
+                    raise _BodyTooLargeError
+            return message
+
+        async def guarded_send(message: Message) -> None:
+            nonlocal started
+            if over:
+                return
+            if message.get("type") == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, counted_receive, guarded_send)
+        except Exception:
+            if not over:
+                raise
+        if over and not started:
+            await self._refuse(scope, receive, send, "streamed")
+
+
 def render(
     request: Request,
     code: ErrorCode,

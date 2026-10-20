@@ -2914,7 +2914,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -4228,6 +4228,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -4292,6 +4301,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4379,6 +4397,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -4459,6 +4486,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
@@ -4516,6 +4552,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4630,6 +4675,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -4690,6 +4744,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4788,6 +4851,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -4872,6 +4944,15 @@ export interface operations {
             };
             /** @description `IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING` */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4970,6 +5051,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -5022,6 +5112,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5109,6 +5208,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE` */
             422: {
                 headers: {
@@ -5160,6 +5268,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5267,7 +5384,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `BUNDLE_TOO_LARGE` */
+            /** @description `REQUEST_TOO_LARGE`, `BUNDLE_TOO_LARGE` */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -5346,6 +5463,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5441,7 +5567,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `BUNDLE_TOO_LARGE` */
+            /** @description `REQUEST_TOO_LARGE`, `BUNDLE_TOO_LARGE` */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -5550,6 +5676,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `CONFIRMATION_MISMATCH` */
             422: {
                 headers: {
@@ -5611,6 +5746,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5705,6 +5849,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -5769,6 +5922,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5868,6 +6030,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
@@ -5929,6 +6100,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6018,6 +6198,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -6080,6 +6269,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6165,6 +6363,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -6235,6 +6442,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6339,6 +6555,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -6411,6 +6636,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6512,6 +6746,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
@@ -6564,6 +6807,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6674,6 +6926,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
@@ -6735,6 +6996,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6830,6 +7100,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -6910,6 +7189,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -6971,6 +7259,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7040,6 +7337,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7136,6 +7442,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -7225,6 +7540,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -7291,6 +7615,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7387,6 +7720,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -7457,6 +7799,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -7518,6 +7869,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7617,6 +7977,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -7707,6 +8076,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -7778,6 +8156,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -7838,6 +8225,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7925,6 +8321,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -7992,6 +8397,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8090,6 +8504,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -8151,6 +8574,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8222,6 +8654,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8329,6 +8770,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
@@ -8408,6 +8858,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -8469,6 +8928,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8545,6 +9013,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -8606,6 +9083,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8680,6 +9166,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -8729,6 +9224,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8814,6 +9318,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -8854,6 +9367,15 @@ export interface operations {
             };
             /** @description `UNAUTHENTICATED` */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8928,6 +9450,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -8977,6 +9508,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9064,6 +9604,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `CONNECTOR_UNAVAILABLE` */
             422: {
                 headers: {
@@ -9124,6 +9673,15 @@ export interface operations {
             };
             /** @description `NOT_FOUND` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9202,6 +9760,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED` */
             422: {
                 headers: {
@@ -9249,6 +9816,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -9289,6 +9865,15 @@ export interface operations {
             };
             /** @description `UNAUTHENTICATED` */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9352,6 +9937,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9427,6 +10021,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -9479,6 +10082,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9546,6 +10158,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -9604,6 +10225,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -9644,6 +10274,15 @@ export interface operations {
             };
             /** @description `UNAUTHENTICATED` */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9711,6 +10350,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -9767,6 +10415,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -9816,6 +10473,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9914,6 +10580,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
@@ -9966,6 +10641,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10032,6 +10716,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
@@ -10081,6 +10774,15 @@ export interface operations {
             };
             /** @description `FORBIDDEN` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10148,6 +10850,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
@@ -10188,6 +10899,15 @@ export interface operations {
             };
             /** @description `UNAUTHENTICATED` */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

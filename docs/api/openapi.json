@@ -3580,6 +3580,7 @@
           "NOT_FOUND",
           "METHOD_NOT_ALLOWED",
           "UNSUPPORTED_MEDIA_TYPE",
+          "REQUEST_TOO_LARGE",
           "UNAUTHENTICATED",
           "FORBIDDEN",
           "RATE_LIMITED",
@@ -6658,6 +6659,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -6751,6 +6762,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -6862,6 +6883,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `ALREADY_EXISTS`, `LAST_ORG_ADMIN`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -6971,6 +7002,16 @@
               }
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -7118,6 +7159,16 @@
             },
             "description": "`FORBIDDEN`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -7256,6 +7307,16 @@
             },
             "description": "`PRECONDITION_STALE`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -7339,6 +7400,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -7470,6 +7541,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -7599,6 +7680,16 @@
               }
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -7730,6 +7821,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APPROVAL_NOT_PENDING`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -7812,6 +7913,16 @@
               }
             },
             "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -7920,6 +8031,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `ALREADY_EXISTS`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -7992,6 +8113,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -8141,7 +8272,7 @@
                 }
               }
             },
-            "description": "`BUNDLE_TOO_LARGE`"
+            "description": "`REQUEST_TOO_LARGE`, `BUNDLE_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -8245,6 +8376,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -8384,7 +8525,7 @@
                 }
               }
             },
-            "description": "`BUNDLE_TOO_LARGE`"
+            "description": "`REQUEST_TOO_LARGE`, `BUNDLE_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -8526,6 +8667,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_OPERATION_IN_FLIGHT`, `KILL_SWITCH_IN_FLIGHT`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -8619,6 +8770,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -8740,6 +8901,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_ALREADY_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`, `APP_DELETING`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -8852,6 +9023,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -8993,6 +9174,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `BUILD_IN_FLIGHT`, `BUNDLE_NOT_UPLOADED`, `PROD_REQUIRES_PROMOTE`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -9086,6 +9277,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -9190,6 +9391,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -9313,6 +9524,16 @@
             },
             "description": "`APPROVAL_REQUIRED`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -9427,6 +9648,16 @@
             },
             "description": "`CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -9530,6 +9761,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -9671,6 +9912,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -9786,6 +10037,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -9943,6 +10204,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`, `RELEASE_ENVIRONMENT_MISMATCH`, `SCHEMA_AHEAD`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -10025,6 +10296,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -10192,6 +10473,16 @@
             },
             "description": "`PRECONDITION_STALE`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -10285,6 +10576,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -10462,6 +10763,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -10578,6 +10889,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -10671,6 +10992,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -10775,6 +11106,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -10916,6 +11257,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `SCHEDULE_DELETED`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -11056,6 +11407,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `SCHEDULE_DELETED`, `SCHEDULE_CANNOT_RESUME`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -11190,6 +11551,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -11329,6 +11700,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `SCHEDULE_DELETED`, `APP_NOT_ACTIVE`, `TIMER_RUN_IN_FLIGHT`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -11442,6 +11823,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -11535,6 +11926,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -11671,6 +12072,16 @@
               }
             },
             "description": "`APP_NOT_ACTIVE`, `DEPLOYMENT_IN_FLIGHT`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -11814,6 +12225,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -11927,6 +12348,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -12003,6 +12434,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -12085,6 +12526,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -12187,6 +12638,16 @@
               }
             },
             "description": "`REPOSITORY_NOT_INSTALLED`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -12328,6 +12789,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `APP_NOT_ACTIVE`, `KILL_SWITCH_IN_FLIGHT`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -12422,6 +12893,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -12515,6 +12996,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -12656,6 +13147,16 @@
             },
             "description": "`PRECONDITION_STALE`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -12780,6 +13281,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -12872,6 +13383,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -13092,6 +13613,16 @@
             },
             "description": "`FORBIDDEN`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -13298,6 +13829,16 @@
             },
             "description": "`FORBIDDEN`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -13381,6 +13922,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -13442,6 +13993,16 @@
               }
             },
             "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -13557,6 +14118,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -13608,6 +14179,16 @@
               }
             },
             "description": "`UNAUTHENTICATED`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -13693,6 +14274,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -13754,6 +14345,16 @@
               }
             },
             "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -13863,6 +14464,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`, `ALREADY_EXISTS`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -13946,6 +14557,16 @@
               }
             },
             "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -14039,6 +14660,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -14091,6 +14722,16 @@
             },
             "description": "`UNAUTHENTICATED`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -14142,6 +14783,16 @@
               }
             },
             "description": "`UNAUTHENTICATED`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -14229,6 +14880,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -14313,6 +14974,16 @@
             },
             "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -14389,6 +15060,16 @@
               }
             },
             "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -14485,6 +15166,16 @@
             },
             "description": "`FORBIDDEN`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -14558,6 +15249,16 @@
             },
             "description": "`NOT_FOUND`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -14609,6 +15310,16 @@
               }
             },
             "description": "`UNAUTHENTICATED`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -14680,6 +15391,16 @@
             },
             "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -14742,6 +15463,16 @@
             },
             "description": "`FORBIDDEN`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -14803,6 +15534,16 @@
               }
             },
             "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -14934,6 +15675,16 @@
             },
             "description": "`IDEMPOTENCY_IN_FLIGHT`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -15017,6 +15768,16 @@
             },
             "description": "`FORBIDDEN`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -15095,6 +15856,16 @@
             },
             "description": "`FORBIDDEN`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -15156,6 +15927,16 @@
               }
             },
             "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {
@@ -15227,6 +16008,16 @@
             },
             "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -15277,6 +16068,16 @@
               }
             },
             "description": "`UNAUTHENTICATED`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
           },
           "422": {
             "content": {

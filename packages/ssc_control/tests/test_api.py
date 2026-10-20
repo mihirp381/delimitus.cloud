@@ -50,7 +50,7 @@ from ssc_control.api.idempotency import (
     request_hash,
     settle,
 )
-from ssc_control.api.problems import REQUEST_ID_HEADER
+from ssc_control.api.problems import REQUEST_ID_HEADER, BodyLimitMiddleware
 from ssc_control.api.settings import INTERNAL_AUDIENCE, USER_AUDIENCE
 from ssc_control.api.uow import Reply
 from ssc_control.db import (
@@ -360,6 +360,90 @@ def test_refused_post_leaves_no_claim(world: World) -> None:
         headers=auth(world.user_token, **{IDEMPOTENCY_HEADER: key}),
     )
     assert r2.status_code == 201, r2.text
+
+
+MIB = 1024 * 1024
+
+
+def big_create_body() -> bytes:
+    return json.dumps({"slug": "too-big", "pad": "x" * (2 * MIB)}).encode()
+
+
+def claims_for(w: World, key: str) -> list[tuple[Any, ...]]:
+    return rows(
+        w.dsns.app, w.org.org_id, "select 1 from ssc.idempotency_claim where key = %s", (key,)
+    )
+
+
+def test_a_declared_body_over_the_limit_is_refused_and_claims_nothing(world: World) -> None:
+    key = new_key()
+    r = world.client.post(
+        "/v1/apps",
+        content=big_create_body(),
+        headers=auth(
+            world.user_token, **{IDEMPOTENCY_HEADER: key, "content-type": "application/json"}
+        ),
+    )
+    assert int(r.request.headers["content-length"]) > 2 * MIB
+    assert_problem(r, ErrorCode.REQUEST_TOO_LARGE)
+    assert claims_for(world, key) == []
+    # the limit is per request: a normal one is untouched
+    create_app_via_api(world, "after-too-big")
+
+
+def test_a_chunked_body_over_the_limit_is_refused_and_claims_nothing(world: World) -> None:
+    key = new_key()
+    body = big_create_body()
+    r = world.client.post(
+        "/v1/apps",
+        content=(part for part in (body[:MIB], body[MIB:])),
+        headers=auth(
+            world.user_token, **{IDEMPOTENCY_HEADER: key, "content-type": "application/json"}
+        ),
+    )
+    assert "content-length" not in r.request.headers
+    assert_problem(r, ErrorCode.REQUEST_TOO_LARGE)
+    assert claims_for(world, key) == []
+
+
+def test_the_body_limit_counts_chunks_as_they_stream() -> None:
+    """Raw ASGI: the app's read past the limit fails, its answer is dropped, the problem sent;
+    a body within the limit and an exempt path pass through."""
+
+    async def echo(scope: Any, receive: Any, send: Any) -> None:
+        size = 0
+        more = True
+        while more:
+            message = await receive()
+            size += len(message.get("body", b""))
+            more = message.get("more_body", False)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": str(size).encode()})
+
+    limited = BodyLimitMiddleware(echo, max_bytes=10, exempt=("/blobs",))
+
+    def run(path: str, chunks: list[bytes]) -> tuple[int, bytes]:
+        incoming = [
+            {"type": "http.request", "body": c, "more_body": i < len(chunks) - 1}
+            for i, c in enumerate(chunks)
+        ]
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return incoming.pop(0)
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        scope = {"type": "http", "method": "POST", "path": path, "headers": [], "query_string": b""}
+        asyncio.run(limited(scope, receive, send))
+        return sent[0]["status"], b"".join(m.get("body", b"") for m in sent[1:])
+
+    status, body = run("/v1/apps", [b"x" * 6, b"x" * 6, b"x" * 6])
+    assert status == 413
+    assert json.loads(body)["code"] == ErrorCode.REQUEST_TOO_LARGE.value
+    assert run("/v1/apps", [b"x" * 5, b"x" * 5]) == (200, b"10")
+    assert run("/blobs/bundles/k", [b"x" * 6, b"x" * 6]) == (200, b"12")
 
 
 def test_visible_claimed_row_is_in_flight(world: World) -> None:

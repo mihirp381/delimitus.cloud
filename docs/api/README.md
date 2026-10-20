@@ -43,6 +43,9 @@ which constraint fired) is logged as one JSON line under the `request_id`, which
 also returns in `X-Request-Id`. There is exactly one renderer (`api/problems.py`); validation
 errors, 404s, database errors and unexpected exceptions all go through it. The `Problem` schema is
 a single component in `openapi.json` that every 4xx and 5xx response refers to.
+A request body over 1 MiB (`Settings.max_body_bytes`) is `413 REQUEST_TOO_LARGE` before any route
+runs, so it claims no idempotency key; the bundle upload URL, the GitHub webhook and `/mcp` keep
+their own limits.
 
 **Every `POST` needs `Idempotency-Key`** (1 to 200 characters, chosen by the client, scoped to the
 credential). The key is claimed in the same database transaction as the change, so a refused

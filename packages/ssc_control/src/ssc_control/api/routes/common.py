@@ -33,6 +33,7 @@ AUTHENTICATED: Final[tuple[ErrorCode, ...]] = (
     ErrorCode.UNAUTHENTICATED,
     ErrorCode.RATE_LIMITED,
     ErrorCode.VALIDATION_FAILED,
+    ErrorCode.REQUEST_TOO_LARGE,
 )
 POST_COMMON: Final[tuple[ErrorCode, ...]] = (
     ErrorCode.UNAUTHENTICATED,
@@ -41,4 +42,5 @@ POST_COMMON: Final[tuple[ErrorCode, ...]] = (
     ErrorCode.IDEMPOTENCY_KEY_REUSED,
     ErrorCode.IDEMPOTENCY_IN_FLIGHT,
     ErrorCode.VALIDATION_FAILED,
+    ErrorCode.REQUEST_TOO_LARGE,
 )

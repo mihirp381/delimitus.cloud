@@ -22,6 +22,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import tarfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -461,6 +462,14 @@ def test_upload_urls_expire_after_ten_minutes_and_refuse_tampering(b: Bench) -> 
     b.clock.at = expires + timedelta(seconds=1)
     assert_problem(upload(b, target, data), ErrorCode.UPLOAD_URL_INVALID)
     assert asyncio.run(b.store.stat(bundle_key(b.w.org, b.w.app, sha(data)))) is None
+
+
+def test_the_upload_is_not_held_to_the_api_body_limit(b: Bench) -> None:
+    """The bundle PUT has its own limit (the signed length), not the API's 1 MiB body limit."""
+    data = os.urandom(2 * 1024 * 1024)
+    target = create(b, data).json()["upload"]
+    assert_problem(b.client.put(target["url"], content=data + b"x"), ErrorCode.BUNDLE_TOO_LARGE)
+    assert upload(b, target, data).status_code == 201
 
 
 def test_the_upload_must_be_exactly_the_signed_bytes(b: Bench) -> None:

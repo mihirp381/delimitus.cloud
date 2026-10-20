@@ -57,6 +57,8 @@ from ssc_control.github.webhook import (
 log = logging.getLogger(__name__)
 router = APIRouter()
 webhook_router = APIRouter(include_in_schema=False)
+WEBHOOK_PATH: Final = "/github/webhook"
+"""Under ``/v1``. Its body has its own limit (``MAX_BODY_BYTES``), not the API's."""
 
 WORKFLOW_PATTERN: Final = r"^\.github/workflows/[A-Za-z0-9._/-]+\.ya?ml$"
 MAX_REQUIRED_CHECKS: Final = 10
@@ -330,7 +332,7 @@ async def _queue(request: Request, push: Push) -> int:
     return 0
 
 
-@webhook_router.post("/github/webhook", response_model=WebhookOut)
+@webhook_router.post(WEBHOOK_PATH, response_model=WebhookOut)
 async def github_webhook(request: Request) -> Response:
     """GitHub's deliveries. ``UNAUTHENTICATED`` unless the body carries the App's signature;
     ``202`` with ``queued`` when a push deferred a job, ``200`` with ``ignored`` otherwise."""

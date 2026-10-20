@@ -31,6 +31,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "NOT_FOUND"
     METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
     UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
+    REQUEST_TOO_LARGE = "REQUEST_TOO_LARGE"
     # credentials
     UNAUTHENTICATED = "UNAUTHENTICATED"
     FORBIDDEN = "FORBIDDEN"
@@ -142,6 +143,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         415,
         "Unsupported request body.",
         "Send the request body as JSON with a matching Content-Type header.",
+    ),
+    ErrorCode.REQUEST_TOO_LARGE: CatalogueEntry(
+        413,
+        "The request body is too large.",
+        "The request body is over the 1 MiB limit for this API. Send less in one request; "
+        "bundles go through the upload URL.",
     ),
     ErrorCode.UNAUTHENTICATED: CatalogueEntry(
         401,

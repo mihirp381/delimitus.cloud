@@ -12,13 +12,20 @@ from ssc_contracts.errors import Problem
 from ssc_control.api import problems
 from ssc_control.api.auth import Verifier
 from ssc_control.api.idempotency import REPLAYED_HEADER, Replay
-from ssc_control.api.mcp.server import install_mcp
-from ssc_control.api.problems import REQUEST_ID_HEADER, RequestIdMiddleware, request_id_of
+from ssc_control.api.mcp.server import MCP_PATH, install_mcp
+from ssc_control.api.problems import (
+    REQUEST_ID_HEADER,
+    BodyLimitMiddleware,
+    RequestIdMiddleware,
+    request_id_of,
+)
 from ssc_control.api.ratelimit import RateLimiter
+from ssc_control.api.routes.blobs import PREFIX as BLOBS_PREFIX
 from ssc_control.api.routes.blobs import blob_store_for, cell_stores_for, check_fs_allowed
 from ssc_control.api.routes.blobs import router as blobs_router
 from ssc_control.api.routes.internal import router as internal_router
 from ssc_control.api.routes.v1 import router as v1_router
+from ssc_control.api.routes.v1.github import WEBHOOK_PATH
 from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
@@ -121,6 +128,13 @@ def create_app(  # noqa: PLR0913  (the ports a test replaces, by keyword)
         timers=Timers(),
         cells=cells if cells is not None else owned_cells,
         github=github if github is not None else owned_github,
+    )
+    # Added first so it runs inside RequestIdMiddleware: its problem carries the request id.
+    # The bundle upload, the GitHub webhook and the agent interface keep their own limits.
+    app.add_middleware(
+        BodyLimitMiddleware,
+        max_bytes=settings.max_body_bytes,
+        exempt=(BLOBS_PREFIX, f"{v1_router.prefix}{WEBHOOK_PATH}", MCP_PATH),
     )
     app.add_middleware(RequestIdMiddleware)
     problems.install(app)

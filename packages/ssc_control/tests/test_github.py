@@ -713,6 +713,14 @@ async def test_a_forged_webhook_is_refused(g: G) -> None:
     assert deliver(g, "push", None, body=body).status_code == 202
 
 
+async def test_a_webhook_body_over_the_api_limit_still_reaches_the_signature_check(g: G) -> None:
+    """The webhook has its own 25 MiB cap, not the API's 1 MiB body limit."""
+    raw = b"{not json" + b" " * (2 * 1024 * 1024)
+    bad = deliver(g, "push", None, body=raw, sig=signature(raw, b"not-the-secret"))
+    assert_problem(bad, ErrorCode.UNAUTHENTICATED)
+    assert_problem(deliver(g, "push", None, body=raw), ErrorCode.VALIDATION_FAILED)
+
+
 async def test_without_a_secret_every_delivery_is_refused(g: G) -> None:
     await connect(g)
     app = cast("FastAPI", g.b.client.app)
