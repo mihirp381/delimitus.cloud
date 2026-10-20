@@ -134,8 +134,8 @@ answer.
 handler runs, the unit of work refuses it with `403 FORBIDDEN` on any path naming the prod
 environment, whatever the method, and on any other change except those in
 `uow.PREVIEW_SCOPE_CHANGES` (the bundle upload today) and a share ask (`uow.PREVIEW_SHARE_ASK`):
-`POST /v1/approvals` of kind `agent_share` or `widen_audience` whose body names an environment
-that is not prod. Preview changes and reads stay open. Any other `scope` value is
+`POST /v1/approvals` of kind `agent_share`, `widen_audience` or `exceed_ceiling` whose body
+names an environment that is not prod. Preview changes and reads stay open. Any other `scope` value is
 `401 UNAUTHENTICATED`.
 
 **CI tokens are issued `preview` credentials** (GA-7.7, decision 011 amendment). The auth

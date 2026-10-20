@@ -270,6 +270,35 @@ def test_preview_scoped_token_may_ask_for_a_preview_share(b: Bench) -> None:
     assert b.client.get(url, headers=auth(b.preview)).json()["grants_version"] == version
 
 
+def test_preview_scoped_token_may_ask_to_exceed_a_ceiling_outside_prod(
+    b: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A CI deploy of a preview environment may need to go past a connection's ceiling; it may
+    ask for that, outside prod only."""
+    connection = {
+        "name": "finance",
+        "classification": "internal",
+        "host": "db.corp.internal",
+        "port": 5432,
+        "database": "warehouse",
+        "owner_user_id": b.org.admin_user_id,
+    }
+    created = b.client.post(
+        "/v1/connections", json=connection, headers=auth(b.full, **{IDEMPOTENCY_HEADER: new_key()})
+    )
+    assert created.status_code == 201, created.text
+    grants = [{"role": "builder", "subject_kind": "user", "subject_id": new_id("usr")}]
+    ask = {"kind": "exceed_ceiling", "payload": {"connection": "finance", "grants": grants}}
+    r = post(b, "/v1/approvals", {"environment_id": b.env("preview"), **ask})
+    assert r.status_code == 201, r.text
+    assert (r.json()["kind"], r.json()["state"]) == ("exceed_ceiling", "pending")
+    with caplog.at_level(logging.WARNING, logger="ssc.api"):
+        refused_by_scope(caplog, post(b, "/v1/approvals", {"environment_id": b.env("prod"), **ask}))
+    asked = "select count(*) from ssc.approval_request where kind = %s and environment_id = %s"
+    assert count(b, asked, "exceed_ceiling", b.env("preview")) == 1
+    assert count(b, asked, "exceed_ceiling", b.env("prod")) == 0
+
+
 def test_preview_scoped_token_may_read(b: Bench) -> None:
     for path in ("/v1/whoami", "/v1/apps", f"/v1/apps/{b.app['id']}"):
         assert b.client.get(path, headers=auth(b.preview)).status_code == 200, path
