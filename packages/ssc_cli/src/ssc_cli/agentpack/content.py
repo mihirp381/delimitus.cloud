@@ -258,9 +258,9 @@ own; its calls are recorded the same way. Set it up once:
   `CONNECTION_UNDECLARED` for a read of one that is not). Production still waits for an approved
   request (`request_connection` with `environment="prod"`); once approved, the environment is linked
   unless its audience exceeds the connection's ceiling. `ssc connections <app> --env <env>` shows
-  the links. You never link or approve: when a request is pending or a read answers
-  `CONNECTION_NOT_GRANTED`, tell the person which connection and environment another admin has to
-  approve or an org admin has to link.
+  the links. You never approve; a preview link may be made for you by the connection's rule when
+  you ask. When a request is pending or a read answers `CONNECTION_NOT_GRANTED`, tell the person
+  which connection and environment another admin has to approve or an org admin has to link.
 - Read a connection with the data helper: Python `from ssc_app import data`, then
   `data.query("sales-db", "select id, total from orders where year = $1", [2026])`; Node
   `import {{ query }} from '@delimitus/ssc-data'`, then

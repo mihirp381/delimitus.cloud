@@ -513,7 +513,7 @@ def test_pack_says_how_an_app_reads_a_data_connection(cli, tmp_path):
         "the connection's preview access rule may link it at once",
         "Production still waits for an approved request",
         "`CONNECTION_NOT_GRANTED`",
-        "You never link or approve",
+        "You never approve; a preview link may be made for you by the connection's rule",
         "Never connect to the source yourself",
     ):
         assert fact in agents, fact

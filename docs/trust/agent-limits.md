@@ -14,7 +14,8 @@ can do no more than that person, and every write is audited as the person with
 
 - Read what the person can see: apps, releases, what each environment runs, operations and
   builds, every data connection of the org (names, kinds and classifications, never an
-  address), a connection's tables and columns for an environment the person may build, and logs (unless the org's admins turned agent log reading off).
+  address), a connection's tables and columns for an environment the person may build, and logs
+  (unless the org's admins turned agent log reading off).
 - Create an app, deploy a folder to preview, and roll an environment back to an earlier
   release.
 - Ask: open an approval request for sharing (`agent_share`) or a data connection

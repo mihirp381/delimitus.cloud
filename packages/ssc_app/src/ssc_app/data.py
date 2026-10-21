@@ -1,6 +1,6 @@
 """Read a database the org connected, through the cell's data gateway (SSC-052). Name the connection
-in ``[connections] names`` in ``ssc.toml``; an admin grants the environment the connection. For
-a ``postgres`` connection:
+in ``[connections] names`` in ``ssc.toml``; the environment is linked to the connection (by its
+preview access rule, or by an admin or an approval). For a ``postgres`` connection:
 
     from ssc_app import data
 

@@ -69,7 +69,7 @@ Each environment has its own files: at most 25 MB each and 1 GB together. A name
 
 ## Company data
 
-Name a connection in `[connections] names` in `ssc.toml`; an org admin grants the environment that connection. `ssc_app.data.query` sends one read-only statement to the cell's data gateway with the app's own ID token; the app holds no database credentials. No extra dependency. For a `postgres` connection:
+Name a connection in `[connections] names` in `ssc.toml`; the environment is linked to the connection (by its preview access rule, or by an admin or an approval). `ssc_app.data.query` sends one read-only statement to the cell's data gateway with the app's own ID token; the app holds no database credentials. No extra dependency. For a `postgres` connection:
 
 ```python
 from ssc_app import data
