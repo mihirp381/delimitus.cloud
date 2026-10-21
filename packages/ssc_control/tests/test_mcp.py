@@ -376,6 +376,9 @@ async def test_tool_set_is_the_allowlist(world: World) -> None:
         assert tools[name].annotations.destructive_hint is True
     assert " ".join((tools["create_app"].description or "").split()).startswith(ASK_FIRST)
     assert ASK_CLAUSE in INSTRUCTIONS
+    assert "the source's own MCP server" in " ".join(
+        (tools["describe_connection"].description or "").split()
+    )
 
 
 @pytest.mark.parametrize("mode", ["auto", "2026-07-28", "legacy"])

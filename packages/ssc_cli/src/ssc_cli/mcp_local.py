@@ -856,7 +856,9 @@ def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
         """The tables and columns one environment of an app sees through a data connection:
         each table's name, each column's name and type, and the snapshot version they come
         from. Only for an environment you may build; the answer is kept five minutes
-        (`cached`)."""
+        (`cached`). This is what the app can read: learn what the data means from the source's
+        own MCP server first when the person connected one (reads only), then write the app's
+        reads against this list."""
 
         return run(open_client, lambda c: connection_schema(c, app, environment, connection))
 

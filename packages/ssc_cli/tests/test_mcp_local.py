@@ -190,6 +190,9 @@ async def test_tools_mirror_the_api_server(fake_api):
     assert set(theirs["preflight"].input_schema.get("properties", {})) == set()
     assert mine["create_app"].description == theirs["create_app"].description
     assert " ".join((mine["create_app"].description or "").split()).startswith(ASK_FIRST)
+    described = mine["describe_connection"].description
+    assert described == theirs["describe_connection"].description
+    assert "the source's own MCP server" in " ".join((described or "").split())
     for instructions in (INSTRUCTIONS, SERVER_INSTRUCTIONS):
         assert ASK_CLAUSE in instructions
     # B-8: both tool lists in the decisions name exactly these tools.
