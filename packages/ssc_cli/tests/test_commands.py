@@ -87,6 +87,7 @@ ALLOWED = {
     "requirements",
     "policy",
     "connections",
+    "connect",
     "approvals",
     "repo",
 }
@@ -164,6 +165,7 @@ def test_help_lists_exact_set(cli):
         ("requirements",),
         ("policy",),
         ("connections",),
+        ("connect",),
         ("approvals", "list"),
         ("approvals", "show"),
         ("approvals", "approve"),
@@ -1316,10 +1318,12 @@ def test_every_command_has_json(on_live, live, tmp_path):
     # `disconnect` need a GitHub App the dev stack does not have; test_repo.py covers their --json.
     # `token create-ci` needs a login at an auth host, and `token revoke-ci` a CI token;
     # test_ci_tokens.py covers their --json. `apps delete-status` needs the id of a removal;
-    # test_admin_commands.py covers its --json.
+    # test_admin_commands.py covers its --json. `connect` needs a data connection the dev stack
+    # does not have; test_connections.py covers its --json.
     expected = (
         {
             ("mcp",),
+            ("connect",),
             ("apps", "delete-status"),
             ("login",),
             ("secret", "set"),

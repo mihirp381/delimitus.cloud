@@ -480,6 +480,13 @@ class Approval(Wire):
     created_at: str
 
 
+class ConnectionRequested(Wire):
+    outcome: str
+    reason: str | None
+    approval: Approval | None
+    connections: list[EnvironmentConnectionOut]
+
+
 class ApprovalPage(Wire):
     approvals: list[Approval]
     next_before: str | None

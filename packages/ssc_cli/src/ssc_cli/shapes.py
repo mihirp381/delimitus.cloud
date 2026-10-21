@@ -556,6 +556,22 @@ class ApprovalRow(Shape):
     created_at: str
 
 
+class ConnectResult(Shape):
+    """``connect``: what asking for an environment to use a connection did. ``outcome`` is
+    ``linked``, ``already_linked``, ``pending`` or ``approved_not_linked`` (``reason`` says
+    why); ``connections`` are the environment's connections after it."""
+
+    api_url: str
+    app_id: str
+    slug: str
+    environment: str
+    connection: str
+    outcome: str
+    reason: str | None
+    approval: ApprovalRow | None
+    connections: list[ConnectionRow]
+
+
 class ApprovalsResult(Shape):
     """``approvals list``: what you may decide (``scope`` ``inbox``) or everything you may see
     (``all``), newest first. ``more`` is true when older ones were left out."""
@@ -779,5 +795,6 @@ SHAPES: dict[str, type[BaseModel]] = {
         CiTokenRow,
         CiTokensResult,
         CiTokenRevoked,
+        ConnectResult,
     )
 }

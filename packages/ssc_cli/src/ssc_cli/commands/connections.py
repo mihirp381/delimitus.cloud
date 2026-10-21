@@ -10,10 +10,10 @@ import typer
 
 from ssc_cli.commands._common import JsonOpt, handled, session
 from ssc_cli.commands.share import Env, EnvOpt
-from ssc_cli.models import CeilingDoc, ConnectionOut
+from ssc_cli.models import Approval, CeilingDoc, ConnectionOut
 from ssc_cli.output import dash, print_json, say, table
 from ssc_cli.resolve import environment, resolve_app
-from ssc_cli.shapes import ConnectionRow, ConnectionsResult
+from ssc_cli.shapes import ApprovalRow, ConnectionRow, ConnectionsResult, ConnectResult
 
 AppOpt = Annotated[
     str | None,
@@ -40,6 +40,20 @@ def _row(c: ConnectionOut, over_ceiling_since: str | None = None) -> ConnectionR
         setup_status=c.setup_status,
         status=c.status,
         over_ceiling_since=over_ceiling_since,
+    )
+
+
+def _approval(a: Approval) -> ApprovalRow:
+    return ApprovalRow(
+        id=a.id,
+        app=a.app,
+        environment=a.environment,
+        kind=a.kind,
+        subject=a.subject_key,
+        state=a.state,
+        requested_by=a.requested_by_name,
+        requested_via_agent=a.requested_via_agent,
+        created_at=a.created_at,
     )
 
 
@@ -98,4 +112,48 @@ def connections(
         say(
             "\nOver ceiling: this environment is shared more widely than a connection allows. "
             "Narrow the sharing, or ask for it to be allowed (an exceed_ceiling approval)."
+        )
+
+
+def connect(
+    ctx: typer.Context,
+    app: Annotated[str, typer.Argument(help="App slug or app_ id.", show_default=False)],
+    connection: Annotated[str, typer.Argument(help="Connection name.", show_default=False)],
+    env: EnvOpt = Env.prod,
+    json_mode: JsonOpt = False,
+) -> None:
+    """Ask for an app environment to use a data connection. On preview the connection's preview
+    access rule may link it at once; otherwise another active admin decides."""
+    with handled(json_mode), session(ctx).client() as client:
+        target = resolve_app(client, app)
+        where = environment(target, env.value)
+        out = client.request_connection(target.id, where.id, connection)
+        result = ConnectResult(
+            api_url=client.api_url,
+            app_id=target.id,
+            slug=target.slug,
+            environment=where.name,
+            connection=connection,
+            outcome=out.outcome,
+            reason=out.reason,
+            approval=None if out.approval is None else _approval(out.approval),
+            connections=[_row(c.connection, c.over_ceiling_since) for c in out.connections],
+        )
+    if json_mode:
+        print_json(result)
+        return
+    here = f"{result.slug} {result.environment}"
+    if result.outcome == "linked":
+        say(f"{here} now reads {connection}.")
+    elif result.outcome == "already_linked":
+        say(f"{here} already reads {connection}; nothing to do.")
+    elif result.outcome == "pending" and result.approval is not None:
+        say(
+            f"Asked for {here} to read {connection} ({result.approval.id}); another active admin "
+            "of the org must approve."
+        )
+    else:
+        say(
+            f"{connection} is approved for {here} but not linked ({result.reason}); an org admin "
+            "can link it anyway."
         )

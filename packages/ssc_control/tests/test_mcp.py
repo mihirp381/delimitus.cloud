@@ -1150,21 +1150,52 @@ async def test_request_share_rereads_moved_grants(
 
 
 async def test_request_connection(world: World) -> None:
+    app = fresh_app(world)
+    name = f"crm-{new_key()[:8].lower()}"
+    human_post(
+        world,
+        "/v1/connections",
+        {
+            "name": name,
+            "classification": "internal",
+            "host": "db.corp.internal",
+            "database": "crm",
+            "owner_user_id": world.org.admin_user_id,
+            "ceiling": {"audience": "org"},
+        },
+    )
     async with session(world.url, world.agent) as client:
-        asked = await client.call_tool(
-            "request_connection", {"app": "mcp-app", "connection": "ledger-db"}
+        prod = await client.call_tool(
+            "request_connection", {"app": app["slug"], "connection": name}
+        )
+        preview = await client.call_tool(
+            "request_connection",
+            {"app": app["id"], "connection": name, "environment": "preview"},
+        )
+        again = await client.call_tool(
+            "request_connection",
+            {"app": app["id"], "connection": name, "environment": "preview"},
         )
         bad = await client.call_tool(
-            "request_connection", {"app": world.app["id"], "connection": "Ledger DB"}
+            "request_connection", {"app": app["id"], "connection": "Ledger DB"}
         )
 
-    assert not asked.is_error, asked.content
-    approval = asked.structured_content["approval"]
+    assert not prod.is_error, prod.content
+    assert prod.structured_content["outcome"] == "pending"
+    approval = prod.structured_content["approval"]
     assert approval["kind"] == "connect_data_source"
-    assert approval["environment_id"] == env_id(world.app, "prod")
-    assert approval["subject_key"] == "ledger-db"
+    assert approval["environment_id"] == env_id(app, "prod")
+    assert approval["subject_key"] == name
     assert approval["state"] == "pending"
     assert approval["requested_via_agent"] is True
+    assert prod.structured_content["next"].startswith("Pending: another active admin")
+    assert preview.structured_content == {
+        "outcome": "linked",
+        "reason": None,
+        "approval": None,
+        "next": "The environment reads it now; call describe_connection for its tables.",
+    }
+    assert again.structured_content["outcome"] == "already_linked"
     assert bad.is_error
     assert bad.structured_content is None  # refused by the tool's own argument pattern
 

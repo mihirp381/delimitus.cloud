@@ -775,21 +775,30 @@ async def new_app(c: V1, slug: str, key: str) -> Body:
     }
 
 
-async def ask_connection(c: V1, *, ref: str, connection: str, key: str) -> Body:
-    """Ask for the app's prod environment to use one data connection."""
+_CONNECTION_NEXT: Final = {
+    "linked": "The environment reads it now; call describe_connection for its tables.",
+    "already_linked": "The environment already reads it; nothing to do.",
+    "pending": "Pending: another active admin of the org must approve; SSC staff record the "
+    "decision. Nothing has changed.",
+}
+
+
+async def ask_connection(c: V1, *, ref: str, env: str, connection: str, key: str) -> Body:
+    """Ask for one environment of the app to use one data connection."""
     found = await resolve_app(c, ref)
-    body = {
-        "environment_id": environment_id(found, "prod"),
-        "kind": "connect_data_source",
-        "subject_key": connection,
-    }
-    r = await c.post("/v1/approvals", body, key)
+    env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(environment_id(found, env))}"
+    r = await c.post(f"{env_path}/connections/{seg(connection)}/request", {}, key)
+    body: Body = r.json()
+    outcome = body["outcome"]
+    nxt = _CONNECTION_NEXT.get(
+        outcome,
+        f"Approved but not linked ({body['reason']}); an org admin can link it anyway.",
+    )
     return {
-        "requested": True,
-        "created": r.status_code == 201,
-        "approval": r.json(),
-        "next": "Pending: another active admin of the org must approve; SSC staff record the "
-        "decision. Nothing has changed.",
+        "outcome": outcome,
+        "reason": body["reason"],
+        "approval": body["approval"],
+        "next": nxt,
     }
 
 
@@ -1035,14 +1044,18 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         app: AppRef,
         connection: ConnectionName,
         ctx: Context,
+        environment: Literal["prod", "preview"] = "prod",
         idempotency_key: IdempotencyKey | None = None,
     ) -> CallToolResult:
-        """Ask for the app's prod environment to use a data connection. This opens an approval
-        request, which another admin of the org must approve; once approved, the environment is
-        linked, unless its audience exceeds the connection's ceiling."""
+        """Ask for one environment of the app to use a data connection. On preview the
+        connection's preview access rule may link it at once; otherwise, and always on prod,
+        this opens an approval request another active admin decides, and once approved the
+        environment is linked unless its audience exceeds the connection's ceiling."""
         key = idempotency_key or fresh_key()
         return await run(
-            api, ctx, lambda c: ask_connection(c, ref=app, connection=connection, key=key)
+            api,
+            ctx,
+            lambda c: ask_connection(c, ref=app, env=environment, connection=connection, key=key),
         )
 
     async def get_logs(  # noqa: PLR0913, PLR0917  (each parameter is a tool argument)

@@ -848,3 +848,29 @@ async def test_the_workspace_is_where_the_server_started(fake_api, tmp_path: Pat
     assert not inside.is_error, inside.content
     assert inside.structured_content["path"] == str((tmp_path / "app").resolve())
     assert outside.structured_content["error"]["code"] == "FOLDER_OUTSIDE_WORKSPACE"
+
+
+async def test_request_connection_asks_the_chosen_environment(fake_api):
+    preview = "env_" + "v" * 20
+    app = {
+        "id": APP_ID,
+        "slug": "a1",
+        "environments": [{"id": ENV_ID, "name": "prod"}, {"id": preview, "name": "preview"}],
+    }
+    fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
+    fake_api.add("GET", "/v1/whoami", whoami(True))
+    answer = {"outcome": "approved_not_linked", "reason": "ceiling", "approval": None}
+    path = f"/v1/apps/{APP_ID}/environments/{preview}/connections/crm/request"
+    fake_api.add("POST", path, httpx2.Response(200, json={**answer, "connections": []}))
+    async with Client(local_server(fake_api), cache=None) as client:
+        r = await client.call_tool(
+            "request_connection", {"app": APP_ID, "connection": "crm", "environment": "preview"}
+        )
+    assert not r.is_error, r.content
+    assert r.structured_content == {
+        **answer,
+        "next": "Approved but not linked (ceiling); an org admin can link it anyway.",
+    }
+    (post,) = [q for q in fake_api.seen if q.method == "POST"]
+    assert json.loads(post.content) == {}
+    assert post.headers["Idempotency-Key"]

@@ -653,21 +653,29 @@ def connection_schema(c: ApiClient, app: str, environment: str, connection: str)
         raise
 
 
-def ask_connection(c: ApiClient, *, ref: str, connection: str, key: str) -> Body:
-    """Ask for the app's prod environment to use one data connection."""
+_CONNECTION_NEXT: Final = {
+    "linked": "The environment reads it now; call describe_connection for its tables.",
+    "already_linked": "The environment already reads it; nothing to do.",
+    "pending": "Pending: another active admin of the org must approve; SSC staff record the "
+    "decision. Nothing has changed.",
+}
+
+
+def ask_connection(c: ApiClient, *, ref: str, env: str, connection: str, key: str) -> Body:
+    """Ask for one environment of the app to use one data connection."""
     found = resolve_app(c, ref)
-    body = {
-        "environment_id": environment_id(found, "prod"),
-        "kind": "connect_data_source",
-        "subject_key": connection,
-    }
-    r = c.post_json("/v1/approvals", body, key)
+    env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(environment_id(found, env))}"
+    body = _json(c.post_json(f"{env_path}/connections/{seg(connection)}/request", {}, key))
+    outcome = body["outcome"]
+    nxt = _CONNECTION_NEXT.get(
+        outcome,
+        f"Approved but not linked ({body['reason']}); an org admin can link it anyway.",
+    )
     return {
-        "requested": True,
-        "created": r.status_code == 201,
-        "approval": _json(r),
-        "next": "Pending: another active admin of the org must approve; SSC staff record the "
-        "decision. Nothing has changed.",
+        "outcome": outcome,
+        "reason": body["reason"],
+        "approval": body["approval"],
+        "next": nxt,
     }
 
 
@@ -984,13 +992,19 @@ def build_server(
         return run(open_client, lambda c: ask_share(c, ref=app, env=env, who=who, role=role))
 
     def request_connection(
-        app: AppRef, connection: ConnectionName, idempotency_key: IdempotencyKey | None = None
+        app: AppRef,
+        connection: ConnectionName,
+        environment: Literal["prod", "preview"] = "prod",
+        idempotency_key: IdempotencyKey | None = None,
     ) -> CallToolResult:
-        """Ask for the app's prod environment to use a data connection. This only opens an
-        approval request, which another admin of the org must approve."""
+        """Ask for one environment of the app to use a data connection. On preview the
+        connection's preview access rule may link it at once; otherwise, and always on prod,
+        this opens an approval request another active admin decides, and once approved the
+        environment is linked unless its audience exceeds the connection's ceiling."""
         key = idempotency_key or fresh_key()
         return run(
-            open_client, lambda c: ask_connection(c, ref=app, connection=connection, key=key)
+            open_client,
+            lambda c: ask_connection(c, ref=app, env=environment, connection=connection, key=key),
         )
 
     def get_logs(  # noqa: PLR0913, PLR0917  (each parameter is a tool argument)

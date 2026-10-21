@@ -170,6 +170,17 @@
     "api_url": "string",
     "ci_tokens": "array<CiTokenRow>"
   },
+  "ConnectResult": {
+    "api_url": "string",
+    "app_id": "string",
+    "approval": "ApprovalRow|null",
+    "connection": "string",
+    "connections": "array<ConnectionRow>",
+    "environment": "string",
+    "outcome": "string",
+    "reason": "string|null",
+    "slug": "string"
+  },
   "ConnectionRow": {
     "ceiling": "array<string>",
     "classification": "string",

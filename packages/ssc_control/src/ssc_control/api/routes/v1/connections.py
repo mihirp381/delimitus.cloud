@@ -384,7 +384,7 @@ async def _environment(uow: UnitOfWork, app_id: str, environment_id: str) -> Non
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
 
 
-async def _environment_out(
+async def environment_out(
     uow: UnitOfWork, environment_id: str, visible: frozenset[str] | None
 ) -> EnvironmentConnectionsOut:
     return EnvironmentConnectionsOut(
@@ -543,7 +543,7 @@ async def get_environment_connections(
     """What the environment may reach, of the connections the caller may see."""
     visible = await _visible(uow)
     await _environment(uow, app_id, environment_id)
-    return await _environment_out(uow, environment_id, visible)
+    return await environment_out(uow, environment_id, visible)
 
 
 @router.get(
@@ -701,7 +701,7 @@ async def put_environment_connection(  # noqa: PLR0913  (FastAPI maps each param
         by_user_id=by,
         policy_decision_id=policy_id,
     )
-    return await _environment_out(uow, environment_id, None)
+    return await environment_out(uow, environment_id, None)
 
 
 @router.delete(
@@ -726,4 +726,4 @@ async def delete_environment_connection(
     )
     if not removed:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
-    return await _environment_out(uow, environment_id, None)
+    return await environment_out(uow, environment_id, None)

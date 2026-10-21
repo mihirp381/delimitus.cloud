@@ -250,15 +250,16 @@ own; its calls are recorded the same way. Set it up once:
   not from the browser. The first deploy that asks sets up file storage once, in a few minutes.
 - Company data (a database, warehouse, spreadsheet, file store or REST API the company
   connected) is read through a data connection. `list_connections` (`ssc connections`) names
-  the ones you may see and their `kind`; `describe_connection` gives the tables and columns an
-  environment sees through one. List each one the app reads under `[connections]` `names` in
-  `ssc.toml`. An environment can read a connection only after an org admin links it, preview
-  and production each, on the app's Data tab in the console
-  (`ssc connections <app> --env <env>` shows the links); production also waits for an approved
-  request, which `request_connection` opens and another admin decides. Once approved, the
-  environment is linked, unless its audience exceeds the connection's ceiling. You never link
-  or approve: when a connection is missing or a read answers `CONNECTION_NOT_GRANTED`, tell the
-  person which connection and environment an org admin has to link or approve.
+  the ones you may see and their `kind`. To use one, call `request_connection` with
+  `environment="preview"` (`ssc connect <app> <connection> --env preview`): the connection's
+  preview access rule may link it at once, otherwise another active admin decides. Once it is
+  linked, `describe_connection` gives the tables and columns the environment sees through it.
+  List each one the app reads under `[connections]` `names` in `ssc.toml`. Production still
+  waits for an approved request (`request_connection` with `environment="prod"`); once approved,
+  the environment is linked unless its audience exceeds the connection's ceiling.
+  `ssc connections <app> --env <env>` shows the links. You never link or approve: when a request
+  is pending or a read answers `CONNECTION_NOT_GRANTED`, tell the person which connection and
+  environment another admin has to approve or an org admin has to link.
 - Read a connection with the data helper: Python `from ssc_app import data`, then
   `data.query("sales-db", "select id, total from orders where year = $1", [2026])`; Node
   `import {{ query }} from '@delimitus/ssc-data'`, then

@@ -1563,3 +1563,192 @@ def test_a_preview_access_change_is_audited(
     assert created["after"]["preview_access"] == "builders"
     policy = client.get("/v1/org/deployment-policy", headers=auth(tokens.admin)).json()
     assert policy["connections"][0]["preview_access"] == rule
+
+
+# Ticket 14: one request route; the rule links preview at once.
+
+
+def build_preview(dsn: str, w: World, user: str) -> None:
+    with psycopg.connect(dsn) as conn:
+        bind_org_sync(conn, w.org)
+        conn.execute(
+            "insert into ssc.app_grant (id, org_id, environment_id, role, subject_kind, user_id, "
+            "granted_by_user_id) values (%s, %s, %s, 'builder', 'user', %s, %s)",
+            (new_id("gnt"), w.org, w.preview, user, w.admin),
+        )
+
+
+def request_link(
+    client: TestClient,
+    w: World,
+    env: str,
+    token: str,
+    name: str = "finance",
+    key: str | None = None,
+) -> Any:
+    return post(client, f"{link_path(w, env, name)}/request", token, {}, key)
+
+
+def compile_jobs(dsns: Dsns, w: World) -> int:
+    jobs = "select count(*) from procrastinate.procrastinate_jobs where args->>'org_id' = %s"
+    return int(rows(dsns.superuser, w, jobs, (w.org,))[0][0])
+
+
+def test_the_builders_rule_links_preview_at_once(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    build_preview(dsns.app, world, world.builder)
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    rows(
+        dsns.superuser,
+        world,
+        "delete from procrastinate.procrastinate_jobs where args->>'org_id' = %s returning id",
+        (world.org,),
+    )
+    r = request_link(client, world, world.preview, tokens.builder)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["outcome"], body["reason"], body["approval"]) == ("linked", None, None)
+    assert [c["connection"]["name"] for c in body["connections"]] == ["finance"]
+    assert compile_jobs(dsns, world) >= 1
+    (granted,) = events_of(dsns.app, world.org, AuditAction.CONNECTION_GRANTED)
+    assert granted["after"]["environment_id"] == world.preview
+    ((action, reason, principal, inputs),) = rows(
+        dsns.app,
+        world,
+        "select action, reason, principal_id, inputs from ssc.policy_decision where id = %s",
+        (granted["policy_decision_id"],),
+    )
+    assert (action, reason, principal) == ("connection.preview_access", "builders", world.builder)
+    assert inputs["via_agent"] is False and inputs["connection"] == "finance"
+    assert approvals_of(dsns.app, world.org) == []
+    again = request_link(client, world, world.preview, tokens.builder)
+    assert again.json()["outcome"] == "already_linked"
+    assert len(events_of(dsns.app, world.org, AuditAction.CONNECTION_GRANTED)) == 1
+
+
+def test_the_same_key_answers_the_same_and_links_once(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    key = new_key()
+    first = request_link(client, world, world.preview, tokens.admin_agent, key=key)
+    second = request_link(client, world, world.preview, tokens.admin_agent, key=key)
+    assert first.status_code == second.status_code == 200, first.text
+    assert first.json() == second.json()
+    assert first.json()["outcome"] == "linked"
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(1,)]
+    (granted,) = events_of(dsns.app, world.org, AuditAction.CONNECTION_GRANTED)
+    ((via_agent,),) = rows(
+        dsns.app,
+        world,
+        "select inputs -> 'via_agent' from ssc.policy_decision where id = %s",
+        (granted["policy_decision_id"],),
+    )
+    assert via_agent is True
+
+
+def test_the_group_rule_links_a_member_and_asks_for_anyone_else(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    build_preview(dsns.app, world, world.builder)
+    group = add_group(dsns.app, world, [world.builder])
+    rule = {"who": "group", "group_id": group}
+    assert (
+        create_connection(client, tokens.admin, world.member, preview_access=rule).status_code
+        == 201
+    )
+    outsider = request_link(client, world, world.preview, tokens.admin)
+    assert outsider.json()["outcome"] == "pending"
+    assert outsider.json()["approval"]["kind"] == "connect_data_source"
+    assert outsider.json()["connections"] == []
+    member = request_link(client, world, world.preview, tokens.builder)
+    assert member.json()["outcome"] == "linked", member.text
+    (granted,) = events_of(dsns.app, world.org, AuditAction.CONNECTION_GRANTED)
+    ((reason, group_id),) = rows(
+        dsns.app,
+        world,
+        "select reason, inputs ->> 'group_id' from ssc.policy_decision where id = %s",
+        (granted["policy_decision_id"],),
+    )
+    assert (reason, group_id) == ("group", group)
+
+
+def test_the_approval_rule_and_prod_wait_for_a_person(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    build_preview(dsns.app, world, world.builder)
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    prod = request_link(client, world, world.prod, tokens.builder)
+    assert prod.status_code == 200, prod.text
+    assert prod.json()["outcome"] == "pending"
+    assert prod.json()["approval"]["environment"] == "prod"
+    assert (
+        patch(client, tokens.admin, "finance", {"preview_access": {"who": "approval"}}).status_code
+        == 200
+    )
+    preview = request_link(client, world, world.preview, tokens.builder)
+    assert preview.json()["outcome"] == "pending"
+    assert preview.json()["approval"]["subject_key"] == "finance"
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
+
+
+def test_a_preview_over_the_ceiling_waits_for_a_person(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    build_preview(dsns.app, world, world.builder)
+    finance(client, world, tokens, ceiling_doc(("user", world.member)))
+    rule = {"preview_access": {"who": "builders"}}
+    assert patch(client, tokens.admin, "finance", rule).status_code == 200
+    r = request_link(client, world, world.preview, tokens.builder)
+    assert r.json()["outcome"] == "pending"
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
+
+
+def test_an_approval_from_before_links_or_says_why_not(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    finance(client, world, tokens, ceiling_doc(("user", world.builder)))
+    before, version = prod_grants(client, world, tokens)
+    assert (
+        put(client, world, world.prod, tokens.admin, [*before, ORG_GRANT], version).status_code
+        == 200
+    )
+    asked = ask_api(client, tokens.admin, world.prod, subject="finance")
+    assert decide_as(client, tokens, asked.json()["id"], world.approver).status_code == 200
+    refused = request_link(client, world, world.prod, tokens.admin)
+    assert refused.status_code == 200, refused.text
+    assert (refused.json()["outcome"], refused.json()["reason"]) == (
+        "approved_not_linked",
+        "ceiling",
+    )
+    assert refused.json()["approval"]["id"] == asked.json()["id"]
+    assert put(client, world, world.prod, tokens.admin, before, version + 1).status_code == 200
+    linked = request_link(client, world, world.prod, tokens.admin)
+    assert linked.json()["outcome"] == "linked", linked.text
+    (granted,) = events_of(dsns.app, world.org, AuditAction.CONNECTION_GRANTED)
+    (row,) = approvals_of(dsns.app, world.org)
+    assert granted["policy_decision_id"] == row["policy_decision_id"]
+
+
+def test_only_a_builder_of_the_environment_may_ask(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    refused = request_link(client, world, world.preview, tokens.member)
+    assert_problem(refused, ErrorCode.FORBIDDEN)
+    assert_problem(request_link(client, world, world.preview, tokens.workload), ErrorCode.FORBIDDEN)
+    assert_problem(request_link(client, world, world.preview, tokens.operator), ErrorCode.FORBIDDEN)
+    assert_problem(
+        request_link(client, world, world.preview, tokens.admin, "nowhere"), ErrorCode.NOT_FOUND
+    )
+    elsewhere = f"/v1/apps/{world.app}/environments/{new_id('env')}/connections/finance/request"
+    assert_problem(post(client, elsewhere, tokens.admin, {}), ErrorCode.NOT_FOUND)
+    rows(
+        dsns.superuser,
+        world,
+        "update ssc.app set status = 'deleting' where id = %s returning id",
+        (world.app,),
+    )
+    assert_problem(request_link(client, world, world.preview, tokens.admin), ErrorCode.APP_DELETING)
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]

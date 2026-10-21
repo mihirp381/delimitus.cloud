@@ -466,7 +466,8 @@ async def _settles_flag(uow: UnitOfWork, row: ApprovalRow, same_grants: bool) ->
     return True
 
 
-async def _link_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcome, str | None]:
+async def link_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcome, str | None]:
+    """Link an approved ``connect_data_source`` request's environment to its connection."""
     connection = await connections.get(uow.conn, uow.org_id, row.subject_key)
     if connection is None:
         return "not_applied", "connection_missing"
@@ -501,7 +502,7 @@ async def apply_approved(uow: UnitOfWork, row: ApprovalRow) -> tuple[ApplyOutcom
     if row.state != "approved":
         return "not_applicable", None
     if row.kind is RequirementKind.CONNECT_DATA_SOURCE:
-        return await _link_approved(uow, row)
+        return await link_approved(uow, row)
     if row.kind in _SHARING:
         return await _apply_grants(uow, row)
     return "not_applicable", None

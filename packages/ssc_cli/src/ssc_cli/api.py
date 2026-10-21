@@ -59,6 +59,7 @@ from ssc_cli.models import (
     BundleOut,
     CiToken,
     CiTokens,
+    ConnectionRequested,
     ConnectionsOut,
     DatabaseOut,
     DatabaseRotateOut,
@@ -193,6 +194,14 @@ class ApiClient:
 
     def get_approval(self, approval_id: str) -> ApprovalDetail:
         return _parse(self._send("GET", f"/v1/approvals/{_seg(approval_id)}"), ApprovalDetail)
+
+    def request_connection(
+        self, app_id: str, environment_id: str, name: str
+    ) -> ConnectionRequested:
+        """Ask for the environment to use the connection; on preview its rule may link it."""
+        env = f"/v1/apps/{_seg(app_id)}/environments/{_seg(environment_id)}"
+        path = f"{env}/connections/{_seg(name)}/request"
+        return _parse(self._send("POST", path, body={}), ConnectionRequested)
 
     def decide_approval(self, approval_id: str, outcome: str, reason: str) -> ApprovalDecided:
         """Approve (``approved``) or reject (``denied``) a request, as the caller."""

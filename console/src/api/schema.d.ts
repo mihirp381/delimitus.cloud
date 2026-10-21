@@ -478,6 +478,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app_id}/environments/{environment_id}/connections/{name}/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Connection
+         * @description Ask for the environment to use a connection. For whoever may build the environment, agent
+         *     sessions included. `already_linked` writes nothing. On preview, when the connection's
+         *     preview access rule covers the caller (`builders`, or `group` and an active member) and the
+         *     environment's audience is inside the ceiling, the link is made at once (`linked`, audited
+         *     `connection.granted` with a `connection.preview_access` policy decision). Otherwise, and
+         *     always on prod, a `connect_data_source` request is opened (`pending`); one approved earlier
+         *     links now (`linked`) or says why not (`approved_not_linked`, `reason` `ceiling` or
+         *     `connection_missing`).
+         */
+        post: operations["request_connection_v1_apps__app_id__environments__environment_id__connections__name__request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app_id}/environments/{environment_id}/connections/{name}/schema": {
         parameters: {
             query?: never;
@@ -2582,6 +2609,21 @@ export interface components {
              * @description `suspended` stops every query on it at the next snapshot.
              */
             status?: ("active" | "suspended") | null;
+        };
+        /** ConnectionRequestIn */
+        ConnectionRequestIn: Record<string, never>;
+        /** ConnectionRequestOut */
+        ConnectionRequestOut: {
+            approval: components["schemas"]["Approval"] | null;
+            /** Connections */
+            connections: components["schemas"]["EnvironmentConnectionOut"][];
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "linked" | "already_linked" | "pending" | "approved_not_linked";
+            /** Reason */
+            reason: string | null;
         };
         /** ConnectionSchemaOut */
         ConnectionSchemaOut: {
@@ -6403,6 +6445,108 @@ export interface operations {
                 };
             };
             /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    request_connection_v1_apps__app_id__environments__environment_id__connections__name__request_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                app_id: string;
+                environment_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionRequestIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionRequestOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `APP_DELETING` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;

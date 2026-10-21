@@ -414,6 +414,12 @@ async def links(conn: AsyncConnection, org_id: str, environment_id: str) -> list
     ]
 
 
+async def active_member(conn: AsyncConnection, org_id: str, group_id: str, user_id: str) -> bool:
+    """Whether ``user_id`` is an active user and a member of ``group_id`` now."""
+    params = {"org": org_id, "groups": [group_id], "users": [user_id]}
+    return (await conn.execute(_ACTIVE_MEMBERS, params)).first() is not None
+
+
 async def ceilings(
     conn: AsyncConnection, org_id: str, environment_id: str, grants: Collection[GrantKey]
 ) -> dict[str, Ceiling]:

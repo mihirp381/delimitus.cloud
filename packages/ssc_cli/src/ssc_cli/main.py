@@ -10,7 +10,7 @@ from ssc_cli.commands.access import access_app
 from ssc_cli.commands.approvals import approvals_app
 from ssc_cli.commands.apps import apps_app
 from ssc_cli.commands.audit import audit_app
-from ssc_cli.commands.connections import connections
+from ssc_cli.commands.connections import connect, connections
 from ssc_cli.commands.database import database_app
 from ssc_cli.commands.deploy import deploy
 from ssc_cli.commands.doctor import doctor
@@ -85,6 +85,7 @@ app.command()(doctor)
 app.command()(requirements)
 app.command()(policy)
 app.command()(connections)
+app.command()(connect)
 app.command()(init)
 app.command()(deploy)
 app.command()(releases)

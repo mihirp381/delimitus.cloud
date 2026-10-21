@@ -161,6 +161,9 @@ AGENT_MAY: Final[Mapping[str, str]] = {
     "POST /v1/apps/{app_id}/environments/{environment_id}/deployments": "deploy, rollback",
     "PUT /v1/apps/{app_id}/environments/{environment_id}/grants": "opens agent_share requests",
     "POST /v1/apps/{app_id}/environments/{environment_id}/grants/requirements": "writes nothing",
+    "POST /v1/apps/{app_id}/environments/{environment_id}/connections/{name}/request": (
+        "request_connection; on preview the connection's rule may link it (decision 016)"
+    ),
 }
 
 
