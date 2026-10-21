@@ -992,6 +992,15 @@ def test_every_member_sees_every_connection_never_its_address(
     assert len(audited) >= 1
 
 
+def test_a_deactivated_user_reads_no_connection(
+    client: TestClient, world: World, tokens: Tokens, signing_key: SigningKey
+) -> None:
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    retired = mint(signing_key, org=world.org, sub=world.retired, jti=f"cred_{new_key()[:16]}")
+    for path in ("/v1/connections", "/v1/connections/finance"):
+        assert_problem(client.get(path, headers=auth(retired)), ErrorCode.FORBIDDEN)
+
+
 # GA-5: kinds and addresses.
 
 
@@ -1799,6 +1808,45 @@ def test_the_production_gate_waits_after_a_revoke(
     assert states == {apr: "approved", fresh: "pending"}
 
 
+def test_a_suspended_connection_is_never_linked_by_its_rule(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    assert patch(client, tokens.admin, "finance", {"status": "suspended"}).status_code == 200
+    r = request_link(client, world, world.preview, tokens.admin)
+    assert r.json()["outcome"] == "pending", r.text
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
+
+
+def test_a_link_by_the_rule_withdraws_the_open_request(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    build_preview(dsns.app, world, world.builder)
+    approval = {"who": "approval"}
+    made = create_connection(client, tokens.admin, world.member, preview_access=approval)
+    assert made.status_code == 201
+    apr = request_link(client, world, world.preview, tokens.admin).json()["approval"]["id"]
+    rule = {"preview_access": {"who": "builders"}}
+    assert patch(client, tokens.admin, "finance", rule).status_code == 200
+    r = request_link(client, world, world.preview, tokens.builder)
+    assert r.json()["outcome"] == "linked", r.text
+    ((state, by, reason, channel),) = rows(
+        dsns.app,
+        world,
+        "select state, decided_by_user_id, decision_reason, decision_channel "
+        "from ssc.approval_request where id = %s",
+        (apr,),
+    )
+    assert (state, by, reason, channel) == (
+        "cancelled",
+        world.admin,
+        "linked by the preview access rule",
+        None,
+    )
+    (cancelled,) = events_of(dsns.app, world.org, AuditAction.APPROVAL_CANCELLED)
+    assert cancelled["target_id"] == apr
+
+
 def test_only_a_builder_of_the_environment_may_ask(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:
@@ -1819,4 +1867,5 @@ def test_only_a_builder_of_the_environment_may_ask(
         (world.app,),
     )
     assert_problem(request_link(client, world, world.preview, tokens.admin), ErrorCode.APP_DELETING)
+    assert_problem(post(client, elsewhere, tokens.admin, {}), ErrorCode.APP_DELETING)
     assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]

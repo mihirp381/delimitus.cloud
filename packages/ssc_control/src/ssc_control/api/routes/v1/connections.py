@@ -29,7 +29,7 @@ from ssc_contracts.connections import SQL_KINDS, Address, AddressError, Kind, pa
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.snapshot import SnapshotLimits
 from ssc_control.api.auth import PrincipalKind
-from ssc_control.api.authz import can_build, require_admin
+from ssc_control.api.authz import active_role, can_build, require_admin
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
@@ -351,10 +351,12 @@ async def _admin(uow: UnitOfWork) -> str:
     return by
 
 
-def _reader(uow: UnitOfWork) -> None:
+async def _reader(uow: UnitOfWork) -> None:
     kind = uow.principal.kind
     if kind not in {PrincipalKind.USER, PrincipalKind.OPERATOR}:
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": kind.value})
+    if kind is PrincipalKind.USER and await active_role(uow) is None:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "not_an_active_member"})
 
 
 async def _audit_operator(uow: UnitOfWork) -> None:
@@ -458,7 +460,7 @@ def _refusal(exc: service.ConnectionChangeError, name: str) -> Refusal:
 async def list_connections(uow: UserUoW) -> ConnectionsOut:
     """Every connection of the org, for every member, by name, kind and classification, never an
     address."""
-    _reader(uow)
+    await _reader(uow)
     await _audit_operator(uow)
     return ConnectionsOut(
         connections=[_out(c) for c in await service.list_all(uow.conn, uow.org_id)]
@@ -472,7 +474,7 @@ async def list_connections(uow: UserUoW) -> ConnectionsOut:
 )
 async def get_connection(name: Name, uow: UserUoW) -> ConnectionOut:
     """One connection, for every member; never its address."""
-    _reader(uow)
+    await _reader(uow)
     found = await service.get(uow.conn, uow.org_id, name)
     if found is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
@@ -527,7 +529,7 @@ async def get_environment_connections(
     app_id: Id, environment_id: Id, uow: UserUoW
 ) -> EnvironmentConnectionsOut:
     """What the environment may reach."""
-    _reader(uow)
+    await _reader(uow)
     await _environment(uow, app_id, environment_id)
     return await environment_out(uow, environment_id)
 
@@ -561,7 +563,7 @@ async def get_environment_connection_schema(  # noqa: PLR0913  (FastAPI maps eac
     ten seconds for the cell to have the snapshot holding the link and asks once more, then is
     `DATA_SNAPSHOT_STALE` with `Retry-After`. A read, not an audit event (an operator's access is
     recorded as on every read)."""
-    _reader(uow)
+    await _reader(uow)
     await _connection(uow, name)
     await _environment(uow, app_id, environment_id)
     principal = uow.principal

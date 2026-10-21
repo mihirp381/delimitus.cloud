@@ -493,7 +493,8 @@ export interface paths {
          *     sessions included. `already_linked` writes nothing. On preview, when the connection's
          *     preview access rule covers the caller (`builders`, or `group` and an active member) and the
          *     environment's audience is inside the ceiling, the link is made at once (`linked`, audited
-         *     `connection.granted` with a `connection.preview_access` policy decision). Otherwise, and
+         *     `connection.granted` with a `connection.preview_access` policy decision; a pending request
+         *     for it is cancelled). A suspended connection is never linked by its rule. Otherwise, and
          *     always on prod, a `connect_data_source` request is opened (`pending`); one approved earlier
          *     whose link was revoked is spent, and a new one is opened. `approved_not_linked` is never
          *     answered and `reason` is always null.

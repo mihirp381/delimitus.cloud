@@ -29,9 +29,9 @@ _LOCK_ENV: Final = text(
     "select name from ssc.environment where org_id = :org and app_id = :app and id = :env "
     "for update"
 )
-_APP_STATUS: Final = text("select status from ssc.app where org_id = :org and id = :app for share")
 
 Outcome = Literal["linked", "already_linked", "pending"]
+LINKED_BY_RULE: Final = "linked by the preview access rule"
 
 
 class ConnectionRequestIn(Strict):
@@ -47,6 +47,8 @@ class ConnectionRequestOut(Strict):
 
 async def _rule_allows(uow: UnitOfWork, connection: service.Connection, requester: str) -> bool:
     rule = connection.preview_access
+    if connection.status != "active":
+        return False
     if rule.who == "builders":
         return True
     if rule.who == "group" and rule.group_id is not None:
@@ -86,6 +88,22 @@ async def _link_by_rule(
         by_user_id=by,
         policy_decision_id=pol,
     )
+    req = Requirement(RequirementKind.CONNECT_DATA_SOURCE, connection.name)
+    found = (
+        await approvals.newest(
+            uow.conn, org_id=uow.org_id, environment_id=environment_id, requirements=[req]
+        )
+    ).get(req)
+    if found is not None and found.state == "pending":
+        await approvals.cancel(
+            uow.conn,
+            org_id=uow.org_id,
+            approval_id=found.id,
+            user_id=found.requested_by_user_id,
+            channel=None,
+            reason=LINKED_BY_RULE,
+            actor=actor_of(uow.principal),
+        )
 
 
 @router.post(
@@ -103,18 +121,16 @@ async def request_connection(  # noqa: PLR0913  (FastAPI maps each parameter)
     sessions included. `already_linked` writes nothing. On preview, when the connection's
     preview access rule covers the caller (`builders`, or `group` and an active member) and the
     environment's audience is inside the ceiling, the link is made at once (`linked`, audited
-    `connection.granted` with a `connection.preview_access` policy decision). Otherwise, and
+    `connection.granted` with a `connection.preview_access` policy decision; a pending request
+    for it is cancelled). A suspended connection is never linked by its rule. Otherwise, and
     always on prod, a `connect_data_source` request is opened (`pending`); one approved earlier
     whose link was revoked is spent, and a new one is opened. `approved_not_linked` is never
     answered and `reason` is always null."""
     del body
     params = {"org": uow.org_id, "app": app_id, "env": environment_id}
     env_name = (await uow.conn.execute(_LOCK_ENV, params)).scalar()
-    status = (await uow.conn.execute(_APP_STATUS, params)).scalar()
-    if env_name is None or status is None or status == "deleted":
+    if env_name is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
-    if status == "deleting":
-        raise Refusal(ErrorCode.APP_DELETING, evidence={"app_id": app_id})
     by = await require_builder(uow, environment_id)
     connection = await service.get(uow.conn, uow.org_id, name)
     if connection is None:

@@ -358,11 +358,12 @@ connection to every member, never an address (decision 034 amendment 2026-10-20)
 environment (`GET` without a name lists them with `over_ceiling_since`). `POST
 .../connections/{name}/request` (body `{}`, `Idempotency-Key`) asks for the environment to use
 the connection, for whoever may build it, agent sessions included, and answers `{outcome, reason,
-approval, connections}`: `already_linked`; `linked` on preview when the preview access rule covers
-the caller and the audience is inside the ceiling (audited `connection.granted` with a
-`connection.preview_access` policy decision); otherwise, and always on prod, `pending` with the
-`connect_data_source` request; an approval whose link was revoked is spent and a new request is
-opened (decision 016 amendment 2026-10-20). `GET
+approval, connections}`: `already_linked`; `linked` on preview when the connection is `active`,
+its preview access rule covers the caller and the audience is inside the ceiling (audited
+`connection.granted` with a `connection.preview_access` policy decision; a pending
+`connect_data_source` request for it is cancelled); otherwise, and always on prod, `pending` with
+the `connect_data_source` request; an approval whose link was revoked is spent and a new request
+is opened (decision 016 amendment 2026-10-20). `GET
 .../connections/{name}/schema` answers the tables and columns that environment sees
 (`{connection, kind, tables, snapshot_version, cached}`), asked of the cell's data gateway through
 the cell agent and kept five minutes per org, environment and connection; it is for whoever may
