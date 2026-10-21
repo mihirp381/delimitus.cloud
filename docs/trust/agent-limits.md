@@ -24,6 +24,11 @@ can do no more than that person, and every write is audited as the person with
 - Have a secret set: `set_secret` takes no value and answers with the `ssc secret set` command
   for the person to run.
 
+SSC's agent pack tells an agent to use a data source's own MCP server first, when the person
+connected one, and for reads only. Those calls run as the person, straight to the source and
+outside SSC, so SSC neither mediates nor records them; the source's own access controls and logs
+apply. An app still reads only through SSC's data gateway, as the connection's role.
+
 ## What an agent cannot do
 
 The rule: the agent interface's tools are the only agent surface. A `/v1` write that does not
