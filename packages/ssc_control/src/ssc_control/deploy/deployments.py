@@ -49,15 +49,15 @@ change is a compare-and-set on the deployment row, and ``apply`` is idempotent o
    pre-empted it.
    Any end short of going live puts the column back to the live release's timeout, in the
    transaction that records it, if the pointer has not moved, and asks for a snapshot.
-3. Healthy: one transaction checks the app is still active (``FOR SHARE``, so it waits for a
-   kill switch pulled at the same moment; ``APP_NOT_ACTIVE`` otherwise), marks it ``healthy``
-   (only if still ``running``), supersedes the previous live deployment, moves the
-   environment's pointer, records ``first_url`` for the environment's first live deployment,
-   for a forward deploy only syncs the manifest's schedules, and audits ``*.finished``. Then a
-   longer timeout raises ``request_timeout_seconds`` and asks for a snapshot; a failure there
-   leaves it at the lower figure until the next deployment. Unhealthy or stopped: ``failed``
-   with the reason code and ``*.failed``; the pointer is untouched, and a service that never had
-   a live deployment is scaled to zero.
+3. Healthy: one transaction locks the environment, then checks the app is still active
+   (``FOR SHARE``, so it waits for a kill switch pulled at the same moment; ``APP_NOT_ACTIVE``
+   otherwise), marks it ``healthy`` (only if still ``running``), supersedes the previous live
+   deployment, moves the environment's pointer, records ``first_url`` for the environment's
+   first live deployment, for a forward deploy only syncs the manifest's schedules, and audits
+   ``*.finished``. Then a longer timeout raises ``request_timeout_seconds`` and asks for a
+   snapshot; a failure there leaves it at the lower figure until the next deployment. Unhealthy
+   or stopped: ``failed`` with the reason code and ``*.failed``; the pointer is untouched, and a
+   service that never had a live deployment is scaled to zero.
 """
 
 import asyncio
@@ -694,6 +694,7 @@ async def _go_live(ports: Ports, org_id: str, ready: _Ready) -> str:
     dep = ready.deployment
     async with bound_org(ports.engine, org_id) as conn:
         app = {"org": org_id, "app": dep.app_id}
+        await conn.execute(_LOCK_POINTER, {"org": org_id, "env": dep.environment_id})
         if (await conn.execute(_SHARE_APP_STATUS, app)).scalar() == "active":
             if await _mark_healthy(conn, ports, org_id, ready):
                 return "healthy"

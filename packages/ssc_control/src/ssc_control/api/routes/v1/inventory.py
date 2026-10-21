@@ -30,7 +30,7 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.apps import AppOut, environments_of
 from ssc_control.api.routes.v1.common import Id, Strict
-from ssc_control.api.routes.v1.grants import grant_owner_preview
+from ssc_control.api.routes.v1.grants import LOCK_PREVIEW, grant_owner_preview
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.lifecycle import inventory, kill_switch
@@ -450,6 +450,7 @@ async def transfer_owner(app_id: Id, body: OwnerTransfer, request: Request, uow:
     if uow.principal.is_agent:
         raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     await require_admin(uow)
+    await uow.conn.execute(LOCK_PREVIEW, {"org": uow.org_id, "app": app_id})
     before = (
         await uow.conn.execute(_LOCK_APP_OWNER, {"org": uow.org_id, "id": app_id})
     ).scalar_one_or_none()

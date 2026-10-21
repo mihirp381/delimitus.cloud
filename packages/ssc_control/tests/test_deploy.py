@@ -66,7 +66,7 @@ from httpx import Response
 from procrastinate import JobContext
 from procrastinate.jobs import Job
 from psycopg.rows import dict_row
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -920,6 +920,26 @@ async def test_a_healthy_deploy_moves_the_pointer_and_traffic(b: Bench) -> None:
     b.runtime.reset_calls()
     assert await run(b, op) == "healthy"
     assert b.runtime.calls == []
+
+
+async def test_going_live_locks_the_environment_before_the_app(b: Bench) -> None:
+    release = await build_release(b, b.w.preview)
+    op = start_deploy(b, b.w.preview, release).json()["operation_id"]
+    engine = b.ports.engine.sync_engine
+    locks: list[str] = []
+
+    def seen(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+        if re.search(r"from ssc\.(environment|app) .*for (update|share)", statement):
+            locks.append(statement)
+
+    event.listen(engine, "before_cursor_execute", seen)
+    try:
+        assert await run(b, op) == "healthy"
+    finally:
+        event.remove(engine, "before_cursor_execute", seen)
+    app = next(i for i, s in enumerate(locks) if s.startswith("select status from ssc.app"))
+    assert app > 0, locks
+    assert locks[app - 1].startswith("select current_deployment_id from ssc.environment"), locks
 
 
 async def test_a_failed_health_check_keeps_the_old_pointer(b: Bench) -> None:

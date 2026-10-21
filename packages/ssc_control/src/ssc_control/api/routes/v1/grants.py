@@ -175,7 +175,7 @@ _BUMP_GRANTS = text(
 )
 
 
-_LOCK_PREVIEW = text(
+LOCK_PREVIEW = text(
     "select id from ssc.environment where org_id = :org and app_id = :app and name = 'preview' "
     "for update"
 )
@@ -186,7 +186,7 @@ _USER_GRANT = text(
 
 async def grant_owner_preview(uow: UnitOfWork, app_id: str, owner: str) -> bool:
     """A builder grant for ``owner`` on the app's preview unless they hold one (GA-12 F9b)."""
-    env = (await uow.conn.execute(_LOCK_PREVIEW, {"org": uow.org_id, "app": app_id})).scalar_one()
+    env = (await uow.conn.execute(LOCK_PREVIEW, {"org": uow.org_id, "app": app_id})).scalar_one()
     params = {"org": uow.org_id, "env": env, "user": owner}
     if (await uow.conn.execute(_USER_GRANT, params)).first() is not None:
         return False
@@ -422,7 +422,8 @@ async def _write(  # noqa: PLR0913  (keyword-only)
 
 
 async def lock_environment(uow: UnitOfWork, row: ApprovalRow) -> None:
-    """Take the request's environment ``FOR UPDATE``, the order :func:`put_grants` locks in."""
+    """Take the request's environment ``FOR UPDATE``, the order :func:`put_grants` locks in:
+    environment before app, everywhere."""
     params = {"org": uow.org_id, "app": row.app_id, "env": row.environment_id}
     await uow.conn.execute(_LOCK_ENV, params)
 

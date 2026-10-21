@@ -32,15 +32,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 from procrastinate import App, PsycopgConnector
 from psycopg.rows import dict_row
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.engine import make_url
 from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
 
@@ -385,6 +386,30 @@ def test_the_owner_needs_no_grant_to_change_sharing(
     assert explain(client, w, prod, token).json()["reason"] == "granted"
     assert put_grants(client, w, prod, token, [], 4).status_code == 200
     assert explain(client, w, prod, token).json()["reason"] == "no_grant"
+
+
+def test_an_owner_transfer_locks_the_environment_before_the_app(
+    client: TestClient, world: World
+) -> None:
+    una = new_member(client, world)
+    engine = cast(FastAPI, client.app).state.runtime.engine.sync_engine
+    locks: list[str] = []
+
+    def seen(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+        if "for update" in statement:
+            locks.append(statement)
+
+    event.listen(engine, "before_cursor_execute", seen)
+    try:
+        r = client.put(
+            f"/v1/apps/{world.app}/owner", json={"user_id": una}, headers=auth(world.admin_token)
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", seen)
+    assert r.status_code == 200, r.text
+    tables = [m.group(1) for s in locks if (m := re.search(r"from (ssc\.\w+)", s))]
+    assert tables[0] == "ssc.environment", locks
+    assert "ssc.app" in tables[1:], locks
 
 
 # ── done when: the last admin cannot be demoted ──────────────────────────────
