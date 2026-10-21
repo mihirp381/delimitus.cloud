@@ -34,6 +34,7 @@ DoctorCode = Literal[
     "ADD_APPROVED_PACKAGE",
     "MANIFEST_IGNORED",
     "SCHEDULE_TIMEOUT_LONG",
+    "CONNECTION_UNDECLARED",
 ]
 
 LOCKFILE_STALE: Final = "LOCKFILE_STALE"
@@ -52,6 +53,7 @@ SESSION_FRAMEWORK: Final = "SESSION_FRAMEWORK"
 ADD_APPROVED_PACKAGE: Final = "ADD_APPROVED_PACKAGE"
 MANIFEST_IGNORED: Final = "MANIFEST_IGNORED"
 SCHEDULE_TIMEOUT_LONG: Final = "SCHEDULE_TIMEOUT_LONG"
+CONNECTION_UNDECLARED: Final = "CONNECTION_UNDECLARED"
 
 SEVERITY: Final[dict[DoctorCode, Severity]] = {
     LOCKFILE_STALE: "block",
@@ -70,6 +72,7 @@ SEVERITY: Final[dict[DoctorCode, Severity]] = {
     ADD_APPROVED_PACKAGE: "block",
     MANIFEST_IGNORED: "warn",
     SCHEDULE_TIMEOUT_LONG: "warn",
+    CONNECTION_UNDECLARED: "warn",
 }
 
 FIX: Final[dict[DoctorCode, str]] = {
@@ -145,6 +148,11 @@ FIX: Final[dict[DoctorCode, str]] = {
         f"{REQUEST_TIMEOUT_SECONDS} seconds to the longest schedule's timeout_seconds for every "
         f"request, not only the timer's; set timeout_seconds to {REQUEST_TIMEOUT_SECONDS} or "
         "less to keep the shorter limit."
+    ),
+    CONNECTION_UNDECLARED: (
+        "List the name under [connections] names in ssc.toml. The deploy's capability check and "
+        "the console's Data tab know only declared names, and an environment reads a connection "
+        "only once it is linked."
     ),
 }
 

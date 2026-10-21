@@ -254,7 +254,8 @@ own; its calls are recorded the same way. Set it up once:
   `environment="preview"` (`ssc connect <app> <connection> --env preview`): the connection's preview
   access rule may link it at once, otherwise another active admin decides. Once it is linked,
   `describe_connection` gives the tables and columns the environment sees through it. List each one
-  the app reads under `[connections]` `names` in `ssc.toml`. Production still waits for an approved
+  the app reads under `[connections]` `names` in `ssc.toml` (`ssc doctor` warns
+  `CONNECTION_UNDECLARED` for a read of one that is not). Production still waits for an approved
   request (`request_connection` with `environment="prod"`); once approved, the environment is linked
   unless its audience exceeds the connection's ceiling. `ssc connections <app> --env <env>` shows
   the links. You never link or approve: when a request is pending or a read answers

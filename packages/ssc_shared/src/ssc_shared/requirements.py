@@ -189,6 +189,13 @@ RULES: Final = (
         "a secret.",
         doctor=("PUBLIC_ENV_AT_BUILD",),
     ),
+    PlatformRule(
+        id="data-connections",
+        text="An app reads company data only through a data connection named under [connections] "
+        "names in ssc.toml, and an environment reads one only once it is linked "
+        "(request_connection, or ssc connect).",
+        doctor=("CONNECTION_UNDECLARED",),
+    ),
 )
 """What an app must do to deploy and run."""
 

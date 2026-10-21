@@ -87,7 +87,7 @@ SQLite on disk (a `sqlite` or `sqlite3` key in `[state]`, in any case, or `state
 
 | Key | Type | Default | Rule |
 |---|---|---|---|
-| `names` | array of string | `[]` | Company data connections by name, `^[a-z][a-z0-9-]{0,62}$` (the `ssc.connection.name` rule). Unique, at most 20. |
+| `names` | array of string | `[]` | Company data connections by name, `^[a-z][a-z0-9-]{0,62}$` (the `ssc.connection.name` rule). Unique, at most 20. `ssc doctor` warns `CONNECTION_UNDECLARED` for a read whose literal connection name is not listed here (decision 017). |
 
 `[egress]`:
 

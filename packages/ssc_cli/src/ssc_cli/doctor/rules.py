@@ -25,6 +25,7 @@ from ssc_bundle.ignore import IGNORE_FILE, Ignore
 from ssc_bundle.secrets import allowed_values, scan
 from ssc_cli.doctor.finding import (
     ADD_APPROVED_PACKAGE,
+    CONNECTION_UNDECLARED,
     EXTERNAL_SERVICE,
     LOCKFILE_STALE,
     MANIFEST_IGNORED,
@@ -866,6 +867,41 @@ def schedule_timeout_long(t: Tree) -> list[Finding]:
     ]
 
 
+_PY_READ: Final = re.compile(r"""\bdata\.(?:query|describe)\s*\(\s*(["'])([^"'\\\n]*)\1\s*[,)]""")
+_JS_HELPER: Final = re.compile(r"""["']@delimitus/ssc-data["']""")
+_JS_READ: Final = re.compile(
+    r"""(?<![\w.$])(?:query|describe)\s*\(\s*(["'`])([^"'`\\\n$]*)\1\s*[,)]"""
+)
+
+
+def connection_undeclared(t: Tree) -> list[Finding]:
+    declared = set(_loaded_manifest(t).connections.names)
+    out: list[Finding] = []
+    for rel, text in t.sources(PY | JS):
+        if _is_test_path(rel):
+            continue
+        if Path(rel).suffix in PY:
+            reads = _PY_READ if "ssc_app" in text else None
+        else:
+            reads = _JS_READ if _JS_HELPER.search(text) else None
+        if reads is None:
+            continue
+        lines: dict[int, str] = {}
+        for m in reads.finditer(text):
+            if m.group(2) not in declared:
+                lines.setdefault(_line_of(text, m.start()), m.group(2))
+        out += [
+            finding(
+                CONNECTION_UNDECLARED,
+                rel,
+                f"This read names connection `{name}`, which ssc.toml does not declare.",
+                line,
+            )
+            for line, name in sorted(lines.items())
+        ]
+    return out
+
+
 Rule = Callable[[Tree], Iterable[Finding]]
 
 RULES: Final[tuple[Rule, ...]] = (
@@ -884,4 +920,5 @@ RULES: Final[tuple[Rule, ...]] = (
     session_framework_rule,
     add_approved_package,
     schedule_timeout_long,
+    connection_undeclared,
 )

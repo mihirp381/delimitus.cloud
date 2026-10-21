@@ -666,3 +666,49 @@ def test_a_schedule_longer_than_the_request_timeout_warns_that_the_timeout_grows
     assert (f.code, f.severity, f.path) == ("SCHEDULE_TIMEOUT_LONG", "warn", "ssc.toml")
     assert "long" in f.message and "900" in f.message and "short" not in f.message
     assert "every request" in f.fix
+
+
+CONNECTED = 'schema = "ssc/v1"\n[connections]\nnames = ["sales-db"]\n'
+
+
+def test_a_python_read_of_an_undeclared_connection_warns(tmp_path):
+    app = (
+        "from ssc_app import data\n"
+        "\n"
+        'data.query("sales-db", "select 1")\n'
+        "data.describe('crm')\n"
+        "data.query(NAME, 'select 1')\n"
+    )
+    found = run_doctor(make(tmp_path, {"main.py": app, "ssc.toml": CONNECTED}))
+    assert [(f.code, f.severity, f.path, f.line) for f in found] == [
+        ("CONNECTION_UNDECLARED", "warn", "main.py", 4)
+    ]
+    assert found[0].message == "This read names connection `crm`, which ssc.toml does not declare."
+    assert found[0].requirement == "data-connections"
+
+
+def test_a_declared_or_non_literal_read_is_quiet(tmp_path):
+    app = (
+        "from ssc_app import data\n"
+        'NAME = "crm"\n'
+        'data.query("sales-db", "x")\n'
+        'data.query(NAME, "x")\n'
+        'data.query(f"{NAME}", "x")\n'
+    )
+    assert codes(make(tmp_path, {"main.py": app, "ssc.toml": CONNECTED})) == []
+
+
+def test_a_node_read_warns_only_with_the_helper_imported(tmp_path):
+    read = "await query('crm', 'select 1', []);\nawait describe(\"sales-db\");\n"
+    helper = "import { query, describe } from '@delimitus/ssc-data';\n"
+    with_helper = make(tmp_path / "a", {"server.js": helper + read, "ssc.toml": CONNECTED})
+    without = make(tmp_path / "b", {"server.js": read, "ssc.toml": CONNECTED})
+    found = [f for f in run_doctor(with_helper) if f.code == "CONNECTION_UNDECLARED"]
+    assert [(f.path, f.line) for f in found] == [("server.js", 2)]
+    assert "CONNECTION_UNDECLARED" not in codes(without)
+
+
+def test_a_test_file_is_not_checked_for_connections(tmp_path):
+    app = 'from ssc_app import data\ndata.query("crm", "select 1")\n'
+    files = {"main.py": "print(1)\n", "tests/test_reads.py": app, "test_main.py": app}
+    assert codes(make(tmp_path, files)) == []
