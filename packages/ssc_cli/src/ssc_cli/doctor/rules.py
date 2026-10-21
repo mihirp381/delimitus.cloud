@@ -11,6 +11,7 @@ checked by the manifest loader (decision 013); the other rules read what they ca
 when it is invalid.
 """
 
+import ast
 import json
 import os
 import re
@@ -317,6 +318,8 @@ def _is_test_path(rel: str) -> bool:
         or ".test." in name
         or ".spec." in name
         or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name == "conftest.py"
     )
 
 
@@ -867,11 +870,80 @@ def schedule_timeout_long(t: Tree) -> list[Finding]:
     ]
 
 
-_PY_READ: Final = re.compile(r"""\bdata\.(?:query|describe)\s*\(\s*(["'])([^"'\\\n]*)\1\s*[,)]""")
-_JS_HELPER: Final = re.compile(r"""["']@delimitus/ssc-data["']""")
-_JS_READ: Final = re.compile(
-    r"""(?<![\w.$])(?:query|describe)\s*\(\s*(["'`])([^"'`\\\n$]*)\1\s*[,)]"""
-)
+_PY_MODULE: Final = "ssc_app.data"
+_PY_READS: Final = frozenset({"query", "describe"})
+_JS_SOURCE: Final = r"""["']@delimitus/ssc-data["']"""
+_JS_NAMED: Final = re.compile(r"import\s*\{([^}]*)\}\s*from\s*" + _JS_SOURCE)
+_JS_NAMESPACE: Final = re.compile(r"import\s*\*\s*as\s+([\w$]+)\s+from\s*" + _JS_SOURCE)
+_JS_REQUIRE: Final = r"\s*=\s*require\s*\(\s*" + _JS_SOURCE + r"\s*\)"
+_JS_REQUIRED: Final = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}" + _JS_REQUIRE)
+_JS_REQUIRED_NAMESPACE: Final = re.compile(r"(?:const|let|var)\s+([\w$]+)" + _JS_REQUIRE)
+_JS_QUERY_NAME: Final = re.compile(r"query(?:\s*(?:as|:)\s*([\w$]+))?")
+
+
+def _dotted(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute) and (base := _dotted(node.value)) is not None:
+        return f"{base}.{node.attr}"
+    return None
+
+
+def _py_bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
+    modules: set[str] = set()
+    functions: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules |= {a.asname or a.name for a in node.names if a.name == _PY_MODULE}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            for a in node.names:
+                if node.module == "ssc_app" and a.name == "data":
+                    modules.add(a.asname or a.name)
+                elif node.module == _PY_MODULE and a.name in _PY_READS:
+                    functions.add(a.asname or a.name)
+    return modules, functions
+
+
+def _connection_arg(call: ast.Call) -> str | None:
+    arg = next((k.value for k in call.keywords if k.arg == "name"), None)
+    if call.args:
+        arg = call.args[0]
+    return arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else None
+
+
+def _py_reads(text: str) -> Iterator[tuple[int, str]]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError, ValueError:
+        return
+    modules, functions = _py_bindings(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        helper = (
+            isinstance(f, ast.Attribute) and f.attr in _PY_READS and _dotted(f.value) in modules
+        ) or (isinstance(f, ast.Name) and f.id in functions)
+        if helper and (name := _connection_arg(node)) is not None:
+            yield node.lineno, name
+
+
+def _js_reads(text: str) -> Iterator[tuple[int, str]]:
+    callees = [
+        re.escape(m.group(1) or "query")
+        for listed in (*_JS_NAMED.findall(text), *_JS_REQUIRED.findall(text))
+        for item in listed.split(",")
+        if (m := _JS_QUERY_NAME.fullmatch(item.strip()))
+    ]
+    callees += [
+        re.escape(ns) + r"\s*\.\s*query"
+        for ns in (*_JS_NAMESPACE.findall(text), *_JS_REQUIRED_NAMESPACE.findall(text))
+    ]
+    if not callees:
+        return
+    call = re.compile(rf"""(?<![\w.$])(?:{"|".join(callees)})\s*\(\s*(["'`])([^"'`\\\n$]*)\1\s*,""")
+    for m in call.finditer(text):
+        yield _line_of(text, m.start()), m.group(2)
 
 
 def connection_undeclared(t: Tree) -> list[Finding]:
@@ -881,15 +953,13 @@ def connection_undeclared(t: Tree) -> list[Finding]:
         if _is_test_path(rel):
             continue
         if Path(rel).suffix in PY:
-            reads = _PY_READ if "ssc_app" in text else None
+            reads = _py_reads(text) if "ssc_app" in text else iter(())
         else:
-            reads = _JS_READ if _JS_HELPER.search(text) else None
-        if reads is None:
-            continue
+            reads = _js_reads(text) if "@delimitus/ssc-data" in text else iter(())
         lines: dict[int, str] = {}
-        for m in reads.finditer(text):
-            if m.group(2) not in declared:
-                lines.setdefault(_line_of(text, m.start()), m.group(2))
+        for line, name in sorted(reads):
+            if name not in declared:
+                lines.setdefault(line, name)
         out += [
             finding(
                 CONNECTION_UNDECLARED,

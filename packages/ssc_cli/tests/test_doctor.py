@@ -712,3 +712,77 @@ def test_a_test_file_is_not_checked_for_connections(tmp_path):
     app = 'from ssc_app import data\ndata.query("crm", "select 1")\n'
     files = {"main.py": "print(1)\n", "tests/test_reads.py": app, "test_main.py": app}
     assert codes(make(tmp_path, files)) == []
+
+
+def undeclared(tmp_path, files):
+    found = run_doctor(make(tmp_path, {**files, "ssc.toml": CONNECTED}))
+    return [(f.path, f.line) for f in found if f.code == "CONNECTION_UNDECLARED"]
+
+
+@pytest.mark.parametrize(
+    "app",
+    [
+        "import pandas as pd\nfrom ssc_app import data as sd\n"
+        'data = pd.read_csv("x")\ndata.query("age > 30")\n',
+        "from ssc_app import data\nclass X:\n"
+        '    def f(self):\n        self.data.query("age > 30")\n',
+        'from ssc_app import data\n\n\ndef f():\n    """data.query("crm", "select 1")"""\n',
+        '# ssc_app: data.query("crm", "select 1")\nprint(1)\n',
+        'from ssc_app import data\ndata.query("crm"\n',
+    ],
+    ids=["other-data", "attribute", "docstring", "comment-only", "syntax-error"],
+)
+def test_a_python_call_that_is_not_the_helper_is_quiet(tmp_path, app):
+    assert undeclared(tmp_path, {"main.py": app}) == []
+
+
+@pytest.mark.parametrize(
+    "app",
+    [
+        'from ssc_app.data import query\n\nquery("crm", "select 1")\n',
+        'from ssc_app.data import describe as schema\n\nschema("crm")\n',
+        'import ssc_app.data as d\n\nd.query("crm", "select 1")\n',
+        'import ssc_app.data\n\nssc_app.data.query("crm", "select 1")\n',
+        'from ssc_app import data\n\ndata.query(name="crm", sql="select 1")\n',
+        'from ssc_app import data\n\ndata.query(\n    "crm",\n    "select 1",\n)\n',
+    ],
+    ids=["from-import", "aliased-function", "module-alias", "dotted", "keyword", "multi-line"],
+)
+def test_every_python_binding_of_the_helper_is_checked(tmp_path, app):
+    assert undeclared(tmp_path, {"main.py": app}) == [("main.py", 3)]
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        "import { query } from '@delimitus/ssc-data';\ndescribe('page', () => {});\n",
+        "import { query as q } from '@delimitus/ssc-data';\n"
+        "import { query } from 'firebase/firestore';\nquery(collection, 'x');\n",
+        "import * as ssc from '@delimitus/ssc-data';\nfoo.query('crm', 'x');\n",
+        "import { query } from '@delimitus/ssc-data';\nuseSWR(() => query('crm'));\n",
+    ],
+    ids=["jest-describe", "another-query", "another-object", "one-argument"],
+)
+def test_a_node_call_that_is_not_the_helper_is_quiet(tmp_path, server):
+    assert undeclared(tmp_path, {"server.js": server}) == []
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        "import * as ssc from '@delimitus/ssc-data';\nawait ssc.query('crm', 'select 1');\n",
+        "import { query as read } from '@delimitus/ssc-data';\nawait read('crm', 'select 1');\n",
+        "const { query } = require('@delimitus/ssc-data');\nquery('crm', 'select 1');\n",
+        "const { query: read } = require('@delimitus/ssc-data');\nread('crm', 'x');\n",
+        "const ssc = require('@delimitus/ssc-data');\nssc.query(\n  'crm',\n  'select 1',\n);\n",
+    ],
+    ids=["namespace", "aliased", "required", "required-aliased", "required-namespace"],
+)
+def test_every_node_binding_of_the_helper_is_checked(tmp_path, server):
+    assert undeclared(tmp_path, {"server.js": server}) == [("server.js", 2)]
+
+
+def test_conftest_and_test_suffixed_files_are_not_checked(tmp_path):
+    app = 'from ssc_app import data\ndata.query("crm", "select 1")\n'
+    files = {"main.py": "print(1)\n", "conftest.py": app, "reads_test.py": app}
+    assert undeclared(tmp_path, files) == []
