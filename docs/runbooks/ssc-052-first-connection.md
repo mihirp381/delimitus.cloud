@@ -35,6 +35,8 @@ curl -sS -X POST "$API/v1/connections" \
 
 `allowed_schemas` is recorded for the setup script and the console. The data gateway does not enforce it: it reads whatever the connection's database role may read, so the schemas the setup script grants that role (step 2's credential) are what bound an app's reads.
 
+`preview_access` says who may link the connection to a preview environment without a person deciding (decision 034, amendment 2026-10-20): `{"who": "approval"}`, `{"who": "builders"}` or `{"who": "group", "group_id": "grp_..."}`. Left out, an `internal` connection gets `builders` and a `confidential` or `restricted` one `approval`; agree it with the data owner along with the ceiling.
+
 Pass: `201` and `setup_status` is `pending`. The answer, `GET /v1/connections` and the audit row `connection.created` show the kind and never the address. A `pending` connection can be granted to an environment but the data gateway does not serve it (step 3).
 
 ## 2. Give the data gateway its credentials

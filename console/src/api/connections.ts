@@ -1,4 +1,5 @@
 import { type ApiClient, must } from './client';
+import { GROUP_ID_PATTERN } from './directory';
 import { type Approval, type Grant, type GrantInput, readGrants, toInput } from './grants';
 import type { components } from './schema';
 
@@ -8,6 +9,8 @@ export type ConnectionChange = components['schemas']['ConnectionPatch'];
 export type Ceiling = components['schemas']['CeilingDoc'];
 export type Subject = components['schemas']['SubjectDoc'];
 export type Limits = components['schemas']['SnapshotLimits'];
+export type PreviewAccess = components['schemas']['PreviewAccessDoc'];
+export type PreviewWho = PreviewAccess['who'];
 export type Classification = Connection['classification'];
 export type Kind = Connection['kind'];
 export type EnvironmentConnection = components['schemas']['EnvironmentConnectionOut'];
@@ -124,6 +127,29 @@ export function parseAddress(kind: Kind, typed: Readonly<Record<string, string>>
 /** `confidential` and `restricted` connections need a ceiling (CEILING_REQUIRED without one). */
 export function needsCeiling(classification: Classification): boolean {
   return classification !== 'internal';
+}
+
+export const PREVIEW_WHO_TITLE: Readonly<Record<PreviewWho, string>> = {
+  approval: 'Approval required',
+  builders: 'Any builder of the app',
+  group: 'Members of a group',
+};
+
+export function defaultPreviewWho(classification: Classification): PreviewWho {
+  return classification === 'internal' ? 'builders' : 'approval';
+}
+
+export function previewAccessText(rule: PreviewAccess): string {
+  if (rule.who === 'group') return `Group ${rule.group_id ?? ''}`;
+  return rule.who === 'builders' ? 'Builders' : 'Approval';
+}
+
+/** Throws an Error when a group rule's id is not a grp_ id. */
+export function previewAccessOf(who: PreviewWho, group: string): PreviewAccess {
+  if (who !== 'group') return { who };
+  const id = group.trim();
+  if (!GROUP_ID_PATTERN.test(id)) throw new Error('The preview access group must be a grp_ id.');
+  return { who, group_id: id };
 }
 
 export const LIMIT_TITLE: Readonly<Record<keyof Limits, string>> = {

@@ -1234,8 +1234,9 @@ export interface paths {
          *     session. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`
          *     connection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;
          *     `ALREADY_EXISTS` for a name in use; `CONNECTOR_UNAVAILABLE` for a kind the platform has no
-         *     connector for yet. The address is stored and never returned; the credentials stay a runbook
-         *     step. Audited as `connection.created`.
+         *     connector for yet; `REFERENCE_NOT_FOUND` for a preview access group the org does not have.
+         *     The address is stored and never returned; the credentials stay a runbook step. Audited as
+         *     `connection.created`.
          */
         post: operations["create_connection_v1_connections_post"];
         delete?: never;
@@ -1263,11 +1264,11 @@ export interface paths {
         head?: never;
         /**
          * Patch Connection
-         * @description Change a connection's owner, classification, ceiling, schemas, limits, setup status or
-         *     status. Active org admins only, never in an agent session. A new ceiling flags every
-         *     environment now over it (`over_ceiling_since`, one `connection.flagged` audit row each) and
-         *     opens no approval; the data gateway is not told. Moving to `confidential` or `restricted`
-         *     needs a ceiling in the same request.
+         * @description Change a connection's owner, classification, ceiling, schemas, limits, setup status,
+         *     status or preview access rule. Active org admins only, never in an agent session. A new
+         *     ceiling flags every environment now over it (`over_ceiling_since`, one `connection.flagged`
+         *     audit row each) and opens no approval; the data gateway is not told. Moving to
+         *     `confidential` or `restricted` needs a ceiling in the same request.
          */
         patch: operations["patch_connection_v1_connections__name__patch"];
         trace?: never;
@@ -2506,6 +2507,8 @@ export interface components {
              * @description With `host`; the engine's default when left out.
              */
             port?: number | null;
+            /** @description `internal` defaults to `builders`; `confidential` and `restricted` to `approval`. */
+            preview_access?: components["schemas"]["PreviewAccessDoc"] | null;
         };
         /** ConnectionOut */
         ConnectionOut: {
@@ -2537,6 +2540,7 @@ export interface components {
             name: string;
             /** Owner User Id */
             owner_user_id: string | null;
+            preview_access: components["schemas"]["PreviewAccessDoc"];
             /**
              * Setup Status
              * @enum {string}
@@ -2567,6 +2571,7 @@ export interface components {
             limits?: components["schemas"]["SnapshotLimits"] | null;
             /** Owner User Id */
             owner_user_id?: string | null;
+            preview_access?: components["schemas"]["PreviewAccessDoc"] | null;
             /**
              * Setup Status
              * @description `ready` puts the connection in the snapshot, so the data gateway serves it to the environments granted it; a `pending` connection answers CONNECTION_NOT_GRANTED. Set it before the first read (runbook ssc-052, step 3); `pending` takes it out again.
@@ -3517,6 +3522,7 @@ export interface components {
             name: string;
             /** Owner User Id */
             owner_user_id: string | null;
+            preview_access: components["schemas"]["PreviewAccessDoc"];
         };
         /** PolicyDatabase */
         PolicyDatabase: {
@@ -3544,6 +3550,20 @@ export interface components {
             environment_id: string;
             /** Host */
             host: string;
+        };
+        /**
+         * PreviewAccessDoc
+         * @description Who may link the connection to a preview environment without a person deciding.
+         */
+        PreviewAccessDoc: {
+            /** Group Id */
+            group_id?: string | null;
+            /**
+             * Who
+             * @description `approval`: an active org admin decides each request. `builders`: anyone who may build the preview. `group`: a builder of the preview who is an active member of `group_id`.
+             * @enum {string}
+             */
+            who: "approval" | "builders" | "group";
         };
         /**
          * PrincipalKind
@@ -9811,7 +9831,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `CONNECTOR_UNAVAILABLE` */
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `CONNECTOR_UNAVAILABLE`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -9967,7 +9987,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED` */
+            /** @description `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
                     [name: string]: unknown;

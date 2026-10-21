@@ -53,6 +53,7 @@ from ssc_control.snapshot.service import mark_dirty
 
 Problem = Literal["name_taken", "owner_not_active", "ceiling_required", "kind_unavailable"]
 Classification = Literal["internal", "confidential", "restricted"]
+PreviewWho = Literal["approval", "builders", "group"]
 SetupStatus = Literal["pending", "ready"]
 Status = Literal["active", "suspended"]
 
@@ -70,13 +71,14 @@ LIMIT_KEYS: Final = (
 """The caps a connection and a grant may carry (``SnapshotLimits``), one flat audit key each."""
 _COLUMNS: Final = (
     "id, name, kind, classification, owner_user_id, ceiling, allowed_schemas, limits, "
-    "setup_status, status, created_at, updated_at"
+    "setup_status, status, preview_access, created_at, updated_at"
 )
 _INSERT = text(
     "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
-    "database_name, address, owner_user_id, ceiling, allowed_schemas, limits) values (:id, :org, "
-    ":name, :kind, :class, :host, :port, :database, cast(:address as jsonb), :owner, "
-    "cast(:ceiling as jsonb), cast(:schemas as text[]), cast(:limits as jsonb)) "
+    "database_name, address, owner_user_id, ceiling, allowed_schemas, limits, preview_access) "
+    "values (:id, :org, :name, :kind, :class, :host, :port, :database, cast(:address as jsonb), "
+    ":owner, cast(:ceiling as jsonb), cast(:schemas as text[]), cast(:limits as jsonb), "
+    "cast(:preview as jsonb)) "
     "on conflict (org_id, name) do nothing returning id"
 )
 _OWNER_ACTIVE = text(
@@ -96,12 +98,12 @@ _UPDATE = text(
     "update ssc.connection set owner_user_id = :owner, classification = :class, "
     "ceiling = cast(:ceiling as jsonb), allowed_schemas = cast(:schemas as text[]), "
     "limits = cast(:limits as jsonb), setup_status = :setup, status = :status, "
-    "updated_at = now() where org_id = :org and id = :id"
+    "preview_access = cast(:preview as jsonb), updated_at = now() where org_id = :org and id = :id"
 )
 _LINKS = text(
     "select g.id, g.environment_id, g.limits, g.over_ceiling_since, g.created_at, "
     "c.id, c.name, c.kind, c.classification, c.owner_user_id, c.ceiling, c.allowed_schemas, "
-    "c.setup_status, c.status, c.limits, c.created_at, c.updated_at "
+    "c.setup_status, c.status, c.limits, c.created_at, c.updated_at, c.preview_access "
     "from ssc.connection_grant g join ssc.connection c "
     "on c.org_id = g.org_id and c.id = g.connection_id "
     "where g.org_id = :org and g.environment_id = :env order by c.name"
@@ -161,6 +163,24 @@ class ConnectionChangeError(Exception):
         self.problem: Problem = problem
 
 
+@dataclass(frozen=True, slots=True)
+class PreviewAccess:
+    """Who may link the connection to a preview environment without a person deciding."""
+
+    who: PreviewWho
+    group_id: str | None = None
+
+    def json(self) -> dict[str, Any]:
+        return {"who": self.who, "group_id": self.group_id}
+
+    def view(self) -> str:
+        return self.who if self.group_id is None else f"group:{self.group_id}"
+
+
+def _preview_access(raw: Mapping[str, Any]) -> PreviewAccess:
+    return PreviewAccess(cast(PreviewWho, raw["who"]), raw.get("group_id"))
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Connection:
     """A connection as the API shows it: never its address."""
@@ -175,6 +195,7 @@ class Connection:
     limits: dict[str, Any]
     setup_status: SetupStatus
     status: Status
+    preview_access: PreviewAccess
     created_at: datetime
     updated_at: datetime
 
@@ -189,6 +210,7 @@ class Connection:
             "allowed_schemas": list(self.allowed_schemas),
             "setup_status": self.setup_status,
             "status": self.status,
+            "preview_access": self.preview_access.view(),
             **limits_view(self.limits),
         }
 
@@ -223,6 +245,7 @@ def _connection(row: RowMapping) -> Connection:
         limits=cast(dict[str, Any], row["limits"]),
         setup_status=cast(SetupStatus, row["setup_status"]),
         status=cast(Status, row["status"]),
+        preview_access=_preview_access(row["preview_access"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -288,12 +311,14 @@ async def create(  # noqa: PLR0913  (keyword-only)
     limits: dict[str, Any],
     kind: Kind,
     address: Address,
+    preview_access: PreviewAccess | None = None,
 ) -> Connection:
     """A new ``pending`` connection. ``internal`` defaults to the whole-org ceiling; a
     ``confidential`` or ``restricted`` one needs ``ceiling`` (``ceiling_required``). The owner
     must be an active user (``owner_not_active``); a name in use is ``name_taken``; a kind
     without a connector is ``kind_unavailable``. ``address`` is the kind's (never a credential):
-    a SQL kind's also fills the host, port and database columns."""
+    a SQL kind's also fills the host, port and database columns. ``preview_access`` defaults to
+    ``builders`` for ``internal`` and ``approval`` otherwise."""
     if kind not in AVAILABLE:
         raise ConnectionChangeError("kind_unavailable")
     if (kind in SQL_KINDS) != isinstance(address, SqlAddress):
@@ -302,6 +327,8 @@ async def create(  # noqa: PLR0913  (keyword-only)
         if classification != "internal":
             raise ConnectionChangeError("ceiling_required")
         ceiling = ORG
+    if preview_access is None:
+        preview_access = PreviewAccess("builders" if classification == "internal" else "approval")
     if not await _owner_active(conn, org_id, owner_user_id):
         raise ConnectionChangeError("owner_not_active")
     con_id = new_id("con")
@@ -322,6 +349,7 @@ async def create(  # noqa: PLR0913  (keyword-only)
                 "ceiling": _dump(ceiling_json(ceiling)),
                 "schemas": allowed_schemas,
                 "limits": _dump(limits),
+                "preview": _dump(preview_access.json()),
             },
         )
     ).scalar_one_or_none()
@@ -377,6 +405,7 @@ async def links(conn: AsyncConnection, org_id: str, environment_id: str) -> list
                 limits=cast(dict[str, Any], r[14]),
                 setup_status=cast(SetupStatus, r[12]),
                 status=cast(Status, r[13]),
+                preview_access=_preview_access(r[17]),
                 created_at=r[15],
                 updated_at=r[16],
             ),
@@ -588,9 +617,10 @@ async def update(
     changes: Mapping[str, Any],
 ) -> Connection | None:
     """Apply the fields in ``changes`` (``owner_user_id``, ``classification``, ``ceiling`` as a
-    :class:`Ceiling`, ``allowed_schemas``, ``limits``, ``setup_status``, ``status``) to the
-    connection called ``name``; None when there is none. A new ceiling flags the environments
-    now over it. ``owner_not_active`` when the new owner is not an active user."""
+    :class:`Ceiling`, ``allowed_schemas``, ``limits``, ``setup_status``, ``status``,
+    ``preview_access`` as a :class:`PreviewAccess`) to the connection called ``name``; None when
+    there is none. A new ceiling flags the environments now over it. ``owner_not_active`` when
+    the new owner is not an active user."""
     row = (await conn.execute(_LOCK, {"org": org_id, "name": name})).mappings().first()
     if row is None:
         return None
@@ -617,6 +647,7 @@ async def update(
             "limits": _dump(changes.get("limits", before.limits)),
             "setup": changes.get("setup_status", before.setup_status),
             "status": changes.get("status", before.status),
+            "preview": _dump(changes.get("preview_access", before.preview_access).json()),
         },
     )
     after = await get(conn, org_id, name)

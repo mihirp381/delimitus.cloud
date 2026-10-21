@@ -35,6 +35,7 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.approvals import sees_every_request
 from ssc_control.api.routes.v1.common import Id, Strict
+from ssc_control.api.routes.v1.grants import missing_subjects
 from ssc_control.api.runtime import cell_of, runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals.service import newest
@@ -114,6 +115,23 @@ class CeilingDoc(Strict):
         return self
 
 
+class PreviewAccessDoc(Strict):
+    """Who may link the connection to a preview environment without a person deciding."""
+
+    who: Literal["approval", "builders", "group"] = Field(
+        description="`approval`: an active org admin decides each request. `builders`: anyone "
+        "who may build the preview. `group`: a builder of the preview who is an active member of "
+        "`group_id`."
+    )
+    group_id: Annotated[str, StringConstraints(pattern=r"^grp_[a-z0-9]{20}$")] | None = None
+
+    @model_validator(mode="after")
+    def _group_when_group(self) -> Self:
+        if (self.who == "group") != (self.group_id is not None):
+            raise ValueError("group_id is given when, and only when, who is group")
+        return self
+
+
 class ConnectionIn(Strict):
     name: NewName
     kind: Kind = Field(
@@ -136,6 +154,11 @@ class ConnectionIn(Strict):
         description=SCHEMAS_DESCRIPTION,
     )
     limits: SnapshotLimits | None = Field(default=None, description=LIMITS_DESCRIPTION)
+    preview_access: PreviewAccessDoc | None = Field(
+        default=None,
+        description="`internal` defaults to `builders`; `confidential` and `restricted` to "
+        "`approval`.",
+    )
     address: dict[str, Any] | None = Field(
         default=None,
         description="Where the source is, by kind: `{host, port?, database}` for `postgres`, "
@@ -198,6 +221,7 @@ class ConnectionPatch(Strict):
     status: Literal["active", "suspended"] | None = Field(
         default=None, description="`suspended` stops every query on it at the next snapshot."
     )
+    preview_access: PreviewAccessDoc | None = None
 
 
 class ConnectionOut(Strict):
@@ -211,6 +235,7 @@ class ConnectionOut(Strict):
     limits: SnapshotLimits
     setup_status: Literal["pending", "ready"]
     status: Literal["active", "suspended"]
+    preview_access: PreviewAccessDoc
     created_at: datetime
     updated_at: datetime
 
@@ -296,6 +321,9 @@ def _out(c: service.Connection) -> ConnectionOut:
         limits=SnapshotLimits.model_validate(c.limits),
         setup_status=c.setup_status,
         status=c.status,
+        preview_access=PreviewAccessDoc(
+            who=c.preview_access.who, group_id=c.preview_access.group_id
+        ),
         created_at=c.created_at,
         updated_at=c.updated_at,
     )
@@ -309,6 +337,12 @@ def _ceiling(doc: CeilingDoc) -> Ceiling:
         return parse_ceiling(raw)
     except CeilingError as exc:
         raise Refusal(ErrorCode.VALIDATION_FAILED, evidence={"ceiling": str(exc)}) from None
+
+
+async def _preview_access(uow: UnitOfWork, doc: PreviewAccessDoc) -> service.PreviewAccess:
+    if missing := await missing_subjects(uow, [("group", doc.group_id)]):
+        raise Refusal(ErrorCode.REFERENCE_NOT_FOUND, evidence={"subject_ids": missing})
+    return service.PreviewAccess(doc.who, doc.group_id)
 
 
 def _limits(limits: SnapshotLimits | None) -> dict[str, Any]:
@@ -381,6 +415,7 @@ async def _environment_out(
         ErrorCode.OWNER_NOT_ACTIVE,
         ErrorCode.CEILING_REQUIRED,
         ErrorCode.CONNECTOR_UNAVAILABLE,
+        ErrorCode.REFERENCE_NOT_FOUND,
     ),
 )
 async def create_connection(body: ConnectionIn, uow: UserUoW) -> Any:
@@ -388,9 +423,13 @@ async def create_connection(body: ConnectionIn, uow: UserUoW) -> Any:
     session. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`
     connection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;
     `ALREADY_EXISTS` for a name in use; `CONNECTOR_UNAVAILABLE` for a kind the platform has no
-    connector for yet. The address is stored and never returned; the credentials stay a runbook
-    step. Audited as `connection.created`."""
+    connector for yet; `REFERENCE_NOT_FOUND` for a preview access group the org does not have.
+    The address is stored and never returned; the credentials stay a runbook step. Audited as
+    `connection.created`."""
     await _admin(uow)
+    preview = (
+        None if body.preview_access is None else await _preview_access(uow, body.preview_access)
+    )
     try:
         made = await service.create(
             uow.conn,
@@ -404,6 +443,7 @@ async def create_connection(body: ConnectionIn, uow: UserUoW) -> Any:
             limits=_limits(body.limits),
             kind=body.kind,
             address=body.parsed_address(),
+            preview_access=preview,
         )
     except service.ConnectionChangeError as exc:
         raise _refusal(exc, body.name) from None
@@ -458,21 +498,29 @@ async def get_connection(name: Name, uow: UserUoW) -> ConnectionOut:
     "/connections/{name}",
     response_model=ConnectionOut,
     responses=problem_responses(
-        *_CHANGE, ErrorCode.NOT_FOUND, ErrorCode.OWNER_NOT_ACTIVE, ErrorCode.CEILING_REQUIRED
+        *_CHANGE,
+        ErrorCode.NOT_FOUND,
+        ErrorCode.OWNER_NOT_ACTIVE,
+        ErrorCode.CEILING_REQUIRED,
+        ErrorCode.REFERENCE_NOT_FOUND,
     ),
 )
 async def patch_connection(name: Name, body: ConnectionPatch, uow: UserUoW) -> ConnectionOut:
-    """Change a connection's owner, classification, ceiling, schemas, limits, setup status or
-    status. Active org admins only, never in an agent session. A new ceiling flags every
-    environment now over it (`over_ceiling_since`, one `connection.flagged` audit row each) and
-    opens no approval; the data gateway is not told. Moving to `confidential` or `restricted`
-    needs a ceiling in the same request."""
+    """Change a connection's owner, classification, ceiling, schemas, limits, setup status,
+    status or preview access rule. Active org admins only, never in an agent session. A new
+    ceiling flags every environment now over it (`over_ceiling_since`, one `connection.flagged`
+    audit row each) and opens no approval; the data gateway is not told. Moving to
+    `confidential` or `restricted` needs a ceiling in the same request."""
     await _admin(uow)
-    changes: dict[str, Any] = body.model_dump(exclude_none=True, exclude={"ceiling", "limits"})
+    changes: dict[str, Any] = body.model_dump(
+        exclude_none=True, exclude={"ceiling", "limits", "preview_access"}
+    )
     if body.ceiling is not None:
         changes["ceiling"] = _ceiling(body.ceiling)
     if body.limits is not None:
         changes["limits"] = _limits(body.limits)
+    if body.preview_access is not None:
+        changes["preview_access"] = await _preview_access(uow, body.preview_access)
     try:
         changed = await service.update(
             uow.conn, org_id=uow.org_id, actor=actor_of(uow.principal), name=name, changes=changes

@@ -338,8 +338,8 @@ requests opened. Workload credentials are `403 FORBIDDEN`; an operator's read is
 the only record of hosts until SSC-053 lands.
 
 **A connection has a classification and an audience ceiling** (SSC-052). `POST /v1/connections`
-(`name`, `owner_user_id`, `classification`, `ceiling`, `allowed_schemas`, `limits`, `kind`, default
-`postgres`, and `address`, where the source is in that kind's fields: `{host, port?, database}` for
+(`name`, `owner_user_id`, `classification`, `ceiling`, `allowed_schemas`, `limits`, `preview_access`,
+`kind`, default `postgres`, and `address`, where the source is in that kind's fields: `{host, port?, database}` for
 `postgres`, `mysql` and `sqlserver`, `{project, dataset, location?}` for `bigquery`, and so on per
 `ConnectionIn` in `openapi.json`; stored and never returned, and never a credential) creates one
 `pending`. The top-level `host`, `port` and `database` are the older form for the SQL kinds, still
@@ -348,7 +348,10 @@ accepted in place of `address`. `allowed_schemas` is recorded for the setup scri
 `status: suspended` stops queries on it at the next snapshot. Only an active org admin in a person
 session writes; a `confidential` or `restricted` connection needs a `ceiling` (`CEILING_REQUIRED`)
 and an owner who is an active user (`OWNER_NOT_ACTIVE`). A ceiling is `{audience: org}` or
-`{audience: subjects, subjects: [{kind: group|user, id}]}`. `GET /v1/connections[/{name}]` follows
+`{audience: subjects, subjects: [{kind: group|user, id}]}`. `preview_access` is who may link it to a
+preview environment without a person deciding: `{who: approval}`, `{who: builders}` or `{who:
+group, group_id}` (`REFERENCE_NOT_FOUND` for a group the org lacks); left out, `builders` for an
+`internal` connection and `approval` otherwise (decision 034). `GET /v1/connections[/{name}]` follows
 the approvals visibility rule above. `PUT` and `DELETE`
 `/v1/apps/{app_id}/environments/{environment_id}/connections/{name}` link and unlink an
 environment (`GET` without a name lists them with `over_ceiling_since`). `GET

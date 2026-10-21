@@ -32,7 +32,7 @@ from ssc_control.api.auth import PrincipalKind
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.approvals import sees_every_request
 from ssc_control.api.routes.v1.common import Strict
-from ssc_control.api.routes.v1.connections import CeilingDoc
+from ssc_control.api.routes.v1.connections import CeilingDoc, PreviewAccessDoc
 from ssc_control.api.uow import UserUoW
 from ssc_control.domain.approval_rules import RequirementKind
 
@@ -79,11 +79,12 @@ _HOSTS = (
 )
 _ORDER_HOSTS = " order by 1, 2, 3"
 _ALL_CONNECTIONS = text(
-    "select name, kind, classification, owner_user_id, ceiling from ssc.connection "
+    "select name, kind, classification, owner_user_id, ceiling, preview_access from ssc.connection "
     "where org_id = :org order by name"
 )
 _OWN_CONNECTIONS = text(
-    "select c.name, c.kind, c.classification, c.owner_user_id, c.ceiling from ssc.connection c "  # noqa: S608  (constant SQL fragments)
+    "select c.name, c.kind, c.classification, c.owner_user_id, c.ceiling, c.preview_access "  # noqa: S608  (constant SQL fragments)
+    "from ssc.connection c "
     "where c.org_id = :org and exists (select 1 from ssc.approval_request a "
     "where a.org_id = c.org_id and a.kind = 'connect_data_source' and a.state = 'approved' "
     "and a.subject_key = c.name" + _MINE + ") order by c.name"
@@ -103,6 +104,7 @@ class PolicyConnection(Strict):
     classification: Literal["internal", "confidential", "restricted"]
     owner_user_id: str | None
     ceiling: CeilingDoc
+    preview_access: PreviewAccessDoc
 
 
 class PolicyApproval(Strict):

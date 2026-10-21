@@ -1494,3 +1494,72 @@ def test_the_cache_keeps_the_newest_entries_for_their_time() -> None:
     assert cache.get(("other", "b", "finance")) is None
     clock.now += 300
     assert cache.get(("org", "c", "finance")) is None
+
+
+# Ticket 14: the preview access rule.
+
+
+def test_preview_access_defaults_by_classification(
+    client: TestClient, world: World, tokens: Tokens
+) -> None:
+    plain = create_connection(client, tokens.admin, world.member)
+    assert plain.json()["preview_access"] == {"who": "builders", "group_id": None}
+    for name in ("confidential", "restricted"):
+        made = create_connection(
+            client,
+            tokens.admin,
+            world.member,
+            name,
+            classification=name,
+            ceiling=ceiling_doc(("user", world.member)),
+        )
+        assert made.status_code == 201, made.text
+        assert made.json()["preview_access"] == {"who": "approval", "group_id": None}
+    listed = client.get("/v1/connections", headers=auth(tokens.admin)).json()["connections"]
+    assert {c["name"]: c["preview_access"]["who"] for c in listed} == {
+        "confidential": "approval",
+        "finance": "builders",
+        "restricted": "approval",
+    }
+
+
+def test_a_preview_access_group_is_one_the_org_has(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    missing = {"who": "group", "group_id": GROUP}
+    assert_problem(
+        create_connection(client, tokens.admin, world.member, preview_access=missing),
+        ErrorCode.REFERENCE_NOT_FOUND,
+    )
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    assert_problem(
+        patch(client, tokens.admin, "finance", {"preview_access": missing}),
+        ErrorCode.REFERENCE_NOT_FOUND,
+    )
+    group = add_group(dsns.app, world, [world.builder])
+    rule = {"who": "group", "group_id": group}
+    made = create_connection(client, tokens.admin, world.member, "hr", preview_access=rule)
+    assert made.json()["preview_access"] == rule
+    for bad in ({"who": "group"}, {"who": "builders", "group_id": group}, {"who": "anyone"}):
+        r = patch(client, tokens.admin, "finance", {"preview_access": bad})
+        assert r.status_code == 422, (bad, r.text)
+
+
+def test_a_preview_access_change_is_audited(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    group = add_group(dsns.app, world, [world.builder])
+    rule = {"who": "group", "group_id": group}
+    changed = patch(client, tokens.admin, "finance", {"preview_access": rule})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["preview_access"] == rule
+    updated = events_of(dsns.app, world.org, AuditAction.CONNECTION_UPDATED)[-1]
+    assert (updated["before"], updated["after"]) == (
+        {"preview_access": "builders"},
+        {"preview_access": f"group:{group}"},
+    )
+    (created,) = events_of(dsns.app, world.org, AuditAction.CONNECTION_CREATED)
+    assert created["after"]["preview_access"] == "builders"
+    policy = client.get("/v1/org/deployment-policy", headers=auth(tokens.admin)).json()
+    assert policy["connections"][0]["preview_access"] == rule

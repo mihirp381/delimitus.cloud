@@ -97,10 +97,11 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "egress_host": frozenset({"host", "high_risk", "approval_request_id"}),  # SSC-053
     "connection": frozenset(
         {"name", "kind", "classification", "ceiling", "setup_status", "status", "owner_user_id"}
-        | {"allowed_schemas"}
+        | {"allowed_schemas", "preview_access"}
         | _LIMITS
     ),  # SSC-052: ceiling is "org" or "group:<id>" and "user:<id>" entries, never an object;
-    # GA-5: kind is one of ssc_contracts.connections.KINDS, never the address
+    # GA-5: kind is one of ssc_contracts.connections.KINDS, never the address;
+    # ticket 14: preview_access is "approval", "builders" or "group:<id>"
     "connection_grant": frozenset({"connection_id", "environment_id", "over_ceiling_since"})
     | _LIMITS,
     "warm": frozenset({"environment_ids", "gateway", "monthly_usd_shown"}),

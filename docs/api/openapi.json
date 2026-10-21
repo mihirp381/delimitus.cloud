@@ -2450,6 +2450,17 @@
             ],
             "description": "With `host`; the engine's default when left out.",
             "title": "Port"
+          },
+          "preview_access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreviewAccessDoc"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`internal` defaults to `builders`; `confidential` and `restricted` to `approval`."
           }
         },
         "required": [
@@ -2526,6 +2537,9 @@
             ],
             "title": "Owner User Id"
           },
+          "preview_access": {
+            "$ref": "#/components/schemas/PreviewAccessDoc"
+          },
           "setup_status": {
             "enum": [
               "pending",
@@ -2559,6 +2573,7 @@
           "limits",
           "setup_status",
           "status",
+          "preview_access",
           "created_at",
           "updated_at"
         ],
@@ -2634,6 +2649,16 @@
               }
             ],
             "title": "Owner User Id"
+          },
+          "preview_access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreviewAccessDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "setup_status": {
             "anyOf": [
@@ -5020,6 +5045,9 @@
               }
             ],
             "title": "Owner User Id"
+          },
+          "preview_access": {
+            "$ref": "#/components/schemas/PreviewAccessDoc"
           }
         },
         "required": [
@@ -5027,7 +5055,8 @@
           "kind",
           "classification",
           "owner_user_id",
-          "ceiling"
+          "ceiling",
+          "preview_access"
         ],
         "title": "PolicyConnection",
         "type": "object"
@@ -5081,6 +5110,39 @@
           "environment_id"
         ],
         "title": "PolicyHost",
+        "type": "object"
+      },
+      "PreviewAccessDoc": {
+        "additionalProperties": false,
+        "description": "Who may link the connection to a preview environment without a person deciding.",
+        "properties": {
+          "group_id": {
+            "anyOf": [
+              {
+                "pattern": "^grp_[a-z0-9]{20}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "who": {
+            "description": "`approval`: an active org admin decides each request. `builders`: anyone who may build the preview. `group`: a builder of the preview who is an active member of `group_id`.",
+            "enum": [
+              "approval",
+              "builders",
+              "group"
+            ],
+            "title": "Who",
+            "type": "string"
+          }
+        },
+        "required": [
+          "who"
+        ],
+        "title": "PreviewAccessDoc",
         "type": "object"
       },
       "PrincipalKind": {
@@ -14645,7 +14707,7 @@
         ]
       },
       "post": {
-        "description": "Add a connection by hand with the customer. Active org admins only, never in an agent\nsession. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`\nconnection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;\n`ALREADY_EXISTS` for a name in use; `CONNECTOR_UNAVAILABLE` for a kind the platform has no\nconnector for yet. The address is stored and never returned; the credentials stay a runbook\nstep. Audited as `connection.created`.",
+        "description": "Add a connection by hand with the customer. Active org admins only, never in an agent\nsession. It starts `pending`. `CEILING_REQUIRED` for a `confidential` or `restricted`\nconnection without a ceiling; `OWNER_NOT_ACTIVE` when the owner is not an active user;\n`ALREADY_EXISTS` for a name in use; `CONNECTOR_UNAVAILABLE` for a kind the platform has no\nconnector for yet; `REFERENCE_NOT_FOUND` for a preview access group the org does not have.\nThe address is stored and never returned; the credentials stay a runbook step. Audited as\n`connection.created`.",
         "operationId": "create_connection_v1_connections_post",
         "parameters": [
           {
@@ -14744,7 +14806,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `CONNECTOR_UNAVAILABLE`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `CONNECTOR_UNAVAILABLE`, `REFERENCE_NOT_FOUND`"
           },
           "429": {
             "content": {
@@ -14857,7 +14919,7 @@
         ]
       },
       "patch": {
-        "description": "Change a connection's owner, classification, ceiling, schemas, limits, setup status or\nstatus. Active org admins only, never in an agent session. A new ceiling flags every\nenvironment now over it (`over_ceiling_since`, one `connection.flagged` audit row each) and\nopens no approval; the data gateway is not told. Moving to `confidential` or `restricted`\nneeds a ceiling in the same request.",
+        "description": "Change a connection's owner, classification, ceiling, schemas, limits, setup status,\nstatus or preview access rule. Active org admins only, never in an agent session. A new\nceiling flags every environment now over it (`over_ceiling_since`, one `connection.flagged`\naudit row each) and opens no approval; the data gateway is not told. Moving to\n`confidential` or `restricted` needs a ceiling in the same request.",
         "operationId": "patch_connection_v1_connections__name__patch",
         "parameters": [
           {
@@ -14940,7 +15002,7 @@
                 }
               }
             },
-            "description": "`VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`"
+            "description": "`VALIDATION_FAILED`, `OWNER_NOT_ACTIVE`, `CEILING_REQUIRED`, `REFERENCE_NOT_FOUND`"
           },
           "429": {
             "content": {

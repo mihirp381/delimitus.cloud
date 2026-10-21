@@ -987,6 +987,36 @@ def test_connections_revision_keeps_old_rows_and_downgrade_removes_it(dsns: Dsns
     assert run(dsn, org, kept) == [("pending", "active", ["public"], {"audience": "org"}, None)]
 
 
+def test_preview_access_revision_keeps_old_connections_on_approval(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database previewaccess owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="previewaccess").render_as_string(hide_password=False)
+    org, con = new_id("org"), new_id("con")
+    upgrade(dsn, "0037_app_delete")
+    with psycopg.connect(dsn) as conn:
+        bind_org_sync(conn, org)
+        conn.execute("insert into ssc.org (id, name) values (%s, 'Old')", (org,))
+        conn.execute(
+            "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
+            "database_name, address) values (%s, %s, 'finance', 'postgres', 'internal', 'h', "
+            "5432, 'd', '{\"host\": \"h\"}')",
+            (con, org),
+        )
+    upgrade(dsn, "0038_connection_preview_access")
+    rule = "select preview_access from ssc.connection where name = 'finance'"
+    assert run(dsn, org, rule) == [({"who": "approval"},)]
+    scalar = "update ssc.connection set preview_access = '\"builders\"'::jsonb"
+    assert refused(dsn, org, scalar) == CHECK_VIOLATION
+    downgrade(dsn, "0037_app_delete")
+    column = (
+        "select count(*) from information_schema.columns where table_schema = 'ssc' "
+        "and table_name = 'connection' and column_name = 'preview_access'"
+    )
+    assert run(dsn, None, column) == [(0,)]
+    upgrade(dsn, "0038_connection_preview_access")
+    assert run(dsn, org, rule) == [({"who": "approval"},)]
+
+
 # ── timers (SSC-041, revision 0013) ──────────────────────────────────────────
 
 ARMED_SCHEDULE = (

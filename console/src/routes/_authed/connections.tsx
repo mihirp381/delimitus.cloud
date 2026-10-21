@@ -23,6 +23,11 @@ import {
   limitPhrases,
   limitsTyped,
   needsCeiling,
+  defaultPreviewWho,
+  PREVIEW_WHO_TITLE,
+  previewAccessOf,
+  previewAccessText,
+  type PreviewWho,
   parseLimits,
   parseAddress,
   parseSchemas,
@@ -64,6 +69,7 @@ function ConnectionsPage() {
     { header: 'Apps may be shared with', cell: (c) => ceilingText(c.ceiling) },
     { header: 'Schemas', cell: (c) => c.allowed_schemas.join(', ') },
     { header: 'Limits', cell: (c) => <Phrases items={limitPhrases(c.limits)} /> },
+    { header: 'Preview access', cell: (c) => previewAccessText(c.preview_access) },
     {
       header: 'State',
       cell: (c) => (
@@ -239,6 +245,38 @@ function ClassificationField({
   );
 }
 
+interface PreviewProps {
+  readonly who: PreviewWho;
+  readonly group: string;
+  readonly onWho: (who: PreviewWho) => void;
+  readonly onGroup: (group: string) => void;
+}
+
+function PreviewAccessFields({ who, group, onWho, onGroup }: PreviewProps) {
+  const id = useId();
+  const groupId = useId();
+  return (
+    <>
+      <label className="field" htmlFor={id}>
+        <span>Preview access</span>
+        <select id={id} value={who} onChange={(e) => onWho(e.target.value as PreviewWho)}>
+          {(Object.keys(PREVIEW_WHO_TITLE) as PreviewWho[]).map((w) => (
+            <option key={w} value={w}>
+              {PREVIEW_WHO_TITLE[w]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {who === 'group' ? (
+        <label className="field" htmlFor={groupId}>
+          <span>Group (grp_ id)</span>
+          <input id={groupId} value={group} spellCheck={false} onChange={(e) => onGroup(e.target.value)} />
+        </label>
+      ) : null}
+    </>
+  );
+}
+
 function ceilingOf(audience: Ceiling['audience'], subjects: string): Ceiling {
   return audience === 'org' ? { audience: 'org' } : { audience: 'subjects', subjects: parseSubjects(subjects) };
 }
@@ -261,6 +299,9 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
   const [audience, setAudience] = useState<Ceiling['audience']>('org');
   const [subjects, setSubjects] = useState('');
   const [limits, setLimits] = useState<Typed>({});
+  const [previewWho, setPreviewWho] = useState<PreviewWho>(defaultPreviewWho('internal'));
+  const [previewTouched, setPreviewTouched] = useState(false);
+  const [previewGroup, setPreviewGroup] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const nameId = useId();
@@ -278,6 +319,16 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
     forgetAddress(next);
   }
 
+  function pickClassification(next: Classification) {
+    setClassification(next);
+    if (!previewTouched) setPreviewWho(defaultPreviewWho(next));
+  }
+
+  function pickPreviewWho(next: PreviewWho) {
+    setPreviewWho(next);
+    setPreviewTouched(true);
+  }
+
   function close() {
     setOpen(false);
     setName('');
@@ -288,6 +339,9 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
     setAudience('org');
     setSubjects('');
     setLimits({});
+    setPreviewWho(defaultPreviewWho('internal'));
+    setPreviewTouched(false);
+    setPreviewGroup('');
     setError(null);
   }
 
@@ -301,8 +355,10 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
     let ceiling: Ceiling;
     let parsedLimits: Limits;
     let parsedAddress: Record<string, string | number>;
+    let previewAccess: ReturnType<typeof previewAccessOf>;
     try {
       ceiling = ceilingOf(audience, subjects);
+      previewAccess = previewAccessOf(previewWho, previewGroup);
       parsedLimits = parseLimits(limits);
       parsedAddress = parseAddress(kind, address);
     } catch (e) {
@@ -322,6 +378,7 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
       ceiling,
       allowed_schemas: parseSchemas(schemas),
       limits: parsedLimits,
+      preview_access: previewAccess,
       ...where,
     });
     forgetAddress();
@@ -364,7 +421,7 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
               ))}
             </select>
           </label>
-          <ClassificationField value={classification} onChange={setClassification} />
+          <ClassificationField value={classification} onChange={pickClassification} />
           <Lookup
             label="Owner: email or usr_ id"
             placeholder="name@example.com"
@@ -417,6 +474,7 @@ function AddConnection({ onDone }: { readonly onDone: (message: string) => void 
               purpose.
             </p>
           ) : null}
+          <PreviewAccessFields who={previewWho} group={previewGroup} onWho={pickPreviewWho} onGroup={setPreviewGroup} />
           <LimitFields typed={limits} onChange={setLimits} />
           {error ? <ProblemNotice error={error} /> : null}
           {error && addressEmpty ? (
@@ -491,6 +549,8 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
   const [subjects, setSubjects] = useState(subjectsText(connection.ceiling));
   const [limits, setLimits] = useState<Typed>(limitsTyped(connection.limits));
   const [setup, setSetup] = useState(connection.setup_status);
+  const [previewWho, setPreviewWho] = useState(connection.preview_access.who);
+  const [previewGroup, setPreviewGroup] = useState(connection.preview_access.group_id ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const ownerId = useId();
@@ -514,6 +574,9 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
     const parsedLimits = parseLimits(limits);
     if (!same(parsedLimits, parseLimits(limitsTyped(connection.limits)))) patch.limits = parsedLimits;
     if (setup !== connection.setup_status) patch.setup_status = setup;
+    const preview = previewAccessOf(previewWho, previewGroup);
+    const { who, group_id } = connection.preview_access;
+    if (!same(preview, previewAccessOf(who, group_id ?? ''))) patch.preview_access = preview;
     return patch;
   }
 
@@ -580,6 +643,7 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
         A narrower audience flags every environment now shared wider; nothing stops until someone
         acts on the flag.
       </p>
+      <PreviewAccessFields who={previewWho} group={previewGroup} onWho={setPreviewWho} onGroup={setPreviewGroup} />
       <LimitFields typed={limits} onChange={setLimits} />
       <label className="field" htmlFor={setupId}>
         <span>Setup</span>

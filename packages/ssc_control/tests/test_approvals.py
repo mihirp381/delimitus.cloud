@@ -1066,6 +1066,7 @@ def test_the_deployment_policy_shows_only_what_the_caller_may_see(
         "classification": "confidential",
         "owner_user_id": None,
         "ceiling": {"audience": "org", "subjects": []},
+        "preview_access": {"who": "approval", "group_id": None},
     }
     assert full["hosts"][0] == {
         "host": "api.mine.example",

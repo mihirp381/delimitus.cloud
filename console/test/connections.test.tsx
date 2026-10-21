@@ -20,6 +20,7 @@ function connection(name: string, extra: Record<string, unknown> = {}) {
     limits: { max_rows: 1000 },
     setup_status: 'ready',
     status: 'active',
+    preview_access: { who: 'builders', group_id: null },
     created_at: '2026-10-01T10:00:00Z',
     updated_at: '2026-10-01T10:00:00Z',
     ...extra,
@@ -27,7 +28,7 @@ function connection(name: string, extra: Record<string, unknown> = {}) {
 }
 
 const LEDGER = connection('ledger');
-const CRM = connection('crm', { classification: 'confidential', ceiling: { audience: 'subjects', subjects: [{ kind: 'group', id: GROUP }] }, setup_status: 'pending' });
+const CRM = connection('crm', { classification: 'confidential', ceiling: { audience: 'subjects', subjects: [{ kind: 'group', id: GROUP }] }, setup_status: 'pending', preview_access: { who: 'group', group_id: GROUP } });
 const ENV_CONNECTIONS = `${APP_PATH}/environments/${PROD}/connections`;
 
 function linked(...list: ReturnType<typeof connection>[]) {
@@ -62,6 +63,8 @@ describe('connections page', () => {
     expect(within(table).getByText('1 listed group or person')).toBeTruthy();
     expect(within(table).getAllByText('Rows per query 1000')).toHaveLength(2);
     expect(within(table).getByText('pending')).toBeTruthy();
+    expect(within(table).getByText('Builders')).toBeTruthy();
+    expect(within(table).getByText(`Group ${GROUP}`)).toBeTruthy();
     expect(document.body.textContent).not.toContain('host');
   });
 
@@ -100,6 +103,7 @@ describe('connections page', () => {
       ceiling: { audience: 'subjects', subjects: [{ kind: 'group', id: GROUP }] },
       allowed_schemas: ['public', 'finance'],
       limits: { max_rows: 500 },
+      preview_access: { who: 'approval' },
       host: HOST,
       port: 6432,
       database: DATABASE,
@@ -115,6 +119,44 @@ describe('connections page', () => {
     const again = await screen.findByRole('dialog', { name: 'Add a connection' });
     expect((within(again).getByLabelText('Host') as HTMLInputElement).value).toBe('');
     expect((within(again).getByLabelText('Database') as HTMLInputElement).value).toBe('');
+  });
+
+  it('starts preview access from the classification until it is picked, and sends a group rule', async () => {
+    const { api } = await connectionsPage({ 'POST /v1/connections': created });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a connection' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add a connection' });
+    const preview = within(dialog).getByLabelText('Preview access') as HTMLSelectElement;
+    expect(preview.value).toBe('builders');
+    fireEvent.change(within(dialog).getByLabelText('Classification'), { target: { value: 'confidential' } });
+    expect(preview.value).toBe('approval');
+    expect(within(dialog).queryByLabelText('Group (grp_ id)')).toBeNull();
+    fireEvent.change(preview, { target: { value: 'group' } });
+    fireEvent.change(within(dialog).getByLabelText('Classification'), { target: { value: 'internal' } });
+    expect(preview.value).toBe('group');
+    fireEvent.change(within(dialog).getByLabelText('Group (grp_ id)'), { target: { value: GROUP } });
+    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: 'warehouse' } });
+    fireEvent.change(within(dialog).getByLabelText('Owner: email or usr_ id'), { target: { value: OWNER } });
+    fireEvent.change(within(dialog).getByLabelText('Host'), { target: { value: HOST } });
+    fireEvent.change(within(dialog).getByLabelText('Database'), { target: { value: DATABASE } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add connection' }));
+    });
+    const body = api.of('POST', '/v1/connections')[0]?.body as Record<string, unknown>;
+    expect(body.classification).toBe('internal');
+    expect(body.preview_access).toEqual({ who: 'group', group_id: GROUP });
+  });
+
+  it('sends the preview access rule when it was changed', async () => {
+    const { api } = await connectionsPage({
+      'PATCH /v1/connections/ledger': ({ body }) => json(200, { ...LEDGER, ...(body as object) }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change ledger' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change ledger' });
+    fireEvent.change(within(dialog).getByLabelText('Preview access'), { target: { value: 'approval' } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    });
+    expect(api.of('PATCH', '/v1/connections/ledger')[0]?.body).toEqual({ preview_access: { who: 'approval' } });
   });
 
   it('clears the address once sent even when the API refuses, and shows why', async () => {
