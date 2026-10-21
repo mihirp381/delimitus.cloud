@@ -9788,7 +9788,7 @@
     },
     "/v1/apps/{app_id}/environments/{environment_id}/connections/{name}/request": {
       "post": {
-        "description": "Ask for the environment to use a connection. For whoever may build the environment, agent\nsessions included. `already_linked` writes nothing. On preview, when the connection's\npreview access rule covers the caller (`builders`, or `group` and an active member) and the\nenvironment's audience is inside the ceiling, the link is made at once (`linked`, audited\n`connection.granted` with a `connection.preview_access` policy decision). Otherwise, and\nalways on prod, a `connect_data_source` request is opened (`pending`); one approved earlier\nlinks now (`linked`) or says why not (`approved_not_linked`, `reason` `ceiling` or\n`connection_missing`).",
+        "description": "Ask for the environment to use a connection. For whoever may build the environment, agent\nsessions included. `already_linked` writes nothing. On preview, when the connection's\npreview access rule covers the caller (`builders`, or `group` and an active member) and the\nenvironment's audience is inside the ceiling, the link is made at once (`linked`, audited\n`connection.granted` with a `connection.preview_access` policy decision). Otherwise, and\nalways on prod, a `connect_data_source` request is opened (`pending`); one approved earlier\nwhose link was revoked is spent, and a new one is opened. `approved_not_linked` is never\nanswered and `reason` is always null.",
         "operationId": "request_connection_v1_apps__app_id__environments__environment_id__connections__name__request_post",
         "parameters": [
           {

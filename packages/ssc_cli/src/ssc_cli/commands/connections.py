@@ -153,8 +153,3 @@ def connect(
             f"Asked for {here} to read {connection} ({result.approval.id}); another active admin "
             "of the org must approve."
         )
-    else:
-        say(
-            f"{connection} is approved for {here} but not linked ({result.reason}); an org admin "
-            "can link it anyway."
-        )

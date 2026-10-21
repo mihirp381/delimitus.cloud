@@ -559,8 +559,8 @@ class ApprovalRow(Shape):
 
 class ConnectResult(Shape):
     """``connect``: what asking for an environment to use a connection did. ``outcome`` is
-    ``linked``, ``already_linked``, ``pending`` or ``approved_not_linked`` (``reason`` says
-    why); ``connections`` are the environment's connections after it."""
+    ``linked``, ``already_linked`` or ``pending``; ``reason`` is always null. ``connections``
+    are the environment's connections after it."""
 
     api_url: str
     app_id: str

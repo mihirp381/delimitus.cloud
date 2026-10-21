@@ -4,8 +4,9 @@ Fail closed, the inverse of Delimitus' publish gate: ``clear`` is returned only 
 was evaluated and every requirement is approved. A missing environment, an unknown profile,
 environment name or capability, unknown capabilities, a requester with no user behind it, or an
 internet host the allowlist refuses (``ssc_contracts.egress.host_pattern_problem``) give
-``refused``. Preview is ``clear``. In production, an approved requirement passes, a pending
-one waits, a denied one refuses, and a missing one is opened as a pending request, then waits.
+``refused``. Preview is ``clear``. In production, an approved requirement passes (a data
+connection only while it is linked), a pending one waits, a denied one refuses, and a missing
+one is opened as a pending request, then waits.
 
 Every outcome writes a ``policy_decision``. A new pending request is written in the caller's
 transaction, so a caller that answers ``waiting`` with a refusal (and rolls back) loses it; the
@@ -22,7 +23,7 @@ from ssc_contracts.audit import ActorKind
 from ssc_contracts.egress import host_pattern_problem
 from ssc_control.approvals.capabilities import CapabilitySource, RecordedCapabilities
 from ssc_control.approvals.policy import PolicyPrincipalKind, record_policy_decision
-from ssc_control.approvals.service import ApprovalRow, newest, request
+from ssc_control.approvals.service import ApprovalRow, newest, request, spent
 from ssc_control.audit import Actor
 from ssc_control.domain.approval_rules import (
     PROFILES,
@@ -111,8 +112,12 @@ async def _evaluate(  # noqa: PLR0913  (keyword-only)
             return "refused", f"egress_host_refused: {host}: {problem}", [], ()
     names = [f"{r.kind.value}:{r.subject_key}" for r in required]
     found = await newest(conn, org_id=org_id, environment_id=environment_id, requirements=required)
-    # A cancelled request was withdrawn: the requirement is asked again.
-    current = {r: a for r, a in found.items() if a.state != "cancelled"}
+    # A cancelled request was withdrawn, a spent one's link revoked: the requirement is asked again.
+    current = {
+        r: a
+        for r, a in found.items()
+        if a.state != "cancelled" and not await spent(conn, org_id, a)
+    }
     outcome = gate_outcome({r: (current[r].state if r in current else None) for r in required})
     if outcome == "refused":
         denied = tuple(a for a in current.values() if a.state == "denied")

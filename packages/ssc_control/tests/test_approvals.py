@@ -248,6 +248,25 @@ async def ask(
     return await in_org(dsn, w.org, work)
 
 
+def link_connection(dsn: str, w: World, name: str = "finance") -> None:
+    """What approving in the inbox does: the prod environment is linked to the connection."""
+    con = new_id("con")
+    with psycopg.connect(dsn) as conn:
+        bind_org_sync(conn, w.org)
+        conn.execute(
+            "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
+            "database_name, address) values (%s, %s, %s, 'postgres', 'internal', "
+            "'db.corp.internal', 5432, 'warehouse', jsonb_build_object('host', "
+            "'db.corp.internal', 'port', 5432, 'database', 'warehouse'))",
+            (con, w.org, name),
+        )
+        conn.execute(
+            "insert into ssc.connection_grant (id, org_id, connection_id, environment_id, "
+            "created_by_user_id) values (%s, %s, %s, %s, %s)",
+            (new_id("cgr"), w.org, con, w.prod, w.admin),
+        )
+
+
 # ── the production gate ──────────────────────────────────────────────────────
 
 
@@ -269,6 +288,7 @@ async def test_production_deploy_waits_on_an_open_approval(dsns: Dsns) -> None:
     assert (again.outcome, again.approval_ids) == ("waiting", first.approval_ids)
     assert len(approvals_of(dsns.app, w.org)) == 1
     await decide(dsns.app, w, row["id"], decider(w.approver))
+    link_connection(dsns.app, w)
     clear = await gate(dsns.app, w, FINANCE)
     assert (clear.outcome, clear.approval_ids) == ("clear", first.approval_ids)
     # Every outcome is a policy decision; only clear allows.
@@ -318,6 +338,7 @@ async def test_every_requirement_must_be_approved(dsns: Dsns) -> None:
     assert waiting.outcome == "waiting"
     assert len(waiting.approval_ids) == 2
     await decide(dsns.app, w, waiting.approval_ids[0], decider(w.approver))
+    link_connection(dsns.app, w)
     half = await gate(dsns.app, w, both)
     assert (half.outcome, half.approval_ids) == ("waiting", waiting.approval_ids[1:])
     await decide(dsns.app, w, waiting.approval_ids[1], decider(w.approver))
@@ -443,6 +464,7 @@ async def test_prod_gate_port_reads_the_recorded_capabilities(dsns: Dsns) -> Non
     waiting = await check(w.release)
     assert (waiting.outcome, waiting.approval_ids) == ("waiting", (declared.id,))
     await decide(dsns.app, w, declared.id, decider(w.approver))
+    link_connection(dsns.app, w)
     assert (await check(w.release)).outcome == "clear"
     # A release that is not this app's is unknown, and unknown refuses.
     assert (await check(new_id("rel"))).outcome == "refused"

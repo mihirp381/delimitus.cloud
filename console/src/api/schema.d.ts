@@ -495,8 +495,8 @@ export interface paths {
          *     environment's audience is inside the ceiling, the link is made at once (`linked`, audited
          *     `connection.granted` with a `connection.preview_access` policy decision). Otherwise, and
          *     always on prod, a `connect_data_source` request is opened (`pending`); one approved earlier
-         *     links now (`linked`) or says why not (`approved_not_linked`, `reason` `ceiling` or
-         *     `connection_missing`).
+         *     whose link was revoked is spent, and a new one is opened. `approved_not_linked` is never
+         *     answered and `reason` is always null.
          */
         post: operations["request_connection_v1_apps__app_id__environments__environment_id__connections__name__request_post"];
         delete?: never;

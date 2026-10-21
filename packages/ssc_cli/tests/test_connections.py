@@ -173,13 +173,6 @@ def test_connect_asks_prod_and_prints_the_answer(cli, scripted):
             "Asked for demo preview to read finance (apr_aaaaaaaaaaaaaaaaaaaa); another active "
             "admin of the org must approve.",
         ),
-        (
-            "approved_not_linked",
-            "ceiling",
-            _approval("approved"),
-            "finance is approved for demo preview but not linked (ceiling); an org admin can link "
-            "it anyway.",
-        ),
     ],
 )
 def test_connect_says_one_line_per_outcome(  # noqa: PLR0913, PLR0917  (parametrized)

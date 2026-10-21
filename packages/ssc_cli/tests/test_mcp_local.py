@@ -859,7 +859,7 @@ async def test_request_connection_asks_the_chosen_environment(fake_api):
     }
     fake_api.add("GET", f"/v1/apps/{APP_ID}", httpx2.Response(200, json=app))
     fake_api.add("GET", "/v1/whoami", whoami(True))
-    answer = {"outcome": "approved_not_linked", "reason": "ceiling", "approval": None}
+    answer = {"outcome": "linked", "reason": None, "approval": None}
     path = f"/v1/apps/{APP_ID}/environments/{preview}/connections/crm/request"
     fake_api.add("POST", path, httpx2.Response(200, json={**answer, "connections": []}))
     async with Client(local_server(fake_api), cache=None) as client:
@@ -869,7 +869,7 @@ async def test_request_connection_asks_the_chosen_environment(fake_api):
     assert not r.is_error, r.content
     assert r.structured_content == {
         **answer,
-        "next": "Approved but not linked (ceiling); an org admin can link it anyway.",
+        "next": "The environment reads it now; call describe_connection for its tables.",
     }
     (post,) = [q for q in fake_api.seen if q.method == "POST"]
     assert json.loads(post.content) == {}

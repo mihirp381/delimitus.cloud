@@ -1708,30 +1708,95 @@ def test_a_preview_over_the_ceiling_waits_for_a_person(
     assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
 
 
-def test_an_approval_from_before_links_or_says_why_not(
+def test_an_approval_that_never_linked_is_spent(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:
-    finance(client, world, tokens, ceiling_doc(("user", world.builder)))
-    before, version = prod_grants(client, world, tokens)
-    assert (
-        put(client, world, world.prod, tokens.admin, [*before, ORG_GRANT], version).status_code
-        == 200
-    )
+    finance(client, world, tokens, None, classification="internal")
     asked = ask_api(client, tokens.admin, world.prod, subject="finance")
     assert decide_as(client, tokens, asked.json()["id"], world.approver).status_code == 200
-    refused = request_link(client, world, world.prod, tokens.admin)
-    assert refused.status_code == 200, refused.text
-    assert (refused.json()["outcome"], refused.json()["reason"]) == (
-        "approved_not_linked",
-        "ceiling",
+    again = request_link(client, world, world.prod, tokens.admin)
+    assert again.status_code == 200, again.text
+    assert again.json()["outcome"] == "pending"
+    assert again.json()["approval"]["id"] != asked.json()["id"]
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
+
+
+def revoke(client: TestClient, w: World, env: str, tokens: Tokens) -> None:
+    gone = client.delete(link_path(w, env, "finance"), headers=auth(tokens.admin))
+    assert gone.status_code == 200, gone.text
+
+
+def agent_of(signing_key: SigningKey, w: World, user: str) -> str:
+    return mint(
+        signing_key, org=w.org, sub=user, jti=f"cred_{new_key()[:16]}", agent=True, client_id="b"
     )
-    assert refused.json()["approval"]["id"] == asked.json()["id"]
-    assert put(client, world, world.prod, tokens.admin, before, version + 1).status_code == 200
-    linked = request_link(client, world, world.prod, tokens.admin)
-    assert linked.json()["outcome"] == "linked", linked.text
-    (granted,) = events_of(dsns.app, world.org, AuditAction.CONNECTION_GRANTED)
-    (row,) = approvals_of(dsns.app, world.org)
-    assert granted["policy_decision_id"] == row["policy_decision_id"]
+
+
+def approved_then_revoked(
+    client: TestClient, w: World, tokens: Tokens, env: str, dsns: Dsns
+) -> dict[str, Any]:
+    asked = request_link(client, w, env, tokens.builder)
+    assert asked.json()["outcome"] == "pending", asked.text
+    apr = asked.json()["approval"]["id"]
+    assert approve(client, tokens.approver, apr).json()["applied"] == "applied"
+    revoke(client, w, env, tokens)
+    assert rows(dsns.app, w, "select count(*) from ssc.connection_grant") == [(0,)]
+    (old,) = approvals_of(dsns.app, w.org)
+    return old
+
+
+@pytest.mark.parametrize("on", ["prod", "preview"])
+def test_a_revoked_link_is_asked_for_again(  # noqa: PLR0913  (fixtures)
+    client: TestClient,
+    world: World,
+    tokens: Tokens,
+    dsns: Dsns,
+    signing_key: SigningKey,
+    on: str,
+) -> None:
+    build_preview(dsns.app, world, world.builder)
+    rule = {"who": "approval"}
+    assert (
+        create_connection(client, tokens.admin, world.member, preview_access=rule).status_code
+        == 201
+    )
+    env = world.prod if on == "prod" else world.preview
+    old = approved_then_revoked(client, world, tokens, env, dsns)
+    again = request_link(client, world, env, agent_of(signing_key, world, world.builder))
+    assert again.status_code == 200, again.text
+    assert again.json()["outcome"] == "pending"
+    assert again.json()["approval"]["id"] != old["id"]
+    assert rows(dsns.app, world, "select count(*) from ssc.connection_grant") == [(0,)]
+    assert [a for a in approvals_of(dsns.app, world.org) if a["id"] == old["id"]] == [old]
+    assert len(approvals_of(dsns.app, world.org)) == 2
+
+
+def test_asking_again_after_a_revoke_opens_a_new_request(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    old = approved_then_revoked(client, world, tokens, world.prod, dsns)
+    again = ask_api(client, tokens.builder, world.prod, subject="finance")
+    assert again.status_code == 201, again.text
+    assert (again.json()["state"], again.json()["id"] != old["id"]) == ("pending", True)
+
+
+def test_the_production_gate_waits_after_a_revoke(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    assert create_connection(client, tokens.admin, world.member).status_code == 201
+    asked = request_link(client, world, world.prod, tokens.builder)
+    apr = asked.json()["approval"]["id"]
+    assert approve(client, tokens.approver, apr).json()["applied"] == "applied"
+    clear = asyncio.run(test_approvals.gate(dsns.app, world, test_approvals.FINANCE))
+    assert (clear.outcome, clear.approval_ids) == ("clear", (apr,))
+    revoke(client, world, world.prod, tokens)
+    waiting = asyncio.run(test_approvals.gate(dsns.app, world, test_approvals.FINANCE))
+    assert waiting.outcome == "waiting"
+    (fresh,) = waiting.approval_ids
+    assert fresh != apr
+    states = {a["id"]: a["state"] for a in approvals_of(dsns.app, world.org)}
+    assert states == {apr: "approved", fresh: "pending"}
 
 
 def test_only_a_builder_of_the_environment_may_ask(

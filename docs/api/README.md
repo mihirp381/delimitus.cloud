@@ -360,8 +360,8 @@ the connection, for whoever may build it, agent sessions included, and answers `
 approval, connections}`: `already_linked`; `linked` on preview when the preview access rule covers
 the caller and the audience is inside the ceiling (audited `connection.granted` with a
 `connection.preview_access` policy decision); otherwise, and always on prod, `pending` with the
-`connect_data_source` request, or, for one approved earlier, `linked` or `approved_not_linked`
-with `reason` `ceiling` or `connection_missing` (decision 016 amendment 2026-10-20). `GET
+`connect_data_source` request; an approval whose link was revoked is spent and a new request is
+opened (decision 016 amendment 2026-10-20). `GET
 .../connections/{name}/schema` answers the tables and columns that environment sees
 (`{connection, kind, tables, snapshot_version, cached}`), asked of the cell's data gateway through
 the cell agent and kept five minutes per org, environment and connection; it is for whoever may

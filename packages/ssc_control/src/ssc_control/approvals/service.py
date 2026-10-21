@@ -1,7 +1,8 @@
 """Approval requests: open one, decide one, and find the newest answer to a question.
 
 A question is ``(environment, kind, subject_key)``. At most one request per question is pending
-(a partial unique index); asking again while one is pending or approved returns that request.
+(a partial unique index); asking again while one is pending or approved returns that request,
+except an approved ``connect_data_source`` whose link is gone (:func:`spent`).
 Deciding locks the request, checks the decider (never an agent session, never the requester,
 an active org admin, or for ``exceed_ceiling`` the connection's active owner), writes a
 ``policy_decision`` and audits ``approval.decided``. The requester may withdraw (:func:`cancel`).
@@ -135,6 +136,11 @@ _INSERT_PENDING: Final = text(
     "cast(:payload as jsonb), :by, :via_agent) "
     "on conflict (org_id, environment_id, kind, subject_key) where state = 'pending' do nothing "
     "returning id"
+)
+_LINKED: Final = text(
+    "select exists (select 1 from ssc.connection_grant g join ssc.connection c "
+    "on c.org_id = g.org_id and c.id = g.connection_id "
+    "where g.org_id = :org and g.environment_id = :env and c.name = :key)"
 )
 _LOCK_DECIDER: Final = text(
     "select role, status from ssc.user_account where org_id = :org and id = :id for share"
@@ -295,6 +301,14 @@ async def newest(
     return {a.requirement: a for a in found if a.requirement in wanted}
 
 
+async def spent(conn: AsyncConnection, org_id: str, row: ApprovalRow) -> bool:
+    """An approved ``connect_data_source`` request whose environment no longer has the link."""
+    if row.kind is not RequirementKind.CONNECT_DATA_SOURCE or row.state != "approved":
+        return False
+    params = {"org": org_id, "env": row.environment_id, "key": row.subject_key}
+    return not (await conn.execute(_LINKED, params)).scalar_one()
+
+
 async def request(  # noqa: PLR0913  (keyword-only)
     conn: AsyncConnection,
     *,
@@ -306,7 +320,8 @@ async def request(  # noqa: PLR0913  (keyword-only)
     payload: Mapping[str, object],
     actor: Actor,
 ) -> tuple[ApprovalRow, bool]:
-    """The pending or approved request for this question, or a new pending one (``True``).
+    """The pending or approved request for this question, or a new pending one (``True``). A
+    :func:`spent` approval counts as none.
 
     A new request is audited as ``approval.requested`` by ``actor``. Two callers asking at once
     get the same row: the loser's insert does nothing and it reads the winner's request.
@@ -317,7 +332,11 @@ async def request(  # noqa: PLR0913  (keyword-only)
                 conn, org_id=org_id, environment_id=environment_id, requirements=[requirement]
             )
         ).get(requirement)
-        if found is not None and found.state in ("pending", "approved"):
+        if (
+            found is not None
+            and found.state in ("pending", "approved")
+            and not await spent(conn, org_id, found)
+        ):
             return found, False
         apr_id = new_id("apr")
         inserted = (

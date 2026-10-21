@@ -790,15 +790,11 @@ async def ask_connection(c: V1, *, ref: str, env: str, connection: str, key: str
     r = await c.post(f"{env_path}/connections/{seg(connection)}/request", {}, key)
     body: Body = r.json()
     outcome = body["outcome"]
-    nxt = _CONNECTION_NEXT.get(
-        outcome,
-        f"Approved but not linked ({body['reason']}); an org admin can link it anyway.",
-    )
     return {
         "outcome": outcome,
         "reason": body["reason"],
         "approval": body["approval"],
-        "next": nxt,
+        "next": _CONNECTION_NEXT.get(outcome, ""),
     }
 
 

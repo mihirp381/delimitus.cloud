@@ -1217,6 +1217,28 @@ async def test_the_production_gate_end_to_end(b: Bench) -> None:
             ),
             actor=Actor(ActorKind.USER, b.w.approver),
         )
+    con = new_id("con")
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
+        "database_name, address) values (%s, %s, 'finance', 'postgres', 'internal', "
+        "'db.corp.internal', 5432, 'warehouse', jsonb_build_object('host', "
+        "'db.corp.internal', 'port', 5432, 'database', 'warehouse'))",
+        con,
+        b.w.org,
+    )
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.connection_grant (id, org_id, connection_id, environment_id, "
+        "created_by_user_id) values (%s, %s, %s, %s, %s)",
+        new_id("cgr"),
+        b.w.org,
+        con,
+        b.w.prod,
+        b.w.admin,
+    )
     again, state = await deploy(b, b.w.prod, release)
     assert state == "healthy"
     assert pointer(b, b.w.prod) == again

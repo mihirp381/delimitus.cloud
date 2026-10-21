@@ -668,15 +668,11 @@ def ask_connection(c: ApiClient, *, ref: str, env: str, connection: str, key: st
     env_path = f"/v1/apps/{seg(found['id'])}/environments/{seg(environment_id(found, env))}"
     body = _json(c.post_json(f"{env_path}/connections/{seg(connection)}/request", {}, key))
     outcome = body["outcome"]
-    nxt = _CONNECTION_NEXT.get(
-        outcome,
-        f"Approved but not linked ({body['reason']}); an org admin can link it anyway.",
-    )
     return {
         "outcome": outcome,
         "reason": body["reason"],
         "approval": body["approval"],
-        "next": nxt,
+        "next": _CONNECTION_NEXT.get(outcome, ""),
     }
 
 

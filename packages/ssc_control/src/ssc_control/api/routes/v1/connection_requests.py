@@ -17,7 +17,6 @@ from ssc_control.api.routes.common import POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.approvals import Approval, approval_out
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.routes.v1.connections import EnvironmentConnectionOut, Name, environment_out
-from ssc_control.api.routes.v1.grants import link_approved
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.approvals import service as approvals
 from ssc_control.approvals.policy import record_policy_decision
@@ -32,7 +31,7 @@ _LOCK_ENV: Final = text(
 )
 _APP_STATUS: Final = text("select status from ssc.app where org_id = :org and id = :app for share")
 
-Outcome = Literal["linked", "already_linked", "pending", "approved_not_linked"]
+Outcome = Literal["linked", "already_linked", "pending"]
 
 
 class ConnectionRequestIn(Strict):
@@ -40,7 +39,7 @@ class ConnectionRequestIn(Strict):
 
 
 class ConnectionRequestOut(Strict):
-    outcome: Outcome
+    outcome: Literal[Outcome, "approved_not_linked"]
     reason: str | None
     approval: Approval | None
     connections: list[EnvironmentConnectionOut]
@@ -106,8 +105,8 @@ async def request_connection(  # noqa: PLR0913  (FastAPI maps each parameter)
     environment's audience is inside the ceiling, the link is made at once (`linked`, audited
     `connection.granted` with a `connection.preview_access` policy decision). Otherwise, and
     always on prod, a `connect_data_source` request is opened (`pending`); one approved earlier
-    links now (`linked`) or says why not (`approved_not_linked`, `reason` `ceiling` or
-    `connection_missing`)."""
+    whose link was revoked is spent, and a new one is opened. `approved_not_linked` is never
+    answered and `reason` is always null."""
     del body
     params = {"org": uow.org_id, "app": app_id, "env": environment_id}
     env_name = (await uow.conn.execute(_LOCK_ENV, params)).scalar()
@@ -121,12 +120,10 @@ async def request_connection(  # noqa: PLR0913  (FastAPI maps each parameter)
     if connection is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
 
-    async def answer(
-        outcome: Outcome, reason: str | None = None, approval: Approval | None = None
-    ) -> Response:
+    async def answer(outcome: Outcome, approval: Approval | None = None) -> Response:
         links = await environment_out(uow, environment_id)
         out = ConnectionRequestOut(
-            outcome=outcome, reason=reason, approval=approval, connections=links.connections
+            outcome=outcome, reason=None, approval=approval, connections=links.connections
         )
         return uow.reply(out)
 
@@ -148,9 +145,4 @@ async def request_connection(  # noqa: PLR0913  (FastAPI maps each parameter)
         payload={},
         actor=actor_of(uow.principal),
     )
-    if row.state != "approved":
-        return await answer("pending", approval=approval_out(row))
-    applied, reason = await link_approved(uow, row)
-    if applied == "applied":
-        return await answer("linked", approval=approval_out(row))
-    return await answer("approved_not_linked", reason, approval_out(row))
+    return await answer("pending", approval=approval_out(row))
