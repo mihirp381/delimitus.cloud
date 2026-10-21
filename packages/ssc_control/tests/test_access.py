@@ -28,7 +28,9 @@ import json
 import re
 import secrets
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,9 +43,18 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from procrastinate import App, PsycopgConnector
 from psycopg.rows import dict_row
-from sqlalchemy import event, text
+from sqlalchemy import TextClause, event, text
 from sqlalchemy.engine import make_url
-from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import (
+    ISSUER,
+    Dsns,
+    SigningKey,
+    assert_problem,
+    auth,
+    mint,
+    new_key,
+    wait_for_a_lock_wait,
+)
 
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
@@ -52,6 +63,8 @@ from ssc_control.api import Settings, authz, create_app
 from ssc_control.api.auth import Principal, PrincipalKind
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.problems import Refusal
+from ssc_control.api.routes.v1 import grants as grant_routes
+from ssc_control.api.routes.v1 import inventory
 from ssc_control.api.settings import INTERNAL_AUDIENCE
 from ssc_control.api.uow import UnitOfWork
 from ssc_control.db import (
@@ -65,6 +78,7 @@ from ssc_control.db import (
     upgrade,
 )
 from ssc_control.domain import grant_rules
+from ssc_control.github import push
 from ssc_control.runtime.cells import OrgCell, StaticCells
 from ssc_control.snapshot import jobs as snapshot_jobs
 from ssc_control.snapshot.compiler import latest_key, point_latest, publish
@@ -396,7 +410,7 @@ def test_an_owner_transfer_locks_the_environment_before_the_app(
     locks: list[str] = []
 
     def seen(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
-        if "for update" in statement:
+        if re.search(r"for (no key )?update", statement):
             locks.append(statement)
 
     event.listen(engine, "before_cursor_execute", seen)
@@ -410,6 +424,77 @@ def test_an_owner_transfer_locks_the_environment_before_the_app(
     tables = [m.group(1) for s in locks if (m := re.search(r"from (ssc\.\w+)", s))]
     assert tables[0] == "ssc.environment", locks
     assert "ssc.app" in tables[1:], locks
+
+
+def pg(statement: TextClause) -> str:
+    return re.sub(r"(?<!:):(\w+)", r"%(\1)s", statement.text)
+
+
+@contextmanager
+def transfer_locking_preview(dsn: str, w: World) -> Iterator[tuple[psycopg.Connection, int]]:
+    with psycopg.connect(dsn) as conn:
+        bind_org_sync(conn, w.org)
+        conn.execute("set lock_timeout = '5s'")
+        conn.execute(pg(grant_routes.LOCK_PREVIEW), {"org": w.org, "app": w.app})
+        yield conn, conn.info.backend_pid
+
+
+def test_an_owner_transfer_and_an_approval_request_do_not_deadlock(
+    client: TestClient, world: World, dsns: Dsns
+) -> None:
+    body = {"environment_id": world.preview, "kind": "connect_data_source", "subject_key": "crm"}
+    headers = auth(world.admin_token, **{IDEMPOTENCY_HEADER: new_key()})
+    with (
+        ThreadPoolExecutor(1) as pool,
+        transfer_locking_preview(dsns.app, world) as (transfer, pid),
+    ):
+        asked = pool.submit(client.post, "/v1/approvals", json=body, headers=headers)
+        wait_for_a_lock_wait(dsns.app, blocker=pid)
+        transfer.execute(pg(inventory._LOCK_APP_OWNER), {"org": world.org, "id": world.app})
+        transfer.commit()
+        r = asked.result(timeout=10)
+    assert r.status_code == 201, r.text
+
+
+def test_an_owner_transfer_and_a_push_do_not_deadlock(world: World, dsns: Dsns) -> None:
+    digest = f"sha256:{secrets.token_hex(32)}"
+    with (
+        ThreadPoolExecutor(1) as pool,
+        transfer_locking_preview(dsns.app, world) as (transfer, pid),
+        psycopg.connect(dsns.app) as pushing,
+    ):
+        bind_org_sync(pushing, world.org)
+        pushing.execute("set lock_timeout = '5s'")
+        bundle = pushing.execute(
+            pg(push._INSERT_STORED),
+            {
+                "id": new_id("bdl"),
+                "org": world.org,
+                "app": world.app,
+                "digest": digest,
+                "size": 1,
+                "sha": "a" * 40,
+                "actor": "int_test",
+                "manifest": "{}",
+                "manifest_digest": digest,
+                "file_count": 0,
+            },
+        ).fetchone()
+        assert bundle is not None
+        build = {
+            "id": new_id("bld"),
+            "org": world.org,
+            "app": world.app,
+            "env": world.preview,
+            "bundle": bundle[0],
+            "actor": "int_test",
+        }
+        queued = pool.submit(pushing.execute, pg(push._INSERT_BUILD), build)
+        wait_for_a_lock_wait(dsns.app, blocker=pid)
+        transfer.execute(pg(inventory._LOCK_APP_OWNER), {"org": world.org, "id": world.app})
+        transfer.commit()
+        queued.result(timeout=10)
+        pushing.rollback()
 
 
 # ── done when: the last admin cannot be demoted ──────────────────────────────

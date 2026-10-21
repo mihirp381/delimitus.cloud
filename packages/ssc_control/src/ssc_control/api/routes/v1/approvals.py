@@ -75,6 +75,11 @@ _GROUP_NAMES = text(
     "select id, display_name from ssc.user_group where org_id = :org and id = any(:ids)"
 )
 CANCELLED_BY_REQUESTER: Final = "Withdrawn by the requester."
+_SHARE_ENV = text(
+    "select 1 from ssc.environment e join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
+    "where e.org_id = :org and e.id = :env and a.status not in ('deleting', 'deleted') "
+    "for share of e"
+)
 # FOR SHARE waits for a removal asked for at the same moment (GA-12), whose last step cancels
 # the requests that are open.
 _SELECT_ENV = text(
@@ -411,9 +416,9 @@ async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
     `exceed_ceiling` request is decided by the named connection's owner or an org admin. A grant
     naming a user or group the org does not have is `NOT_FOUND`."""
     require_user(uow)
-    env = (
-        await uow.conn.execute(_SELECT_ENV, {"org": uow.org_id, "env": body.environment_id})
-    ).first()
+    params = {"org": uow.org_id, "env": body.environment_id}
+    await uow.conn.execute(_SHARE_ENV, params)
+    env = (await uow.conn.execute(_SELECT_ENV, params)).first()
     if env is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": body.environment_id})
     if env.status == "deleting":

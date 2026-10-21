@@ -181,7 +181,7 @@ _SELECT_APP = text(
     "where org_id = :org and id = :id"
 )
 _LOCK_APP_OWNER = text(
-    "select owner_user_id from ssc.app where org_id = :org and id = :id for update"
+    "select owner_user_id from ssc.app where org_id = :org and id = :id for no key update"
 )
 _SELECT_USER_STATUS = text("select status from ssc.user_account where org_id = :org and id = :id")
 _SET_OWNER = text("update ssc.app set owner_user_id = :owner where org_id = :org and id = :id")

@@ -423,7 +423,8 @@ async def _write(  # noqa: PLR0913  (keyword-only)
 
 async def lock_environment(uow: UnitOfWork, row: ApprovalRow) -> None:
     """Take the request's environment ``FOR UPDATE``, the order :func:`put_grants` locks in:
-    environment before app, everywhere."""
+    environment before app, everywhere; an insert with a foreign key to a row takes a KEY SHARE
+    lock on it and counts."""
     params = {"org": uow.org_id, "app": row.app_id, "env": row.environment_id}
     await uow.conn.execute(_LOCK_ENV, params)
 
