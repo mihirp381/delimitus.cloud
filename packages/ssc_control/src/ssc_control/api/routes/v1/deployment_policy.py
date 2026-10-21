@@ -1,14 +1,13 @@
 """What the org lets the caller's apps reach and use (SSC-093): ``GET /v1/org/deployment-policy``.
 
 A coding agent reads it before writing code that calls out, so it asks for what exists instead of
-guessing. It returns nothing the caller could not see already, by the approvals rule (decision
-016): operators and active org admins see the whole org; anyone else sees only what their own
-approved requests opened. So:
+guessing. Hosts follow the approvals rule (decision 016): operators and active org admins see the
+whole org; anyone else sees only what their own approved requests opened. So:
 
 - ``hosts``: internet hosts approved for an environment (``enable_internet_hosts``);
-- ``connections``: the org's data connections by name, kind, classification, owner and audience
-  ceiling, never their address; a member sees only those their own approved
-  ``connect_data_source`` requests name;
+- ``connections``: every data connection of the org by name, kind, classification, owner,
+  audience ceiling and preview access rule, never its address, for every member (decision 034
+  amendment 2026-10-20);
 - ``approvals``: which changes wait for a person, and who decides;
 - ``database``: whether the company's database has room for another app database, counted from
   the control plane's records (the cell agent's count is the one that refuses, ``DB_TIER_FULL``);
@@ -82,13 +81,6 @@ _ALL_CONNECTIONS = text(
     "select name, kind, classification, owner_user_id, ceiling, preview_access from ssc.connection "
     "where org_id = :org order by name"
 )
-_OWN_CONNECTIONS = text(
-    "select c.name, c.kind, c.classification, c.owner_user_id, c.ceiling, c.preview_access "  # noqa: S608  (constant SQL fragments)
-    "from ssc.connection c "
-    "where c.org_id = :org and exists (select 1 from ssc.approval_request a "
-    "where a.org_id = c.org_id and a.kind = 'connect_data_source' and a.state = 'approved' "
-    "and a.subject_key = c.name" + _MINE + ") order by c.name"
-)
 _PLACES = text("select count(*) from ssc.app_database where org_id = :org")
 
 
@@ -120,12 +112,12 @@ class PolicyDatabase(Strict):
 
 class DeploymentPolicy(Strict):
     scope: Literal["org", "own"] = Field(
-        description="`org`: every host and connection in the org (admins and operators). "
-        "`own`: only those the caller's own approved requests opened."
+        description="`org`: every host in the org (admins and operators). `own`: only the hosts "
+        "the caller's own approved requests opened. Connections are always the whole org."
     )
     hosts: list[PolicyHost] = Field(description="Internet hosts approved for an environment.")
     connections: list[PolicyConnection] = Field(
-        description="Data connections by name; never their address."
+        description="Every data connection of the org by name; never its address."
     )
     approvals: list[PolicyApproval] = Field(description="Which changes wait for a person.")
     approver: str = Field(description="Who decides an approval request.")
@@ -147,8 +139,7 @@ async def get_deployment_policy(uow: UserUoW) -> DeploymentPolicy:
     params = {"org": uow.org_id, "me": uow.principal.subject}
     hosts_sql = text(_HOSTS + ("" if everything else _MINE) + _ORDER_HOSTS)
     hosts = (await uow.conn.execute(hosts_sql, params)).mappings().all()
-    connections_sql = _ALL_CONNECTIONS if everything else _OWN_CONNECTIONS
-    connections = (await uow.conn.execute(connections_sql, params)).mappings().all()
+    connections = (await uow.conn.execute(_ALL_CONNECTIONS, params)).mappings().all()
     used = int((await uow.conn.execute(_PLACES, params)).scalar_one())
     if uow.principal.kind is PrincipalKind.OPERATOR:
         await uow.audit(AuditAction.OPERATOR_ACCESS, target_kind="org", target_id=uow.org_id)

@@ -13,12 +13,13 @@ can do no more than that person, and every write is audited as the person with
 `via_agent: true` and the agent's `client_id`.
 
 - Read what the person can see: apps, releases, what each environment runs, operations and
-  builds, the data connections the person may see (names and classifications), a connection's
-  tables and columns, and logs (unless the org's admins turned agent log reading off).
+  builds, every data connection of the org (names, kinds and classifications, never an
+  address), a connection's tables and columns for an environment the person may build, and logs (unless the org's admins turned agent log reading off).
 - Create an app, deploy a folder to preview, and roll an environment back to an earlier
   release.
 - Ask: open an approval request for sharing (`agent_share`) or a data connection
-  (`connect_data_source`), and withdraw a request it opened itself (decision 016).
+  (`connect_data_source`; on preview the connection's preview access rule may link it at once
+  instead), and withdraw a request it opened itself (decision 016).
 - Have a secret set: `set_secret` takes no value and answers with the `ssc secret set` command
   for the person to run.
 

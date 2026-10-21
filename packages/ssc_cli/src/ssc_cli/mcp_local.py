@@ -13,9 +13,10 @@ more; ``set_secret`` takes no value and answers with the ``ssc secret set`` comm
 A refusal is a tool error whose structured content is ``{"error": {...}}``, the members
 ``ssc --json`` prints. Absent on purpose, as on the server: approving, promote, the warm flag and
 the cell resource flags. ``create_app`` sends what ``ssc apps create`` sends; ``list_connections``
-reads ``/v1/connections``, which shows an agent only what its person's approved requests name;
-``describe_connection`` reads the columns one environment sees through one of them, which the API
-asks of the cell's data gateway and keeps five minutes (GA-5.8).
+reads ``/v1/connections``, every connection of the org by name, kind and classification, never an
+address; ``describe_connection`` reads the columns one environment its person may build sees
+through one of them, which the API asks of the cell's data gateway and keeps five minutes
+(GA-5.8).
 
 ``get_platform_requirements`` answers from ``ssc_shared.requirements`` without a call, the same
 source ``ssc doctor`` reads; ``get_org_deployment_policy`` reads ``/v1/org/deployment-policy``.
@@ -849,9 +850,8 @@ def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
         return run(open_client, lambda c: new_app(c, slug, key))
 
     def list_connections() -> CallToolResult:
-        """The org's data connections you may see, by name and classification: all of them for
-        an org admin, otherwise those named by your own approved requests. Never an address.
-        Ask for one with request_connection."""
+        """Every data connection of the org, by name, kind and classification, never an
+        address. Ask for one with request_connection."""
         return run(open_client, lambda c: c.get_json("/v1/connections"))
 
     def describe_connection(
@@ -859,7 +859,8 @@ def _org_tools(server: MCPServer, open_client: Opener) -> MCPServer:
     ) -> CallToolResult:
         """The tables and columns one environment of an app sees through a data connection:
         each table's name, each column's name and type, and the snapshot version they come
-        from. Only a connection you may see; the answer is kept five minutes (`cached`)."""
+        from. Only for an environment you may build; the answer is kept five minutes
+        (`cached`)."""
 
         return run(open_client, lambda c: connection_schema(c, app, environment, connection))
 

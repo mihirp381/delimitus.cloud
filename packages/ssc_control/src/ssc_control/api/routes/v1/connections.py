@@ -3,9 +3,9 @@
 Only an active org admin, never in an agent session, creates or changes a connection or links an
 environment to one. A connection's address is stored when it is created and never returned. A
 connection stays ``pending`` until an admin sets it ``ready`` after the runbook's first read; the
-data gateway serves only ready ones. Reads follow the approvals rule (decision 016): operators and
-active org admins see every connection; anyone else sees only those their own approved
-``connect_data_source`` requests name.
+data gateway serves only ready ones. Every member reads every connection by name, kind and
+classification, never an address (decision 034 amendment 2026-10-20); the columns an environment
+sees are for whoever may build it.
 
 Linking an environment whose audience already exceeds the connection's ceiling needs an approved
 ``exceed_ceiling`` request, decided by the connection's owner or an org admin. Lowering a ceiling
@@ -29,11 +29,10 @@ from ssc_contracts.connections import SQL_KINDS, Address, AddressError, Kind, pa
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.snapshot import SnapshotLimits
 from ssc_control.api.auth import PrincipalKind
-from ssc_control.api.authz import require_admin
+from ssc_control.api.authz import can_build, require_admin
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
-from ssc_control.api.routes.v1.approvals import sees_every_request
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.routes.v1.grants import missing_subjects
 from ssc_control.api.runtime import cell_of, runtime_of
@@ -54,10 +53,6 @@ NewName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,62}$")]
 Schema = Annotated[str, StringConstraints(pattern=r"^[a-z_][a-z0-9_]{0,62}$")]
 Classification = Literal["internal", "confidential", "restricted"]
 _CHANGE: Final = (*AUTHENTICATED, ErrorCode.FORBIDDEN, ErrorCode.AGENT_SESSION_REFUSED)
-_OWN_NAMES: Final = text(
-    "select distinct subject_key from ssc.approval_request where org_id = :org "
-    "and kind = 'connect_data_source' and state = 'approved' and requested_by_user_id = :me"
-)
 PUBLISH_WAIT_SECONDS: Final = 10.0
 PUBLISH_POLL_SECONDS: Final = 0.5
 PUBLISH_RETRY_AFTER_SECONDS: Final = 60
@@ -356,12 +351,10 @@ async def _admin(uow: UnitOfWork) -> str:
     return by
 
 
-async def _visible(uow: UnitOfWork) -> frozenset[str] | None:
-    """The names the caller may see; None for every one."""
-    if await sees_every_request(uow):
-        return None
-    rows = await uow.conn.execute(_OWN_NAMES, {"org": uow.org_id, "me": uow.principal.subject})
-    return frozenset(str(n) for n in rows.scalars())
+def _reader(uow: UnitOfWork) -> None:
+    kind = uow.principal.kind
+    if kind not in {PrincipalKind.USER, PrincipalKind.OPERATOR}:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": kind.value})
 
 
 async def _audit_operator(uow: UnitOfWork) -> None:
@@ -384,9 +377,7 @@ async def _environment(uow: UnitOfWork, app_id: str, environment_id: str) -> Non
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"environment_id": environment_id})
 
 
-async def environment_out(
-    uow: UnitOfWork, environment_id: str, visible: frozenset[str] | None
-) -> EnvironmentConnectionsOut:
+async def environment_out(uow: UnitOfWork, environment_id: str) -> EnvironmentConnectionsOut:
     return EnvironmentConnectionsOut(
         connections=[
             EnvironmentConnectionOut(
@@ -397,7 +388,6 @@ async def environment_out(
                 granted_at=link.created_at,
             )
             for link in await service.links(uow.conn, uow.org_id, environment_id)
-            if visible is None or link.connection.name in visible
         ]
     )
 
@@ -466,16 +456,12 @@ def _refusal(exc: service.ConnectionChangeError, name: str) -> Refusal:
     responses=problem_responses(*AUTHENTICATED, ErrorCode.FORBIDDEN),
 )
 async def list_connections(uow: UserUoW) -> ConnectionsOut:
-    """The connections the caller may see, by name: all of them for operators and org admins,
-    otherwise only those the caller's own approved requests name. Never an address."""
-    visible = await _visible(uow)
+    """Every connection of the org, for every member, by name, kind and classification, never an
+    address."""
+    _reader(uow)
     await _audit_operator(uow)
     return ConnectionsOut(
-        connections=[
-            _out(c)
-            for c in await service.list_all(uow.conn, uow.org_id)
-            if visible is None or c.name in visible
-        ]
+        connections=[_out(c) for c in await service.list_all(uow.conn, uow.org_id)]
     )
 
 
@@ -485,10 +471,10 @@ async def list_connections(uow: UserUoW) -> ConnectionsOut:
     responses=problem_responses(*AUTHENTICATED, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND),
 )
 async def get_connection(name: Name, uow: UserUoW) -> ConnectionOut:
-    """One connection; `NOT_FOUND` for one the caller may not see."""
-    visible = await _visible(uow)
+    """One connection, for every member; never its address."""
+    _reader(uow)
     found = await service.get(uow.conn, uow.org_id, name)
-    if found is None or (visible is not None and name not in visible):
+    if found is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
     await _audit_operator(uow)
     return _out(found)
@@ -540,10 +526,10 @@ async def patch_connection(name: Name, body: ConnectionPatch, uow: UserUoW) -> C
 async def get_environment_connections(
     app_id: Id, environment_id: Id, uow: UserUoW
 ) -> EnvironmentConnectionsOut:
-    """What the environment may reach, of the connections the caller may see."""
-    visible = await _visible(uow)
+    """What the environment may reach."""
+    _reader(uow)
     await _environment(uow, app_id, environment_id)
-    return await environment_out(uow, environment_id, visible)
+    return await environment_out(uow, environment_id)
 
 
 @router.get(
@@ -566,20 +552,23 @@ async def get_environment_connection_schema(  # noqa: PLR0913  (FastAPI maps eac
     app_id: Id, environment_id: Id, name: Name, request: Request, uow: UserUoW
 ) -> ConnectionSchemaOut:
     """The tables and columns the connection shows the environment's app, as the cell's data
-    gateway answers for it, asked through the cell agent. For anyone who may see the connection
-    (`NOT_FOUND` otherwise), agents included. An answer is kept five minutes (`cached`). The
-    gateway's refusals pass on with its code: `CONNECTION_NOT_GRANTED` (pending, not linked, or
-    not in the snapshot yet), `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`, `DATA_SNAPSHOT_STALE`,
-    `CONNECTION_UNAVAILABLE`, `QUERY_TIMEOUT`; `CELL_UNAVAILABLE` when the cell could not be
-    asked. A ready, linked connection the gateway does not know yet waits up to ten seconds for
-    the cell to have the snapshot holding the link and asks once more, then is
+    gateway answers for it, asked through the cell agent. For whoever may build the environment
+    (`FORBIDDEN` otherwise) and operators, agents included. An answer is kept five minutes
+    (`cached`). The gateway's refusals pass on with its code: `CONNECTION_NOT_GRANTED` (pending,
+    not linked, or not in the snapshot yet), `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`,
+    `DATA_SNAPSHOT_STALE`, `CONNECTION_UNAVAILABLE`, `QUERY_TIMEOUT`; `CELL_UNAVAILABLE` when the
+    cell could not be asked. A ready, linked connection the gateway does not know yet waits up to
+    ten seconds for the cell to have the snapshot holding the link and asks once more, then is
     `DATA_SNAPSHOT_STALE` with `Retry-After`. A read, not an audit event (an operator's access is
     recorded as on every read)."""
-    visible = await _visible(uow)
-    if visible is not None and name not in visible:
-        raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
+    _reader(uow)
     await _connection(uow, name)
     await _environment(uow, app_id, environment_id)
+    principal = uow.principal
+    if principal.kind is PrincipalKind.USER and not await can_build(
+        uow.conn, uow.org_id, principal.subject, environment_id
+    ):
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "not_a_builder"})
     await _audit_operator(uow)
     rt = runtime_of(request)
     cache = rt.schema_cache
@@ -701,7 +690,7 @@ async def put_environment_connection(  # noqa: PLR0913  (FastAPI maps each param
         by_user_id=by,
         policy_decision_id=policy_id,
     )
-    return await environment_out(uow, environment_id, None)
+    return await environment_out(uow, environment_id)
 
 
 @router.delete(
@@ -726,4 +715,4 @@ async def delete_environment_connection(
     )
     if not removed:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
-    return await environment_out(uow, environment_id, None)
+    return await environment_out(uow, environment_id)

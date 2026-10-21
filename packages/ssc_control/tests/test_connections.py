@@ -949,41 +949,45 @@ def test_connections_stay_in_their_org(
     assert create_connection(client, theirs, other.member).status_code == 201
 
 
-def test_connections_are_seen_by_the_approvals_rule(
+def test_every_member_sees_every_connection_never_its_address(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:
     for name in ("finance", "hr", "payroll"):
         assert create_connection(client, tokens.admin, world.member, name).status_code == 201
         assert link(client, world, world.prod, tokens.admin, name).status_code == 200
-    asked = ask_api(client, tokens.builder, world.prod, subject="finance")
-    assert decide_as(client, tokens, asked.json()["id"], world.approver).status_code == 200
-    ask_api(client, tokens.builder, world.prod, subject="hr")
 
     def names(token: str) -> list[str]:
         r = client.get("/v1/connections", headers=auth(token))
         assert r.status_code == 200, r.text
+        assert "db.corp.internal" not in r.text
         return [c["name"] for c in r.json()["connections"]]
 
     def linked(token: str) -> list[str]:
         return [c["connection"]["name"] for c in links_of(client, world, world.prod, token)]
 
     everything = ["finance", "hr", "payroll"]
-    for token in (tokens.admin, tokens.approver, tokens.admin_agent, tokens.operator):
+    for token in (
+        tokens.admin,
+        tokens.approver,
+        tokens.admin_agent,
+        tokens.operator,
+        tokens.builder,
+        tokens.member,
+    ):
         assert names(token) == everything
         assert linked(token) == everything
-    assert names(tokens.builder) == ["finance"]
-    assert linked(tokens.builder) == ["finance"]
-    assert names(tokens.member) == []
-    assert linked(tokens.member) == []
-    assert client.get("/v1/connections/finance", headers=auth(tokens.builder)).status_code == 200
-    assert_problem(
-        client.get("/v1/connections/hr", headers=auth(tokens.builder)), ErrorCode.NOT_FOUND
+    one = client.get("/v1/connections/hr", headers=auth(tokens.member))
+    assert one.status_code == 200, one.text
+    assert (one.json()["owner_user_id"], one.json()["preview_access"]) == (
+        world.member,
+        {"who": "builders", "group_id": None},
     )
+    assert "db.corp.internal" not in one.text
     assert_problem(
-        client.get("/v1/connections/finance", headers=auth(tokens.member)), ErrorCode.NOT_FOUND
+        client.get("/v1/connections", headers=auth(tokens.workload)), ErrorCode.FORBIDDEN
     )
-    policy = client.get("/v1/org/deployment-policy", headers=auth(tokens.builder)).json()
-    assert [c["name"] for c in policy["connections"]] == ["finance"]
+    policy = client.get("/v1/org/deployment-policy", headers=auth(tokens.member)).json()
+    assert [c["name"] for c in policy["connections"]] == everything
     audited = events_of(dsns.app, world.org, AuditAction.OPERATOR_ACCESS)
     assert len(audited) >= 1
 
@@ -1279,16 +1283,15 @@ def test_an_admin_reads_the_columns_and_the_answer_is_kept_five_minutes(
     assert audit_rows(dsns.app, world) == before  # a read is not an audit event
 
 
-def test_the_columns_follow_the_approvals_rule(
+def test_the_columns_are_for_whoever_may_build_the_environment(
     gw: Gateway, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:
     for name in ("finance", "hr"):
         assert create_connection(gw.client, tokens.admin, world.member, name).status_code == 201
-    asked = ask_api(gw.client, tokens.builder, world.prod, subject="finance")
-    assert decide_as(gw.client, tokens, asked.json()["id"], world.approver).status_code == 200
     assert gw.schema(world, tokens.builder).status_code == 200
-    assert_problem(gw.schema(world, tokens.builder, "hr"), ErrorCode.NOT_FOUND)
-    assert_problem(gw.schema(world, tokens.member), ErrorCode.NOT_FOUND)
+    assert gw.schema(world, tokens.admin).json()["cached"] is True
+    assert_problem(gw.schema(world, tokens.member), ErrorCode.FORBIDDEN)
+    assert_problem(gw.schema(world, tokens.member, "hr"), ErrorCode.FORBIDDEN)
     assert_problem(gw.schema(world, tokens.workload), ErrorCode.FORBIDDEN)
     assert_problem(gw.schema(world, tokens.admin, "nothing"), ErrorCode.NOT_FOUND)
     unknown = "env_" + "x" * 20

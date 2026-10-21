@@ -177,13 +177,13 @@ class ApiClient:
         return _parse(self._send("GET", "/v1/org/deployment-policy"), DeploymentPolicy)
 
     def list_connections(self) -> ConnectionsOut:
-        """The data connections the caller may see."""
+        """Every data connection of the org."""
         return _parse(self._send("GET", "/v1/connections"), ConnectionsOut)
 
     def environment_connections(
         self, app_id: str, environment_id: str
     ) -> EnvironmentConnectionsOut:
-        """The connections one environment may reach, of those the caller may see."""
+        """The connections one environment may reach."""
         path = f"/v1/apps/{_seg(app_id)}/environments/{_seg(environment_id)}/connections"
         return _parse(self._send("GET", path), EnvironmentConnectionsOut)
 

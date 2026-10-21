@@ -248,18 +248,18 @@ own; its calls are recorded the same way. Set it up once:
   Storage directly. A file is at most 25 MB and a download always arrives as an attachment;
   for a browser download, redirect to `files.link("get", name)["url"]`. Upload from the server,
   not from the browser. The first deploy that asks sets up file storage once, in a few minutes.
-- Company data (a database, warehouse, spreadsheet, file store or REST API the company
-  connected) is read through a data connection. `list_connections` (`ssc connections`) names
-  the ones you may see and their `kind`. To use one, call `request_connection` with
-  `environment="preview"` (`ssc connect <app> <connection> --env preview`): the connection's
-  preview access rule may link it at once, otherwise another active admin decides. Once it is
-  linked, `describe_connection` gives the tables and columns the environment sees through it.
-  List each one the app reads under `[connections]` `names` in `ssc.toml`. Production still
-  waits for an approved request (`request_connection` with `environment="prod"`); once approved,
-  the environment is linked unless its audience exceeds the connection's ceiling.
-  `ssc connections <app> --env <env>` shows the links. You never link or approve: when a request
-  is pending or a read answers `CONNECTION_NOT_GRANTED`, tell the person which connection and
-  environment another admin has to approve or an org admin has to link.
+- Company data (a database, warehouse, spreadsheet, file store or REST API the company connected) is
+  read through a data connection. `list_connections` (`ssc connections`) names every one by name,
+  kind and classification, never an address. To use one, call `request_connection` with
+  `environment="preview"` (`ssc connect <app> <connection> --env preview`): the connection's preview
+  access rule may link it at once, otherwise another active admin decides. Once it is linked,
+  `describe_connection` gives the tables and columns the environment sees through it. List each one
+  the app reads under `[connections]` `names` in `ssc.toml`. Production still waits for an approved
+  request (`request_connection` with `environment="prod"`); once approved, the environment is linked
+  unless its audience exceeds the connection's ceiling. `ssc connections <app> --env <env>` shows
+  the links. You never link or approve: when a request is pending or a read answers
+  `CONNECTION_NOT_GRANTED`, tell the person which connection and environment another admin has to
+  approve or an org admin has to link.
 - Read a connection with the data helper: Python `from ssc_app import data`, then
   `data.query("sales-db", "select id, total from orders where year = $1", [2026])`; Node
   `import {{ query }} from '@delimitus/ssc-data'`, then

@@ -1,8 +1,9 @@
 """``ssc connections``: the data connections your org has set up and, for one app, which of them
 an environment may reach (``GET /v1/connections``, ``GET .../environments/{id}/connections``).
-An org admin sees every connection; anyone else sees only those their own approved requests
-named. A connection whose ceiling is narrower than the environment's audience shows
-``over ceiling``: narrow the sharing, or ask for it to be allowed (``exceed_ceiling``)."""
+Every member sees every connection, by name, kind and classification, never an address.
+``ssc connect`` asks for an environment to use one. A connection whose ceiling is narrower than
+the environment's audience shows ``over ceiling``: narrow the sharing, or ask for it to be allowed
+(``exceed_ceiling``)."""
 
 from typing import Annotated
 
@@ -19,7 +20,7 @@ AppOpt = Annotated[
     str | None,
     typer.Argument(
         metavar="[APP]",
-        help="App slug or app_ id. Without one, every connection you may see.",
+        help="App slug or app_ id. Without one, every connection of the org.",
         show_default=False,
     ),
 ]

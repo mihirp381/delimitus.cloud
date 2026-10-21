@@ -25,10 +25,10 @@ what the caller could see already (SSC-093). ``preflight`` runs ``ssc doctor`` o
 runs only in the local server (``ssc mcp``); here it answers with how to run it, as ``deploy``
 does for packing.
 
-``list_connections`` answers ``GET /v1/connections``, which shows an agent only the connections
-its person's own approved requests name (SSC-052); ``describe_connection`` answers that
-connection's ``/schema`` route for one environment, the columns the cell's data gateway shows it
-(GA-5.8). ``create_app`` answers ``POST /v1/apps``, as
+``list_connections`` answers ``GET /v1/connections``, every connection of the org by name, kind
+and classification, never an address; ``describe_connection`` answers a connection's ``/schema``
+route for one environment the agent's person may build, the columns the cell's data gateway shows
+it (GA-5.8). ``create_app`` answers ``POST /v1/apps``, as
 ``ssc apps create`` sends it.
 
 The credential is the MCP audience's (decision 029), which ``/v1`` refuses from outside. The
@@ -901,9 +901,8 @@ def _org_tools(
         return await run(api, ctx, lambda c: new_app(c, slug, key))
 
     async def list_connections(ctx: Context) -> CallToolResult:
-        """The org's data connections you may see, by name and classification: all of them for
-        an org admin, otherwise those named by your own approved requests. Never an address.
-        Ask for one with request_connection."""
+        """Every data connection of the org, by name, kind and classification, never an
+        address. Ask for one with request_connection."""
         return await run(api, ctx, lambda c: c.get("/v1/connections"))
 
     async def describe_connection(
@@ -914,7 +913,8 @@ def _org_tools(
     ) -> CallToolResult:
         """The tables and columns one environment of an app sees through a data connection:
         each table's name, each column's name and type, and the snapshot version they come
-        from. Only a connection you may see; the answer is kept five minutes (`cached`)."""
+        from. Only for an environment you may build; the answer is kept five minutes
+        (`cached`)."""
 
         return await run(api, ctx, lambda c: connection_schema(c, app, environment, connection))
 

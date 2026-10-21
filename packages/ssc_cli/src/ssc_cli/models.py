@@ -440,7 +440,7 @@ class CeilingDoc(Wire):
 
 
 class ConnectionOut(Wire):
-    """A data connection the caller may see; never its address."""
+    """A data connection; never its address."""
 
     name: str
     kind: str

@@ -124,7 +124,7 @@ async def request_connection(  # noqa: PLR0913  (FastAPI maps each parameter)
     async def answer(
         outcome: Outcome, reason: str | None = None, approval: Approval | None = None
     ) -> Response:
-        links = await environment_out(uow, environment_id, None)
+        links = await environment_out(uow, environment_id)
         out = ConnectionRequestOut(
             outcome=outcome, reason=reason, approval=approval, connections=links.connections
         )

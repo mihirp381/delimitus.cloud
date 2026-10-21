@@ -438,7 +438,7 @@ export interface paths {
         };
         /**
          * Get Environment Connections
-         * @description What the environment may reach, of the connections the caller may see.
+         * @description What the environment may reach.
          */
         get: operations["get_environment_connections_v1_apps__app_id__environments__environment_id__connections_get"];
         put?: never;
@@ -515,13 +515,13 @@ export interface paths {
         /**
          * Get Environment Connection Schema
          * @description The tables and columns the connection shows the environment's app, as the cell's data
-         *     gateway answers for it, asked through the cell agent. For anyone who may see the connection
-         *     (`NOT_FOUND` otherwise), agents included. An answer is kept five minutes (`cached`). The
-         *     gateway's refusals pass on with its code: `CONNECTION_NOT_GRANTED` (pending, not linked, or
-         *     not in the snapshot yet), `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`, `DATA_SNAPSHOT_STALE`,
-         *     `CONNECTION_UNAVAILABLE`, `QUERY_TIMEOUT`; `CELL_UNAVAILABLE` when the cell could not be
-         *     asked. A ready, linked connection the gateway does not know yet waits up to ten seconds for
-         *     the cell to have the snapshot holding the link and asks once more, then is
+         *     gateway answers for it, asked through the cell agent. For whoever may build the environment
+         *     (`FORBIDDEN` otherwise) and operators, agents included. An answer is kept five minutes
+         *     (`cached`). The gateway's refusals pass on with its code: `CONNECTION_NOT_GRANTED` (pending,
+         *     not linked, or not in the snapshot yet), `CONNECTION_SUSPENDED`, `APP_NOT_ACTIVE`,
+         *     `DATA_SNAPSHOT_STALE`, `CONNECTION_UNAVAILABLE`, `QUERY_TIMEOUT`; `CELL_UNAVAILABLE` when the
+         *     cell could not be asked. A ready, linked connection the gateway does not know yet waits up to
+         *     ten seconds for the cell to have the snapshot holding the link and asks once more, then is
          *     `DATA_SNAPSHOT_STALE` with `Retry-After`. A read, not an audit event (an operator's access is
          *     recorded as on every read).
          */
@@ -1250,8 +1250,8 @@ export interface paths {
         };
         /**
          * List Connections
-         * @description The connections the caller may see, by name: all of them for operators and org admins,
-         *     otherwise only those the caller's own approved requests name. Never an address.
+         * @description Every connection of the org, for every member, by name, kind and classification, never an
+         *     address.
          */
         get: operations["list_connections_v1_connections_get"];
         put?: never;
@@ -1281,7 +1281,7 @@ export interface paths {
         };
         /**
          * Get Connection
-         * @description One connection; `NOT_FOUND` for one the caller may not see.
+         * @description One connection, for every member; never its address.
          */
         get: operations["get_connection_v1_connections__name__get"];
         put?: never;
@@ -2828,7 +2828,7 @@ export interface components {
             approver: string;
             /**
              * Connections
-             * @description Data connections by name; never their address.
+             * @description Every data connection of the org by name; never its address.
              */
             connections: components["schemas"]["PolicyConnection"][];
             database: components["schemas"]["PolicyDatabase"];
@@ -2841,7 +2841,7 @@ export interface components {
             how_to_ask_for_a_package: string;
             /**
              * Scope
-             * @description `org`: every host and connection in the org (admins and operators). `own`: only those the caller's own approved requests opened.
+             * @description `org`: every host in the org (admins and operators). `own`: only the hosts the caller's own approved requests opened. Connections are always the whole org.
              * @enum {string}
              */
             scope: "org" | "own";

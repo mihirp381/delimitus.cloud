@@ -503,7 +503,8 @@ class PolicyDatabaseRow(Shape):
 
 class PolicyResult(Shape):
     """``policy``: what the org lets the caller's apps reach and use. ``scope`` is ``org`` for an
-    org admin, else ``own``: only what the caller's own approved requests opened."""
+    org admin, else ``own``: only the hosts the caller's own approved requests opened.
+    ``connections`` are always the whole org."""
 
     api_url: str
     scope: str
@@ -531,7 +532,7 @@ class ConnectionRow(Shape):
 
 
 class ConnectionsResult(Shape):
-    """``connections``: the org's connections the caller may see, or with an app the ones one of
+    """``connections``: every connection of the org, or with an app the ones one of
     its environments may reach (``app_id``, ``slug`` and ``environment`` are then set)."""
 
     api_url: str

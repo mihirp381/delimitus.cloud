@@ -1009,7 +1009,7 @@ def test_who_sees_which_request(
     assert client.get("/v1/approvals", headers=auth(stranger)).json()["approvals"] == []
 
 
-def test_the_deployment_policy_shows_only_what_the_caller_may_see(
+def test_the_deployment_policy_shows_every_connection_and_only_the_callers_hosts(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns, signing_key: SigningKey
 ) -> None:
     with psycopg.connect(dsns.app) as conn:
@@ -1057,8 +1057,10 @@ def test_the_deployment_policy_shows_only_what_the_caller_may_see(
     everything = ("org", ["finance", "hr", "payroll"], ["api.mine.example", "api.theirs.example"])
     assert seen(tokens.approver) == everything
     assert seen(tokens.admin_agent) == everything
-    assert seen(tokens.builder) == ("own", ["finance"], ["api.mine.example"])
-    assert seen(tokens.member) == ("own", [], [])
+    connections = ["finance", "hr", "payroll"]
+    assert seen(tokens.builder) == ("own", connections, ["api.mine.example"])
+    assert seen(tokens.member) == ("own", connections, [])
+    assert "db.corp.internal" not in str(policy(tokens.member))
     full = policy(tokens.operator)
     assert full["connections"][0] == {
         "name": "finance",

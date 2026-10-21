@@ -318,6 +318,7 @@ describe('connections page', () => {
   it('shows a member the list without any way to change it', async () => {
     await connectionsPage({}, 'member');
     expect(screen.getByText(/Only org admins can add or change connections/)).toBeTruthy();
+    expect(screen.getByText(/You see every connection of the org, never its address/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Add a connection' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Change ledger' })).toBeNull();
   });

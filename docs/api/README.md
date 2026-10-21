@@ -324,16 +324,16 @@ every other at 0; the gateway's part is the cell stack's `warm` flag, which the 
 through the cell deployer. A change is audited as `org.updated` on target kind `warm`, with who
 and the cost shown; setting what is set changes and audits nothing. Nothing charges for it (A6).
 
-**The deployment policy shows only what the caller may already see** (SSC-093, decision 016). `GET
+**The deployment policy shows every connection and the hosts the caller may see** (SSC-093, decision 016). `GET
 /v1/org/deployment-policy` answers, for the caller, the internet hosts approved for an environment
 (`host`, `app_id`, `environment_id`), the org's data connections by `name`, `kind` and
 `classification` (never their address), which changes wait for a person (`approvals`, with the
 `approver`), whether the company's database has room for another app database (`database`:
 `places_used` from the control plane's records, `places_total`, `room`; the cell agent's count is
 the one that refuses, `DB_TIER_FULL`), and the platform package list with how to ask for a
-package. Operators and active org admins get `scope: org`, the whole org; anyone else gets
-`scope: own`, only what their own approved `enable_internet_hosts` and `connect_data_source`
-requests opened. Workload credentials are `403 FORBIDDEN`; an operator's read is audited as
+package. Operators and active org admins get `scope: org`, every host; anyone else gets
+`scope: own`, only the hosts their own approved `enable_internet_hosts` requests opened. The
+connections are the whole org's for everyone (decision 034 amendment 2026-10-20). Workload credentials are `403 FORBIDDEN`; an operator's read is audited as
 `operator.access`. Connections also show their `owner_user_id` and `ceiling`; approved hosts remain
 the only record of hosts until SSC-053 lands.
 
@@ -351,8 +351,8 @@ and an owner who is an active user (`OWNER_NOT_ACTIVE`). A ceiling is `{audience
 `{audience: subjects, subjects: [{kind: group|user, id}]}`. `preview_access` is who may link it to a
 preview environment without a person deciding: `{who: approval}`, `{who: builders}` or `{who:
 group, group_id}` (`REFERENCE_NOT_FOUND` for a group the org lacks); left out, `builders` for an
-`internal` connection and `approval` otherwise (decision 034). `GET /v1/connections[/{name}]` follows
-the approvals visibility rule above. `PUT` and `DELETE`
+`internal` connection and `approval` otherwise (decision 034). `GET /v1/connections[/{name}]` shows every
+connection to every member, never an address (decision 034 amendment 2026-10-20). `PUT` and `DELETE`
 `/v1/apps/{app_id}/environments/{environment_id}/connections/{name}` link and unlink an
 environment (`GET` without a name lists them with `over_ceiling_since`). `POST
 .../connections/{name}/request` (body `{}`, `Idempotency-Key`) asks for the environment to use
@@ -364,8 +364,8 @@ the caller and the audience is inside the ceiling (audited `connection.granted` 
 with `reason` `ceiling` or `connection_missing` (decision 016 amendment 2026-10-20). `GET
 .../connections/{name}/schema` answers the tables and columns that environment sees
 (`{connection, kind, tables, snapshot_version, cached}`), asked of the cell's data gateway through
-the cell agent and kept five minutes per org, environment and connection; it follows the same
-visibility rule, maps the gateway's refusals to `CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`,
+the cell agent and kept five minutes per org, environment and connection; it is for whoever may
+build the environment and operators (`FORBIDDEN` otherwise), maps the gateway's refusals to `CONNECTION_NOT_GRANTED`, `CONNECTION_SUSPENDED`,
 `APP_NOT_ACTIVE`, `DATA_SNAPSHOT_STALE`, `CONNECTION_UNAVAILABLE` and `QUERY_TIMEOUT`, answers
 `CELL_UNAVAILABLE` when the cell cannot be asked, and is not audited (GA-5.8). Sharing an environment
 beyond the ceiling of any connection it is linked to, or linking an environment whose audience is
@@ -511,11 +511,10 @@ stateless, JSON replies. Code: `api/mcp/`.
     the connection's preview access rule may link it at once; otherwise a `connect_data_source`
     request is opened, and once approved the environment is linked unless its audience exceeds
     the connection's ceiling.
-  - `list_connections()`: `GET /v1/connections` as is: every connection for an org admin,
-    otherwise those the caller may see; names and classifications, never an address
-    (decision 029).
+  - `list_connections()`: `GET /v1/connections` as is: every connection of the org, by name,
+    kind and classification, never an address (decision 034 amendment 2026-10-20).
   - `describe_connection(app, environment, connection)`: `GET .../connections/{name}/schema`
-    for the app's `prod` or `preview`, as is (GA-5.8); a `DATA_SNAPSHOT_STALE` refusal's
+    for the app's `prod` or `preview`, as is, for an environment the caller may build (GA-5.8); a `DATA_SNAPSHOT_STALE` refusal's
     `detail` adds that the link is being published and to retry in a minute.
   - `create_app(slug, idempotency_key?)`: `POST /v1/apps` with the body `ssc apps create`
     sends; the caller owns the app. Audited `app.created` with `via_agent` (decision 029).
@@ -536,8 +535,7 @@ stateless, JSON replies. Code: `api/mcp/`.
   shape as `ssc --json`), plus `retry_after`: the seconds of the API's `Retry-After` (on
   `RATE_LIMITED`, say), else `null`.
 - **Absent on purpose.** Approving (decision 016 refuses agent sessions), `promote` (a person's
-  step), a secret's value (SSC-026), listing connections beyond those the caller may see (SSC-052;
-  `list_connections` is the route's own view), the warm flag (SSC-092),
+  step), a secret's value (SSC-026), the warm flag (SSC-092),
   the cell resource flags (SSC-087) and deleting an app (GA-12): no tool does them, and the cell
   enable, warm and app delete routes refuse an agent session. Local `ssc mcp` has the same tools; `deploy` packs and uploads a folder itself, and
   `preflight` checks one.

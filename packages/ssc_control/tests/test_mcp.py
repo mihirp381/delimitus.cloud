@@ -1243,15 +1243,40 @@ async def test_create_app_once_per_key_and_audited_as_agent(world: World) -> Non
     ]
 
 
-async def test_list_connections_shows_what_the_route_shows(world: World) -> None:
-    async with session(world.url, world.agent) as client:
-        listed = await client.call_tool("list_connections", {})
-    assert not listed.is_error, listed.content
-    direct = httpx2.get(
-        f"{world.url}/v1/connections", headers={"Authorization": f"Bearer {world.agent_v1}"}
+async def test_list_connections_shows_a_member_every_connection(world: World) -> None:
+    name = f"cat-{new_key()[:8].lower()}"
+    human_post(
+        world,
+        "/v1/connections",
+        {
+            "name": name,
+            "classification": "internal",
+            "host": "db.corp.internal",
+            "database": "crm",
+            "owner_user_id": world.org.admin_user_id,
+        },
     )
+    member = add_account(world.dsns.app, world.org.org_id, "member")
+    args = {"app": "mcp-app", "environment": "prod", "connection": name}
+    agent = mint(
+        world.key,
+        org=world.org.org_id,
+        sub=member,
+        agent=True,
+        client_id=CLIENT_ID,
+        audience=f"{world.url}/mcp",
+    )
+    async with session(world.url, agent) as client:
+        listed = await client.call_tool("list_connections", {})
+        described = await client.call_tool("describe_connection", args)
+    assert not listed.is_error, listed.content
+    v1 = mint(world.key, org=world.org.org_id, sub=member, agent=True, client_id=CLIENT_ID)
+    direct = httpx2.get(f"{world.url}/v1/connections", headers={"Authorization": f"Bearer {v1}"})
     assert listed.structured_content == direct.json()
     assert set(listed.structured_content) == {"connections"}
+    assert name in [c["name"] for c in listed.structured_content["connections"]]
+    assert "db.corp.internal" not in direct.text
+    assert described.structured_content["error"]["code"] == "FORBIDDEN"
 
 
 async def test_describe_connection_reads_the_schema_route(world: World) -> None:

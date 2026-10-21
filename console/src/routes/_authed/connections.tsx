@@ -115,8 +115,8 @@ function ConnectionsPage() {
       </PageHeader>
       {me.isPending || admin ? null : (
         <p className="muted">
-          Only org admins can add or change connections. You see the ones your approved requests
-          name.
+          Only org admins can add or change connections. You see every connection of the org, never
+          its address.
         </p>
       )}
       <section className="panel tone-purple" aria-label="Connections">

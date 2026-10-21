@@ -1,6 +1,7 @@
 """``ssc policy``: what the org lets your apps reach and use (``GET /v1/org/deployment-policy``),
 the same answer the ``get_org_deployment_policy`` agent tool gives. An org admin sees the whole
-org; anyone else sees only what their own approved requests opened."""
+org; anyone else sees only the hosts their own approved requests opened. Every member sees every
+connection."""
 
 import typer
 
@@ -35,7 +36,10 @@ def policy(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
         print_json(result)
         return
     if result.scope == "own":
-        say("Showing what your own approved requests opened; an org admin sees the whole org.\n")
+        say(
+            "Showing the hosts your own approved requests opened; an org admin sees every host. "
+            "Connections are the whole org's.\n"
+        )
     hosts = [(h.host, h.app_id, h.environment_id) for h in result.hosts]
     say(table(("HOST", "APP", "ENVIRONMENT"), hosts) if hosts else "No internet hosts approved.")
     say()
