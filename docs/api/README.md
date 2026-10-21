@@ -181,7 +181,8 @@ answer.
 
 **A `scope: preview` credential never touches production** (decision 011, SSC-042). Before any
 handler runs, the unit of work refuses it with `403 FORBIDDEN` on any path naming the prod
-environment, whatever the method, and on any other change except those in
+environment, whatever the method, on the changes in `uow.PREVIEW_SCOPE_REFUSED` (asking for a
+connection) on any environment, and on any other change except those in
 `uow.PREVIEW_SCOPE_CHANGES` (the bundle upload today) and a share ask (`uow.PREVIEW_SHARE_ASK`):
 `POST /v1/approvals` of kind `agent_share`, `widen_audience` or `exceed_ceiling` whose body
 names an environment that is not prod. Preview changes and reads stay open. Any other `scope` value is

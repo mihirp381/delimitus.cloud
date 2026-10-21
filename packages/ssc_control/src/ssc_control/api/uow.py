@@ -47,6 +47,11 @@ PREVIEW_SCOPE_CHANGES: Final = (
     "POST /v1/apps/{app_id}/bundles/{bundle_id}/complete",
 )
 """The changes naming no environment that a ``preview``-scoped credential may make."""
+PREVIEW_SCOPE_REFUSED: Final = (
+    "POST /v1/apps/{app_id}/environments/{environment_id}/connections/{name}/request",
+)
+"""The changes naming an environment that is not prod that a ``preview``-scoped credential may
+still not make (decision 011)."""
 PREVIEW_SHARE_ASK: Final = "POST /v1/approvals"
 """The one change naming its environment in the body: a ``preview``-scoped credential may ask
 for a share of an environment that is not prod, and nothing else."""
@@ -55,6 +60,9 @@ _SHARE_KINDS: Final = frozenset(
 )
 _PREVIEW_SCOPE_CHANGES: Final = tuple(
     re.compile(re.sub(r"\{[a-z_]+\}", "[^/]+", change)) for change in PREVIEW_SCOPE_CHANGES
+)
+_PREVIEW_SCOPE_REFUSED: Final = tuple(
+    re.compile(re.sub(r"\{[a-z_]+\}", "[^/]+", change)) for change in PREVIEW_SCOPE_REFUSED
 )
 _SAFE_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS"})
 _APP_REMOVAL: Final = re.compile(r"/v1/apps/[^/]+/delete(/[^/]+)?")
@@ -145,12 +153,15 @@ class UnitOfWork:
 
 async def check_scope(request: Request, conn: AsyncConnection, principal: Principal) -> None:
     """A ``preview``-scoped credential never touches production: a request naming an environment,
-    in its path or as a share ask (:data:`PREVIEW_SHARE_ASK`), must name one that is not prod, and
-    any other change must be in :data:`PREVIEW_SCOPE_CHANGES`. Anything else is ``FORBIDDEN``. A
-    route that names an environment changes only that one."""
+    in its path or as a share ask (:data:`PREVIEW_SHARE_ASK`), must name one that is not prod and
+    not be in :data:`PREVIEW_SCOPE_REFUSED`, and any other change must be in
+    :data:`PREVIEW_SCOPE_CHANGES`. Anything else is ``FORBIDDEN``. A route that names an
+    environment changes only that one."""
     if principal.scope is not CredentialScope.PREVIEW:
         return
     change = f"{request.method} {request.url.path}"
+    if any(p.fullmatch(change) for p in _PREVIEW_SCOPE_REFUSED):
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "preview_scope", "change": change})
     environment_id = request.path_params.get("environment_id")
     if environment_id is None and change == PREVIEW_SHARE_ASK:
         environment_id = await _share_environment(request)

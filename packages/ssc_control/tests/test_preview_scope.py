@@ -24,7 +24,7 @@ from ssc_control.api import Settings, create_app
 from ssc_control.api.auth import CredentialScope, principal_from_claims
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.problems import REQUEST_ID_HEADER, Refusal
-from ssc_control.api.uow import PREVIEW_SCOPE_CHANGES
+from ssc_control.api.uow import PREVIEW_SCOPE_CHANGES, PREVIEW_SCOPE_REFUSED
 from ssc_control.db import CreatedOrg, bind_org_sync
 
 
@@ -229,6 +229,39 @@ def test_preview_scoped_token_cannot_ask_for_a_prod_share(
     assert count(b, "select count(*) from ssc.approval_request where subject_key = 'a.io'") == 0
 
 
+def test_preview_scoped_token_cannot_ask_for_a_connection(
+    b: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    env = b.env("preview")
+    for name, rule in (("crm", "builders"), ("payroll", "approval")):
+        connection = {
+            "name": name,
+            "classification": "internal",
+            "host": "db.corp.internal",
+            "port": 5432,
+            "database": "warehouse",
+            "owner_user_id": b.org.admin_user_id,
+            "preview_access": {"who": rule},
+        }
+        created = b.client.post(
+            "/v1/connections",
+            json=connection,
+            headers=auth(b.full, **{IDEMPOTENCY_HEADER: new_key()}),
+        )
+        assert created.status_code == 201, created.text
+        path = f"/v1/apps/{b.app['id']}/environments/{env}/connections/{name}/request"
+        with caplog.at_level(logging.WARNING, logger="ssc.api"):
+            refused_by_scope(caplog, post(b, path, {}))
+    assert count(b, "select count(*) from ssc.connection_grant where environment_id = %s", env) == 0
+    assert (
+        count(
+            b,
+            "select count(*) from ssc.approval_request where subject_key in ('crm', 'payroll')",
+        )
+        == 0
+    )
+
+
 # ── preview, source and reads stay open ──────────────────────────────────────
 
 
@@ -313,8 +346,8 @@ def test_an_unknown_environment_is_still_not_found(b: Bench) -> None:
     assert_problem(r, ErrorCode.NOT_FOUND)
 
 
-def test_the_allowed_changes_are_real_routes(b: Bench) -> None:
+def test_the_listed_changes_are_real_routes(b: Bench) -> None:
     paths = b.client.app.openapi()["paths"]  # type: ignore[attr-defined]
-    for change in PREVIEW_SCOPE_CHANGES:
+    for change in (*PREVIEW_SCOPE_CHANGES, *PREVIEW_SCOPE_REFUSED):
         method, path = change.split(" ")
         assert method.lower() in paths[path], change
