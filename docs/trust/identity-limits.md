@@ -7,7 +7,8 @@ none is a promise beyond what is written here.
 
 - V1 supports Okta (SAML sign-in, SCIM directory) through WorkOS. Google Workspace sign-in worked
   in the SSC-002 spike, but its lockout and rename checks were not run on SSC's own stack, so it is
-  not offered in V1. Microsoft Entra has not been tested.
+  not offered in V1. Microsoft Entra has not been tested. The code itself refuses only consumer
+  sign-in (any OAuth type and magic links); the operator chooses each org's connection.
 
 ## Removing access
 

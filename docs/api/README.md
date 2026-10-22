@@ -101,8 +101,9 @@ channel}` from a person session (an agent session gets `AGENT_SESSION_REFUSED`, 
 `SELF_APPROVAL_REFUSED`). Approving a sharing request applies the grant when every approval it needs is in
 (the answer's `applied` says `applied`, `waiting`, `not_applied` with `applied_reason`, or
 `not_applicable`). `POST /v1/approvals/{id}/cancel` withdraws a pending request, for its requester only.
-SSC staff can still record a reply through `POST /v1/approvals/{id}/decision`, which takes an operator
-credential without the agent claim and names the org admin who decided (never the requester).
+SSC staff can still record a reply through `POST /v1/approvals/{id}/decision`, which takes an
+operator credential without the agent claim and names the person who decided (an org admin, or for
+`exceed_ceiling` the connection's owner; never the requester).
 
 **Tools say which tool they are** (SSC-028). A client sends `X-SSC-Source-Tool: <tool>` (for
 example `claude-code`, `cursor`, `lovable`) on the requests that deploy or share. The value is
@@ -335,8 +336,8 @@ the one that refuses, `DB_TIER_FULL`), and the platform package list with how to
 package. Operators and active org admins get `scope: org`, every host; anyone else gets
 `scope: own`, only the hosts their own approved `enable_internet_hosts` requests opened. The
 connections are the whole org's for everyone (decision 034 amendment 2026-10-20). Workload credentials are `403 FORBIDDEN`; an operator's read is audited as
-`operator.access`. Connections also show their `owner_user_id` and `ceiling`; approved hosts remain
-the only record of hosts until SSC-053 lands.
+`operator.access`. Connections also show their `owner_user_id` and `ceiling`; the hosts listed are
+those of approved requests, and the org's allowlist is `GET /v1/egress` (SSC-053).
 
 **A connection has a classification and an audience ceiling** (SSC-052). `POST /v1/connections`
 (`name`, `owner_user_id`, `classification`, `ceiling`, `allowed_schemas`, `limits`, `preview_access`,

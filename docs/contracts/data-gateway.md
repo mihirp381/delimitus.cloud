@@ -720,7 +720,7 @@ What v1 does not do, and says so:
 - **The quota is checked when a link is made**, by summing the environment's files. Links made just before the quota fills can each add one more file of up to 25 MB.
 - **A link outlives the kill switch** for up to its 10 minutes: a disabled app gets no new link, but one it already holds still works until it expires.
 - **No browser-direct upload.** The bucket has no CORS rule, so the app's server sends and fetches the bytes (it reaches Cloud Storage over Private Google Access; the storage host is never on the egress allowlist, `docs/contracts/manifest.md`, egress).
-- **Deletion with the environment** is a seam: the cell agent's `POST /v1/files/drop` removes an environment's live files once its service is gone, and the bucket deletes their noncurrent versions after 7 days. The flow that deletes an environment, and the database's grace period it waits out first, are not built yet; that flow calls the drop after the grace.
+- **Deletion with the app.** Deleting an app (GA-12, `ssc apps delete`) stops it, then calls the cell agent's `POST /v1/files/drop` for each environment, which refuses while the environment's service still runs, and removes its live files; the bucket deletes their noncurrent versions after 7 days.
 
 ## Logs
 

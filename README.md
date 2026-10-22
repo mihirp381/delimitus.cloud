@@ -36,6 +36,9 @@ ssc promote expenses --wait         # builds what preview runs for production an
 ssc share expenses someone@company.com  # lets a person use the production app
 ```
 
+Sharing by email address needs an org admin; anyone else shares by the person's `usr_` id
+(their `ssc whoami` shows it as `subject`).
+
 When something fails, `ssc status expenses` shows each environment's state and
 `ssc logs expenses --source build` the build's output. An error names its code and, when there
 is a next step, ends with a `Fix:` line. The exit code says what kind of failure it was: 1

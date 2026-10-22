@@ -32,12 +32,12 @@ by the founder, 2026-10-08 (GA-6.5).
   [cloud_build.py:8-9; decision 014]
 - A build receives only its bundle URL and digest, the manifest's public build values, the start
   command and the system package list. App secrets set with `ssc secret set` are not among them.
-  [cloud_build.py:252-267]
+  [cloud_build.py:323-339]
 - So a dependency's install script can read the app's source and public build values, but no
   app secret, and, in the private pool, can send them only to the listed registries. Nothing
   in a build can reach the cell's database.
   [decision 014]
-- Build logs go to Cloud Logging only. [cloud_build.py:283]
+- Build logs go to Cloud Logging only. [cloud_build.py:342]
 
 ## Who can read source
 
@@ -66,7 +66,7 @@ by the founder, 2026-10-08 (GA-6.5).
 - The build then runs gitleaks 8.30.1: its default rules (except `jwt`, since a Supabase anon key
   is public) plus SSC's rules for Supabase keys and database URLs with a password. A finding stops
   the build before anything is built: no image, no release, no deployment. Findings are printed
-  redacted. All three refuse with `SECRET_IN_BUNDLE`. [cloud_build.py:79, 123-127, 200-247]
+  redacted. All three refuse with `SECRET_IN_BUNDLE`. [cloud_build.py:82, 145-149, 273-320]
 - Measured on cell 1, 2026-10-09 00:58 UTC: a GitHub token shape made of random characters (no
   live token) passed the CLI's scan and the control plane's re-scan, and the build refused it:
   gitleaks rule `github-pat`, `SECRET_IN_BUNDLE`. The scan step failed 19 s after the build was

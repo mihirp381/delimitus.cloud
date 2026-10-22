@@ -54,10 +54,10 @@ promise beyond what is written here. Decided for MVP V1 by the founder, 2026-10-
   passwords and for collisions; neither applies to a 256-bit random token, so a reader of the
   snapshot cannot recover a token from its digest. What a reader does see is which environments
   hold a credential and the allowed host names. The bucket enforces no public access, and the
-  roles that read it are the cell's gateway, agent, data gateway and proxy accounts (the
-  control plane's worker writes it).
-  [egress.py:165-178; access-snapshot.md (SSC-053); cell.py bucket and `bucket-proxy`]
+  roles that read it are the cell's gateway, data gateway and proxy accounts (the control
+  plane's worker writes it).
+  [ssc_contracts egress.py:199-213; access-snapshot.md (SSC-053); cell.py:1588-1603]
 - The proxy's machine image is not pinned. It boots from the `cos-stable` family, so a new or
   replaced machine gets the newest stable Container-Optimized OS. Automatic updates are off on
   the machine, which is patched by replacing it. Pinning an exact image is not in V1.
-  [cell.py:69, 1952; infra/README.md, Egress proxy]
+  [cell.py:72, 2148; infra/README.md, Egress proxy]

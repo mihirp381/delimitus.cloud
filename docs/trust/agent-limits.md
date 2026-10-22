@@ -41,7 +41,7 @@ responses in `openapi.json` name that code:
 - Promote to prod, warm an app, link or unlink a repository, delete an app.
 - Pull an app's kill switch, enable a stopped app, give an app to another member.
 - Pause or resume a schedule, or run one now.
-- Set or delete a secret, change who may read one, rotate a database password.
+- Set a secret, change who may read one, rotate a database password.
 - Create or change a data connection, attach or detach one from an environment.
 - Change the egress allowlist, the agent policy, a cell resource, or a CI token.
 - Link a login to a person.
@@ -51,14 +51,14 @@ on every one of them (the matrix checks this too).
 
 ## What the matrix proves
 
-Offline, against two orgs on one control plane, with an agent of org A attacking org B. 414
+Offline, against two orgs on one control plane, with an agent of org A attacking org B. 415
 cases:
 
 | Group | What it checks | Cases |
 |---|---|---|
 | 1. Refused routes | each route above, with an API agent token: `AGENT_SESSION_REFUSED` and no row changed in either org; the test fails when a route that names the code is missing from the probe map, or when a new write is neither refused nor listed | 55 |
 | 2. Another org | every tool with B's app ids, release, operation, connection, secret name, user and bundle digest: not found or refused, nothing of B's in the answer; for B's slug, connection, secret name and user the answer is the one for a name that exists nowhere; a share or grants change naming B's user or group is refused and opens no request; B's digest does not skip A's upload | 27 |
-| 3. Hostile input | every string argument of every tool, and three `/v1` inputs, with 1 MiB, control characters, `../../`, `${HOME}`, `$(id)`, a JSON object, 64 characters and a trailing dot: a validation refusal or `413`, never a `500`, and never written to the logs | 287 |
+| 3. Hostile input | every string argument of every tool, and three `/v1` inputs, with 1 MiB, control characters, `../../`, `${HOME}`, `$(id)`, a JSON object, 64 characters and a trailing dot, and control characters in a `/v1/groups` name: a validation refusal or `413`, never a `500`, and never written to the logs | 288 |
 | 4. Credentials | an MCP token on `/v1`, an API token, a CI token or a refresh token on `/mcp`, a refresh token as a bearer, B's ids in A's token, a token after `/revoke`: `401` (with `resource_metadata` on `/mcp`) or not found | 9 |
 | 5. Secrets | `set_secret` has no value argument; `get_logs` masks Supabase secret keys, service-role JWTs, database URLs with passwords, GitHub tokens, AWS keys and JWTs; app, status and connection answers carry no address, no `HTTPS_PROXY` and no `SSC_CONNECTION_*` value | 14 |
 | 6. Approvals | decide or record a decision on its own request, on someone else's or on B's; withdraw someone else's or B's; promote, warm, repo link, egress, new connection, delete app, link login | 14 |

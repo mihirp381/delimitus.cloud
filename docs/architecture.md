@@ -2,7 +2,8 @@
 
 SSC separates the control plane from each customer's cell. The control plane owns desired
 state and policy; cell services carry out builds, runtime changes, and access checks in the
-customer's Google Cloud project. The [decision records](decisions/README.md) and
+cell's own Google Cloud project, `ssc-c-<label>`, which SSC creates in its own folder and
+billing account. The [decision records](decisions/README.md) and
 [infrastructure guide](../infra/README.md) hold the detailed design and deployment configuration.
 
 ## Components
@@ -90,7 +91,7 @@ Paths below are relative to
 | [approvals/](../packages/ssc_control/src/ssc_control/approvals/) | Open and decide approval requests, evaluate capabilities, and enforce the production gate. |
 | [audit/](../packages/ssc_control/src/ssc_control/audit/) | Hash-chain append, search, export, verification, and cell-bucket anchors. |
 | [lifecycle/](../packages/ssc_control/src/ssc_control/lifecycle/) | Kill switch, app enablement, owner changes, and rollback. |
-| [cell/](../packages/ssc_control/src/ssc_control/cell/) | Customer cell creation, lazy resources, and warm settings. |
+| [cell/](../packages/ssc_control/src/ssc_control/cell/) | Lazy cell resources and warm settings; a cell itself is a Pulumi stack in `infra/` (`c-<cell label>`). |
 | [connections/](../packages/ssc_control/src/ssc_control/connections/) | Company data connection setup and lifecycle. |
 | [github/](../packages/ssc_control/src/ssc_control/github/) | Connected repositories, webhook handling, and push-driven preview builds. |
 | [notifications/](../packages/ssc_control/src/ssc_control/notifications/) | Approval email composition and delivery jobs. |

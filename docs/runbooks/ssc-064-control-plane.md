@@ -255,7 +255,7 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
      | jq -r '.data[] | [.idp_id, .email] | @tsv'
    ```
 
-3. Create each org as `ssc_app`, once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`). One command makes the org with the founder keyed under the directory, checks the founder in WorkOS, records the connection and sets the org's cell label when one is given, in one transaction, and audits `org.created`, `directory.connected` and, with a label, `org.updated`:
+3. Create each org as `ssc_app`, once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`). One command makes the org with the founder keyed under the directory, checks the founder in WorkOS, records the connection and sets the org's cell label, in one transaction, and audits `org.created`, `directory.connected` and `org.updated`:
 
    ```sh
    ORG=$(uv run python -m ssc_control.identity create-org --name "<org name>" \
@@ -265,7 +265,7 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
    echo $ORG
    ```
 
-   `--cell-label` is required (the command refuses to run without it): an org must be placed on an applied cell from the start, or its snapshot and anchor jobs have no bucket to write to. The label is unique, so only one org can have it, and the auth host redeems a login code only for the gateway in the org's cell project, `ssc-c-<cell label>`, so a wrong label refuses every sign-in with "caller project mismatch". The Okta org has no cell yet: it omits `--cell-label` and keeps the label the database generated for it (no `org.updated` is written for it).
+   `--cell-label` is required (the command refuses to run without it): an org must be placed on an applied cell from the start, or its snapshot and anchor jobs have no bucket to write to. The label is unique, so only one org can have it, and the auth host redeems a login code only for the gateway in the org's cell project, `ssc-c-<cell label>`, so a wrong label refuses every sign-in with "caller project mismatch". Each org needs its own applied cell, since a label belongs to one org.
 
    Pass: the command prints the org id and, on the error stream, `ok` for the founder. A refusal prints why, writes nothing, and can be run again once the founder's `idp_id` or the connection is right.
 
@@ -276,7 +276,7 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
    pulumi up --stack c-$LABEL
    ```
 
-   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 030) and refuses any other `WRONG_CELL`. The Okta org has no configured cell, so its deploys fail `CELL_UNAVAILABLE` until it gets one.
+   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 030) and refuses any other `WRONG_CELL`. Each org's deploys fail `CELL_UNAVAILABLE` until the platform stack's `cells` names its cell.
 
 5. Finish up:
 

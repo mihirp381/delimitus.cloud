@@ -6,7 +6,7 @@ Read a database your org connected, from an SSC app. Zero dependencies; Node 22 
 npm install @delimitus/ssc-data
 ```
 
-Name the connection in `ssc.toml`; an org admin grants your environment the connection (`ssc connections` shows what it has):
+Name the connection in `ssc.toml` and ask for it with `ssc connect`: on preview the connection's preview access rule may link it at once, otherwise another org admin decides (`ssc connections` shows what it has):
 
 ```toml
 [connections]

@@ -1,6 +1,6 @@
 # How to get help
 
-If something is wrong with your app, or you are stuck, write to a person at the support inbox: the address on the console's Help page (set at build by `VITE_SSC_SUPPORT_EMAIL`).
+If something is wrong with your app, or you are stuck, write to a person at the support inbox: the address on the console's Help page when the console was built with one (`VITE_SSC_SUPPORT_EMAIL`); otherwise the page says to ask your SSC contact.
 
 ## Get started
 

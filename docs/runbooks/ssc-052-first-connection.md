@@ -1,6 +1,6 @@
 # SSC-052 first connection, set up by hand
 
-Connects one customer database (Postgres) so apps can read it through the cell's data gateway, with the classification and audience ceiling the data owner chose (SSC-052). The first connections are set up this way with the customer; there is no self-service screen. Nothing here puts a database password in the control plane: the address is stored, the credentials go through the cell's secret intake.
+Connects one customer database (Postgres) so apps can read it through the cell's data gateway, with the classification and audience ceiling the data owner chose (SSC-052). The first connections are set up this way with the customer; the console's Add connection form (org admins) records a connection, but its credentials still go through the operator. Nothing here puts a database password in the control plane: the address is stored, the credentials go through the cell's secret intake.
 
 ## Before you start
 
@@ -61,7 +61,7 @@ curl -sS -X PUT "$API/v1/apps/<app>/environments/<env>/connections/finance" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"limits": {"max_rows": 1000}}'
 ```
 
-Pass: `200` listing the connection; `ssc connections <app>` shows it and its `over ceiling` state. When the environment's audience is already wider than the ceiling the answer is `APPROVAL_REQUIRED`: ask `POST /v1/approvals` with `kind: exceed_ceiling`, `payload: {"connection": "finance", "grants": [<the environment's current grants>]}`; the owner or another admin decides it through the operator; then repeat the `PUT`. Since 2026-10-20 an admin approving a `connect_data_source` request for the name through `/decide` links its environment (decision 016 amendment); one recorded through the operator's `/decision` does not. For the first read a throwaway app's environment, shared with nobody but you, is the right grantee.
+Pass: `200` listing the connection; `ssc connections <app>` shows it and its `over ceiling` state. When the environment's audience is already wider than the ceiling the answer is `APPROVAL_REQUIRED`: ask `POST /v1/approvals` with `kind: exceed_ceiling`, `payload: {"connection": "finance", "grants": [<the environment's current grants>]}`; the owner or another admin decides it in the console's approvals inbox or `ssc approvals` (`/decide`); then repeat the `PUT`. Since 2026-10-20 an admin approving a `connect_data_source` request for the name through `/decide` links its environment (decision 016 amendment); one recorded through the operator's `/decision` does not. For the first read a throwaway app's environment, shared with nobody but you, is the right grantee.
 
 ## 5. The first read
 
