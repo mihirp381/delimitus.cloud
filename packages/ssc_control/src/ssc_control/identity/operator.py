@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor, NewEvent, append_event
-from ssc_control.db import CreatedOrg, NewOrg, bound_org, create_org_in
+from ssc_control.db import CreatedOrg, NewOrg, bound_org, check_org_id, create_org_in
 from ssc_control.db.errors import UNIQUE_VIOLATION
 from ssc_control.identity import connections
 from ssc_control.identity.connections import ConnectError, FounderResult
@@ -119,11 +119,18 @@ async def create_org_with_directory(  # noqa: PLR0913  (keyword-only)
     admin_group_ref: str | None,
     cell_label: str | None,
     actor: Actor,
+    org_id: str | None = None,
 ) -> OrgSetUp:
     """Create the org keyed under the directory, check the founder in WorkOS, connect the
     directory and set the cell label, if one is given (else the org keeps the generated one): all
     of it or none. :class:`ConnectError` says why not."""
-    org_id = new_id("org")
+    if org_id is None:
+        org_id = new_id("org")
+    else:
+        try:
+            check_org_id(org_id)
+        except ValueError as e:
+            raise ConnectError(str(e)) from e
     spec = NewOrg(
         name,
         founder_name,
@@ -169,8 +176,8 @@ async def create_org_with_directory(  # noqa: PLR0913  (keyword-only)
         if getattr(e.orig, "sqlstate", None) != UNIQUE_VIOLATION:
             raise
         raise ConnectError(
-            "the WorkOS organisation, the directory or the cell label is already used by "
-            "another org"
+            f"the WorkOS organisation, the directory, the cell label or the org id {org_id} is "
+            "already used by another org"
         ) from e
     return OrgSetUp(created, connection_id, founder)
 

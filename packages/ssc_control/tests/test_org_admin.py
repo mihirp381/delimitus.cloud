@@ -26,6 +26,7 @@ from ssc_testkit import Dsns
 from test_identity import BOB_IDP, BOB_UID, FOUNDER_IDP, FOUNDER_UID, World, new_world
 
 from ssc_contracts.audit import ActorKind
+from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor
 from ssc_control.audit.verify import verify
 from ssc_control.db import NewOrg, bound_org, create_org, make_engine
@@ -65,6 +66,7 @@ async def create(
     label: str | None = LABEL,
     name: str = "Acme",
     admin_group_ref: str | None = None,
+    **kw: Any,
 ) -> operator.OrgSetUp:
     client = wo.client()
     try:
@@ -82,6 +84,7 @@ async def create(
             admin_group_ref=admin_group_ref,
             cell_label=label,
             actor=OP,
+            **kw,
         )
     finally:
         await client.aclose()
@@ -250,6 +253,46 @@ async def test_a_cell_label_another_org_has_rolls_everything_back(
         await create(engine, wo, label="zxcvbnmasdfg", name="Second")
     assert counts(dsns, "Second", wo.directory) == (0, 0, 0)
     assert await chain_ok(engine, first.org.org_id) == 3
+
+
+async def test_create_org_uses_a_given_org_id(dsns: Dsns, engine: AsyncEngine) -> None:
+    org_id = new_id("org")
+    made = await create(engine, directory_with_founder(), org_id=org_id, label=None, name="Given")
+    assert made.org.org_id == org_id
+    rows = await events_of(engine, org_id)
+    assert [(r[1], r[4], r[5]) for r in rows][0] == ("org.created", "org", org_id)
+    assert await chain_ok(engine, org_id) == 2
+    with psycopg.connect(dsns.superuser) as conn:
+        found = conn.execute("select id from ssc.org where name = 'Given'").fetchall()
+    assert found == [(org_id,)]
+
+
+@pytest.mark.parametrize("bad", ["", "org_", "dcn_" + "a" * 26, "org-01abc", "ORG_01ABC"])
+async def test_create_org_refuses_a_badly_shaped_org_id_before_writing(
+    dsns: Dsns, engine: AsyncEngine, bad: str
+) -> None:
+    wo = directory_with_founder()
+    with pytest.raises(ConnectError, match="not an (org|SSC) id"):
+        await create(engine, wo, org_id=bad, label=None, name="Bad-id")
+    assert counts(dsns, "Bad-id", wo.directory) == (0, 0, 0)
+    assert "/directory_users" not in wo.calls
+
+
+async def test_create_org_with_a_taken_org_id_is_refused(dsns: Dsns, engine: AsyncEngine) -> None:
+    first = await create(engine, directory_with_founder(), label=None, name="Taken-1")
+    wo = directory_with_founder()
+    with pytest.raises(ConnectError, match="already used by another org") as e:
+        await create(engine, wo, org_id=first.org.org_id, label=None, name="Taken-2")
+    assert first.org.org_id in str(e.value)
+    assert counts(dsns, "Taken-2", wo.directory) == (0, 0, 0)
+    assert await chain_ok(engine, first.org.org_id) == 2
+
+
+async def test_create_org_without_an_org_id_generates_one(engine: AsyncEngine) -> None:
+    a = await create(engine, directory_with_founder(), label=None, name="Gen-1")
+    b = await create(engine, directory_with_founder(), label=None, name="Gen-2")
+    assert a.org.org_id.startswith("org_")
+    assert a.org.org_id != b.org.org_id
 
 
 async def test_a_failed_workos_read_writes_nothing(dsns: Dsns, engine: AsyncEngine) -> None:
