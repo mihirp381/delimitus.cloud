@@ -131,6 +131,11 @@ class World:
             urns = self.bucket_urns.get(STACK, []) if in_bucket else self.local_urns
             deployment = {"resources": [{"urn": u, "type": "x"} for u in urns]}
             Path(args[-1]).write_text(json.dumps({"version": 3, "deployment": deployment}))
+        if args[:2] == ("stack", "rm"):
+            if in_bucket:
+                del self.bucket[args[3]]
+            else:
+                self.stacks.remove(args[3])
         if args[:2] == ("stack", "import"):
             assert in_bucket
             self.bucket_urns[STACK] = list(self.local_urns)
@@ -192,6 +197,10 @@ class World:
         if argv[:3] == ("gcloud", "storage", "cat"):
             found = self.keys.get(argv[3])
             return Done(0, found, "") if found is not None else Done(1, b"", "not found")
+        if argv[:3] == ("gcloud", "storage", "ls"):
+            return Done(0 if argv[3] in self.keys else 1, b"", "")
+        if argv[:3] == ("gcloud", "storage", "rm"):
+            del self.keys[argv[3]]
         if argv[:3] == ("gcloud", "storage", "cp"):
             source = Path(argv[-2])
             mode = stat.S_IMODE(source.stat().st_mode)
@@ -237,6 +246,9 @@ class World:
         settings = self.tmp_path / "settings.json"
         settings.write_text(json.dumps(SETTINGS))
         return onboard.main([*argv, "--settings", str(settings)], self.tools())
+
+    def destroy(self, *argv: str) -> int:
+        return onboard.main([LABEL, "--stage", "staging", "--destroy", *argv], self.tools())
 
     def commands(self) -> list[str]:
         return [" ".join(a) for a in self.shell_calls]
@@ -465,6 +477,7 @@ def test_the_resume_command_and_the_plan_repeat_the_stage(world: World) -> None:
         ([*ARGV, "--set", "gateway_image=docker.io/x@sha256:" + "a" * 64], "gateway_image must"),
         ([*ARGV, "--set", "nonsense"], "KEY=VALUE"),
         ([*ARGV, "--from-step", "11"], "--from-step is 1 to 10"),
+        ([*ARGV, "--from-step", "0"], "--from-step is 1 to 10"),
     ],
 )
 def test_bad_arguments_are_refused_before_anything_runs(
@@ -1100,3 +1113,118 @@ def test_a_failed_run_prints_the_resume_command_and_no_cells_ready_command(world
     assert world.run(*ARGV) == 1
     assert world.err[-1].endswith("--from-step 10")
     assert not any("cells ready" in x for x in world.out + world.err)
+
+
+# --destroy: an abandoned cell.
+
+RETIRE = f"uv run python -m ssc_control.cells retire --label {LABEL} --operator op_<your name>"
+DESTROY = ("destroy", "--stack", STACK, "--yes")
+STACK_RM = ("stack", "rm", "--stack", STACK, "--yes")
+
+
+def test_destroy_of_a_moved_cell_runs_on_the_bucket_then_removes_its_keys(world: World) -> None:
+    world.bucket = {STACK: len(URNS)}
+    world.keys[KEYS_URL] = JWKS.encode()
+    assert world.destroy() == 0
+    changes = [c for c in world.pulumi_calls if c[0] == "destroy" or c[:2] == ("stack", "rm")]
+    assert changes == [DESTROY, STACK_RM]
+    assert DESTROY in world.bucket_calls()
+    assert STACK_RM in world.bucket_calls()
+    assert world.commands()[-2:] == [
+        f"gcloud storage ls {KEYS_URL}",
+        f"gcloud storage rm {KEYS_URL}",
+    ]
+    assert world.keys == {}
+    assert world.bucket == {}
+    assert f"      removed {KEYS_URL}" in world.out
+    assert world.out[-1] == RETIRE
+    assert world.applies == []
+    assert not any("ssc_control" in c for c in world.commands())
+
+
+def test_destroy_of_a_cell_still_in_the_local_folder_runs_there(world: World) -> None:
+    have_local_state(world)
+    assert world.destroy() == 0
+    assert DESTROY in world.local_calls()
+    assert STACK_RM in world.local_calls()
+    assert DESTROY not in world.bucket_calls()
+    assert f"gcloud storage ls {KEYS_URL}" in world.commands()
+    assert not any(c[:3] == ("gcloud", "storage", "rm") for c in world.shell_calls)
+    assert world.stacks == []
+    assert world.out[-1] == RETIRE
+
+
+def test_destroy_refuses_a_stack_that_does_not_exist(world: World) -> None:
+    assert world.destroy() == 1
+    assert f"there is no stack {STACK}" in world.err[0]
+    assert not any(c[0] == "destroy" for c in world.pulumi_calls)
+    assert world.shell_calls == []
+
+
+def test_destroy_refuses_a_stack_both_in_the_folder_and_in_the_bucket(world: World) -> None:
+    have_local_state(world)
+    world.bucket = {STACK: 0}
+    assert world.destroy() == 1
+    assert "both" in world.err[0]
+    assert "nothing was destroyed" in world.err[0]
+    assert not any(c[0] == "destroy" for c in world.pulumi_calls)
+
+
+def test_a_failed_destroy_stops_before_the_stack_rm_and_the_keys(world: World) -> None:
+    world.bucket = {STACK: len(URNS)}
+    world.keys[KEYS_URL] = JWKS.encode()
+    world.fail = lambda argv: argv[:1] == ("destroy",)
+    assert world.destroy() == 1
+    assert "pulumi destroy --stack failed" in world.err[0]
+    assert STACK_RM not in world.pulumi_calls
+    assert KEYS_URL in world.keys
+
+
+@pytest.mark.parametrize("label", ["proofcell01", "proofcell02"])
+def test_destroy_refuses_the_proof_run_s_cells(world: World, label: str) -> None:
+    for stage in ("staging", "prod"):
+        assert onboard.main([label, "--stage", stage, "--destroy"], world.tools()) == 2
+    assert "live proof-run cell" in world.err[0]
+    assert world.pulumi_calls == []
+    assert world.shell_calls == []
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--probe-image", PROBE_IMAGE],
+        ["--settings", "settings.json"],
+        ["--set", "oncall_email=a@b.c"],
+        ["--from-step", "2"],
+        ["--resume"],
+    ],
+)
+def test_destroy_takes_none_of_the_build_s_arguments(
+    world: World, extra: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as stopped:
+        world.destroy(*extra)
+    assert stopped.value.code == 2
+    assert extra[0] in capsys.readouterr().err
+    assert world.pulumi_calls == []
+
+
+def test_a_build_still_needs_the_probe_image(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        world.run(LABEL, "--stage", "staging")
+    assert "--probe-image" in capsys.readouterr().err
+
+
+def test_the_destroy_dry_run_prints_the_plan_and_runs_nothing(world: World) -> None:
+    world.bucket = {STACK: len(URNS)}
+    assert world.destroy("--dry-run") == 0
+    assert world.pulumi_calls == []
+    assert world.shell_calls == []
+    text = "\n".join(world.out)
+    assert f"plan to destroy {STACK} (project {PROJECT}); nothing is run" in text
+    assert f"$ pulumi destroy --stack {STACK} --yes --non-interactive" in text
+    assert f"$ pulumi stack rm --stack {STACK} --yes --non-interactive" in text
+    assert "$ gcloud storage rm 'gs://ssc-control-<control_public_stage>-keys/" in text
+    assert world.out[-1] == RETIRE

@@ -14,7 +14,8 @@ in the first apply, which the agent needs (decision 030); settings that apply ca
 Each step is idempotent. ``--resume`` continues a stack that exists, skipping a step whose work
 is visibly done; ``--from-step N`` starts at step N (and implies ``--resume``). A failed step
 prints its time and the command to resume. ``--dry-run`` prints the plan with the exact commands
-and runs none. The labels of the live proof run's cells are always refused.
+and runs none. The labels of the live proof run's cells are always refused. ``--destroy`` destroys
+and removes an abandoned cell's stack, from the backend that holds it, and its public keys.
 
 State lives in a local file backend, ``~/.ssc/onboard/<label>/`` (mode 0700), until the last step:
 Pulumi rewrites the whole checkpoint after every resource, and in the bucket that took 78 minutes
@@ -307,6 +308,7 @@ class Options:
     from_step: int = 1
     resume: bool = False
     dry_run: bool = False
+    destroy: bool = False
     invocation: tuple[str, ...] = ()
     """The arguments to repeat when resuming, without ``--from-step``, ``--resume`` and
     ``--dry-run``."""
@@ -339,6 +341,8 @@ def validate(opts: Options) -> None:
     check_cell_label(opts.label)
     if opts.label in REFUSED_LABELS:
         raise ValueError(f"{opts.label} is a live proof-run cell: refusing")
+    if opts.destroy:
+        return
     unknown = sorted(set(opts.settings) - SETTINGS)
     if unknown:
         raise ValueError(
@@ -549,6 +553,22 @@ def keys_stage(outputs: object) -> n.Stage:
     raise OnboardError(
         "the platform stack exports no control_public_stage: there is no keys bucket to publish to"
     )
+
+
+def keys_ls(url: str) -> list[str]:
+    return ["gcloud", "storage", "ls", url]
+
+
+def keys_rm(url: str) -> list[str]:
+    return ["gcloud", "storage", "rm", url]
+
+
+def destroy_args(stack: str) -> tuple[tuple[str, ...], ...]:
+    return (("destroy", "--stack", stack, "--yes"), ("stack", "rm", "--stack", stack, "--yes"))
+
+
+def retire_command(label: str) -> str:
+    return f"uv run python -m ssc_control.cells retire --label {label} --operator op_<your name>"
 
 
 def ready_command(label: str, jwks_file: Path, project_number: str) -> str:
@@ -797,6 +817,51 @@ class Onboarding:
         finally:
             Path(name).unlink(missing_ok=True)
         self.t.out(f"      published {url}")
+
+    def destroy(self) -> int:
+        """Never touches the control database: ``cells retire`` is the operator's."""
+        opts, t = self.opts, self.t
+        t.out(f"destroying {opts.stack} (project {opts.project})")
+        try:
+            bucket = self._destroy_backend()
+            t.out(f"backend: {t.bucket_url if bucket else f'file://{self.folder}'}")
+            for args in destroy_args(opts.stack):
+                t.out(f"      $ {pulumi_line(args)}")
+                self._pulumi(*args, bucket=bucket)
+            self._remove_keys()
+        except (CommandError, OnboardError) as exc:
+            t.err(str(exc))
+            return 1
+        t.out("then, as ssc_app, if the cell is not retired yet:")
+        t.out(retire_command(opts.label))
+        return 0
+
+    def _destroy_backend(self) -> bool:
+        """Whether the stack is in the bucket; the local folder's otherwise."""
+        opts, folder, bucket = self.opts, self.folder, self.t.bucket_url
+        local = folder.exists() and opts.stack in stack_names(self._pulumi("stack", "ls", "--json"))
+        in_bucket = opts.stack in stack_names(self._pulumi("stack", "ls", "--json", bucket=True))
+        if local and in_bucket:
+            raise OnboardError(
+                f"{opts.stack} is both in {folder} and in {bucket}: a move to the bucket may have "
+                "stopped halfway. Finish it with --from-step 9 or remove one of the two by hand; "
+                "nothing was destroyed"
+            )
+        if not (local or in_bucket):
+            raise OnboardError(f"there is no stack {opts.stack} in {folder} or {bucket}")
+        return in_bucket
+
+    def _remove_keys(self) -> None:
+        try:
+            url = keys_url(self._keys_bucket(), self.opts.label)
+        except OnboardError as exc:
+            self.t.out(f"      no keys to remove: {exc}")
+            return
+        if self.t.shell(keys_ls(url)).code:
+            self.t.out(f"      no {url}")
+            return
+        self._sh(keys_rm(url))
+        self.t.out(f"      removed {url}")
 
     # Helpers.
 
@@ -1101,6 +1166,25 @@ def plan(opts: Options) -> list[str]:
     return lines
 
 
+def destroy_plan(opts: Options) -> list[str]:
+    folder = STATE_ROOT / opts.label
+    bucket_url = f"gs://{n.STATE_BUCKET}"
+    keys = keys_url(n.control_bucket(cast("n.Stage", "<control_public_stage>"), "keys"), opts.label)
+    return [
+        f"plan to destroy {opts.stack} (project {opts.project}); nothing is run",
+        f"      $ {pulumi_line(('stack', 'ls', '--json'))}  [file://{folder}] (when it exists)",
+        f"      $ {pulumi_line(('stack', 'ls', '--json'))}  [{bucket_url}]",
+        f"backend: the one that holds {opts.stack}; both or neither is refused",
+        *(f"      $ {pulumi_line(args)}" for args in destroy_args(opts.stack)),
+        f"      $ {pulumi_line(('stack', 'output', '--stack', n.PLATFORM_STACK, '--json'))}"
+        f"  [{bucket_url}] (control_public_stage names the keys bucket)",
+        f"      $ {shlex.join(keys_ls(keys))}",
+        f"      $ {shlex.join(keys_rm(keys))}  (when it is there)",
+        "then, as ssc_app, if the cell is not retired yet:",
+        retire_command(opts.label),
+    ]
+
+
 def parse(argv: Sequence[str]) -> Options:
     parser = argparse.ArgumentParser(
         prog="python -m ssc_infra.onboard",
@@ -1110,11 +1194,23 @@ def parse(argv: Sequence[str]) -> Options:
     parser.add_argument("--stage", choices=n.STAGES, required=True)
     parser.add_argument("--settings", type=Path, help="JSON object of stack settings")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
-    parser.add_argument("--probe-image", required=True)
-    parser.add_argument("--from-step", type=int, default=1)
+    parser.add_argument("--probe-image")
+    parser.add_argument("--from-step", type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--destroy", action="store_true")
     args = parser.parse_args(argv)
+    build = {
+        "--probe-image": args.probe_image is not None,
+        "--settings": args.settings is not None,
+        "--set": bool(args.set),
+        "--from-step": args.from_step is not None,
+        "--resume": args.resume,
+    }
+    if args.destroy and any(build.values()):
+        parser.error(f"--destroy takes no {', '.join(k for k, v in build.items() if v)}")
+    if not args.destroy and args.probe_image is None:
+        parser.error("the following arguments are required: --probe-image")
     settings: dict[str, str] = {}
     if args.settings is not None:
         loaded: Any = json.loads(args.settings.read_text())
@@ -1126,7 +1222,9 @@ def parse(argv: Sequence[str]) -> Options:
         if not sep:
             raise ValueError(f"--set wants KEY=VALUE, not {item!r}")
         settings[key] = value
-    repeated = [args.label, "--stage", args.stage, "--probe-image", args.probe_image]
+    repeated = [args.label, "--stage", args.stage]
+    if args.probe_image is not None:
+        repeated += ["--probe-image", args.probe_image]
     if args.settings is not None:
         repeated += ["--settings", str(args.settings)]
     for item in args.set:
@@ -1135,10 +1233,11 @@ def parse(argv: Sequence[str]) -> Options:
         label=args.label,
         stage=args.stage,
         settings=settings,
-        probe_image=args.probe_image,
-        from_step=args.from_step,
+        probe_image=args.probe_image or "",
+        from_step=1 if args.from_step is None else args.from_step,
         resume=args.resume,
         dry_run=args.dry_run,
+        destroy=args.destroy,
         invocation=tuple(repeated),
     )
 
@@ -1151,6 +1250,12 @@ def main(argv: Sequence[str], tools: Tools | None = None) -> int:
     except (ValueError, OSError) as exc:
         tools.err(str(exc))
         return 2
+    if opts.destroy:
+        if opts.dry_run:
+            for line in destroy_plan(opts):
+                tools.out(line)
+            return 0
+        return Onboarding(opts, tools).destroy()
     if opts.dry_run:
         for line in plan(opts):
             tools.out(line)
