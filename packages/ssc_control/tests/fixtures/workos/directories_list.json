@@ -1,0 +1,27 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "directory",
+      "id": "directory_01JTESTDIRECTORY0000000001",
+      "organization_id": "org_01JTESTORGANISATION000000001",
+      "type": "okta scim v2.0",
+      "state": "linked",
+      "name": "Acme Fixture",
+      "domain": "acme.example",
+      "metadata": {
+        "users": {
+          "active": 4,
+          "inactive": 1
+        },
+        "groups": 2
+      },
+      "created_at": "2026-10-24T12:00:00.000Z",
+      "updated_at": "2026-10-24T12:00:00.000Z"
+    }
+  ],
+  "list_metadata": {
+    "before": null,
+    "after": null
+  }
+}
