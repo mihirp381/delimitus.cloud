@@ -1,6 +1,6 @@
-"""Onboards a staging cell from one command and times each step (SSC-091):
+"""Onboards a cell from one command and times each step (SSC-091):
 
-    uv run python -m ssc_infra.onboard <cell label> --settings settings.json \\
+    uv run python -m ssc_infra.onboard <cell label> --stage staging --settings settings.json \\
         --probe-image us-central1-docker.pkg.dev/ssc-platform-0/ssc-platform/<probe>@sha256:<digest>
 
 It does what ``infra/README.md`` and the proof run's T1 and T3 do by hand, in order, and prints
@@ -114,8 +114,8 @@ SETTINGS: Final = frozenset(
         "proxy_ha",
     }
 )
-"""What ``--settings`` may name. ``stage`` and ``probe`` are set here, and the keyring, its JWKS and
-``probe_digest`` are produced here."""
+"""What ``--settings`` may name. ``stage`` is ``--stage``, ``probe`` is set here, and the keyring,
+its JWKS and ``probe_digest`` are produced here."""
 LATE_SETTINGS: Final = (
     "gateway_image",
     "datagw_image",
@@ -297,6 +297,7 @@ def verdict(counted: float, certificate: str, *, partial: bool) -> str:
 @dataclass(frozen=True, slots=True)
 class Options:
     label: str
+    stage: n.Stage
     settings: Mapping[str, str]
     probe_image: str
     from_step: int = 1
@@ -337,8 +338,8 @@ def validate(opts: Options) -> None:
     unknown = sorted(set(opts.settings) - SETTINGS)
     if unknown:
         raise ValueError(
-            f"settings {', '.join(unknown)} are not taken here; stage and probe are set, and "
-            "gateway_keyring, gateway_jwks and probe_digest are produced"
+            f"settings {', '.join(unknown)} are not taken here; the stage is given with --stage, "
+            "probe is set, and gateway_keyring, gateway_jwks and probe_digest are produced"
         )
     required = ("gateway_image", "org_id", "billing_account", "operator")
     missing = [key for key in required if not opts.settings.get(key)]
@@ -432,7 +433,7 @@ def early_settings(opts: Options) -> dict[str, str]:
     held = set(LATE_SETTINGS)
     return {
         "gcp:disableGlobalProjectWarning": "true",
-        "stage": "staging",
+        "stage": opts.stage,
         "probe": "true",
         **{k: v for k, v in opts.settings.items() if k not in held},
     }
@@ -987,6 +988,7 @@ def parse(argv: Sequence[str]) -> Options:
         description=(__doc__ or "").split("\n\n", maxsplit=1)[0],
     )
     parser.add_argument("label")
+    parser.add_argument("--stage", choices=n.STAGES, required=True)
     parser.add_argument("--settings", type=Path, help="JSON object of stack settings")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     parser.add_argument("--probe-image", required=True)
@@ -1005,13 +1007,14 @@ def parse(argv: Sequence[str]) -> Options:
         if not sep:
             raise ValueError(f"--set wants KEY=VALUE, not {item!r}")
         settings[key] = value
-    repeated = [args.label, "--probe-image", args.probe_image]
+    repeated = [args.label, "--stage", args.stage, "--probe-image", args.probe_image]
     if args.settings is not None:
         repeated += ["--settings", str(args.settings)]
     for item in args.set:
         repeated += ["--set", item]
     return Options(
         label=args.label,
+        stage=args.stage,
         settings=settings,
         probe_image=args.probe_image,
         from_step=args.from_step,

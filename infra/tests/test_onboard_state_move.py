@@ -79,7 +79,9 @@ class Rig:
         )
 
     def onboarding(self) -> Onboarding:
-        opts = Options(label=LABEL, settings={}, probe_image=PROBE_IMAGE, from_step=9)
+        opts = Options(
+            label=LABEL, stage="staging", settings={}, probe_image=PROBE_IMAGE, from_step=9
+        )
         return Onboarding(opts, self.tools())
 
     def on(self, url: str, *args: str) -> str:

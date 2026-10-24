@@ -33,7 +33,7 @@ SETTINGS = {
 KMS_KEY = "projects/p/locations/l/keyRings/r/cryptoKeys/gateway"
 KEYRING = b"PLAIN-KEYRING-MUST-NOT-APPEAR"
 SEALED = b"SEALED-BYTES"
-ARGV = [LABEL, "--probe-image", PROBE_IMAGE]
+ARGV = [LABEL, "--stage", "staging", "--probe-image", PROBE_IMAGE]
 SEED_SKIP = "not needed: the rules go in the first apply on local state (SSC-091)"
 URNS = [
     f"urn:pulumi:{STACK}::ssc-infra::{kind}::{name}"
@@ -349,7 +349,8 @@ def test_a_failure_prints_the_step_its_time_and_the_command_to_resume(
     assert any(line.startswith("[5/9] FAILED after 00:42, total ") for line in world.out)
     assert "docker buildx imagetools failed (exit 1): docker: boom" in world.err[0]
     assert world.err[1] == (
-        f"resume with: uv run python -m ssc_infra.onboard {LABEL} --probe-image {PROBE_IMAGE} "
+        f"resume with: uv run python -m ssc_infra.onboard {LABEL} --stage staging "
+        f"--probe-image {PROBE_IMAGE} "
         f"--settings {tmp_path / 'settings.json'} --from-step 5"
     )
     assert world.out[-1].startswith("[5/9] FAILED")
@@ -374,7 +375,7 @@ def test_an_existing_stack_is_refused_without_resume(world: World) -> None:
 
 @pytest.mark.parametrize("label", ["proofcell01", "proofcell02"])
 def test_the_proof_run_s_cells_are_refused_before_anything_runs(world: World, label: str) -> None:
-    assert world.run(label, "--probe-image", PROBE_IMAGE) == 2
+    assert world.run(label, "--stage", "staging", "--probe-image", PROBE_IMAGE) == 2
     assert "live proof-run cell" in world.err[0]
     assert world.pulumi_calls == []
     assert world.shell_calls == []
@@ -383,15 +384,58 @@ def test_the_proof_run_s_cells_are_refused_before_anything_runs(world: World, la
 
 @pytest.mark.parametrize("label", ["proofcell01", "proofcell02"])
 def test_the_dry_run_refuses_them_too(world: World, label: str) -> None:
-    assert world.run(label, "--probe-image", PROBE_IMAGE, "--dry-run") == 2
+    assert world.run(label, "--stage", "staging", "--probe-image", PROBE_IMAGE, "--dry-run") == 2
     assert world.out == []
+
+
+def test_the_stage_is_a_required_argument_with_no_default(
+    world: World, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for argv in ([LABEL, "--probe-image", PROBE_IMAGE], [*ARGV[:2], "production", *ARGV[3:]]):
+        with pytest.raises(SystemExit) as stopped:
+            world.run(*argv)
+        assert stopped.value.code == 2
+        assert "--stage" in capsys.readouterr().err
+    assert world.pulumi_calls == []
+    assert world.shell_calls == []
+
+
+def test_a_prod_cell_is_configured_as_prod(world: World) -> None:
+    assert world.run(LABEL, "--stage", "prod", "--probe-image", PROBE_IMAGE) == 0
+    first = next(c for c in world.pulumi_calls if c[:2] == ("config", "set-all"))
+    assert "stage=prod" in first
+    assert "stage=staging" not in first
+
+
+def test_the_stage_is_never_a_setting(world: World) -> None:
+    assert (
+        world.run(LABEL, "--stage", "prod", "--probe-image", PROBE_IMAGE, "--set", "stage=prod")
+        == 2
+    )
+    assert "are not taken here; the stage is given with --stage" in world.err[0]
+    assert world.pulumi_calls == []
+
+
+@pytest.mark.parametrize("label", ["proofcell01", "proofcell02"])
+def test_the_proof_run_s_cells_are_refused_as_prod_too(world: World, label: str) -> None:
+    assert world.run(label, "--stage", "prod", "--probe-image", PROBE_IMAGE) == 2
+    assert "live proof-run cell" in world.err[0]
+    assert world.pulumi_calls == []
+
+
+def test_the_resume_command_and_the_plan_repeat_the_stage(world: World) -> None:
+    opts = onboard.parse([LABEL, "--stage", "prod", "--probe-image", PROBE_IMAGE])
+    resume = Onboarding(opts, world.tools()).resume_command(5)
+    assert resume.startswith(f"uv run python -m ssc_infra.onboard {LABEL} --stage prod ")
+    assert resume.endswith("--from-step 5")
+    assert "stage=prod" in "\n".join(onboard.plan(opts))
 
 
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
-        ([LABEL, "--probe-image", "ubuntu:latest"], "--probe-image must be"),
-        (["Bad_Label", "--probe-image", PROBE_IMAGE], "cell label"),
+        ([LABEL, "--stage", "staging", "--probe-image", "ubuntu:latest"], "--probe-image must be"),
+        (["Bad_Label", "--stage", "staging", "--probe-image", PROBE_IMAGE], "cell label"),
         ([*ARGV, "--set", "gateway_keyring=x"], "are not taken here"),
         ([*ARGV, "--set", "probe_digest=x"], "are not taken here"),
         ([*ARGV, "--set", "stage=production"], "are not taken here"),
@@ -526,7 +570,7 @@ def test_the_budget_is_15_minutes_inclusive() -> None:
 
 
 def test_the_options_derive_the_cell_s_names() -> None:
-    opts = Options(label=LABEL, settings=SETTINGS, probe_image=PROBE_IMAGE)
+    opts = Options(label=LABEL, stage="staging", settings=SETTINGS, probe_image=PROBE_IMAGE)
     assert opts.stack == STACK
     assert opts.project == PROJECT
     assert opts.probe_digest == PROBE_DIGEST
@@ -571,7 +615,7 @@ def test_a_real_apply_that_fails_says_where_the_output_is(
 
 
 def test_the_orchestrator_is_the_one_that_main_builds(world: World) -> None:
-    opts = Options(label=LABEL, settings=SETTINGS, probe_image=PROBE_IMAGE)
+    opts = Options(label=LABEL, stage="staging", settings=SETTINGS, probe_image=PROBE_IMAGE)
     assert [s.__name__ for s in Onboarding(opts, world.tools()).steps()] == [
         "stack_and_settings",
         "seed_dns",
