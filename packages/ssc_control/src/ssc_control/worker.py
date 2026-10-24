@@ -549,6 +549,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         apps_domain=apps_domain_from_env(env),
         mailer=mailer_from_env(env, console_url),
         console_url=console_url,
+        mail_from=env.get(MAIL_FROM_ENV) or None,
     )
     refuse_fakes(ports, env)
     return ports

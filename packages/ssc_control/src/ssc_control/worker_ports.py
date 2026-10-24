@@ -64,7 +64,8 @@ class Ports:
     (``cell.verify``). ``directory`` None skips the directory sync
     (SSC-064). ``github`` None leaves a push job with nothing to do (SSC-047); ``apps_domain``
     makes the preview address it reports. ``mailer`` None leaves queued approval mail waiting
-    (SSC-049); ``console_url`` is the link those mails carry."""
+    (SSC-049); ``console_url`` is the link those mails carry; ``mail_from`` (``SSC_MAIL_FROM``)
+    decides whether the welcome offers help by reply."""
 
     engine: AsyncEngine
     cells: CellPorts | None = None
@@ -83,6 +84,7 @@ class Ports:
     apps_domain: str = APPS_DOMAIN
     mailer: Mailer | None = None
     console_url: str = ""
+    mail_from: str | None = None
 
 
 class PortsMissingError(RuntimeError):

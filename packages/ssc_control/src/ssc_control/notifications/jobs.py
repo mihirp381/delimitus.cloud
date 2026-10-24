@@ -36,7 +36,11 @@ def blueprint(*, tick_cron: str = TICK_CRON, digest_cron: str = DIGEST_CRON) -> 
             log.info("mail not sent: no mailer configured", extra={"org_id": org_id})
             return 0
         return await delivery.flush(
-            ports.engine, ports.mailer, org_id=org_id, console_url=ports.console_url
+            ports.engine,
+            ports.mailer,
+            org_id=org_id,
+            console_url=ports.console_url,
+            mail_from=ports.mail_from,
         )
 
     @bp.periodic(cron=tick_cron, periodic_id="notify_tick", queueing_lock="notify_tick")
@@ -51,7 +55,11 @@ def blueprint(*, tick_cron: str = TICK_CRON, digest_cron: str = DIGEST_CRON) -> 
                 await delivery.remind(ports.engine, org_id=org_id)
                 if ports.mailer is not None:
                     sent += await delivery.flush(
-                        ports.engine, ports.mailer, org_id=org_id, console_url=ports.console_url
+                        ports.engine,
+                        ports.mailer,
+                        org_id=org_id,
+                        console_url=ports.console_url,
+                        mail_from=ports.mail_from,
                     )
                 await delivery.prune(ports.engine, org_id=org_id)
             except Exception:

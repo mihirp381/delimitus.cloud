@@ -95,13 +95,20 @@ async def _waiting(
 
 
 async def _build(
-    conn: AsyncConnection, org_id: str, row: Mapping[Any, Any], console_url: str
+    conn: AsyncConnection,
+    org_id: str,
+    row: Mapping[Any, Any],
+    console_url: str,
+    mail_from: str | None,
 ) -> mailer.Mail | None:
     """The mail for one outbox row, or None when it is no longer worth sending."""
     who = (await conn.execute(_RECIPIENT, {"org": org_id, "id": row["user_id"]})).first()
     if who is None or who[2] != "active":
         return None
     to, kind = str(who[0]), str(row["kind"])
+    if kind == "welcome":
+        subject, body = messages.welcome(console_url, org_id, mail_from=mail_from)
+        return mailer.Mail(to=to, subject=subject, body=body)
     if kind == "digest":
         waiting = await _waiting(conn, org_id, str(row["user_id"]), admin=who[1] == "admin")
         if not waiting:
@@ -109,9 +116,7 @@ async def _build(
         subject, body = messages.digest(waiting, console_url)
         return mailer.Mail(to=to, subject=subject, body=body)
     approval = await approvals.get(conn, org_id=org_id, approval_id=str(row["approval_id"]))
-    if approval is None:
-        return None
-    if (approval.state == "pending") == (kind == "decided"):
+    if approval is None or (approval.state == "pending") == (kind == "decided"):
         return None
     request = _request(approval)
     if kind == "decided":
@@ -122,7 +127,12 @@ async def _build(
 
 
 async def flush(
-    engine: AsyncEngine, sender: mailer.Mailer, *, org_id: str, console_url: str
+    engine: AsyncEngine,
+    sender: mailer.Mailer,
+    *,
+    org_id: str,
+    console_url: str,
+    mail_from: str | None = None,
 ) -> int:
     """Send the org's due mail; how many went out."""
     sent = 0
@@ -132,7 +142,7 @@ async def flush(
             key = {"org": org_id, "id": row["id"]}
             try:
                 async with conn.begin_nested():
-                    mail = await _build(conn, org_id, row, console_url)
+                    mail = await _build(conn, org_id, row, console_url, mail_from)
                 if mail is None:
                     await conn.execute(_DROP, key)
                     continue

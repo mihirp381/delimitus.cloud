@@ -22,8 +22,11 @@ from ssc_control.cells import service as cells
 from ssc_control.db import make_engine
 from ssc_control.identity import operator
 from ssc_control.identity.workos import WorkOSClient
+from ssc_control.notifications import delivery, messages
+from ssc_control.notifications.mailer import LogMailer
 from ssc_control.onboarding import service
 from ssc_control.onboarding.service import OnboardingError
+from ssc_control.worker import compose_ports
 
 OP = "op_dana"
 OP_ACTOR = Actor(kind=ActorKind.OPERATOR, id=OP)
@@ -532,3 +535,58 @@ async def test_the_onboarded_org_matches_one_create_org_makes(
     onboarded = org_events(dsns, ob.org_id)
     assert onboarded[-1][0] == "org.onboarded"
     assert onboarded[:-1] == org_events(dsns, made.org.org_id)
+
+
+# ── the welcome mail ────────────────────────────────────────────────────────
+
+CONSOLE = "https://console.delimitus.test/"
+
+
+def test_the_welcome_names_the_console_the_org_and_the_login_and_offers_help_from_a_mailbox() -> (
+    None
+):
+    subject, body = messages.welcome(CONSOLE, "org_" + "a" * 20, mail_from="help@delimitus.test")
+    assert subject == "Your organisation is ready"
+    assert body.splitlines() == [
+        "Open the console: https://console.delimitus.test",
+        f"Your organisation id: org_{'a' * 20}",
+        "Sign in from a terminal: uvx --from ssc-cli ssc login",
+        "Reply to this mail for help.",
+    ]
+    for sender in ("noreply@delimitus.com", "Delimitus <no-reply@delimitus.com>", None):
+        _, body = messages.welcome(CONSOLE, "org_" + "a" * 20, mail_from=sender)
+        assert len(body.splitlines()) == 3
+        assert "Reply" not in body
+
+
+async def test_the_welcome_is_sent_once_to_the_admin_without_an_approval(
+    dsns: Dsns, engine: AsyncEngine, wo: FakeWorkOS, client: WorkOSClient
+) -> None:
+    ob = await start(engine, client)
+    await ready(engine, ob.label)
+    connect(wo)
+    await tick(engine, client)
+    sender = LogMailer()
+    flushed = delivery.flush(
+        engine, sender, org_id=ob.org_id, console_url=CONSOLE, mail_from="noreply@delimitus.com"
+    )
+    assert await flushed == 1
+    (mail,) = sender.sent
+    assert (mail.to, mail.subject) == (EMAIL, "Your organisation is ready")
+    assert f"Your organisation id: {ob.org_id}" in mail.body
+    assert "Reply" not in mail.body
+
+    with psycopg.connect(dsns.superuser) as conn:
+        conn.execute("update ssc.onboarding set status = 'open' where id = %s", (ob.id,))
+    assert (await tick(engine, client)).live == (ob.id,)
+    assert len(welcome_rows(dsns, ob.org_id)) == 1
+    assert actions(dsns, ob.org_id).count("org.onboarded") == 1
+    assert await delivery.flush(engine, sender, org_id=ob.org_id, console_url=CONSOLE) == 0
+
+
+def test_the_worker_passes_the_sender_address_to_the_welcome() -> None:
+    base = {"SSC_DATABASE_DSN": "postgresql://ssc_app@localhost/ssc"}
+    assert compose_ports(base).mail_from is None
+    assert compose_ports({**base, "SSC_MAIL_FROM": "noreply@delimitus.com"}).mail_from == (
+        "noreply@delimitus.com"
+    )

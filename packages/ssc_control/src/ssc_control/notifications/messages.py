@@ -1,11 +1,14 @@
 """The text of each mail (SSC-049). Pure functions: plain text, no customer data values, and a
 link to the console and nothing that approves by itself."""
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
 MAX_LISTED: Final = 20
+NO_REPLY: Final = frozenset({"noreply", "donotreply"})
+_ADDRESS: Final = re.compile(r"<([^<>]+)>\s*$")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -98,3 +101,25 @@ def digest(requests: Sequence[Request], console_url: str) -> tuple[str, str]:
     ]
     more = f"\n...and {n - MAX_LISTED} more." if n > MAX_LISTED else ""
     return subject, "Waiting for your decision:\n\n" + "\n".join(lines) + more
+
+
+def reads_replies(mail_from: str | None) -> bool:
+    """Whether ``SSC_MAIL_FROM`` is a mailbox someone reads, not a no-reply address."""
+    if not mail_from:
+        return False
+    found = _ADDRESS.search(mail_from)
+    address = found[1] if found else mail_from
+    local = address.strip().split("@", 1)[0].lower()
+    return re.sub(r"[-_.]", "", local) not in NO_REPLY
+
+
+def welcome(console_url: str, org_id: str, *, mail_from: str | None = None) -> tuple[str, str]:
+    """The mail to an onboarded org's first admin."""
+    lines = [
+        f"Open the console: {console_url.rstrip('/')}",
+        f"Your organisation id: {org_id}",
+        "Sign in from a terminal: uvx --from ssc-cli ssc login",
+    ]
+    if reads_replies(mail_from):
+        lines.append("Reply to this mail for help.")
+    return "Your organisation is ready", "\n".join(lines)
