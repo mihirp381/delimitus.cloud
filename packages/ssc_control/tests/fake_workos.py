@@ -40,6 +40,10 @@ class FakeWorkOS:
     calls: list[str] = field(default_factory=list)
     domains: dict[str, str] = field(default_factory=dict)
     """This organisation's domains and their state (``verified``, ``pending``...)."""
+    connection_list: list[Json] = field(default_factory=list)
+    directory_list: list[Json] = field(default_factory=list)
+    created: dict[str, str] = field(default_factory=dict)
+    """Organisations made through ``POST /organizations``, with the domain each claimed."""
 
     # ── arranging ─────────────────────────────────────────────────────────────
 
@@ -115,7 +119,7 @@ class FakeWorkOS:
         after = str(start + PAGE) if start + PAGE < len(items) else None
         return httpx2.Response(200, json={"data": chunk, "list_metadata": {"after": after}})
 
-    def handle(self, request: httpx2.Request) -> httpx2.Response:  # noqa: PLR0911
+    def handle(self, request: httpx2.Request) -> httpx2.Response:  # noqa: PLR0911, C901
         path, q = request.url.path, parse_qs(request.url.query.decode())
         self.calls.append(path)
         if self.fail is not None:
@@ -128,6 +132,19 @@ class FakeWorkOS:
             return httpx2.Response(200, json={"profile": profile, "access_token": "x"})
         if request.headers.get("authorization") != "Bearer sk_test_fake":
             return httpx2.Response(401)
+        if request.method == "POST" and path == "/organizations":
+            body = json.loads(request.content)
+            org = _id("org")
+            self.created[org] = body["domain_data"][0]["domain"]
+            return httpx2.Response(201, json={"id": org, "name": body["name"]})
+        if path == "/portal/generate_link":
+            body = json.loads(request.content)
+            link = f"https://setup.workos.test/{body['intent']}/{body['organization']}"
+            return httpx2.Response(200, json={"link": link})
+        if path == "/connections":
+            return self._page(self.connection_list, q)
+        if path == "/directories":
+            return self._page(self.directory_list, q)
         if path.startswith("/directory_users/"):
             raw = self.users.get(path.rsplit("/", 1)[1])
             return httpx2.Response(404) if raw is None else httpx2.Response(200, json=raw)
@@ -137,6 +154,9 @@ class FakeWorkOS:
                 if gid not in self.groups:
                     return httpx2.Response(404)
                 uids = sorted(self.members[gid])
+            elif "email" in q:
+                wanted = q["email"][0].lower()
+                uids = sorted(u for u, raw in self.users.items() if raw["email"].lower() == wanted)
             else:
                 uids = sorted(self.users)
             return self._page([self.users[u] for u in uids if u in self.users], q)

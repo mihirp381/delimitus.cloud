@@ -4,6 +4,11 @@ SSO: ``GET /sso/authorize`` (built here, the browser goes there), ``POST /sso/to
 Directory Sync: ``/directory_users``, ``/directory_users/{id}``, ``/directory_groups``.
 Events: ``GET /events``, read as triggers only; the current state is always fetched again.
 Organizations: ``GET /organizations?domains=``, to find a sign-in from a work email.
+Organizations: ``POST /organizations``, a new organisation with its domain claimed, not verified.
+Admin Portal: ``POST /portal/generate_link``, a setup link for SSO or Directory Sync.
+Connections: ``GET /connections?organization_id=``, the organisation's SSO connections.
+Directories: ``GET /directories?organization_id=``, the organisation's directories.
+Directory users: ``GET /directory_users?directory=&email=``, one person by primary email.
 
 Every list is paged with ``after`` until WorkOS returns no cursor. Non-2xx answers raise
 :class:`WorkOSError` carrying only the status and path, never the body (it can hold PII).
@@ -11,17 +16,18 @@ Every list is paged with ``after`` until WorkOS returns no cursor. Non-2xx answe
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 from urllib.parse import urlencode
 
 import httpx2
 
-from ssc_control.identity.rules import ProfileError, SsoProfile
+from ssc_control.identity.rules import DirectoryPerson, ProfileError, SsoProfile
 
 DEFAULT_BASE: Final = "https://api.workos.com"
 PAGE: Final = 100
 ORG_LOOKUP: Final = 10
 VERIFIED_DOMAIN_STATES: Final = frozenset({"verified", "legacy_verified"})
+CLAIMED_DOMAIN_STATE: Final = "pending"
 TIMEOUT_SECONDS: Final = 20.0
 DSYNC_EVENTS: Final = (
     "dsync.activated",
@@ -44,6 +50,24 @@ class WorkOSError(RuntimeError):
         super().__init__(f"WorkOS answered HTTP {status} for {path}")
         self.status = status
         self.path = path
+
+
+class AmbiguousEmailError(ValueError):
+    """More than one directory user has the address."""
+
+
+@dataclass(frozen=True, slots=True)
+class Connection:
+    id: str
+    connection_type: str
+    state: str
+
+
+@dataclass(frozen=True, slots=True)
+class Directory:
+    id: str
+    type: str
+    state: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +131,12 @@ class WorkOSClient:
             raise WorkOSError(r.status_code, path)
         return cast(Json, r.json())
 
+    async def _post(self, path: str, body: Json) -> Json:
+        r = await self._http.post(path, json=body, headers={"authorization": f"Bearer {self._key}"})
+        if not r.is_success:
+            raise WorkOSError(r.status_code, path)
+        return cast(Json, r.json())
+
     async def _all(self, path: str, params: Mapping[str, Any]) -> list[Json]:
         out: list[Json] = []
         after: str | None = None
@@ -166,6 +196,51 @@ class WorkOSClient:
             if isinstance(org_id, str) and any(_verified(d, domain) for d in domains):
                 found.append(org_id)
         return found
+
+    async def create_organization(self, *, name: str, domain: str) -> str:
+        body = {"name": name, "domain_data": [{"domain": domain, "state": CLAIMED_DOMAIN_STATE}]}
+        org_id = (await self._post("/organizations", body)).get("id")
+        if not isinstance(org_id, str) or not org_id:
+            raise ProfileError("no id")
+        return org_id
+
+    async def portal_link(self, *, organization: str, intent: Literal["sso", "dsync"]) -> str:
+        body = {"organization": organization, "intent": intent}
+        link = (await self._post("/portal/generate_link", body)).get("link")
+        if not isinstance(link, str) or not link:
+            raise ProfileError("no link")
+        return link
+
+    async def connections(self, organization: str) -> list[Connection]:
+        rows = await self._all("/connections", {"organization_id": organization})
+        return [
+            Connection(*f) for r in rows if (f := _strings(r, "id", "connection_type", "state"))
+        ]
+
+    async def directories(self, organization: str) -> list[Directory]:
+        rows = await self._all("/directories", {"organization_id": organization})
+        return [Directory(*f) for r in rows if (f := _strings(r, "id", "type", "state"))]
+
+    async def directory_user_by_email(self, directory: str, email: str) -> Json | None:
+        wanted = email.strip().lower()
+        rows = await self._all("/directory_users", {"directory": directory, "email": email.strip()})
+        found: list[Json] = []
+        for raw in rows:
+            try:
+                if DirectoryPerson.from_wire(raw).email == wanted:
+                    found.append(raw)
+            except ProfileError:
+                continue
+        if len(found) > 1:
+            raise AmbiguousEmailError(
+                f"{len(found)} users of directory {directory} have this email"
+            )
+        return found[0] if found else None
+
+
+def _strings(raw: Json, *keys: str) -> tuple[str, ...] | None:
+    values = tuple(raw.get(k) for k in keys)
+    return cast(tuple[str, ...], values) if all(isinstance(v, str) and v for v in values) else None
 
 
 def _verified(entry: Json, domain: str) -> bool:
