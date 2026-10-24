@@ -48,7 +48,14 @@ from ssc_control.domain.approval_rules import exceed_subject_key
 from ssc_control.domain.audience import Ceiling
 from ssc_control.identity import connections, join, sessions, sync, tokens
 from ssc_control.identity.connections import ConnectError, directory_issuer
-from ssc_control.identity.rules import JoinRule, SsoProfile
+from ssc_control.identity.rules import (
+    GOOGLE_DIRECTORY_TYPE,
+    OKTA_DIRECTORY_TYPE,
+    REFUSED_CONNECTION_TYPES,
+    JoinRule,
+    SsoProfile,
+    join_rule_for,
+)
 from ssc_control.snapshot.compiler import compile_document, point_latest, publish
 from ssc_control.snapshot.service import compile_lock
 from ssc_edge.gate import STREAM_HEADER, Allow, Deny, Facts, GateConfig
@@ -1013,3 +1020,35 @@ def test_token_shapes() -> None:
     assert tokens.org_of(f"{org}.s", tokens.REFRESH_PREFIX) is None
     assert set(tokens.new_user_code()) <= set(tokens.USER_CODE_ALPHABET)
     assert tokens.normal_user_code("bcdf-ghjk") == "BCDFGHJK"
+
+
+@pytest.mark.parametrize(
+    ("directory_type", "connection_types", "decision"),
+    [
+        (OKTA_DIRECTORY_TYPE, ["OktaSAML"], "idp_id"),
+        (OKTA_DIRECTORY_TYPE, ["GenericOIDC"], "idp_id"),
+        (OKTA_DIRECTORY_TYPE, [], "unsupported"),
+        (GOOGLE_DIRECTORY_TYPE, ["GoogleSAML"], "confirm_email"),
+        (GOOGLE_DIRECTORY_TYPE, [], "unsupported"),
+        ("azure scim v2.0", ["AzureSAML"], "unsupported"),
+        ("generic scim v2.0", ["OktaSAML"], "unsupported"),
+        ("Okta SCIM v2.0", ["OktaSAML"], "unsupported"),
+        ("", ["OktaSAML"], "unsupported"),
+    ],
+)
+def test_the_join_rule_follows_the_directory_type(
+    directory_type: str, connection_types: list[str], decision: str
+) -> None:
+    assert join_rule_for(directory_type, connection_types) == decision
+
+
+@pytest.mark.parametrize("refused", [*sorted(REFUSED_CONNECTION_TYPES), "FooOAuth"])
+@pytest.mark.parametrize("directory_type", [OKTA_DIRECTORY_TYPE, GOOGLE_DIRECTORY_TYPE])
+def test_a_consumer_connection_alone_is_unsupported(directory_type: str, refused: str) -> None:
+    assert join_rule_for(directory_type, [refused]) == "unsupported"
+    assert join_rule_for(directory_type, [refused, refused]) == "unsupported"
+
+
+def test_a_refused_connection_beside_an_accepted_one_is_fine() -> None:
+    assert join_rule_for(OKTA_DIRECTORY_TYPE, ["GoogleOAuth", "OktaSAML"]) == "idp_id"
+    assert join_rule_for(GOOGLE_DIRECTORY_TYPE, ["GoogleSAML", "MagicLink"]) == "confirm_email"

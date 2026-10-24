@@ -20,7 +20,7 @@ login finds the new one.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 from urllib.parse import urlsplit
@@ -44,10 +44,15 @@ FORBIDDEN_SUBJECT_CLAIMS: Final = frozenset(
 """Claims that name or address a person and are reassigned; never a key (compared lower-case)."""
 REFUSED_CONNECTION_TYPES: Final = frozenset({"GoogleOAuth", "MicrosoftOAuth", "MagicLink"})
 """Consumer sign-in, not the company's directory. Any other ``…OAuth`` type is refused too."""
+OKTA_DIRECTORY_TYPE: Final = "okta scim v2.0"
+"""As ``azure scim v2.0`` in https://workos.com/docs/reference/directory-sync/directory."""
+GOOGLE_DIRECTORY_TYPE: Final = "gsuite directory"
+"""https://workos.com/docs/reference/directory-sync/directory"""
 MAX_RETURN_TO: Final = 2048
 MAX_DISPLAY: Final = 320
 
 JoinRule = Literal["idp_id", "email"]
+type JoinDecision = JoinRule | Literal["confirm_email", "unsupported"]
 LoginRefusal = Literal[
     "wrong_organization",
     "connection_not_allowed",
@@ -181,6 +186,18 @@ def check_key_claim(claim: str) -> str:
 
 def connection_type_refused(connection_type: str) -> bool:
     return connection_type in REFUSED_CONNECTION_TYPES or connection_type.endswith("OAuth")
+
+
+def join_rule_for(directory_type: str, connection_types: Sequence[str]) -> JoinDecision:
+    """Okta joins by ``idp_id``; Google Workspace waits for an operator to confirm ``email``
+    (decision 002); anything else, or no accepted connection, is unsupported."""
+    if all(connection_type_refused(t) for t in connection_types):
+        return "unsupported"
+    if directory_type == OKTA_DIRECTORY_TYPE:
+        return "idp_id"
+    if directory_type == GOOGLE_DIRECTORY_TYPE:
+        return "confirm_email"
+    return "unsupported"
 
 
 def check_profile(
