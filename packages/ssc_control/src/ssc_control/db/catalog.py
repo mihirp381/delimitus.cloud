@@ -59,6 +59,10 @@ token's scope and the name its person gave it, never a token.
 Revision 0037 adds no table (GA-12): an app's status gains ``deleting`` and ``deleted``, a deleted
 app's slug is free again, a kill-switch run gains the ``delete`` mode, and the app role may delete
 an ``app_database`` row, which removing an app does once its database is dropped.
+Revision 0039 adds ``cell`` (ticket 19), the single table in ``PLATFORM_TABLES``: the cells the
+control plane serves, which the operator writes after building one. Platform data, so no RLS; its
+``org_id`` names the org a cell was built for and is nullable, so it is not a ``GLOBAL_TABLES``
+table either.
 """
 
 from collections.abc import Mapping
@@ -123,6 +127,10 @@ UNSCOPED_TABLES: Final[tuple[str, ...]] = ("org_index",)
 # Tables that hold no org's data at all, so they have no org_id and no RLS: self-registered OAuth
 # clients (revision 0033, decision 029; db/README.md rule 17). Kept out of TABLES like org_index.
 GLOBAL_TABLES: Final[tuple[str, ...]] = ("oauth_client",)
+
+# The platform's own tables: no RLS, an optional org_id that names an org without holding its
+# data. The cells the control plane serves (revision 0039, decision 030; db/README.md rule 18).
+PLATFORM_TABLES: Final[tuple[str, ...]] = ("cell",)
 
 # Tables keyed by something other than a type-prefixed id; they have no (org_id, id) pair.
 UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
@@ -212,6 +220,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "oauth_code": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
     "oauth_client": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # unused ones pruned
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
+    "cell": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; retired, never deleted
 }
 
 # Procrastinate's schema (revision 0006): the app role's privileges on its tables and sequences.

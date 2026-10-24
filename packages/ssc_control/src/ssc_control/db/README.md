@@ -5,7 +5,7 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
 
 ## Rules
 
-1. **Every table carries `org_id`** (one exception, `org_index`: rule 14). Foreign keys are `(org_id, id)` pairs, so a row can never
+1. **Every table carries `org_id`** (exceptions: `org_index`, rule 14; `oauth_client`, rule 17; `cell`, rule 18). Foreign keys are `(org_id, id)` pairs, so a row can never
    point at another customer's row. Every table has `UNIQUE (org_id, id)` for that purpose.
 2. **Row-level security is enabled and forced on every table in `catalog.TABLES`.** One
    policy per table:
@@ -70,6 +70,16 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     `SECURITY DEFINER` function, `ssc.org_for_workos_organization` (`PLPGSQL.md`), is how the
     auth host finds an org from a WorkOS organisation before any org is bound; it is listed in
     `catalog.SECURITY_DEFINER_FUNCTIONS` and only the app role may execute it.
+18. **`ssc.cell` is the platform's own table** (decision 030 amendment of 2026-10-24), listed
+    alone in `catalog.PLATFORM_TABLES` and never in `catalog.TABLES`. It names the cells this
+    control plane serves: label, stage, status, public identity JWKS, project number, the org a
+    cell was built for (nullable, unique, no foreign key: a cell may be built before its org
+    exists), the last error and two times. The router reads it before any org is bound, so it
+    has no RLS, like the pilot requests that stay out of the database for the same reason. The
+    control plane has one application role, so the API, the auth host, the worker and the
+    operator CLI (`python -m ssc_control.cells`) all reach it as `ssc_app`, which may `SELECT`,
+    `INSERT` and `UPDATE` it, never `DELETE` (a cell is retired, not deleted); TRUNCATE is
+    `SC006`. Only the CLI writes it; no API route or job does.
 
 ## Migrations
 
@@ -113,6 +123,7 @@ after that code is out. Revisions so far, all pure expand:
 | `0036_ci_tokens` | GA-7.7 | CI tokens. `ssc.auth_session` gains the `ci` kind (up to 90 days; every other kind keeps 12 hours), `scope` and `label` (both set exactly for `ci`) and the `revoked` revoke reason. Downgrade drops the columns and restores the vocabularies and the 12-hour lifetime `NOT VALID` (development databases only) |
 | `0037_app_delete` | GA-12 | Removing an app. `ssc.app.status` gains `deleting` (set when an org admin asks, with the removal run) and `deleted` (set by the run's last step); the row stays as a tombstone, because releases, deployments, builds, bundles, runs, metrics and the audit log name it. The unique constraint on `(org_id, slug)` becomes the partial unique index `app_slug_live` (`WHERE status <> 'deleted'`), so a deleted app's slug can be used again. `ssc.kill_switch_run.mode` gains `delete`: the removal is a run of the kill switch's saga with its own steps. The app role gains `DELETE` on `ssc.app_database`, which the run uses once the cell has dropped the database. Downgrade restores the two vocabularies `NOT VALID` and the unique constraint. |
 | `0038_connection_preview_access` | Ticket 14 | `ssc.connection.preview_access` (jsonb object, default `{"who": "approval"}`): who may link the connection to a preview environment without a person deciding, `approval`, `builders` or `group` with a `group_id` (decision 034). Rows from before keep `approval`. Downgrade drops the column. |
+| `0039_cells` | Ticket 19 | `ssc.cell` (rule 18): one row per cell the control plane serves, `building`, `ready`, `failed` or `retired`, with its stage (`staging` or `prod`), public identity JWKS (a JSON object, required when `ready`), project number, the org it was built for and `last_error`; the label is checked as `ssc_shared.hosts.check_cell_label` does. `ready` does not require the project number, because cells imported from `SSC_CELLS` have none. No RLS; `SELECT, INSERT, UPDATE` for the app role; TRUNCATE is `SC006`. Downgrade drops the table (development databases only) |
 
 There is no `alembic.ini`. Run migrations from Python:
 

@@ -50,6 +50,9 @@ Also personal data, but not stored here:
 Not personal data: `approval_request.recorded_by_operator` and an operator's `actor_id` (the operator credential's subject, an opaque staff id; operator credentials must not carry an email as subject), `idempotency_claim.key` (a client-chosen retry key; the API rejects keys longer than 200 characters and stores no request body, only its hash), `actor_id` (a `usr_…` id, opaque), `directory_ref` (a provider group id),
 `org.name` (a company name).
 
+`ssc.cell` (ticket 19) holds no personal data: a cell label, a stage, a status, the cell's public
+identity keys, a project number, an org id, an error from the build and timestamps.
+
 `ssc.bundle` holds no personal data: digests, sizes, a commit hash, the actor tuple (opaque ids)
 and the manifest the server read from the bundle, whose only free-form values are the public
 build values (`build.public_env`), which are shipped to every browser by design.

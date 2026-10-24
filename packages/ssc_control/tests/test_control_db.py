@@ -1184,10 +1184,13 @@ def test_every_table_is_declared_and_org_scoped(dsns: Dsns) -> None:
     tables = {
         r[0] for r in catalog_rows(dsns, "select tablename from pg_tables where schemaname = 'ssc'")
     }
-    unscoped = set(catalog.UNSCOPED_TABLES) | set(catalog.GLOBAL_TABLES)
+    unscoped = (
+        set(catalog.UNSCOPED_TABLES) | set(catalog.GLOBAL_TABLES) | set(catalog.PLATFORM_TABLES)
+    )
     assert tables == catalog.TABLES | unscoped | {catalog.MIGRATION_LEDGER}
     assert catalog.TABLES.isdisjoint(unscoped)
-    assert set(catalog.UNSCOPED_TABLES).isdisjoint(catalog.GLOBAL_TABLES)
+    lists = (catalog.UNSCOPED_TABLES, catalog.GLOBAL_TABLES, catalog.PLATFORM_TABLES)
+    assert sum(len(t) for t in lists) == len(unscoped)
     columns = catalog_rows(
         dsns,
         "select table_name, column_name from information_schema.columns where table_schema = 'ssc'",
@@ -1199,6 +1202,13 @@ def test_every_table_is_declared_and_org_scoped(dsns: Dsns) -> None:
         assert "org_id" in by_table[t], t
     for t in catalog.GLOBAL_TABLES:  # no org's data, so nothing that names an org
         assert "org_id" not in by_table[t], t
+    nullable = catalog_rows(
+        dsns,
+        "select table_name, is_nullable from information_schema.columns "
+        "where table_schema = 'ssc' and column_name = 'org_id'",
+    )
+    for t in catalog.PLATFORM_TABLES:  # names an org, at most, never holds its data
+        assert (t, "YES") in nullable, t
     # Every table another table may point at exposes (org_id, id), so FKs are org-scoped pairs.
     constraints = catalog_rows(
         dsns,
@@ -1242,7 +1252,9 @@ def test_rls_is_enabled_and_forced_everywhere(dsns: Dsns) -> None:
         "where n.nspname = 'ssc' and c.relkind = 'r' and c.relname <> %s",
         (catalog.MIGRATION_LEDGER,),
     )
-    unscoped = set(catalog.UNSCOPED_TABLES) | set(catalog.GLOBAL_TABLES)
+    unscoped = (
+        set(catalog.UNSCOPED_TABLES) | set(catalog.GLOBAL_TABLES) | set(catalog.PLATFORM_TABLES)
+    )
     assert {r[0] for r in rows} == catalog.TABLES | unscoped
     for name, enabled, forced, policies in rows:
         expected = (False, False, 0) if name in unscoped else (True, True, 1)
@@ -1391,7 +1403,12 @@ def test_downgrade_then_upgrade_round_trips(dsns: Dsns) -> None:
     count = (
         "select count(*) from pg_tables where schemaname = 'ssc' and tablename <> 'alembic_version'"
     )
-    tables = len(catalog.TABLES) + len(catalog.UNSCOPED_TABLES) + len(catalog.GLOBAL_TABLES)
+    tables = (
+        len(catalog.TABLES)
+        + len(catalog.UNSCOPED_TABLES)
+        + len(catalog.GLOBAL_TABLES)
+        + len(catalog.PLATFORM_TABLES)
+    )
     queue_schema = "select count(*) from pg_namespace where nspname = %s"
     upgrade(dsn)
     assert run(dsn, None, count) == [(tables,)]
@@ -1709,6 +1726,67 @@ def test_oauth_clients_are_global_and_checked(dsns: Dsns) -> None:
     assert run(
         dsns.app, None, "delete from ssc.oauth_client where client_id = %s returning 1", (client,)
     ) == [(1,)]
+
+
+# ── cells: the one platform table (ticket 19, revision 0039) ─────────────────────────────────
+
+CELL_JWKS = '{"keys": [{"kid": "gw-1", "kty": "EC", "crv": "P-256", "x": "AA", "y": "BB"}]}'
+INSERT_CELL = (
+    "insert into ssc.cell (label, stage, status, identity_jwks, project_number, org_id) "
+    "values (%s, %s, %s, %s::jsonb, %s, %s) returning label"
+)
+
+
+def cell_label() -> str:
+    return "c" + new_id("org")[-11:]
+
+
+def test_cell_revision_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database cells owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="cells").render_as_string(hide_password=False)
+    exists = "select to_regclass('ssc.cell') is not null"
+    upgrade(dsn, "0038_connection_preview_access")
+    assert run(dsn, None, exists) == [(False,)]
+    upgrade(dsn, "0039_cells")
+    assert run(dsn, None, exists) == [(True,)]
+    downgrade(dsn, "0038_connection_preview_access")
+    assert run(dsn, None, exists) == [(False,)]
+    upgrade(dsn, "0039_cells")
+    assert run(dsn, None, exists) == [(True,)]
+
+
+def test_cells_belong_to_no_org_and_are_checked(dsns: Dsns) -> None:
+    label, org = cell_label(), new_id("org")
+    assert run(dsns.app, None, INSERT_CELL, (label, "prod", "ready", CELL_JWKS, 42, org)) == [
+        (label,)
+    ]
+    assert run(
+        dsns.app, None, INSERT_CELL, (cell_label(), "staging", "ready", CELL_JWKS, None, None)
+    )
+    bad = [
+        ("Cell-1", "prod", "building", None, None, None),
+        ("1abcdefgh", "prod", "building", None, None, None),
+        ("a" * 17, "prod", "building", None, None, None),
+        (cell_label(), "dev", "building", None, None, None),
+        (cell_label(), "prod", "live", None, None, None),
+        (cell_label(), "prod", "ready", None, 42, None),
+        (cell_label(), "prod", "building", "[]", None, None),
+        (cell_label(), "prod", "building", None, 0, None),
+        (cell_label(), "prod", "building", None, None, "usr_" + "a" * 20),
+    ]
+    for row in bad:
+        assert refused(dsns.app, None, INSERT_CELL, row) == CHECK_VIOLATION, row
+    duplicate_org = (cell_label(), "prod", "building", None, None, org)
+    assert refused(dsns.app, None, INSERT_CELL, duplicate_org) == UNIQUE_VIOLATION
+    same_label = (label, "prod", "building", None, None, None)
+    assert refused(dsns.app, None, INSERT_CELL, same_label) == UNIQUE_VIOLATION
+    unready = "update ssc.cell set identity_jwks = null where label = %s"
+    assert refused(dsns.app, None, unready, (label,)) == CHECK_VIOLATION
+    delete = "delete from ssc.cell where label = %s"
+    assert refused(dsns.app, None, delete, (label,)) == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.app, None, "truncate ssc.cell") == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.migrate, None, "truncate ssc.cell") == SqlState.TRUNCATE_REFUSED
 
 
 # ── org_index: the single unscoped table (decision 009 amendment, revision 0006) ─────────────
