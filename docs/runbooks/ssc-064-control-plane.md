@@ -296,13 +296,25 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
 
    ```sh
    uv run python -m ssc_control.cells request --label $LABEL --stage prod --org-id $ORG --operator op_<your name>
-   uv run python -m ssc_infra.onboard $LABEL --settings settings.json --probe-image <probe image>
-   pulumi stack output --stack c-$LABEL identity_jwks > /tmp/$LABEL-jwks.json
-   uv run python -m ssc_control.cells ready --label $LABEL --jwks-file /tmp/$LABEL-jwks.json \
-     --project-number "$(pulumi stack output --stack c-$LABEL project_number)" --operator op_<your name>
+   uv run python -m ssc_infra.onboard $LABEL --stage prod --settings settings.json --probe-image <probe image>
    ```
 
-   Pass: `ready` prints `$LABEL prod ready project=<number> org=$ORG ...`; the API and the worker serve the cell within 5 minutes (`LABEL_SECONDS`), with no platform apply and no new revision. A build that does not finish is recorded with `cells fail --label $LABEL --reason "<one line>"`, and `ready` still works after a rebuild. Add the cell's `{label, jwks}` to the platform stack's `cells` as well, and apply, only to publish its keys at `keys.delimitus.com/<label>/jwks.json` for code outside SSC. With `cell_catalog: env`, the platform stack's `cells` is still what serves it.
+   The build runs under the just-in-time grant (`cells-jit`) and, after a full run, prints the next command last, with the label, the path of the cell's `identity_jwks` (written beside the kept state copy, mode 0600) and its project number filled in. Run it as printed:
+
+   ```sh
+   uv run python -m ssc_control.cells ready --label $LABEL --jwks-file <path> --project-number <number> --operator op_<your name>
+   ```
+
+   Pass: `ready` prints `$LABEL prod ready project=<number> org=$ORG ...`; the API and the worker serve the cell within 5 minutes (`LABEL_SECONDS`), with no platform apply and no new revision. The build's step 10 has already published the cell's keys at `keys.delimitus.com/$LABEL/jwks.json`; never add such a cell to the platform stack's `cells`, which is for the proof cells only. A build that does not finish is recorded with `cells fail --label $LABEL --reason "<one line>"`, and `ready` still works after a rebuild. This assumes `cell_catalog: table`; with `env`, a cell is served only from the platform stack's `cells`.
+
+   To abandon a cell, retire it first (it refuses while an org names the cell), then destroy it:
+
+   ```sh
+   uv run python -m ssc_control.cells retire --label $LABEL --operator op_<your name>
+   uv run python -m ssc_infra.onboard $LABEL --stage prod --destroy
+   ```
+
+   `--destroy` never touches the control database, and prints the `retire` line last as a reminder. A prod cell's project, database and services are protected, so it cannot remove a prod cell as it stands (`infra/README.md`, An abandoned cell).
 
 5. Finish up:
 
