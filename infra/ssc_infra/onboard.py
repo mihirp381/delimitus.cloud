@@ -53,7 +53,7 @@ from ssc_infra.cell import APP_IMAGE, CUSTOMER_ORG
 from ssc_infra.control import PINNED_IMAGE
 from ssc_infra.run import FORBIDDEN_PROJECT, CommandError, pulumi
 from ssc_infra.stack_config import INFRA_DIR
-from ssc_shared.hosts import check_cell_label
+from ssc_shared.hosts import PROOF_LABELS, check_cell_label
 
 BUDGET_SECONDS: Final = 15 * 60
 CERTIFICATE_TIMEOUT_SECONDS: Final = 120 * 60
@@ -62,7 +62,7 @@ HEARTBEAT_SECONDS: Final = 30.0
 CERTIFICATE_NAME: Final = "ssc-cell-wildcard"
 PROBE_TAG: Final = "nightly-probe"
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
-REFUSED_LABELS: Final = frozenset({"proofcell01", "proofcell02"})
+REFUSED_LABELS: Final = PROOF_LABELS
 """The live proof run's cells. Nothing here may touch them."""
 
 STEP_NAMES: Final = (

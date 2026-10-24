@@ -92,6 +92,7 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "cell_resource": frozenset(
         {"state", "cause", "attempts", "execution", "failure_code", "deployment_id"}
     ),  # SSC-087
+    "cell": frozenset({"stage", "status", "project_number", "reason"}),  # ticket 19
     "github_installation": frozenset({"installation_id"}),
     "repo_link": frozenset({"installation_id", "repository_id", "branch", "required_checks"}),
     "egress_host": frozenset({"host", "high_risk", "approval_request_id"}),  # SSC-053

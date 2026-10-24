@@ -1741,6 +1741,9 @@ def cell_label() -> str:
     return "c" + new_id("org")[-11:]
 
 
+CELL_RECORD_ACTIONS = {"cell.requested", "cell.ready", "cell.failed", "cell.retired"}
+
+
 def test_cell_revision_round_trips(dsns: Dsns) -> None:
     with psycopg.connect(dsns.superuser, autocommit=True) as conn:
         conn.execute(f"create database cells owner {MIGRATE_ROLE}")
@@ -1748,12 +1751,18 @@ def test_cell_revision_round_trips(dsns: Dsns) -> None:
     exists = "select to_regclass('ssc.cell') is not null"
     upgrade(dsn, "0038_connection_preview_access")
     assert run(dsn, None, exists) == [(False,)]
+    before = action_check(dsn)
     upgrade(dsn, "0039_cells")
     assert run(dsn, None, exists) == [(True,)]
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | CELL_RECORD_ACTIONS
     downgrade(dsn, "0038_connection_preview_access")
     assert run(dsn, None, exists) == [(False,)]
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
     upgrade(dsn, "0039_cells")
     assert run(dsn, None, exists) == [(True,)]
+    assert action_check(dsn) == after
 
 
 def test_cells_belong_to_no_org_and_are_checked(dsns: Dsns) -> None:

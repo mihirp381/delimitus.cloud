@@ -36,6 +36,8 @@ RESERVED_SLUGS: Final = frozenset(
 PREVIEW_SUFFIX: Final = "--preview"
 AGENT_HOST_LABEL: Final = "ssc--agent"
 INTAKE_HOST_LABEL: Final = "ssc--secrets"
+PROOF_LABELS: Final = frozenset({"proofcell01", "proofcell02"})
+"""The live proof run's cells: no tool builds or requests them again."""
 ISSUER_PREFIX: Final = "https://keys.delimitus.com/"
 """Each cell's identity issuer is this and its label; ``<issuer>/jwks.json`` serves its keys."""
 MAX_APPS_DOMAIN: Final = 186

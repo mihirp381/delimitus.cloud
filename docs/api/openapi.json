@@ -1244,6 +1244,10 @@
           "cell.resource_requested",
           "cell.resource_ready",
           "cell.resource_failed",
+          "cell.requested",
+          "cell.ready",
+          "cell.failed",
+          "cell.retired",
           "github.installation_bound",
           "repo.connected",
           "repo.disconnected"
