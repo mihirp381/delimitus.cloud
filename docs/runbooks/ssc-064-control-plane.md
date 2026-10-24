@@ -71,7 +71,7 @@ pulumi config set --stack platform cells "$(jq -cn --arg label $LABEL \
 
 `cells` lists every cell this control plane serves (decision 030); add one `{label, jwks}` per cell. A stack that still has `cell_label` and `cell_jwks` works as one cell, but remove them before setting `cells`: both at once are refused.
 
-Once the release from step 9 has applied revision `0039_cells`, move the cells to the table (decision 030, amendment of 2026-10-24), once per control deployment, from the shell of step 10.2 (`SSC_DATABASE_DSN` as `ssc_app`):
+Once the release from step 9 has applied revision `0039_cells`, move the cells to the table (decision 030, amendment of 2026-10-24), once per control deployment, from the shell of `docs/runbooks/ssc-110-onboarding.md` (Before you start: `SSC_DATABASE_DSN` as `ssc_app`):
 
 ```sh
 export SSC_CELLS="$(pulumi config get --stack platform cells \
@@ -253,70 +253,11 @@ Pass:
 
 A secret version added later reaches a service only with a new revision. To roll one, run `pulumi up` after a release change, or `gcloud run services update <service> --project=$P --region=us-central1 --update-labels=rolled=$(date +%s)`.
 
-## 10. WorkOS and the two orgs **[real]**
-
-The founder check now runs inside `create-org` and `connect`: they read the directory's users from WorkOS and refuse unless a linked admin is an active user of that directory under the same `idp_id`. An org is never created, and no audit event written, for a founder the first sync would deactivate.
+## 10. WorkOS and the orgs **[real]**
 
 1. In the WorkOS production dashboard, add `https://auth.delimitus.com/callback` as a redirect URI.
-2. With the proxy still running, give the shell the settings the commands read, and take the founder's `idp_id` from WorkOS itself, not from the identity provider's console. If it does not match, `create-org` refuses and lists the directory users that have the founder's email, with their `idp_id`.
-
-   ```sh
-   export SSC_DATABASE_DSN="postgresql://ssc_app:$APP_PW@127.0.0.1:5433/ssc"
-   read -rs SSC_WORKOS_API_KEY; export SSC_WORKOS_API_KEY
-   read -r SSC_WORKOS_CLIENT_ID; export SSC_WORKOS_CLIENT_ID
-   curl -s -H "Authorization: Bearer $SSC_WORKOS_API_KEY" \
-     "https://api.workos.com/directory_users?directory=<directory_01…>&limit=100" \
-     | jq -r '.data[] | [.idp_id, .email] | @tsv'
-   ```
-
-3. Create each org as `ssc_app`, once for Okta (`JOIN=idp_id`) and once for Google (`JOIN=email`). One command makes the org with the founder keyed under the directory, checks the founder in WorkOS, records the connection and sets the org's cell label, in one transaction, and audits `org.created`, `directory.connected` and `org.updated`:
-
-   ```sh
-   ORG=$(uv run python -m ssc_control.identity create-org --name "<org name>" \
-     --founder-name "<founder name>" --founder-email "<founder email>" --founder-idp-id "<founder idp_id>" \
-     --operator op_<your name> --workos-org <org_01…> --directory <directory_01…> --sso <conn_01…> \
-     --join-rule $JOIN --cell-label $LABEL)
-   echo $ORG
-   ```
-
-   `--cell-label` is required (the command refuses to run without it): an org must be placed on an applied cell from the start, or its snapshot and anchor jobs have no bucket to write to. The label is unique, so only one org can have it, and the auth host redeems a login code only for the gateway in the org's cell project, `ssc-c-<cell label>`, so a wrong label refuses every sign-in with "caller project mismatch". Each org needs its own applied cell, since a label belongs to one org.
-
-   Pass: the command prints the org id and, on the error stream, `ok` for the founder. A refusal prints why, writes nothing, and can be run again once the founder's `idp_id` or the connection is right.
-
-4. Set the cell's gateway to the org that took `$LABEL`, then re-apply the cell:
-
-   ```sh
-   pulumi config set --stack c-$LABEL org_id <org_…>
-   pulumi up --stack c-$LABEL
-   ```
-
-   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 030) and refuses any other `WRONG_CELL`. Each org's deploys fail `CELL_UNAVAILABLE` until the control plane serves its cell.
-
-   With `cell_catalog: table` (step 3), a cell imported there is already served. Any later cell is recorded before it is built and served once the operator marks it ready, as `ssc_app`, in this order. The build, `python -m ssc_infra.onboard`, is described in `infra/README.md`.
-
-   ```sh
-   uv run python -m ssc_control.cells request --label $LABEL --stage prod --org-id $ORG --operator op_<your name>
-   uv run python -m ssc_infra.onboard $LABEL --stage prod --settings settings.json --probe-image <probe image>
-   ```
-
-   The build runs under the just-in-time grant (`cells-jit`) and, after a full run, prints the next command last, with the label, the path of the cell's `identity_jwks` (written beside the kept state copy, mode 0600) and its project number filled in. Run it as printed:
-
-   ```sh
-   uv run python -m ssc_control.cells ready --label $LABEL --jwks-file <path> --project-number <number> --operator op_<your name>
-   ```
-
-   Pass: `ready` prints `$LABEL prod ready project=<number> org=$ORG ...`; the API and the worker serve the cell within 5 minutes (`LABEL_SECONDS`), with no platform apply and no new revision. The build's step 10 has already published the cell's keys at `keys.delimitus.com/$LABEL/jwks.json`; never add such a cell to the platform stack's `cells`, which is for the proof cells only. A build that does not finish is recorded with `cells fail --label $LABEL --reason "<one line>"`, and `ready` still works after a rebuild. This assumes `cell_catalog: table`; with `env`, a cell is served only from the platform stack's `cells`.
-
-   To abandon a cell, retire it first (it refuses while an org names the cell), then destroy it:
-
-   ```sh
-   uv run python -m ssc_control.cells retire --label $LABEL --operator op_<your name>
-   uv run python -m ssc_infra.onboard $LABEL --stage prod --destroy
-   ```
-
-   `--destroy` never touches the control database, and prints the `retire` line last as a reminder. A prod cell's project, database and services are protected, so it cannot remove a prod cell as it stands (`infra/README.md`, An abandoned cell).
-
-5. Finish up:
+2. Onboard each org with `docs/runbooks/ssc-110-onboarding.md`: one `onboarding start` per customer requests the cell, makes the WorkOS organisation and its links, and prints the `onboard.py` command with the org id set; the worker's tick creates the org with its first admin from the connected directory, and the row goes `live` once the cell is ready. The commands this step used before (`identity create-org` and `cells request`) stay for repairs.
+3. Finish up:
 
    ```sh
    unset APP_PW SSC_DATABASE_DSN SSC_WORKOS_API_KEY SSC_WORKOS_CLIENT_ID
@@ -351,7 +292,7 @@ Pass: the browser signs in through the IdP, the code is approved, and `whoami` n
 - **Suspension.** Suspend the user in Google. `whoami` must fail within 5 minutes of the WorkOS event.
 - **Rename.** Change the user's primary email in Google, then log in again once the directory has caught up. The `usr_` id and the people count must be unchanged.
 
-**d. A gateway started from zero redeems a login code through its public load balancer.** This uses an app deployed in the org from step 10.3, such as SSC-086 T2's.
+**d. A gateway started from zero redeems a login code through its public load balancer.** This uses an app deployed in an org onboarded in step 10, such as SSC-086 T2's.
 
 1. Leave the cell idle for 20 minutes, until Cloud Run has scaled the gateway to zero. Check that this prints nothing:
 

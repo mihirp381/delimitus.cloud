@@ -383,7 +383,7 @@ def cell_catalog_setting(value: str | None, cells: Sequence[Cell]) -> str:
         raise ValueError(f"cell_catalog must be {' or '.join(CELL_CATALOGS)}")
     if catalog == "env" and cells:
         pulumi.log.warn(
-            f"{CELLS} as SSC_CELLS moves to the ssc.cell table, ticket 19: run python -m "
+            f"the ssc.cell table replaces {CELLS} as SSC_CELLS: run python -m "
             "ssc_control.cells import-env, then set cell_catalog: table"
         )
     return catalog

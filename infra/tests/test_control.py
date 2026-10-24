@@ -576,9 +576,8 @@ def test_cells_in_the_environment_are_deprecated(
     warnings: list[str] = []
     monkeypatch.setattr(pulumi.log, "warn", lambda msg, *_, **__: warnings.append(msg))
     run(naming.PLATFORM_STACK, config)
-    cells = [w for w in warnings if "ticket 19" in w]
+    cells = [w for w in warnings if "the ssc.cell table replaces" in w]
     assert len(cells) == (1 if warned else 0)
-    assert all("moves to the ssc.cell table, ticket 19" in w for w in cells)
 
 
 def test_the_cells_replace_the_legacy_cell() -> None:
