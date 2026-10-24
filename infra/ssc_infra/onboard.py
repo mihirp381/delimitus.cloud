@@ -551,6 +551,20 @@ def keys_stage(outputs: object) -> n.Stage:
     )
 
 
+def ready_command(label: str, jwks_file: Path, project_number: str) -> str:
+    """``python -m ssc_control.cells ready``, as runbook SSC-064 step 10.4 runs it."""
+    argv = ["uv", "run", "python", "-m", "ssc_control.cells", "ready", "--label", label]
+    argv += ["--jwks-file", str(jwks_file), "--project-number", project_number]
+    return shlex.join(argv) + " --operator op_<your name>"
+
+
+def write_private(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as file:
+        file.write(text)
+
+
 def floor_probes() -> list[str]:
     return ["uv", "run", "python", "-m", "ssc_conformance.nightly"]
 
@@ -595,6 +609,7 @@ class Onboarding:
         self.move_seconds: float | None = None
         self.moved: Path | None = None
         self.identity_jwks: str | None = None
+        self.project_number: str | None = None
         self.folder = tools.state_root / opts.label
 
     @property
@@ -763,7 +778,12 @@ class Onboarding:
             raise OnboardError(
                 "identity_jwks is not a public JWKS of named keys: nothing published"
             )
-        self.identity_jwks = jwks
+        number = self._pulumi(
+            "stack", "output", "--stack", opts.stack, "project_number", bucket=True
+        )
+        if not number.strip().isdigit():
+            raise OnboardError("the stack's project_number must be a number")
+        self.identity_jwks, self.project_number = jwks, number.strip()
         url = keys_url(self._keys_bucket(), opts.label)
         if opts.resumed:
             found = self.t.shell(keys_cat(url))
@@ -966,7 +986,18 @@ class Onboarding:
         if self.move_seconds is not None:
             t.out(f"state move: {mmss(self.move_seconds)} (counted in the total)")
         t.out(self.verdict_line())
+        if opts.from_step == 1:
+            self.next_command()
         return 0
+
+    def next_command(self) -> None:
+        moved, jwks, number = self.moved, self.identity_jwks, self.project_number
+        if moved is None or jwks is None or number is None:
+            return
+        jwks_file = moved / "identity_jwks.json"
+        write_private(jwks_file, jwks)
+        self.t.out(f"identity_jwks written to {jwks_file} (mode 0600); next, as ssc_app:")
+        self.t.out(ready_command(self.opts.label, jwks_file, number))
 
     def certificate_figure(self) -> str:
         if self.certificate_already_active:
@@ -1049,6 +1080,8 @@ def plan(opts: Options) -> list[str]:
         [
             pulumi_line(("stack", "output", "--stack", opts.stack, "identity_jwks"))
             + f"  [{bucket_url}] (refused unless public keys only)",
+            pulumi_line(("stack", "output", "--stack", opts.stack, "project_number"))
+            + f"  [{bucket_url}] (for the cells ready command printed at the end)",
             pulumi_line(("stack", "output", "--stack", n.PLATFORM_STACK, "--json"))
             + f"  [{bucket_url}] (control_public_stage names the keys bucket)",
             shlex.join(keys_cat(keys)) + "  (with --resume: identical content is skipped)",

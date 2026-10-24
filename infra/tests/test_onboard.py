@@ -679,6 +679,7 @@ def test_every_pulumi_call_before_the_move_runs_on_the_local_folder_and_the_buck
         ("stack", "export"),
         ("preview", "--stack"),
         ("stack", "output"),  # identity_jwks
+        ("stack", "output"),  # project_number
         ("stack", "output"),  # control_public_stage
     ]
     assert world.applies == [STACK, STACK]
@@ -697,7 +698,7 @@ def test_the_move_copies_the_state_checks_it_and_keeps_the_local_folder_renamed(
         STACK,
         f"--secrets-provider={n.SECRETS_PROVIDER}",
     )
-    assert bucket[-3] == (
+    assert bucket[-4] == (
         "preview",
         "--stack",
         STACK,
@@ -874,7 +875,7 @@ def test_a_move_that_stopped_after_the_import_goes_straight_to_the_preview(world
     kinds = [c[:2] for c in world.bucket_calls()]
     assert ("stack", "init") not in kinds
     assert ("stack", "import") not in kinds
-    assert kinds[-3] == ("preview", "--stack")
+    assert kinds[-4] == ("preview", "--stack")
     assert len(world.moved()) == 1
 
 
@@ -1037,3 +1038,65 @@ def test_the_dry_run_shows_the_publish_command(world: World) -> None:
     assert f"$ pulumi stack output --stack {n.PLATFORM_STACK} --json --non-interactive" in step
     assert "counted: steps 1 to 6, 8, 9 and 10" in text
     assert world.shell_calls == []
+
+
+# The operator's next command, after a full run.
+
+
+def ready_line(jwks_file: Path, number: str = PROJECT_NUMBER) -> str:
+    return (
+        f"uv run python -m ssc_control.cells ready --label {LABEL} --jwks-file {jwks_file} "
+        f"--project-number {number} --operator op_<your name>"
+    )
+
+
+def test_a_full_run_ends_with_the_cells_ready_command_and_the_jwks_beside_the_kept_state(
+    world: World,
+) -> None:
+    assert world.run(*ARGV) == 0
+    (moved,) = world.moved()
+    jwks_file = moved / "identity_jwks.json"
+    assert world.out[-3] == world.verdict()
+    assert world.out[-2] == f"identity_jwks written to {jwks_file} (mode 0600); next, as ssc_app:"
+    assert world.out[-1] == ready_line(jwks_file)
+    assert "#" not in world.out[-1]
+    assert jwks_file.read_text() == JWKS
+    assert stat.S_IMODE(jwks_file.stat().st_mode) == 0o600
+
+
+def test_the_command_takes_its_values_from_the_stack_outputs(world: World) -> None:
+    other = json.dumps({"keys": [{"kty": "OKP", "crv": "Ed25519", "kid": "gw-2", "x": "B" * 43}]})
+    world.outputs |= {"identity_jwks": other, "project_number": "987654321"}
+    assert world.run(*ARGV) == 0
+    (moved,) = world.moved()
+    assert world.out[-1] == ready_line(moved / "identity_jwks.json", "987654321")
+    assert (moved / "identity_jwks.json").read_text() == other
+
+
+def test_a_project_number_that_is_not_a_number_fails_step_10(world: World) -> None:
+    world.outputs["project_number"] = "ssc-c-onbcell01"
+    assert world.run(*ARGV) == 1
+    assert "project_number must be a number" in world.err[0]
+    assert not any("cells ready" in x for x in world.out + world.err)
+
+
+@pytest.mark.parametrize("step", ["6", "10"])
+def test_a_partial_run_prints_no_cells_ready_command(world: World, step: str) -> None:
+    world.stacks = [STACK]
+    world.outputs["gateway_kms_key"] = KMS_KEY
+    world.config |= {"gateway_keyring": "set", "probe_digest": PROBE_DIGEST}
+    world.stack_file().write_text(KEY_LINES)
+    if step == "10":
+        world.stacks = []
+        world.bucket = {STACK: len(URNS)}
+    assert world.run(*ARGV, "--from-step", step) == 0
+    assert world.out[-1] == world.verdict()
+    assert not any("cells ready" in x for x in world.out)
+    assert not list(world.state_root.glob("*/identity_jwks.json"))
+
+
+def test_a_failed_run_prints_the_resume_command_and_no_cells_ready_command(world: World) -> None:
+    world.fail = lambda argv: argv[:3] == ("gcloud", "storage", "cp")
+    assert world.run(*ARGV) == 1
+    assert world.err[-1].endswith("--from-step 10")
+    assert not any("cells ready" in x for x in world.out + world.err)
