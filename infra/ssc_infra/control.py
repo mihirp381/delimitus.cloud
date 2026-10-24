@@ -127,6 +127,9 @@ DNS_TTL: Final = 300
 KEYS_CACHE: Final = "public, max-age=300"
 RELEASE_SETTINGS: Final = ("control_image", "auth_jwks", "auth_signing_kid")
 CELLS: Final = "cells"
+CELL_CATALOGS: Final = ("env", "table")
+"""``cell_catalog``: where the API and worker find the cells (ticket 19). With ``table`` they
+read ``ssc.cell``, and ``cells`` only publishes each cell's keys."""
 LEGACY_CELL_SETTINGS: Final = ("cell_label", "cell_jwks")
 """The one cell before ``cells`` (decision 030): read as a one-cell ``cells`` when that is
 unset."""
@@ -262,7 +265,8 @@ def mail_record_settings(raw: object) -> tuple[MailRecord, ...]:
 class ControlConfig:
     """``control_stages`` run the control plane; ``public_stage`` holds the public hosts.
     ``control_image``, ``auth_jwks`` and ``auth_signing_kid`` are the release, all or none;
-    ``cells`` every cell the control plane serves (decision 030). ``timer_key_id`` names the
+    ``cells`` every cell's public keys, and with ``cell_catalog`` ``env`` the cells the control
+    plane serves (decision 030; ``table`` reads ``ssc.cell``). ``timer_key_id`` names the
     worker's timer key, whose PEM is the ``SSC_TIMER_SIGNING_KEY`` secret (SSC-041).
     ``landing`` builds delimitus.com's account, bucket and alert in the public stage's project
     (SSC-065); ``landing_image`` then puts the page behind the entry load balancer.
@@ -277,6 +281,7 @@ class ControlConfig:
     auth_jwks: str | None = None
     auth_kid: str | None = None
     cells: tuple[Cell, ...] = ()
+    cell_catalog: str = "env"
     worker_instances: int = 1
     deployer: bool = False
     timer_key_id: str | None = None
@@ -307,6 +312,14 @@ class ControlConfig:
         """Whether ``stage``'s control plane is the one the cells trust (``cell.control_for``):
         the public stage, or every stage while there is none."""
         return self.public is None or self.public == stage
+
+    def cell_env(self, stage: n.Stage) -> dict[str, str]:
+        """How ``stage``'s API and worker find the cells: ``ssc.cell`` or ``SSC_CELLS``."""
+        if not self.serves_cells(stage):
+            return {}
+        if self.cell_catalog == "table":
+            return {"SSC_CELL_CATALOG": "table"}
+        return {"SSC_CELLS": cells_env(self.cells)} if self.cells else {}
 
 
 def release_settings(
@@ -364,6 +377,18 @@ def _cell(label: str, jwks: str, what: str) -> Cell:
     return Cell(label=label, jwks=jwks)
 
 
+def cell_catalog_setting(value: str | None, cells: Sequence[Cell]) -> str:
+    catalog = value or "env"
+    if catalog not in CELL_CATALOGS:
+        raise ValueError(f"cell_catalog must be {' or '.join(CELL_CATALOGS)}")
+    if catalog == "env" and cells:
+        pulumi.log.warn(
+            f"{CELLS} as SSC_CELLS moves to the ssc.cell table, ticket 19: run python -m "
+            "ssc_control.cells import-env, then set cell_catalog: table"
+        )
+    return catalog
+
+
 def cells_env(cells: Sequence[Cell]) -> str:
     """``SSC_CELLS`` (``ssc_control.runtime.cells.parse_cells``): each label's identity JWKS,
     compact with sorted keys so the same cells always make the same value."""
@@ -410,6 +435,7 @@ def read_config(config: pulumi.Config, acct: Account, *, deployer: bool) -> Cont
     cells = cell_settings(
         config.get_object(CELLS), config.get("cell_label"), config.get("cell_jwks")
     )
+    catalog = cell_catalog_setting(config.get("cell_catalog"), cells)
     timer_key_id = config.get("timer_key_id") or None
     if timer_key_id is not None and not TIMER_KEY_ID.fullmatch(timer_key_id):
         raise ValueError("timer_key_id must be 1 to 64 letters, digits, '.', '_' or '-'")
@@ -441,6 +467,7 @@ def read_config(config: pulumi.Config, acct: Account, *, deployer: bool) -> Cont
         auth_jwks=auth_jwks,
         auth_kid=auth_kid,
         cells=cells,
+        cell_catalog=catalog,
         worker_instances=1 if instances is None else instances,
         deployer=deployer,
         timer_key_id=timer_key_id,
@@ -469,8 +496,7 @@ def api_env(
         "SSC_CELL_BUCKET_TEMPLATE": n.CELL_BUCKET_TEMPLATE,
         **_signer_env(signer),
     }
-    if cfg.cells and cfg.serves_cells(stage):
-        env["SSC_CELLS"] = cells_env(cfg.cells)
+    env.update(cfg.cell_env(stage))
     return env
 
 
@@ -488,10 +514,10 @@ def worker_env(
     if cfg.deployer:
         env["SSC_CELL_DEPLOYER"] = "cloud_run"
         env["SSC_CELL_DEPLOYER_JOB"] = n.deployer_job()
-    if cfg.cells and cfg.serves_cells(stage):
+    if cells := cfg.cell_env(stage):
         env["SSC_RUNTIME_DRIVER"] = "cell_agent"
         env["SSC_BUILD_DRIVER"] = "cell_agent"
-        env["SSC_CELLS"] = cells_env(cfg.cells)
+        env.update(cells)
     if cfg.timer_key_id:
         env["SSC_TIMER_DISPATCHER"] = "https"
         env["SSC_TIMER_KEY_ID"] = cfg.timer_key_id

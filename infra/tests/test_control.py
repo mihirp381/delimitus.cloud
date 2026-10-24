@@ -22,6 +22,9 @@ Ticket "done when" checks:
   * every cell the control plane serves, as SSC_CELLS (decision 030)
         -> test_the_cells_are_one_compact_setting, test_the_legacy_cell_is_a_one_cell_list,
         test_the_cells_are_validated, test_the_control_plane_names_cell_hosts_as_the_cells_do
+  * ticket 19: with cell_catalog table, the cells come from ssc.cell and cells only publishes
+        keys -> test_with_the_table_catalog_the_cells_come_from_ssc_cell,
+        test_the_cell_catalog_is_env_or_table, test_cells_in_the_environment_are_deprecated
   * the GitHub App's three secrets for the public stage's API and worker (GA-7.2)
         -> test_github_wiring_goes_to_the_public_stage_only,
         test_without_github_no_github_secret_is_made, test_github_needs_a_control_stage
@@ -527,6 +530,55 @@ def test_the_legacy_cell_is_a_one_cell_list() -> None:
 def test_the_cells_are_validated(cells: str, message: str) -> None:
     with pytest.raises(Exception, match=message):
         run(naming.PLATFORM_STACK, {"platform_folder_id": PLATFORM_FOLDER, "cells": cells})
+
+
+TABLE = {"SSC_CELL_CATALOG": "table"}
+
+
+@pytest.mark.parametrize("cells", [True, False])
+def test_with_the_table_catalog_the_cells_come_from_ssc_cell(cells: bool) -> None:
+    """Ticket 19: the API and the worker read the cells from ``ssc.cell``; ``cells`` then only
+    publishes each cell's keys at keys.delimitus.com."""
+    config = RELEASE if cells else {k: v for k, v in RELEASE.items() if k != control.CELLS}
+    declared = run(naming.PLATFORM_STACK, config | {"cell_catalog": "table"})
+    api, _ = _env(_workload(declared, SERVICE, "prod", "ssc-api"))
+    worker, _ = _env(_workload(declared, POOL, "prod", "ssc-worker"))
+    assert TABLE.items() <= api.items()
+    assert (WORKER_CELL.keys() - {"SSC_CELLS"}) <= worker.keys()
+    assert (TABLE | {"SSC_RUNTIME_DRIVER": "cell_agent"}).items() <= worker.items()
+    assert "SSC_CELLS" not in api
+    assert "SSC_CELLS" not in worker
+    api, _ = _env(_workload(declared, SERVICE, "staging", "ssc-api"))
+    worker, _ = _env(_workload(declared, POOL, "staging", "ssc-worker"))
+    assert not (set(TABLE) | set(WORKER_CELL)) & (set(api) | set(worker))
+    keys = {d.name for d in declared if d.type == "gcp:storage/bucketObject:BucketObject"}
+    labels = {f"control-prod-keys-{LABEL}", f"control-prod-keys-{LABEL2}"}
+    assert keys == (labels if cells else set())
+
+
+def test_the_cell_catalog_is_env_or_table() -> None:
+    with pytest.raises(Exception, match="cell_catalog must be env or table"):
+        run(naming.PLATFORM_STACK, RELEASE | {"cell_catalog": "database"})
+
+
+@pytest.mark.parametrize(
+    ("config", "warned"),
+    [
+        (RELEASE, True),
+        (RELEASE | {"cell_catalog": "env"}, True),
+        (RELEASE | {"cell_catalog": "table"}, False),
+        ({k: v for k, v in RELEASE.items() if k != control.CELLS}, False),
+    ],
+)
+def test_cells_in_the_environment_are_deprecated(
+    config: dict[str, str], warned: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(pulumi.log, "warn", lambda msg, *_, **__: warnings.append(msg))
+    run(naming.PLATFORM_STACK, config)
+    cells = [w for w in warnings if "ticket 19" in w]
+    assert len(cells) == (1 if warned else 0)
+    assert all("moves to the ssc.cell table, ticket 19" in w for w in cells)
 
 
 def test_the_cells_replace_the_legacy_cell() -> None:

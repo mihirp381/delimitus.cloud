@@ -71,6 +71,20 @@ pulumi config set --stack platform cells "$(jq -cn --arg label $LABEL \
 
 `cells` lists every cell this control plane serves (decision 030); add one `{label, jwks}` per cell. A stack that still has `cell_label` and `cell_jwks` works as one cell, but remove them before setting `cells`: both at once are refused.
 
+Once the release from step 9 has applied revision `0039_cells`, move the cells to the table (decision 030, amendment of 2026-10-24), once per control deployment, from the shell of step 10.2 (`SSC_DATABASE_DSN` as `ssc_app`):
+
+```sh
+export SSC_CELLS="$(pulumi config get --stack platform cells \
+  | jq -c 'map({(.label): {identity_jwks: (.jwks | fromjson)}}) | add')"
+uv run python -m ssc_control.cells import-env --stage prod --operator op_<your name>
+uv run python -m ssc_control.cells list
+unset SSC_CELLS
+pulumi config set --stack platform cell_catalog table
+pulumi up --stack platform
+```
+
+Pass: `import-env` prints each label as imported (a second run prints them as unchanged), `list` shows each `ready`, and after the apply the API and the worker have `SSC_CELL_CATALOG=table` and no `SSC_CELLS`. From then on `cells` only publishes each cell's keys at `keys.delimitus.com/<label>/jwks.json`; a new cell is served by `cells ready` (step 10.4) with no platform apply.
+
 Leave `control_image`, `auth_jwks` and `auth_signing_kid` unset for now. Without them, every service runs the placeholder with no settings, the worker pool runs no instance and there is no migration job.
 
 ## 4. First apply: the project and the placeholders **[real]**
@@ -276,7 +290,19 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
    pulumi up --stack c-$LABEL
    ```
 
-   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 030) and refuses any other `WRONG_CELL`. Each org's deploys fail `CELL_UNAVAILABLE` until the platform stack's `cells` names its cell.
+   The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 030) and refuses any other `WRONG_CELL`. Each org's deploys fail `CELL_UNAVAILABLE` until the control plane serves its cell.
+
+   With `cell_catalog: table` (step 3), a cell imported there is already served. Any later cell is recorded before it is built and served once the operator marks it ready, as `ssc_app`, in this order:
+
+   ```sh
+   uv run python -m ssc_control.cells request --label $LABEL --stage prod --org-id $ORG --operator op_<your name>
+   uv run python -m ssc_infra.onboard $LABEL --settings settings.json --probe-image <probe image>  # infra/README.md
+   pulumi stack output --stack c-$LABEL identity_jwks > /tmp/$LABEL-jwks.json
+   uv run python -m ssc_control.cells ready --label $LABEL --jwks-file /tmp/$LABEL-jwks.json \
+     --project-number "$(pulumi stack output --stack c-$LABEL project_number)" --operator op_<your name>
+   ```
+
+   Pass: `ready` prints `$LABEL prod ready project=<number> org=$ORG ...`; the API and the worker serve the cell within 5 minutes (`LABEL_SECONDS`), with no platform apply and no new revision. A build that does not finish is recorded with `cells fail --label $LABEL --reason "<one line>"`, and `ready` still works after a rebuild. Add the cell's `{label, jwks}` to the platform stack's `cells` as well, and apply, only to publish its keys at `keys.delimitus.com/<label>/jwks.json` for code outside SSC. With `cell_catalog: env`, the platform stack's `cells` is still what serves it.
 
 5. Finish up:
 
