@@ -78,6 +78,7 @@ class AuditAction(StrEnum):
     CELL_READY = "cell.ready"
     CELL_FAILED = "cell.failed"
     CELL_RETIRED = "cell.retired"
+    ORG_ONBOARDED = "org.onboarded"
     GITHUB_INSTALLATION_BOUND = "github.installation_bound"
     REPO_CONNECTED = "repo.connected"
     REPO_DISCONNECTED = "repo.disconnected"

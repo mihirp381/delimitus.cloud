@@ -3,7 +3,7 @@
 The written list the ticket asks for (SSC-010). The catalog test
 `test_control_db.py::test_pii_columns_are_exactly_the_declared_ones` fails when a column with a
 personal-data name (`display_name`, `email`, `subject`, `actor_ip`, `ip_address`, `given_name`,
-`family_name`, `phone`, `decision_reason`, `repository`) appears on a table not listed here, or when a listed
+`family_name`, `phone`, `decision_reason`, `repository`, `customer_name`, `domain`, `admin_email`) appears on a table not listed here, or when a listed
 column is missing.
 The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 
@@ -19,6 +19,9 @@ The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 | `unlinked_login` | `subject` | The SSO login's `idp_id` (for Google Workspace SAML, the person's email) when it matched no one, or more than one active person, in the directory | Shown to active org admins in the Unlinked logins list so they can link it to a person (SSC-019) | Delete the row |
 | `unlinked_login` | `email` | The email the SSO login carried | The same list; display only | Delete the row |
 | `repo_link` | `repository` | The connected GitHub repository as `owner/name`; the owner can be a person's GitHub login | Calling GitHub for the app's pushes and checks, and showing the connection (SSC-047). Audit rows carry the repository's numeric id instead | Disconnect the repository (deletes the row) |
+| `onboarding` | `customer_name` | The customer's company name the operator typed at `onboarding start`; a sole trader's name is a person's name | Naming the WorkOS organisation and the onboarding row; read by the operator CLI (`python -m ssc_control.onboarding`) and the worker's onboarding tick only | Rows are never deleted, `abandon` keeps them; overwrite on request |
+| `onboarding` | `domain` | The customer's email domain, which can be a person's own domain | Finding and creating the WorkOS organisation; read by the operator CLI and the onboarding tick only | Rows are never deleted, `abandon` keeps them; overwrite on request |
+| `onboarding` | `admin_email` | The work email of the customer's first admin, stored lower-case | Finding that person in the connected directory to make them the org's first admin; read by the operator CLI and the onboarding tick only, never logged (log lines name the row id and state) | Rows are never deleted, `abandon` keeps them; overwrite on request |
 
 Also personal data, but not stored here:
 

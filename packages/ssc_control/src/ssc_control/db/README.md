@@ -5,7 +5,7 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
 
 ## Rules
 
-1. **Every table carries `org_id`** (exceptions: `org_index`, rule 14; `oauth_client`, rule 17; `cell`, rule 18). Foreign keys are `(org_id, id)` pairs, so a row can never
+1. **Every table carries `org_id`** (exceptions: `org_index`, rule 14; `oauth_client`, rule 17; `cell` and `onboarding`, rule 18). Foreign keys are `(org_id, id)` pairs, so a row can never
    point at another customer's row. Every table has `UNIQUE (org_id, id)` for that purpose.
 2. **Row-level security is enabled and forced on every table in `catalog.TABLES`.** One
    policy per table:
@@ -71,7 +71,7 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     auth host finds an org from a WorkOS organisation before any org is bound; it is listed in
     `catalog.SECURITY_DEFINER_FUNCTIONS` and only the app role may execute it.
 18. **`ssc.cell` is the platform's own table** (decision 030 amendment of 2026-10-24), listed
-    alone in `catalog.PLATFORM_TABLES` and never in `catalog.TABLES`. It names the cells this
+    in `catalog.PLATFORM_TABLES` and never in `catalog.TABLES`. It names the cells this
     control plane serves: label, stage, status, public identity JWKS, project number, the org a
     cell was built for (nullable, unique, no foreign key: a cell may be built before its org
     exists), the last error and two times. The router reads it before any org is bound, so it
@@ -79,7 +79,12 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     control plane has one application role, so the API, the auth host, the worker and the
     operator CLI (`python -m ssc_control.cells`) all reach it as `ssc_app`, which may `SELECT`,
     `INSERT` and `UPDATE` it, never `DELETE` (a cell is retired, not deleted); TRUNCATE is
-    `SC006`. Only the CLI writes it; no API route or job does.
+    `SC006`. Only the operator CLIs (`cells`, `onboarding`) write it; no API route or job does.
+    `ssc.onboarding` (revision 0040) is the second platform table, with the same grants and
+    TRUNCATE guard and no RLS: one row per customer being onboarded, made before its org
+    exists. Its `label` references `ssc.cell(label)` (the only foreign key on a platform table);
+    its `org_id` is the pre-generated org id, unique, with no foreign key. Only the onboarding
+    CLI (`python -m ssc_control.onboarding`) and the worker's `onboarding.tick` write it.
 
 ## Migrations
 
@@ -124,6 +129,7 @@ after that code is out. Revisions so far, all pure expand:
 | `0037_app_delete` | GA-12 | Removing an app. `ssc.app.status` gains `deleting` (set when an org admin asks, with the removal run) and `deleted` (set by the run's last step); the row stays as a tombstone, because releases, deployments, builds, bundles, runs, metrics and the audit log name it. The unique constraint on `(org_id, slug)` becomes the partial unique index `app_slug_live` (`WHERE status <> 'deleted'`), so a deleted app's slug can be used again. `ssc.kill_switch_run.mode` gains `delete`: the removal is a run of the kill switch's saga with its own steps. The app role gains `DELETE` on `ssc.app_database`, which the run uses once the cell has dropped the database. Downgrade restores the two vocabularies `NOT VALID` and the unique constraint. |
 | `0038_connection_preview_access` | Ticket 14 | `ssc.connection.preview_access` (jsonb object, default `{"who": "approval"}`): who may link the connection to a preview environment without a person deciding, `approval`, `builders` or `group` with a `group_id` (decision 034). Rows from before keep `approval`. Downgrade drops the column. |
 | `0039_cells` | Ticket 19 | `ssc.cell` (rule 18): one row per cell the control plane serves, `building`, `ready`, `failed` or `retired`, with its stage (`staging` or `prod`), public identity JWKS (a JSON object, required when `ready`), project number, the org it was built for and `last_error`; the label is checked as `ssc_shared.hosts.check_cell_label` does. `ready` does not require the project number, because cells imported from `SSC_CELLS` have none. No RLS; `SELECT, INSERT, UPDATE` for the app role; TRUNCATE is `SC006`. The audit vocabulary gains `cell.requested`, `cell.ready`, `cell.failed` and `cell.retired`, which `python -m ssc_control.cells` writes in the chain of the org the cell is for. Downgrade drops the table and restores the vocabulary `NOT VALID` (development databases only) |
+| `0040_onboarding` | Ticket 19D | `ssc.onboarding` (rule 18): one row per customer being onboarded, `onb_` id, the pre-generated org id (unique, no foreign key), the cell label (unique, references `ssc.cell`), the stage, the customer's name, domain and first admin's email (`PII.md`), the WorkOS organisation id (unique) and the two Admin Portal links, the join rule, `status` (`open`, `live`, `abandoned`), the two tracks `cell_state` (`awaiting_cell`, `cell_ready`) and `idp_state` (`requested`, `awaiting_idp`, `org_created`), the waiting `reason`, the operator and `last_error`. CHECKs: the links exist once `idp_state` leaves `requested`; `org_created` and `live` need a join rule; `live` needs both tracks done; a reason only while open and waiting on the identity track (`WORKOS_ERROR` also in `requested`). No RLS; `SELECT, INSERT, UPDATE` for the app role; TRUNCATE is `SC006`. `notification_outbox.kind` gains `welcome`, which like `digest` names no approval. The audit vocabulary gains `org.onboarded`. Downgrade drops the table and restores both vocabularies and the outbox check `NOT VALID` (development databases only) |
 
 There is no `alembic.ini`. Run migrations from Python:
 

@@ -63,6 +63,8 @@ Revision 0039 adds ``cell`` (ticket 19), the single table in ``PLATFORM_TABLES``
 control plane serves, which the operator writes after building one. Platform data, so no RLS; its
 ``org_id`` names the org a cell was built for and is nullable, so it is not a ``GLOBAL_TABLES``
 table either.
+Revision 0040 adds ``onboarding`` (ticket 19D) to ``PLATFORM_TABLES``: one row per customer being
+onboarded, written before its org exists, so its ``org_id`` has no foreign key.
 """
 
 from collections.abc import Mapping
@@ -128,9 +130,10 @@ UNSCOPED_TABLES: Final[tuple[str, ...]] = ("org_index",)
 # clients (revision 0033, decision 029; db/README.md rule 17). Kept out of TABLES like org_index.
 GLOBAL_TABLES: Final[tuple[str, ...]] = ("oauth_client",)
 
-# The platform's own tables: no RLS, an optional org_id that names an org without holding its
-# data. The cells the control plane serves (revision 0039, decision 030; db/README.md rule 18).
-PLATFORM_TABLES: Final[tuple[str, ...]] = ("cell",)
+# The platform's own tables: no RLS, an org_id with no foreign key that names an org without
+# holding its data. The cells the control plane serves (revision 0039, decision 030) and the
+# onboarding of each customer (revision 0040); db/README.md rule 18.
+PLATFORM_TABLES: Final[tuple[str, ...]] = ("cell", "onboarding")
 
 # Tables keyed by something other than a type-prefixed id; they have no (org_id, id) pair.
 UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
@@ -221,6 +224,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "oauth_client": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # unused ones pruned
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
     "cell": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; retired, never deleted
+    "onboarding": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; abandoned, never deleted
 }
 
 # Procrastinate's schema (revision 0006): the app role's privileges on its tables and sequences.
@@ -249,6 +253,9 @@ PII_COLUMNS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("unlinked_login", "subject"),
         ("unlinked_login", "email"),
         ("repo_link", "repository"),
+        ("onboarding", "customer_name"),
+        ("onboarding", "domain"),
+        ("onboarding", "admin_email"),
     }
 )
 PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(
@@ -263,6 +270,9 @@ PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(
         "phone",
         "decision_reason",
         "repository",
+        "customer_name",
+        "domain",
+        "admin_email",
     }
 )
 

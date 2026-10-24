@@ -1248,6 +1248,7 @@
           "cell.ready",
           "cell.failed",
           "cell.retired",
+          "org.onboarded",
           "github.installation_bound",
           "repo.connected",
           "repo.disconnected"

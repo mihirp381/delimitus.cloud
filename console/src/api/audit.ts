@@ -74,6 +74,7 @@ const ACTIONS: Readonly<Record<AuditAction, true>> = {
   'cell.ready': true,
   'cell.failed': true,
   'cell.retired': true,
+  'org.onboarded': true,
   'github.installation_bound': true,
   'repo.connected': true,
   'repo.disconnected': true,

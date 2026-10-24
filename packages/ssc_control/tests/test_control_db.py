@@ -1202,13 +1202,13 @@ def test_every_table_is_declared_and_org_scoped(dsns: Dsns) -> None:
         assert "org_id" in by_table[t], t
     for t in catalog.GLOBAL_TABLES:  # no org's data, so nothing that names an org
         assert "org_id" not in by_table[t], t
-    nullable = catalog_rows(
+    org_keys = catalog_rows(
         dsns,
-        "select table_name, is_nullable from information_schema.columns "
-        "where table_schema = 'ssc' and column_name = 'org_id'",
+        "select conrelid::regclass::text from pg_constraint "
+        "where contype = 'f' and confrelid = 'ssc.org'::regclass",
     )
-    for t in catalog.PLATFORM_TABLES:  # names an org, at most, never holds its data
-        assert (t, "YES") in nullable, t
+    for t in catalog.PLATFORM_TABLES:  # names an org, never holds its data
+        assert (f"ssc.{t}",) not in org_keys, t
     # Every table another table may point at exposes (org_id, id), so FKs are org-scoped pairs.
     constraints = catalog_rows(
         dsns,
@@ -1223,6 +1223,8 @@ def test_every_table_is_declared_and_org_scoped(dsns: Dsns) -> None:
     # Every foreign key that is not to org(id) carries org_id.
     for t, ds in defs.items():
         for d in ds:
+            if t in catalog.PLATFORM_TABLES and "REFERENCES ssc.cell(label)" in d:
+                continue
             if d.startswith("FOREIGN KEY") and "REFERENCES ssc.org(id)" not in d:
                 assert d.startswith("FOREIGN KEY (org_id,"), (t, d)
 
@@ -1238,7 +1240,7 @@ def test_ids_are_type_prefixed_per_table(dsns: Dsns) -> None:
         m = re.search(r"\(id ~ '\^([a-z]+)_\[a-z0-9\]\{20\}\$'", d)
         if m:
             prefixed[rel.removeprefix("ssc.")] = m.group(1)
-    expected = catalog.TABLES - catalog.UNKEYED_TABLES
+    expected = (catalog.TABLES - catalog.UNKEYED_TABLES) | {"onboarding"}
     assert set(prefixed) == expected
     assert set(prefixed.values()) <= set(PREFIXES), prefixed
 
@@ -1795,7 +1797,149 @@ def test_cells_belong_to_no_org_and_are_checked(dsns: Dsns) -> None:
     delete = "delete from ssc.cell where label = %s"
     assert refused(dsns.app, None, delete, (label,)) == INSUFFICIENT_PRIVILEGE
     assert refused(dsns.app, None, "truncate ssc.cell") == INSUFFICIENT_PRIVILEGE
-    assert refused(dsns.migrate, None, "truncate ssc.cell") == SqlState.TRUNCATE_REFUSED
+    assert refused(dsns.migrate, None, "truncate ssc.cell cascade") == SqlState.TRUNCATE_REFUSED
+
+
+# ── onboarding: one row per customer being onboarded (ticket 19D, revision 0040) ────────────
+
+INSERT_ONBOARDING = (
+    "insert into ssc.onboarding (id, org_id, label, stage, customer_name, domain, admin_email, "
+    "operator, workos_organization_id, sso_link, dsync_link, join_rule, status, cell_state, "
+    "idp_state, reason, last_error) values (%(id)s, %(org)s, %(label)s, %(stage)s, %(name)s, "
+    "%(domain)s, %(email)s, %(operator)s, %(wo)s, %(sso)s, %(dsync)s, %(rule)s, %(status)s, "
+    "%(cell)s, %(idp)s, %(reason)s, %(error)s) returning id"
+)
+
+
+def onboarding_row(label: str, **kw: object) -> dict[str, object]:
+    return {
+        "id": new_id("onb"),
+        "org": new_id("org"),
+        "label": label,
+        "stage": "prod",
+        "name": "Acme",
+        "domain": "acme.example",
+        "email": "ada@acme.example",
+        "operator": "op_dana",
+        "wo": None,
+        "sso": None,
+        "dsync": None,
+        "rule": None,
+        "status": "open",
+        "cell": "awaiting_cell",
+        "idp": "requested",
+        "reason": None,
+        "error": None,
+    } | kw
+
+
+def onboarding_cell(dsns: Dsns) -> str:
+    label = cell_label()
+    run(dsns.app, None, INSERT_CELL, (label, "prod", "building", None, None, None))
+    return label
+
+
+ONBOARDING_ACTIONS = {"org.onboarded"}
+
+
+def test_onboarding_revision_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database onboarding owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="onboarding").render_as_string(hide_password=False)
+    exists = "select to_regclass('ssc.onboarding') is not null"
+    kinds = (
+        "select pg_get_constraintdef(oid) from pg_constraint "
+        "where conrelid = 'ssc.notification_outbox'::regclass and conname = %s"
+    )
+    upgrade(dsn, "0039_cells")
+    assert run(dsn, None, exists) == [(False,)]
+    before = action_check(dsn)
+    upgrade(dsn, "0040_onboarding")
+    assert run(dsn, None, exists) == [(True,)]
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | ONBOARDING_ACTIONS
+    assert "'welcome'" in run(dsn, None, kinds, ("notification_outbox_kind_check",))[0][0]
+    downgrade(dsn, "0039_cells")
+    assert run(dsn, None, exists) == [(False,)]
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    assert "'welcome'" not in run(dsn, None, kinds, ("notification_outbox_kind_check",))[0][0]
+    upgrade(dsn, "0040_onboarding")
+    assert run(dsn, None, exists) == [(True,)]
+    assert action_check(dsn) == after
+
+
+def test_onboarding_rows_belong_to_no_org_and_are_checked(dsns: Dsns) -> None:
+    label = onboarding_cell(dsns)
+    good = onboarding_row(label)
+    assert run(dsns.app, None, INSERT_ONBOARDING, good) == [(good["id"],)]
+    linked = {"wo": "org_01FAKE" + new_id("org")[-8:], "sso": "https://x.test/s"}
+    waiting = onboarding_row(
+        onboarding_cell(dsns),
+        **linked,
+        dsync="https://x.test/d",
+        idp="awaiting_idp",
+        reason="JOIN_RULE_CONFIRM",
+    )
+    assert run(dsns.app, None, INSERT_ONBOARDING, waiting)
+    retrying = onboarding_row(onboarding_cell(dsns), reason="WORKOS_ERROR", error="HTTP 500")
+    assert run(dsns.app, None, INSERT_ONBOARDING, retrying)
+    bad: list[dict[str, object]] = [
+        {"id": new_id("org")},
+        {"org": "usr_" + "a" * 20},
+        {"stage": "dev"},
+        {"name": ""},
+        {"name": "a" * 121},
+        {"domain": "Acme.example"},
+        {"domain": "acme"},
+        {"email": "Ada@acme.example"},
+        {"email": "ada"},
+        {"operator": "dana"},
+        {"rule": "upn"},
+        {"status": "awaiting_cell"},
+        {"cell": "ready"},
+        {"idp": "live"},
+        {"reason": "NOPE"},
+        {"reason": "JOIN_RULE_CONFIRM"},
+        {"error": ""},
+        {"error": "x" * 501},
+        {"idp": "awaiting_idp"},
+        {"status": "live", "cell": "cell_ready", "idp": "org_created", **linked, "dsync": "d"},
+        {"idp": "org_created", **linked, "dsync": "https://x.test/d"},
+        {"status": "abandoned", "reason": "WORKOS_ERROR"},
+    ]
+    for change in bad:
+        row = onboarding_row(onboarding_cell(dsns), **change)
+        assert refused(dsns.app, None, INSERT_ONBOARDING, row) == CHECK_VIOLATION, change
+    no_cell = onboarding_row(cell_label())
+    assert refused(dsns.app, None, INSERT_ONBOARDING, no_cell) == FOREIGN_KEY_VIOLATION
+    for taken in ({"org": good["org"]}, {"label": label}, {"id": good["id"]}):
+        row = onboarding_row(onboarding_cell(dsns)) | taken
+        assert refused(dsns.app, None, INSERT_ONBOARDING, row) == UNIQUE_VIOLATION, taken
+    same_workos = onboarding_row(
+        onboarding_cell(dsns), **linked, dsync="https://x.test/d", idp="awaiting_idp"
+    )
+    assert refused(dsns.app, None, INSERT_ONBOARDING, same_workos) == UNIQUE_VIOLATION
+    live = "update ssc.onboarding set status = 'live' where id = %s"
+    assert refused(dsns.app, None, live, (good["id"],)) == CHECK_VIOLATION
+    delete = "delete from ssc.onboarding where id = %s"
+    assert refused(dsns.app, None, delete, (good["id"],)) == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.app, None, "truncate ssc.onboarding") == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.migrate, None, "truncate ssc.onboarding") == SqlState.TRUNCATE_REFUSED
+
+
+def test_a_welcome_mail_needs_no_approval(dsns: Dsns) -> None:
+    org = make_org(dsns.app, "Welcomed")
+    insert = (
+        "insert into ssc.notification_outbox (id, org_id, user_id, kind, approval_id, dedupe_key) "
+        "values (%s, %s, %s, %s, %s, %s)"
+    )
+    welcome = (new_id("ntf"), org.org_id, org.admin_user_id, "welcome", None, "welcome:x")
+    run(dsns.app, org.org_id, insert + " returning id", welcome)
+    approval = (new_id("ntf"), org.org_id, org.admin_user_id, "welcome", new_id("apr"), "w:y")
+    assert refused(dsns.app, org.org_id, insert, approval) == CHECK_VIOLATION
+    other = (new_id("ntf"), org.org_id, org.admin_user_id, "hello", None, "w:z")
+    assert refused(dsns.app, org.org_id, insert, other) == CHECK_VIOLATION
 
 
 # ── org_index: the single unscoped table (decision 009 amendment, revision 0006) ─────────────
