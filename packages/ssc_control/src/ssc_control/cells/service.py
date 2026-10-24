@@ -84,27 +84,33 @@ async def list_all(engine: AsyncEngine) -> list[Cell]:
 async def request(
     engine: AsyncEngine, label: str, *, stage: Stage, org_id: str | None, actor: Actor
 ) -> Cell:
+    async with engine.begin() as conn:
+        await request_in(conn, label, stage=stage, org_id=org_id, actor=actor)
+    return await get(engine, label)
+
+
+async def request_in(
+    conn: AsyncConnection, label: str, *, stage: Stage, org_id: str | None, actor: Actor
+) -> None:
     if label in PROOF_LABELS:
         raise CellError(f"{label} is a live proof-run cell: import it with import-env")
-    async with engine.begin() as conn:
-        if await _locked(conn, label) is not None:
-            raise CellError(f"cell {label} already exists")
-        if org_id is not None:
-            taken = (await conn.execute(_BY_ORG, {"org": org_id})).scalar_one_or_none()
-            if taken is not None:
-                raise CellError(f"{org_id} already has cell {taken}")
-        params = {"label": label, "stage": stage, "status": "building", "jwks": None}
-        await conn.execute(_INSERT, {**params, "org": org_id})
-        await _record(
-            conn,
-            AuditAction.CELL_REQUESTED,
-            label,
-            org_id=org_id,
-            actor=actor,
-            before=None,
-            after={"stage": stage, "status": "building"},
-        )
-    return await get(engine, label)
+    if await _locked(conn, label) is not None:
+        raise CellError(f"cell {label} already exists")
+    if org_id is not None:
+        taken = (await conn.execute(_BY_ORG, {"org": org_id})).scalar_one_or_none()
+        if taken is not None:
+            raise CellError(f"{org_id} already has cell {taken}")
+    params = {"label": label, "stage": stage, "status": "building", "jwks": None}
+    await conn.execute(_INSERT, {**params, "org": org_id})
+    await _record(
+        conn,
+        AuditAction.CELL_REQUESTED,
+        label,
+        org_id=org_id,
+        actor=actor,
+        before=None,
+        after={"stage": stage, "status": "building"},
+    )
 
 
 async def ready(

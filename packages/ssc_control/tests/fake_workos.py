@@ -44,6 +44,10 @@ class FakeWorkOS:
     directory_list: list[Json] = field(default_factory=list)
     created: dict[str, str] = field(default_factory=dict)
     """Organisations made through ``POST /organizations``, with the domain each claimed."""
+    fail_on: set[str] = field(default_factory=set)
+    """Paths answered with HTTP 500."""
+    fail_for: set[str] = field(default_factory=set)
+    """Organisations whose connections and directories are answered with HTTP 500."""
 
     # ── arranging ─────────────────────────────────────────────────────────────
 
@@ -124,6 +128,8 @@ class FakeWorkOS:
         self.calls.append(path)
         if self.fail is not None:
             return httpx2.Response(self.fail)
+        if path in self.fail_on or (q.get("organization_id") or [""])[0] in self.fail_for:
+            return httpx2.Response(500)
         if path == "/sso/token":
             body = json.loads(request.content)
             profile = self.profiles.get(body.get("code"))
