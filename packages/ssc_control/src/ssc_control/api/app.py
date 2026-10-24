@@ -32,7 +32,13 @@ from ssc_control.db.engine import make_engine
 from ssc_control.github.client import GitHubApp
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.cell_agent import MetadataIdTokens
-from ssc_control.runtime.cells import CellPorts, CellRouter
+from ssc_control.runtime.cells import (
+    CellCatalog,
+    CellPorts,
+    CellRouter,
+    StaticCatalog,
+    TableCatalog,
+)
 from ssc_control.snapshot.service import Snapshots
 from ssc_control.storage import CellStores
 from ssc_control.timers.service import Timers
@@ -156,13 +162,18 @@ def create_app(  # noqa: PLR0913  (the ports a test replaces, by keyword)
 
 
 def cells_for(settings: Settings, engine: AsyncEngine) -> CellRouter | None:
-    """Each org's cell among ``settings.cells`` (``SSC_CELLS``), through its agent with this
-    instance's ID tokens; ``None`` when there are none. No I/O."""
-    if not settings.cells:
+    """Each org's cell among ``settings.cells`` (``SSC_CELLS``) or, with ``cell_catalog`` table,
+    in ``ssc.cell``, through its agent with this instance's ID tokens; ``None`` when there are no
+    cells. No I/O."""
+    if settings.cell_catalog == "table":
+        catalog: CellCatalog = TableCatalog(engine)
+    elif settings.cells:
+        catalog = StaticCatalog(settings.cells)
+    else:
         return None
     return CellRouter(
         engine,
-        settings.cells,
+        catalog,
         apps_domain=settings.apps_domain,
         id_tokens=MetadataIdTokens(),
         grant_tokens=MetadataIdTokens(cache=False),

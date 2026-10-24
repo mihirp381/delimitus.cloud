@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from ssc_control.metrics.pseudonym import parse_master_key
-from ssc_control.runtime.cells import CellConfig, cells_from_env
+from ssc_control.runtime.cells import CatalogKind, CellConfig, catalog_kind, cells_from_env
 from ssc_control.storage import signing_keys
 from ssc_shared.hosts import check_apps_domain
 
@@ -70,6 +70,9 @@ class Settings:
     (SSC-053), each named by an org's ``cell_label``; their agents and secret intakes are at the
     reserved hosts on ``apps_domain``. Empty: secret writes refuse ``SECRETS_UNAVAILABLE``, and
     so on. An org whose label is not here is refused ``CELL_UNAVAILABLE``."""
+    cell_catalog: CatalogKind = "env"
+    """``SSC_CELL_CATALOG``: ``env`` routes to ``cells``; ``table`` to the ``ready`` rows of
+    ``ssc.cell`` (ticket 19), with ``cells`` empty."""
     github_app_id: str = ""
     """``SSC_GITHUB_APP_ID``: the GitHub App connected repositories are read through (SSC-047).
     Unset with the key: connecting refuses ``GITHUB_UNAVAILABLE``, and so does promote for an
@@ -101,6 +104,8 @@ class Settings:
         missing = next((name for name in _REQUIRED if name not in e), None)
         if missing is not None:
             raise SettingsError(f"{missing} is not set")
+        apps_domain = e.get("SSC_APPS_DOMAIN", APPS_DOMAIN)
+        kind = catalog_kind(e)
         return cls(
             database_dsn=e["SSC_DATABASE_DSN"],
             jwks=json.loads(e["SSC_API_JWKS"]),
@@ -122,8 +127,9 @@ class Settings:
             bundle_max_bytes=int(e.get("SSC_BUNDLE_MAX_BYTES", str(100 * MIB))),
             bundle_max_unpacked_bytes=int(e.get("SSC_BUNDLE_MAX_UNPACKED_BYTES", str(500 * MIB))),
             bundle_max_files=int(e.get("SSC_BUNDLE_MAX_FILES", "20000")),
-            apps_domain=e.get("SSC_APPS_DOMAIN", APPS_DOMAIN),
-            cells=cells_from_env(e, e.get("SSC_APPS_DOMAIN", APPS_DOMAIN)),
+            apps_domain=apps_domain,
+            cells=cells_from_env(e, apps_domain) if kind == "env" else {},
+            cell_catalog=kind,
             github_app_id=e.get("SSC_GITHUB_APP_ID", ""),
             github_private_key=e.get("SSC_GITHUB_PRIVATE_KEY", ""),
             github_webhook_secret=e["SSC_GITHUB_WEBHOOK_SECRET"].encode()

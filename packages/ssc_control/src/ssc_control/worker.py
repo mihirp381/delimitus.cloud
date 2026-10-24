@@ -56,12 +56,17 @@ from ssc_control.runtime.cell_datagw import FakeCellSchemas
 from ssc_control.runtime.cell_egress import FakeCellEgress
 from ssc_control.runtime.cell_removal import FakeCellRemoval
 from ssc_control.runtime.cells import (
+    CATALOG_ENV,
     CELLS_ENV,
     STATIC_LABEL,
+    CellCatalog,
     CellPorts,
     CellRouter,
     OrgCell,
+    StaticCatalog,
     StaticCells,
+    TableCatalog,
+    catalog_kind,
     cells_from_env,
 )
 from ssc_control.runtime.driver import AppIdentity
@@ -224,14 +229,19 @@ def cells_of(
     ``BUILD_DRIVER_UNAVAILABLE``). ``fake``: one in-memory cell for every org, its runtime with
     in-memory app databases, egress and data gateway, and the identity of ``SSC_IDENTITY_*``.
     ``cell_agent``:
-    each org's own cell (``runtime.cells``), from ``SSC_CELLS``, through its agent with this
-    instance's ID token; a ``cell_agent`` build also needs where the bundles are, which it signs
-    the bundle's URL from and the build job analyses the bundle from (SSC-015): each cell's own
-    bucket with ``cell_stores`` (decision 015 amendment), else the blob store."""
+    each org's own cell (``runtime.cells``), from ``SSC_CELLS`` or, with ``SSC_CELL_CATALOG=table``,
+    from ``ssc.cell``, through its agent with this instance's ID token; a ``cell_agent`` build also
+    needs where the bundles are, which it signs the bundle's URL from and the build job analyses
+    the bundle from (SSC-015): each cell's own bucket with ``cell_stores`` (decision 015
+    amendment), else the blob store."""
     runtime, build = env.get(RUNTIME_DRIVER_ENV, ""), env.get(BUILD_DRIVER_ENV, "")
     for name, value in ((RUNTIME_DRIVER_ENV, runtime), (BUILD_DRIVER_ENV, build)):
         if value not in DRIVERS:
             raise CompositionError(f"unknown {name} {value!r}")
+    try:
+        kind = catalog_kind(env)
+    except ValueError as exc:
+        raise CompositionError(str(exc)) from None
     if CELL_AGENT in (runtime, build):
         if runtime != CELL_AGENT or build == "fake":
             raise CompositionError(
@@ -243,24 +253,21 @@ def cells_of(
                 f"{BUILD_DRIVER_ENV}=cell_agent needs SSC_CELL_BUCKET_TEMPLATE or SSC_BLOB_* set"
             )
         domain = apps_domain_from_env(env)
-        try:
-            cells = cells_from_env(env, domain)
-        except ValueError as exc:
-            raise CompositionError(str(exc)) from None
-        if not cells:
-            raise CompositionError(f"{RUNTIME_DRIVER_ENV}=cell_agent needs {CELLS_ENV}")
+        catalog = TableCatalog(engine) if kind == "table" else _env_catalog(env, domain)
         store = blob_store
         bundles: Callable[[str], BlobStore] | None = cell_stores
         if bundles is None and store is not None:
             bundles = lambda _label: store  # noqa: E731
         return CellRouter(
             engine,
-            cells,
+            catalog,
             apps_domain=domain,
             id_tokens=MetadataIdTokens(),
             grant_tokens=MetadataIdTokens(cache=False),
             build_store=bundles if build else None,
         )
+    if kind == "table":
+        raise CompositionError(f"{CATALOG_ENV}=table needs {RUNTIME_DRIVER_ENV}=cell_agent")
     if not (runtime or build):
         return None
     fake = runtime == "fake"
@@ -276,6 +283,16 @@ def cells_of(
             removal=FakeCellRemoval() if fake else None,
         )
     )
+
+
+def _env_catalog(env: Mapping[str, str], domain: str) -> CellCatalog:
+    try:
+        cells = cells_from_env(env, domain)
+    except ValueError as exc:
+        raise CompositionError(str(exc)) from None
+    if not cells:
+        raise CompositionError(f"{RUNTIME_DRIVER_ENV}=cell_agent needs {CELLS_ENV}")
+    return StaticCatalog(cells)
 
 
 def timer_dispatcher_from_env(env: Mapping[str, str]) -> ScheduleDispatcher | None:

@@ -14,6 +14,10 @@ every org the same ports, for development and tests.
 
 Before ``SSC_CELLS`` there was one cell, set as ``SSC_CELL_AGENT_URL``, ``SSC_IDENTITY_JWKS`` and
 ``SSC_IDENTITY_ISSUER``. Those still make a one-cell map, with a deprecation warning.
+
+Ticket 19: with ``SSC_CELL_CATALOG=table`` the cells are the ``ready`` rows of ``ssc.cell``, which
+the operator writes (``python -m ssc_control.cells``) and the router reads live
+(:class:`TableCatalog`). ``SSC_CELLS`` stays for development and tests (:class:`StaticCatalog`).
 """
 
 import base64
@@ -23,7 +27,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import Final, Protocol, cast, runtime_checkable
+from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 import httpx2
 from sqlalchemy import text
@@ -53,6 +57,8 @@ LEGACY_AGENT_URL_ENV: Final = "SSC_CELL_AGENT_URL"
 LEGACY_JWKS_ENV: Final = "SSC_IDENTITY_JWKS"
 LEGACY_ISSUER_ENV: Final = "SSC_IDENTITY_ISSUER"
 LEGACY_ENVS: Final = (LEGACY_AGENT_URL_ENV, LEGACY_JWKS_ENV, LEGACY_ISSUER_ENV)
+CATALOG_ENV: Final = "SSC_CELL_CATALOG"
+type CatalogKind = Literal["env", "table"]
 LABEL_SECONDS: Final = 300.0
 """How long a process trusts an org's cell label. Labels are set when the org is made and do not
 change today; the bound keeps a future move from needing a restart of every process."""
@@ -61,10 +67,11 @@ CELL_UNAVAILABLE: Final = "CELL_UNAVAILABLE"
 """The failure code of a job for an org whose cell is not configured (``ErrorCode`` too)."""
 PRIVATE_JWK_MEMBERS: Final = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
 _CELL_LABEL = text("select cell_label from ssc.org where id = :org")
+_READY_CELL = text("select identity_jwks from ssc.cell where label = :label and status = 'ready'")
 
 
 class CellUnavailableError(Exception):
-    """The org's cell is not one this process can reach: its label is not in ``SSC_CELLS``."""
+    """The org's cell is not one this process can reach: its label is not in the catalog."""
 
     def __init__(self, org_id: str, label: str | None) -> None:
         super().__init__(f"no cell configured for {org_id} (label {label!r})")
@@ -186,8 +193,70 @@ def cells_from_env(env: Mapping[str, str], apps_domain: str) -> Mapping[str, Cel
     return MappingProxyType({})
 
 
+def catalog_kind(env: Mapping[str, str]) -> CatalogKind:
+    """``SSC_CELL_CATALOG``: ``env`` (the default) or ``table``. ``ValueError`` for anything else,
+    and for ``table`` while a cell is still named in the environment."""
+    kind = env.get(CATALOG_ENV) or "env"
+    if kind not in get_args(CatalogKind.__value__):
+        raise ValueError(f"{CATALOG_ENV} must be env or table, not {kind!r}")
+    named = [name for name in (CELLS_ENV, *LEGACY_ENVS) if env.get(name)]
+    if kind == "table" and named:
+        raise ValueError(
+            f"{CATALOG_ENV}=table and {', '.join(named)} are both set: "
+            "the cells are in ssc.cell; unset one"
+        )
+    return cast("CatalogKind", kind)
+
+
+class CellCatalog(Protocol):
+    async def get(self, label: str) -> CellConfig | None:
+        """The cell named ``label``, or None when this control plane does not serve it."""
+        ...
+
+
+class StaticCatalog(CellCatalog):
+    """The cells of ``SSC_CELLS``, fixed at start-up."""
+
+    def __init__(self, cells: Mapping[str, CellConfig]) -> None:
+        self._cells = MappingProxyType(dict(cells))
+
+    @property
+    def labels(self) -> frozenset[str]:
+        return frozenset(self._cells)
+
+    async def get(self, label: str) -> CellConfig | None:
+        return self._cells.get(label)
+
+
+class TableCatalog(CellCatalog):
+    """The ``ready`` cells of ``ssc.cell``. Each label's answer, a miss too, is kept for
+    :data:`LABEL_SECONDS`, so a cell made ready is served within that without a restart."""
+
+    def __init__(self, engine: AsyncEngine, clock: Callable[[], float] = time.monotonic) -> None:
+        self._engine = engine
+        self._clock = clock
+        self._cells: dict[str, tuple[CellConfig | None, float]] = {}
+
+    async def get(self, label: str) -> CellConfig | None:
+        now = self._clock()
+        cached = self._cells.get(label)
+        if cached is not None and now < cached[1]:
+            return cached[0]
+        async with self._engine.connect() as conn:
+            jwks = (await conn.execute(_READY_CELL, {"label": label})).scalar_one_or_none()
+            await conn.rollback()
+        config = None
+        if jwks is not None:
+            try:
+                config = CellConfig(label, check_public_jwks(jwks, f"ssc.cell {label}"))
+            except ValueError as exc:
+                log.error("cell not served: %s", exc, extra={"cell_label": label})
+        self._cells[label] = (config, now + LABEL_SECONDS)
+        return config
+
+
 class CellRouter(CellPorts):
-    """Each org's cell from ``ssc.org.cell_label`` and the cells in ``SSC_CELLS``.
+    """Each org's cell from ``ssc.org.cell_label`` and the cells in ``catalog``.
 
     ``id_tokens`` mint ID tokens for each agent's URL; ``grant_tokens`` fresh ones for secret
     grants. ``build_store`` gives the store a label's bundles are signed from; None builds
@@ -197,7 +266,7 @@ class CellRouter(CellPorts):
     def __init__(  # noqa: PLR0913  (keyword-only)
         self,
         engine: AsyncEngine,
-        cells: Mapping[str, CellConfig],
+        catalog: CellCatalog,
         *,
         apps_domain: str,
         id_tokens: IdTokens,
@@ -207,7 +276,7 @@ class CellRouter(CellPorts):
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._engine = engine
-        self._cells = dict(cells)
+        self._catalog = catalog
         self._domain = hosts.check_apps_domain(apps_domain)
         self._id_tokens = id_tokens
         self._grant_tokens = grant_tokens
@@ -218,12 +287,12 @@ class CellRouter(CellPorts):
         self._orgs: dict[tuple[str, str], OrgCell] = {}
 
     @property
-    def labels(self) -> frozenset[str]:
-        return frozenset(self._cells)
+    def catalog(self) -> CellCatalog:
+        return self._catalog
 
     async def for_org(self, org_id: str) -> OrgCell:
         label = await self._label(org_id)
-        config = self._cells.get(label)
+        config = await self._catalog.get(label)
         if config is None:
             raise CellUnavailableError(org_id, label)
         cell = self._orgs.get((org_id, label))
@@ -314,16 +383,22 @@ class StaticCells(CellPorts):
 
 
 __all__ = [
+    "CATALOG_ENV",
     "CELLS_ENV",
     "CELL_UNAVAILABLE",
     "LABEL_SECONDS",
     "STATIC_LABEL",
+    "CatalogKind",
+    "CellCatalog",
     "CellConfig",
     "CellPorts",
     "CellRouter",
     "CellUnavailableError",
     "OrgCell",
+    "StaticCatalog",
     "StaticCells",
+    "TableCatalog",
+    "catalog_kind",
     "cells_from_env",
     "check_public_jwks",
     "legacy_cells",

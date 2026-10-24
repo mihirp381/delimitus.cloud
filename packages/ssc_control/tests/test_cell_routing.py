@@ -8,6 +8,7 @@ Ticket "done when" checks:
         it and serves the others (its deployments and builds fail, test_deploy)
         -> test_the_api_reaches_each_org_s_cell_alone, test_the_worker_reaches_each_org_s_cell_alone
   * ``SSC_CELLS`` and the deprecated one-cell variables -> test_ssc_cells_*, test_the_legacy_*
+  * ticket 19: the cells of ``ssc.cell`` (``SSC_CELL_CATALOG=table``) -> test_the_table_*
   * a one-cell identity is the identity before placement, byte for byte
         -> test_a_cell_s_identity_is_the_one_cell_identity_byte_for_byte
 """
@@ -35,6 +36,7 @@ import ssc_control.db
 from ssc_contracts.app_env import APP_ORIGIN, IDENTITY_KEYS_URL
 from ssc_contracts.manifest import default_manifest
 from ssc_control.api import Settings, create_app
+from ssc_control.api.app import cells_for
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.db import bind_org_sync
 from ssc_control.metrics.collect import collect_all
@@ -43,13 +45,23 @@ from ssc_control.runtime.cells import (
     CellConfig,
     CellRouter,
     CellUnavailableError,
+    StaticCatalog,
+    TableCatalog,
+    catalog_kind,
     cells_from_env,
     legacy_cells,
     parse_cells,
 )
 from ssc_control.runtime.driver import AppIdentity, identity_env
 from ssc_control.runtime.specs import ReleaseSpec, StaticReleaseSpecs
-from ssc_control.worker import Ports, app_identity_from_env, build_app, run_worker
+from ssc_control.worker import (
+    CompositionError,
+    Ports,
+    app_identity_from_env,
+    build_app,
+    cells_of,
+    run_worker,
+)
 from ssc_shared import hosts
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
@@ -180,7 +192,7 @@ def test_the_api_reaches_each_org_s_cell_alone(dsns: Dsns, signing_key: SigningK
         rt = app.state.runtime
         router = CellRouter(
             rt.engine,
-            cells,
+            StaticCatalog(cells),
             apps_domain=DOMAIN,
             id_tokens=id_token,
             grant_tokens=id_token,
@@ -240,7 +252,7 @@ async def test_the_worker_reaches_each_org_s_cell_alone(
     client = agents.client()
     router = CellRouter(
         engine,
-        cells,
+        StaticCatalog(cells),
         apps_domain=DOMAIN,
         id_tokens=id_token,
         grant_tokens=id_token,
@@ -315,7 +327,7 @@ async def test_an_org_s_label_is_read_once_per_period(dsns: Dsns) -> None:
     queries: list[str] = []
     router = CellRouter(
         engine,
-        cells,
+        StaticCatalog(cells),
         apps_domain=DOMAIN,
         id_tokens=id_token,
         grant_tokens=id_token,
@@ -339,6 +351,143 @@ async def test_an_org_s_label_is_read_once_per_period(dsns: Dsns) -> None:
         assert len(queries) == 2
         with pytest.raises(CellUnavailableError):
             await router.for_org("org_" + "z" * 20)
+    finally:
+        await engine.dispose()
+
+
+# ── ssc.cell (ticket 19) ─────────────────────────────────────────────────────
+
+INSERT_CELL = (
+    "insert into ssc.cell (label, stage, status, identity_jwks) values (%s, 'prod', %s, %s)"
+)
+
+
+def add_cell(dsn: str, label: str, status: str = "ready") -> None:
+    jwks = json.dumps(JWKS) if status == "ready" else None
+    with psycopg.connect(dsn) as conn:
+        conn.execute(INSERT_CELL, (label, status, jwks))
+
+
+def set_ready(dsn: str, label: str) -> None:
+    with psycopg.connect(dsn) as conn:
+        conn.execute(
+            "update ssc.cell set status = 'ready', identity_jwks = %s where label = %s",
+            (json.dumps(JWKS), label),
+        )
+
+
+def fresh_label() -> str:
+    return "t" + new_key().replace("-", "")[:11].lower()
+
+
+async def test_the_table_catalog_reads_ready_cells_once_per_period(dsns: Dsns) -> None:
+    ready, building = fresh_label(), fresh_label()
+    add_cell(dsns.app, ready)
+    add_cell(dsns.app, building, "building")
+    engine = ssc_control.db.make_engine(dsns.app)
+    now = [0.0]
+    queries: list[str] = []
+    catalog = TableCatalog(engine, clock=lambda: now[0])
+
+    def seen(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+        if "ssc.cell" in statement:
+            queries.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", seen)
+    try:
+        assert await catalog.get(ready) == CellConfig(label=ready, identity_jwks=JWKS)
+        assert await catalog.get(building) is None
+        assert await catalog.get(fresh_label()) is None
+        assert len(queries) == 3
+        set_ready(dsns.app, building)
+        now[0] = LABEL_SECONDS - 1
+        assert await catalog.get(ready) is not None
+        assert await catalog.get(building) is None  # the miss is cached too
+        assert len(queries) == 3
+        now[0] = LABEL_SECONDS + 1
+        assert await catalog.get(building) == CellConfig(label=building, identity_jwks=JWKS)
+        assert len(queries) == 4
+    finally:
+        await engine.dispose()
+
+
+async def test_the_table_catalog_routes_an_org_once_its_cell_is_ready(dsns: Dsns) -> None:
+    e = await asyncio.to_thread(live_env, dsns.app, "Route Table")
+    label = label_of(dsns.app, e.org)
+    add_cell(dsns.app, label, "building")
+    _, agents = configured(dsns.app, e)
+    engine = ssc_control.db.make_engine(dsns.app)
+    now = [0.0]
+    router = CellRouter(
+        engine,
+        TableCatalog(engine, clock=lambda: now[0]),
+        apps_domain=DOMAIN,
+        id_tokens=id_token,
+        grant_tokens=id_token,
+        client=agents.client(),
+        clock=lambda: now[0],
+    )
+    try:
+        with pytest.raises(CellUnavailableError):
+            await router.for_org(e.org)
+        set_ready(dsns.app, label)
+        now[0] = LABEL_SECONDS + 1
+        cell = await router.for_org(e.org)
+        assert cell.label == label
+        assert cell.identity == CellConfig(label=label, identity_jwks=JWKS).identity(DOMAIN)
+    finally:
+        await engine.dispose()
+
+
+TABLE = {"SSC_CELL_CATALOG": "table"}
+SIGNER = UrlSigner({"k1": MASTER}, active="k1", clock=SystemClock())
+CELLS = {"SSC_CELLS": json.dumps({"cellabcd01": {"identity_jwks": JWKS}})}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [CELLS, {"SSC_IDENTITY_JWKS": STACK_JWKS}, {"SSC_CELL_AGENT_URL": "https://x.test"}],
+)
+def test_the_table_catalog_refuses_cells_in_the_environment(extra: dict[str, str]) -> None:
+    (name,) = extra
+    with pytest.raises(ValueError, match=f"SSC_CELL_CATALOG=table.*{name}"):
+        catalog_kind({**TABLE, **extra})
+    with pytest.raises(ValueError, match="SSC_CELL_CATALOG"):
+        catalog_kind({"SSC_CELL_CATALOG": "sql"})
+    base = {
+        "SSC_DATABASE_DSN": "postgresql://ssc_app@localhost/ssc",
+        "SSC_API_JWKS": '{"keys": []}',
+        "SSC_API_ISSUER": ISSUER,
+    }
+    with pytest.raises(ValueError, match=f"SSC_CELL_CATALOG=table.*{name}"):
+        Settings.from_env({**base, **TABLE, **extra})
+    agent = {"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_BUILD_DRIVER": "cell_agent"}
+    engine = ssc_control.db.make_engine(base["SSC_DATABASE_DSN"])
+    store = FsBlobStore(Path("/nonexistent"), signer=SIGNER, base_url="https://blobs.test")
+    with pytest.raises(CompositionError, match=f"SSC_CELL_CATALOG=table.*{name}"):
+        cells_of({**agent, **TABLE, **extra}, engine, store)
+
+
+async def test_the_table_catalog_is_what_the_api_and_the_worker_route_with() -> None:
+    dsn = "postgresql://ssc_app@localhost/ssc"
+    base = {"SSC_DATABASE_DSN": dsn, "SSC_API_JWKS": '{"keys": []}', "SSC_API_ISSUER": ISSUER}
+    engine = ssc_control.db.make_engine(dsn)
+    try:
+        settings = Settings.from_env({**base, **TABLE})
+        api = cells_for(settings, engine)
+        assert isinstance(api, CellRouter) and isinstance(api.catalog, TableCatalog)
+        env = cells_for(Settings.from_env({**base, **CELLS}), engine)
+        assert isinstance(env, CellRouter) and isinstance(env.catalog, StaticCatalog)
+        assert env.catalog.labels == {"cellabcd01"}
+        assert cells_for(Settings.from_env(base), engine) is None
+        agent = {"SSC_RUNTIME_DRIVER": "cell_agent", "SSC_BUILD_DRIVER": "cell_agent"}
+        store = FsBlobStore(Path("/nonexistent"), signer=SIGNER, base_url="https://blobs.test")
+        worker = cells_of({**agent, **TABLE}, engine, store)
+        assert isinstance(worker, CellRouter) and isinstance(worker.catalog, TableCatalog)
+        with pytest.raises(CompositionError, match="SSC_CELLS"):
+            cells_of(agent, engine, store)
+        with pytest.raises(CompositionError, match="cell_agent"):
+            cells_of({"SSC_RUNTIME_DRIVER": "fake", **TABLE}, engine)
     finally:
         await engine.dispose()
 

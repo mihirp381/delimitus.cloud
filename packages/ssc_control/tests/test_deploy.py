@@ -155,7 +155,13 @@ from ssc_control.ports import (
     NullTimersPort,
 )
 from ssc_control.runtime.cell_agent import CellAgentDriver
-from ssc_control.runtime.cells import STATIC_LABEL, CellRouter, OrgCell, StaticCells
+from ssc_control.runtime.cells import (
+    STATIC_LABEL,
+    CellRouter,
+    OrgCell,
+    StaticCatalog,
+    StaticCells,
+)
 from ssc_control.runtime.driver import service_name
 from ssc_control.runtime.fake import FakeRuntimeDriver, changed
 from ssc_control.runtime.specs import BundleReleaseSpecs
@@ -1822,7 +1828,8 @@ def test_the_worker_registers_the_deploy_tasks_and_ports() -> None:
         worker.cells_of({**agent, "SSC_CELLS": '{"Bad": {}}'}, engine, store)
     router = worker.cells_of(agent, engine, store)
     assert isinstance(router, CellRouter)
-    assert router.labels == {"cellabcd01"}
+    assert isinstance(router.catalog, StaticCatalog)
+    assert router.catalog.labels == {"cellabcd01"}
     # Each cell's own bucket is enough: its bundles are signed from there (decision 015).
     buckets = storage.cell_stores("cells-{cell}", bucket=lambda _name: store)
     assert isinstance(worker.cells_of(agent, engine, None, buckets), CellRouter)
