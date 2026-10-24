@@ -48,6 +48,7 @@ from ssc_control.metrics import MetricsKeyError, metrics_port, parse_master_key
 from ssc_control.metrics import jobs as metrics_jobs
 from ssc_control.notifications import jobs as notify_jobs
 from ssc_control.notifications.mailer import LogMailer, Mailer, Security, SmtpConfig, SmtpMailer
+from ssc_control.onboarding import jobs as onboarding_jobs
 from ssc_control.ports import MetricsPort
 from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import FakeAppDatabases
@@ -115,6 +116,7 @@ SMTP_TLS_ENV: Final = "SSC_SMTP_TLS"
 SMTP_USER_ENV: Final = "SSC_SMTP_USER"
 SMTP_PASSWORD_ENV: Final = "SSC_SMTP_PASSWORD"  # noqa: S105  (an environment variable name)
 MAIL_FROM_ENV: Final = "SSC_MAIL_FROM"
+ONBOARDING_TICK_CRON_ENV: Final = "SSC_ONBOARDING_TICK_CRON"
 CONSOLE_URL_ENV: Final = "SSC_CONSOLE_URL"
 DEV_CONSOLE_URL: Final = "http://localhost:5173"
 SMTP_PORTS: Final[dict[str, int]] = {"starttls": 587, "tls": 465}
@@ -132,6 +134,7 @@ class WorkerSettings:
 
     tick_cron: str = runtime_jobs.TICK_CRON
     sweep_cron: str = SWEEP_CRON
+    onboarding_cron: str = onboarding_jobs.TICK_CRON
     stalled_after_seconds: float = 30.0
     heartbeat_seconds: float = 5.0
     stalled_worker_timeout: float = 30.0
@@ -215,7 +218,16 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(metrics_jobs.blueprint(), namespace="metrics")
     app.add_tasks_from(github_jobs.blueprint(), namespace="github")
     app.add_tasks_from(notify_jobs.blueprint(), namespace="notify")
+    app.add_tasks_from(
+        onboarding_jobs.blueprint(tick_cron=s.onboarding_cron), namespace=onboarding_jobs.NAMESPACE
+    )
     return app
+
+
+def settings_from_env(env: Mapping[str, str]) -> WorkerSettings:
+    return WorkerSettings(
+        onboarding_cron=env.get(ONBOARDING_TICK_CRON_ENV) or onboarding_jobs.TICK_CRON
+    )
 
 
 def cells_of(
@@ -572,7 +584,7 @@ async def run(env: Mapping[str, str] | None = None) -> None:
         raise CompositionError(f"{DSN_ENV} is not set")
     ports = compose_ports(e)
     try:
-        await run_worker(build_app(e[DSN_ENV]), ports)
+        await run_worker(build_app(e[DSN_ENV], settings=settings_from_env(e)), ports)
     finally:
         if ports.directory is not None:
             await ports.directory.aclose()
@@ -619,6 +631,7 @@ __all__ = [
     "retry_stalled",
     "run",
     "run_worker",
+    "settings_from_env",
     "timer_dispatcher_from_env",
 ]
 

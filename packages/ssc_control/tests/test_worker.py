@@ -65,6 +65,7 @@ from ssc_control.worker import (
     retry_stalled,
     run,
     run_worker,
+    settings_from_env,
 )
 
 CHILD = Path(__file__).with_name("worker_crash_child.py")
@@ -561,6 +562,26 @@ def periods(app: App, task_name: str) -> set[float]:
     for _ in range(12):
         ticks.append(periodic.croniter.get_next(float, start_time=ticks[-1]))
     return {round(b - a, 3) for a, b in zip(ticks, ticks[1:], strict=False)}
+
+
+def test_the_onboarding_tick_runs_every_five_minutes_unless_the_env_says_otherwise() -> None:
+    app = build_app("postgresql://ssc_app@localhost/ssc")
+    assert periods(app, "onboarding:tick") == {300.0}
+    ((periodic,),) = [
+        [
+            p
+            for key, p in app.periodic_registry.periodic_tasks.items()
+            if key[0] == "onboarding:tick"
+        ]
+    ]
+    assert periodic.periodic_id == "onboarding_tick"
+    assert periodic.configure_kwargs.get("queueing_lock") == "onboarding_tick"
+    assert settings_from_env({}).onboarding_cron == "*/5 * * * *"
+    every_minute = settings_from_env({"SSC_ONBOARDING_TICK_CRON": "* * * * *"})
+    assert every_minute.onboarding_cron == "* * * * *"
+    assert periods(
+        build_app("postgresql://x@localhost/x", settings=every_minute), "onboarding:tick"
+    ) == {60.0}
 
 
 def test_default_timings_repair_within_a_minute() -> None:
