@@ -292,11 +292,11 @@ The founder check now runs inside `create-org` and `connect`: they read the dire
 
    The cell's agent then serves this org alone (`SSC_ORG_ID`, decision 030) and refuses any other `WRONG_CELL`. Each org's deploys fail `CELL_UNAVAILABLE` until the control plane serves its cell.
 
-   With `cell_catalog: table` (step 3), a cell imported there is already served. Any later cell is recorded before it is built and served once the operator marks it ready, as `ssc_app`, in this order:
+   With `cell_catalog: table` (step 3), a cell imported there is already served. Any later cell is recorded before it is built and served once the operator marks it ready, as `ssc_app`, in this order. The build, `python -m ssc_infra.onboard`, is described in `infra/README.md`.
 
    ```sh
    uv run python -m ssc_control.cells request --label $LABEL --stage prod --org-id $ORG --operator op_<your name>
-   uv run python -m ssc_infra.onboard $LABEL --settings settings.json --probe-image <probe image>  # infra/README.md
+   uv run python -m ssc_infra.onboard $LABEL --settings settings.json --probe-image <probe image>
    pulumi stack output --stack c-$LABEL identity_jwks > /tmp/$LABEL-jwks.json
    uv run python -m ssc_control.cells ready --label $LABEL --jwks-file /tmp/$LABEL-jwks.json \
      --project-number "$(pulumi stack output --stack c-$LABEL project_number)" --operator op_<your name>
