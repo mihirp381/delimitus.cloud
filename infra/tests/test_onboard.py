@@ -13,6 +13,7 @@ import pytest
 
 from ssc_infra import naming as n
 from ssc_infra import onboard
+from ssc_infra.control import KEYS_CACHE
 from ssc_infra.onboard import Counts, Done, Onboarding, Options, Tools
 from ssc_infra.run import CommandError
 
@@ -33,6 +34,9 @@ SETTINGS = {
 KMS_KEY = "projects/p/locations/l/keyRings/r/cryptoKeys/gateway"
 KEYRING = b"PLAIN-KEYRING-MUST-NOT-APPEAR"
 SEALED = b"SEALED-BYTES"
+JWKS = json.dumps({"keys": [{"kty": "OKP", "crv": "Ed25519", "kid": "gw-1", "x": "A" * 43}]})
+PROJECT_NUMBER = "123456789012"
+KEYS_URL = f"gs://{n.control_bucket('prod', 'keys')}/{LABEL}/jwks.json"
 ARGV = [LABEL, "--stage", "staging", "--probe-image", PROBE_IMAGE]
 SEED_SKIP = "not needed: the rules go in the first apply on local state (SSC-091)"
 URNS = [
@@ -67,7 +71,7 @@ class World:
         self.init_rewrites_yaml = False
         self.state_root = tmp_path / "state"
         self.folder = self.state_root / LABEL
-        self.outputs: dict[str, str] = {}
+        self.outputs: dict[str, str] = {"identity_jwks": JWKS, "project_number": PROJECT_NUMBER}
         self.config: dict[str, str] = {}
         self.applied_config: dict[str, str] | None = None
         self.out: list[str] = []
@@ -79,6 +83,9 @@ class World:
         self.image_in_registry = False
         self.probe_code = 0
         self.fail: Callable[[Sequence[str]], bool] = lambda _argv: False
+        self.platform: dict[str, object] = {"control_public_stage": "prod"}
+        self.keys: dict[str, bytes] = {}
+        self.published: list[tuple[tuple[str, ...], str, int]] = []
         self.tmp_path = tmp_path
 
     def clock(self) -> float:
@@ -129,6 +136,9 @@ class World:
             self.bucket_urns[STACK] = list(self.local_urns)
             self.bucket[STACK] = len(self.local_urns)
         if args[:2] == ("stack", "output"):
+            if args[2:4] == ("--stack", n.PLATFORM_STACK):
+                assert in_bucket
+                return json.dumps(self.platform)
             if "--json" in args:
                 if self.applied_config is None:
                     raise CommandError("pulumi stack output failed: no such output")
@@ -169,7 +179,7 @@ class World:
             return Done(0, KEYRING, "")
         if line.endswith("ssc_edge.keys jwks"):
             assert input == KEYRING
-            return Done(0, b'{"keys": []}\n', "")
+            return Done(0, JWKS.encode() + b"\n", "")
         if argv[:3] == ("gcloud", "kms", "encrypt"):
             assert input == KEYRING
             return Done(0, SEALED, "")
@@ -179,6 +189,14 @@ class World:
             state = self.cert_states[min(self.cert_calls, len(self.cert_states) - 1)]
             self.cert_calls += 1
             return Done(0, state.encode() + b"\n", "")
+        if argv[:3] == ("gcloud", "storage", "cat"):
+            found = self.keys.get(argv[3])
+            return Done(0, found, "") if found is not None else Done(1, b"", "not found")
+        if argv[:3] == ("gcloud", "storage", "cp"):
+            source = Path(argv[-2])
+            mode = stat.S_IMODE(source.stat().st_mode)
+            self.published.append((argv, source.read_text(), mode))
+            self.keys[argv[-1]] = source.read_bytes()
         if argv[-1] == "ssc_conformance.nightly":
             return Done(self.probe_code, b"floor probes: 12 passed\n", "")
         return Done(0, b"", "")
@@ -240,6 +258,10 @@ class World:
             if e is not None and e["PULUMI_BACKEND_URL"] == BUCKET
         ]
 
+    def verdict(self) -> str:
+        (line,) = [x for x in self.out if x.startswith("onboarding ") and "(budget " in x]
+        return line
+
     def moved(self) -> list[Path]:
         return sorted(self.state_root.glob(f"{LABEL}.moved-*"))
 
@@ -256,12 +278,12 @@ def test_each_step_is_numbered_timed_and_the_verdict_counts_all_but_the_certific
     total = len(onboard.STEP_NAMES)
     for number, name in enumerate(onboard.STEP_NAMES, 1):
         assert any(line.startswith(f"[{number}/{total}] {name}") for line in world.out)
-    assert f"[2/9] {SEED_SKIP}" in world.out
-    assert any(line.startswith("[3/9] done in 01:00, total ") for line in world.out)
+    assert f"[2/10] {SEED_SKIP}" in world.out
+    assert any(line.startswith("[3/10] done in 01:00, total ") for line in world.out)
     assert any("      ... 30 resources done, 10 in flight, 00:00" in x for x in world.out)
     # two applies of 60 s, the shell steps at 1 s each, a certificate wait of two polls (60 s)
-    assert world.out[-1].startswith("onboarding 02:")
-    assert "(budget 15:00, PASS); certificate 02:" in world.out[-1]
+    assert world.verdict().startswith("onboarding 02:")
+    assert "(budget 15:00, PASS); certificate 02:" in world.verdict()
     assert world.err == []
 
 
@@ -271,7 +293,7 @@ def test_the_verdict_leaves_the_certificate_wait_out_and_says_over_when_it_is(
     world.apply_seconds = 600.0
     world.cert_states = ["PROVISIONING"] * 40 + ["ACTIVE"]  # 20 minutes
     assert world.run(*ARGV) == 0
-    verdict_line = world.out[-1]
+    verdict_line = world.verdict()
     assert "(budget 15:00, OVER)" in verdict_line
     assert verdict_line.startswith("onboarding 20:")
     # from the end of the first apply: the second apply, the shell steps and the 20-minute wait
@@ -296,7 +318,7 @@ def test_the_late_settings_wait_for_step_4_and_the_keyring_is_never_printed(
     assert "org_id=" not in second
     assert "datagw_image=" in second
     assert "gateway_keyring=" + onboard.base64.b64encode(SEALED).decode() in second
-    assert 'gateway_jwks={"keys": []}' in second
+    assert f"gateway_jwks={JWKS}" in second
     everything = "\n".join(world.out + world.err + world.commands())
     assert KEYRING.decode() not in everything
 
@@ -310,7 +332,7 @@ def test_the_keyring_is_made_sealed_with_the_stack_s_key_and_the_floor_probes_ge
     copy = f"{n.REGION}-docker.pkg.dev/{PROJECT}/ssc-apps/apps:nightly-probe {PROBE_IMAGE}"
     assert f"docker buildx imagetools create --tag {copy}" in world.commands()
     assert world.config["probe_digest"] == PROBE_DIGEST
-    env = world.shell_envs[-1]
+    env = world.shell_envs[world.commands().index("uv run python -m ssc_conformance.nightly")]
     assert env is not None
     assert env["SSC_PROBE_PROJECT"] == PROJECT
     assert env["SSC_PROBE_AGENT_URL"] == n.agent_url(LABEL)
@@ -328,7 +350,7 @@ def test_the_certificate_is_waited_for_before_the_floor_probes(world: World) -> 
 def test_a_failed_certificate_stops_the_run_at_once(world: World) -> None:
     world.cert_states = ["PROVISIONING", "FAILED"]
     assert world.run(*ARGV) == 1
-    assert "[7/9] FAILED after 00:32, total " in "\n".join(world.out)
+    assert "[7/10] FAILED after 00:32, total " in "\n".join(world.out)
     assert "the certificate FAILED" in world.err[0]
     assert world.err[1].endswith("--from-step 7")
 
@@ -346,21 +368,21 @@ def test_a_failure_prints_the_step_its_time_and_the_command_to_resume(
     world.fail = lambda argv: argv[:3] == ("docker", "buildx", "imagetools")
     world.cost["docker"] = 42.0
     assert world.run(*ARGV) == 1
-    assert any(line.startswith("[5/9] FAILED after 00:42, total ") for line in world.out)
+    assert any(line.startswith("[5/10] FAILED after 00:42, total ") for line in world.out)
     assert "docker buildx imagetools failed (exit 1): docker: boom" in world.err[0]
     assert world.err[1] == (
         f"resume with: uv run python -m ssc_infra.onboard {LABEL} --stage staging "
         f"--probe-image {PROBE_IMAGE} "
         f"--settings {tmp_path / 'settings.json'} --from-step 5"
     )
-    assert world.out[-1].startswith("[5/9] FAILED")
+    assert world.out[-1].startswith("[5/10] FAILED")
     assert len(world.applies) == 1
 
 
 def test_a_failed_pulumi_up_names_step_3(world: World) -> None:
     world.fail = lambda argv: argv == ("apply", STACK)
     assert world.run(*ARGV) == 1
-    assert any(line.startswith("[3/9] FAILED") for line in world.out)
+    assert any(line.startswith("[3/10] FAILED") for line in world.out)
     assert "pulumi up failed" in world.err[0]
     assert world.err[1].endswith("--from-step 3")
 
@@ -442,7 +464,7 @@ def test_the_resume_command_and_the_plan_repeat_the_stage(world: World) -> None:
         ([*ARGV, "--set", "org_id=org_short"], "org_id must be"),
         ([*ARGV, "--set", "gateway_image=docker.io/x@sha256:" + "a" * 64], "gateway_image must"),
         ([*ARGV, "--set", "nonsense"], "KEY=VALUE"),
-        ([*ARGV, "--from-step", "10"], "--from-step is 1 to 9"),
+        ([*ARGV, "--from-step", "11"], "--from-step is 1 to 10"),
     ],
 )
 def test_bad_arguments_are_refused_before_anything_runs(
@@ -475,7 +497,7 @@ def test_the_dry_run_prints_every_step_with_its_commands_and_runs_none(world: Wo
     assert world.shell_calls == []
     text = "\n".join(world.out)
     for number, name in enumerate(onboard.STEP_NAMES, 1):
-        assert f"[{number}/9] {name}" in text
+        assert f"[{number}/10] {name}" in text
     assert f"$ pulumi stack init {STACK} --secrets-provider={n.SECRETS_PROVIDER}" in text
     assert f"$ pulumi up --stack {STACK} --yes --skip-preview --non-interactive --event-log" in text
     assert f"docker buildx imagetools create --tag {n.REGION}-docker.pkg.dev/{PROJECT}" in text
@@ -484,7 +506,7 @@ def test_the_dry_run_prints_every_step_with_its_commands_and_runs_none(world: Wo
     assert f"SSC_PROBE_AGENT_URL={n.agent_url(LABEL)}" in text
     assert SEED_SKIP not in text
     assert "gateway_keyring=<sealed keyring>" in text
-    assert "gateway_image=" not in text.split("[4/9]")[0]
+    assert "gateway_image=" not in text.split("[4/10]")[0]
 
 
 def test_from_step_skips_the_earlier_steps_and_marks_the_verdict_as_this_run_only(
@@ -497,7 +519,7 @@ def test_from_step_skips_the_earlier_steps_and_marks_the_verdict_as_this_run_onl
     world.image_in_registry = True
     world.stack_file().write_text(KEY_LINES)  # step 1 is skipped, so nothing writes it
     assert world.run(*ARGV, "--from-step", "6") == 0
-    assert "[1/9] stack and settings: skipped (--from-step 6)" in world.out
+    assert "[1/10] stack and settings: skipped (--from-step 6)" in world.out
     assert not any(c[:2] == ("stack", "init") for c in world.local_calls())
     assert world.applies == [STACK]
     assert world.out[-1].endswith("[resumed: this run only]")
@@ -516,9 +538,9 @@ def test_resume_skips_the_work_it_finds_done(world: World) -> None:
     assert world.applies == []
     skipped = [line for line in world.out if "skipped (" in line]
     assert len(skipped) == 4
-    assert f"[2/9] {SEED_SKIP}" in world.out
+    assert f"[2/10] {SEED_SKIP}" in world.out
     assert not any("imagetools" in c for c in world.commands())
-    assert world.out[-1].endswith("certificate already active [resumed: this run only]")
+    assert world.verdict().endswith("certificate already active [resumed: this run only]")
 
 
 def test_resume_picks_up_where_the_first_apply_finished(world: World) -> None:
@@ -526,7 +548,7 @@ def test_resume_picks_up_where_the_first_apply_finished(world: World) -> None:
     world.outputs["gateway_kms_key"] = KMS_KEY
     assert world.run(*ARGV, "--resume") == 0
     assert world.applies == [STACK]  # only the second apply
-    assert any("[3/9] skipped (the stack already exports gateway_kms_key)" == x for x in world.out)
+    assert any("[3/10] skipped (the stack already exports gateway_kms_key)" == x for x in world.out)
     assert any(c[:3] == ("gcloud", "kms", "encrypt") for c in world.shell_calls)
 
 
@@ -626,6 +648,7 @@ def test_the_orchestrator_is_the_one_that_main_builds(world: World) -> None:
         "certificate",
         "probes",
         "move_state",
+        "publish_keys",
     ]
 
 
@@ -655,6 +678,8 @@ def test_every_pulumi_call_before_the_move_runs_on_the_local_folder_and_the_buck
         ("stack", "import"),
         ("stack", "export"),
         ("preview", "--stack"),
+        ("stack", "output"),  # identity_jwks
+        ("stack", "output"),  # control_public_stage
     ]
     assert world.applies == [STACK, STACK]
     for env in world.apply_envs:
@@ -672,7 +697,7 @@ def test_the_move_copies_the_state_checks_it_and_keeps_the_local_folder_renamed(
         STACK,
         f"--secrets-provider={n.SECRETS_PROVIDER}",
     )
-    assert bucket[-1] == (
+    assert bucket[-3] == (
         "preview",
         "--stack",
         STACK,
@@ -688,9 +713,9 @@ def test_the_move_copies_the_state_checks_it_and_keeps_the_local_folder_renamed(
     assert (moved / f"Pulumi.{STACK}.yaml.before-init").read_text() == KEY_LINES
     assert stat.S_IMODE(moved.stat().st_mode) == 0o700
     assert stat.S_IMODE((moved / "export.json").stat().st_mode) == 0o600
-    assert world.out[-3].startswith("[9/9] done in ")
-    assert world.out[-2].startswith("state move: ")
-    assert world.out[-1].startswith("onboarding ")
+    done = next(i for i, x in enumerate(world.out) if x.startswith("[9/10] done in "))
+    assert world.out.index(f"[10/10] {onboard.STEP_NAMES[-1]}") == done + 1
+    assert world.out[world.out.index(world.verdict()) - 1].startswith("state move: ")
     assert f"the local copy is kept at {moved}" in "\n".join(world.out)
     assert "SEALED-DATA-KEY" not in "\n".join(world.out + world.err + world.pulumi_lines())
 
@@ -700,14 +725,14 @@ def test_the_move_is_counted_in_the_total_and_the_budget_and_has_its_own_line(
 ) -> None:
     world.preview_seconds = 14 * 60  # a slow preview of a 7 MB state
     assert world.run(*ARGV) == 0
-    assert world.out[-2] == "state move: 14:00 (counted in the total)"
-    assert "(budget 15:00, OVER)" in world.out[-1]
+    assert "state move: 14:00 (counted in the total)" in world.out
+    assert "(budget 15:00, OVER)" in world.verdict()
 
 
 def test_a_quick_move_leaves_the_run_within_the_budget(world: World) -> None:
     assert world.run(*ARGV) == 0
-    assert world.out[-2] == "state move: 00:00 (counted in the total)"
-    assert "(budget 15:00, PASS)" in world.out[-1]
+    assert "state move: 00:00 (counted in the total)" in world.out
+    assert "(budget 15:00, PASS)" in world.verdict()
 
 
 def test_the_state_folder_is_kept_in_the_home_folder_not_a_temporary_one() -> None:
@@ -741,11 +766,11 @@ def test_the_dry_run_shows_the_folder_the_backend_of_each_step_and_the_move(worl
     folder = onboard.STATE_ROOT / LABEL
     assert f"state: {folder} (mode 0700)" in text
     assert text.count(f"backend: file://{folder}") == 8
-    assert "[2/9] DNS sinkhole rules" in text
+    assert "[2/10] DNS sinkhole rules" in text
     assert "nothing: the rules go in the first apply on local state (SSC-091)" in text
-    assert "--parallel 32" in text.split("[3/9]")[1].split("[4/9]")[0]
-    assert "--parallel 32" in text.split("[6/9]")[1].split("[7/9]")[0]
-    move = text.split("[9/9] move the state to the bucket")[1]
+    assert "--parallel 32" in text.split("[3/10]")[1].split("[4/10]")[0]
+    assert "--parallel 32" in text.split("[6/10]")[1].split("[7/10]")[0]
+    move = text.split("[9/10] move the state to the bucket")[1]
     assert f"$ pulumi stack export --stack {STACK} --file {folder}/export.json" in move
     assert f"cp infra/Pulumi.{STACK}.yaml {folder}/Pulumi.{STACK}.yaml.before-init" in move
     assert f"$ pulumi stack init {STACK} --secrets-provider={n.SECRETS_PROVIDER}" in move
@@ -753,7 +778,7 @@ def test_the_dry_run_shows_the_folder_the_backend_of_each_step_and_the_move(worl
     assert f"$ pulumi stack import --stack {STACK} --file {folder}/export.json" in move
     assert f"$ pulumi preview --stack {STACK} --expect-no-changes --parallel 32" in move
     assert f"mv {folder} {folder}.moved-<UTC>" in move
-    assert "counted: steps 1 to 6, 8 and 9" in text
+    assert "counted: steps 1 to 6, 8, 9 and 10" in text
 
 
 def test_a_stack_that_exists_only_in_the_bucket_is_refused_before_step_1(world: World) -> None:
@@ -826,7 +851,7 @@ def test_a_resume_continues_on_the_local_folder_and_ends_with_the_move(world: Wo
 def test_a_move_that_stopped_after_the_init_is_finished_by_from_step_9(world: World) -> None:
     world.fail = lambda argv: argv[:2] == ("stack", "import")
     assert world.run(*ARGV) == 1
-    assert world.out[-1].startswith("[9/9] FAILED")
+    assert world.out[-1].startswith("[9/10] FAILED")
     assert world.err[-1].endswith("--from-step 9")
     assert world.bucket == {STACK: 0}
     assert world.folder.exists()
@@ -849,7 +874,7 @@ def test_a_move_that_stopped_after_the_import_goes_straight_to_the_preview(world
     kinds = [c[:2] for c in world.bucket_calls()]
     assert ("stack", "init") not in kinds
     assert ("stack", "import") not in kinds
-    assert kinds[-1] == ("preview", "--stack")
+    assert kinds[-3] == ("preview", "--stack")
     assert len(world.moved()) == 1
 
 
@@ -914,3 +939,101 @@ def test_the_move_refuses_without_the_stack_file_and_without_resources(world: Wo
     assert world.run(*ARGV, "--from-step", "9") == 1
     assert "the local stack holds no resources" in world.err[0]
     assert ("stack", "init") not in [c[:2] for c in world.bucket_calls()]
+
+
+# Step 10: the cell's public keys at keys.delimitus.com/<label>/jwks.json.
+
+
+def onboarded(world: World) -> None:
+    world.bucket = {STACK: len(URNS)}
+    (world.state_root / f"{LABEL}.moved-20260101T000000Z").mkdir(parents=True)
+
+
+def test_step_10_publishes_the_identity_jwks_in_the_public_stage_s_keys_bucket(
+    world: World,
+) -> None:
+    assert world.run(*ARGV) == 0
+    ((argv, content, mode),) = world.published
+    assert argv[:5] == (
+        "gcloud",
+        "storage",
+        "cp",
+        "--content-type=application/json",
+        f"--cache-control={KEYS_CACHE}",
+    )
+    assert argv[-1] == KEYS_URL  # a staging cell trusts the public stage's control plane
+    assert content == JWKS
+    assert mode == 0o600
+    assert not Path(argv[-2]).exists()
+    assert not any(c[:3] == ("gcloud", "storage", "cat") for c in world.shell_calls)
+    assert ("stack", "output", "--stack", n.PLATFORM_STACK, "--json") in world.bucket_calls()
+    assert ("stack", "output", "--stack", STACK, "identity_jwks") in world.bucket_calls()
+    assert f"[10/10] {onboard.STEP_NAMES[-1]}" in world.out
+    assert f"      published {KEYS_URL}" in world.out
+
+
+def test_the_published_file_holds_the_public_members_only(world: World) -> None:
+    assert world.run(*ARGV) == 0
+    ((_, content, _),) = world.published
+    for key in json.loads(content)["keys"]:
+        assert not {"d", "p", "q", "dp", "dq", "qi", "k"} & set(key)
+
+
+def test_a_jwks_with_a_private_member_is_never_published(world: World) -> None:
+    onboarded(world)
+    private = json.loads(JWKS)
+    private["keys"][0]["d"] = "PRIVATE-PART"
+    world.outputs["identity_jwks"] = json.dumps(private)
+    assert world.run(*ARGV, "--from-step", "10") == 1
+    assert "identity_jwks is not a public JWKS" in world.err[0]
+    assert world.published == []
+    assert "PRIVATE-PART" not in "\n".join(world.out + world.err)
+
+
+def test_identical_keys_are_not_published_again(world: World) -> None:
+    onboarded(world)
+    world.keys[KEYS_URL] = JWKS.encode()
+    assert world.run(*ARGV, "--from-step", "10") == 0
+    assert "[10/10] skipped (already published)" in world.out
+    assert world.published == []
+    assert ("gcloud", "storage", "cat", KEYS_URL) in world.shell_calls
+
+
+def test_different_keys_are_overwritten(world: World) -> None:
+    onboarded(world)
+    world.keys[KEYS_URL] = b'{"keys": [{"kid": "old"}]}'
+    assert world.run(*ARGV, "--from-step", "10") == 0
+    assert [p[1] for p in world.published] == [JWKS]
+    assert world.keys[KEYS_URL] == JWKS.encode()
+
+
+def test_without_a_public_stage_there_is_no_keys_bucket_and_step_10_says_so(
+    world: World,
+) -> None:
+    world.platform = {}
+    assert world.run(*ARGV) == 1
+    assert world.out[-1].startswith("[10/10] FAILED")
+    assert "exports no control_public_stage" in world.err[0]
+    assert world.err[1].endswith("--from-step 10")
+    assert world.published == []
+
+
+def test_step_10_alone_needs_the_stack_in_the_bucket(world: World) -> None:
+    assert world.run(*ARGV, "--from-step", "10") == 1
+    assert f"there is no stack {STACK} in {BUCKET}" in world.err[0]
+    assert world.published == []
+
+
+def test_the_dry_run_shows_the_publish_command(world: World) -> None:
+    assert world.run(*ARGV, "--dry-run") == 0
+    text = "\n".join(world.out)
+    step = text.split("[10/10] publish the public keys")[1]
+    bucket = "ssc-control-<control_public_stage>-keys"
+    assert (
+        "$ gcloud storage cp --content-type=application/json "
+        f"'--cache-control={KEYS_CACHE}' '<temporary file, mode 0600, the public JWKS only>' "
+        f"'gs://{bucket}/{LABEL}/jwks.json'"
+    ) in step
+    assert f"$ pulumi stack output --stack {n.PLATFORM_STACK} --json --non-interactive" in step
+    assert "counted: steps 1 to 6, 8, 9 and 10" in text
+    assert world.shell_calls == []

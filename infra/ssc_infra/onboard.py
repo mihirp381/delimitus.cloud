@@ -21,7 +21,9 @@ Pulumi rewrites the whole checkpoint after every resource, and in the bucket tha
 for the sinkhole's rules (8.8 rules a minute against 274 on a local file). Step 9 exports the
 state, creates the stack in the state bucket with the same secrets provider, imports it, checks
 that a preview has no changes, and renames the folder to ``<label>.moved-<UTC>``, which is kept.
-A run that stops before step 9 leaves the state in the folder: ``--resume`` continues it.
+A run that stops before step 9 leaves the state in the folder: ``--resume`` continues it. Step 10
+writes the cell's ``identity_jwks`` as ``keys.delimitus.com/<label>/jwks.json``, in the keys
+bucket of the platform's ``control_public_stage``.
 
 The certificate is Google's, issued only after the first apply creates its DNS record, and the
 cell agent is reachable only through the cell's load balancer with that certificate: the floor
@@ -50,7 +52,7 @@ from typing import Any, Final, Protocol, cast
 from ssc_infra import account
 from ssc_infra import naming as n
 from ssc_infra.cell import APP_IMAGE, CUSTOMER_ORG
-from ssc_infra.control import PINNED_IMAGE
+from ssc_infra.control import KEYS_CACHE, PINNED_IMAGE, public_jwks_kids
 from ssc_infra.run import FORBIDDEN_PROJECT, CommandError, pulumi
 from ssc_infra.stack_config import INFRA_DIR
 from ssc_shared.hosts import PROOF_LABELS, check_cell_label
@@ -75,12 +77,14 @@ STEP_NAMES: Final = (
     "certificate issuance (not counted in the budget)",
     "floor probes",
     "move the state to the bucket",
+    "publish the public keys",
 )
 SEED_STEP: Final = 2
 FIRST_APPLY_STEP: Final = 3
 CERTIFICATE_STEP: Final = 7
 PROBES_STEP: Final = 8
 MOVE_STEP: Final = 9
+PUBLISH_STEP: Final = 10
 APPLY_PARALLEL: Final = 32
 """Resources Pulumi works on at once in both applies; the sinkhole's rules are the bulk."""
 STATE_ROOT: Final = Path.home() / ".ssc" / "onboard"
@@ -514,6 +518,39 @@ def certificate_state(project: str) -> list[str]:
     ]
 
 
+def keys_url(bucket: str, label: str) -> str:
+    return f"gs://{bucket}/{label}/jwks.json"
+
+
+def keys_cat(url: str) -> list[str]:
+    return ["gcloud", "storage", "cat", url]
+
+
+def keys_cp(source: str, url: str) -> list[str]:
+    """As the platform stack's ``cells`` objects are written (``control.py``, ``_keys``)."""
+    return [
+        "gcloud",
+        "storage",
+        "cp",
+        "--content-type=application/json",
+        f"--cache-control={KEYS_CACHE}",
+        source,
+        url,
+    ]
+
+
+def keys_stage(outputs: object) -> n.Stage:
+    """``control_public_stage`` of the platform stack: only that control plane has the keys
+    bucket behind ``keys.delimitus.com``."""
+    found = cast("dict[str, object]", outputs) if isinstance(outputs, dict) else {}
+    for stage in n.STAGES:
+        if found.get("control_public_stage") == stage:
+            return stage
+    raise OnboardError(
+        "the platform stack exports no control_public_stage: there is no keys bucket to publish to"
+    )
+
+
 def floor_probes() -> list[str]:
     return ["uv", "run", "python", "-m", "ssc_conformance.nightly"]
 
@@ -556,6 +593,8 @@ class Onboarding:
         self.certificate_already_active = False
         self.detected_skips = False
         self.move_seconds: float | None = None
+        self.moved: Path | None = None
+        self.identity_jwks: str | None = None
         self.folder = tools.state_root / opts.label
 
     @property
@@ -712,10 +751,42 @@ class Onboarding:
         self._pulumi(*preview_args(opts.stack), bucket=True)
         moved = self.t.state_root / f"{opts.label}.moved-{self.t.now():%Y%m%dT%H%M%SZ}"
         folder.rename(moved)
+        self.moved = moved
         self.move_seconds = self.t.clock() - began
         self.t.out(f"      state is in {self.t.bucket_url}; the local copy is kept at {moved}")
 
+    def publish_keys(self) -> None:
+        opts = self.opts
+        jwks = self._pulumi("stack", "output", "--stack", opts.stack, "identity_jwks", bucket=True)
+        jwks = jwks.strip()
+        if public_jwks_kids(jwks) is None:
+            raise OnboardError(
+                "identity_jwks is not a public JWKS of named keys: nothing published"
+            )
+        self.identity_jwks = jwks
+        url = keys_url(self._keys_bucket(), opts.label)
+        if opts.resumed:
+            found = self.t.shell(keys_cat(url))
+            if self.detected(found.code == 0 and found.out == jwks.encode()):
+                raise Skip("skipped (already published)")
+        fd, name = tempfile.mkstemp(prefix="ssc-jwks-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as file:
+                file.write(jwks)
+            self._sh(keys_cp(name, url))
+        finally:
+            Path(name).unlink(missing_ok=True)
+        self.t.out(f"      published {url}")
+
     # Helpers.
+
+    def _keys_bucket(self) -> str:
+        raw = self._pulumi("stack", "output", "--stack", n.PLATFORM_STACK, "--json", bucket=True)
+        try:
+            outputs: Any = json.loads(raw)
+        except ValueError as exc:
+            raise OnboardError("the platform stack's outputs are not JSON") from exc
+        return n.control_bucket(keys_stage(outputs), "keys")
 
     def _export(self, file: Path, *, bucket: bool = False) -> None:
         self._pulumi(*export_args(self.opts.stack, file), bucket=bucket)
@@ -808,6 +879,7 @@ class Onboarding:
             self.certificate,
             self.probes,
             self.move_state,
+            self.publish_keys,
         ]
 
     def resume_command(self, step: int) -> str:
@@ -823,6 +895,11 @@ class Onboarding:
         local = folder.exists()
         moved = sorted(self.t.state_root.glob(f"{opts.label}.moved-*"))
         in_bucket = opts.stack in stack_names(self._pulumi("stack", "ls", "--json", bucket=True))
+        if opts.from_step == PUBLISH_STEP:
+            if not in_bucket:
+                raise OnboardError(f"there is no stack {opts.stack} in {bucket} to publish")
+            if not local:
+                return
         if opts.from_step == MOVE_STEP:
             if local:
                 return
@@ -920,6 +997,7 @@ def plan(opts: Options) -> list[str]:
     stack_file = f"infra/Pulumi.{opts.stack}.yaml"
     saved = f"{folder}/{Path(stack_file).name}.before-init"
     reference = f"{opts.cell_repo}@{opts.probe_digest}"
+    keys = keys_url(n.control_bucket(cast("n.Stage", "<control_public_stage>"), "keys"), opts.label)
     steps: list[list[str]] = [
         [
             pulumi_line(("stack", "ls", "--json")),
@@ -968,6 +1046,14 @@ def plan(opts: Options) -> list[str]:
             pulumi_line(preview_args(opts.stack)) + f"  [{bucket_url}]",
             f"mv {folder} {STATE_ROOT / opts.label}.moved-<UTC>  (kept, never deleted here)",
         ],
+        [
+            pulumi_line(("stack", "output", "--stack", opts.stack, "identity_jwks"))
+            + f"  [{bucket_url}] (refused unless public keys only)",
+            pulumi_line(("stack", "output", "--stack", n.PLATFORM_STACK, "--json"))
+            + f"  [{bucket_url}] (control_public_stage names the keys bucket)",
+            shlex.join(keys_cat(keys)) + "  (with --resume: identical content is skipped)",
+            shlex.join(keys_cp("<temporary file, mode 0600, the public JWKS only>", keys)),
+        ],
     ]
     lines = [
         f"plan for {opts.stack} (project {opts.project}); nothing is run",
@@ -978,7 +1064,7 @@ def plan(opts: Options) -> list[str]:
         if number < MOVE_STEP:
             lines.append(f"      backend: {local_url}")
         lines += [f"      $ {c}" for c in commands]
-    lines.append(f"counted: steps 1 to 6, 8 and 9; the budget is {mmss(BUDGET_SECONDS)}")
+    lines.append(f"counted: steps 1 to 6, 8, 9 and 10; the budget is {mmss(BUDGET_SECONDS)}")
     return lines
 
 
