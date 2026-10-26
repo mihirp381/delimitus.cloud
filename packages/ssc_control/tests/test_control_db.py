@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import secrets
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -1243,7 +1244,7 @@ def test_ids_are_type_prefixed_per_table(dsns: Dsns) -> None:
         m = re.search(r"\(id ~ '\^([a-z]+)_\[a-z0-9\]\{20\}\$'", d)
         if m:
             prefixed[rel.removeprefix("ssc.")] = m.group(1)
-    expected = (catalog.TABLES - catalog.UNKEYED_TABLES) | {"onboarding"}
+    expected = (catalog.TABLES - catalog.UNKEYED_TABLES) | {"onboarding", "pilot_invite"}
     assert set(prefixed) == expected
     assert set(prefixed.values()) <= set(PREFIXES), prefixed
 
@@ -2267,3 +2268,73 @@ def test_0037_downgrades_with_a_deleted_app_and_upgrades(dsns: Dsns) -> None:
     upgrade(dsn, "0037_app_delete")
     assert (_checks(dsn, "ssc.app"), _checks(dsn, "ssc.kill_switch_run")) == after
     assert run(dsn, None, grant) == [(1,)]
+
+
+# ── pilot invites: platform rows, revoked and never deleted (revision 0042) ──────────────
+
+INVITE_ACTIONS = {"invite.created", "invite.revoked", "invite.used"}
+INSERT_INVITE = (
+    "insert into ssc.pilot_invite (id, code_sha256, org_id, expires_at, max_uses, uses, note, "
+    "created_by) values (%(id)s, %(digest)s, %(org)s, now() + %(life)s::interval, %(max)s, "
+    "%(uses)s, %(note)s, %(by)s) returning id"
+)
+
+
+def invite_row(**change: object) -> dict[str, object]:
+    return {
+        "id": new_id("pinv"),
+        "digest": secrets.token_bytes(32),
+        "org": new_id("org"),
+        "life": "14 days",
+        "max": 10,
+        "uses": 0,
+        "note": None,
+        "by": "op_dana",
+    } | change
+
+
+def test_pilot_invite_revision_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database invites owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="invites").render_as_string(hide_password=False)
+    exists = "select to_regclass('ssc.pilot_invite') is not null"
+    upgrade(dsn, "0041_admin_self_decide")
+    before = action_check(dsn)
+    upgrade(dsn, "0042_pilot_invite")
+    assert run(dsn, None, exists) == [(True,)]
+    after = action_check(dsn)
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | INVITE_ACTIONS
+    downgrade(dsn, "0041_admin_self_decide")
+    assert run(dsn, None, exists) == [(False,)]
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    upgrade(dsn, "0042_pilot_invite")
+    assert action_check(dsn) == after
+
+
+def test_pilot_invites_belong_to_no_org_and_are_checked(dsns: Dsns) -> None:
+    good = invite_row(note="pilot")
+    assert run(dsns.app, None, INSERT_INVITE, good) == [(good["id"],)]
+    bad: list[dict[str, object]] = [
+        {"id": new_id("org")},
+        {"digest": b"short"},
+        {"org": "usr_" + "a" * 20},
+        {"life": "-1 hour"},
+        {"max": 0},
+        {"uses": 11},
+        {"uses": -1},
+        {"note": ""},
+        {"note": "x" * 201},
+        {"by": "dana"},
+    ]
+    for change in bad:
+        assert refused(dsns.app, None, INSERT_INVITE, invite_row(**change)) == CHECK_VIOLATION
+    for taken in ({"id": good["id"]}, {"digest": good["digest"]}):
+        row = invite_row(**taken)
+        assert refused(dsns.app, None, INSERT_INVITE, row) == UNIQUE_VIOLATION, taken
+    use = "update ssc.pilot_invite set uses = 11 where id = %s"
+    assert refused(dsns.app, None, use, (good["id"],)) == CHECK_VIOLATION
+    delete = "delete from ssc.pilot_invite where id = %s"
+    assert refused(dsns.app, None, delete, (good["id"],)) == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.app, None, "truncate ssc.pilot_invite") == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.migrate, None, "truncate ssc.pilot_invite") == SqlState.TRUNCATE_REFUSED

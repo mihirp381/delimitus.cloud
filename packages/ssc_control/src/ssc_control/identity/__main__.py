@@ -16,6 +16,9 @@
 * ``restore-admin --org ID --user ID --operator op_x --reason TEXT [--outside-admin-group]
   [--already-applied-at TIME]``: make a person an active admin again, audited
   (``identity.operator``).
+* ``invite create --org ID --operator op_x --expires-in 14d --max-uses 10 [--note TEXT]``,
+  ``invite list --org ID``, ``invite revoke ID --operator op_x``: pilot invite codes
+  (``identity.invites``). ``create`` prints the code once; only its SHA-256 is kept.
 
 Every command connects with ``SSC_DATABASE_DSN``; ``sync``, ``connect`` and ``create-org`` read
 ``SSC_WORKOS_API_KEY``, ``SSC_WORKOS_CLIENT_ID`` and optionally ``SSC_WORKOS_BASE``.
@@ -32,7 +35,7 @@ from typing import Final
 from ssc_contracts.audit import ActorKind
 from ssc_control.audit.chain import Actor
 from ssc_control.db import all_org_ids, bound_org, check_org_id, make_engine
-from ssc_control.identity import connections, operator, sync
+from ssc_control.identity import connections, invites, operator, sync
 from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
 from ssc_shared import redaction
 
@@ -142,6 +145,36 @@ async def run_restore_admin(dsn: str, args: argparse.Namespace) -> operator.Rest
         await engine.dispose()
 
 
+async def run_invite(dsn: str, args: argparse.Namespace) -> list[str]:
+    engine = make_engine(dsn)
+    actor = Actor(kind=ActorKind.OPERATOR, id=getattr(args, "operator", "") or "")
+    try:
+        if args.invite_command == "create":
+            async with bound_org(engine, args.org) as conn:
+                invite, code = await invites.create(
+                    conn,
+                    args.org,
+                    expires_in=args.expires_in,
+                    max_uses=args.max_uses,
+                    note=args.note,
+                    actor=actor,
+                )
+            sys.stderr.write(f"{invite.line}\n")
+            return [code]
+        if args.invite_command == "list":
+            async with bound_org(engine, args.org) as conn:
+                return [i.line for i in await invites.list_for(conn, args.org)]
+        async with engine.connect() as conn:
+            org_id = await invites.org_of(conn, args.id)
+            await conn.rollback()
+        if org_id is None:
+            raise invites.InviteError(f"{args.id} is unknown or already revoked")
+        async with bound_org(engine, org_id) as conn:
+            return [(await invites.revoke(conn, args.id, actor=actor)).line]
+    finally:
+        await engine.dispose()
+
+
 def serve(host: str, port: int) -> None:
     import uvicorn  # noqa: PLC0415  (only the serving process needs it)
 
@@ -202,6 +235,17 @@ def _parser() -> argparse.ArgumentParser:
     p_restore.add_argument("--reason", type=operator.check_reason, required=True)
     p_restore.add_argument("--outside-admin-group", action="store_true")
     p_restore.add_argument("--already-applied-at", type=datetime.fromisoformat)
+    p_invite = sub.add_parser("invite").add_subparsers(dest="invite_command", required=True)
+    p_create = p_invite.add_parser("create")
+    p_create.add_argument("--org", type=check_org_id, required=True)
+    p_create.add_argument("--operator", type=operator.check_operator_id, required=True)
+    p_create.add_argument("--expires-in", type=invites.check_duration, required=True)
+    p_create.add_argument("--max-uses", type=invites.check_max_uses, required=True)
+    p_create.add_argument("--note", type=operator.check_reason)
+    p_invite.add_parser("list").add_argument("--org", type=check_org_id, required=True)
+    p_revoke = p_invite.add_parser("revoke")
+    p_revoke.add_argument("id")
+    p_revoke.add_argument("--operator", type=operator.check_operator_id, required=True)
     return parser
 
 
@@ -220,7 +264,15 @@ def main(argv: list[str] | None = None) -> int:
     return _run(args, dsn, env)
 
 
-def _run(args: argparse.Namespace, dsn: str, env: dict[str, str]) -> int:
+def _run(args: argparse.Namespace, dsn: str, env: dict[str, str]) -> int:  # noqa: PLR0911
+    if args.command == "invite":
+        try:
+            lines = asyncio.run(run_invite(dsn, args))
+        except invites.InviteError as e:
+            sys.stderr.write(f"not done: {e}\n")
+            return 1
+        sys.stdout.writelines(f"{line}\n" for line in lines)
+        return 0
     if args.command == "restore-admin":
         try:
             restored = asyncio.run(run_restore_admin(dsn, args))

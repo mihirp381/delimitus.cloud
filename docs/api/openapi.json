@@ -1249,6 +1249,9 @@
           "cell.failed",
           "cell.retired",
           "org.onboarded",
+          "invite.created",
+          "invite.revoked",
+          "invite.used",
           "github.installation_bound",
           "repo.connected",
           "repo.disconnected"
