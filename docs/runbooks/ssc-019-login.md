@@ -70,6 +70,21 @@ or token. Rerunning the checks above many times from one machine can reach them:
 hour or restart `auth`, which keeps its counts only in memory. There is no operator override in
 production; the person waits up to an hour or signs in from another network.
 
+## Invite codes
+
+A pilot user without an org id signs in to the console with an invite code (decision 029,
+amendment of 2026-10-26). With `SSC_DATABASE_DSN` set:
+
+```
+uv run python -m ssc_control.identity invite create --org <org_…> --operator op_<you> --expires-in 14d --max-uses 10 [--note "pilot cohort"]
+uv run python -m ssc_control.identity invite list --org <org_…>
+uv run python -m ssc_control.identity invite revoke <pinv_…> --operator op_<you>
+```
+
+`create` prints the code once on stdout (the row goes to stderr); only its SHA-256 is kept, so
+a lost code is revoked and made again. A revoked, expired or used-up code gets the same "We
+could not find a sign-in" answer as a wrong one.
+
 ## Record
 
 Copy the times, the `usr_` ids and the pass or fail lines into the SSC-019 status in the tickets file. Stop both servers with Ctrl-C; `.ssc-dev/` keeps the state for a rerun.
