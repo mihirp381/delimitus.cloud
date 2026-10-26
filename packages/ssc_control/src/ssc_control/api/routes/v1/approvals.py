@@ -1,11 +1,11 @@
 """Approval requests (SSC-045, SSC-049): ask, list, read, decide, cancel.
 
 Anyone who may change an environment may ask, agent sessions included. Admins and the owner of
-a connection a request names decide from the inbox (``/decide``), in a normal session: the
-approver is never the requester and never an agent session, and approving applies the grant
+a connection a request names decide from the inbox (``/decide``), in a normal session: never an
+agent session, and the requester only when an admin. Approving applies the grant
 (:func:`ssc_control.api.routes.v1.grants.apply_approved`). The ``/decision`` endpoint stays for
-SSC staff recording what an admin decided by email or chat. The database refuses both
-self-approval and agent approval even if this code is wrong.
+SSC staff recording what an admin decided by email or chat. The database refuses agent approval
+even if this code is wrong.
 """
 
 from datetime import datetime
@@ -182,7 +182,9 @@ class ApprovalCreate(Strict):
 
 class DecisionIn(Strict):
     outcome: Literal["approved", "denied"]
-    approver_user_id: UsrId = Field(description="The org admin who decided, never the requester.")
+    approver_user_id: UsrId = Field(
+        description="The org admin who decided, or for `exceed_ceiling` the connection's owner."
+    )
     channel: Literal["email", "chat"] = Field(description="How the decision reached SSC.")
     reason: Reason
 
@@ -216,8 +218,9 @@ class CancelIn(Strict):
 class ApprovalQuery(Strict):
     inbox: bool = Field(
         default=False,
-        description="Only the pending requests the caller may decide: not their own; every one "
-        "for an org admin, else those on connections they own. Empty in an agent session.",
+        description="Only the pending requests the caller may decide: every one for an org "
+        "admin, their own included, else those on connections they own that they did not ask "
+        "for. Empty in an agent session.",
     )
     state: ApprovalState | None = None
     environment_id: EnvId | None = None
@@ -411,7 +414,7 @@ async def _diff(uow: UnitOfWork, row: ApprovalRow) -> GrantDiff | None:
     },
 )
 async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
-    """Ask another admin of the org to approve one change to one environment. Allowed to the
+    """Ask an admin of the org to approve one change to one environment. Allowed to the
     environment's builders, its app's owner and org admins, agent sessions included. An
     `exceed_ceiling` request is decided by the named connection's owner or an org admin. A grant
     naming a user or group the org does not have is `NOT_FOUND`."""
@@ -560,7 +563,7 @@ async def get_approval(approval_id: Id, uow: UserUoW) -> ApprovalDetail:
 async def decide_approval(approval_id: Id, body: DecisionIn, uow: UserUoW) -> Response:
     """Record what an org admin decided. Operator credentials only, never in an agent session.
     Refused, in this order: not an operator, an agent session, no such request, already decided,
-    the approver asked for it, the approver is not an active org admin."""
+    the approver is not an active org admin."""
     principal = uow.principal
     if principal.kind is not PrincipalKind.OPERATOR:
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})
@@ -608,11 +611,11 @@ async def decide_approval(approval_id: Id, body: DecisionIn, uow: UserUoW) -> Re
     ),
 )
 async def decide_as_approver(approval_id: Id, body: PersonDecisionIn, uow: UserUoW) -> Response:
-    """Approve or reject a request you can see, with a reason. Never in an agent session, never
-    your own request; an org admin, or for `exceed_ceiling` the connection's owner. Approving a
-    sharing request applies it once every requirement for that change is approved; approving a
-    `connect_data_source` request links its environment. One that no longer fits stays approved
-    and says so in `applied`; the requester asks again."""
+    """Approve or reject a request you can see, with a reason. Never in an agent session; an org
+    admin, their own requests included, or for `exceed_ceiling` the connection's owner, not on
+    their own. Approving a sharing request applies it once every requirement for that change is
+    approved; approving a `connect_data_source` request links its environment. One that no
+    longer fits stays approved and says so in `applied`; the requester asks again."""
     principal = uow.principal
     if principal.kind is not PrincipalKind.USER:
         raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})

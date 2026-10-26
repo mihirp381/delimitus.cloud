@@ -106,24 +106,42 @@ def test_every_agent_change_needs_approval_and_a_person_s_does_not() -> None:
 
 
 @pytest.mark.parametrize(
-    ("decider", "role", "active", "via_agent", "refusal"),
+    ("decider", "role", "active", "via_agent", "owner", "refusal"),
     [
-        pytest.param("usr_b", "admin", True, False, None, id="another active admin"),
-        pytest.param("usr_a", "admin", True, True, "agent_session", id="agent first"),
-        pytest.param("usr_b", None, False, True, "agent_session", id="agent before eligibility"),
-        pytest.param("usr_a", "admin", True, False, "self_approval", id="self"),
+        pytest.param("usr_b", "admin", True, False, None, None, id="another active admin"),
+        pytest.param("usr_a", "admin", True, False, None, None, id="an admin on their own"),
+        pytest.param("usr_a", "admin", True, True, None, "agent_session", id="agent first"),
         pytest.param(
-            "usr_a", "member", False, False, "self_approval", id="self before eligibility"
+            "usr_b", None, False, True, None, "agent_session", id="agent before eligibility"
         ),
-        pytest.param("usr_b", "member", True, False, "not_eligible", id="a member"),
-        pytest.param("usr_b", "admin", False, False, "not_eligible", id="a deactivated admin"),
-        pytest.param("usr_b", None, False, False, "not_eligible", id="nobody in this org"),
+        pytest.param(
+            "usr_a", "member", False, False, None, "not_eligible", id="eligibility before self"
+        ),
+        pytest.param(
+            "usr_a", "admin", False, False, None, "not_eligible", id="a deactivated admin's own"
+        ),
+        pytest.param("usr_b", "member", True, False, "usr_b", None, id="the owner"),
+        pytest.param(
+            "usr_a", "member", True, False, "usr_a", "self_approval", id="the owner's own"
+        ),
+        pytest.param("usr_a", "admin", True, False, "usr_a", None, id="an admin owner's own"),
+        pytest.param("usr_b", "member", True, False, None, "not_eligible", id="a member"),
+        pytest.param(
+            "usr_b", "admin", False, False, None, "not_eligible", id="a deactivated admin"
+        ),
+        pytest.param("usr_b", None, False, False, None, "not_eligible", id="nobody in this org"),
     ],
 )
-def test_check_decider_order(
-    decider: str, role: str | None, active: bool, via_agent: bool, refusal: str | None
+def test_check_decider_order(  # noqa: PLR0913  (one per column)
+    decider: str,
+    role: str | None,
+    active: bool,
+    via_agent: bool,
+    owner: str | None,
+    refusal: str | None,
 ) -> None:
-    assert check_decider("usr_a", decider, role, active, via_agent) == refusal
+    got = check_decider("usr_a", decider, role, active, via_agent, connection_owner_id=owner)
+    assert got == refusal
 
 
 def test_gate_outcome() -> None:

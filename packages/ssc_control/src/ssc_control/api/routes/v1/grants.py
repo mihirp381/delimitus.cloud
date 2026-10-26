@@ -129,7 +129,7 @@ class GrantsRequirements(Strict):
 
 
 class GrantsPending(Strict):
-    """An agent session's change, waiting for another admin. Nothing was applied."""
+    """An agent session's change, waiting for an admin. Nothing was applied."""
 
     environment_id: str
     grants_version: int = Field(description="Unchanged: the version the change will replace.")

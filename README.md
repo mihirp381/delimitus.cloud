@@ -18,7 +18,7 @@ SSC is in a private pilot. V1 runs Python and Node web apps and signs people in 
 - **Approvals, a kill switch, and an audit log** for every change.
 - **Coding agent support** through MCP: an agent can check and deploy to preview. Coding agents
   cannot promote: a builder of the app promotes a release to production, and a release that
-  asks for new internet hosts or data connections waits for another admin to approve them.
+  asks for new internet hosts or data connections waits for an admin to approve them.
 
 ## Quick start
 

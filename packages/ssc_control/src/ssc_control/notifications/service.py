@@ -21,8 +21,8 @@ SEND_TASK: Final = f"{NAMESPACE}:send"
 
 _APPROVERS = text(
     "select u.id from ssc.user_account u where u.org_id = :org and u.status = 'active' "
-    "and u.id <> :requester and (u.role = 'admin' or u.id = (select c.owner_user_id "
-    "from ssc.connection c where c.org_id = :org and c.name = :connection)) order by u.id"
+    "and (u.role = 'admin' or (u.id <> :requester and u.id = (select c.owner_user_id "
+    "from ssc.connection c where c.org_id = :org and c.name = :connection))) order by u.id"
 )
 _INSERT = text(
     "insert into ssc.notification_outbox (id, org_id, user_id, kind, approval_id, dedupe_key) "
@@ -34,8 +34,8 @@ _INSERT = text(
 async def approvers(
     conn: AsyncConnection, *, org_id: str, requester_id: str, connection: str | None
 ) -> list[str]:
-    """Who may decide a request: every active org admin and, for ``exceed_ceiling``, the named
-    connection's owner. Never the requester."""
+    """Who may decide a request: every active org admin, the requester included, and, for
+    ``exceed_ceiling``, the named connection's owner unless they asked."""
     rows = await conn.execute(
         _APPROVERS, {"org": org_id, "requester": requester_id, "connection": connection}
     )

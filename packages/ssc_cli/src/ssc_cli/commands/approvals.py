@@ -2,7 +2,7 @@
 
 ``list`` shows what you may decide now (``--all`` shows everything you may see), ``show`` one
 request with the sharing rules it would change, ``approve`` and ``reject`` decide it with a
-reason. You decide as yourself, never in an agent session, and never your own request.
+reason. You decide as yourself, never in an agent session; an admin may decide their own request.
 Approving a sharing change applies it once every approval it needs is in.
 """
 

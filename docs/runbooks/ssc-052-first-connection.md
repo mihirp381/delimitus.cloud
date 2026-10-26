@@ -61,7 +61,7 @@ curl -sS -X PUT "$API/v1/apps/<app>/environments/<env>/connections/finance" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"limits": {"max_rows": 1000}}'
 ```
 
-Pass: `200` listing the connection; `ssc connections <app>` shows it and its `over ceiling` state. When the environment's audience is already wider than the ceiling the answer is `APPROVAL_REQUIRED`: ask `POST /v1/approvals` with `kind: exceed_ceiling`, `payload: {"connection": "finance", "grants": [<the environment's current grants>]}`; the owner or another admin decides it in the console's approvals inbox or `ssc approvals` (`/decide`); then repeat the `PUT`. Since 2026-10-20 an admin approving a `connect_data_source` request for the name through `/decide` links its environment (decision 016 amendment); one recorded through the operator's `/decision` does not. For the first read a throwaway app's environment, shared with nobody but you, is the right grantee.
+Pass: `200` listing the connection; `ssc connections <app>` shows it and its `over ceiling` state. When the environment's audience is already wider than the ceiling the answer is `APPROVAL_REQUIRED`: ask `POST /v1/approvals` with `kind: exceed_ceiling`, `payload: {"connection": "finance", "grants": [<the environment's current grants>]}`; the owner or an admin decides it in the console's approvals inbox or `ssc approvals` (`/decide`); then repeat the `PUT`. Since 2026-10-20 an admin approving a `connect_data_source` request for the name through `/decide` links its environment (decision 016 amendment); one recorded through the operator's `/decision` does not. For the first read a throwaway app's environment, shared with nobody but you, is the right grantee.
 
 ## 5. The first read
 
@@ -84,7 +84,7 @@ A failure here never reaches a user: only the throwaway environment is granted. 
 
 ## 6. Check the ceiling
 
-1. Share an environment that uses the connection with a person outside the ceiling (or the whole org). Pass: `APPROVAL_REQUIRED` until an `exceed_ceiling` request for that connection and that audience is approved by the owner or an admin (never the requester).
+1. Share an environment that uses the connection with a person outside the ceiling (or the whole org). Pass: `APPROVAL_REQUIRED` until an `exceed_ceiling` request for that connection and that audience is approved by the owner or an admin (the owner not on their own request unless an admin).
 2. Lower the ceiling (`PATCH` with a shorter list). Pass: every environment now over it, except one whose exact audience an `exceed_ceiling` request approved, shows `over_ceiling_since` in `ssc connections`, with one `connection.flagged` audit row each. No approval is opened and the data gateway is not told; the flag clears when the audience is narrowed inside the ceiling.
 
 ## Know before you rely on it

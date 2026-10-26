@@ -527,7 +527,7 @@ async def test_preview_scoped_agent_cannot_roll_back_prod(world: World) -> None:
 
 
 async def test_preview_scoped_agent_asks_only_preview_shares(world: World) -> None:
-    """Founder decision 2026-09-29: a preview share may be asked for, and another admin decides.
+    """Founder decision 2026-09-29: a preview share may be asked for, and an admin decides.
     A data connection stays refused, and so does a prod share, already at the read of prod's
     grants; test_preview_scope pins the prod ask itself."""
     member = add_account(world.dsns.app, world.org.org_id, "member")
@@ -784,20 +784,17 @@ async def test_no_approve_path(world: World) -> None:
     operator = mint(world.key, org=world.org.org_id, sub="op_staff", kind="operator")
     assert post(path, world.agent_v1, decision).json()["code"] == "FORBIDDEN"
     assert post(path, agent_operator, decision).json()["code"] == "AGENT_SESSION_REFUSED"
-    assert post(path, operator, decision).json()["code"] == "SELF_APPROVAL_REFUSED"
-    state = rows(
+    pending = rows(
         world.dsns.app,
         world.org.org_id,
         "select state from ssc.approval_request where id = %s",
         (asked.json()["id"],),
     )
-    assert state == [("pending",)]
-
-    approver = add_account(world.dsns.app, world.org.org_id, "admin")
-    approved = post(path, operator, {**decision, "approver_user_id": approver})
+    assert pending == [("pending",)]
+    approved = post(path, operator, decision)
     assert approved.status_code == 200, approved.text
     assert approved.json()["state"] == "approved"
-    assert approved.json()["decided_by_user_id"] == approver
+    assert approved.json()["decided_by_user_id"] == world.org.admin_user_id
     assert approved.json()["requested_by_user_id"] == world.org.admin_user_id
 
 
@@ -1191,7 +1188,7 @@ async def test_request_connection(world: World) -> None:
     assert approval["subject_key"] == name
     assert approval["state"] == "pending"
     assert approval["requested_via_agent"] is True
-    assert prod.structured_content["next"].startswith("Pending: another active admin")
+    assert prod.structured_content["next"].startswith("Pending: an active admin")
     assert preview.structured_content == {
         "outcome": "linked",
         "reason": None,

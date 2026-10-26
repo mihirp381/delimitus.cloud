@@ -1,14 +1,15 @@
 """SSC-045: approvals, operator-recorded, against postgres:18.
 
 Ticket "done when" checks:
-  * self-approval is refused             -> test_self_approval_is_refused_by_the_api_and_database
+  * an admin may decide their own request, a non-admin owner may not
+                                         -> test_an_admin_decides_their_own_request_an_owner_not
   * an agent-session approval is refused -> test_agent_session_decisions_are_refused
   * a production deploy waits on an open approval
                                          -> test_production_deploy_waits_on_an_open_approval
 Plus: the fail-closed gate, the ProdGate port over recorded and manifest capabilities, widening
 a data-connected app, agent grant changes (agent_share), the operator-only decision endpoint,
 who sees which request and what the deployment policy shows (SSC-093), operator.access, and the
-0005 migration.
+0005 and 0041 migrations.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from ssc_control.approvals.service import ApprovalRefusedError, Decider
 from ssc_control.audit import Actor
 from ssc_control.db import (
     MIGRATE_ROLE,
+    CreatedOrg,
     NewOrg,
     bind_org_sync,
     bound_org,
@@ -594,7 +596,6 @@ async def test_decide_refuses_in_order(dsns: Dsns) -> None:
     for who, reason in [
         (decider(w.approver, via_agent=True), "agent_session"),
         (decider(w.admin, via_agent=True), "agent_session"),
-        (decider(w.admin), "self_approval"),
         (decider(w.member), "not_eligible"),
         (decider(w.retired), "not_eligible"),
         (decider(new_id("usr")), "not_eligible"),
@@ -605,8 +606,8 @@ async def test_decide_refuses_in_order(dsns: Dsns) -> None:
     with pytest.raises(ApprovalRefusedError) as e:
         await decide(dsns.app, w, new_id("apr"), decider(w.approver))
     assert e.value.reason == "not_found"
-    decided = await decide(dsns.app, w, apr, decider(w.approver))
-    assert (decided.state, decided.decided_by_user_id) == ("approved", w.approver)
+    decided = await decide(dsns.app, w, apr, decider(w.admin))
+    assert (decided.state, decided.decided_by_user_id) == ("approved", w.admin)
     with pytest.raises(ApprovalRefusedError) as e:
         await decide(dsns.app, w, apr, decider(w.approver, "denied"))
     assert e.value.reason == "not_pending"
@@ -625,16 +626,9 @@ async def test_the_database_names_each_refused_decision(dsns: Dsns) -> None:
             (
                 "approved",
                 w.admin,
-                False,
-                "approval_request_not_self",
-                ErrorCode.SELF_APPROVAL_REFUSED,
-            ),
-            (
-                "denied",
-                w.admin,
-                False,
-                "approval_request_not_self",
-                ErrorCode.SELF_APPROVAL_REFUSED,
+                True,
+                "approval_request_decided_via_agent_check",
+                ErrorCode.AGENT_SESSION_REFUSED,
             ),
             (
                 "approved",
@@ -697,7 +691,7 @@ async def test_environment_profile_defaults_to_internal_and_is_closed(dsns: Dsns
         assert e.value.diag.constraint_name == "environment_profile_check"
 
 
-def test_0005_renames_the_self_check_and_downgrade_restores_it(dsns: Dsns) -> None:
+def test_0005_renames_the_self_check_0041_drops_it_and_downgrade_restores_it(dsns: Dsns) -> None:
     with psycopg.connect(dsns.superuser, autocommit=True) as conn:
         conn.execute(f"create database approvals05 owner {MIGRATE_ROLE}")
     dsn = make_url(dsns.migrate).set(database="approvals05").render_as_string(hide_password=False)
@@ -730,8 +724,15 @@ def test_0005_renames_the_self_check_and_downgrade_restores_it(dsns: Dsns) -> No
     downgrade(dsn, "0003_lane_vocab")
     assert sorted(checks().values()) == sorted(before.values())
     assert not has_profile()
-    upgrade(dsn)
+    upgrade(dsn, "0040_onboarding")
     assert "approval_request_not_self" in checks()
+    upgrade(dsn, "0041_admin_self_decide")
+    assert "approval_request_not_self" not in checks()
+    downgrade(dsn, "0040_onboarding")
+    restored = checks()["approval_request_not_self"]
+    assert restored == after["approval_request_not_self"] + " NOT VALID"
+    upgrade(dsn)
+    assert "approval_request_not_self" not in checks()
 
 
 # ── the API ──────────────────────────────────────────────────────────────────
@@ -815,25 +816,117 @@ def decision(approver: str, outcome: str = "approved") -> dict[str, Any]:
     }
 
 
-def test_self_approval_is_refused_by_the_api_and_database(
+def test_an_admin_decides_their_own_request_an_owner_not(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:
     r = ask_api(client, tokens.admin, world.prod)
     assert r.status_code == 201, r.text
     apr = r.json()["id"]
-    refused = post(client, f"/v1/approvals/{apr}/decision", tokens.operator, decision(world.admin))
-    assert_problem(refused, ErrorCode.SELF_APPROVAL_REFUSED)
-    got = client.get(f"/v1/approvals/{apr}", headers=auth(tokens.admin))
-    assert got.json()["state"] == "pending"
+    done = post(client, f"/v1/approvals/{apr}/decision", tokens.operator, decision(world.admin))
+    assert done.status_code == 200, done.text
+    assert (done.json()["state"], done.json()["decided_by_user_id"]) == ("approved", world.admin)
     with psycopg.connect(dsns.app) as conn:
         bind_org_sync(conn, world.org)
-        with pytest.raises(psycopg.Error) as e:
-            conn.execute(
-                "update ssc.approval_request set state = 'approved', decided_at = now(), "
-                "decided_by_user_id = requested_by_user_id, decision_reason = 'x' where id = %s",
-                (apr,),
-            )
-    assert e.value.diag.constraint_name == "approval_request_not_self"
+        conn.execute(
+            "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
+            "database_name, address, owner_user_id) values (%s, %s, 'ledgerdb', 'postgres', "
+            "'internal', 'db.corp.internal', 5432, 'warehouse', jsonb_build_object('host', "
+            "'db.corp.internal', 'port', 5432, 'database', 'warehouse'), %s)",
+            (new_id("con"), world.org, world.builder),
+        )
+    grants = [{"role": "user", "subject_kind": "user", "subject_id": world.member}]
+    owned = ask_api(
+        client,
+        tokens.builder,
+        world.prod,
+        "exceed_ceiling",
+        None,
+        {"connection": "ledgerdb", "grants": grants},
+    )
+    assert owned.status_code == 201, owned.text
+    own = owned.json()["id"]
+    by_operator = post(
+        client, f"/v1/approvals/{own}/decision", tokens.operator, decision(world.builder)
+    )
+    assert_problem(by_operator, ErrorCode.SELF_APPROVAL_REFUSED)
+    body = {"outcome": "approved", "reason": "Mine.", "channel": "console"}
+    by_owner = post(client, f"/v1/approvals/{own}/decide", tokens.builder, body)
+    assert_problem(by_owner, ErrorCode.SELF_APPROVAL_REFUSED)
+    got = client.get(f"/v1/approvals/{own}", headers=auth(tokens.builder))
+    assert (got.json()["state"], got.json()["can_decide"]) == ("pending", False)
+
+
+def test_a_one_admin_org_approves_what_its_agent_asked_for(
+    client: TestClient, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    async def solo() -> CreatedOrg:
+        engine = make_engine(dsns.app)
+        try:
+            spec = NewOrg("Solo", "Sol Admin", "sol@example.com", ISSUER, new_id("usr"))
+            return await create_org(engine, spec)
+        finally:
+            await engine.dispose()
+
+    created = asyncio.run(solo())
+    org, admin = created.org_id, created.admin_user_id
+    app, prod = new_id("app"), new_id("env")
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, org)
+        assert conn.execute(
+            "select count(*) from ssc.user_account where role = 'admin' and status = 'active'"
+        ).fetchone() == (1,)
+        conn.execute(
+            "insert into ssc.app (id, org_id, slug, owner_user_id) values (%s, %s, 'solo', %s)",
+            (app, org, admin),
+        )
+        conn.execute(
+            "insert into ssc.environment (id, org_id, app_id, name) values (%s, %s, %s, 'prod')",
+            (prod, org, app),
+        )
+        conn.execute(
+            "insert into ssc.connection (id, org_id, name, kind, classification, host, port, "
+            "database_name, address) values (%s, %s, 'finance', 'postgres', 'internal', "
+            "'db.corp.internal', 5432, 'warehouse', jsonb_build_object('host', "
+            "'db.corp.internal', 'port', 5432, 'database', 'warehouse'))",
+            (new_id("con"), org),
+        )
+
+    def token(**claims: Any) -> str:
+        return mint(signing_key, org=org, sub=admin, jti=f"cred_{new_key()[:16]}", **claims)
+
+    person, agent = token(), token(agent=True, client_id="agent-x")
+
+    async def outcome(conn: AsyncConnection) -> GateResult:
+        return await production_gate(
+            conn,
+            org_id=org,
+            environment_id=prod,
+            capabilities=FINANCE,
+            requested_by=Actor(ActorKind.USER, admin),
+            app_id=app,
+        )
+
+    asked = ask_api(client, agent, prod)
+    assert asked.status_code == 201, asked.text
+    apr = asked.json()["id"]
+    assert asyncio.run(in_org(dsns.app, org, outcome)).outcome == "waiting"
+    assert_problem(
+        post(
+            client, f"/v1/approvals/{apr}/decide", agent, {"reason": "Mine.", "outcome": "approved"}
+        ),
+        ErrorCode.AGENT_SESSION_REFUSED,
+    )
+    inbox = client.get("/v1/approvals?inbox=true", headers=auth(person)).json()["approvals"]
+    assert [a["id"] for a in inbox] == [apr]
+    body = {"outcome": "approved", "reason": "My agent asked for it.", "channel": "console"}
+    decided = post(client, f"/v1/approvals/{apr}/decide", person, body)
+    assert decided.status_code == 200, decided.text
+    assert (decided.json()["state"], decided.json()["applied"]) == ("approved", "applied")
+    (row,) = approvals_of(dsns.app, org)
+    assert (row["requested_by_user_id"], row["requested_via_agent"]) == (admin, True)
+    assert (row["decided_by_user_id"], row["decided_via_agent"]) == (admin, False)
+    clear = asyncio.run(in_org(dsns.app, org, outcome))
+    assert (clear.outcome, clear.approval_ids) == ("clear", (apr,))
 
 
 def test_agent_session_decisions_are_refused(
@@ -1180,7 +1273,7 @@ def test_widening_a_data_connected_app_needs_approval(
     assert put(client, world, world.prod, tokens.admin, before, 2).status_code == 200
 
 
-def test_agent_grant_changes_wait_for_another_admin(
+def test_agent_grant_changes_wait_for_an_admin(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:
     before = keyed(current(client, world, world.prod, tokens.admin)["grants"])
@@ -1201,14 +1294,8 @@ def test_agent_grant_changes_wait_for_another_admin(
         True,
     )
     assert row["payload"]["grants_version"] == 1
-    # The requester, in their own session, still cannot approve their agent's change.
-    assert_problem(
-        post(client, f"/v1/approvals/{apr}/decision", tokens.operator, decision(world.admin)),
-        ErrorCode.SELF_APPROVAL_REFUSED,
-    )
-    decided = post(
-        client, f"/v1/approvals/{apr}/decision", tokens.operator, decision(world.approver)
-    )
+    # The requester, an admin, approves their agent's change in their own session.
+    decided = post(client, f"/v1/approvals/{apr}/decision", tokens.operator, decision(world.admin))
     assert decided.status_code == 200, decided.text
     applied = put(client, world, world.prod, tokens.admin_agent, wider, 1)
     assert applied.status_code == 200, applied.text

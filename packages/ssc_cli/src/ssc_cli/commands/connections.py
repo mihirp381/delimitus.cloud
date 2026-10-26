@@ -124,7 +124,7 @@ def connect(
     json_mode: JsonOpt = False,
 ) -> None:
     """Ask for an app environment to use a data connection. On preview the connection's preview
-    access rule may link it at once; otherwise another active admin decides."""
+    access rule may link it at once; otherwise an active admin decides."""
     with handled(json_mode), session(ctx).client() as client:
         target = resolve_app(client, app)
         where = environment(target, env.value)
@@ -150,6 +150,6 @@ def connect(
         say(f"{here} already reads {connection}; nothing to do.")
     elif result.outcome == "pending" and result.approval is not None:
         say(
-            f"Asked for {here} to read {connection} ({result.approval.id}); another active admin "
-            "of the org must approve."
+            f"Asked for {here} to read {connection} ({result.approval.id}); an active admin of "
+            "the org must approve."
         )

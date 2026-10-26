@@ -170,8 +170,8 @@ def test_connect_asks_prod_and_prints_the_answer(cli, scripted):
             "pending",
             None,
             _approval(),
-            "Asked for demo preview to read finance (apr_aaaaaaaaaaaaaaaaaaaa); another active "
-            "admin of the org must approve.",
+            "Asked for demo preview to read finance (apr_aaaaaaaaaaaaaaaaaaaa); an active admin of "
+            "the org must approve.",
         ),
     ],
 )

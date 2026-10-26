@@ -289,7 +289,7 @@ def test_preview_scoped_token_may_upload_source(b: Bench) -> None:
 
 
 def test_preview_scoped_token_may_ask_for_a_preview_share(b: Bench) -> None:
-    """Founder decision 2026-09-29. Asking changes nothing: another admin of the org decides."""
+    """Founder decision 2026-09-29. Asking changes nothing: an admin of the org decides."""
     member = add_account(b.dsns.app, b.org.org_id, "member")
     grants = [{"role": "builder", "subject_kind": "user", "subject_id": member}]
     url = f"/v1/apps/{b.app['id']}/environments/{b.env('preview')}/grants"

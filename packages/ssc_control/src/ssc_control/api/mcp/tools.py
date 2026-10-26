@@ -647,7 +647,7 @@ def grant_body(key: GrantKey) -> Body:
 
 
 SHARE_PENDING_NEXT: Final = (
-    "Pending: every listed request must be approved (agent_share and widen_audience by another "
+    "Pending: every listed request must be approved (agent_share and widen_audience by an "
     "active admin of the org; exceed_ceiling by the connection's owner or an admin). The last "
     "approval applies the change; nothing changes before it. If the grants still lack it "
     "afterwards, call request_share again."
@@ -778,7 +778,7 @@ async def new_app(c: V1, slug: str, key: str) -> Body:
 _CONNECTION_NEXT: Final = {
     "linked": "The environment reads it now; call describe_connection for its tables.",
     "already_linked": "The environment already reads it; nothing to do.",
-    "pending": "Pending: another active admin of the org must approve; SSC staff record the "
+    "pending": "Pending: an active admin of the org must approve; SSC staff record the "
     "decision. Nothing has changed.",
 }
 
@@ -1031,7 +1031,7 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
         and `builder` on preview (a preview `user` grant gives no access). This asks for every
         approval the change needs (always `agent_share`; `widen_audience` when the app uses
         company data; `exceed_ceiling` per data connection whose ceiling the audience passes)
-        and lists them in `requirements`. Other people decide them; the last approval applies
+        and lists them in `requirements`. An org admin decides them; the last approval applies
         the change, and the sharing rules stay as they are until then. `idempotency_key` is
         accepted but not needed: asking again answers the same pending requests. Your pending
         share on the environment is folded into a new one and cancelled (`superseded`)."""
@@ -1047,7 +1047,7 @@ def register(server: MCPServer, api: FastAPI, settings: Settings) -> None:
     ) -> CallToolResult:
         """Ask for one environment of the app to use a data connection. On preview the
         connection's preview access rule may link it at once; otherwise, and always on prod,
-        this opens an approval request another active admin decides, and once approved the
+        this opens an approval request an active admin decides, and once approved the
         environment is linked unless its audience exceeds the connection's ceiling."""
         key = idempotency_key or fresh_key()
         return await run(

@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
 const token = process.env.SSC_E2E_TOKEN ?? '';
 const auth = { Authorization: `Bearer ${token}` };
 
-test('the requester sees their request but cannot decide it; the audit log filters and exports', async ({ page, request }) => {
+test('an admin may decide their own request; the audit log filters and exports', async ({ page, request }) => {
   expect(token, 'run through e2e/run.mjs, which mints the token').not.toBe('');
   const stamp = Date.now().toString(36);
   const slug = `e2e-audit-${stamp}`;
@@ -32,7 +32,7 @@ test('the requester sees their request but cannot decide it; the audit log filte
   await page.getByLabel('API token').fill(token);
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  // Your own request is listed under all requests as pending, and you cannot decide it.
+  // Your own request is listed under all requests as pending, and as an admin you may decide it.
   await expect(page.getByRole('heading', { name: 'Approvals' })).toBeVisible();
   await page.getByRole('link', { name: 'All requests' }).click();
   const row = page.getByRole('row').filter({ hasText: connection });
@@ -41,7 +41,7 @@ test('the requester sees their request but cannot decide it; the audit log filte
   await expect(row.getByRole('link', { name: slug })).toBeVisible();
   await expect(row).toContainText('prod');
   await row.getByRole('link', { name: 'Open' }).click();
-  await expect(page.getByRole('button', { name: /approve|reject/i })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /approve|reject/i })).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Withdraw this request' })).toBeVisible();
 
   // The audit log finds the request by action and target.

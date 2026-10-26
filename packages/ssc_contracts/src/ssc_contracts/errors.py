@@ -231,7 +231,7 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
     ErrorCode.APPROVAL_REQUIRED: CatalogueEntry(
         409,
         "This change needs an approval first.",
-        "Another admin of the organisation must approve exactly this change before it is applied. "
+        "An admin of the organisation must approve exactly this change before it is applied. "
         "Ask for an approval and retry once it is approved.",
     ),
     ErrorCode.APPROVAL_NOT_PENDING: CatalogueEntry(
@@ -242,7 +242,7 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
     ErrorCode.SELF_APPROVAL_REFUSED: CatalogueEntry(
         403,
         "You cannot decide your own request.",
-        "An approval must be decided by a different person from the one who asked for it.",
+        "Only an org admin may decide their own request.",
     ),
     ErrorCode.AGENT_SESSION_REFUSED: CatalogueEntry(
         403,

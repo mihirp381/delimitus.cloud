@@ -97,13 +97,14 @@ exists (`connection` names the connection for `exceed_ceiling`, else `null`). Th
 `payload.grants`, `kind: exceed_ceiling` with `payload.{connection, grants}`, the grants being the
 same desired set. Once all are approved, the same `PUT` applies. Decisions are made in the console inbox or with `ssc approvals`: `GET /v1/approvals?inbox=true` lists what the
 caller may decide and `POST /v1/approvals/{id}/decide` takes `{outcome: approved|denied, reason,
-channel}` from a person session (an agent session gets `AGENT_SESSION_REFUSED`, the requester
-`SELF_APPROVAL_REFUSED`). Approving a sharing request applies the grant when every approval it needs is in
+channel}` from a person session (an agent session gets `AGENT_SESSION_REFUSED`; an org admin may
+decide their own request, a connection owner who is not an admin gets `SELF_APPROVAL_REFUSED` on
+their own). Approving a sharing request applies the grant when every approval it needs is in
 (the answer's `applied` says `applied`, `waiting`, `not_applied` with `applied_reason`, or
 `not_applicable`). `POST /v1/approvals/{id}/cancel` withdraws a pending request, for its requester only.
 SSC staff can still record a reply through `POST /v1/approvals/{id}/decision`, which takes an
 operator credential without the agent claim and names the person who decided (an org admin, or for
-`exceed_ceiling` the connection's owner; never the requester).
+`exceed_ceiling` the connection's owner; the requester only when an admin).
 
 **Tools say which tool they are** (SSC-028). A client sends `X-SSC-Source-Tool: <tool>` (for
 example `claude-code`, `cursor`, `lovable`) on the requests that deploy or share. The value is
@@ -374,7 +375,7 @@ build the environment and operators (`FORBIDDEN` otherwise), maps the gateway's 
 beyond the ceiling of any connection it is linked to, or linking an environment whose audience is
 already beyond it, is `409 APPROVAL_REQUIRED` until an `exceed_ceiling` request (`POST
 /v1/approvals`, `payload: {connection, grants}`) is approved by the connection's owner or an org
-admin, never the requester or an agent session. It is checked on a sharing change that widens, and
+admin (the owner not on their own request unless an admin), never an agent session. It is checked on a sharing change that widens, and
 on creating a link. Lowering a ceiling opens no approval: it flags each environment now over it
 (`over_ceiling_since`, one `connection.flagged` audit row each) and clears the flag once the
 audience is inside. A user is inside a group ceiling when they are an active member of a listed
@@ -521,7 +522,7 @@ stateless, JSON replies. Code: `api/mcp/`.
     `detail` adds that the link is being published and to retry in a minute.
   - `create_app(slug, idempotency_key?)`: `POST /v1/apps` with the body `ssc apps create`
     sends; the caller owns the app. Audited `app.created` with `via_agent` (decision 029).
-  - Asking opens pending requests only; another active admin of the org approves (decision
+  - Asking opens pending requests only; an active admin of the org approves (decision
     016, founder default D2), the connection's owner or an admin for `exceed_ceiling`. Approving
     the last request of a share applies it (SSC-049); nothing else has to run.
   - A `scope: preview` credential (decision 011) can use every read and `deploy`: the bundle

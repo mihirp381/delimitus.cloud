@@ -66,10 +66,10 @@ says so (`migrations_unknown` under `--json`), so tell the person.
 preview runs now and puts it live there.
 Promoting is the person's decision, so run it only when they ask for it.
 
-A sharing change made with an agent's token waits for another admin: `ssc share` and
+A sharing change made with an agent's token waits for an admin: `ssc share` and
 `ssc unshare` then change nothing, print the approval request ids (`pending` under `--json`) and
 exit 0. Tell the person, and run the same command again once it is approved. The code
-`APPROVAL_REQUIRED` means showing an app that reaches company data to more people needs another
+`APPROVAL_REQUIRED` means showing an app that reaches company data to more people needs an
 admin's approval first; without `--json` the error says how to ask.
 
 `ssc share` names a person by `usr_` id or email address (looking up an email needs an org admin's
@@ -253,7 +253,7 @@ own; its calls are recorded the same way. Set it up once:
   read through a data connection. `list_connections` (`ssc connections`) names every one by name,
   kind and classification, never an address. To use one, call `request_connection` with
   `environment="preview"` (`ssc connect <app> <connection> --env preview`): the connection's preview
-  access rule may link it at once, otherwise another active admin decides. Once it is linked,
+  access rule may link it at once, otherwise an active admin decides. Once it is linked,
   `describe_connection` gives the tables and columns the environment sees through it. List each one
   the app reads under `[connections]` `names` in `ssc.toml` (`ssc doctor` warns
   `CONNECTION_UNDECLARED` for a read of one that is not). Production still waits for an approved
@@ -261,7 +261,7 @@ own; its calls are recorded the same way. Set it up once:
   unless its audience exceeds the connection's ceiling. `ssc connections <app> --env <env>` shows
   the links. You never approve; a preview link may be made for you by the connection's rule when
   you ask. When a request is pending or a read answers `CONNECTION_NOT_GRANTED`, tell the person
-  which connection and environment another admin has to approve or an org admin has to link.
+  which connection and environment an org admin has to approve or link.
 - Explore the data before you write a read. When this session already has an MCP server for the
   data's own source, one the person connected (for example Snowflake's MCP server for a
   `snowflake` connection), use it first, for reads only: which databases, schemas and tables hold

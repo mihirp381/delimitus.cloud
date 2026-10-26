@@ -3,8 +3,8 @@
 A question is ``(environment, kind, subject_key)``. At most one request per question is pending
 (a partial unique index); asking again while one is pending or approved returns that request,
 except an approved ``connect_data_source`` whose link is gone (:func:`spent`).
-Deciding locks the request, checks the decider (never an agent session, never the requester,
-an active org admin, or for ``exceed_ceiling`` the connection's active owner), writes a
+Deciding locks the request, checks the decider (never an agent session, an active org admin, or
+for ``exceed_ceiling`` the connection's active owner when not the requester), writes a
 ``policy_decision`` and audits ``approval.decided``. The requester may withdraw (:func:`cancel`).
 Each new request and each decision queues its mail (SSC-049, ``notifications``). An approved
 internet host or data source turns on the cell's ``egress`` or ``connections`` (SSC-087), and an
@@ -391,7 +391,7 @@ async def decide(
     conn: AsyncConnection, *, org_id: str, approval_id: str, decider: Decider, actor: Actor
 ) -> ApprovalRow:
     """Record a decision. Raises :class:`ApprovalRefusedError` in the order the API documents:
-    agent session, missing, not pending, self-approval, not an active admin."""
+    agent session, missing, not pending, not eligible, self-approval by a non-admin."""
     if decider.via_agent:
         raise ApprovalRefusedError("agent_session")
     row = await get(conn, org_id=org_id, approval_id=approval_id, lock=True)
@@ -421,7 +421,7 @@ async def decide(
         target_kind="approval_request",
         target_id=approval_id,
         outcome="allow",
-        reason="other_active_admin",
+        reason="eligible_decider",
         inputs={
             "outcome": decider.outcome,
             "kind": row.kind.value,
@@ -616,7 +616,7 @@ async def search(  # noqa: PLR0913  (keyword-only)
     """Newest first, keyed on ``(created_at, id)`` so a page boundary never skips a row.
     ``visible_to`` limits the page to one user's own requests and the ``exceed_ceiling`` requests
     on connections they own. ``decidable_by`` keeps the pending requests that user may decide:
-    not their own, and any when ``decider_is_admin``, else only those on connections they own."""
+    any when ``decider_is_admin``, else those on connections they own that are not their own."""
     r = _R.c
     query = _select().where(r.org_id == org_id)
     if visible_to is not None:
@@ -624,8 +624,9 @@ async def search(  # noqa: PLR0913  (keyword-only)
     if decidable_by is not None:
         query = query.where(
             r.state == "pending",
-            r.requested_by_user_id != decidable_by,
-            true() if decider_is_admin else _owns(decidable_by),
+            true()
+            if decider_is_admin
+            else and_(r.requested_by_user_id != decidable_by, _owns(decidable_by)),
         )
     if state is not None:
         query = query.where(r.state == state)

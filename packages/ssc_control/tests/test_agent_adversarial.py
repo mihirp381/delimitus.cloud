@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx2
@@ -143,7 +143,17 @@ def test_an_operator_agent_is_refused_a_decision(arena: Arena) -> None:
 
 @pytest.mark.parametrize("key", MARKED)
 def test_the_person_gets_past_the_agent_check(arena: Arena, key: str) -> None:
-    probe = KNOWN[key](arena.a.ids)
+    ids = arena.a.ids
+    if key.startswith("POST /v1/approvals/{approval_id}/"):
+        ask = {
+            "environment_id": ids.preview,
+            "kind": "connect_data_source",
+            "subject_key": f"person-{new_key()[:8].lower()}",
+        }
+        ids = replace(
+            ids, approval=made(call(arena.url, arena.a.human, "POST", "/v1/approvals", ask))["id"]
+        )
+    probe = KNOWN[key](ids)
     with arena.v1(arena.a.human) as c:
         assert got_of(send(c, probe)) != problem("AGENT_SESSION_REFUSED")
 

@@ -207,7 +207,7 @@ def _run(  # noqa: PLR0913
         return
     if result.pending:
         say(f"Waiting for approval, nothing changed yet: {_pending(result.pending, asked)}.")
-        say("Run the same command again once another admin of the org has approved.")
+        say("Run the same command again once an admin of the org has approved.")
     else:
         say(done(subjects) if result.changed else "Nothing to change.")
     say(
@@ -428,8 +428,7 @@ def _ask(environment_id: str, desired: list[GrantIn], req: RequirementOut) -> st
         "payload": {"grants": grants},
     }
     return (
-        f"ask for approval with POST /v1/approvals {json.dumps(ask)}; "
-        "another admin of the org decides"
+        f"ask for approval with POST /v1/approvals {json.dumps(ask)}; an admin of the org decides"
     )
 
 
@@ -455,7 +454,7 @@ def approval_fix(
     }
     return (
         f"ask for approval with POST /v1/approvals {json.dumps(ask)}, then run this command "
-        "again once another admin of the org has approved it."
+        "again once an admin of the org has approved it."
     )
 
 

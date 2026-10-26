@@ -41,7 +41,7 @@ PLACES_TOTAL: Final = app_database.ceiling(
     app_database.BASE_TIER_MAX_CONNECTIONS, app_database.SUPERUSER_RESERVE
 )
 APPROVER: Final = (
-    "An active admin of the org other than the person who asked, never through an agent. They "
+    "An active admin of the org, the person who asked included, never through an agent. They "
     "decide by email or chat and an SSC operator records it. Ask through POST /v1/approvals "
     "(the request_connection and request_share tools do it for a connection or a share)."
 )

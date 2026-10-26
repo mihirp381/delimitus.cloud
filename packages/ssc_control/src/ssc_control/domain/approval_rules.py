@@ -141,7 +141,7 @@ def agent_share_needs_approval(
     before: Collection[GrantKey],
     after: Collection[GrantKey],
 ) -> Requirement | None:
-    """Every grant change made through an agent credential waits for another admin."""
+    """Every grant change made through an agent credential waits for an admin."""
     if not via_agent or set(before) == set(after):
         return None
     return Requirement(RequirementKind.AGENT_SHARE, agent_share_subject_key(base_version, after))
@@ -157,15 +157,15 @@ def check_decider(  # noqa: PLR0913  (the owner is keyword-only)
     connection_owner_id: str | None = None,
 ) -> DeciderRefusal | None:
     """Why this person may not decide, or None. Checked in this order: an agent session, then
-    self-approval, then eligibility (an active org admin; ``decider_role`` None when unknown).
-    For an ``exceed_ceiling`` request the caller passes the connection's owner, who may decide
-    too while active."""
+    eligibility (an active org admin, or the ``exceed_ceiling`` connection's owner; ``decider_role``
+    None when unknown), then self-approval, refused only to a non-admin."""
     if via_agent:
         return "agent_session"
-    if decider_id == requester_id:
-        return "self_approval"
-    if not decider_active or (decider_role != "admin" and decider_id != connection_owner_id):
+    is_admin = decider_role == "admin"
+    if not decider_active or (not is_admin and decider_id != connection_owner_id):
         return "not_eligible"
+    if decider_id == requester_id and not is_admin:
+        return "self_approval"
     return None
 
 

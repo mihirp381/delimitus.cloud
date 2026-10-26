@@ -20,7 +20,7 @@ ssc promote expenses --wait      # build what preview runs for production, then 
 
 `ssc deploy` always goes to preview. A builder of the app promotes to production; a coding agent
 cannot. A release that asks for new internet hosts or data connections reaches production only
-after another admin of your company approves them.
+after an admin of your company approves them.
 
 When something fails, `ssc status <app>` shows each environment's state and `ssc logs <app>
 --source build` the build's output. An error names its code and, when there is a next step, ends

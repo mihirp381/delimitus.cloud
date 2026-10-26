@@ -177,19 +177,19 @@ def test_an_exceed_request_reaches_the_owner_and_approving_it_applies_the_grant(
     apr = ask_exceed(client, tokens.admin, world, org_wide)
     assert notify_jobs(dsns, world.org) == 1
     queued = outbox(dsns.app, world, "arrival")
-    assert {r["user_id"] for r in queued} == {world.approver, world.member}
+    assert {r["user_id"] for r in queued} == {world.admin, world.approver, world.member}
     assert all(r["state"] == "pending" and r["approval_id"] == apr for r in queued)
     sender = LogMailer()
-    assert flush(dsns, world, sender) == 2
+    assert flush(dsns, world, sender) == 3
     sent = {addresses[m.to]: m for m in sender.sent}
-    assert set(sent) == {"approver", "member"}
+    assert set(sent) == {"admin", "approver", "member"}
     body = sent["member"].body
     assert f"{CONSOLE}/approvals/{apr}" in body
     assert "Ada Admin" in body and "ledger" in body and "finance" in body
     assert "usr_" not in body and "grp_" not in body
     assert inbox_ids(client, tokens.member) == [apr]
     assert inbox_ids(client, tokens.approver) == [apr]
-    assert inbox_ids(client, tokens.admin) == []
+    assert inbox_ids(client, tokens.admin) == [apr]
     seen = client.get(f"/v1/approvals/{apr}", headers=auth(tokens.member)).json()
     assert seen["can_decide"] is True and seen["can_cancel"] is False
     assert (seen["app"], seen["environment"]) == ("ledger", "prod")
@@ -240,11 +240,11 @@ def test_an_agent_session_cannot_approve(
     assert inbox_ids(client, tokens.approver) == [apr]
 
 
-def test_you_cannot_decide_your_own_request_or_without_a_reason(
+def test_an_admin_decides_their_own_request_but_never_without_a_reason(
     client: TestClient, world: World, tokens: Tokens
 ) -> None:
     apr = ask_api(client, tokens.admin, world.prod).json()["id"]
-    assert_problem(decide(client, apr, tokens.admin), ErrorCode.SELF_APPROVAL_REFUSED)
+    assert get(client, f"/v1/approvals/{apr}", tokens.admin).json()["can_decide"] is True
     assert_problem(
         decide(client, apr, tokens.approver, {"outcome": "approved"}), ErrorCode.VALIDATION_FAILED
     )
@@ -262,7 +262,9 @@ def test_you_cannot_decide_your_own_request_or_without_a_reason(
     )
     assert_problem(decide(client, apr, tokens.operator), ErrorCode.FORBIDDEN)
     multiline = {"outcome": "approved", "reason": "Fine by me.\r\n\tFor a month."}
-    assert decide(client, apr, tokens.approver, multiline).status_code == 200
+    decided = decide(client, apr, tokens.admin, multiline)
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["decided_by_user_id"] == world.admin
     assert_problem(decide(client, apr, tokens.approver), ErrorCode.APPROVAL_NOT_PENDING)
 
 
@@ -305,7 +307,7 @@ def test_the_owner_sees_only_the_exceed_request_on_their_connection(
     assert client.get("/v1/approvals", headers=auth(tokens.builder)).json()["approvals"] == []
     assert inbox_ids(client, tokens.builder) == []
     assert sorted(inbox_ids(client, tokens.approver)) == sorted([exceed, other])
-    assert inbox_ids(client, tokens.admin) == []
+    assert sorted(inbox_ids(client, tokens.admin)) == sorted([exceed, other])
 
 
 def test_a_change_needing_two_approvals_applies_with_the_last_one(
@@ -491,7 +493,7 @@ def test_the_daily_digest_lists_what_each_approver_can_decide(
     assert flush(dsns, world, sender) == 3
     counts = {addresses[m.to]: m.subject for m in sender.sent}
     assert counts == {
-        "admin": "1 approval request(s) waiting for you",
+        "admin": "2 approval request(s) waiting for you",
         "approver": "2 approval request(s) waiting for you",
         "member": "1 approval request(s) waiting for you",
     }

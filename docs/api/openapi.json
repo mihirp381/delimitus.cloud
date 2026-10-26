@@ -3006,7 +3006,7 @@
         "additionalProperties": false,
         "properties": {
           "approver_user_id": {
-            "description": "The org admin who decided, never the requester.",
+            "description": "The org admin who decided, or for `exceed_ceiling` the connection's owner.",
             "pattern": "^usr_[a-z0-9]{20}$",
             "title": "Approver User Id",
             "type": "string"
@@ -3995,7 +3995,7 @@
       },
       "GrantsPending": {
         "additionalProperties": false,
-        "description": "An agent session's change, waiting for another admin. Nothing was applied.",
+        "description": "An agent session's change, waiting for an admin. Nothing was applied.",
         "properties": {
           "approval_ids": {
             "description": "Retry the same change once all are approved.",
@@ -7276,13 +7276,13 @@
         "operationId": "list_approvals_v1_approvals_get",
         "parameters": [
           {
-            "description": "Only the pending requests the caller may decide: not their own; every one for an org admin, else those on connections they own. Empty in an agent session.",
+            "description": "Only the pending requests the caller may decide: every one for an org admin, their own included, else those on connections they own that they did not ask for. Empty in an agent session.",
             "in": "query",
             "name": "inbox",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Only the pending requests the caller may decide: not their own; every one for an org admin, else those on connections they own. Empty in an agent session.",
+              "description": "Only the pending requests the caller may decide: every one for an org admin, their own included, else those on connections they own that they did not ask for. Empty in an agent session.",
               "title": "Inbox",
               "type": "boolean"
             }
@@ -7426,7 +7426,7 @@
         ]
       },
       "post": {
-        "description": "Ask another admin of the org to approve one change to one environment. Allowed to the\nenvironment's builders, its app's owner and org admins, agent sessions included. An\n`exceed_ceiling` request is decided by the named connection's owner or an org admin. A grant\nnaming a user or group the org does not have is `NOT_FOUND`.",
+        "description": "Ask an admin of the org to approve one change to one environment. Allowed to the\nenvironment's builders, its app's owner and org admins, agent sessions included. An\n`exceed_ceiling` request is decided by the named connection's owner or an org admin. A grant\nnaming a user or group the org does not have is `NOT_FOUND`.",
         "operationId": "create_approval_v1_approvals_post",
         "parameters": [
           {
@@ -7810,7 +7810,7 @@
     },
     "/v1/approvals/{approval_id}/decide": {
       "post": {
-        "description": "Approve or reject a request you can see, with a reason. Never in an agent session, never\nyour own request; an org admin, or for `exceed_ceiling` the connection's owner. Approving a\nsharing request applies it once every requirement for that change is approved; approving a\n`connect_data_source` request links its environment. One that no longer fits stays approved\nand says so in `applied`; the requester asks again.",
+        "description": "Approve or reject a request you can see, with a reason. Never in an agent session; an org\nadmin, their own requests included, or for `exceed_ceiling` the connection's owner, not on\ntheir own. Approving a sharing request applies it once every requirement for that change is\napproved; approving a `connect_data_source` request links its environment. One that no\nlonger fits stays approved and says so in `applied`; the requester asks again.",
         "operationId": "decide_as_approver_v1_approvals__approval_id__decide_post",
         "parameters": [
           {
@@ -7950,7 +7950,7 @@
     },
     "/v1/approvals/{approval_id}/decision": {
       "post": {
-        "description": "Record what an org admin decided. Operator credentials only, never in an agent session.\nRefused, in this order: not an operator, an agent session, no such request, already decided,\nthe approver asked for it, the approver is not an active org admin.",
+        "description": "Record what an org admin decided. Operator credentials only, never in an agent session.\nRefused, in this order: not an operator, an agent session, no such request, already decided,\nthe approver is not an active org admin.",
         "operationId": "decide_approval_v1_approvals__approval_id__decision_post",
         "parameters": [
           {

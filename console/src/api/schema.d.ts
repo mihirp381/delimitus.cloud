@@ -121,7 +121,7 @@ export interface paths {
         put?: never;
         /**
          * Create Approval
-         * @description Ask another admin of the org to approve one change to one environment. Allowed to the
+         * @description Ask an admin of the org to approve one change to one environment. Allowed to the
          *     environment's builders, its app's owner and org admins, agent sessions included. An
          *     `exceed_ceiling` request is decided by the named connection's owner or an org admin. A grant
          *     naming a user or group the org does not have is `NOT_FOUND`.
@@ -186,11 +186,11 @@ export interface paths {
         put?: never;
         /**
          * Decide As Approver
-         * @description Approve or reject a request you can see, with a reason. Never in an agent session, never
-         *     your own request; an org admin, or for `exceed_ceiling` the connection's owner. Approving a
-         *     sharing request applies it once every requirement for that change is approved; approving a
-         *     `connect_data_source` request links its environment. One that no longer fits stays approved
-         *     and says so in `applied`; the requester asks again.
+         * @description Approve or reject a request you can see, with a reason. Never in an agent session; an org
+         *     admin, their own requests included, or for `exceed_ceiling` the connection's owner, not on
+         *     their own. Approving a sharing request applies it once every requirement for that change is
+         *     approved; approving a `connect_data_source` request links its environment. One that no
+         *     longer fits stays approved and says so in `applied`; the requester asks again.
          */
         post: operations["decide_as_approver_v1_approvals__approval_id__decide_post"];
         delete?: never;
@@ -212,7 +212,7 @@ export interface paths {
          * Decide Approval
          * @description Record what an org admin decided. Operator credentials only, never in an agent session.
          *     Refused, in this order: not an operator, an agent session, no such request, already decided,
-         *     the approver asked for it, the approver is not an active org admin.
+         *     the approver is not an active org admin.
          */
         post: operations["decide_approval_v1_approvals__approval_id__decision_post"];
         delete?: never;
@@ -2730,7 +2730,7 @@ export interface components {
         DecisionIn: {
             /**
              * Approver User Id
-             * @description The org admin who decided, never the requester.
+             * @description The org admin who decided, or for `exceed_ceiling` the connection's owner.
              */
             approver_user_id: string;
             /**
@@ -3107,7 +3107,7 @@ export interface components {
         };
         /**
          * GrantsPending
-         * @description An agent session's change, waiting for another admin. Nothing was applied.
+         * @description An agent session's change, waiting for an admin. Nothing was applied.
          */
         GrantsPending: {
             /**
@@ -4678,7 +4678,7 @@ export interface operations {
     list_approvals_v1_approvals_get: {
         parameters: {
             query?: {
-                /** @description Only the pending requests the caller may decide: not their own; every one for an org admin, else those on connections they own. Empty in an agent session. */
+                /** @description Only the pending requests the caller may decide: every one for an org admin, their own included, else those on connections they own that they did not ask for. Empty in an agent session. */
                 inbox?: boolean;
                 state?: ("pending" | "approved" | "denied" | "cancelled") | null;
                 environment_id?: string | null;

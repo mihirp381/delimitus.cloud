@@ -308,6 +308,7 @@ def test_who_may_decide_an_exceed_request() -> None:
         check_decider(owner, owner, "member", True, False, connection_owner_id=owner)
         == "self_approval"
     )
+    assert check_decider(owner, owner, "admin", True, False, connection_owner_id=owner) is None
     assert (
         check_decider(requester, owner, "member", True, True, connection_owner_id=owner)
         == "agent_session"
@@ -684,7 +685,6 @@ def test_only_the_owner_or_an_admin_decides_an_exceed_request(
     wide = [*before, ORG_GRANT]
     apr = ask_exceed(client, tokens.admin, world, wide)
     refusals = [
-        (world.admin, tokens.operator, ErrorCode.SELF_APPROVAL_REFUSED),
         (world.member, tokens.operator_agent, ErrorCode.AGENT_SESSION_REFUSED),
         (world.builder, tokens.operator, ErrorCode.APPROVER_NOT_ELIGIBLE),
         (world.retired, tokens.operator, ErrorCode.APPROVER_NOT_ELIGIBLE),
@@ -692,6 +692,19 @@ def test_only_the_owner_or_an_admin_decides_an_exceed_request(
     for approver, token, code in refusals:
         assert_problem(decide_as(client, tokens, apr, approver, token), code)
     assert decide_as(client, tokens, apr, world.member).status_code == 200
+
+
+def test_the_owner_may_not_decide_their_own_exceed_request_but_an_admin_may(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    group = add_group(dsns.app, world, [world.member])
+    finance(client, world, tokens, ceiling_doc(("group", group)), owner=world.builder)
+    before, _ = prod_grants(client, world, tokens)
+    owns = ask_exceed(client, tokens.builder, world, [*before, ORG_GRANT])
+    assert_problem(decide_as(client, tokens, owns, world.builder), ErrorCode.SELF_APPROVAL_REFUSED)
+    assert decide_as(client, tokens, owns, world.approver).status_code == 200
+    mine = ask_exceed(client, tokens.admin, world, [*before, user_grant(world.approver)])
+    assert decide_as(client, tokens, mine, world.admin).status_code == 200
 
 
 def test_an_admin_decides_an_exceed_request_and_a_plain_request_still_needs_one(

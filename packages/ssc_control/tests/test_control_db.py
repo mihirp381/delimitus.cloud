@@ -750,7 +750,7 @@ def test_audit_log_is_append_only(dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg])
     assert refused(dsns.migrate, a.org, "truncate ssc.audit_head") == SqlState.TRUNCATE_REFUSED
 
 
-def test_approvals_need_another_person_and_never_an_agent(dsns: Dsns) -> None:
+def test_approvals_never_come_from_an_agent(dsns: Dsns) -> None:
     org = make_org(dsns.app, "Approvals")
     insert = (
         "insert into ssc.approval_request (id, org_id, environment_id, kind, subject_key, "
@@ -765,8 +765,7 @@ def test_approvals_need_another_person_and_never_an_agent(dsns: Dsns) -> None:
         at = "2026-09-28T00:00:00Z"
         kind = "connect_data_source"
         bad = (
-            (kind, "approved", me, at, False, "approval_request_not_self"),
-            (kind, "denied", me, at, False, "approval_request_not_self"),
+            (kind, "approved", me, at, True, "approval_request_decided_via_agent_check"),
             (kind, "approved", approver, at, True, "approval_request_decided_via_agent_check"),
             (kind, "pending", approver, at, False, None),  # pending with a decider
             (kind, "approved", approver, None, False, None),  # approved without a time
@@ -782,6 +781,10 @@ def test_approvals_need_another_person_and_never_an_agent(dsns: Dsns) -> None:
                 assert e.value.diag.constraint_name == constraint
         ok = (new_id("apr"), org.org_id, env, kind, me, "approved", approver, at, False, "Yes.")
         conn.execute(insert, ok)
+        # Since 0041 the requester's own decision is stored; check_decider limits it to admins.
+        for state in ("approved", "denied"):
+            own = (new_id("apr"), org.org_id, env, kind, me, state, me, at, False, "Mine.")
+            conn.execute(insert, own)
         # The requester may withdraw their own request.
         mine = (new_id("apr"), org.org_id, env, kind, me, "cancelled", me, at, False, "Withdrawn.")
         conn.execute(insert, mine)
