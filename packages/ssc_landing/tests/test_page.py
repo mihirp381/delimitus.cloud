@@ -119,7 +119,7 @@ def test_the_cost_card_shows_the_default_total() -> None:
 
 
 def test_the_agent_is_never_shown_approving() -> None:
-    """An agent asks; another admin approves (SSC-045, SSC-048). The copy must not say otherwise."""
+    """An agent asks; an org admin approves (SSC-045, SSC-048). The copy must not say otherwise."""
     text = _text_without_styles()
     assert "waiting for IT" in text
     assert "an agent can never approve a request" in text
@@ -282,4 +282,5 @@ def test_every_approval_names_who_approves() -> None:
         r"(?i)\b(once|after) IT approved|connections IT approved|lead approves", text
     )
     assert "Only an admin can approve" not in text
-    assert text.count("another admin of your company") >= 5
+    assert not re.search(r"(?i)\b(another|a second|a different) admin", text)
+    assert text.lower().count("an admin of your company") == 7
