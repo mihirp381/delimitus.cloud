@@ -191,7 +191,9 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
 test('an org admin sees every screen and the admin actions', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', adminToken);
-  await expect(nav(page)).toHaveText([...EVERYONE, ...ADMIN_ONLY, HELP]);
+  await expect(nav(page)).toHaveText(
+    [...EVERYONE, ...ADMIN_ONLY, HELP].map((name) => (name === 'Approvals' ? /^Approvals(\d+\+?)?$/ : name)),
+  );
   // Eight links: every one is on show, the sidebar does not hide one below the fold.
   await expect(nav(page).first()).toBeInViewport({ ratio: 1 });
   await expect(nav(page).last()).toBeInViewport({ ratio: 1 });

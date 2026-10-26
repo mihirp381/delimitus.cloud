@@ -43,6 +43,13 @@ test('an admin may decide their own request; the audit log filters and exports',
   await row.getByRole('link', { name: 'Open' }).click();
   await expect(page.getByRole('button', { name: /approve|reject/i })).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Withdraw this request' })).toBeVisible();
+  const decision = page.getByRole('form', { name: 'Decide this request' });
+  await decision.getByLabel('Reason').fill('No warehouse in the dev stack');
+  await decision.getByRole('button', { name: 'Reject' }).click();
+  await expect(page.getByRole('status').getByText('Rejected. The requester has been told why.')).toBeVisible();
+  await expect(page.getByText(/^Rejected by /)).toBeVisible();
+  await expect(page.getByText('“No warehouse in the dev stack”')).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Decide this request' })).toHaveCount(0);
 
   // The audit log finds the request by action and target.
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Audit log' }).click();
