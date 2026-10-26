@@ -18,6 +18,7 @@ Brief checks:
   * MCP refuses a user-audience token and /v1
     an MCP-audience token from outside        -> test_an_mcp_client_signs_in_and_calls_the_...
   * CORS for the console origin only          -> test_only_the_console_origin_calls_token_...
+  * org and invite hints, one console miss    -> test_an_org_hint_goes_straight_to_workos, ...
 """
 
 import base64
@@ -40,12 +41,13 @@ from test_auth_host import AUTH, SECRET, Rig, client_for, onward, settings
 from test_identity import FOUNDER_IDP, OPERATOR, World, new_world
 
 from ssc_contracts.audit import AuditAction
+from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
 from ssc_control.api.auth import Verifier
 from ssc_control.api.problems import Refusal
 from ssc_control.api.settings import USER_AUDIENCE
 from ssc_control.db import bound_org
-from ssc_control.identity import authorize, connections, oauth, pages, tokens
+from ssc_control.identity import authorize, connections, invites, oauth, pages, tokens
 from ssc_control.identity import jobs as identity_jobs
 from ssc_control.identity.authhost import AuthHost
 from ssc_control.identity.cell_callers import DevCallers
@@ -57,6 +59,12 @@ MCP = f"{API}/mcp"
 CONSOLE = "https://console.test"
 CONSOLE_CALLBACK = f"{CONSOLE}/auth/callback"
 REDIRECT = "http://127.0.0.1:43117/callback"
+CONSOLE_CLIENT = {
+    "client_id": oauth.CONSOLE_CLIENT_ID,
+    "redirect_uri": CONSOLE_CALLBACK,
+    "resource": USER_AUDIENCE,
+}
+SESSION_COOKIE = "__Host-ssc-auth="
 STATE = "st-123"
 EMAIL = "ada@acme.example"
 _AGE_CLIENT = text(
@@ -297,8 +305,10 @@ async def test_a_signed_in_browser_skips_the_email_step(rig: OAuthRig) -> None:
 async def test_the_console_signs_in_without_consent(rig: OAuthRig) -> None:
     verifier, challenge = pkce()
     console = {"client_id": oauth.CONSOLE_CLIENT_ID, "redirect_uri": CONSOLE_CALLBACK}
-    page = await rig.authorize(challenge=challenge, resource=USER_AUDIENCE, **console)
-    back = await rig.through_workos(await rig.email(page))
+    page = await rig.authorize(
+        challenge=challenge, resource=USER_AUDIENCE, org=rig.w.org, **console
+    )
+    back = await rig.through_workos(page)
     assert back.status_code == 302, back.text
     assert back.headers["location"].startswith(f"{CONSOLE_CALLBACK}?")
     answer = query(back.headers["location"])
@@ -511,6 +521,194 @@ async def test_an_expired_code_is_refused(rig: OAuthRig) -> None:
     )
     r = await rig.token(client_id, code, verifier)
     assert (r.status_code, r.json()) == (400, {"error": "invalid_grant"})
+
+
+# ── org and invite hints (decision 029 amendment of 2026-10-26) ──────────────
+
+
+def hint(**params: str) -> dict[str, str]:
+    return {
+        "response_type": "code",
+        "state": STATE,
+        "code_challenge": pkce()[1],
+        "code_challenge_method": "S256",
+        **CONSOLE_CLIENT,
+        **params,
+    }
+
+
+async def at_console(rig: OAuthRig, address: str = "10.9.0.1", **params: str) -> httpx2.Response:
+    return await rig.http.get("/authorize", params=hint(**params), headers=forwarded(address))
+
+
+def no_sign_in(r: httpx2.Response) -> tuple[object, ...]:
+    assert r.status_code == 302, r.text
+    assert r.headers["location"].startswith(f"{CONSOLE_CALLBACK}?")
+    assert query(r.headers["location"]) == {
+        "error": "access_denied",
+        "error_description": "no_sign_in",
+        "state": STATE,
+        "iss": AUTH,
+    }
+    assert "set-cookie" not in r.headers
+    return r.status_code, r.headers["location"], tuple(sorted(r.headers.items())), r.content
+
+
+def cookies(r: httpx2.Response) -> list[str]:
+    return r.headers.get_list("set-cookie")
+
+
+async def new_invite(rig: OAuthRig, max_uses: int = 5) -> tuple[invites.Invite, str]:
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        return await invites.create(
+            conn, rig.w.org, expires_in=86400, max_uses=max_uses, note=None, actor=OPERATOR
+        )
+
+
+async def uses(rig: OAuthRig, invite_id: str) -> int:
+    (row,) = await rig.w.rows("select uses from ssc.pilot_invite where id = :id", id=invite_id)
+    return int(row[0])
+
+
+async def test_an_org_hint_goes_straight_to_workos(rig: OAuthRig) -> None:
+    r = await at_console(rig, org=rig.w.org)
+    assert r.status_code == 302
+    location = r.headers["location"]
+    assert location.startswith("https://workos.test/sso/authorize")
+    assert query(location)["organization"] == rig.w.wo.organization
+    back = await rig.through_workos(r)
+    assert back.headers["location"].startswith(f"{CONSOLE_CALLBACK}?")
+    assert "code" in query(back.headers["location"])
+    assert any(c.startswith(SESSION_COOKIE) for c in cookies(back))
+
+
+async def test_every_console_miss_is_one_answer(rig: OAuthRig) -> None:
+    other = new_id("org")
+    misses = [
+        await at_console(rig),
+        await at_console(rig, org=other),
+        await at_console(rig, org="org_short"),
+        await at_console(rig, org="acme"),
+        await at_console(rig, org=""),
+        await at_console(rig, invite="inv_" + "a" * 16),
+        await at_console(rig, invite="inv_short"),
+        await at_console(rig, invite="INV_" + "A" * 16),
+    ]
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        assert await connections.freeze(conn, rig.w.org, "operator", actor=OPERATOR)
+    misses.append(await at_console(rig, org=rig.w.org))
+    assert len({no_sign_in(r) for r in misses}) == 1
+
+
+async def test_a_registered_client_keeps_the_email_step(rig: OAuthRig) -> None:
+    client_id = await rig.register()
+    page = await rig.authorize(client_id, pkce()[1])
+    assert page.status_code == 200 and "work email" in page.text
+    for params in ({"org": new_id("org")}, {"org": "nonsense"}, {"invite": "inv_" + "b" * 16}):
+        miss = await rig.authorize(client_id, pkce()[1], **params)
+        assert miss.status_code == 200 and "work email" in miss.text, params
+    _, code = await new_invite(rig)
+    invited = await rig.authorize(client_id, pkce()[1], invite=code)
+    assert invited.status_code == 200 and "work email" in invited.text, "invites are the console's"
+    hit = await rig.authorize(client_id, pkce()[1], org=rig.w.org)
+    assert onward(hit).startswith("https://workos.test/sso/authorize")
+    consent = await rig.through_workos(hit)
+    assert consent.status_code == 200 and "answer_token" in consent.text
+    approved = await rig.consent(consent)
+    assert approved.status_code == 302
+    for r in (consent, approved):
+        assert not any(c.startswith(SESSION_COOKIE) for c in cookies(r)), "the console's alone"
+
+
+async def test_a_console_session_skips_the_hint_until_it_is_revoked(rig: OAuthRig) -> None:
+    verifier, challenge = pkce()
+    back = await rig.through_workos(await at_console(rig, org=rig.w.org, code_challenge=challenge))
+    got = await rig.token(
+        code=query(back.headers["location"])["code"],
+        verifier=verifier,
+        client_id=oauth.CONSOLE_CLIENT_ID,
+        redirect_uri=CONSOLE_CALLBACK,
+        resource=USER_AUDIENCE,
+    )
+    assert got.status_code == 200, got.text
+    again = await at_console(rig, org=new_id("org"))
+    assert onward(again).startswith("https://workos.test/sso/authorize"), "the cookie names the org"
+    assert (await at_console(rig)).status_code == 302
+    await rig.http.post("/revoke", data={"token": got.json()["refresh_token"]})
+    no_sign_in(await at_console(rig))
+
+
+async def test_an_invite_leads_to_its_org_and_counts_once_signed_in(rig: OAuthRig) -> None:
+    invite, code = await new_invite(rig)
+    r = await at_console(rig, invite=code)
+    assert query(onward(r))["organization"] == rig.w.wo.organization
+    assert await uses(rig, invite.id) == 0
+    assert await rig.w.audit(AuditAction.INVITE_USED) == []
+    back = await rig.through_workos(r)
+    assert "code" in query(back.headers["location"])
+    assert await uses(rig, invite.id) == 1
+    ((kind, target, body),) = await rig.w.audit(AuditAction.INVITE_USED)
+    (sid,) = await rig.w.rows(
+        "select id from ssc.auth_session where org_id = :org and kind = 'console'"
+    )
+    assert (kind, target) == ("pilot_invite", invite.id)
+    assert body == {"session_id": sid[0], "client_id": oauth.CONSOLE_CLIENT_ID}
+    (created,) = await rig.w.audit(AuditAction.INVITE_CREATED)
+    assert created[1] == invite.id and created[2]["max_uses"] == 5
+
+
+async def test_an_expired_used_up_or_revoked_invite_is_a_miss(rig: OAuthRig) -> None:
+    expired, expired_code = await new_invite(rig)
+    await rig.w.rows(
+        "update ssc.pilot_invite set created_at = now() - interval '2 days', "
+        "expires_at = now() - interval '1 day' where id = :id",
+        id=expired.id,
+    )
+    once, once_code = await new_invite(rig, max_uses=1)
+    await rig.through_workos(await at_console(rig, invite=once_code))
+    rig.http.cookies.clear()
+    revoked, revoked_code = await new_invite(rig)
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        await invites.revoke(conn, revoked.id, actor=OPERATOR)
+    answers = {
+        no_sign_in(await at_console(rig, invite=c))
+        for c in (expired_code, once_code, revoked_code, invites.new_code())
+    }
+    assert len(answers) == 1
+    assert [await uses(rig, i.id) for i in (expired, once, revoked)] == [0, 1, 0]
+    assert len(await rig.w.audit(AuditAction.INVITE_REVOKED)) == 1
+
+
+async def test_an_invite_revoked_during_sign_in_opens_no_session(rig: OAuthRig) -> None:
+    invite, code = await new_invite(rig)
+    r = await at_console(rig, invite=code)
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        await invites.revoke(conn, invite.id, actor=OPERATOR)
+    no_sign_in_back = await rig.through_workos(r)
+    assert query(no_sign_in_back.headers["location"])["error_description"] == "no_sign_in"
+    assert not any(c.startswith(SESSION_COOKIE) for c in cookies(no_sign_in_back))
+    opened = await rig.w.rows("select count(*) from ssc.auth_session where org_id = :org")
+    assert opened[0][0] == 0
+    assert await rig.w.audit(AuditAction.INVITE_USED) == []
+
+
+async def test_hints_are_limited_per_address(rig: OAuthRig) -> None:
+    for _ in range(60):
+        assert (await at_console(rig, "10.8.0.1", org=new_id("org"))).status_code == 302
+    limited = await at_console(rig, "10.8.0.1", org=rig.w.org)
+    assert no_sign_in(limited) == no_sign_in(await at_console(rig, "10.8.0.9"))
+    client_id = await rig.register()
+    over = await rig.http.get(
+        "/authorize",
+        params=hint(client_id=client_id, redirect_uri=REDIRECT, resource=MCP, org=rig.w.org),
+        headers=forwarded("10.8.0.1"),
+    )
+    assert (over.status_code, over.text) == (429, pages.TOO_MANY)
+    _, code = await new_invite(rig)
+    for _ in range(20):
+        no_sign_in(await at_console(rig, "10.8.1.1", invite=invites.new_code()))
+    no_sign_in(await at_console(rig, "10.8.1.1", invite=code))
+    assert onward(await at_console(rig, "10.8.1.2", invite=code)).startswith("https://workos.test")
 
 
 # ── finding the org ──────────────────────────────────────────────────────────

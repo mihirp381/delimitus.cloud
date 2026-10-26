@@ -5,7 +5,8 @@ instance.
 twenty tries an hour per address and twenty per email domain, because each try asks WorkOS and
 looks the organisation up across every org (decision 029). ``/device/authorize`` takes thirty
 command-line logins an hour per address, as each one stores a device code. ``/ci-tokens`` takes
-ten CI tokens an hour per person (GA-7.7).
+ten CI tokens an hour per person (GA-7.7). ``GET /authorize`` with an ``org`` hint takes sixty an
+hour per address, and with an ``invite`` code twenty (decision 029 amendment of 2026-10-26).
 
 Sign-in (decision 024 amendment of 2026-10-19), each counted before the route reads the
 database or calls WorkOS:
@@ -38,6 +39,8 @@ LOAD_BALANCER_HOPS: Final = 2
 """The client is the second entry from the right of ``X-Forwarded-For``."""
 REGISTER_PER_HOUR: Final = 10
 EMAIL_PER_HOUR: Final = 20
+ORG_HINT_PER_HOUR: Final = 60
+INVITE_PER_HOUR: Final = 20
 DEVICE_PER_HOUR: Final = 30
 """Command-line logins (``/device/authorize``) an address may start an hour."""
 CI_TOKENS_PER_HOUR: Final = 10

@@ -10,14 +10,18 @@
   ``code_challenge`` (``plain`` is refused) and the ``resource`` (RFC 8707): the MCP endpoint for
   a registered client, the API's user audience for the console. Anything wrong from here on goes
   back to the client as ``error`` with ``state`` and ``iss`` (RFC 9207).
-* Which org: a live auth-host session cookie names it; otherwise the person types a work email.
-  Its domain is looked up in WorkOS (verified domains only) and the WorkOS organisation in
-  ``ssc.org_for_workos_organization``, which answers only for an active connection. Every miss,
-  whatever the reason, gets ``pages.NO_SIGN_IN`` by the same path. Twenty tries an hour per
-  address and per domain.
+* Which org: a live auth-host session cookie names it; else an ``org`` hint (an org id), or for
+  the console an ``invite`` code (``identity.invites``), names one with an active connection.
+  The console gets every miss back as ``access_denied`` with ``error_description=no_sign_in``,
+  whatever the reason. A registered client with no hit gets the work-email step: the domain is
+  looked up in WorkOS (verified domains only) and the WorkOS organisation in
+  ``ssc.org_for_workos_organization``, which answers only for an active connection; every miss
+  gets ``pages.NO_SIGN_IN`` by the same path. Twenty emails an hour per address and per domain;
+  sixty ``org`` hints and twenty ``invite`` codes an hour per address.
 * WorkOS single sign-on through ``/callback``, the pending request riding in the sealed login
   cookie (``flow: oauth``). Then :meth:`OAuthFlow.finish`: the console goes straight back with a
-  code; a registered client first gets a consent page (``POST /authorize/consent``, answered
+  code and the auth-host session cookie, counting the invite's use if one led here; a registered
+  client first gets a consent page (``POST /authorize/consent``, answered
   only with the sealed answer token and the consent cookie it is bound to).
 * ``/token`` with ``authorization_code``: :meth:`OAuthFlow.code_token`. A code works once; a code
   presented again revokes the session it opened (``code_reuse``) and is audited.
@@ -46,9 +50,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.db import bound_org, check_org_id
-from ssc_control.identity import connections, oauth, pages, sessions, tokens
+from ssc_control.identity import connections, invites, oauth, pages, sessions, tokens
 from ssc_control.identity.limits import (
     EMAIL_PER_HOUR,
+    INVITE_PER_HOUR,
+    ORG_HINT_PER_HOUR,
     REGISTER_PER_HOUR,
     RateLimit,
     client_address,
@@ -71,6 +77,8 @@ _NO_ORGANIZATION: Final = "org_none"
 _DOMAIN: Final = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}")
 _FIND_ORG = text("select ssc.org_for_workos_organization(:workos)")
 _ORG_NAME = text("select name from ssc.org where id = :org")
+NO_SIGN_IN: Final = {"error": "access_denied", "error_description": "no_sign_in"}
+"""The console's one answer for every miss (decision 029)."""
 
 
 class Seals(Protocol):
@@ -228,6 +236,8 @@ class OAuthFlow:
         self._registrations = RateLimit(kit.clock, REGISTER_PER_HOUR)
         self._emails_by_address = RateLimit(kit.clock, EMAIL_PER_HOUR)
         self._emails_by_domain = RateLimit(kit.clock, EMAIL_PER_HOUR)
+        self._org_hints = RateLimit(kit.clock, ORG_HINT_PER_HOUR)
+        self._invite_codes = RateLimit(kit.clock, INVITE_PER_HOUR)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -287,13 +297,41 @@ class OAuthFlow:
                 if found is not None:
                     break
             await conn.rollback()
-        if found is None:
-            return None
-        async with bound_org(self._kit.engine, found) as conn:
-            connection = await connections.load(conn, found)
+        return None if found is None else await self._active(found)
+
+    async def _active(self, org_id: str) -> connections.DirectoryConnection | None:
+        async with bound_org(self._kit.engine, org_id) as conn:
+            connection = await connections.load(conn, org_id)
         if connection is None or connection.frozen:
             return None
         return connection
+
+    async def _hinted(  # noqa: PLR0911  (one answer per check)
+        self, request: Request, *, console: bool
+    ) -> tuple[connections.DirectoryConnection | None, str | None] | None:
+        """The org an ``org`` hint or, for the console, an ``invite`` code names: its active
+        connection (or None) and the invite id; None when over the limit."""
+        q, address = request.query_params, self._address(request)
+        if "org" in q:
+            if not self._org_hints.allow(address):
+                return None
+            org_id = _org(q["org"])
+            return (None if org_id is None else await self._active(org_id)), None
+        if not console or "invite" not in q:
+            return None, None
+        if not self._invite_codes.allow(address):
+            return None
+        code = q["invite"]
+        if not invites.CODE.fullmatch(code):
+            return None, None
+        async with self._kit.engine.connect() as conn:
+            found = await invites.find(conn, code)
+            await conn.rollback()
+        if found is None:
+            return None, None
+        invite_id, org_id = found
+        connection = await self._active(org_id)
+        return connection, (invite_id if connection is not None else None)
 
     async def _approve(  # noqa: PLR0913  (keyword-only)
         self,
@@ -378,6 +416,11 @@ class OAuthFlow:
         if client is None or not oauth.allowed_redirect(client, pending["redirect_uri"]):
             return self._html(pages.UNKNOWN_CLIENT, 400)
         if client.first_party:
+            invite_id = str(login.get("invite") or "")
+            if invite_id and not await invites.claim(conn, org_id, invite_id):
+                return self._back(
+                    pending["redirect_uri"], {**NO_SIGN_IN, "state": pending["state"]}
+                )
             session_id = await sessions.open_session(
                 conn,
                 org_id,
@@ -386,9 +429,25 @@ class OAuthFlow:
                 connection_id=connection_id,
                 actor=Actor(ActorKind.USER, user_id),
             )
-            return await self._approve(
+            if invite_id:
+                await invites.audit_use(
+                    conn,
+                    org_id,
+                    invite_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    client_id=client.client_id,
+                )
+            response = await self._approve(
                 conn, org_id, user_id=user_id, session_id=session_id, client=client, pending=pending
             )
+            remembered = kit.sealer.seal(
+                "session",
+                {"org": org_id, "sid": session_id},
+                self._now() + sessions.SESSION_SECONDS,
+            )
+            kit.set_cookie(response, kit.session_cookie, remembered, sessions.SESSION_SECONDS)
+            return response
         nonce = secrets.token_urlsafe(24)
         answer = kit.sealer.seal(
             "consent",
@@ -568,6 +627,17 @@ class OAuthFlow:
                 return kit.to_workos(
                     connection, {"flow": "oauth", "org": connection.org_id, **pending}
                 )
+            hinted = await self._hinted(request, console=client.first_party)
+            connection, invite_id = hinted or (None, None)
+            if connection is not None:
+                login = {"flow": "oauth", "org": connection.org_id, **pending}
+                return kit.to_workos(
+                    connection, login | ({"invite": invite_id} if invite_id else {})
+                )
+            if client.first_party:
+                return self._back(redirect_uri, {**NO_SIGN_IN, "state": state})
+            if hinted is None:
+                return self._html(pages.TOO_MANY, 429)
             sealed = kit.sealer.seal("authorize", pending, self._now() + AUTHORIZE_SECONDS)
             return self._html(pages.work_email(sealed))
 
