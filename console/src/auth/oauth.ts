@@ -15,6 +15,10 @@ export const API_AUDIENCE: string =
   import.meta.env.VITE_SSC_API_AUDIENCE || 'https://api.delimitus.com';
 /** Where a sign-in in progress waits for its callback. */
 export const PENDING_KEY = 'ssc.console.oauth';
+/** The last organisation id or invite code entered, in localStorage. */
+export const HINT_KEY = 'ssc.signInHint';
+export const ORG_ID = /^org_[a-z0-9]{20}$/;
+export const INVITE_CODE = /^inv_[a-z0-9]{16}$/;
 
 export interface OAuthConfig {
   readonly authUrl: string;
@@ -41,8 +45,11 @@ export interface Refresher {
 }
 
 export interface OAuthClient extends Refresher {
-  /** Sends the browser to the auth host; `next` is the same-site path to come back to. */
-  signIn(next?: string): Promise<void>;
+  /**
+   * Sends the browser to the auth host; `next` is the same-site path to come back to, `hint` an
+   * organisation id or invite code naming the sign-in.
+   */
+  signIn(next?: string, hint?: string): Promise<void>;
   /** Checks the callback's query and exchanges its code; throws `SignInError` on any mismatch. */
   complete(search: string): Promise<{ tokens: TokenSet; next: string }>;
 }
@@ -50,6 +57,48 @@ export interface OAuthClient extends Refresher {
 /** A sign-in that did not finish; the message is safe to show. */
 export class SignInError extends Error {
   override name = 'SignInError';
+}
+
+export const NO_SIGN_IN_MESSAGE =
+  'We could not find a sign-in for that organisation or code. Check it and try again.';
+
+/** The auth host found no sign-in for the organisation id or invite code. */
+export class NoSignIn extends SignInError {
+  override name = 'NoSignIn';
+  readonly next: string;
+  constructor(next: string) {
+    super(NO_SIGN_IN_MESSAGE);
+    this.next = next;
+  }
+}
+
+export function isSignInHint(value: string): boolean {
+  return ORG_ID.test(value) || INVITE_CODE.test(value);
+}
+
+function hints(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readHint(): string {
+  try {
+    return hints()?.getItem(HINT_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function keepHint(value: string | null): void {
+  try {
+    if (value === null) hints()?.removeItem(HINT_KEY);
+    else hints()?.setItem(HINT_KEY, value);
+  } catch {
+    // Blocked storage: the hint is typed again next time.
+  }
 }
 
 /** What to show for a sign-in that failed: its own message, or that the auth host was not reached. */
@@ -156,7 +205,7 @@ export function createOAuth(config: OAuthConfig): OAuthClient {
   }
 
   return {
-    async signIn(next = '/') {
+    async signIn(next = '/', hint) {
       const { verifier, challenge } = await newPkce();
       const state = randomString(32);
       const pending: Pending = { verifier, state, next };
@@ -170,6 +219,7 @@ export function createOAuth(config: OAuthConfig): OAuthClient {
         code_challenge_method: 'S256',
         resource: config.audience,
       });
+      if (hint) query.set(INVITE_CODE.test(hint) ? 'invite' : 'org', hint);
       go(`${config.authUrl}/authorize?${query.toString()}`);
     },
 
@@ -184,6 +234,9 @@ export function createOAuth(config: OAuthConfig): OAuthClient {
         throw new SignInError('This answer did not come from the SSC auth host.');
       }
       const error = q.get('error');
+      if (error === 'access_denied' && q.get('error_description') === 'no_sign_in') {
+        throw new NoSignIn(pending.next);
+      }
       if (error === 'access_denied') throw new SignInError('Sign-in was cancelled.');
       if (error) throw new SignInError(`Sign-in did not finish (${error}).`);
       const code = q.get('code');

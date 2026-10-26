@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
-import { safeNext, signInMessage } from '../auth/oauth';
+import { keepHint, NoSignIn, safeNext, signInMessage } from '../auth/oauth';
 import { Brand, BrandRule } from '../components/Brand';
 
 /**
@@ -29,7 +29,19 @@ function Callback() {
         session.start(tokens);
         router.history.replace(safeNext(next) ?? '/');
       },
-      (e: unknown) => setError(signInMessage(e)),
+      (e: unknown) => {
+        if (!(e instanceof NoSignIn)) {
+          setError(signInMessage(e));
+          return;
+        }
+        keepHint(null);
+        const next = safeNext(e.next);
+        void router.navigate({
+          to: '/login',
+          search: { error: 'no_sign_in', ...(next && next !== '/' ? { next } : {}) },
+          replace: true,
+        });
+      },
     );
   }, [oauth, session, queryClient, router]);
 
@@ -40,7 +52,7 @@ function Callback() {
         <span className="brand">
           <Brand />
         </span>
-        <h1>Sign in to SSC</h1>
+        <h1>Sign in to Delimitus</h1>
         {error ? (
           <>
             <div className="notice notice-danger" role="alert">

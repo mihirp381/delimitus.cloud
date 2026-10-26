@@ -32,7 +32,7 @@ afterAll(() => {
 describe('dev login in the build output', () => {
   it('is absent from a production build', { timeout: 120_000 }, () => {
     const files = build({});
-    expect(files.some((text) => text.includes('Sign in to SSC'))).toBe(true);
+    expect(files.some((text) => text.includes('Sign in to Delimitus'))).toBe(true);
     expect(files.filter((text) => text.includes(DEV_LOGIN_MARKER))).toEqual([]);
     expect(files.filter((text) => text.includes('tools/dev_stack.py token'))).toEqual([]);
   });
