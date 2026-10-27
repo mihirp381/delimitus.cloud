@@ -1,6 +1,14 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router';
-import { type FormEvent, lazy, Suspense, useState } from 'react';
-import { isSignInHint, keepHint, NO_SIGN_IN_MESSAGE, readHint, safeNext, signInMessage } from '../auth/oauth';
+import { type FormEvent, lazy, Suspense, useEffect, useRef, useState } from 'react';
+import {
+  type AuthorizeForm,
+  isSignInHint,
+  keepHint,
+  NO_SIGN_IN_MESSAGE,
+  readHint,
+  safeNext,
+  signInMessage,
+} from '../auth/oauth';
 import { Brand, BrandRule } from '../components/Brand';
 import { Button } from '../components/Button';
 
@@ -26,6 +34,18 @@ export const Route = createFileRoute('/login')({
   component: LoginPage,
 });
 
+function PostAuthorize({ form }: { form: AuthorizeForm }) {
+  const ref = useRef<HTMLFormElement>(null);
+  useEffect(() => ref.current?.submit(), [form]);
+  return (
+    <form ref={ref} method="post" action={form.action} hidden>
+      {Object.entries(form.fields).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
+    </form>
+  );
+}
+
 function LoginPage() {
   const { api, session, oauth } = Route.useRouteContext();
   const search = Route.useSearch();
@@ -34,6 +54,7 @@ function LoginPage() {
   const router = useRouter();
   const [hint, setHint] = useState(readHint);
   const [busy, setBusy] = useState(false);
+  const [posting, setPosting] = useState<AuthorizeForm | null>(null);
   const [error, setError] = useState<string | null>(
     search.error === 'no_sign_in' ? NO_SIGN_IN_MESSAGE : null,
   );
@@ -50,7 +71,7 @@ function LoginPage() {
     setError(null);
     keepHint(value);
     try {
-      await oauth.signIn(next ?? '/', value);
+      setPosting(await oauth.signIn(next ?? '/', value));
     } catch (e) {
       setError(signInMessage(e));
       setBusy(false);
@@ -62,7 +83,7 @@ function LoginPage() {
       <div className="login-card">
         <BrandRule />
         <span className="brand">
-          <Brand />
+          <Brand name="Delimitus" />
         </span>
         <h1>Sign in to Delimitus</h1>
         {error ? (
@@ -90,6 +111,7 @@ function LoginPage() {
             Continue
           </Button>
         </form>
+        {posting ? <PostAuthorize form={posting} /> : null}
         {DevLogin ? (
           <Suspense fallback={<p className="muted">Loading…</p>}>
             <DevLogin api={api} session={session} onSignedIn={() => router.history.push(next ?? '/')} />

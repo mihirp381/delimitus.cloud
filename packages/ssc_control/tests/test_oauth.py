@@ -30,7 +30,7 @@ import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx2
 import pytest
@@ -541,6 +541,11 @@ async def at_console(rig: OAuthRig, address: str = "10.9.0.1", **params: str) ->
     return await rig.http.get("/authorize", params=hint(**params), headers=forwarded(address))
 
 
+async def posted(rig: OAuthRig, address: str = "10.9.0.1", **params: str) -> httpx2.Response:
+    headers = forwarded(address) | {"sec-fetch-site": "cross-site"}
+    return await rig.http.post("/authorize", data=hint(**params), headers=headers)
+
+
 def no_sign_in(r: httpx2.Response) -> tuple[object, ...]:
     assert r.status_code == 302, r.text
     assert r.headers["location"].startswith(f"{CONSOLE_CALLBACK}?")
@@ -590,14 +595,46 @@ async def test_every_console_miss_is_one_answer(rig: OAuthRig) -> None:
         await at_console(rig, org="org_short"),
         await at_console(rig, org="acme"),
         await at_console(rig, org=""),
-        await at_console(rig, invite="inv_" + "a" * 16),
-        await at_console(rig, invite="inv_short"),
-        await at_console(rig, invite="INV_" + "A" * 16),
+        await posted(rig, invite="inv_" + "a" * 16),
+        await posted(rig, invite="inv_short"),
+        await posted(rig, invite="INV_" + "A" * 16),
     ]
     async with bound_org(rig.w.engine, rig.w.org) as conn:
         assert await connections.freeze(conn, rig.w.org, "operator", actor=OPERATOR)
     misses.append(await at_console(rig, org=rig.w.org))
+    misses.append(await posted(rig, org=rig.w.org))
+    misses.append(await posted(rig, org=other))
+    misses.append(await posted(rig))
     assert len({no_sign_in(r) for r in misses}) == 1
+
+
+async def test_an_org_hint_posted_goes_on_through_a_continue_page(rig: OAuthRig) -> None:
+    r = await posted(rig, org=rig.w.org)
+    assert r.status_code == 200 and "content-security-policy" in r.headers
+    assert query(onward(r))["organization"] == rig.w.wo.organization
+    back = await rig.through_workos(r)
+    assert "code" in query(back.headers["location"])
+
+
+async def test_an_invite_in_a_url_is_a_miss(rig: OAuthRig) -> None:
+    invite, code = await new_invite(rig)
+    assert no_sign_in(await at_console(rig, invite=code)) == no_sign_in(await at_console(rig))
+    assert await uses(rig, invite.id) == 0
+    assert onward(await posted(rig, invite=code)).startswith("https://workos.test")
+
+
+async def test_a_posted_authorize_is_checked_as_get_is(rig: OAuthRig) -> None:
+    for change in ({"code_challenge_method": "plain"}, {"resource": MCP}, {"response_type": "x"}):
+        got, sent = await at_console(rig, **change), await posted(rig, **change)
+        assert (sent.status_code, sent.headers["location"]) == (302, got.headers["location"])
+    unknown = await posted(rig, client_id="nobody")
+    assert (unknown.status_code, unknown.text) == (400, pages.UNKNOWN_CLIENT)
+    twice = await rig.http.post(
+        "/authorize",
+        content=urlencode(hint(org=rig.w.org)) + "&state=again",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert (twice.status_code, twice.text) == (400, pages.UNKNOWN_CLIENT)
 
 
 async def test_a_registered_client_keeps_the_email_step(rig: OAuthRig) -> None:
@@ -640,7 +677,7 @@ async def test_a_console_session_skips_the_hint_until_it_is_revoked(rig: OAuthRi
 
 async def test_an_invite_leads_to_its_org_and_counts_once_signed_in(rig: OAuthRig) -> None:
     invite, code = await new_invite(rig)
-    r = await at_console(rig, invite=code)
+    r = await posted(rig, invite=code)
     assert query(onward(r))["organization"] == rig.w.wo.organization
     assert await uses(rig, invite.id) == 0
     assert await rig.w.audit(AuditAction.INVITE_USED) == []
@@ -665,13 +702,13 @@ async def test_an_expired_used_up_or_revoked_invite_is_a_miss(rig: OAuthRig) -> 
         id=expired.id,
     )
     once, once_code = await new_invite(rig, max_uses=1)
-    await rig.through_workos(await at_console(rig, invite=once_code))
+    await rig.through_workos(await posted(rig, invite=once_code))
     rig.http.cookies.clear()
     revoked, revoked_code = await new_invite(rig)
     async with bound_org(rig.w.engine, rig.w.org) as conn:
         await invites.revoke(conn, revoked.id, actor=OPERATOR)
     answers = {
-        no_sign_in(await at_console(rig, invite=c))
+        no_sign_in(await posted(rig, invite=c))
         for c in (expired_code, once_code, revoked_code, invites.new_code())
     }
     assert len(answers) == 1
@@ -681,7 +718,7 @@ async def test_an_expired_used_up_or_revoked_invite_is_a_miss(rig: OAuthRig) -> 
 
 async def test_an_invite_revoked_during_sign_in_opens_no_session(rig: OAuthRig) -> None:
     invite, code = await new_invite(rig)
-    r = await at_console(rig, invite=code)
+    r = await posted(rig, invite=code)
     async with bound_org(rig.w.engine, rig.w.org) as conn:
         await invites.revoke(conn, invite.id, actor=OPERATOR)
     no_sign_in_back = await rig.through_workos(r)
@@ -693,8 +730,10 @@ async def test_an_invite_revoked_during_sign_in_opens_no_session(rig: OAuthRig) 
 
 
 async def test_hints_are_limited_per_address(rig: OAuthRig) -> None:
-    for _ in range(60):
-        assert (await at_console(rig, "10.8.0.1", org=new_id("org"))).status_code == 302
+    for i in range(60):
+        sent = at_console if i % 2 else posted
+        assert (await sent(rig, "10.8.0.1", org=new_id("org"))).status_code == 302
+    assert no_sign_in(await posted(rig, "10.8.0.1", org=rig.w.org))
     limited = await at_console(rig, "10.8.0.1", org=rig.w.org)
     assert no_sign_in(limited) == no_sign_in(await at_console(rig, "10.8.0.9"))
     client_id = await rig.register()
@@ -706,9 +745,9 @@ async def test_hints_are_limited_per_address(rig: OAuthRig) -> None:
     assert (over.status_code, over.text) == (429, pages.TOO_MANY)
     _, code = await new_invite(rig)
     for _ in range(20):
-        no_sign_in(await at_console(rig, "10.8.1.1", invite=invites.new_code()))
-    no_sign_in(await at_console(rig, "10.8.1.1", invite=code))
-    assert onward(await at_console(rig, "10.8.1.2", invite=code)).startswith("https://workos.test")
+        no_sign_in(await posted(rig, "10.8.1.1", invite=invites.new_code()))
+    no_sign_in(await posted(rig, "10.8.1.1", invite=code))
+    assert onward(await posted(rig, "10.8.1.2", invite=code)).startswith("https://workos.test")
 
 
 # ── finding the org ──────────────────────────────────────────────────────────

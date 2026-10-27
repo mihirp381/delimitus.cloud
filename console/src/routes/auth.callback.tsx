@@ -58,7 +58,7 @@ function Callback() {
       <div className="login-card">
         <BrandRule />
         <span className="brand">
-          <Brand />
+          <Brand name="Delimitus" />
         </span>
         <h1>Sign in to Delimitus</h1>
         {error ? (
