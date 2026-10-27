@@ -388,9 +388,9 @@ describe('admin gating', () => {
         'Approvals',
         'Connections',
         'Internet access',
-        'Your environment',
         'People',
         'Audit log',
+        'Usage',
         'Help',
       ]),
     );

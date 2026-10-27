@@ -242,24 +242,24 @@ a.brand:hover {
   border-top: 1px solid var(--ssc-border-subtle);
 }
 
-.nav-group,
-.nav-foot {
+.nav-group {
   display: grid;
   gap: var(--ssc-space-0);
 }
 
-.nav-foot {
-  margin-top: auto;
+.nav-divider {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--ssc-border-subtle);
 }
 
-.nav-title {
-  padding: var(--ssc-space-1) var(--ssc-space-2);
-  font-size: var(--ssc-type-size-tiny);
-  font-weight: 600;
-  line-height: var(--ssc-type-leading-tight);
-  letter-spacing: var(--ssc-type-tracking-caps);
-  text-transform: uppercase;
-  color: var(--ssc-text-muted);
+.nav-item {
+  display: grid;
+}
+
+.nav-item > * {
+  grid-area: 1 / 1;
 }
 
 .sidenav a {
@@ -301,8 +301,10 @@ a.brand:hover {
 }
 
 .nav-count {
+  align-self: center;
+  justify-self: end;
   min-width: 20px;
-  margin-left: auto;
+  margin-right: var(--ssc-space-2);
   padding: 0 var(--ssc-space-1);
   border-radius: var(--ssc-radius-full);
   font-size: var(--ssc-type-size-tiny);
@@ -312,6 +314,7 @@ a.brand:hover {
   text-align: center;
   color: var(--ssc-feedback-warning);
   background: var(--ssc-feedback-warning-soft);
+  pointer-events: none;
 }
 
 /* Who is signed in, and the menu that opens above it. */

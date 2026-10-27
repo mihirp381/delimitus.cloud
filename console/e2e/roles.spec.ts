@@ -13,7 +13,7 @@ const composeProject = process.env.SSC_E2E_COMPOSE_PROJECT ?? '';
 const composeFile = process.env.SSC_E2E_COMPOSE_FILE ?? '';
 
 const EVERYONE = ['Apps', 'Approvals', 'Connections', 'Internet access'];
-const ADMIN_ONLY = ['Your environment', 'People', 'Audit log'];
+const ADMIN_ONLY = ['People', 'Audit log', 'Usage'];
 const HELP = 'Help';
 const FORBIDDEN = 'Your credential is valid but does not allow this action.';
 
@@ -146,7 +146,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
   await expect(page.getByRole('form', { name: 'Filter events' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Export/ })).toHaveCount(0);
   await page.goto('/environment');
-  await expect(page.getByText('Only org admins can see the environment.')).toBeVisible();
+  await expect(page.getByText('Only org admins can see usage.')).toBeVisible();
   await page.goto('/people');
   await expect(page.getByText('Only org admins can look people up and link logins.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Unmatched logins' })).toHaveCount(0);
@@ -191,10 +191,8 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
 test('an org admin sees every screen and the admin actions', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', adminToken);
-  await expect(nav(page)).toHaveText(
-    [...EVERYONE, ...ADMIN_ONLY, HELP].map((name) => (name === 'Approvals' ? /^Approvals(\d+\+?)?$/ : name)),
-  );
-  // Eight links: every one is on show, the sidebar does not hide one below the fold.
+  await expect(nav(page)).toHaveText([...EVERYONE, ...ADMIN_ONLY, HELP]);
+  // Eight links, the count outside the Approvals link: every one is on show, none below the fold.
   await expect(nav(page).first()).toBeInViewport({ ratio: 1 });
   await expect(nav(page).last()).toBeInViewport({ ratio: 1 });
 
@@ -205,9 +203,9 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   await nav(page).filter({ hasText: 'Audit log' }).click();
   await expect(page.getByRole('form', { name: 'Filter events' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export JSON Lines' })).toBeVisible();
-  await nav(page).filter({ hasText: 'Your environment' }).click();
-  await expect(page.getByRole('heading', { name: 'Your environment' })).toBeVisible();
-  await expect(page.getByText('Only org admins can see the environment.')).toHaveCount(0);
+  await nav(page).filter({ hasText: 'Usage' }).click();
+  await expect(page.getByRole('heading', { name: 'Usage' })).toBeVisible();
+  await expect(page.getByText('Only org admins can see usage.')).toHaveCount(0);
 
   // People: the unmatched logins (none here, every person was pushed by the operator), and a
   // person found by their whole email address.

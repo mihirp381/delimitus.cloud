@@ -62,24 +62,28 @@ function linksIn(group: string): string[] {
     .map((a) => a.textContent ?? '');
 }
 
+function approvals(): HTMLElement {
+  return within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Approvals' });
+}
+
 describe('the shell', () => {
-  it('groups the navigation in a sidebar, with the admin pages for admins only', async () => {
+  it('lists the navigation flat in a sidebar, with the admin pages for admins only', async () => {
     start('/connections', { ...APPS, 'GET /v1/whoami': WHOAMI }, signedIn());
     const nav = await screen.findByRole('navigation', { name: 'Main' });
     await within(nav).findByRole('group', { name: 'Admin' });
-    expect(linksIn('Workspace')).toEqual(['Apps', 'Approvals']);
-    expect(linksIn('Data and network')).toEqual(['Connections', 'Internet access']);
-    expect(linksIn('Admin')).toEqual(['Your environment', 'People', 'Audit log']);
+    expect(linksIn('Admin')).toEqual(['People', 'Audit log', 'Usage']);
     expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
       'Apps',
       'Approvals',
       'Connections',
       'Internet access',
-      'Your environment',
       'People',
       'Audit log',
+      'Usage',
       'Help',
     ]);
+    expect(within(nav).getAllByRole('separator')).toHaveLength(1);
+    expect(nav.querySelector('.nav-title')).toBeNull();
     expect(within(nav).getByRole('link', { name: 'Connections' }).getAttribute('aria-current')).toBe('page');
     expect(within(nav).getByRole('link', { name: 'Apps' }).getAttribute('aria-current')).toBeNull();
     // Every item carries an icon drawn in the page, and none is read out.
@@ -129,9 +133,12 @@ describe('the approvals count', () => {
     const { api } = shell({
       'GET /v1/approvals': inbox([request('apr_1', 'pending'), request('apr_2', 'pending'), request('apr_3', 'approved')]),
     });
-    const link = await screen.findByRole('link', { name: 'Approvals, 2 waiting for you' });
+    await screen.findByRole('link', { name: 'Approvals', description: '2 waiting for you' });
+    const link = approvals();
     expect(link.getAttribute('href')).toBe('/approvals');
-    expect(link.querySelector('.nav-count')?.textContent).toBe('2');
+    expect(link.textContent).toBe('Approvals');
+    expect(link.querySelector('.nav-count')).toBeNull();
+    expect(document.getElementById(link.getAttribute('aria-describedby') ?? '')?.className).toBe('nav-count');
     const reads = api.of('GET', '/v1/approvals');
     expect(reads).toHaveLength(1);
     expect([...reads[0]!.query.entries()]).toEqual([['inbox', 'true']]);
@@ -139,14 +146,15 @@ describe('the approvals count', () => {
 
   it('says when older requests were not counted', async () => {
     shell({ 'GET /v1/approvals': inbox([request('apr_1', 'pending')], 'apr_1') });
-    expect(await screen.findByRole('link', { name: 'Approvals, 1+ waiting for you' })).toBeTruthy();
+    await screen.findByRole('link', { name: 'Approvals', description: '1+ waiting for you' });
   });
 
   it('shows no count when nothing waits', async () => {
     const { api } = shell({ 'GET /v1/approvals': inbox([request('apr_3', 'denied')]) });
     await waitFor(() => expect(api.of('GET', '/v1/approvals')).toHaveLength(1));
     await screen.findByRole('button', { name: /Signed in as/ });
-    expect(screen.getByRole('link', { name: 'Approvals' }).querySelector('.nav-count')).toBeNull();
+    expect(approvals().hasAttribute('aria-describedby')).toBe(false);
+    expect(document.querySelector('.nav-count')).toBeNull();
   });
 
   it('is the same read as the Approvals page: one request, both places', async () => {
@@ -155,7 +163,7 @@ describe('the approvals count', () => {
       '/approvals',
     );
     await screen.findByText('2 requests waiting for you');
-    expect(await screen.findByRole('link', { name: 'Approvals, 2 waiting for you' })).toBeTruthy();
+    await screen.findByRole('link', { name: 'Approvals', description: '2 waiting for you' });
     expect(api.of('GET', '/v1/approvals')).toHaveLength(1);
   });
 });
