@@ -196,7 +196,7 @@ def serve(host: str, port: int) -> None:
             callers=callers,
         )
     )
-    uvicorn.run(app, host=host, port=port, proxy_headers=True, log_level="info")
+    uvicorn.run(app, host=host, port=port, proxy_headers=True, log_level="info", access_log=False)
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -2,15 +2,18 @@
 operator's pilot invite codes, through ``main(argv)`` against postgres:18."""
 
 import hashlib
+import secrets
 
 import psycopg
 import pytest
+import uvicorn
 from ssc_testkit import Dsns, make_org
 
 from ssc_contracts.ids import new_id
 from ssc_control.db import bind_org_sync
 from ssc_control.identity import __main__ as cli
-from ssc_control.identity import invites
+from ssc_control.identity import invites, tokens
+from ssc_control.identity.settings import AuthSettings
 
 OP = "op_dana"
 
@@ -116,3 +119,21 @@ def test_refusals_write_nothing(dsns: Dsns, capsys: Out) -> None:
         assert conn.execute(
             "select count(*) from ssc.pilot_invite where org_id = %s", (org,)
         ).fetchone() == (0,)
+
+
+def test_the_auth_host_writes_no_access_log(dsns: Dsns, monkeypatch: pytest.MonkeyPatch) -> None:
+    s = AuthSettings(
+        database_dsn=dsns.app,
+        workos_api_key="sk_test_fake",
+        workos_client_id="client_fake",
+        signing_pem=tokens.new_signing_pem(),
+        signing_kid="k1",
+        state_key=secrets.token_bytes(32),
+        environment="test",
+        dev_cell_secret=secrets.token_hex(16),
+    )
+    monkeypatch.setattr(AuthSettings, "from_env", staticmethod(lambda: s))
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(uvicorn, "run", lambda _app, **kw: seen.update(kw))
+    cli.serve("127.0.0.1", 0)
+    assert seen["access_log"] is False
