@@ -353,6 +353,7 @@ describe('sign-in screens', () => {
     const { oauth, went } = client();
     mount('/apps/app_aaaaaaaaaaaaaaaaaaaa', oauth);
     expect(await screen.findByRole('heading', { name: 'Sign in to Delimitus' })).toBeTruthy();
+    expect(document.querySelector('.login-card .brand')?.textContent).toBe('Delimitus');
     const field = screen.getByLabelText('Organisation id or invite code');
     expect(field.getAttribute('autocomplete')).toBe('off');
     fireEvent.change(field, { target: { value: `  ${ORG.toUpperCase()} ` } });
@@ -443,6 +444,7 @@ describe('sign-in screens', () => {
     expect(session.token()).toBeNull();
     expect(sent).toEqual([]);
     expect(screen.getByRole('link', { name: 'Try again' })).toBeTruthy();
+    expect(document.querySelector('.login-card .brand')?.textContent).toBe('Delimitus');
   });
 
   describe('a 401 from the whoami poll', () => {
