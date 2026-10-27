@@ -5,6 +5,7 @@ import { INBOX_KEY, inboxPage, waitingCount } from '../api/approvals';
 import { APP_TAB_TITLE, appTab } from '../app-detail/tabs';
 import type { Whoami } from '../auth/admin';
 import { Brand, BrandRule } from '../components/Brand';
+import { Id } from '../components/Copy';
 import { Icon } from '../components/Icon';
 import { PageActionsSlot } from '../components/PageHeader';
 import { Segmented } from '../components/Segmented';
@@ -124,9 +125,9 @@ function AuthedLayout() {
               </button>
             </div>
             {me.data ? (
-              <p className="sidebar-org" title={me.data.org_id}>
+              <p className="sidebar-org">
                 <span className="visually-hidden">Organisation </span>
-                <code>{me.data.org_id}</code>
+                {me.data.org_name ?? 'Your organisation'}
               </p>
             ) : null}
             <nav aria-label="Main" className="sidenav">
@@ -298,6 +299,7 @@ function UserMenu({ me, onSignOut }: { readonly me: Whoami | undefined; readonly
   const button = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const role = me ? (me.role ? ROLE_TEXT[me.role] : me.is_agent ? 'Agent' : 'No role') : null;
+  const who = me?.name ?? 'Your account';
 
   useEffect(() => {
     if (!open) return undefined;
@@ -329,6 +331,15 @@ function UserMenu({ me, onSignOut }: { readonly me: Whoami | undefined; readonly
     >
       {open ? (
         <div id={panelId} className="user-menu" role="group" aria-label="Your account">
+          {me ? (
+            <div className="user-menu-who">
+              <span className="user-menu-name">{who}</span>
+              {me.email ? <span className="user-menu-email">{me.email}</span> : null}
+              <span className="user-menu-org">
+                Organisation id <Id value={me.org_id} label="organisation id" />
+              </span>
+            </div>
+          ) : null}
           <div className="user-menu-row">
             <span className="menu-label" aria-hidden="true">
               Theme
@@ -353,7 +364,7 @@ function UserMenu({ me, onSignOut }: { readonly me: Whoami | undefined; readonly
         ref={button}
         type="button"
         className="user-button"
-        aria-label={me ? `Signed in as ${me.subject}, ${role}` : 'Your account'}
+        aria-label={me ? `Signed in as ${who}, ${role}` : 'Your account'}
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((was) => !was)}
@@ -363,9 +374,7 @@ function UserMenu({ me, onSignOut }: { readonly me: Whoami | undefined; readonly
         </span>
         {me ? (
           <span className="user-text">
-            <span className="user-name" title={me.subject}>
-              <code>{me.subject}</code>
-            </span>
+            <span className="user-name">{who}</span>
             <span className="user-role">{role}</span>
           </span>
         ) : (

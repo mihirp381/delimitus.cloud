@@ -33,6 +33,7 @@ import { Icon } from '../../components/Icon';
 import { Loading } from '../../components/Loading';
 import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Person } from '../../components/Person';
 import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
@@ -89,6 +90,7 @@ function AppView({ app }: { readonly app: AppOut }) {
             <div>
               <dt>Owner</dt>
               <dd>
+                <Person name={app.owner_name} email={app.owner_email} />{' '}
                 <Id value={app.owner_user_id} label="owner id" />
               </dd>
             </div>
@@ -325,7 +327,8 @@ function Access({ app, env }: { readonly app: AppOut; readonly env: EnvironmentO
           who(g)
         ) : (
           <>
-            {g.subject_kind === 'user' ? 'User' : 'Group'} <code>{g.subject_id}</code>
+            {g.subject_kind === 'user' ? 'User' : 'Group'}{' '}
+            <Person name={g.subject_name} email={g.subject_email} fallback={g.subject_id ?? ''} />
           </>
         ),
     },

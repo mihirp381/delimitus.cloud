@@ -14,6 +14,8 @@ function connection(name: string, extra: Record<string, unknown> = {}) {
     name,
     kind: 'postgres',
     owner_user_id: OWNER,
+    owner_name: 'Olive Owner',
+    owner_email: 'olive@example.com',
     classification: 'internal',
     ceiling: { audience: 'org', subjects: [] },
     allowed_schemas: ['public'],
@@ -21,6 +23,7 @@ function connection(name: string, extra: Record<string, unknown> = {}) {
     setup_status: 'ready',
     status: 'active',
     preview_access: { who: 'builders', group_id: null },
+    preview_access_group_name: null,
     created_at: '2026-10-01T10:00:00Z',
     updated_at: '2026-10-01T10:00:00Z',
     ...extra,
@@ -28,7 +31,7 @@ function connection(name: string, extra: Record<string, unknown> = {}) {
 }
 
 const LEDGER = connection('ledger');
-const CRM = connection('crm', { classification: 'confidential', ceiling: { audience: 'subjects', subjects: [{ kind: 'group', id: GROUP }] }, setup_status: 'pending', preview_access: { who: 'group', group_id: GROUP } });
+const CRM = connection('crm', { classification: 'confidential', ceiling: { audience: 'subjects', subjects: [{ kind: 'group', id: GROUP }] }, setup_status: 'pending', preview_access: { who: 'group', group_id: GROUP }, preview_access_group_name: 'Finance' });
 const ENV_CONNECTIONS = `${APP_PATH}/environments/${PROD}/connections`;
 
 function linked(...list: ReturnType<typeof connection>[]) {
@@ -64,7 +67,10 @@ describe('connections page', () => {
     expect(within(table).getAllByText('Rows per query 1000')).toHaveLength(2);
     expect(within(table).getByText('pending')).toBeTruthy();
     expect(within(table).getByText('Builders')).toBeTruthy();
-    expect(within(table).getByText(`Group ${GROUP}`)).toBeTruthy();
+    expect(within(table).getByText('Group Finance')).toBeTruthy();
+    expect(within(table).getAllByText('Olive Owner')).toHaveLength(2);
+    expect(table.textContent).not.toContain(GROUP);
+    expect(table.textContent).not.toContain(OWNER);
     expect(document.body.textContent).not.toContain('host');
   });
 
@@ -383,7 +389,7 @@ describe("an environment's data connections", () => {
       kind: 'exceed_ceiling',
       payload: { connection: 'crm', grants: [{ role: ORG_USER.role, subject_kind: 'org' }] },
     });
-    const link = await within(panel).findByRole('link', { name: 'apr_cccccccccccccccccccc' });
+    const link = await within(panel).findByRole('link', { name: 'open the request' });
     expect(link.getAttribute('href')).toBe('/approvals/apr_cccccccccccccccccccc');
   });
 

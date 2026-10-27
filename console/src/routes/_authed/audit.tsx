@@ -17,9 +17,11 @@ import { type ChainReport, chainVerdict, checkChain } from '../../auditChain';
 import { AdminOnly } from '../../components/AdminOnly';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { Id } from '../../components/Copy';
 import { Loading } from '../../components/Loading';
 import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Person } from '../../components/Person';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
@@ -338,11 +340,18 @@ function FilterForm({
 }
 
 function Changes({ event }: { readonly event: AuditEvent }) {
-  if (event.before === null && event.after === null && event.policy_decision_id === null) return null;
   return (
     <details>
       <summary>Details</summary>
       <dl className="facts">
+        <dt>Actor id</dt>
+        <dd>
+          <Id value={event.actor.id} label="actor id" />
+        </dd>
+        <dt>Target id</dt>
+        <dd>
+          <Id value={event.target.id} label="target id" />
+        </dd>
         {event.before !== null ? (
           <>
             <dt>Before</dt>
@@ -382,17 +391,11 @@ const COLUMNS: readonly Column<AuditEvent>[] = [
     header: 'Actor',
     cell: (e) => (
       <>
-        {e.actor.kind} <code>{e.actor.id}</code>
+        <Person name={e.actor.name} email={e.actor.email} />
         {e.actor.via_agent ? (
           <>
             {' '}
             <Badge tone="info">agent</Badge>
-            {e.actor.client_id ? (
-              <>
-                {' '}
-                <code>{e.actor.client_id}</code>
-              </>
-            ) : null}
           </>
         ) : null}
       </>
@@ -400,25 +403,28 @@ const COLUMNS: readonly Column<AuditEvent>[] = [
   },
   {
     header: 'Target',
-    cell: (e) => (
-      <>
-        {e.target.kind}{' '}
-        {e.target.kind === 'app' ? (
-          <Link to="/apps/$appId" params={{ appId: e.target.id }}>
-            <code>{e.target.id}</code>
-          </Link>
-        ) : killSwitchApp(e) ? (
-          <Link
-            to={isDeleteRun(e) ? '/apps/$appId/delete/$runId' : '/apps/$appId/kill-switch/$runId'}
-            params={{ appId: killSwitchApp(e) ?? '', runId: e.target.id }}
-          >
-            <code>{e.target.id}</code>
-          </Link>
-        ) : (
-          <code>{e.target.id}</code>
-        )}
-      </>
-    ),
+    cell: (e) => {
+      const app = killSwitchApp(e);
+      return (
+        <>
+          {e.target.kind}{' '}
+          {e.target.kind === 'app' ? (
+            <Link to="/apps/$appId" params={{ appId: e.target.id }}>
+              {e.target.name ?? 'Open'}
+            </Link>
+          ) : app ? (
+            <Link
+              to={isDeleteRun(e) ? '/apps/$appId/delete/$runId' : '/apps/$appId/kill-switch/$runId'}
+              params={{ appId: app, runId: e.target.id }}
+            >
+              Open run
+            </Link>
+          ) : (
+            e.target.name
+          )}
+        </>
+      );
+    },
   },
   { header: 'Details', cell: (e) => <Changes event={e} /> },
   { header: 'Seq', cell: (e) => e.seq },

@@ -44,6 +44,7 @@ import { ConfirmAction } from '../../components/ConfirmAction';
 import { Dialog } from '../../components/Dialog';
 import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
+import { Person } from '../../components/Person';
 import { Phrases } from '../../components/Phrases';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
@@ -69,7 +70,7 @@ function ConnectionsPage() {
     { header: 'Apps may be shared with', cell: (c) => ceilingText(c.ceiling) },
     { header: 'Schemas', cell: (c) => c.allowed_schemas.join(', ') },
     { header: 'Limits', cell: (c) => <Phrases items={limitPhrases(c.limits)} /> },
-    { header: 'Preview access', cell: (c) => previewAccessText(c.preview_access) },
+    { header: 'Preview access', cell: (c) => previewAccessText(c.preview_access, c.preview_access_group_name) },
     {
       header: 'State',
       cell: (c) => (
@@ -81,14 +82,7 @@ function ConnectionsPage() {
     },
     {
       header: 'Owner',
-      cell: (c) =>
-        c.owner_user_id ? (
-          <code className="truncate" title={c.owner_user_id}>
-            {c.owner_user_id}
-          </code>
-        ) : (
-          'None'
-        ),
+      cell: (c) => <Person name={c.owner_name} email={c.owner_email} fallback="None" />,
     },
   ];
   if (admin) {
@@ -619,6 +613,7 @@ function EditForm({ connection, title, onClose, onDone }: EditProps) {
           autoComplete="off"
           onChange={(e) => setOwner(e.target.value)}
         />
+        {connection.owner_name ? <span className="muted">Now: {connection.owner_name}</span> : null}
       </label>
       <label className="field" htmlFor={schemasId}>
         <span>Schemas, separated by commas</span>

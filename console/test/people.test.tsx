@@ -97,7 +97,8 @@ describe('people page', () => {
     const { api } = await peoplePage({
       'GET /v1/unlinked-logins': [logins(PAT_LOGIN, SAML_LOGIN), logins(SAML_LOGIN)],
       'GET /v1/users': () => json(200, { users: [user(PAT, 'Pat')] }),
-      [`POST /v1/unlinked-logins/${PAT_LOGIN.id}/link`]: () => json(200, { identity_link_id: 'idl_1', user_id: PAT }),
+      [`POST /v1/unlinked-logins/${PAT_LOGIN.id}/link`]: () =>
+        json(200, { identity_link_id: 'idl_1', user_id: PAT, user_name: 'Pat', user_email: 'pat@example.com' }),
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Link pat@example.com to a person' }));
     const dialog = await screen.findByRole('dialog', { name: 'Link pat@example.com to a person' });
@@ -119,9 +120,7 @@ describe('people page', () => {
     const [call] = api.of('POST', `/v1/unlinked-logins/${PAT_LOGIN.id}/link`);
     expect(call?.body).toEqual({ user_id: PAT });
     expect(call?.headers.get('Idempotency-Key')).toBeTruthy();
-    expect(await toast()).toBe(
-      `Linked pat@example.com to Pat (${PAT}). Their next login signs them in.`,
-    );
+    expect(await toast()).toBe('Linked pat@example.com to Pat. Their next login signs them in.');
     // The list is read again and the linked login is gone from it.
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Link pat@example.com to a person' })).toBeNull());
     expect(screen.queryByRole('dialog', { name: 'Link pat@example.com to a person' })).toBeNull();
@@ -129,7 +128,8 @@ describe('people page', () => {
 
   it('links by usr_ id with no lookup', async () => {
     const { api } = await peoplePage({
-      [`POST /v1/unlinked-logins/${PAT_LOGIN.id}/link`]: () => json(200, { identity_link_id: 'idl_1', user_id: PAT }),
+      [`POST /v1/unlinked-logins/${PAT_LOGIN.id}/link`]: () =>
+        json(200, { identity_link_id: 'idl_1', user_id: PAT, user_name: 'Pat Lee', user_email: 'pat@example.com' }),
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Link pat@example.com to a person' }));
     const dialog = await screen.findByRole('dialog', { name: 'Link pat@example.com to a person' });
@@ -138,9 +138,7 @@ describe('people page', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Link' }));
     });
     expect(api.of('GET', '/v1/users')).toHaveLength(0);
-    expect(await toast()).toBe(
-      `Linked pat@example.com to ${PAT}. Their next login signs them in.`,
-    );
+    expect(await toast()).toBe('Linked pat@example.com to Pat Lee. Their next login signs them in.');
   });
 
   it('does not let a deactivated person be picked', async () => {
@@ -201,23 +199,25 @@ describe('looking a person or a group up', () => {
     expect(api.of('GET', '/v1/users')[0]?.query.get('email')).toBe('pat@example.com');
     const [, pat, sam] = within(table).getAllByRole('row');
     expect(within(pat!).getAllByRole('cell').map((c) => c.textContent)).toEqual([
-      'Pat',
+      `Pat ${PAT}`,
       'pat@example.com',
       'admin',
       'active',
-      PAT,
     ]);
     expect(within(sam!).getAllByRole('cell').map((c) => c.textContent)).toEqual([
-      'Sam',
+      `Sam ${SAM}`,
       'pat@example.com',
       'member',
       'deactivated',
-      SAM,
     ]);
     expect(sam?.querySelector('.badge-danger')?.textContent).toBe('deactivated');
     // Nothing here changes a person.
     const section = screen.getByRole('region', { name: 'Look up a person' });
-    expect(within(section).getAllByRole('button').map((b) => b.textContent)).toEqual(['Find']);
+    expect(within(section).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
+      'Find',
+      'Copy person id',
+      'Copy person id',
+    ]);
     expect(section.textContent).toContain('change them in your identity provider');
   });
 
@@ -240,12 +240,14 @@ describe('looking a person or a group up', () => {
     const table = await screen.findByRole('table', { name: 'Groups named finance' });
     expect(api.of('GET', '/v1/groups')[0]?.query.get('name')).toBe('finance');
     expect(within(within(table).getAllByRole('row')[1]!).getAllByRole('cell').map((c) => c.textContent)).toEqual([
-      'Finance',
+      'Finance grp_ffffffffffffffffffff',
       '3 active members',
-      'grp_ffffffffffffffffffff',
     ]);
     const section = screen.getByRole('region', { name: 'Look up a group' });
-    expect(within(section).getAllByRole('button').map((b) => b.textContent)).toEqual(['Find']);
+    expect(within(section).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
+      'Find',
+      'Copy group id',
+    ]);
     expect(section.textContent).toContain('change it in your identity provider');
   });
 

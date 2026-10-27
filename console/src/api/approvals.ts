@@ -120,9 +120,10 @@ export function replacedVersion(payload: Approval['payload']): number | null {
   return typeof v === 'number' && Number.isInteger(v) ? v : null;
 }
 
-export function grantText(g: GrantInput): string {
+export function grantText(g: GrantInput, names: Readonly<Record<string, string>> = {}): string {
   if (g.subject_kind === 'org') return `Everyone in the organisation (${g.role})`;
-  return `${g.subject_kind === 'user' ? 'User' : 'Group'} ${g.subject_id ?? ''} (${g.role})`;
+  const name = (g.subject_id && names[g.subject_id]) || g.subject_id || '';
+  return `${g.subject_kind === 'user' ? 'User' : 'Group'} ${name} (${g.role})`;
 }
 
 export function diffGrantText(g: DiffGrant): string {

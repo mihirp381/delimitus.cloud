@@ -1,4 +1,4 @@
-import { useRouteContext } from '@tanstack/react-router';
+import { Link, useRouteContext } from '@tanstack/react-router';
 import { type FormEvent, useId, useRef, useState } from 'react';
 import { askCeilingApproval } from '../api/connections';
 import {
@@ -284,7 +284,11 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
                         {r.state === 'pending' && r.approval_id ? (
                           <>
                             {' '}
-                            — already asked: <code>{r.approval_id}</code> (pending)
+                            — already asked (
+                            <Link to="/approvals/$approvalId" params={{ approvalId: r.approval_id }}>
+                              pending request
+                            </Link>
+                            )
                           </>
                         ) : null}
                       </li>
@@ -311,7 +315,10 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
               <ul>
                 {asked.map((a) => (
                   <li key={a.id}>
-                    <code>{a.id}</code>: {needs(a)} ({a.state})
+                    <Link to="/approvals/$approvalId" params={{ approvalId: a.id }}>
+                      {needs(a)}
+                    </Link>{' '}
+                    ({a.state})
                   </li>
                 ))}
               </ul>

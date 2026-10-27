@@ -300,7 +300,7 @@ function LinkForm({ app, env, held, onSaved }: LinkProps) {
           <p>
             Asked for approval:{' '}
             <Link to="/approvals/$approvalId" params={{ approvalId: asked.id }}>
-              {asked.id}
+              open the request
             </Link>{' '}
             ({asked.state}). Link it again once it is approved.
           </p>

@@ -21,8 +21,8 @@ const APP = {
 } as const;
 const PROD_GRANTS = `/v1/apps/${APP.id}/environments/env_prod0000000000000000/grants`;
 const PREVIEW_GRANTS = `/v1/apps/${APP.id}/environments/env_preview0000000000000/grants`;
-const ORG_USER = { id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null } as const;
-const OWNER_BUILDER = { id: 'gnt_000000000000000000b1', role: 'builder', subject_kind: 'user', subject_id: OWNER } as const;
+const ORG_USER = { id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null, subject_name: null, subject_email: null } as const;
+const OWNER_BUILDER = { id: 'gnt_000000000000000000b1', role: 'builder', subject_kind: 'user', subject_id: OWNER, subject_name: 'Olive Owner', subject_email: 'olive@example.com' } as const;
 function prodGrants(version: number, list: Grants['grants']): Grants {
   return { environment_id: 'env_prod0000000000000000', grants_version: version, grants: list };
 }
@@ -120,8 +120,8 @@ function listedSlugs(): (string | null)[] {
 
 describe('inventory', () => {
   const apps = [
-    { id: 'app_zzzzzzzzzzzzzzzzzzzz', slug: 'timesheets', owner_user_id: OTHER, status: 'quarantined' },
-    { id: APP.id, slug: 'expenses', owner_user_id: OWNER, status: 'active' },
+    { id: 'app_zzzzzzzzzzzzzzzzzzzz', slug: 'timesheets', owner_user_id: OTHER, owner_name: 'Dan Other', owner_email: 'dan@example.com', status: 'quarantined' },
+    { id: APP.id, slug: 'expenses', owner_user_id: OWNER, owner_name: 'Olivia Owner', owner_email: 'olivia@example.com', status: 'active' },
   ];
 
   // Anyone but an org admin reads the plain list; an admin reads the inventory (below).
@@ -132,13 +132,13 @@ describe('inventory', () => {
     await screen.findByRole('link', { name: 'expenses' });
     const rows = screen.getAllByRole('row').slice(1);
     expect(listedSlugs()).toEqual(['expenses', 'timesheets']);
-    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['App', 'Owner', 'App id']);
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['App', 'Owner']);
     // The status is a dot beside the slug; an app that is not active says so in words too.
     expect(within(rows[0]!).getByRole('img', { name: 'active' })).toBeTruthy();
     expect(within(rows[1]!).getByText('quarantined')).toBeTruthy();
-    expect(within(rows[0]!).getByText(OWNER)).toBeTruthy();
-    expect(within(rows[0]!).getByText(APP.id)).toBeTruthy();
-    expect(within(rows[0]!).getByRole('button', { name: 'Copy app id' })).toBeTruthy();
+    expect(within(rows[0]!).getByText('Olivia Owner').getAttribute('title')).toBe('olivia@example.com');
+    expect(within(rows[0]!).queryByText(OWNER)).toBeNull();
+    expect(within(rows[0]!).queryByText(APP.id)).toBeNull();
     expect(screen.getByText('2 apps')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter apps'), { target: { value: OTHER.slice(0, 10) + 'ddd' } });
     expect(screen.queryByRole('link', { name: 'expenses' })).toBeNull();
@@ -169,8 +169,7 @@ describe('inventory', () => {
     const link = await screen.findByRole('link', { name: 'expenses' });
     expect(link.getAttribute('href')).toBe(`/apps/${APP.id}`);
     const row = link.closest('tr')!;
-    // A control in the row keeps its own click, and a click with a modifier is left to the link.
-    fireEvent.click(within(row).getByRole('button', { name: 'Copy app id' }));
+    // A click with a modifier is left to the link.
     fireEvent.click(within(row).getAllByRole('cell')[1]!, { metaKey: true });
     expect(router.state.location.pathname).toBe('/');
     await act(async () => {
@@ -209,7 +208,7 @@ describe('inventory for an org admin', () => {
       slug,
       status: 'active',
       created_at: '2026-09-28T10:00:00Z',
-      owner: { user_id: OWNER, display_name: 'Olivia Owner' },
+      owner: { user_id: OWNER, display_name: 'Olivia Owner', name: 'Olivia Owner', email: 'olivia@example.com' },
       last_used_at: null,
       environments: [
         {
@@ -243,7 +242,7 @@ describe('inventory for an org admin', () => {
       },
     ],
   });
-  const TIMESHEETS = item('timesheets', { status: 'quarantined', owner: { user_id: OTHER, display_name: 'Dan Other' } });
+  const TIMESHEETS = item('timesheets', { status: 'quarantined', owner: { user_id: OTHER, display_name: 'Dan Other', name: 'Dan Other', email: 'dan@example.com' } });
   const usage = () =>
     json(200, {
       month: '2026-10',
@@ -272,7 +271,8 @@ describe('inventory for an org admin', () => {
     const [expenses, timesheets] = within(table).getAllByRole('row').slice(1) as [HTMLElement, HTMLElement];
     expect(within(expenses).getByRole('link', { name: 'expenses' }).getAttribute('href')).toBe(`/apps/${APP.id}`);
     expect(within(expenses).getByText(/Olivia Owner/)).toBeTruthy();
-    expect(within(expenses).getByTitle(OWNER).textContent).toBe(OWNER);
+    expect(within(expenses).getByTitle('olivia@example.com').textContent).toBe('Olivia Owner');
+    expect(within(expenses).queryByText(OWNER)).toBeNull();
     expect(within(expenses).getByRole('img', { name: 'active' })).toBeTruthy();
     expect(within(timesheets).getByText('quarantined')).toBeTruthy();
     const deployed = `Last deploy ${new Date('2026-10-07T10:00:00Z').toLocaleString()}`;
@@ -409,7 +409,7 @@ describe('app detail', () => {
 
     const access = await openSection(prod, 'Who has access');
     await within(access).findByText('Everyone in the organisation');
-    expect(within(access).getByText(OWNER)).toBeTruthy();
+    expect(within(access).getByText('Olive Owner')).toBeTruthy();
     await chooseEnv('Preview');
     expect(await screen.findByText('Nobody has access yet.')).toBeTruthy();
 
@@ -424,7 +424,7 @@ describe('app detail', () => {
       routes(
         [
           () => problem(412, 'PRECONDITION_STALE', 'Changed since you read it'),
-          ({ body }) => json(200, prodGrants(5, (body as Grants).grants as Grants['grants'])),
+          () => json(200, prodGrants(5, [OWNER_BUILDER])),
         ],
         [
           () => json(200, prodGrants(3, [OWNER_BUILDER, ORG_USER])),
@@ -456,7 +456,7 @@ describe('app detail', () => {
     expect(puts.map((p) => p.headers.get('If-Match'))).toEqual(['"3"', '"4"']);
     expect(puts[1]?.body).toEqual({ grants: [{ role: 'builder', subject_kind: 'user', subject_id: OWNER }] });
     await waitFor(() => expect(within(prod).queryByText('Everyone in the organisation')).toBeNull());
-    expect(within(prod).getByText(OWNER)).toBeTruthy();
+    expect(within(prod).getByText('Olive Owner')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 

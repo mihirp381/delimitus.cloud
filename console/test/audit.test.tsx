@@ -15,8 +15,8 @@ function event(seq: number, overrides: Record<string, unknown> = {}) {
     seq,
     at: '2026-09-29T10:00:00Z',
     action: 'app.created',
-    actor: { kind: 'user', id: USER, via_agent: false, client_id: null },
-    target: { kind: 'app', id: APP_ID },
+    actor: { kind: 'user', id: USER, via_agent: false, client_id: null, name: 'Cat User', email: 'cat@example.com' },
+    target: { kind: 'app', id: APP_ID, name: 'expenses' },
     before: null,
     after: null,
     policy_decision_id: null,
@@ -28,8 +28,8 @@ function event(seq: number, overrides: Record<string, unknown> = {}) {
 
 const REMOVED_BY_AGENT = event(12, {
   action: 'grant.removed',
-  actor: { kind: 'user', id: USER, via_agent: true, client_id: 'claude-code' },
-  target: { kind: 'app_grant', id: 'gnt_000000000000000000o1' },
+  actor: { kind: 'user', id: USER, via_agent: true, client_id: 'claude-code', name: 'claude-code for Cat User', email: 'cat@example.com' },
+  target: { kind: 'app_grant', id: 'gnt_000000000000000000o1', name: null },
   before: { role: 'user', subject_kind: 'org', subject_id: null, environment_id: 'env_prod0000000000000000' },
   policy_decision_id: 'pdc_bbbbbbbbbbbbbbbbbbbb',
 });
@@ -50,11 +50,12 @@ describe('audit log', () => {
     const rows = screen.getAllByRole('row').slice(1);
     expect(rows.map((r) => within(r).getAllByRole('cell').at(-1)?.textContent)).toEqual(['12', '11']);
     expect(within(rows[0]!).getByText('agent')).toBeTruthy();
-    expect(within(rows[0]!).getByText('claude-code')).toBeTruthy();
+    expect(within(rows[0]!).getByText('claude-code for Cat User')).toBeTruthy();
     expect(within(rows[0]!).getByText('pdc_bbbbbbbbbbbbbbbbbbbb')).toBeTruthy();
     expect(within(rows[0]!).getByText(/"subject_kind": "org"/)).toBeTruthy();
     expect(within(rows[1]!).queryByText('agent')).toBeNull();
-    expect(within(rows[1]!).getByRole('link', { name: APP_ID }).getAttribute('href')).toBe(`/apps/${APP_ID}`);
+    expect(within(rows[1]!).getByRole('link', { name: 'expenses' }).getAttribute('href')).toBe(`/apps/${APP_ID}`);
+    expect(within(rows[1]!).getAllByRole('cell')[2]?.textContent).toBe('Cat User');
     expect(screen.queryByRole('button', { name: 'Load older events' })).toBeNull();
     expect(entries(api.of('GET', '/v1/audit')[0]!.query)).toEqual([]);
     expect(api.of('GET', '/v1/audit')[0]?.headers.get('Authorization')).toBe('Bearer tok-admin');
@@ -63,7 +64,7 @@ describe('audit log', () => {
   it('links a kill switch step to its run when the row names the app', async () => {
     const run = 'ksr_rrrrrrrrrrrrrrrrrrrr';
     const step = (seq: number, after: Record<string, unknown> | null) =>
-      event(seq, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run }, after });
+      event(seq, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run, name: null }, after });
     start(
       '/audit',
       { 'GET /v1/audit': page([step(21, { app_id: APP_ID, step: 'gateway_deny' }), step(20, { app_id: '../x' }), step(19, null)]) },
@@ -71,11 +72,11 @@ describe('audit log', () => {
     );
     await screen.findByText('3 events');
     const rows = screen.getAllByRole('row').slice(1);
-    expect(within(rows[0]!).getByRole('link', { name: run }).getAttribute('href')).toBe(
+    expect(within(rows[0]!).getByRole('link', { name: 'Open run' }).getAttribute('href')).toBe(
       `/apps/${APP_ID}/kill-switch/${run}`,
     );
-    expect(within(rows[1]!).queryByRole('link', { name: run })).toBeNull();
-    expect(within(rows[2]!).queryByRole('link', { name: run })).toBeNull();
+    expect(within(rows[1]!).queryByRole('link', { name: 'Open run' })).toBeNull();
+    expect(within(rows[2]!).queryByRole('link', { name: 'Open run' })).toBeNull();
     expect(within(rows[2]!).getByText(run)).toBeTruthy();
   });
 
@@ -84,11 +85,11 @@ describe('audit log', () => {
     const after = { app_id: APP_ID, mode: 'delete', step: 'drop_databases', removed: 2 };
     start(
       '/audit',
-      { 'GET /v1/audit': page([event(22, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run }, after })]) },
+      { 'GET /v1/audit': page([event(22, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run, name: null }, after })]) },
       signedIn(),
     );
     await screen.findByText('1 event');
-    expect(screen.getByRole('link', { name: run }).getAttribute('href')).toBe(`/apps/${APP_ID}/delete/${run}`);
+    expect(screen.getByRole('link', { name: 'Open run' }).getAttribute('href')).toBe(`/apps/${APP_ID}/delete/${run}`);
   });
 
   it('applies filters through the URL and sends only the ones that are set', async () => {
@@ -354,7 +355,7 @@ describe('audit export', () => {
     });
     expect((await screen.findByRole('alert')).textContent).toContain('Agent sessions cannot export');
     expect(saved).toEqual([]);
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryAllByRole('status').filter((s) => s.textContent)).toEqual([]);
   });
 });
 
@@ -372,7 +373,7 @@ describe('admin gating', () => {
     });
 
   it('answers from the role whoami gives', () => {
-    const me = { org_id: 'o', subject: USER, kind: 'user', credential_id: 'c', is_agent: false, client_id: null } as const;
+    const me = { org_id: 'o', subject: USER, kind: 'user', credential_id: 'c', is_agent: false, client_id: null, org_name: 'Acme', name: 'Ada', email: 'ada@example.com' } as const;
     expect(isAdmin({ ...me, role: 'admin' })).toBe(true);
     expect(isAdmin({ ...me, role: 'member' })).toBe(false);
     expect(isAdmin({ ...me, role: null })).toBe(false);

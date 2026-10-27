@@ -238,7 +238,11 @@ function AskedBy({ resource }: { readonly resource: CellResource }) {
       {resource.approval_id ? (
         <>
           {' '}
-          (approval <code>{resource.approval_id}</code>)
+          (
+          <Link to="/approvals/$approvalId" params={{ approvalId: resource.approval_id }}>
+            approval
+          </Link>
+          )
         </>
       ) : null}
     </>

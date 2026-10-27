@@ -11,6 +11,8 @@ function host(name: string, highRisk = false) {
     host: name,
     high_risk: highRisk,
     added_by_user_id: OWNER,
+    added_by_name: 'Olive Owner',
+    added_by_email: 'olive@example.com',
     approval_request_id: null,
     created_at: '2026-10-01T10:00:00Z',
   };
@@ -66,10 +68,12 @@ describe('internet access', () => {
     await egressPage({ 'GET /v1/egress': () => json(200, { hosts: [host('api.stripe.com'), approved], outbound_ip: IP, proxy_address: null }) });
     const hosts = screen.getByRole('table', { name: 'Hosts apps may reach' });
     const row = within(hosts).getByText('api.twilio.com').closest('tr');
-    expect(row?.textContent).toContain(`Approval apr_x1 (approved by ${OWNER})`);
+    expect(row?.textContent).toContain('Approval (approved by Olive Owner)');
+    expect(within(row!).getByRole('link', { name: 'Approval' }).getAttribute('href')).toBe('/approvals/apr_x1');
     const direct = within(hosts).getByText('api.stripe.com').closest('tr');
     expect(direct?.textContent).not.toContain('Approval');
-    expect(direct?.textContent).toContain(OWNER);
+    expect(direct?.textContent).toContain('Olive Owner');
+    expect(direct?.textContent).not.toContain(OWNER);
   });
 
   it('says when the cell has no fixed IP yet', async () => {
