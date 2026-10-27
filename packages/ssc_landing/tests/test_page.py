@@ -313,6 +313,8 @@ REMOVED = (
     "Sample Linehaul",
     "Demo Carriers",
     "Placeholder Haulage",
+    "The expensive part isn’t running the app.",
+    "It’s everything around it.",
 )
 ADDED = (
     "Secure data connections",
@@ -322,6 +324,8 @@ ADDED = (
     "Cascade Linehaul",
     "Redwood Carriers",
     "Pioneer Haulage",
+    'Building apps with AI is <span class="grad">easy and fun.</span>',
+    "Deploying and maintaining hundreds of them is hard and expensive.",
 )
 
 
