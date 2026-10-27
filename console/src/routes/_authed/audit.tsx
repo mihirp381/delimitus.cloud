@@ -121,12 +121,13 @@ function AuditLog() {
     <>
       <PageHeader
         title="Audit log"
-        purpose={
-          <>
-            Newest first. An export holds every event matching the applied filters, oldest first,
-            and is itself recorded as <code>audit.exported</code>. A JSON Lines export carries the
-            log's hash chain, which is checked here in your browser once it is saved.
-          </>
+        purpose="What happened in your organisation, newest first."
+        about={
+          <p>
+            An export holds every event matching the applied filters, oldest first, and is itself recorded as{' '}
+            <code>audit.exported</code>. A JSON Lines export carries the log&apos;s hash chain, which is checked
+            here in your browser once it is saved.
+          </p>
         }
       >
         {FORMATS.map(({ format, label }) => (

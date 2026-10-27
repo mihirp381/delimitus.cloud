@@ -41,13 +41,8 @@ function People() {
     <>
       <PageHeader
         title="People"
-        purpose={
-          <>
-            People and groups are managed in your identity provider: add, change or remove them
-            there, and SSC follows. Here you can look one up, and link a login that matched no
-            person.
-          </>
-        }
+        purpose="People and groups are managed in your identity provider; here you look one up and link a login that matched no person."
+        about={<p>Add, change or remove people and groups in your identity provider, and SSC follows.</p>}
       />
       <UnmatchedLogins />
       <FindPerson />

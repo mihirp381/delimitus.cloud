@@ -48,7 +48,7 @@ const STATE_TONE: Readonly<Record<CellResource['state'], Tone>> = {
 
 function EnvironmentPage() {
   return (
-    <AdminOnly title="Your environment" refusal="Only org admins can see the environment.">
+    <AdminOnly title="Usage" refusal="Only org admins can see usage.">
       <YourEnvironment />
     </AdminOnly>
   );
@@ -61,13 +61,9 @@ function YourEnvironment() {
   return (
     <>
       <PageHeader
-        title="Your environment"
-        purpose={
-          <>
-            What your company&apos;s cell runs and what each part adds a month. These figures are
-            not a bill: you pay a flat fee, and they show what a choice sets off.
-          </>
-        }
+        title="Usage"
+        purpose="What your company's cell runs and what each part adds a month."
+        about={<p>These figures are not a bill: you pay a flat fee, and they show what a choice sets off.</p>}
       />
       <Tiles />
       <OutboundIp />

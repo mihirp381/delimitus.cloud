@@ -591,11 +591,17 @@ a.brand:hover {
   overflow-wrap: anywhere;
 }
 
-.page-purpose {
+.page-purpose,
+.page-about {
   max-width: 78ch;
   font-size: var(--ssc-type-size-small);
   color: var(--ssc-text-muted);
   text-wrap: pretty;
+}
+
+.page-about-body {
+  display: grid;
+  gap: var(--ssc-space-2);
 }
 
 /* What an app is, under its name: owner, id, when it was made. */

@@ -344,9 +344,9 @@ describe('your environment', () => {
 
   it('is for org admins only', async () => {
     const { api } = start('/environment', { ...environmentRoutes(), 'GET /v1/whoami': member }, signedIn());
-    expect(await screen.findByText('Only org admins can see the environment.')).toBeTruthy();
+    expect(await screen.findByText('Only org admins can see usage.')).toBeTruthy();
     const nav = screen.getByRole('navigation', { name: 'Main' });
-    expect(within(nav).queryByRole('link', { name: 'Your environment' })).toBeNull();
+    expect(within(nav).queryByRole('link', { name: 'Usage' })).toBeNull();
     expect(api.of('GET', '/v1/cell')).toHaveLength(0);
     expect(api.of('GET', '/v1/usage')).toHaveLength(0);
     expect(api.of('GET', '/v1/warm')).toHaveLength(0);

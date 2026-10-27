@@ -103,12 +103,12 @@ function ConnectionsPage() {
     <>
       <PageHeader
         title="Connections"
-        purpose={
-          <>
-            Your company&apos;s databases that apps may read through the data gateway. A
-            connection&apos;s address is stored when it is added and never shown again; its
-            credentials are set up with your operator.
-          </>
+        purpose="Your company's databases that apps may read through the data gateway."
+        about={
+          <p>
+            A connection&apos;s address is stored when it is added and never shown again; its credentials are
+            set up with your operator.
+          </p>
         }
       >
         {!me.isPending && admin ? <AddConnection onDone={toast} /> : null}

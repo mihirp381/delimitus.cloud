@@ -96,7 +96,7 @@ function Inventory() {
     <>
       <PageHeader
         title="Apps"
-        purpose="The apps in your organisation. Open one to see how it is running and who can use it."
+        purpose="The apps in your organisation: open one to see how it is running and who can use it."
       />
       <div className="search">
         <label htmlFor={textId} className="visually-hidden">

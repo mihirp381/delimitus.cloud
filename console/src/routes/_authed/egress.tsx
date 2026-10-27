@@ -45,12 +45,8 @@ function EgressPage() {
     <>
       <PageHeader
         title="Internet access"
-        purpose={
-          <>
-            Apps reach the internet only through your cell&apos;s egress proxy, and only the hosts
-            listed here. Partners see every call come from one fixed IP.
-          </>
-        }
+        purpose="Apps reach the internet only through your cell's egress proxy, and only the hosts listed here."
+        about={<p>Partners see every call come from one fixed IP.</p>}
       />
       {egress.isPending ? (
         <Loading label="Loading internet access…" rows={3} />
