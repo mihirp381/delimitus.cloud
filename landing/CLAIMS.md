@@ -64,7 +64,7 @@ carry no `data-claim`.
 
 | Id | What exists | Truth state | Checked |
 |---|---|---|---|
-| social | Social sign-in (Google, Microsoft, GitHub) for a pilot org an operator puts in social mode; admins invite people by email (decision 002 amendment 2026-10-27) | Pilot orgs only, not offered to customers; the `idp` row is unchanged. Built and covered by the control-plane and console tests; the live check in runbook ssc-019 is not yet run | 2026-10-27 |
+| social | Social sign-in (Google and personal Microsoft accounts; GitHub is refused until SSC checks GitHub's verified addresses) for a pilot org an operator puts in social mode; admins invite people by email (decision 002 amendment 2026-10-27) | Pilot orgs only, not offered to customers; the `idp` row is unchanged. Built and covered by the control-plane and console tests; the live check in runbook ssc-019 is not yet run | 2026-10-27 |
 
 ## Public sources
 
