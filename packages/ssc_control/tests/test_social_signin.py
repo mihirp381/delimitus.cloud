@@ -201,6 +201,19 @@ async def test_later_sign_ins_match_the_subject_only(rig: OAuthRig) -> None:
     assert await reasons(rig.w) == ["subject_mismatch"]
 
 
+async def test_another_provider_never_links_to_a_linked_person(rig: OAuthRig) -> None:
+    signed_in(await social_login(rig), rig)
+    r = await social_login(rig, GITHUB_SUB, ADA, provider="github")
+    assert (r.status_code, r.text) == (403, pages.REFUSED)
+    assert await reasons(rig.w) == ["subject_mismatch"]
+    links = await rig.w.rows(
+        "select issuer from ssc.identity_link where org_id = :org and user_id = :id "
+        "and source = 'social'",
+        id=rig.w.founder,
+    )
+    assert [tuple(row) for row in links] == [("workos:social:google",)]
+
+
 async def test_every_social_refusal_is_the_same_page(rig: OAuthRig) -> None:
     signed_in(await social_login(rig), rig)
     await invite(rig.w, "gone@example.com", "deactivated")

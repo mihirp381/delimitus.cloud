@@ -82,7 +82,7 @@ _BY_LINK = text(
 )
 _BY_EMAIL = text(
     "select u.id, u.status, exists (select 1 from ssc.identity_link l where l.org_id = u.org_id "
-    "and l.user_id = u.id and l.issuer = :issuer) from ssc.user_account u "
+    "and l.user_id = u.id and l.source = 'social') from ssc.user_account u "
     "where u.org_id = :org and lower(u.email) = :email limit 2 for update"
 )
 _LINK = text(
@@ -138,7 +138,7 @@ async def find_person(  # noqa: PLR0911  (one answer per check)
     if linked is not None:
         return Person(str(linked[0]), bool(linked[1]))
     found = (
-        await conn.execute(_BY_EMAIL, {"org": org, "email": profile.email, "issuer": iss})
+        await conn.execute(_BY_EMAIL, {"org": org, "email": profile.email})
     ).all()
     if not found:
         return "no_match"
