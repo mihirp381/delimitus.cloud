@@ -1,6 +1,8 @@
 """The auth host's own pages. Every refused sign-in gets :data:`REFUSED`, byte for byte: the
 reason is in the log and the audit, never on the page. Every work email that finds no sign-in
-gets :data:`NO_SIGN_IN`, byte for byte, whatever the reason (decision 029)."""
+gets :data:`NO_SIGN_IN`, byte for byte, whatever the reason (decision 029).
+
+The colours in :data:`STYLE` mirror ``console/src/tokens`` (Python has no token file)."""
 
 from html import escape
 from typing import Final
@@ -22,11 +24,57 @@ def headers(workos_base: str, *, answer_to: str = "") -> dict[str, str]:
     }
 
 
+STYLE: Final = (
+    "<style>"
+    ":root{color-scheme:light dark;--bg:#f5f5f7;--card:#ffffff;--line:#e3e3e8;--text:#1d1d1f;"
+    "--text2:#424245;--muted:#6e6e73;--field:#86868b;--accent:#0071e3;--accent-hi:#0062c4;"
+    "--on-accent:#ffffff;--ink:#0066cc;--ink-hi:#0062c4;--ring:#0071e3}"
+    "@media (prefers-color-scheme:dark){:root{--bg:#0b0b0c;--card:#1d1d1f;--line:#2c2c2e;"
+    "--text:#f5f5f7;--text2:#d2d2d7;--muted:#aeaeb2;--field:#aeaeb2;--accent:#2997ff;"
+    "--accent-hi:#5eb0ff;--on-accent:#0b0b0c;--ink:#6eb6ff;--ink-hi:#8cc4ff;--ring:#2997ff}}"
+    "*,*::before,*::after{box-sizing:border-box}"
+    "html{-webkit-text-size-adjust:100%;text-size-adjust:100%;background:var(--bg)}"
+    "body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px 16px;"
+    "font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',Helvetica,"
+    "Arial,sans-serif;font-size:14px;line-height:1.52;letter-spacing:-0.012em;"
+    "color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased}"
+    "main{position:relative;display:grid;gap:16px;width:min(420px,100%);"
+    "padding:32px 24px 24px;overflow:hidden;overflow-wrap:anywhere;background:var(--card);"
+    "border:1px solid var(--line);border-radius:8px}"
+    "main::before{content:'';position:absolute;top:0;right:0;left:0;height:2px;"
+    "background:linear-gradient(90deg,#0a84ff 0%,#6e5bff 22%,#c24bf0 44%,#ff378c 64%,"
+    "#ff5e3a 82%,#ff9f0a 100%)}"
+    ".brand{font-size:15px;font-weight:650;letter-spacing:-0.015em;line-height:1}"
+    "h1{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',"
+    "'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:21px;font-weight:650;"
+    "line-height:1.2;letter-spacing:-0.02em}"
+    "p{margin:0}"
+    "code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:0.92em;"
+    "letter-spacing:0}"
+    "a{color:var(--ink);text-decoration:underline;text-underline-offset:0.18em}"
+    "a:hover{color:var(--ink-hi)}"
+    "form{display:grid;gap:12px}"
+    "label{display:grid;gap:4px;font-size:13px;font-weight:500;color:var(--text2)}"
+    "input{width:100%;min-height:32px;padding:4px 8px;border:1px solid var(--field);"
+    "border-radius:6px;font:inherit;font-size:14px;color:var(--text);background:var(--card)}"
+    "button{min-height:40px;padding:0 16px;border:1px solid var(--accent);border-radius:6px;"
+    "font:inherit;font-weight:500;color:var(--on-accent);background:var(--accent);"
+    "cursor:pointer}"
+    "button:hover{background:var(--accent-hi);border-color:var(--accent-hi)}"
+    "button[value=deny]{color:var(--text);background:var(--card);border-color:var(--line)}"
+    "button[value=deny]:hover{background:var(--bg)}"
+    ":focus-visible{outline:2px solid var(--ring);outline-offset:2px}"
+    "input:focus-visible{outline-offset:0;border-color:var(--ring)}"
+    "</style>"
+)
+
+
 def page(title: str, body: str, head: str = "") -> str:
     return (
         "<!doctype html><html lang=en><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width'>{head}"
-        f"<title>{escape(title)}</title><h1>{escape(title)}</h1>{body}</html>\n"
+        f"<title>{escape(title)}</title>{STYLE}"
+        f"<main><p class=brand>Delimitus</p><h1>{escape(title)}</h1>{body}</main></html>\n"
     )
 
 
