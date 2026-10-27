@@ -333,3 +333,24 @@ def test_the_refreshed_copy_replaces_the_old() -> None:
     assert "Private pilot" not in og[1]
     register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
     assert "| `names` |" not in register
+
+
+def _bound(name: str) -> str:
+    found = re.search(rf'data-bind="{name}"[^>]*>(.*?)</(?:span|ul)>', HTML, flags=re.S)
+    assert found is not None, name
+    return found[1]
+
+
+def test_the_case_panel_shows_the_warehouse_asks_without_javascript() -> None:
+    wh = re.search(r"wh:\s*\{(.*?)\n\s*\},?\n", HTML, flags=re.S)
+    assert wh is not None
+    simple = re.search(r'simple:\s*\{\s*ask:\s*"([^"]+)",\s*get:\s*\[([^\]]*)\]', wh[1])
+    big = re.search(r'ask:\s*"([^"]+)",\s*tool:\s*"([^"]+)",\s*get:\s*\[([^\]]*)\]', wh[1])
+    assert simple is not None and big is not None
+    assert _bound("askSimple") == simple[1]
+    assert re.findall(r"<li>(.*?)</li>", _bound("getSimple")) == re.findall(r'"([^"]+)"', simple[2])
+    assert _bound("ask") == big[1]
+    assert _bound("tool") == big[2]
+    assert re.findall(r"<li>(.*?)</li>", _bound("get")) == re.findall(r'"([^"]+)"', big[3])
+    assert simple[1] == "A page that shows which doors are free right now."
+    assert "Company login on, with no setup" in simple[2]

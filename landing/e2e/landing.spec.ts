@@ -89,6 +89,22 @@ test('the operations tabs and the viewers switch', async ({ page }) => {
   await expect(page.locator('[data-bind="who"]')).toHaveText('Sam Whitaker');
 });
 
+test('each team shows a simple ask and a bigger ask', async ({ page }) => {
+  await page.goto('/');
+  const panel = page.locator('#casePanel');
+  await expect(panel.locator('.case__card--simple')).toBeVisible();
+  await expect(panel.locator('.case__card--big')).toBeVisible();
+  await expect(panel.locator('.case__card--simple .case__k')).toHaveText('Simple ask');
+  await expect(panel.locator('.case__card--big .case__k')).toHaveText('Bigger ask');
+  await page.getByRole('tab', { name: 'Facilities' }).click();
+  await expect(panel.locator('[data-bind="askSimple"]')).toHaveText('A form to book a meeting room.');
+  await expect(panel.locator('[data-bind="getSimple"] li')).toHaveCount(2);
+  await expect(panel.locator('[data-bind="get"] li')).toHaveCount(3);
+  await expect(panel.locator('.case__card--big')).toHaveCSS('opacity', '1');
+  const columns = await panel.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);
+  expect(columns).toBe((page.viewportSize()?.width ?? 0) <= 860 ? 1 : 2);
+});
+
 test('the agent conversation plays once it is in view, and a step can be picked', async ({ page }) => {
   await page.goto('/');
   const url = page.locator('#term .chat__url');
