@@ -30,6 +30,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { Notice } from '../../components/Notice';
+import { AdminOnly } from '../../components/AdminOnly';
 
 export const Route = createFileRoute('/_authed/environment')({
   component: EnvironmentPage,
@@ -44,22 +45,10 @@ const STATE_TONE: Readonly<Record<CellResource['state'], Tone>> = {
 };
 
 function EnvironmentPage() {
-  const { queries, isAdmin } = Route.useRouteContext();
-  const me = queries.useQuery('get', '/v1/whoami');
-  if (isAdmin(me.data)) {
-    return <YourEnvironment />;
-  }
   return (
-    <>
-      <PageHeader title="Your environment" />
-      {me.isPending ? (
-        <p className="muted">Loading…</p>
-      ) : me.isError ? (
-        <ProblemNotice error={me.error} />
-      ) : (
-        <p className="muted">Only org admins can see the environment.</p>
-      )}
-    </>
+    <AdminOnly title="Your environment" refusal="Only org admins can see the environment.">
+      <YourEnvironment />
+    </AdminOnly>
   );
 }
 

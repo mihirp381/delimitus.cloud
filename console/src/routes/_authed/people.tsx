@@ -21,28 +21,17 @@ import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
+import { AdminOnly } from '../../components/AdminOnly';
 
 export const Route = createFileRoute('/_authed/people')({
   component: PeoplePage,
 });
 
 function PeoplePage() {
-  const { queries, isAdmin } = Route.useRouteContext();
-  const me = queries.useQuery('get', '/v1/whoami');
-  if (isAdmin(me.data)) {
-    return <People />;
-  }
   return (
-    <>
-      <PageHeader title="People" />
-      {me.isPending ? (
-        <p className="muted">Loading…</p>
-      ) : me.isError ? (
-        <ProblemNotice error={me.error} />
-      ) : (
-        <p className="muted">Only org admins can look people up and link logins.</p>
-      )}
-    </>
+    <AdminOnly title="People" refusal="Only org admins can look people up and link logins.">
+      <People />
+    </AdminOnly>
   );
 }
 

@@ -23,6 +23,7 @@ import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
 import { saveBlob } from '../../download';
 import { Notice } from '../../components/Notice';
+import { AdminOnly } from '../../components/AdminOnly';
 
 export const Route = createFileRoute('/_authed/audit')({
   validateSearch: auditFilters,
@@ -44,22 +45,10 @@ const FORMATS: readonly { readonly format: ExportFormat; readonly label: string 
 ];
 
 function AuditPage() {
-  const { queries, isAdmin } = Route.useRouteContext();
-  const me = queries.useQuery('get', '/v1/whoami');
-  if (isAdmin(me.data)) {
-    return <AuditLog />;
-  }
   return (
-    <>
-      <PageHeader title="Audit log" />
-      {me.isPending ? (
-        <p className="muted">Loading…</p>
-      ) : me.isError ? (
-        <ProblemNotice error={me.error} />
-      ) : (
-        <p className="muted">Only org admins can see the audit log.</p>
-      )}
-    </>
+    <AdminOnly title="Audit log" refusal="Only org admins can see the audit log.">
+      <AuditLog />
+    </AdminOnly>
   );
 }
 
