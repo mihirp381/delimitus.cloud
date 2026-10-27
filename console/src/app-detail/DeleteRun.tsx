@@ -1,10 +1,10 @@
 import { Link, useRouteContext } from '@tanstack/react-router';
 import { type AppDeleteRun, POLL_MS } from '../api/lifecycle';
 import { Badge } from '../components/Badge';
+import { Notice } from '../components/Notice';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { clock, STATE_TONE, took } from './KillSwitchRun';
-import { Notice } from '../components/Notice';
 
 type Step = AppDeleteRun['steps'][number];
 

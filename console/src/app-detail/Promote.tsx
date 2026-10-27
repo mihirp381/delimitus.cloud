@@ -7,8 +7,8 @@ import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
-import { ProblemNotice } from '../components/ProblemNotice';
 import { Notice } from '../components/Notice';
+import { ProblemNotice } from '../components/ProblemNotice';
 
 const BUILD_TONE: Readonly<Record<string, Tone>> = {
   queued: 'info',

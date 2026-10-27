@@ -21,16 +21,17 @@ import {
   warmCost,
 } from '../../api/warm';
 import { ENV_TITLE } from '../../app-detail/names';
+import { AdminOnly } from '../../components/AdminOnly';
 import { Badge, type Tone } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Id } from '../../components/Copy';
 import { Meter } from '../../components/Meter';
 import { Loading } from '../../components/Loading';
+import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
-import { Notice } from '../../components/Notice';
-import { AdminOnly } from '../../components/AdminOnly';
 import { copyMessage, useClipboard } from '../../components/useClipboard';
 
 export const Route = createFileRoute('/_authed/environment')({
@@ -79,8 +80,7 @@ function YourEnvironment() {
           <Resources resources={cell.data.resources} />
           <WarmPanel />
           <DatabasePanel database={cell.data.database} environments={cell.data.environments} />
-          <section className="panel" aria-labelledby="usage-heading">
-            <h2 id="usage-heading">Usage this month</h2>
+          <Panel title="Usage this month">
             {usage.isPending ? (
               <Loading label="Loading usage…" rows={3} />
             ) : usage.isError ? (
@@ -88,7 +88,7 @@ function YourEnvironment() {
             ) : (
               <UsageTable usage={usage.data.environments} environments={cell.data.environments} />
             )}
-          </section>
+          </Panel>
         </>
       )}
     </>
@@ -198,8 +198,7 @@ function OutboundIp() {
   const ip = egress.data?.outbound_ip ?? null;
 
   return (
-    <section className="panel" aria-labelledby="ip-heading">
-      <h2 id="ip-heading">Fixed outbound IP</h2>
+    <Panel title="Fixed outbound IP">
       {egress.isPending ? (
         <p className="muted">Loading…</p>
       ) : egress.isError ? (
@@ -225,7 +224,7 @@ function OutboundIp() {
           up; if it stays missing, ask your operator.
         </p>
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -271,8 +270,7 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
     { header: 'Adds', cell: (r) => monthly(r.monthly_usd) },
   ];
   return (
-    <section className="panel" aria-labelledby="resources-heading">
-      <h2 id="resources-heading">Parts created when first needed</h2>
+    <Panel title="Parts created when first needed">
       <p className="muted">
         Each part is created the first time an app needs it and then stays: a database for the
         first app that stores data, the egress proxy for the first allowed internet host, the data
@@ -286,7 +284,7 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
         empty="No parts."
         emptyHint="A part appears here the first time an app needs it."
       />
-    </section>
+    </Panel>
   );
 }
 
@@ -319,8 +317,7 @@ function WarmPanel() {
       q.state.data?.gateway.state.startsWith('turning') ? GATEWAY_POLL_MS : false,
   });
   return (
-    <section className="panel" aria-labelledby="warm-heading">
-      <h2 id="warm-heading">Warm option</h2>
+    <Panel title="Warm option">
       <p className="muted">
         Every app sleeps when nobody uses it, and its first visitor waits while it wakes. A warm
         production app keeps one instance running, so it opens straight away. Preview apps are never
@@ -333,7 +330,7 @@ function WarmPanel() {
       ) : (
         <WarmForm key={savedSetting(warm.data)} warm={warm.data} />
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -444,8 +441,7 @@ function DatabasePanel({
   const taken = database.places_used * database.connection_limit;
   const total = database.places_total * database.connection_limit;
   return (
-    <section className="panel" aria-labelledby="database-heading">
-      <h2 id="database-heading">Database</h2>
+    <Panel title="Database">
       <dl className="facts">
         <dt>Tier</dt>
         <dd>
@@ -499,7 +495,7 @@ function DatabasePanel({
           ))}
         </ul>
       )}
-    </section>
+    </Panel>
   );
 }
 

@@ -12,11 +12,12 @@ import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ConfirmAction } from '../../components/ConfirmAction';
 import { Loading } from '../../components/Loading';
+import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
-import { Notice } from '../../components/Notice';
 import { copyMessage, useClipboard } from '../../components/useClipboard';
 
 export const Route = createFileRoute('/_authed/egress')({
@@ -74,8 +75,7 @@ function OutboundIp({ ip }: { readonly ip: string | null }) {
   const { state, copy } = useClipboard();
 
   return (
-    <section className="panel tone-magenta" aria-labelledby="egress-ip-heading">
-      <h2 id="egress-ip-heading">Fixed outbound IP</h2>
+    <Panel title="Fixed outbound IP">
       {ip ? (
         <>
           <p>
@@ -97,7 +97,7 @@ function OutboundIp({ ip }: { readonly ip: string | null }) {
           when the first host is allowed; if it stays missing, ask your operator.
         </p>
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -163,8 +163,7 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
     });
   }
   return (
-    <section className="panel tone-magenta" aria-labelledby="egress-hosts-heading">
-      <h2 id="egress-hosts-heading">Allowed hosts</h2>
+    <Panel title="Allowed hosts">
       <Table
         caption="Hosts apps may reach"
         columns={columns}
@@ -177,7 +176,7 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
             : 'Ask an org admin to allow the hosts your app calls.'
         }
       />
-    </section>
+    </Panel>
   );
 }
 
@@ -242,8 +241,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
   ];
 
   return (
-    <section className="panel tone-magenta" aria-labelledby="egress-add-heading">
-      <h2 id="egress-add-heading">Allow a host</h2>
+    <Panel title="Allow a host">
       <form className="stack" onSubmit={submit} aria-label="Allow a host">
         <label className="field" htmlFor={hostId}>
           <span>Host, such as api.example.com or *.example.com</span>
@@ -298,6 +296,6 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
           emptyHint="Type the host you need in the field above."
         />
       )}
-    </section>
+    </Panel>
   );
 }

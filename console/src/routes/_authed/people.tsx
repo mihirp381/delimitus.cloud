@@ -12,16 +12,17 @@ import {
   type UserMatch,
 } from '../../api/people';
 import { Lookup } from '../../app-detail/Lookup';
+import { AdminOnly } from '../../components/AdminOnly';
 import { Badge } from '../../components/Badge';
 import { Ago } from '../../components/Ago';
 import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
-import { AdminOnly } from '../../components/AdminOnly';
 
 export const Route = createFileRoute('/_authed/people')({
   component: PeoplePage,
@@ -67,7 +68,6 @@ function UnmatchedLogins() {
   const { queries } = Route.useRouteContext();
   const list = queries.useQuery('get', '/v1/unlinked-logins');
   const toast = useToast();
-  const headingId = useId();
 
   const columns: readonly Column<UnlinkedLogin>[] = [
     { header: 'Email', cell: (u) => u.email },
@@ -94,8 +94,7 @@ function UnmatchedLogins() {
   ];
 
   return (
-    <section className="panel" aria-labelledby={headingId}>
-      <h2 id={headingId}>Unmatched logins</h2>
+    <Panel title="Unmatched logins">
       <p className="muted">
         A login lands here when its identity provider subject matches no linked person and its
         email matches no one, or more than one. Link it to an active person, and that
@@ -116,7 +115,7 @@ function UnmatchedLogins() {
           emptyHint="A login that matches no one in the directory shows up here to be linked."
         />
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -239,7 +238,6 @@ function Finder<T>(props: FinderProps<T>) {
   const [error, setError] = useState<unknown>(null);
   const [found, setFound] = useState<{ readonly asked: string; readonly rows: readonly T[] } | null>(null);
   const latest = useRef(0);
-  const headingId = useId();
   const inputId = useId();
   const typed = text.trim();
 
@@ -275,8 +273,7 @@ function Finder<T>(props: FinderProps<T>) {
   }
 
   return (
-    <section className="panel" aria-labelledby={headingId}>
-      <h2 id={headingId}>{title}</h2>
+    <Panel title={title}>
       <p className="muted">{children}</p>
       <form className="lookup-form" onSubmit={submit} aria-label={title}>
         <label className="field" htmlFor={inputId}>
@@ -309,7 +306,7 @@ function Finder<T>(props: FinderProps<T>) {
           />
         </div>
       ) : null}
-    </section>
+    </Panel>
   );
 }
 

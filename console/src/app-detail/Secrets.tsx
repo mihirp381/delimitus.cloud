@@ -5,11 +5,11 @@ import { Ago } from '../components/Ago';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Loading } from '../components/Loading';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
-import { ENV_TITLE } from './names';
-import { Section } from './Section';
 import { copyMessage, useClipboard } from '../components/useClipboard';
+import { ENV_TITLE } from './names';
 
 type Secret = components['schemas']['SecretOut'];
 
@@ -54,9 +54,9 @@ const COLUMNS: readonly Column<Secret>[] = [
  */
 export function Secrets({ app, env }: Props) {
   return (
-    <Section title="Secrets">
+    <Panel title="Secrets">
       <SecretsBody app={app} env={env} />
-    </Section>
+    </Panel>
   );
 }
 

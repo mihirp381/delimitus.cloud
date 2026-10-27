@@ -23,10 +23,10 @@ import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { ApiProblem } from '../api/problem';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
+import { Notice } from '../components/Notice';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { ENV_TITLE } from './names';
 import { Lookup } from './Lookup';
-import { Notice } from '../components/Notice';
 
 type Kind = 'group' | 'user' | 'org';
 type Role = GrantInput['role'];

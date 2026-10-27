@@ -21,11 +21,11 @@ import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
 import { Loading } from '../components/Loading';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { useToast } from '../components/Toast';
 import { ENV_TITLE } from './names';
-import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -64,9 +64,9 @@ interface Started {
  */
 export function Timers({ app, env }: Props) {
   return (
-    <Section title="Timers">
+    <Panel title="Timers">
       <TimersBody app={app} env={env} />
-    </Section>
+    </Panel>
   );
 }
 

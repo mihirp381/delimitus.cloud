@@ -18,9 +18,9 @@ import {
 } from '../api/logs';
 import { ApiProblem } from '../api/problem';
 import { Button } from '../components/Button';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { ENV_TITLE } from './names';
-import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -68,9 +68,9 @@ function onShow(signal: AbortSignal): Promise<void> {
  */
 export function Logs({ app, env }: Props) {
   return (
-    <Section title="Logs">
+    <Panel title="Logs">
       <LogsBody app={app} env={env} />
-    </Section>
+    </Panel>
   );
 }
 

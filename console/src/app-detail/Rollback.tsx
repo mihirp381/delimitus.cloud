@@ -17,9 +17,9 @@ import { ApiProblem } from '../api/problem';
 import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
+import { Notice } from '../components/Notice';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { ENV_TITLE } from './names';
-import { Notice } from '../components/Notice';
 
 const OP_TONE: Readonly<Record<string, Tone>> = {
   pending: 'info',

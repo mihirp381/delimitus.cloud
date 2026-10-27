@@ -12,7 +12,6 @@ import { Repository } from '../../app-detail/Repository';
 import { Rollback } from '../../app-detail/Rollback';
 import { Running } from '../../app-detail/Running';
 import { Secrets } from '../../app-detail/Secrets';
-import { Section } from '../../app-detail/Section';
 import { ShareDialog } from '../../app-detail/ShareDialog';
 import {
   APP_TAB_TITLE,
@@ -32,10 +31,11 @@ import { ConfirmAction } from '../../components/ConfirmAction';
 import { Id } from '../../components/Copy';
 import { Icon } from '../../components/Icon';
 import { Loading } from '../../components/Loading';
+import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
-import { Notice } from '../../components/Notice';
 
 export const Route = createFileRoute('/_authed/apps/$appId')({
   validateSearch: appSearch,
@@ -221,7 +221,6 @@ interface CardProps {
 function EnvironmentCard({ app, env, preview }: CardProps) {
   const { queries } = Route.useRouteContext();
   const { grants, seen, waiting, applied } = useGrants(app, env);
-  const headingId = `env-${env.id}`;
   const current = env.current_deployment_id;
   const deployments = queries.useQuery(
     'get',
@@ -242,10 +241,14 @@ function EnvironmentCard({ app, env, preview }: CardProps) {
   }, [current, refetch]);
 
   return (
-    <section className="panel" aria-labelledby={headingId} data-env={env.name}>
-      <h2 id={headingId}>
-        {ENV_TITLE[env.name]} <code className="chip">{env.name}</code>
-      </h2>
+    <Panel
+      title={
+        <>
+          {ENV_TITLE[env.name]} <code className="chip">{env.name}</code>
+        </>
+      }
+      data-env={env.name}
+    >
       <dl className="facts">
         <Running app={app} env={env}>
           {current ? (
@@ -306,7 +309,7 @@ function EnvironmentCard({ app, env, preview }: CardProps) {
           <p>{waiting}</p>
         </Notice>
       ) : null}
-    </section>
+    </Panel>
   );
 }
 
@@ -348,7 +351,7 @@ function Access({ app, env }: { readonly app: AppOut; readonly env: EnvironmentO
   ];
 
   return (
-    <Section
+    <Panel
       title="Who has access"
       actions={<ShareDialog app={app} env={env} seen={seen} onDone={(u, m) => void applied(u, m)} />}
     >
@@ -371,6 +374,6 @@ function Access({ app, env }: { readonly app: AppOut; readonly env: EnvironmentO
           emptyHint={`Use Share to give a person, a group or everyone in the organisation access to ${ENV_TITLE[env.name].toLowerCase()}.`}
         />
       )}
-    </Section>
+    </Panel>
   );
 }

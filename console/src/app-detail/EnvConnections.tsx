@@ -16,14 +16,14 @@ import { Ago } from '../components/Ago';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
+import { Notice } from '../components/Notice';
+import { Panel } from '../components/Panel';
 import { Phrases } from '../components/Phrases';
 import { Loading } from '../components/Loading';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { useToast } from '../components/Toast';
 import { ENV_TITLE } from './names';
-import { Section } from './Section';
-import { Notice } from '../components/Notice';
 
 interface Props {
   readonly app: AppOut;
@@ -39,9 +39,9 @@ const SCHEMA_PATH = '/v1/apps/{app_id}/environments/{environment_id}/connections
  */
 export function EnvConnections({ app, env }: Props) {
   return (
-    <Section title="Data connections">
+    <Panel title="Data connections">
       <ConnectionsBody app={app} env={env} />
-    </Section>
+    </Panel>
   );
 }
 

@@ -17,6 +17,7 @@ import { Ago } from '../components/Ago';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { useToast } from '../components/Toast';
 
@@ -44,8 +45,7 @@ export function Repository({ app }: { readonly app: AppOut }) {
   }
 
   return (
-    <section className="panel" aria-labelledby="repo-heading">
-      <h2 id="repo-heading">Repository</h2>
+    <Panel title="Repository">
       {link.isPending ? (
         <p className="muted">Loading the repository…</p>
       ) : link.isError ? (
@@ -118,7 +118,7 @@ export function Repository({ app }: { readonly app: AppOut }) {
           </div>
         </>
       )}
-    </section>
+    </Panel>
   );
 }
 

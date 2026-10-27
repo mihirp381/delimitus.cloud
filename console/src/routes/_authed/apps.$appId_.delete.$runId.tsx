@@ -18,7 +18,7 @@ function DeleteRunPage() {
         title="Delete run"
         purpose="One removal of an app: what it deleted, step by step, and how long each step took. Every step is also in the audit log."
       />
-      <section className="panel tone-orange" aria-label="Delete run">
+      <section className="panel" aria-label="Delete run">
         <DeleteProgress appId={appId} runId={runId} page />
       </section>
     </>

@@ -5,11 +5,11 @@ import { findAnyone, type Match, USER_ID_PATTERN } from '../api/directory';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { Lookup } from './Lookup';
 import { ENV_TITLE } from './names';
-import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -29,9 +29,9 @@ const GRANT_COLUMNS: readonly Column<ExplainedGrant>[] = [
  */
 export function AccessExplain({ app, env }: Props) {
   return (
-    <Section title="Why can this person open it?">
+    <Panel title="Why can this person open it?">
       <Body app={app} env={env} />
-    </Section>
+    </Panel>
   );
 }
 

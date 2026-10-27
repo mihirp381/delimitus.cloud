@@ -119,7 +119,7 @@ function ConnectionsPage() {
           its address.
         </p>
       )}
-      <section className="panel tone-purple" aria-label="Connections">
+      <section className="panel" aria-label="Connections">
         {list.isPending ? (
           <Loading label="Loading connections…" rows={3} />
         ) : list.isError ? (
