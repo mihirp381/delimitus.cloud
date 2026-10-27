@@ -127,6 +127,7 @@ test('the prompt is typed, the pipeline lights, and Play again starts over', asy
   await page.locator('#term').scrollIntoViewIfNeeded();
   await page.waitForTimeout(300);
   expect(((await me.textContent()) ?? '').length).toBeLessThan(PROMPT.length);
+  expect(await page.locator('#term .chat').ariaSnapshot()).toContain(PROMPT.slice('You'.length));
   await expect(reply).toBeHidden();
   await expect(me).toHaveText(PROMPT, { timeout: 4000 });
   await expect(reply).toBeVisible();

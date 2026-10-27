@@ -682,6 +682,7 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .chat .chat__url[data-later] { transform: translateY(8px); }
 .chat__me.is-typing::after { content: ""; display: inline-block; width: 0.55em; height: 1.1em; margin-left: 2px; vertical-align: -0.2em; background: #FFFFFF; animation: caret 0.9s steps(1) infinite; }
 @keyframes caret { 50% { opacity: 0; } }
+.chat .chat__sr { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .hiw__alt { padding: 14px clamp(24px, 4vw, 52px) 18px; border-top: 1px solid var(--line); color: var(--ink-2); }
 
 /* ── the gap: everything one prompt sets off ──────────────────────────── */
@@ -1872,6 +1873,12 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       bars("0");
       light(false);
       hold(true);
+      var heard = me.cloneNode(true);
+      heard.className = "chat__sr";
+      heard.removeAttribute("data-s");
+      heard.removeAttribute("data-on");
+      me.parentNode.insertBefore(heard, me);
+      me.setAttribute("aria-hidden", "true");
       said.nodeValue = "";
       replay.hidden = false;
       replay.addEventListener("click", function () { if (seen) { seen.disconnect(); } play(); });
