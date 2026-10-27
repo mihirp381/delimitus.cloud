@@ -23,6 +23,7 @@ import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { ApiProblem } from '../api/problem';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
+import { Notice } from '../components/Notice';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { ENV_TITLE } from './names';
 import { Lookup } from './Lookup';
@@ -272,7 +273,7 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
           {env.name === 'preview' ? <p className="muted">Preview is for builders only.</p> : null}
           {error ? <ProblemNotice error={error} /> : null}
           {needed && !asked ? (
-            <div className="notice notice-info" role="note">
+            <Notice tone="info" role="note">
               {needed.requirements.length > 0 ? (
                 <>
                   <p>This change needs approval before it applies:</p>
@@ -302,10 +303,10 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
               ) : (
                 <p>Every approval this change needs is now in. Share again.</p>
               )}
-            </div>
+            </Notice>
           ) : null}
           {asked ? (
-            <div className="notice notice-success" role="status">
+            <Notice tone="success">
               <p>Asked for approval. Share again once every request is approved:</p>
               <ul>
                 {asked.map((a) => (
@@ -314,7 +315,7 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
                   </li>
                 ))}
               </ul>
-            </div>
+            </Notice>
           ) : null}
           <div className="actions">
             <Button onClick={close}>Cancel</Button>

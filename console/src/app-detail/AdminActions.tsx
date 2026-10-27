@@ -13,6 +13,7 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { useToast } from '../components/Toast';
 import { DeleteProgress } from './DeleteRun';
@@ -38,13 +39,8 @@ const MODE_TEXT: Readonly<Record<KillSwitchMode, { label: string; body: string }
 export function AdminActions({ app }: { readonly app: AppOut }) {
   const { queries, isAdmin } = useRouteContext({ from: '/_authed/apps/$appId' });
   const me = queries.useQuery('get', '/v1/whoami');
-  const headingId = `admin-${app.id}`;
   return (
-    <section className="panel danger-zone" aria-labelledby={headingId}>
-      <div className="panel-head">
-        <h2 id={headingId}>Admin actions</h2>
-        <Badge tone="danger">Danger zone</Badge>
-      </div>
+    <Panel title="Admin actions" actions={<Badge tone="danger">Danger zone</Badge>} className="danger-zone">
       <p className="muted">
         These stop the app for everyone who uses it, hand it to someone else, or delete it for good.
       </p>
@@ -59,7 +55,7 @@ export function AdminActions({ app }: { readonly app: AppOut }) {
           Only an org admin can disable, quarantine, enable, transfer or delete this app.
         </p>
       )}
-    </section>
+    </Panel>
   );
 }
 

@@ -16,9 +16,10 @@ function KillSwitchRunPage() {
     <>
       <PageHeader
         title="Kill switch run"
-        purpose="One pull of the kill switch: what it did, step by step, and how long each step and the whole stop took. Every step is also in the audit log."
+        purpose="One pull of the kill switch: what it did, step by step, and how long each step and the whole stop took."
+        about={<p>Every step is also in the audit log.</p>}
       />
-      <section className="panel tone-orange" aria-label="Kill switch run">
+      <section className="panel" aria-label="Kill switch run">
         <KillSwitchProgress appId={appId} runId={runId} page />
       </section>
     </>

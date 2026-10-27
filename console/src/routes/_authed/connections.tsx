@@ -42,9 +42,9 @@ import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ConfirmAction } from '../../components/ConfirmAction';
 import { Dialog } from '../../components/Dialog';
+import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { Phrases } from '../../components/Phrases';
-import { Loading } from '../../components/Loading';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
@@ -103,12 +103,12 @@ function ConnectionsPage() {
     <>
       <PageHeader
         title="Connections"
-        purpose={
-          <>
-            Your company&apos;s databases that apps may read through the data gateway. A
-            connection&apos;s address is stored when it is added and never shown again; its
-            credentials are set up with your operator.
-          </>
+        purpose="Your company's databases that apps may read through the data gateway."
+        about={
+          <p>
+            A connection&apos;s address is stored when it is added and never shown again; its credentials are
+            set up with your operator.
+          </p>
         }
       >
         {!me.isPending && admin ? <AddConnection onDone={toast} /> : null}
@@ -119,7 +119,7 @@ function ConnectionsPage() {
           its address.
         </p>
       )}
-      <section className="panel tone-purple" aria-label="Connections">
+      <section className="panel" aria-label="Connections">
         {list.isPending ? (
           <Loading label="Loading connections…" rows={3} />
         ) : list.isError ? (

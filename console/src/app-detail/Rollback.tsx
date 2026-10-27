@@ -17,6 +17,8 @@ import { ApiProblem } from '../api/problem';
 import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
+import { Loading } from '../components/Loading';
+import { Notice } from '../components/Notice';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { ENV_TITLE } from './names';
 
@@ -163,7 +165,7 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
         <p className="muted">Production runs only releases built for production.</p>
       ) : null}
       {releases.isPending || deployments.isPending ? (
-        <p className="muted">Loading releases…</p>
+        <Loading label="Loading releases…" rows={3} />
       ) : releases.isError && items.length === 0 ? (
         <ProblemNotice error={releases.error} />
       ) : deployments.isError ? (
@@ -224,7 +226,7 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
       </label>
       {error ? <ProblemNotice error={error} /> : null}
       {warned && picked ? (
-        <div className="notice notice-warning" role="alert">
+        <Notice tone="warn" role="alert">
           <p>
             The database may have run migrations {picked.label} does not have. A rollback does not
             undo them, so {picked.label} may not work against the database as it is now.
@@ -247,7 +249,7 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
             />
             <span>{picked.label} works with these migrations</span>
           </label>
-        </div>
+        </Notice>
       ) : null}
       <div className="actions">
         <Button onClick={onClose}>Cancel</Button>

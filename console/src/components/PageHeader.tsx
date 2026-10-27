@@ -14,10 +14,14 @@ export function PageActions({ children }: { readonly children: ReactNode }) {
   return slot ? createPortal(children, slot) : null;
 }
 
+export const PURPOSE_MAX = 140;
+
 interface Props {
   readonly title: ReactNode;
-  /** One line saying what the page is for. */
-  readonly purpose?: ReactNode;
+  /** One sentence, at most PURPOSE_MAX characters (test/page-header.test.ts). */
+  readonly purpose?: string;
+  /** What else the page needs said, under "About this page". */
+  readonly about?: ReactNode;
   /** A status pill shown beside the title. */
   readonly status?: ReactNode;
   /** A line of facts under the title: who owns it, its id. */
@@ -27,7 +31,7 @@ interface Props {
 }
 
 /** The top of every page: its title and what it is for. What you can do from it sits in the page bar. */
-export function PageHeader({ title, purpose, status, meta, children }: Props) {
+export function PageHeader({ title, purpose, about, status, meta, children }: Props) {
   return (
     <div className="page-head">
       <div className="page-head-main">
@@ -37,6 +41,12 @@ export function PageHeader({ title, purpose, status, meta, children }: Props) {
         </div>
         {purpose ? <p className="page-purpose">{purpose}</p> : null}
         {meta}
+        {about ? (
+          <details className="page-about">
+            <summary>About this page</summary>
+            <div className="page-about-body">{about}</div>
+          </details>
+        ) : null}
       </div>
       {children ? <PageActions>{children}</PageActions> : null}
     </div>

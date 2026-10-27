@@ -17,6 +17,8 @@ import { Ago } from '../components/Ago';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
+import { Loading } from '../components/Loading';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { useToast } from '../components/Toast';
 
@@ -44,10 +46,9 @@ export function Repository({ app }: { readonly app: AppOut }) {
   }
 
   return (
-    <section className="panel" aria-labelledby="repo-heading">
-      <h2 id="repo-heading">Repository</h2>
+    <Panel title="Repository">
       {link.isPending ? (
-        <p className="muted">Loading the repository…</p>
+        <Loading label="Loading the repository…" rows={2} />
       ) : link.isError ? (
         link.error instanceof ApiProblem && link.error.status === 403 ? (
           <p className="muted">Only builders of this app can see its repository.</p>
@@ -118,7 +119,7 @@ export function Repository({ app }: { readonly app: AppOut }) {
           </div>
         </>
       )}
-    </section>
+    </Panel>
   );
 }
 

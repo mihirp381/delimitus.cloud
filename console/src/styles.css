@@ -242,24 +242,24 @@ a.brand:hover {
   border-top: 1px solid var(--ssc-border-subtle);
 }
 
-.nav-group,
-.nav-foot {
+.nav-group {
   display: grid;
   gap: var(--ssc-space-0);
 }
 
-.nav-foot {
-  margin-top: auto;
+.nav-divider {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--ssc-border-subtle);
 }
 
-.nav-title {
-  padding: var(--ssc-space-1) var(--ssc-space-2);
-  font-size: var(--ssc-type-size-tiny);
-  font-weight: 600;
-  line-height: var(--ssc-type-leading-tight);
-  letter-spacing: var(--ssc-type-tracking-caps);
-  text-transform: uppercase;
-  color: var(--ssc-text-muted);
+.nav-item {
+  display: grid;
+}
+
+.nav-item > * {
+  grid-area: 1 / 1;
 }
 
 .sidenav a {
@@ -301,8 +301,10 @@ a.brand:hover {
 }
 
 .nav-count {
+  align-self: center;
+  justify-self: end;
   min-width: 20px;
-  margin-left: auto;
+  margin-right: var(--ssc-space-2);
   padding: 0 var(--ssc-space-1);
   border-radius: var(--ssc-radius-full);
   font-size: var(--ssc-type-size-tiny);
@@ -312,6 +314,7 @@ a.brand:hover {
   text-align: center;
   color: var(--ssc-feedback-warning);
   background: var(--ssc-feedback-warning-soft);
+  pointer-events: none;
 }
 
 /* Who is signed in, and the menu that opens above it. */
@@ -591,11 +594,17 @@ a.brand:hover {
   overflow-wrap: anywhere;
 }
 
-.page-purpose {
+.page-purpose,
+.page-about {
   max-width: 78ch;
   font-size: var(--ssc-type-size-small);
   color: var(--ssc-text-muted);
   text-wrap: pretty;
+}
+
+.page-about-body {
+  display: grid;
+  gap: var(--ssc-space-2);
 }
 
 /* What an app is, under its name: owner, id, when it was made. */
@@ -678,26 +687,6 @@ a.brand:hover {
   white-space: nowrap;
   color: var(--ssc-tone-blue);
   background: var(--ssc-tone-blue-soft);
-}
-
-.tone-violet .chip {
-  color: var(--ssc-tone-violet);
-  background: var(--ssc-tone-violet-soft);
-}
-
-.tone-purple .chip {
-  color: var(--ssc-tone-purple);
-  background: var(--ssc-tone-purple-soft);
-}
-
-.tone-magenta .chip {
-  color: var(--ssc-tone-magenta);
-  background: var(--ssc-tone-magenta-soft);
-}
-
-.tone-orange .chip {
-  color: var(--ssc-tone-orange);
-  background: var(--ssc-tone-orange-soft);
 }
 
 /* Definition list */
@@ -1078,6 +1067,18 @@ textarea {
   max-width: 100%;
 }
 
+.filter-bar {
+  display: grid;
+  gap: var(--ssc-space-3);
+}
+
+.filter-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ssc-space-2);
+}
+
 /* One choice among a few, as joined segments. */
 .segmented {
   display: inline-flex;
@@ -1246,9 +1247,7 @@ a.segment.current {
 .panel > .field > input,
 .panel > .field > select,
 .panel > form > .field > input,
-.panel > form > .field > select,
-.panel > .stack > .field > select,
-.panel > form.stack > .field > select {
+.panel > .stack > .field > select {
   max-width: 480px;
 }
 
@@ -1343,15 +1342,11 @@ a.segment.current {
   background: var(--ssc-surface-hover);
 }
 
-.panel > .table-wrap th:first-child,
-.panel > .table-wrap td:first-child,
 .table th:first-child,
 .table td:first-child {
   padding-left: var(--ssc-space-4);
 }
 
-.panel > .table-wrap th:last-child,
-.panel > .table-wrap td:last-child,
 .table th:last-child,
 .table td:last-child {
   padding-right: var(--ssc-space-4);
@@ -1572,6 +1567,16 @@ a.segment.current {
   padding: 0;
 }
 
+.skeleton-inline {
+  display: inline-flex;
+  width: 8rem;
+  vertical-align: middle;
+}
+
+.skeleton-inline > .skeleton-bar {
+  flex: 1;
+}
+
 .skeleton-row:last-child {
   border-bottom: 0;
 }
@@ -1656,27 +1661,6 @@ details[open] > summary::after {
 
 details[open] > summary {
   margin-bottom: var(--ssc-space-3);
-}
-
-/* A card's own sections that open: a full-width row under a hairline. */
-.panel > details {
-  padding-top: var(--ssc-space-3);
-  border-top: 1px solid var(--ssc-border-subtle);
-}
-
-.panel > .table-wrap + details {
-  border-top: 0;
-}
-
-.panel > details > summary {
-  display: flex;
-  justify-content: space-between;
-  font-weight: 600;
-  color: var(--ssc-text-primary);
-}
-
-.panel > details > summary::after {
-  color: var(--ssc-text-muted);
 }
 
 /* Logs: what the app wrote, in the mono face, each line with its time and severity. The box

@@ -21,14 +21,18 @@ import {
   warmCost,
 } from '../../api/warm';
 import { ENV_TITLE } from '../../app-detail/names';
+import { AdminOnly } from '../../components/AdminOnly';
 import { Badge, type Tone } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Id } from '../../components/Copy';
-import { Meter } from '../../components/Meter';
 import { Loading } from '../../components/Loading';
+import { Meter } from '../../components/Meter';
+import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
+import { copyMessage, useClipboard } from '../../components/useClipboard';
 
 export const Route = createFileRoute('/_authed/environment')({
   component: EnvironmentPage,
@@ -43,22 +47,10 @@ const STATE_TONE: Readonly<Record<CellResource['state'], Tone>> = {
 };
 
 function EnvironmentPage() {
-  const { queries, isAdmin } = Route.useRouteContext();
-  const me = queries.useQuery('get', '/v1/whoami');
-  if (isAdmin(me.data)) {
-    return <YourEnvironment />;
-  }
   return (
-    <>
-      <PageHeader title="Your environment" />
-      {me.isPending ? (
-        <p className="muted">Loading…</p>
-      ) : me.isError ? (
-        <ProblemNotice error={me.error} />
-      ) : (
-        <p className="muted">Only org admins can see the environment.</p>
-      )}
-    </>
+    <AdminOnly title="Usage" refusal="Only org admins can see usage.">
+      <YourEnvironment />
+    </AdminOnly>
   );
 }
 
@@ -69,13 +61,9 @@ function YourEnvironment() {
   return (
     <>
       <PageHeader
-        title="Your environment"
-        purpose={
-          <>
-            What your company&apos;s cell runs and what each part adds a month. These figures are
-            not a bill: you pay a flat fee, and they show what a choice sets off.
-          </>
-        }
+        title="Usage"
+        purpose="What your company's cell runs and what each part adds a month."
+        about={<p>These figures are not a bill: you pay a flat fee, and they show what a choice sets off.</p>}
       />
       <Tiles />
       <OutboundIp />
@@ -88,8 +76,7 @@ function YourEnvironment() {
           <Resources resources={cell.data.resources} />
           <WarmPanel />
           <DatabasePanel database={cell.data.database} environments={cell.data.environments} />
-          <section className="panel" aria-labelledby="usage-heading">
-            <h2 id="usage-heading">Usage this month</h2>
+          <Panel title="Usage this month">
             {usage.isPending ? (
               <Loading label="Loading usage…" rows={3} />
             ) : usage.isError ? (
@@ -97,7 +84,7 @@ function YourEnvironment() {
             ) : (
               <UsageTable usage={usage.data.environments} environments={cell.data.environments} />
             )}
-          </section>
+          </Panel>
         </>
       )}
     </>
@@ -203,23 +190,13 @@ function Tiles() {
 function OutboundIp() {
   const { queries } = Route.useRouteContext();
   const egress = queries.useQuery('get', '/v1/egress');
-  const [copied, setCopied] = useState<string | null>(null);
+  const { state, copy } = useClipboard();
   const ip = egress.data?.outbound_ip ?? null;
 
-  async function copy(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied('Copied.');
-    } catch {
-      setCopied('Could not copy; select the address instead.');
-    }
-  }
-
   return (
-    <section className="panel" aria-labelledby="ip-heading">
-      <h2 id="ip-heading">Fixed outbound IP</h2>
+    <Panel title="Fixed outbound IP">
       {egress.isPending ? (
-        <p className="muted">Loading…</p>
+        <Loading label="Loading the outbound IP…" rows={1} />
       ) : egress.isError ? (
         <ProblemNotice error={egress.error} />
       ) : ip ? (
@@ -230,9 +207,9 @@ function OutboundIp() {
           </p>
           <div className="toolbar">
             <Button onClick={() => void copy(ip)}>Copy IP</Button>
-            {copied ? (
+            {state !== 'idle' ? (
               <span className="muted" role="status">
-                {copied}
+                {copyMessage(state, 'address')}
               </span>
             ) : null}
           </div>
@@ -243,7 +220,7 @@ function OutboundIp() {
           up; if it stays missing, ask your operator.
         </p>
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -289,8 +266,7 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
     { header: 'Adds', cell: (r) => monthly(r.monthly_usd) },
   ];
   return (
-    <section className="panel" aria-labelledby="resources-heading">
-      <h2 id="resources-heading">Parts created when first needed</h2>
+    <Panel title="Parts created when first needed">
       <p className="muted">
         Each part is created the first time an app needs it and then stays: a database for the
         first app that stores data, the egress proxy for the first allowed internet host, the data
@@ -304,7 +280,7 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
         empty="No parts."
         emptyHint="A part appears here the first time an app needs it."
       />
-    </section>
+    </Panel>
   );
 }
 
@@ -337,21 +313,20 @@ function WarmPanel() {
       q.state.data?.gateway.state.startsWith('turning') ? GATEWAY_POLL_MS : false,
   });
   return (
-    <section className="panel" aria-labelledby="warm-heading">
-      <h2 id="warm-heading">Warm option</h2>
+    <Panel title="Warm option">
       <p className="muted">
         Every app sleeps when nobody uses it, and its first visitor waits while it wakes. A warm
         production app keeps one instance running, so it opens straight away. Preview apps are never
         warm.
       </p>
       {warm.isPending ? (
-        <p className="muted">Loading…</p>
+        <Loading label="Loading the warm option…" rows={3} />
       ) : warm.isError ? (
         <ProblemNotice error={warm.error} />
       ) : (
         <WarmForm key={savedSetting(warm.data)} warm={warm.data} />
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -429,13 +404,13 @@ function WarmForm({ warm }: { readonly warm: WarmOut }) {
         </span>
       </label>
       {chosen.size > 0 && !gateway ? (
-        <div className="notice notice-warning" role="status">
+        <Notice tone="warn">
           <p>
             A warm app behind a sleeping gateway still waits: every visit passes through the gateway,
             and it wakes first.
           </p>
           <Button onClick={() => setGateway(true)}>Keep the gateway warm too</Button>
-        </div>
+        </Notice>
       ) : null}
       <p>
         As chosen, the warm option adds <strong>{monthly(cost)}</strong>. This is not a bill.
@@ -462,8 +437,7 @@ function DatabasePanel({
   const taken = database.places_used * database.connection_limit;
   const total = database.places_total * database.connection_limit;
   return (
-    <section className="panel" aria-labelledby="database-heading">
-      <h2 id="database-heading">Database</h2>
+    <Panel title="Database">
       <dl className="facts">
         <dt>Tier</dt>
         <dd>
@@ -480,7 +454,7 @@ function DatabasePanel({
         </dd>
       </dl>
       {offerBigger ? (
-        <div className="notice notice-warning" role="status">
+        <Notice tone="warn">
           {database.tier_full_at ? (
             <p>
               A deploy was refused on{' '}
@@ -501,7 +475,7 @@ function DatabasePanel({
             Or give places back: deleting an app, from the admin actions on its Settings tab,
             frees the places of its databases.
           </p>
-        </div>
+        </Notice>
       ) : null}
       {withDatabase.length === 0 ? (
         <p className="muted">No app has a database yet.</p>
@@ -517,7 +491,7 @@ function DatabasePanel({
           ))}
         </ul>
       )}
-    </section>
+    </Panel>
   );
 }
 

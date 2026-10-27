@@ -52,6 +52,7 @@ function AuthedLayout() {
   const [actions, setActions] = useState<HTMLElement | null>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const countId = useId();
   // The inbox the Approvals page shows, so the page and this count are one read.
   const waiting = useInfiniteQuery({
     queryKey: INBOX_KEY,
@@ -129,7 +130,7 @@ function AuthedLayout() {
               </p>
             ) : null}
             <nav aria-label="Main" className="sidenav">
-              <NavGroup title="Workspace">
+              <div className="nav-group">
                 <Link
                   to="/"
                   activeOptions={{ exact: true }}
@@ -139,13 +140,18 @@ function AuthedLayout() {
                   <Icon name="apps" />
                   <span>Apps</span>
                 </Link>
-                <Link to="/approvals" aria-label={count > 0 ? `Approvals, ${waitingText} waiting for you` : undefined}>
-                  <Icon name="approvals" />
-                  <span>Approvals</span>
-                  {count > 0 ? <span className="nav-count">{waitingText}</span> : null}
-                </Link>
-              </NavGroup>
-              <NavGroup title="Data and network">
+                <div className="nav-item">
+                  <Link to="/approvals" aria-describedby={count > 0 ? countId : undefined}>
+                    <Icon name="approvals" />
+                    <span>Approvals</span>
+                  </Link>
+                  {count > 0 ? (
+                    <span id={countId} className="nav-count">
+                      {waitingText}{' '}
+                      <span className="visually-hidden">waiting for you</span>
+                    </span>
+                  ) : null}
+                </div>
                 <Link to="/connections">
                   <Icon name="connections" />
                   <span>Connections</span>
@@ -154,24 +160,25 @@ function AuthedLayout() {
                   <Icon name="globe" />
                   <span>Internet access</span>
                 </Link>
-              </NavGroup>
-              {admin ? (
-                <NavGroup title="Admin">
-                  <Link to="/environment">
-                    <Icon name="server" />
-                    <span>Your environment</span>
-                  </Link>
-                  <Link to="/people">
-                    <Icon name="people" />
-                    <span>People</span>
-                  </Link>
-                  <Link to="/audit">
-                    <Icon name="audit" />
-                    <span>Audit log</span>
-                  </Link>
-                </NavGroup>
-              ) : null}
-              <div className="nav-foot">
+              </div>
+              <hr className="nav-divider" />
+              <div className="nav-group">
+                {admin ? (
+                  <div className="nav-group" role="group" aria-label="Admin">
+                    <Link to="/people">
+                      <Icon name="people" />
+                      <span>People</span>
+                    </Link>
+                    <Link to="/audit">
+                      <Icon name="audit" />
+                      <span>Audit log</span>
+                    </Link>
+                    <Link to="/environment">
+                      <Icon name="server" />
+                      <span>Usage</span>
+                    </Link>
+                  </div>
+                ) : null}
                 <Link to="/help">
                   <Icon name="help" />
                   <span>Help</span>
@@ -209,23 +216,11 @@ function AuthedLayout() {
   );
 }
 
-function NavGroup({ title, children }: { readonly title: string; readonly children: ReactNode }) {
-  const id = useId();
-  return (
-    <div className="nav-group" role="group" aria-labelledby={id}>
-      <p id={id} className="nav-title">
-        {title}
-      </p>
-      {children}
-    </div>
-  );
-}
-
 const SECTION_TITLE: Readonly<Record<string, string>> = {
   approvals: 'Approvals',
   connections: 'Connections',
   egress: 'Internet access',
-  environment: 'Your environment',
+  environment: 'Usage',
   people: 'People',
   audit: 'Audit log',
   help: 'Help',

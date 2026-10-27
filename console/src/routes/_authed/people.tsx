@@ -12,12 +12,14 @@ import {
   type UserMatch,
 } from '../../api/people';
 import { Lookup } from '../../app-detail/Lookup';
+import { AdminOnly } from '../../components/AdminOnly';
 import { Badge } from '../../components/Badge';
 import { Ago } from '../../components/Ago';
 import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
@@ -27,22 +29,10 @@ export const Route = createFileRoute('/_authed/people')({
 });
 
 function PeoplePage() {
-  const { queries, isAdmin } = Route.useRouteContext();
-  const me = queries.useQuery('get', '/v1/whoami');
-  if (isAdmin(me.data)) {
-    return <People />;
-  }
   return (
-    <>
-      <PageHeader title="People" />
-      {me.isPending ? (
-        <p className="muted">Loading…</p>
-      ) : me.isError ? (
-        <ProblemNotice error={me.error} />
-      ) : (
-        <p className="muted">Only org admins can look people up and link logins.</p>
-      )}
-    </>
+    <AdminOnly title="People" refusal="Only org admins can look people up and link logins.">
+      <People />
+    </AdminOnly>
   );
 }
 
@@ -51,13 +41,8 @@ function People() {
     <>
       <PageHeader
         title="People"
-        purpose={
-          <>
-            People and groups are managed in your identity provider: add, change or remove them
-            there, and SSC follows. Here you can look one up, and link a login that matched no
-            person.
-          </>
-        }
+        purpose="People and groups are managed in your identity provider; here you look one up and link a login that matched no person."
+        about={<p>Add, change or remove people and groups in your identity provider, and SSC follows.</p>}
       />
       <UnmatchedLogins />
       <FindPerson />
@@ -78,7 +63,6 @@ function UnmatchedLogins() {
   const { queries } = Route.useRouteContext();
   const list = queries.useQuery('get', '/v1/unlinked-logins');
   const toast = useToast();
-  const headingId = useId();
 
   const columns: readonly Column<UnlinkedLogin>[] = [
     { header: 'Email', cell: (u) => u.email },
@@ -105,8 +89,7 @@ function UnmatchedLogins() {
   ];
 
   return (
-    <section className="panel" aria-labelledby={headingId}>
-      <h2 id={headingId}>Unmatched logins</h2>
+    <Panel title="Unmatched logins">
       <p className="muted">
         A login lands here when its identity provider subject matches no linked person and its
         email matches no one, or more than one. Link it to an active person, and that
@@ -127,7 +110,7 @@ function UnmatchedLogins() {
           emptyHint="A login that matches no one in the directory shows up here to be linked."
         />
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -250,7 +233,6 @@ function Finder<T>(props: FinderProps<T>) {
   const [error, setError] = useState<unknown>(null);
   const [found, setFound] = useState<{ readonly asked: string; readonly rows: readonly T[] } | null>(null);
   const latest = useRef(0);
-  const headingId = useId();
   const inputId = useId();
   const typed = text.trim();
 
@@ -286,8 +268,7 @@ function Finder<T>(props: FinderProps<T>) {
   }
 
   return (
-    <section className="panel" aria-labelledby={headingId}>
-      <h2 id={headingId}>{title}</h2>
+    <Panel title={title}>
       <p className="muted">{children}</p>
       <form className="lookup-form" onSubmit={submit} aria-label={title}>
         <label className="field" htmlFor={inputId}>
@@ -320,7 +301,7 @@ function Finder<T>(props: FinderProps<T>) {
           />
         </div>
       ) : null}
-    </section>
+    </Panel>
   );
 }
 

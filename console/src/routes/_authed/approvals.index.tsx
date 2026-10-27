@@ -54,10 +54,13 @@ function ApprovalsPage() {
     <>
       <PageHeader
         title="Approvals"
-        purpose={
-          inbox
-            ? 'Requests you may approve or reject: org admins see every one, and a connection owner sees the sharing requests that go beyond their connection’s audience ceiling. Open one to see what it changes.'
-            : 'Every request you may see, and how it was decided. Org admins see every request; others see their own.'
+        purpose={inbox ? 'Requests you may approve or reject; open one to see what it changes.' : 'Every request you may see, and how it was decided.'}
+        about={
+          <p>
+            {inbox
+              ? 'Org admins see every request, and a connection owner sees the sharing requests that go beyond their connection’s audience ceiling.'
+              : 'Org admins see every request; others see their own.'}
+          </p>
         }
       />
       <nav className="tabs" aria-label="Requests shown">
