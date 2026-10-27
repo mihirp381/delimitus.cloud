@@ -1545,10 +1545,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Find Users
-         * @description Active org admins with a user credential only (``FORBIDDEN``).
+         * List Users
+         * @description Active org admins with a user credential only (``FORBIDDEN``); the roster, without
+         *     ``email``, never in an agent session (``AGENT_SESSION_REFUSED``). By name, then id.
          */
-        get: operations["find_users_v1_users_get"];
+        get: operations["list_users_v1_users_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4301,12 +4302,22 @@ export interface components {
         };
         /** UserMatch */
         UserMatch: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Display Name */
             display_name: string;
             /** Email */
             email: string;
             /** Id */
             id: string;
+            /**
+             * Last Sign In At
+             * @description The start of the person's latest browser, console or command-line session.
+             */
+            last_sign_in_at: string | null;
             role: components["schemas"]["OrgRole"];
             /**
              * Status
@@ -4316,6 +4327,11 @@ export interface components {
         };
         /** UserMatches */
         UserMatches: {
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` for the next page; null on the last page and with `email`.
+             */
+            next_cursor: string | null;
             /** Users */
             users: components["schemas"]["UserMatch"][];
         };
@@ -11178,11 +11194,17 @@ export interface operations {
             };
         };
     };
-    find_users_v1_users_get: {
+    list_users_v1_users_get: {
         parameters: {
-            query: {
-                /** @description Matched whole, ignoring case. Deactivated people are included. */
-                email: string;
+            query?: {
+                /** @description Matched whole, ignoring case; deactivated people are included. Not with `q`, `status` or `cursor`. */
+                email?: string | null;
+                /** @description Part of the name or email, ignoring case. */
+                q?: string | null;
+                status?: ("active" | "deactivated") | null;
+                limit?: number;
+                /** @description The previous page's `next_cursor`. */
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -11208,7 +11230,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `FORBIDDEN` */
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
             403: {
                 headers: {
                     [name: string]: unknown;
