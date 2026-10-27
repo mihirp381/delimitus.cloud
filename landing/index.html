@@ -6,7 +6,7 @@
 <title>Delimitus · Where coding agents deploy company software</title>
 <meta name="description" content="Build with your coding agent. Deploy on Delimitus. The tool your team built comes back as a company app, behind your login, with its data, its secrets and IT’s rules. Private pilot.">
 <meta property="og:title" content="Delimitus">
-<meta property="og:description" content="Build with your coding agent. Deploy on Delimitus. Where coding agents deploy company software. Private pilot.">
+<meta property="og:description" content="Build with your coding agent. Deploy on Delimitus. Where coding agents deploy company software.">
 <meta name="theme-color" content="#FFFFFF">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Cdefs%3E%3ClinearGradient%20id='f'%20x1='0.82'%20y1='13.4'%20x2='14.08'%20y2='3.77'%20gradientUnits='userSpaceOnUse'%3E%3Cstop%20offset='0'%20stop-color='%230071E3'/%3E%3Cstop%20offset='0.22'%20stop-color='%230A84FF'/%3E%3Cstop%20offset='0.5'%20stop-color='%236E5BFF'/%3E%3Cstop%20offset='0.7'%20stop-color='%23C24BF0'/%3E%3Cstop%20offset='0.87'%20stop-color='%23FF378C'/%3E%3Cstop%20offset='1'%20stop-color='%23FF9F0A'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath%20fill='url(%23f)'%20fill-rule='evenodd'%20d='M3%201H8.5A7%207%200%200%201%208.5%2015H3A2%202%200%200%201%201%2013V3A2%202%200%200%201%203%201ZM4.45%2012L6.9%2012A0.3%200.3%200%200%200%207.18%2011.81L10.17%204.41A0.3%200.3%200%200%200%209.89%204L7.44%204A0.3%200.3%200%200%200%207.16%204.19L4.17%2011.59A0.3%200.3%200%200%200%204.45%2012Z'/%3E%3C/svg%3E">
 <style>
@@ -138,9 +138,11 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .nav__links { display: flex; gap: 28px; margin-left: auto; }
 .nav__links a { color: var(--ink-2); text-decoration: none; font-size: 0.8rem; letter-spacing: -0.005em; transition: color 140ms var(--ease); }
 .nav__links a:hover { color: var(--ink); }
-.nav__act { display: flex; align-items: center; margin-left: 12px; }
+.nav__act { display: flex; align-items: center; gap: 20px; margin-left: 12px; }
+.nav__link { color: var(--ink-2); text-decoration: none; font-size: 0.8rem; letter-spacing: -0.005em; white-space: nowrap; padding-block: 10px; transition: color 140ms var(--ease); }
+.nav__link:hover { color: var(--ink); }
 @media (max-width: 860px) { .nav__in { gap: 18px; } .nav__links { gap: 18px; } .nav__act { margin-left: 0; } }
-@media (max-width: 699px) { .nav__links { display: none; } .nav__act { margin-left: auto; } }
+@media (max-width: 699px) { .nav__links { display: none; } .nav__act { margin-left: auto; gap: 14px; } }
 
 /* ── buttons and chips ───────────────────────────────────────────────── */
 .btn {
@@ -213,10 +215,7 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .enter__ui .h1 .grad { padding-bottom: 0.06em; }
 .enter__ui .lede { max-width: 46ch; color: var(--ink-2); }
 .hero__cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-.enter__note { display: flex; align-items: center; gap: 10px; margin: -4px 0 0; font-size: 0.875rem; color: var(--ink-2); }
-.enter__note::before { content: ""; width: 22px; height: 2px; border-radius: 2px; background: var(--spectrum); flex: none; }
 .enter__art { container-type: inline-size; min-width: 0; width: 100%; max-width: 960px; justify-self: center; }
-.scene__note { margin: 10px 0 0; text-align: right; font-size: 0.75rem; color: var(--ink-3); opacity: var(--rest, 1); }
 
 /* the scene, laid out on a 960 × 590 board */
 .scene { position: relative; width: 60em; height: 36.875em; font-size: calc(100cqw / 60); letter-spacing: -0.01em; line-height: 1.4; }
@@ -394,7 +393,7 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
   .enter__into { display: flex; }
 }
 @media (max-height: 760px) and (min-width: 1100px) {
-  .enter__ui .eyebrow, .scene__note { display: none; }
+  .enter__ui .eyebrow { display: none; }
 }
 /* phones: the scene restacks as a column, at a size its text can be read */
 @media (max-width: 639px) {
@@ -432,6 +431,13 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .hiw__item:nth-child(2) { --step: var(--t-violet); }
 .hiw__item:nth-child(3) { --step: var(--t-orange); }
 .hiw__item:hover { background: rgba(255, 255, 255, 0.6); }
+.hiw__item { position: relative; }
+.hiw__bar { position: absolute; left: clamp(16px, 2vw, 22px); right: clamp(16px, 2vw, 22px); bottom: 6px; height: 3px; border-radius: 3px; background: var(--step); transform: scaleX(0); transform-origin: 0 50%; }
+.hiw__bar.is-run { transform: scaleX(1); transition: transform var(--dur, 2400ms) linear; }
+.hiw__bar.is-full { transform: scaleX(1); }
+.hiw__replay, .race__replay { margin: 14px 0 0; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 980px; border: 1px solid var(--line-strong); background: #FFFFFF; font-size: 0.85rem; font-weight: 500; color: var(--accent-ink); cursor: pointer; transition: background 160ms var(--ease); }
+.hiw__replay::before, .race__replay::before { content: "↻"; content: "↻" / ""; }
+.hiw__replay:hover, .race__replay:hover { background: var(--accent-soft); }
 .hiw__n { grid-row: span 3; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--step); color: #FFFFFF; font: 700 0.8rem var(--sans); }
 .hiw__t { font: 600 1.14rem/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); transition: color 160ms var(--ease); }
 .hiw__d { font-size: 0.92rem; line-height: 1.5; color: var(--ink-3); }
@@ -562,8 +568,8 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .tab:hover { color: var(--ink); border-color: var(--ink-3); }
 .tab[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #FFFFFF; }
 .case {
-  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px clamp(28px, 5vw, 64px);
-  padding: clamp(24px, 4vw, 44px); border-radius: var(--r-xl); align-items: start;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(16px, 2.4vw, 24px);
+  padding: clamp(24px, 4vw, 44px); border-radius: var(--r-xl); align-items: stretch;
   background:
     radial-gradient(60% 90% at 0% 0%, rgba(10, 132, 255, 0.1), rgba(10, 132, 255, 0) 70%),
     radial-gradient(50% 80% at 100% 0%, rgba(255, 55, 140, 0.09), rgba(255, 55, 140, 0) 70%),
@@ -572,13 +578,22 @@ table.tbl tr:last-child td { border-bottom: 0; }
     var(--card);
 }
 .case:focus-visible { outline-offset: 4px; border-radius: var(--r-xl); }
-.case__l { display: flex; flex-direction: column; gap: 22px; }
-.case__ask { margin: 0; display: flex; gap: 14px; font: 600 clamp(1.25rem, 2.2vw, 1.65rem)/1.3 var(--display); letter-spacing: -0.022em; color: var(--ink); text-wrap: pretty; }
+.case__card {
+  min-width: 0; display: flex; flex-direction: column; gap: 18px; padding: clamp(18px, 2.4vw, 26px);
+  border-radius: var(--r-lg); background: rgba(255, 255, 255, 0.55); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9);
+  transition: opacity 260ms var(--ease), transform 260ms var(--ease);
+}
+.case__card--simple { --tone: var(--t-blue); }
+.case__card--big { --tone: var(--t-magenta); transition-delay: 90ms; }
+.case__card.is-swap, .case__card.is-swap .case__get li { opacity: 0; transform: translateY(8px); transition: none; }
+.case__k { margin: 0; font: 600 0.78rem var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--tone); }
+.case__ask { margin: 0; display: flex; gap: 14px; font: 600 clamp(1.15rem, 1.8vw, 1.4rem)/1.3 var(--display); letter-spacing: -0.022em; color: var(--ink); text-wrap: pretty; }
 .case__ask .caret { font-family: var(--mono); color: var(--accent-ink); font-weight: 500; flex: none; }
 .case__reads { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 0.92rem; color: var(--ink-2); }
 .case__reads b { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); background: #FFFFFF; border: 1px solid var(--line-strong); border-radius: 999px; padding: 2px 10px; }
 .case__get { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-.case__get li { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-md); background: #FFFFFF; font-size: 0.95rem; color: var(--ink); box-shadow: var(--shadow-soft); }
+.case__get li { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-md); background: #FFFFFF; font-size: 0.95rem; color: var(--ink); box-shadow: var(--shadow-soft); transition: opacity 260ms var(--ease), transform 260ms var(--ease); transition-delay: calc(var(--d, 0ms) + var(--i, 0) * 60ms + 120ms); }
+.case__card--big .case__get li { --d: 90ms; }
 .case__get li::before { content: ""; flex: none; width: 10px; height: 10px; margin-top: 7px; border-radius: 50%; background: var(--dot); }
 .case__get li:nth-child(1) { --dot: var(--s-blue); }
 .case__get li:nth-child(2) { --dot: var(--s-purple); }
@@ -630,12 +645,11 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .cta .lede { color: var(--ink-2); max-width: 40ch; text-wrap: balance; }
 
 /* ── footer ──────────────────────────────────────────────────────────── */
-.foot { padding-top: 44px; padding-bottom: 20px; display: flex; flex-wrap: wrap; gap: 22px 40px; justify-content: space-between; align-items: flex-start; }
+.foot { padding-top: 44px; padding-bottom: 44px; display: flex; flex-wrap: wrap; gap: 22px 40px; justify-content: space-between; align-items: flex-start; }
 .foot__brand { display: flex; flex-direction: column; gap: 12px; }
 .foot__links { display: flex; flex-wrap: wrap; gap: 0 24px; margin-top: -10px; }
 .foot__links a { color: var(--ink-2); font-size: 0.85rem; text-decoration: none; padding-block: 10px; }
 .foot__links a:hover { color: var(--ink); text-decoration: underline; }
-.foot__fine { padding: 18px 0 44px; border-top: 1px solid var(--line); font-size: 0.8rem; }
 
 /* ── the prompt: one line the page keeps coming back to ───────────────── */
 .prompt {
@@ -656,12 +670,19 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .chat__me { color: #FFFFFF; }
 .chat__ai, .chat__sys { color: #C7C7CC; }
 .chat__ok { color: #7EE2A0; }
-.chat__ok::before { content: "✓ "; }
+.chat__ok::before { content: "✓ "; display: inline-block; white-space: pre; }
+.chat__ok:not([data-later])::before { animation: tick 0.45s var(--ease) both; animation-delay: calc(var(--i, 0) * 140ms + 120ms); }
 .chat__wait { color: #FFD479; }
-.chat__wait::before { content: "◷ "; }
+.chat__wait::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 9px; vertical-align: 1px; border-radius: 50%; background: #FFD479; animation: wait 1.2s ease-in-out infinite; }
+@keyframes wait { 50% { opacity: 0.25; transform: scale(0.7); } }
 .chat__url { color: #8CC4FF; }
 .chat [data-on] { background: rgba(255, 255, 255, 0.08); box-shadow: inset 3px 0 0 var(--s-violet); }
+.chat p:not([data-later]) { transition-delay: calc(var(--i, 0) * 140ms); }
 .chat [data-later] { opacity: 0; transform: translateY(6px); visibility: hidden; }
+.chat .chat__url[data-later] { transform: translateY(8px); }
+.chat__me.is-typing::after { content: ""; display: inline-block; width: 0.55em; height: 1.1em; margin-left: 2px; vertical-align: -0.2em; background: #FFFFFF; animation: caret 0.9s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
+.chat .chat__sr { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .hiw__alt { padding: 14px clamp(24px, 4vw, 52px) 18px; border-top: 1px solid var(--line); color: var(--ink-2); }
 
 /* ── the gap: everything one prompt sets off ──────────────────────────── */
@@ -735,6 +756,27 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .trio__fig { margin: auto 0 0; padding-top: 10px; font: 700 2rem/1.1 var(--display); letter-spacing: -0.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .trio__fig span { display: block; margin-top: 4px; font: 400 0.85rem/1.4 var(--sans); letter-spacing: 0; color: var(--ink-3); }
 .trio__fig--txt { font-size: 1.1rem; letter-spacing: -0.015em; }
+.race { display: flex; flex-direction: column; gap: 18px; padding: clamp(20px, 3vw, 32px); border-radius: var(--r-xl); background: var(--card); }
+.race__k { margin: 0; font: 600 clamp(1.15rem, 1.8vw, 1.4rem)/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); text-wrap: balance; }
+.race__lane { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+.race__lane--diy { --tone: var(--t-orange); --fill: var(--s-orange); }
+.race__lane--dlm { --tone: var(--t-blue); --fill: var(--s-blue); }
+.race__t { margin: 0; font: 600 0.78rem var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--tone); }
+.race__track { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 12px 6px; }
+.race__track li { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; font-size: 0.78rem; line-height: 1.3; color: var(--ink-3); transition: color 300ms var(--ease); }
+.race__track li::before { content: ""; align-self: stretch; height: 6px; border-radius: 3px; background: linear-gradient(var(--fill), var(--fill)) 0 0 / 0% 100% no-repeat, var(--overlay); transition: background-size 600ms var(--ease); }
+.race__track li.is-done { color: var(--ink); }
+.race__track li.is-done::before { background-size: 100% 100%; }
+.race__lane--dlm li:last-child { grid-column: span 2; }
+.race__track li.is-wait { color: var(--caution); }
+.race__track li.is-wait::before { background: var(--caution-fill); animation: hold 1.2s ease-in-out infinite; }
+@keyframes hold { 50% { opacity: 0.4; } }
+.race__figs { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; font-size: 0.92rem; color: var(--ink-2); }
+.race__figs b { font: 700 1.6rem/1.1 var(--display); letter-spacing: -0.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.race__end { margin: 0; font-weight: 600; color: var(--ink); transition: opacity 400ms var(--ease); }
+.race.is-armed:not(.is-total) .race__end { opacity: 0; }
+.race__replay { align-self: flex-start; margin: 0; }
+@media (max-width: 640px) { .race__track { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .model > summary { font-size: 1.05rem; }
 .model > .stack { padding-bottom: 8px; }
 @media (max-width: 760px) { .trio { grid-template-columns: minmax(0, 1fr); } }
@@ -746,6 +788,7 @@ table.tbl tr:last-child td { border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
   .exit::after { animation: none; }
+  .chat p, .chat p::before { transition-delay: 0s !important; animation-delay: 0s !important; }
   /* SMIL ignores the rules above, so the dots on the hero's flows go */
   .flow__dot { display: none; }
 }
@@ -757,8 +800,7 @@ table.tbl tr:last-child td { border-bottom: 0; }
 #get { --label: var(--t-magenta); }
 #security { --label: var(--t-orange); }
 #cost { --label: var(--t-blue); }
-#limits { --label: var(--t-violet); }
-#faq { --label: var(--t-purple); }
+#faq { --label: var(--t-violet); }
 
 /* ── the gap ─────────────────────────────────────────────────────────── */
 .gap__end { margin: 0; font: 600 clamp(1.2rem, 2vw, 1.5rem)/1.3 var(--display); letter-spacing: -0.02em; text-wrap: balance; }
@@ -787,13 +829,22 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .term { width: 100%; max-width: 660px; background: #1D1D1F; color: #F5F5F7; border-radius: var(--r-xl); overflow: hidden; box-shadow: var(--shadow-lift); }
 .term__bar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #2C2C2E; }
 .term__title { font: 500 0.78rem var(--sans); color: #C7C7CC; }
+.term__pipe { list-style: none; margin: 0; padding: 12px 16px 2px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.term__pipe li { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.05); font: 600 0.7rem var(--sans); color: #AEAEB2; white-space: nowrap; transition: color 300ms var(--ease), background 300ms var(--ease); }
+.term__pipe li::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: #48484A; transition: background 300ms var(--ease); }
+.term__pipe li.is-done { color: #7EE2A0; background: rgba(126, 226, 160, 0.12); }
+.term__pipe li.is-done::before { background: #34C759; animation: tick 0.45s var(--ease) both; }
+@media (max-width: 480px) {
+  .term__pipe { padding: 10px 10px 2px; gap: 4px; }
+  .term__pipe li { padding: 5px 2px; font-size: 0.64rem; }
+  .term__pipe li::before { display: none; }
+}
 .term__body { margin: 0; padding: 16px 0 20px; font: 400 0.8rem/1.7 var(--mono); letter-spacing: 0; }
 .dots { display: flex; gap: 6px; flex: none; }
 .dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
 .dots i:nth-child(1) { background: #FF5F57; }
 .dots i:nth-child(2) { background: #FEBC2E; }
 .dots i:nth-child(3) { background: #28C840; }
-.mock-note { margin: 14px 4px 0; text-align: right; font-size: 0.8rem; color: var(--ink-2); }
 .hiw__fig { margin: 0; width: 100%; max-width: 660px; }
 
 /* ── example: four viewers, one app ──────────────────────────────────── */
@@ -861,13 +912,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   .cmp__note { padding-left: 16px; padding-right: 16px; }
 }
 
-/* ── what it does not do ─────────────────────────────────────────────── */
-.limits { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.limits li { background: var(--card); border-radius: var(--r-xl); padding: 22px 24px; display: flex; flex-direction: column; gap: 6px; border-left: 4px solid var(--line-strong); }
-.limits b { font: 600 1.1rem/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); }
-.limits span { font-size: 0.95rem; color: var(--ink-2); }
-@media (max-width: 640px) { .limits { grid-template-columns: minmax(0, 1fr); } }
-
 /* ── request a pilot ─────────────────────────────────────────────────── */
 .form { width: 100%; max-width: 620px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; text-align: left; }
 .form label { display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; font-weight: 600; color: var(--ink-2); }
@@ -905,6 +949,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <a href="#faq">Questions</a>
     </div>
     <div class="nav__act">
+      <a class="nav__link" href="https://console.delimitus.com/login">Sign in</a>
       <a class="btn btn--primary btn--sm" href="#pilot">Request a pilot</a>
     </div>
   </div>
@@ -923,8 +968,8 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         <div class="hero__cta">
           <a class="btn btn--primary" href="#pilot">Request a pilot</a>
           <a class="btn btn--ghost" href="#how">See how it works</a>
+          <a class="btn btn--ghost" href="https://console.delimitus.com/login">Sign in</a>
         </div>
-        <p class="enter__note" data-claim="pilot">Private pilot. Not generally available yet.</p>
       </div>
       <div class="enter__art">
         <div class="scene" id="scene" aria-hidden="true">
@@ -1018,13 +1063,12 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 
           <span class="scene__mark"><svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path fill="url(#dl-nav)" fill-rule="evenodd" d="M6 3H11.5A8 8 0 0 1 11.5 19H6A2 2 0 0 1 4 17V5A2 2 0 0 1 6 3ZM7.52 16L10.16 16A0.35 0.35 0 0 0 10.49 15.78L14.25 6.48A0.35 0.35 0 0 0 13.92 6L11.28 6A0.35 0.35 0 0 0 10.95 6.22L7.19 15.52A0.35 0.35 0 0 0 7.52 16Z"/></svg></span>
           <ul class="does">
-            <li class="does--blue" data-claim="data"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13"/><path d="M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></span><span class="does__t">Your data connections</span></li>
+            <li class="does--blue" data-claim="data"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13"/><path d="M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></span><span class="does__t">Secure data connections</span></li>
             <li class="does--violet" data-claim="login"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="does__t">Company security &amp; access control</span></li>
             <li class="does--purple" data-claim="cloud account"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"/></svg></span><span class="does__t">Managed infrastructure</span></li>
             <li class="does--orange" data-claim="share"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.9-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2c2.4-.3 4.6 1.2 5 4.3"/></svg></span><span class="does__t">Share with anyone in your team</span></li>
           </ul>
         </div>
-        <p class="scene__note">Illustration · example data</p>
       </div>
     </div>
     <ol class="enter__in enter__steps" id="heroSteps">
@@ -1034,7 +1078,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     </ol>
     <div class="enter__into" id="into">
       <p class="label">One prompt</p>
-      <p class="h3"><span>“Deploy this on Delimitus.”</span> <span>The rest is ours. IT keeps the last word.</span></p>
+      <p class="h3"><span>“Deploy this on Delimitus.”</span> <span>Say it once. We run everything behind it. IT approves what matters.</span></p>
     </div>
   </div>
 </header>
@@ -1051,17 +1095,20 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <div class="hiw__body">
         <div class="hiw__list" role="group" aria-label="Steps">
           <button class="hiw__item" type="button" data-step="1" aria-pressed="true">
+            <span class="hiw__bar" aria-hidden="true"></span>
             <span class="hiw__n" aria-hidden="true">1</span>
             <span class="hiw__t">Ask your agent</span>
             <span class="hiw__d" data-claim="agent">Tell your coding agent to deploy on Delimitus. It calls Delimitus from the editor, so nobody learns a new tool.</span>
             <span class="hiw__chips" data-claim="tools"><span class="chip">Claude Code</span><span class="chip">Codex</span></span>
           </button>
           <button class="hiw__item" type="button" data-step="2" aria-pressed="false">
+            <span class="hiw__bar" aria-hidden="true"></span>
             <span class="hiw__n" aria-hidden="true">2</span>
             <span class="hiw__t">Delimitus does the rest</span>
             <span class="hiw__d" data-claim="langs leaks secrets login preview">It builds the app, checks it for leaked keys, keeps its secrets, and puts it behind company login at its own preview address.</span>
           </button>
           <button class="hiw__item" type="button" data-step="3" aria-pressed="false">
+            <span class="hiw__bar" aria-hidden="true"></span>
             <span class="hiw__n" aria-hidden="true">3</span>
             <span class="hiw__t">IT keeps the last word</span>
             <span class="hiw__d" data-claim="share data approvals agents">Sharing and company data wait for an admin of your company to approve. The agent can ask. It can’t approve.</span>
@@ -1071,6 +1118,13 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <figure class="hiw__fig">
             <div class="term" id="term">
               <div class="term__bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="term__title">Coding agent · dock-board</span></div>
+              <ol class="term__pipe" aria-hidden="true" data-claim="langs leaks secrets login preview">
+                <li class="is-done" data-node="build">Build</li>
+                <li class="is-done" data-node="keys">Keys</li>
+                <li class="is-done" data-node="secrets">Secrets</li>
+                <li class="is-done" data-node="login">Login</li>
+                <li class="is-done" data-node="preview">Preview</li>
+              </ol>
               <div class="term__body chat" aria-label="A coding agent deploys an app called dock-board on Delimitus">
                 <p class="chat__me" data-s="1" data-on data-claim="snowflake"><b>You</b>Build an inbound dock scheduler from our Snowflake data and deploy it on Delimitus.</p>
                 <p class="chat__ai" data-s="1" data-on data-claim="agent langs"><b>Agent</b>Built dock-board, a Node app. Deploying it with Delimitus.</p>
@@ -1087,7 +1141,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
                 <p class="chat__ai" data-s="3" data-claim="approvals agents">IT has two requests to approve: the Snowflake connection and sharing with Inbound team.</p>
               </div>
             </div>
-            <figcaption class="mock-note">Illustration · example app</figcaption>
+            <button type="button" class="hiw__replay" hidden>Play again</button>
           </figure>
         </div>
       </div>
@@ -1199,7 +1253,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
                 <h4 class="app__title">Inbound dock board</h4>
                 <p class="app__sub">Reno distribution centre · today</p>
               </div>
-              <span class="chip">Example data</span>
             </div>
             <div class="kpis">
               <div class="kpi"><span class="kpi__l">Trucks due today</span><span class="kpi__v">38</span></div>
@@ -1210,10 +1263,10 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
               <table class="tbl">
                 <thead><tr><th scope="col">Door</th><th scope="col">Carrier</th><th scope="col" class="r">Booked</th><th scope="col">Status</th></tr></thead>
                 <tbody>
-                  <tr><td>D04</td><td>Example Freight Co.</td><td class="r">06:30</td><td><span class="chip chip--live st-chip">Unloading</span></td></tr>
-                  <tr><td>D07</td><td>Sample Linehaul</td><td class="r">07:15</td><td><span class="chip chip--danger st-chip">40 min late</span></td></tr>
-                  <tr><td>D11</td><td>Demo Carriers</td><td class="r">08:00</td><td><span class="chip chip--caution st-chip">At the gate</span></td></tr>
-                  <tr><td>D02</td><td>Placeholder Haulage</td><td class="r">08:45</td><td><span class="chip st-chip">Expected</span></td></tr>
+                  <tr><td>D04</td><td>Northline Freight</td><td class="r">06:30</td><td><span class="chip chip--live st-chip">Unloading</span></td></tr>
+                  <tr><td>D07</td><td>Cascade Linehaul</td><td class="r">07:15</td><td><span class="chip chip--danger st-chip">40 min late</span></td></tr>
+                  <tr><td>D11</td><td>Redwood Carriers</td><td class="r">08:00</td><td><span class="chip chip--caution st-chip">At the gate</span></td></tr>
+                  <tr><td>D02</td><td>Pioneer Haulage</td><td class="r">08:45</td><td><span class="chip st-chip">Expected</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -1224,7 +1277,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
             <p data-bind="deniedText"></p>
           </div>
         </div>
-        <p class="mock-note" data-claim="names">Illustration · example data</p>
       </div>
     </div>
   </div>
@@ -1262,7 +1314,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         </div>
       </div>
       <p class="small" data-claim="langs">Python and Node apps.</p>
-      <p class="small" data-claim="names">Product names belong to their owners. Delimitus is not affiliated with or endorsed by them.</p>
     </div>
   </div>
 </section>
@@ -1318,11 +1369,17 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <button class="tab" role="tab" id="tab-cx" aria-controls="casePanel" aria-selected="false" tabindex="-1" data-case="cx">Customer operations</button>
         </div>
         <div class="case" id="casePanel" role="tabpanel" aria-labelledby="tab-wh" tabindex="0">
-          <div class="case__l" data-claim="tools">
+          <article class="case__card case__card--simple" data-claim="login share data db">
+            <p class="case__k">Simple ask</p>
+            <p class="case__ask"><span class="caret" aria-hidden="true">&gt;</span><span data-bind="askSimple">A page that shows which doors are free right now.</span></p>
+            <ul class="case__get" data-bind="getSimple"><li>Company login on, with no setup</li><li>Shared with the Inbound team group</li></ul>
+          </article>
+          <article class="case__card case__card--big" data-claim="tools db timers share files approvals data egress secrets owner logs rollback">
+            <p class="case__k">Bigger ask</p>
             <p class="case__ask"><span class="caret" aria-hidden="true">&gt;</span><span data-bind="ask">A dock scheduler the inbound team books trucks into.</span></p>
             <p class="case__reads"><b>Asked of</b><span data-bind="tool">Claude Code</span></p>
-          </div>
-          <ul class="case__get" data-bind="get" data-claim="db timers share files approvals data egress secrets owner logs rollback"><li>Its own database for the bookings</li><li>A timer that rolls the schedule over at midnight</li><li>Shared with the Inbound team group</li></ul>
+            <ul class="case__get" data-bind="get"><li>Its own database for the bookings</li><li>A timer that rolls the schedule over at midnight</li><li>Shared with the Inbound team group</li></ul>
+          </article>
         </div>
       </div>
       <p class="feat__note" data-claim="pilot"><span class="chip chip--next">Pilot</span>All of this is part of the private pilot offer.</p>
@@ -1380,8 +1437,35 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     <div class="band__label"><span class="rule"></span><p class="label">Cost</p></div>
     <div class="stack stack--lg">
       <div class="head">
-        <h2 class="h2">The expensive part isn’t running the app.</h2>
-        <p class="lede">It’s everything around it.</p>
+        <h2 class="h2">Building apps with AI is <span class="grad">easy and fun.</span></h2>
+        <p class="lede">Deploying and maintaining hundreds of them is hard and expensive.</p>
+      </div>
+      <div class="race" id="race" data-claim="econ-labour econ-cloud minutes agents approvals">
+        <p class="race__k">From “it works on my laptop” to “the team can open it”</p>
+        <div class="race__lane race__lane--diy">
+          <p class="race__t">Deploy it yourself</p>
+          <ol class="race__track">
+            <li class="is-done">Ticket to IT</li>
+            <li class="is-done">Cloud account</li>
+            <li class="is-done">Company login</li>
+            <li class="is-done">Database and secrets</li>
+            <li class="is-done">Network rules</li>
+            <li class="is-done">Security review</li>
+            <li class="is-done">First app live</li>
+            <li class="is-done">Upkeep, every month</li>
+          </ol>
+          <p class="race__figs"><span><b data-race="hours">92</b> hours of IT time before the first app is live, our estimate</span><span>and the cloud bill starts in week one: $129.53 a month before the first app</span></p>
+          <p class="race__end">First year, 10 apps: <b data-race="total">$32,658</b></p>
+        </div>
+        <div class="race__lane race__lane--dlm">
+          <p class="race__t">Deploy with Delimitus</p>
+          <ol class="race__track">
+            <li class="is-done">One prompt</li>
+            <li class="is-done">3½ minutes to a running preview, measured</li>
+            <li class="is-wait">IT approves what matters <span class="chip chip--caution">waiting for IT</span></li>
+          </ol>
+        </div>
+        <button type="button" class="race__replay" hidden>Play again</button>
       </div>
       <div class="trio">
         <article class="trio__card">
@@ -1460,26 +1544,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </section>
 
-
-<section class="band band--alt" id="limits" data-claims>
-  <div class="wrap band__grid">
-    <div class="band__label"><span class="rule"></span><p class="label">Pilot boundaries</p></div>
-    <div class="stack stack--lg">
-      <div class="head">
-        <h2 class="h2" data-claim="no-public no-domains no-webhooks data">Opinionated on purpose.</h2>
-        <p class="lede" data-claim="no-public no-domains no-webhooks data">We’re starting with the safest, most common shape of internal software.</p>
-      </div>
-      <ul class="limits">
-        <li data-claim="no-public"><b>No public apps</b><span>Every request needs a company login.</span></li>
-        <li data-claim="no-domains"><b>No custom domains</b><span>Apps live at an address on our domain.</span></li>
-        <li data-claim="no-webhooks"><b>No inbound webhooks</b><span>Outside services can’t call into your app.</span></li>
-        <li data-claim="data"><b>Company data is read-only</b><span>Apps read your company databases and never write to them.</span></li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section class="band" id="faq" data-claims>
+<section class="band band--alt" id="faq" data-claims>
   <div class="wrap band__grid">
     <div class="band__label"><span class="rule"></span><h2 class="label">Questions</h2></div>
     <div class="faq">
@@ -1523,7 +1588,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </section>
 
-<section class="band band--alt" id="pilot">
+<section class="band" id="pilot">
   <div class="wrap">
     <div class="cta">
       <span class="eyebrow" data-claim="pilot"><span class="dot"></span>Private pilot</span>
@@ -1569,7 +1634,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <a href="#pilot">Request a pilot</a>
     </nav>
   </div>
-  <div class="wrap"><p class="small foot__fine" data-claim="names">Every screen on this page shows example data. Product names belong to their owners.</p></div>
 </footer>
 <script>
 (function () {
@@ -1607,32 +1671,58 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 
   /* ── what you get: operations examples ─────────────────────────────── */
   var CASES = {
-    wh:    { ask: "A dock scheduler the inbound team books trucks into.", tool: "Claude Code",
-             get: ["Its own database for the bookings", "A timer that rolls the schedule over at midnight", "Shared with the Inbound team group"] },
-    field: { ask: "A job log where technicians attach photos from the site.", tool: "Cursor, through the same MCP server",
-             get: ["File storage for the photos", "Only the field technicians group can open it", "Production after an admin of your company approves"] },
-    fleet: { ask: "A board of late deliveries, with the carrier’s tracking beside each.", tool: "Codex",
-             get: ["Read-only access to the dispatch database", "Reaches only the internet hosts your admin allowed", "The tracking API key kept as a secret, not in the code"] },
-    fac:   { ask: "A form anyone can use to report a broken door or a leak.", tool: "Lovable, through a GitHub push",
-             get: ["Shared with the whole company", "A photo stored with each report", "When the owner moves on, IT hands the app to someone else"] },
-    cx:    { ask: "A returns queue that sorts each return by reason and order value.", tool: "Replit, through a GitHub push",
-             get: ["Read-only access to the orders database", "Logs that show why a return was held", "One command rolls back a bad update"] }
+    wh: {
+      ask: "A dock scheduler the inbound team books trucks into.", tool: "Claude Code",
+      get: ["Its own database for the bookings", "A timer that rolls the schedule over at midnight", "Shared with the Inbound team group"],
+      simple: { ask: "A page that shows which doors are free right now.", get: ["Company login on, with no setup", "Shared with the Inbound team group"] }
+    },
+    field: {
+      ask: "A job log where technicians attach photos from the site.", tool: "Cursor, through the same MCP server",
+      get: ["File storage for the photos", "Only the field technicians group can open it", "Production after an admin of your company approves"],
+      simple: { ask: "A checklist technicians tick off before they leave a site.", get: ["Only the field technicians group can open it"] }
+    },
+    fleet: {
+      ask: "A board of late deliveries, with the carrier’s tracking beside each.", tool: "Codex",
+      get: ["Read-only access to the dispatch database", "Reaches only the internet hosts your admin allowed", "The tracking API key kept as a secret, not in the code"],
+      simple: { ask: "A list of today’s deliveries, sorted by promised time.", get: ["Read-only access to the dispatch database"] }
+    },
+    fac: {
+      ask: "A form anyone can use to report a broken door or a leak.", tool: "Lovable, through a GitHub push",
+      get: ["Shared with the whole company", "A photo stored with each report", "When the owner moves on, IT hands the app to someone else"],
+      simple: { ask: "A form to book a meeting room.", get: ["Its own database for the bookings", "Shared with the whole company"] }
+    },
+    cx: {
+      ask: "A returns queue that sorts each return by reason and order value.", tool: "Replit, through a GitHub push",
+      get: ["Read-only access to the orders database", "Logs that show why a return was held", "One command rolls back a bad update"],
+      simple: { ask: "A page that shows today’s open returns.", get: ["Read-only access to the orders database"] }
+    }
   };
 
   var panel = document.getElementById("casePanel");
   var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+  function fill(name, items) {
+    var list = panel.querySelector('[data-bind="' + name + '"]');
+    list.textContent = "";
+    items.forEach(function (g, i) {
+      var li = document.createElement("li");
+      li.textContent = g;
+      li.style.setProperty("--i", String(i));
+      list.appendChild(li);
+    });
+  }
   function paintCase(key) {
     var c = CASES[key];
     if (!c || !panel) { return; }
+    panel.querySelector('[data-bind="askSimple"]').textContent = c.simple.ask;
+    fill("getSimple", c.simple.get);
     panel.querySelector('[data-bind="ask"]').textContent = c.ask;
     panel.querySelector('[data-bind="tool"]').textContent = c.tool;
-    var list = panel.querySelector('[data-bind="get"]');
-    list.textContent = "";
-    c.get.forEach(function (g) {
-      var li = document.createElement("li");
-      li.textContent = g;
-      list.appendChild(li);
-    });
+    fill("get", c.get);
+    if (calm) { return; }
+    var cards = panel.querySelectorAll(".case__card");
+    Array.prototype.forEach.call(cards, function (card) { card.classList.add("is-swap"); });
+    void panel.offsetWidth;
+    Array.prototype.forEach.call(cards, function (card) { card.classList.remove("is-swap"); });
   }
   function selectTab(tab, focus) {
     tabs.forEach(function (t) {
@@ -1659,37 +1749,116 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   var calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var watching = "IntersectionObserver" in window;
 
-  /* ── how it works: the conversation grows one step at a time ─────────── */
+  /* ── how it works: the prompt is typed, then the conversation grows one step at a time ── */
+  var each = function (list, fn) { Array.prototype.forEach.call(list, fn); };
   var how = document.getElementById("how");
   if (how) {
+    var STEP = 2400, HOLD = 1200, KEY = 28, LAND = 140;
     var steps = how.querySelectorAll("[data-step]");
     var lines = how.querySelectorAll("[data-s]");
-    var timer = null;
-    var pick = function (key) {
-      Array.prototype.forEach.call(steps, function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-step") === key)); });
-      Array.prototype.forEach.call(lines, function (l) {
+    var nodes = how.querySelectorAll("[data-node]");
+    var me = how.querySelector(".chat__me");
+    var said = me.lastChild;
+    var prompt = said.nodeValue;
+    var replay = how.querySelector(".hiw__replay");
+    var timers = [];
+    var seen = null;
+    var later = function (fn, ms) { timers.push(window.setTimeout(fn, ms)); };
+    var place = {};
+    var landAt = [];
+    each(lines, function (l) {
+      var s = l.getAttribute("data-s");
+      place[s] = place[s] || 0;
+      l.style.setProperty("--i", String(place[s]));
+      if (l.classList.contains("chat__ok")) { landAt.push(place[s] * LAND + 210); }
+      place[s] += 1;
+    });
+    var bars = function (key, dur) {
+      each(steps, function (b) {
+        var bar = b.querySelector(".hiw__bar"), n = b.getAttribute("data-step");
+        bar.classList.remove("is-run", "is-full");
+        if (n === key && dur) {
+          bar.style.setProperty("--dur", dur + "ms");
+          void bar.offsetWidth;
+          bar.classList.add("is-run");
+        } else if (n <= key) {
+          bar.classList.add("is-full");
+        }
+      });
+    };
+    var light = function (on, timed) {
+      each(nodes, function (node, k) {
+        if (!on) { node.classList.remove("is-done"); }
+        else if (timed) { later(function () { node.classList.add("is-done"); }, landAt[k]); }
+        else { node.classList.add("is-done"); }
+      });
+    };
+    var pick = function (key, dur) {
+      each(steps, function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-step") === key)); });
+      each(lines, function (l) {
         var s = l.getAttribute("data-s");
         l.toggleAttribute("data-on", s === key);
         l.toggleAttribute("data-later", s > key);
       });
+      bars(key, dur);
+      light(key >= "2", !!dur && key === "2");
     };
-    var stop = function () { if (timer) { window.clearInterval(timer); timer = null; } };
-    Array.prototype.forEach.call(steps, function (b) {
-      b.addEventListener("click", function () { stop(); pick(b.getAttribute("data-step")); });
+    var stop = function () {
+      timers.forEach(window.clearTimeout);
+      timers = [];
+      said.nodeValue = prompt;
+      me.classList.remove("is-typing");
+    };
+    var hold = function (on) {
+      each(lines, function (l) { if (l !== me && l.getAttribute("data-s") === "1") { l.toggleAttribute("data-later", on); } });
+    };
+    var play = function () {
+      stop();
+      pick("1", prompt.length * KEY + HOLD);
+      hold(true);
+      said.nodeValue = "";
+      me.classList.add("is-typing");
+      var start = Date.now();
+      var type = function () {
+        var n = Math.min(prompt.length, Math.ceil((Date.now() - start) / KEY));
+        said.nodeValue = prompt.slice(0, n);
+        if (n < prompt.length) { later(type, KEY); return; }
+        me.classList.remove("is-typing");
+        hold(false);
+        later(function () {
+          pick("2", STEP);
+          later(function () { pick("3", STEP); }, STEP);
+        }, HOLD);
+      };
+      later(type, KEY);
+    };
+    each(steps, function (b) {
+      b.addEventListener("click", function () {
+        if (seen) { seen.disconnect(); }
+        stop();
+        pick(b.getAttribute("data-step"));
+      });
     });
     if (calm || !watching) {
       pick("3");
     } else {
       pick("1");
-      var seen = new IntersectionObserver(function (entries) {
+      bars("0");
+      light(false);
+      hold(true);
+      var heard = me.cloneNode(true);
+      heard.className = "chat__sr";
+      heard.removeAttribute("data-s");
+      heard.removeAttribute("data-on");
+      me.parentNode.insertBefore(heard, me);
+      me.setAttribute("aria-hidden", "true");
+      said.nodeValue = "";
+      replay.hidden = false;
+      replay.addEventListener("click", function () { if (seen) { seen.disconnect(); } play(); });
+      seen = new IntersectionObserver(function (entries) {
         if (!entries[0].isIntersecting) { return; }
         seen.disconnect();
-        var n = 1;
-        timer = window.setInterval(function () {
-          n += 1;
-          pick(String(n));
-          if (n >= steps.length) { stop(); }
-        }, 2400);
+        play();
       }, { threshold: 0.5 });
       seen.observe(document.getElementById("term"));
     }
@@ -1756,6 +1925,61 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     Array.prototype.forEach.call(ins, function (el) { el.addEventListener("input", paint); });
     document.getElementById("calcIn").hidden = false;
     paint();
+  }
+
+  /* ── cost: the long way, raced ────────────────────────────────────── */
+  var race = document.getElementById("race");
+  if (race) {
+    var field = function (k) { return parseFloat(document.querySelector('[data-in="' + k + '"]').defaultValue); };
+    var RACE = { hours: field("setup") + field("perApp"), every: 650, quick: 1600 };
+    var diyStages = race.querySelectorAll(".race__lane--diy li");
+    var dlmStages = race.querySelectorAll(".race__lane--dlm li");
+    var hours = race.querySelector('[data-race="hours"]');
+    var trio = document.getElementById("trioDiy");
+    race.querySelector('[data-race="total"]').textContent = trio.firstChild.nodeValue;
+    hours.textContent = String(RACE.hours);
+    if (!calm && watching) {
+      var raceTimers = [];
+      var at = function (fn, ms) { raceTimers.push(window.setTimeout(fn, ms)); };
+      var rest = function () {
+        raceTimers.forEach(window.clearTimeout);
+        raceTimers = [];
+        each(diyStages, function (l) { l.classList.remove("is-done"); });
+        each(dlmStages, function (l) { l.classList.remove("is-done", "is-wait"); });
+        race.classList.remove("is-total");
+        hours.textContent = "0";
+      };
+      var run = function () {
+        rest();
+        var last = dlmStages.length - 1;
+        var span = RACE.every * diyStages.length;
+        each(dlmStages, function (l, i) {
+          if (i < last) { at(function () { l.classList.add("is-done"); }, RACE.quick * (i + 1) / last); }
+          else { at(function () { l.classList.add("is-wait"); }, RACE.quick + 200); }
+        });
+        each(diyStages, function (l, i) { at(function () { l.classList.add("is-done"); }, RACE.every * (i + 1)); });
+        at(function () { race.classList.add("is-total"); }, span);
+        var start = Date.now();
+        var count = function () {
+          var t = Math.min(1, (Date.now() - start) / span);
+          hours.textContent = String(Math.round(RACE.hours * t));
+          if (t < 1) { at(count, 50); }
+        };
+        count();
+      };
+      rest();
+      race.classList.add("is-armed");
+      var replayRace = race.querySelector(".race__replay");
+      replayRace.hidden = false;
+      replayRace.addEventListener("click", function () { raced.disconnect(); run(); });
+      var raced = new IntersectionObserver(function (entries) {
+        if (!entries[0].isIntersecting) { return; }
+        raced.disconnect();
+        race.classList.add("is-in");
+        run();
+      }, { threshold: 0.4 });
+      raced.observe(race);
+    }
   }
 
   /* ── request a pilot ───────────────────────────────────────────────── */

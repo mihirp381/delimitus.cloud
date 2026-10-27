@@ -9,6 +9,7 @@ import pytest
 
 from ssc_landing.page import (
     MAX_PAGE_BYTES,
+    SIGN_IN,
     PageError,
     check_page,
     content_security_policy,
@@ -76,6 +77,8 @@ def test_no_dollar_figure_outside_the_cost_section() -> None:
 
 def test_nothing_is_loaded_from_another_origin() -> None:
     text = _text_without_styles()
+    assert text.count(f'href="{SIGN_IN}"') == 2
+    text = text.replace(f'href="{SIGN_IN}"', "")
     assert re.findall(r"""(?:src|href|action|srcset)\s*=\s*["']?(?:https?:)?//""", text) == []
     assert "@import" not in HTML
     assert re.findall(r"url\(\s*['\"]?(?:https?:)?//", HTML) == []
@@ -193,6 +196,8 @@ def _pairs() -> list[tuple[str, str]]:
     for fg in ("#FFFFFF", "#C7C7CC", "#7EE2A0", "#8CC4FF", "#AEAEB2", "#FFD479"):
         pairs += [(fg, "#1D1D1F"), (fg, "#2B2B2D")]
     pairs.append(("#C7C7CC", "#2C2C2E"))
+    # The pipeline's pills: 5% white and 12% #7EE2A0 over the terminal's ground.
+    pairs += [("#AEAEB2", "#28282A"), ("#7EE2A0", "#29352E")]
     return pairs
 
 
@@ -211,6 +216,10 @@ def test_text_contrast_is_at_least_4_5_to_1(fg: str, bg: str) -> None:
         ('<img src="https://example.com/a.png">', "another origin"),
         ('<link rel="stylesheet" href="//example.com/a.css">', "another origin"),
         ('<form action="https://example.com/post"></form>', "another origin"),
+        ('<a href="https://console.delimitus.com/other">x</a>', "another origin"),
+        ('<img src="https://console.delimitus.com/x.png">', "another origin"),
+        ('<form action="https://console.delimitus.com/login"></form>', "another origin"),
+        ('<a href="https://console.delimitus.com/login/x">x</a>', "another origin"),
     ],
 )
 def test_a_page_the_policy_would_break_is_refused(page: str, message: str) -> None:
@@ -221,6 +230,12 @@ def test_a_page_the_policy_would_break_is_refused(page: str, message: str) -> No
 def test_a_page_over_the_weight_limit_is_refused() -> None:
     with pytest.raises(PageError, match="limit"):
         check_page("<p>x</p>", MAX_PAGE_BYTES + 1)
+
+
+def test_the_sign_in_link_is_the_one_link_to_another_origin() -> None:
+    assert SIGN_IN == "https://console.delimitus.com/login"
+    page = f'<a class="nav__link" href="{SIGN_IN}">Sign in</a><a href="{SIGN_IN}">Sign in</a>'
+    check_page(page, len(page))
 
 
 def test_inline_blocks_and_mailto_links_are_allowed() -> None:
@@ -284,3 +299,93 @@ def test_every_approval_names_who_approves() -> None:
     assert "Only an admin can approve" not in text
     assert not re.search(r"(?i)\b(another|a second|a different) admin", text)
     assert text.lower().count("an admin of your company") == 7
+
+
+REMOVED = (
+    "Private pilot. Not generally available",
+    "Illustration ·",
+    "Example data",
+    "example data",
+    "Product names belong to their owners",
+    "Your data connections",
+    "The rest is ours.",
+    "Example Freight",
+    "Sample Linehaul",
+    "Demo Carriers",
+    "Placeholder Haulage",
+    "The expensive part isn’t running the app.",
+    "It’s everything around it.",
+    'id="limits"',
+    "Opinionated on purpose",
+    "No custom domains",
+    "No inbound webhooks",
+)
+ADDED = (
+    "Secure data connections",
+    "<span>“Deploy this on Delimitus.”</span> <span>Say it once. We run everything behind it."
+    " IT approves what matters.</span>",
+    "Northline Freight",
+    "Cascade Linehaul",
+    "Redwood Carriers",
+    "Pioneer Haulage",
+    'Building apps with AI is <span class="grad">easy and fun.</span>',
+    "Deploying and maintaining hundreds of them is hard and expensive.",
+)
+
+
+def test_the_refreshed_copy_replaces_the_old() -> None:
+    assert [s for s in REMOVED if s in HTML] == []
+    assert [s for s in ADDED if s not in HTML] == []
+    og = re.search(r'<meta property="og:description" content="([^"]*)">', HTML)
+    assert og is not None
+    assert "Private pilot" not in og[1]
+    register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
+    assert "| `names` |" not in register
+
+
+def _bound(name: str) -> str:
+    found = re.search(rf'data-bind="{name}"[^>]*>(.*?)</(?:span|ul)>', HTML, flags=re.S)
+    assert found is not None, name
+    return found[1]
+
+
+def test_the_case_panel_shows_the_warehouse_asks_without_javascript() -> None:
+    wh = re.search(r"wh:\s*\{(.*?)\n\s*\},?\n", HTML, flags=re.S)
+    assert wh is not None
+    simple = re.search(r'simple:\s*\{\s*ask:\s*"([^"]+)",\s*get:\s*\[([^\]]*)\]', wh[1])
+    big = re.search(r'ask:\s*"([^"]+)",\s*tool:\s*"([^"]+)",\s*get:\s*\[([^\]]*)\]', wh[1])
+    assert simple is not None and big is not None
+    assert _bound("askSimple") == simple[1]
+    assert re.findall(r"<li>(.*?)</li>", _bound("getSimple")) == re.findall(r'"([^"]+)"', simple[2])
+    assert _bound("ask") == big[1]
+    assert _bound("tool") == big[2]
+    assert re.findall(r"<li>(.*?)</li>", _bound("get")) == re.findall(r'"([^"]+)"', big[3])
+    assert simple[1] == "A page that shows which doors are free right now."
+    assert "Company login on, with no setup" in simple[2]
+
+
+def test_the_long_way_agrees_with_the_calculator_vectors() -> None:
+    vectors = json.loads((LANDING / "calculator_vectors.json").read_text(encoding="utf-8"))
+    default = vectors["vectors"][0]
+    cost = re.search(r'<section[^>]*id="cost".*?</section>', HTML, flags=re.S)
+    assert cost is not None
+    race = re.search(
+        r'<div class="race" id="race".*?<button[^>]*class="race__replay"', cost[0], re.S
+    )
+    assert race is not None
+    hours = re.search(r'data-race="hours">(\d+)<', race[0])
+    assert hours is not None
+    assert int(hours[1]) == default["in"]["setup"] + default["in"]["perApp"] == 92
+    fixed = re.search(r"var CLOUD_FIXED_CENTS = (\d+);", HTML)
+    per_app = re.search(r"var CLOUD_PER_APP_CENTS = (\d+);", HTML)
+    assert fixed is not None and per_app is not None
+    cloud = (int(fixed[1]) + int(per_app[1]) * default["in"]["apps"]) * 12 / 100
+    assert round(cloud) == default["out"]["cloud"]
+    assert "$129.53 a month before the first app" in race[0]
+    assert int(fixed[1]) == 12953
+    total = re.search(r'data-race="total">\$([\d,]+)<', race[0])
+    assert total is not None
+    assert int(total[1].replace(",", "")) == default["out"]["total"] == 32658
+    assert "First year, 10 apps: " in race[0]
+    for word in ("approved", "granted"):
+        assert word not in race[0]
