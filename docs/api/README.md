@@ -83,6 +83,14 @@ the apps they own, and those with a builder grant on any environment. `GET /v1/g
 returns every group with that name, ignoring case, with its active member count, to anyone who
 may change some app's sharing: an admin, an owner or a builder.
 
+**Names come beside ids.** A response that names a person, group or app also carries its display
+name in a sibling field (`owner_name`, `subject_name`, `actor.name`, ...), read in one query per
+kind; the id fields never change. A person without a display name is shown by email; a removed or
+deactivated person is `Former member` with no email. `whoami` adds `org_name`, `name` and `email`.
+An audit actor is the person's name, `<client_id> for <name>` in an agent session,
+`Delimitus operator` or `System`; names are added to search results only, never to the chain or
+the export.
+
 **Some changes wait for approval** (decision 016). A `PUT .../grants` made through an agent
 credential, or one that widens the audience of a data-connected app, is not applied until the
 matching approval is approved: an agent session gets `202` with `{environment_id, grants_version,
