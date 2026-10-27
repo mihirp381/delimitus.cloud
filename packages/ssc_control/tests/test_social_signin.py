@@ -41,6 +41,7 @@ from ssc_control.snapshot.service import compile_lock
 
 ADA = "ada@example.com"
 GOOGLE_SUB, GITHUB_SUB = "110248495921238986420", "583231"
+BOB_SUB = "117512345678901234567"
 SOCIAL_CONN = "conn_01SOCIAL"
 
 
@@ -175,7 +176,7 @@ async def test_a_chooser_miss_is_the_same_bad_request(rig: OAuthRig) -> None:
 
 async def test_an_invited_member_signs_in_and_becomes_active(rig: OAuthRig) -> None:
     bob = await invite(rig.w, "Bob@Example.com")
-    r = await social_login(rig, GITHUB_SUB, "bob@example.COM", provider="github")
+    r = await social_login(rig, BOB_SUB, "bob@example.COM")
     signed_in(r, rig)
     (row,) = await rig.w.rows(
         "select u.status, u.display_name, l.issuer, l.subject, l.source from ssc.user_account u "
@@ -183,10 +184,24 @@ async def test_an_invited_member_signs_in_and_becomes_active(rig: OAuthRig) -> N
         "where u.org_id = :org and u.id = :id",
         id=bob,
     )
-    assert tuple(row) == ("active", "Pat Doe", "workos:social:github", GITHUB_SUB, "social")
+    assert tuple(row) == ("active", "Pat Doe", "workos:social:google", BOB_SUB, "social")
     updated = await rig.w.audit(AuditAction.USER_UPDATED)
     assert updated[-1][2] == {"status": "active"}
     assert [a[2]["source"] for a in await rig.w.audit(AuditAction.IDENTITY_LINKED)] == ["social"]
+
+
+async def test_github_links_only_an_address_it_says_is_verified(rig: OAuthRig) -> None:
+    bob = await invite(rig.w, "bob@example.com")
+    refused = await social_login(rig, GITHUB_SUB, "bob@example.com", provider="github")
+    assert (refused.status_code, refused.text) == (403, pages.REFUSED)
+    assert await reasons(rig.w) == ["email_not_verified"]
+    assert await rig.w.rows("select 1 from ssc.identity_link where user_id = :id", id=bob) == []
+    verified = {"email_verified": True}
+    first = await social_login(
+        rig, GITHUB_SUB, "bob@example.com", provider="github", raw_attributes=verified
+    )
+    signed_in(first, rig)
+    signed_in(await social_login(rig, GITHUB_SUB, "bob@example.com", provider="github"), rig)
 
 
 async def test_later_sign_ins_match_the_subject_only(rig: OAuthRig) -> None:
@@ -203,7 +218,9 @@ async def test_later_sign_ins_match_the_subject_only(rig: OAuthRig) -> None:
 
 async def test_another_provider_never_links_to_a_linked_person(rig: OAuthRig) -> None:
     signed_in(await social_login(rig), rig)
-    r = await social_login(rig, GITHUB_SUB, ADA, provider="github")
+    r = await social_login(
+        rig, GITHUB_SUB, ADA, provider="github", raw_attributes={"email_verified": True}
+    )
     assert (r.status_code, r.text) == (403, pages.REFUSED)
     assert await reasons(rig.w) == ["subject_mismatch"]
     links = await rig.w.rows(
@@ -223,7 +240,7 @@ async def test_every_social_refusal_is_the_same_page(rig: OAuthRig) -> None:
         await social_login(rig, "3", ADA, connection_type="OktaSAML"),
         await social_login(rig, "4", ADA, raw_attributes={"email_verified": False}),
         await social_login(rig, "5", ADA),
-        await social_login(rig, "6", "gone@example.com", provider="github"),
+        await social_login(rig, "6", "gone@example.com"),
         await social_login(rig, "", ADA),
     ]
     assert {(r.status_code, r.text) for r in attempts} == {(403, pages.REFUSED)}
@@ -242,10 +259,10 @@ async def test_every_social_refusal_is_the_same_page(rig: OAuthRig) -> None:
 
 async def test_a_deactivated_member_with_a_link_is_refused(rig: OAuthRig) -> None:
     bob = await invite(rig.w, "bob@example.com")
-    signed_in(await social_login(rig, GITHUB_SUB, "bob@example.com", provider="github"), rig)
+    signed_in(await social_login(rig, BOB_SUB, "bob@example.com"), rig)
     async with bound_org(rig.w.engine, rig.w.org) as conn:
         await directory.set_status(conn, rig.w.org, bob, "deactivated", actor=OPERATOR)
-    r = await social_login(rig, GITHUB_SUB, "bob@example.com", provider="github")
+    r = await social_login(rig, BOB_SUB, "bob@example.com")
     assert (r.status_code, r.text) == (403, pages.REFUSED)
     assert await reasons(rig.w) == ["not_active"]
 

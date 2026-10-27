@@ -26,6 +26,7 @@ WORKOS_PROVIDERS: Final[dict[str, str]] = {
     "github": "GitHubOAuth",
 }
 LABELS: Final[dict[str, str]] = {"google": "Google", "microsoft": "Microsoft", "github": "GitHub"}
+FLAG_TO_LINK: Final = frozenset({"github"})
 ACTOR: Final = "workos:social"
 SocialRefusal = Literal[
     "connection_type_refused",
@@ -115,7 +116,7 @@ async def resolve(conn: AsyncConnection, org_id: str) -> SignIn | None:
     return None if connection is None or connection.frozen else connection
 
 
-async def find_person(  # noqa: PLR0911  (one answer per check)
+async def find_person(  # noqa: PLR0911, PLR0912  (one answer per check)
     conn: AsyncConnection, target: SocialSignIn, profile: SsoProfile, chosen: object
 ) -> Person | SocialRefusal:
     provider = provider_of(profile.connection_type)
@@ -137,9 +138,9 @@ async def find_person(  # noqa: PLR0911  (one answer per check)
     ).one_or_none()
     if linked is not None:
         return Person(str(linked[0]), bool(linked[1]))
-    found = (
-        await conn.execute(_BY_EMAIL, {"org": org, "email": profile.email})
-    ).all()
+    if provider in FLAG_TO_LINK and profile.email_verified is not True:
+        return "email_not_verified"
+    found = (await conn.execute(_BY_EMAIL, {"org": org, "email": profile.email})).all()
     if not found:
         return "no_match"
     if len(found) > 1:
