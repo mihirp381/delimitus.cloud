@@ -64,7 +64,7 @@ interface Started {
  */
 export function Timers({ app, env }: Props) {
   return (
-    <Panel title="Timers">
+    <Panel title="Timers" id="timers">
       <TimersBody app={app} env={env} />
     </Panel>
   );

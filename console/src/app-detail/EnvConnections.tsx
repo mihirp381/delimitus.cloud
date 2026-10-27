@@ -39,7 +39,7 @@ const SCHEMA_PATH = '/v1/apps/{app_id}/environments/{environment_id}/connections
  */
 export function EnvConnections({ app, env }: Props) {
   return (
-    <Panel title="Data connections">
+    <Panel title="Data connections" id="data-connections">
       <ConnectionsBody app={app} env={env} />
     </Panel>
   );

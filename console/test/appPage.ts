@@ -76,9 +76,9 @@ export async function envPanel(name: 'Production' | 'Preview'): Promise<HTMLElem
 const TAB_OF: Readonly<Record<string, string>> = {
   'Who has access': 'Access',
   'Why can this person open it?': 'Access',
-  'Data connections': 'Data',
-  Secrets: 'Secrets',
-  Timers: 'Timers',
+  'Data connections': 'Access',
+  Secrets: 'Settings',
+  Timers: 'Settings',
   Logs: 'Logs',
   Repository: 'Settings',
   'Admin actions': 'Settings',
@@ -110,7 +110,7 @@ export async function openSection(panel: HTMLElement, summary: string): Promise<
   if (tab && panel.dataset.env) {
     const preview = panel.dataset.env === 'preview';
     await openTab(tab);
-    if (preview && tab !== 'Settings') await chooseEnv('Preview');
+    if (preview) await chooseEnv('Preview');
     return screen.findByRole('region', { name: summary });
   }
   const details = within(panel).getByText(summary).closest('details');

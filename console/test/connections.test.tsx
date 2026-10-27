@@ -392,14 +392,19 @@ describe('connections page', () => {
 });
 
 describe("an environment's data connections", () => {
-  it('reads nothing until the section is opened', async () => {
-    const { api } = start(`/apps/${'app_aaaaaaaaaaaaaaaaaaaa'}`, page({ [`GET ${ENV_CONNECTIONS}`]: () => json(200, linked(LEDGER)) }), signedIn());
+  it('counts the links on the card, which leads to the section on the Access tab', async () => {
+    const { api, router } = start(`/apps/${'app_aaaaaaaaaaaaaaaaaaaa'}`, page({ [`GET ${ENV_CONNECTIONS}`]: () => json(200, linked(LEDGER)) }), signedIn());
     const panel = await envPanel('Production');
-    await within(panel).findByText('Everyone in the organisation');
-    expect(api.of('GET', ENV_CONNECTIONS)).toHaveLength(0);
-    const section = await openSection(panel, 'Data connections');
+    expect(await within(panel).findByText('1 connection')).toBeTruthy();
+    expect(api.of('GET', '/v1/connections')).toHaveLength(0);
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole('link', { name: 'Data connections of Production' }));
+    });
+    expect(router.state.location.search).toEqual({ tab: 'access' });
+    expect(router.state.location.hash).toBe('data-connections');
+    const section = await screen.findByRole('region', { name: 'Data connections' });
+    expect(section.id).toBe('data-connections');
     expect(await within(section).findByText('ledger')).toBeTruthy();
-    expect(api.of('GET', ENV_CONNECTIONS)).toHaveLength(1);
   });
 
   it('links a connection with an empty body and shows the new list', async () => {

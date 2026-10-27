@@ -1,44 +1,45 @@
 import type { EnvironmentOut } from '../api/lifecycle';
 
-/** The app page's tabs, in order. The first is where an address without `tab` lands. */
-export const APP_TABS = ['overview', 'access', 'data', 'secrets', 'timers', 'logs', 'settings'] as const;
+export const APP_TABS = ['overview', 'logs', 'access', 'settings'] as const;
 export type AppTab = (typeof APP_TABS)[number];
 
 export const APP_TAB_TITLE: Readonly<Record<AppTab, string>> = {
   overview: 'Overview',
-  access: 'Access',
-  data: 'Data',
-  secrets: 'Secrets',
-  timers: 'Timers',
   logs: 'Logs',
+  access: 'Access',
   settings: 'Settings',
 };
 
-/** The tabs that show one environment at a time, chosen with the Production / Preview switch. */
-export const ENV_TABS: ReadonlySet<AppTab> = new Set(['access', 'data', 'secrets', 'timers', 'logs']);
+/** Tabs from before the merge, and where each now lives. */
+export const MOVED_TABS = {
+  data: { tab: 'access', hash: 'data-connections' },
+  secrets: { tab: 'settings', hash: 'secrets' },
+  timers: { tab: 'settings', hash: 'timers' },
+} as const satisfies Record<string, { readonly tab: AppTab; readonly hash: string }>;
+export type MovedTab = keyof typeof MOVED_TABS;
+
+export function movedTab(value: unknown): MovedTab | null {
+  return typeof value === 'string' && Object.hasOwn(MOVED_TABS, value) ? (value as MovedTab) : null;
+}
 
 export type EnvName = EnvironmentOut['name'];
-export const ENV_NAMES: readonly EnvName[] = ['prod', 'preview'];
 
-/** The tab an address names; anything else, or nothing, is the overview. */
 export function appTab(value: unknown): AppTab {
+  const moved = movedTab(value);
+  if (moved) return MOVED_TABS[moved].tab;
   return typeof value === 'string' && (APP_TABS as readonly string[]).includes(value) ? (value as AppTab) : 'overview';
 }
 
-/** The environment an address names; anything else, or nothing, is production. */
 export function appEnv(value: unknown): EnvName {
   return value === 'preview' ? 'preview' : 'prod';
 }
 
 export interface AppSearch {
-  readonly tab?: AppTab;
+  readonly tab?: AppTab | MovedTab;
   readonly env?: EnvName;
 }
 
-/**
- * The app page's search, held to what it knows: an unknown tab or environment is dropped, and
- * the defaults (overview, production) are left out so the plain address stays the plain address.
- */
+/** Unknown values are dropped and the defaults (overview, production) left out of the address. */
 export function appSearch(search: Record<string, unknown>): AppSearch {
   const tab = appTab(search.tab);
   const env = appEnv(search.env);
@@ -46,4 +47,10 @@ export function appSearch(search: Record<string, unknown>): AppSearch {
     ...(tab === 'overview' ? {} : { tab }),
     ...(env === 'prod' ? {} : { env }),
   };
+}
+
+/** As `appSearch`, but an old tab is kept so the route can redirect it with its section's hash. */
+export function validateAppSearch(search: Record<string, unknown>): AppSearch {
+  const moved = movedTab(search.tab);
+  return moved ? { ...appSearch(search), tab: moved } : appSearch(search);
 }

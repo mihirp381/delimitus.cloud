@@ -1,5 +1,4 @@
 import { useRouteContext } from '@tanstack/react-router';
-import type { ReactNode } from 'react';
 import { BILLING_TEXT, coldStarts, type Health, hours, size } from '../api/cell';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { Badge, type Tone } from '../components/Badge';
@@ -17,57 +16,42 @@ const REASON: Readonly<Record<string, string>> = {
   logs_unavailable: 'The cell cannot tell right now',
 };
 
-/**
- * How one environment is running: its state, where asleep is normal and the next request wakes
- * it; its use this month; and its database's connections and size. Each line says "not
- * available" rather than failing the page when the cell cannot answer. `children` are the facts
- * that sit between its state and its use: what it runs and where.
- */
-export function Running({
-  app,
-  env,
-  children,
-}: {
+interface Props {
   readonly app: AppOut;
   readonly env: EnvironmentOut;
-  readonly children?: ReactNode;
-}) {
+}
+
+export function useHealth({ app, env }: Props) {
+  const { queries } = useRouteContext({ from: '/_authed/apps/$appId' });
+  return queries.useQuery('get', '/v1/apps/{app_id}/environments/{environment_id}/health', {
+    params: { path: { app_id: app.id, environment_id: env.id } },
+  });
+}
+
+export function HealthBadge({ health }: { readonly health: ReturnType<typeof useHealth> }) {
+  if (health.isPending) return <span className="muted">Checking…</span>;
+  if (health.isError) return <span className="muted">Not available</span>;
+  const state = health.data.state;
+  if (state) return <Badge tone={HEALTH[state].tone}>{HEALTH[state].text}</Badge>;
+  return <Badge tone="neutral">{REASON[health.data.reason] ?? health.data.reason}</Badge>;
+}
+
+/** `dt`/`dd` pairs for a `dl`: asleep explained, use this month, the database. */
+export function RunningFacts({ app, env, asleep }: Props & { readonly asleep: boolean }) {
   const { queries } = useRouteContext({ from: '/_authed/apps/$appId' });
   const init = { params: { path: { app_id: app.id, environment_id: env.id } } };
-  const health = queries.useQuery(
-    'get',
-    '/v1/apps/{app_id}/environments/{environment_id}/health',
-    init,
-  );
   const usage = queries.useQuery('get', '/v1/apps/{app_id}/environments/{environment_id}/usage', init);
-  const database = queries.useQuery(
-    'get',
-    '/v1/apps/{app_id}/environments/{environment_id}/database',
-    init,
-  );
-  const state = health.data?.state ?? null;
+  const database = queries.useQuery('get', '/v1/apps/{app_id}/environments/{environment_id}/database', init);
   const db = database.data;
 
   return (
     <>
-      <dt>Status</dt>
-      <dd>
-        {health.isPending ? (
-          <span className="muted">Checking…</span>
-        ) : health.isError ? (
-          <span className="muted">Not available</span>
-        ) : state ? (
-          <>
-            <Badge tone={HEALTH[state].tone}>{HEALTH[state].text}</Badge>
-            {state === 'asleep' ? (
-              <span className="muted"> Nobody is using it; the next visit wakes it.</span>
-            ) : null}
-          </>
-        ) : (
-          <span className="muted">{REASON[health.data.reason] ?? health.data.reason}</span>
-        )}
-      </dd>
-      {children}
+      {asleep ? (
+        <>
+          <dt>Asleep</dt>
+          <dd className="muted">Nobody is using it; the next visit wakes it.</dd>
+        </>
+      ) : null}
       <dt>This month</dt>
       <dd>
         {usage.isPending ? (

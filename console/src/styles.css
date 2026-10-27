@@ -694,6 +694,7 @@ a.brand:hover {
 
 /* What can stop or hand over an app, set apart. */
 .danger-zone {
+  margin-top: var(--ssc-space-6);
   border-color: var(--ssc-feedback-danger-line);
 }
 

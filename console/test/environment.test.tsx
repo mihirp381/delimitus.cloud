@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CellOut, Usage } from '../src/api/cell';
 import type { WarmOut } from '../src/api/warm';
+import { openSection } from './appPage';
 import { json, problem } from './fakeApi';
 import { signedIn, start } from './harness';
 
@@ -413,7 +414,18 @@ describe('app detail', () => {
         [`GET ${envPath(PREVIEW, 'database')}`]: database(PREVIEW, true),
         [`GET ${envPath(PROD, 'database')}`]: database(PROD, false),
         [`GET ${envPath(PROD, 'deployments')}`]: () =>
-          json(200, { environment_id: PROD, items: [{ release_number: 7, current: true }] }),
+          json(200, {
+            environment_id: PROD,
+            items: [
+              {
+                release_number: 7,
+                current: true,
+                started_at: '2026-10-07T10:00:00Z',
+                finished_at: null,
+                actor: { kind: 'user', id: 'usr_cccccccccccccccccccc', via_agent: false, name: 'Olive Owner' },
+              },
+            ],
+          }),
       },
       signedIn(),
     );
@@ -422,17 +434,21 @@ describe('app detail', () => {
     if (!preview || !prod) throw new Error('no environment panels');
 
     await waitFor(() => expect(within(preview).getByText('asleep').className).toContain('badge-neutral'));
-    expect(preview.textContent).toContain('the next visit wakes it');
-    await waitFor(() => expect(preview.textContent).toContain('Instance-billed, 1.02 h of sessions, 1.26 h running'));
-    expect(preview.textContent).toContain('Cold starts: 21, median 11s, slowest 5% 20s.');
-    await waitFor(() => expect(preview.textContent).toContain('1 connections of 2, 8.2 MB'));
+    expect(api.of('GET', envPath(PREVIEW, 'usage'))).toHaveLength(0);
+    const previewDetails = await openSection(preview, 'Details');
+    expect(previewDetails.textContent).toContain('the next visit wakes it');
+    await waitFor(() => expect(previewDetails.textContent).toContain('Instance-billed, 1.02 h of sessions, 1.26 h running'));
+    expect(previewDetails.textContent).toContain('Cold starts: 21, median 11s, slowest 5% 20s.');
+    await waitFor(() => expect(previewDetails.textContent).toContain('1 connections of 2, 8.2 MB'));
 
-    await waitFor(() => expect(prod.textContent).toContain('Not deployed yet'));
-    await waitFor(() => expect(prod.textContent).toContain('ReleaseRelease 7'));
+    await waitFor(() => expect(within(prod).getByText('Not deployed yet').className).toContain('badge-neutral'));
+    await waitFor(() => expect(prod.textContent).toContain('Release 7 by Olive Owner'));
     expect(api.of('GET', envPath(PROD, 'deployments'))[0]?.query.get('limit')).toBe('50');
     expect(api.of('GET', envPath(PREVIEW, 'deployments'))).toHaveLength(0);
-    await waitFor(() => expect(within(prod).getAllByText('Not available')).toHaveLength(1));
-    await waitFor(() => expect(prod.textContent).toContain('DatabaseNone'));
+    const prodDetails = await openSection(prod, 'Details');
+    await waitFor(() => expect(prodDetails.textContent).toContain('ReleaseRelease 7'));
+    await waitFor(() => expect(within(prodDetails).getAllByText('Not available')).toHaveLength(1));
+    await waitFor(() => expect(prodDetails.textContent).toContain('DatabaseNone'));
     expect(screen.queryByRole('alert')).toBeNull();
     expect(api.of('GET', envPath(PREVIEW, 'health'))).toHaveLength(1);
   });
