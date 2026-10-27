@@ -141,9 +141,10 @@ Delimitus and no Okta name.
 
 1. Create the WorkOS organisation for the pilot in the production dashboard and verify a domain
    for it that the pilot accounts' emails use (a Delimitus subdomain, verified by its TXT record
-   in the same zone). WorkOS refuses a profile whose email is outside the organisation's
-   verified domains (Before you start, above), so pilot users get accounts on that domain, not
-   their own company's.
+   in the same zone). WorkOS's default domain policy refuses a profile whose email is outside
+   the organisation's domains (Before you start, above); SSC does not check the email domain
+   itself, and WorkOS support can relax the policy. Keep the default, so pilot users get
+   accounts on that domain, not their own company's.
 2. Connect the tenant as SAML (or OIDC) and Okta SCIM directory sync, as in Before you start
    and `docs/runbooks/ssc-110-onboarding.md` step 2 (the Admin Portal links, followed here as
    the tenant's admin). Create the Okta app after step 2 so its sign-on URL is on
