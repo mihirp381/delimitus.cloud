@@ -25,9 +25,9 @@ users: nothing on the page is load-bearing for a customer yet.
 |---|---|---|
 | T1 | Sign in: a `Sign in` link in the nav and a `Sign in` button in the hero, both to `https://console.delimitus.com/login`; `page.py` allows that one href and nothing else from another origin | 1 |
 | T2 | Copy: "Secure data connections"; the hero's "Private pilot. Not generally available yet." line removed (and "Private pilot." from `og:description`); the zoom caption reworded; every "Illustration · example …" caption, the "Example data" chip and the footer's example-data line removed; "Product names belong to their owners…" removed in both places and the `names` row dropped from `CLAIMS.md`; placeholder carrier names replaced by invented ones | 2, 3, 4, 5, 8 |
-| T3 | How it works: the terminal types the prompt, lands each line with a tick, lights a five-stage pipeline (Build, Keys, Secrets, Login, Preview), pulses the two "waiting for IT" lines, slides the preview address in; the step cards show progress and a Play again control | 6 |
+| T3 | How it works: the terminal types the prompt, lands each line with a tick, lights a five-stage pipeline (Build, Keys, Secrets, Login, Preview), pulses the two "waiting for IT" lines, slides the preview address in; the step cards show progress | 6 |
 | T4 | What operations teams ask for: each team shows a simple ask and a bigger ask side by side, each with what it gets; switching a team animates the cards in | 7, 9 |
-| T5 | The long way: in `#cost`, two lanes race from "the tool works" to "the team can open it": do it yourself (eight stages, an IT-hours counter from the sourced defaults, the cloud bill starting early) against Delimitus (one prompt, minutes to preview, then IT's approvals); scroll-triggered, replayable, at rest under reduced motion and without JavaScript | 11 |
+| T5 | The long way: in `#cost`, two lanes race from "the tool works" to "the team can open it": do it yourself (eight stages, an IT-hours counter from the sourced defaults, the cloud bill starting early) against Delimitus (one prompt, minutes to preview, then IT's approvals); scroll-triggered and played once, at rest under reduced motion and without JavaScript | 11 |
 | T6 | Docs, claims, tests: `landing/README.md`, `CLAIMS.md`, e2e for every new behaviour, the full check list green | all |
 
 Open with the founder (not in this branch): the meaning of point 10 ("change branding; running can become
@@ -46,7 +46,7 @@ column, the FAQ, the request section) stays; the pilot boundaries section: remov
   `test_page` green with the `names` row gone.
 - T3: with motion allowed, the prompt is typed before the first agent line shows, all five pipeline
   nodes carry `is-done` once step 3 is reached, `#term .chat__url` becomes visible within 8 s of the
-  terminal entering the viewport (existing test), Play again hides the address and starts over; under
+  terminal entering the viewport (existing test), the animation plays once per page load; under
   reduced motion and without JavaScript the whole conversation, the lit pipeline and the address are
   visible at once; clicking a step still selects it (existing test).
 - T4: five tabs still switch (`Fleet and dispatch` still binds `Codex`); each panel shows two asks with

@@ -435,9 +435,6 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .hiw__bar { position: absolute; left: clamp(16px, 2vw, 22px); right: clamp(16px, 2vw, 22px); bottom: 6px; height: 3px; border-radius: 3px; background: var(--step); transform: scaleX(0); transform-origin: 0 50%; }
 .hiw__bar.is-run { transform: scaleX(1); transition: transform var(--dur, 2400ms) linear; }
 .hiw__bar.is-full { transform: scaleX(1); }
-.hiw__replay, .race__replay { margin: 14px 0 0; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 980px; border: 1px solid var(--line-strong); background: #FFFFFF; font-size: 0.85rem; font-weight: 500; color: var(--accent-ink); cursor: pointer; transition: background 160ms var(--ease); }
-.hiw__replay::before, .race__replay::before { content: "↻"; content: "↻" / ""; }
-.hiw__replay:hover, .race__replay:hover { background: var(--accent-soft); }
 .hiw__n { grid-row: span 3; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--step); color: #FFFFFF; font: 700 0.8rem var(--sans); }
 .hiw__t { font: 600 1.14rem/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); transition: color 160ms var(--ease); }
 .hiw__d { font-size: 0.92rem; line-height: 1.5; color: var(--ink-3); }
@@ -775,7 +772,6 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .race__figs b { font: 700 1.6rem/1.1 var(--display); letter-spacing: -0.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .race__end { margin: 0; font-weight: 600; color: var(--ink); transition: opacity 400ms var(--ease); }
 .race.is-armed:not(.is-total) .race__end { opacity: 0; }
-.race__replay { align-self: flex-start; margin: 0; }
 @media (max-width: 640px) { .race__track { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .model > summary { font-size: 1.05rem; }
 .model > .stack { padding-bottom: 8px; }
@@ -1141,7 +1137,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
                 <p class="chat__ai" data-s="3" data-claim="approvals agents">IT has two requests to approve: the Snowflake connection and sharing with Inbound team.</p>
               </div>
             </div>
-            <button type="button" class="hiw__replay" hidden>Play again</button>
           </figure>
         </div>
       </div>
@@ -1465,7 +1460,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
             <li class="is-wait">IT approves what matters <span class="chip chip--caution">waiting for IT</span></li>
           </ol>
         </div>
-        <button type="button" class="race__replay" hidden>Play again</button>
       </div>
       <div class="trio">
         <article class="trio__card">
@@ -1760,7 +1754,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     var me = how.querySelector(".chat__me");
     var said = me.lastChild;
     var prompt = said.nodeValue;
-    var replay = how.querySelector(".hiw__replay");
     var timers = [];
     var seen = null;
     var later = function (fn, ms) { timers.push(window.setTimeout(fn, ms)); };
@@ -1853,8 +1846,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       me.parentNode.insertBefore(heard, me);
       me.setAttribute("aria-hidden", "true");
       said.nodeValue = "";
-      replay.hidden = false;
-      replay.addEventListener("click", function () { if (seen) { seen.disconnect(); } play(); });
       seen = new IntersectionObserver(function (entries) {
         if (!entries[0].isIntersecting) { return; }
         seen.disconnect();
@@ -1939,18 +1930,8 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     race.querySelector('[data-race="total"]').textContent = trio.firstChild.nodeValue;
     hours.textContent = String(RACE.hours);
     if (!calm && watching) {
-      var raceTimers = [];
-      var at = function (fn, ms) { raceTimers.push(window.setTimeout(fn, ms)); };
-      var rest = function () {
-        raceTimers.forEach(window.clearTimeout);
-        raceTimers = [];
-        each(diyStages, function (l) { l.classList.remove("is-done"); });
-        each(dlmStages, function (l) { l.classList.remove("is-done", "is-wait"); });
-        race.classList.remove("is-total");
-        hours.textContent = "0";
-      };
+      var at = function (fn, ms) { window.setTimeout(fn, ms); };
       var run = function () {
-        rest();
         var last = dlmStages.length - 1;
         var span = RACE.every * diyStages.length;
         each(dlmStages, function (l, i) {
@@ -1967,11 +1948,10 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         };
         count();
       };
-      rest();
+      each(diyStages, function (l) { l.classList.remove("is-done"); });
+      each(dlmStages, function (l) { l.classList.remove("is-done", "is-wait"); });
+      hours.textContent = "0";
       race.classList.add("is-armed");
-      var replayRace = race.querySelector(".race__replay");
-      replayRace.hidden = false;
-      replayRace.addEventListener("click", function () { raced.disconnect(); run(); });
       var raced = new IntersectionObserver(function (entries) {
         if (!entries[0].isIntersecting) { return; }
         raced.disconnect();

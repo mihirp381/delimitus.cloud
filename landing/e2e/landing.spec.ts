@@ -117,7 +117,7 @@ test('the agent conversation plays once it is in view, and a step can be picked'
   await expect(page.locator('#term .chat__me')).toBeVisible();
 });
 
-test('the prompt is typed, the pipeline lights, and Play again starts over', async ({ page }) => {
+test('the prompt is typed and the pipeline lights', async ({ page }) => {
   await page.goto('/');
   const me = page.locator('#term .chat__me');
   const reply = page.locator('#term .chat__ai[data-s="1"]');
@@ -133,11 +133,6 @@ test('the prompt is typed, the pipeline lights, and Play again starts over', asy
   await expect(reply).toBeVisible();
   await expect(url).toBeVisible({ timeout: 8000 });
   for (const node of await nodes.all()) await expect(node).toHaveClass(/is-done/);
-  await page.locator('#how .hiw__replay').click();
-  await expect(url).toBeHidden();
-  await expect(nodes.first()).not.toHaveClass(/is-done/);
-  await expect(url).toBeVisible({ timeout: 10000 });
-  for (const node of await nodes.all()) await expect(node).toHaveClass(/is-done/);
 });
 
 test('the list bursts out of the prompt and settles in place', async ({ page }) => {
@@ -150,7 +145,7 @@ test('the list bursts out of the prompt and settles in place', async ({ page }) 
   await expect(page.locator('#burst .burst__url')).toHaveCSS('opacity', '1', { timeout: 4000 });
 });
 
-test('the long way races once it is in view, and plays again', async ({ page }) => {
+test('the long way races once it is in view', async ({ page }) => {
   await page.goto('/');
   const race = page.locator('#race');
   const last = race.locator('.race__lane--diy li').last();
@@ -164,9 +159,6 @@ test('the long way races once it is in view, and plays again', async ({ page }) 
   await expect(race.locator('[data-race="total"]')).toHaveText('$32,658');
   await expect(wait).toHaveClass(/is-wait/);
   await expect(wait).not.toHaveClass(/is-done/);
-  await race.locator('.race__replay').click();
-  await expect(last).not.toHaveClass(/is-done/);
-  await expect(last).toHaveClass(/is-done/, { timeout: 8000 });
 });
 
 test('the hero zooms into the app where there is room, and holds still where there is not', async ({ page }) => {
@@ -237,10 +229,8 @@ test.describe('without JavaScript', () => {
     await page.goto('/');
     await expect(page.locator('#term .chat__me')).toHaveText(PROMPT);
     await expect(page.locator('#term .term__pipe li')).toHaveCount(5);
-    await expect(page.locator('#how .hiw__replay')).toHaveCount(1);
     for (const node of await page.locator('#term .term__pipe li').all()) await expect(node).toHaveClass(/is-done/);
     await expect(page.locator('#term .chat__url')).toBeVisible();
-    await expect(page.locator('#how .hiw__replay')).toBeHidden();
   });
 
   test('shows the long way finished', async ({ page }) => {
@@ -251,7 +241,6 @@ test.describe('without JavaScript', () => {
     await expect(page.locator('#race .race__lane--dlm li').last()).toHaveClass(/is-wait/);
     await expect(page.locator('#race [data-race="hours"]')).toHaveText('92');
     await expect(page.locator('#race [data-race="total"]')).toBeVisible();
-    await expect(page.locator('#race .race__replay')).toBeHidden();
   });
 
   test('sends the form as a plain post the server takes', async ({ page }, info) => {
