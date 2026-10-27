@@ -916,6 +916,8 @@ Amendment (2026-10-26, console sign-in): the console names the org itself. Its s
 
 Removal: invites are for the pilot. To remove them, drop the `invite` branch of `_hinted` in `identity/authorize.py` and the claim in `finish`, `identity/invites.py`, the `invite` command in `identity/__main__.py` and the console's invite pattern, then add a revision that drops `ssc.pilot_invite` (the three audit actions stay in the check for the rows already written). Org hints and the session cookie stay.
 
+Revision `0043_roster_sign_in_index` indexes `auth_session (org_id, user_id, created_at DESC)`; the index serves the People roster's last-sign-in lookup from PR #12 (decision 019 amendment of 2026-10-26). It ships on this stack so the migration chain keeps one head.
+
 ## 030 Placement: each org's cell
 
 Choice: an org lives in one cell, the one its `ssc.org.cell_label` names (revision 0011; set by `create-org --cell-label`, else the generated label of an org with no cell yet). One control plane serves many cells and reaches each org only in its own.
