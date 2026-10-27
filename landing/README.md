@@ -58,6 +58,15 @@ redirected to the apex by the service.
   motion is allowed and scripts run (`scripting: enabled`); everywhere else the hero is a static
   block. Its flows' moving dots are SMIL, which ignores the reduced-motion CSS, so that CSS
   hides them.
+  How it works plays itself once it is in view: each step's bar fills, step 1 types the prompt,
+  the chat lines land one by one and the pipeline lights; Play again restarts it. Under reduced
+  motion, or with no IntersectionObserver, it shows step 3 finished with Play again hidden; with
+  JavaScript off the markup holds the whole conversation and the lit pipeline.
+  The team cards swap with a short fade and their list items step in; under reduced motion they
+  swap at once, and with JavaScript off the warehouse asks are in the markup.
+  The cost section's race fills the do-it-yourself stages every 650 ms while the hours count to 92,
+  and the Delimitus lane stops on an amber "waiting for IT"; Play again reruns it. Under reduced
+  motion, or with no IntersectionObserver, and with JavaScript off, it shows the finished race.
 
 ## Sign in
 
