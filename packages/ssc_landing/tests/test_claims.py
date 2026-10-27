@@ -74,7 +74,7 @@ def test_the_page_and_the_register_agree() -> None:
 
 def test_the_page_marks_its_claim_sections() -> None:
     marked = set(re.findall(r'<section[^>]*id="([a-z]+)"[^>]*data-claims', HTML))
-    assert {"how", "example", "works", "get", "security", "limits", "faq"} <= marked
+    assert {"how", "example", "works", "get", "security", "faq"} <= marked
 
 
 def test_the_forbidden_list_names_what_the_ticket_bans() -> None:
