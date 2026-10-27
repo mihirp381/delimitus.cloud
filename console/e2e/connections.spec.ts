@@ -62,7 +62,10 @@ test('add a connection with the first step only, change its owner and status, an
   await expect(row).toContainText('alpha E2E');
   await expect(row).toContainText('pending');
   expect(await table.getByRole('columnheader').allTextContents()).toEqual(['Name', 'Kind', 'State', 'Owner']);
-  const overflow = await page.locator('.table-wrap').filter({ has: table }).evaluate('el => el.scrollWidth - el.clientWidth');
+  const overflow = await page.locator('.table-wrap').filter({ has: table }).evaluate((el) => {
+    const box = el as unknown as { scrollWidth: number; clientWidth: number };
+    return box.scrollWidth - box.clientWidth;
+  });
   expect(overflow).toBe(0);
 
   await row.getByRole('link', { name }).click();
