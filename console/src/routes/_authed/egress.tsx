@@ -11,6 +11,7 @@ import { Ago } from '../../components/Ago';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ConfirmAction } from '../../components/ConfirmAction';
+import { Id } from '../../components/Copy';
 import { Loading } from '../../components/Loading';
 import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
@@ -19,7 +20,6 @@ import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
-import { copyMessage, useClipboard } from '../../components/useClipboard';
 
 export const Route = createFileRoute('/_authed/egress')({
   component: EgressPage,
@@ -47,7 +47,7 @@ function EgressPage() {
       <PageHeader
         title="Internet access"
         purpose="Apps reach the internet only through your cell's egress proxy, and only the hosts listed here."
-        about={<p>Partners see every call come from one fixed IP.</p>}
+        about={<p>Partners see every call come from the fixed outbound IP; give it to a partner whose firewall only lets known addresses in.</p>}
       />
       {egress.isPending ? (
         <Loading label="Loading internet access…" rows={3} />
@@ -69,32 +69,20 @@ function EgressPage() {
 }
 
 function OutboundIp({ ip }: { readonly ip: string | null }) {
-  const { state, copy } = useClipboard();
-
   return (
-    <Panel title="Fixed outbound IP">
-      {ip ? (
-        <>
-          <p>
-            Your apps reach the internet from <code>{ip}</code>. Give it to a partner whose firewall
-            only lets known addresses in.
-          </p>
-          <div className="toolbar">
-            <Button onClick={() => void copy(ip)}>Copy IP</Button>
-            {state !== 'idle' ? (
-              <span className="muted" role="status">
-                {copyMessage(state, 'address')}
-              </span>
-            ) : null}
-          </div>
-        </>
-      ) : (
-        <p className="muted">
-          Your cell has not told us its fixed outbound IP yet. It is created with the egress proxy,
-          when the first host is allowed; if it stays missing, ask your operator.
-        </p>
-      )}
-    </Panel>
+    <dl className="panel facts">
+      <dt>Fixed outbound IP</dt>
+      <dd>
+        {ip ? (
+          <Id value={ip} label="fixed outbound IP" />
+        ) : (
+          <span className="muted">
+            Not set yet. It is created with the egress proxy, when the first host is allowed; if it stays missing,
+            ask your operator.
+          </span>
+        )}
+      </dd>
+    </dl>
   );
 }
 
@@ -121,19 +109,19 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
     },
     {
       header: 'Added by',
-      cell: (h) =>
-        h.approval_request_id ? (
-          <>
-            <Link to="/approvals/$approvalId" params={{ approvalId: h.approval_request_id }}>
-              Approval
-            </Link>
-            {h.added_by_name ? ` (approved by ${h.added_by_name})` : null}
-          </>
-        ) : h.added_by_name ? (
-          <Person name={h.added_by_name} email={h.added_by_email} />
-        ) : (
-          'SSC'
-        ),
+      cell: (h) => (
+        <>
+          <Person name={h.added_by_name} email={h.added_by_email} fallback="SSC" />
+          {h.approval_request_id ? (
+            <>
+              {' '}
+              <Link to="/approvals/$approvalId" params={{ approvalId: h.approval_request_id }}>
+                by approval
+              </Link>
+            </>
+          ) : null}
+        </>
+      ),
     },
   ];
   if (admin) {

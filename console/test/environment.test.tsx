@@ -161,20 +161,33 @@ afterEach(() => {
 });
 
 describe('your environment', () => {
-  it('shows the fixed IP to copy, each part with what asked for it, the database and usage', async () => {
-    const writeText = vi.fn(() => Promise.resolve());
-    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  it('shows plan and usage, each part with what asked for it behind Details, the database, and never the IP', async () => {
     start('/environment', environmentRoutes(), signedIn());
 
-    await screen.findByRole('heading', { name: 'Fixed outbound IP' });
-    expect(await within(section('Fixed outbound IP')).findByText(IP)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Copy IP' }));
-    expect(await screen.findByText('Copied.')).toBeTruthy();
-    expect(writeText).toHaveBeenCalledWith(IP);
+    await screen.findByText('Instance-billed');
+    const plan = section('Plan and usage');
+    await waitFor(() => expect(plan.textContent).toContain('Added a month: $20, by the parts asked for and the warm option.'));
+    const usageTable = within(plan).getByRole('table', { name: 'Usage of each app this month' });
+    expect(within(usageTable).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'App',
+      'Billed',
+      'Session hours',
+      'Cold starts',
+    ]);
+    const usageRows = within(usageTable).getAllByRole('row').map((r) => r.textContent ?? '');
+    expect(usageRows[1]).toContain('expenses Preview');
+    expect(usageRows[1]).toContain('1.02 h');
+    expect(usageRows[1]).toContain('21, median 11s, slowest 5% 20s');
+    expect(usageRows[2]).toContain('expenses Production');
+    expect(usageRows[2]).toContain('Request-billed');
+    expect(usageRows[2]).toContain('3, too few for timings');
 
-    await screen.findByRole('heading', { name: 'Parts created when first needed' });
-    const rows = within(section('Parts created when first needed')).getAllByRole('row');
-    const text = rows.map((r) => r.textContent ?? '');
+    const details = await openSection(plan, 'Details');
+    const more = within(details).getByRole('table', { name: 'More usage figures this month' });
+    expect(within(more).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['App', 'Instance hours', 'Kind of use']);
+    expect(within(more).getAllByRole('row')[2]?.textContent).toContain('rare');
+    const rows = within(details).getByRole('table', { name: 'Parts of your cell created when first needed' }).querySelectorAll('tr');
+    const text = [...rows].map((r) => r.textContent ?? '');
     expect(text[1]).toContain('Database');
     expect(text[1]).toContain('ready');
     expect(text[1]).toContain(`A deploy that needed a database (deploy ${DEPLOY})`);
@@ -195,37 +208,15 @@ describe('your environment', () => {
     expect(database.textContent).toContain('2 for each app database, 2 of 20 taken');
     expect(within(database).queryByText(/bigger database/)).toBeNull();
     expect(within(database).getByRole('link', { name: 'expenses' }).getAttribute('href')).toBe(`/apps/${APP_ID}`);
-
-    await screen.findByText('Instance-billed');
-    const usageRows = within(section('Usage this month')).getAllByRole('row').map((r) => r.textContent ?? '');
-    expect(usageRows[1]).toContain('expenses Preview');
-    expect(usageRows[1]).toContain('1.02 h');
-    expect(usageRows[1]).toContain('21, median 11s, slowest 5% 20s');
-    expect(usageRows[2]).toContain('expenses Production');
-    expect(usageRows[2]).toContain('Request-billed');
-    expect(usageRows[2]).toContain('3, too few for timings');
-
-    expect(screen.getByText(/These figures are not a bill/)).toBeTruthy();
-    expect(document.body.textContent).not.toMatch(/\$50|200 apps|gateway instance/i);
-  });
-
-  it('opens with the figures at a glance: what is added a month, places, the IP and the warm option', async () => {
-    const writeText = vi.fn(() => Promise.resolve());
-    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    start('/environment', environmentRoutes(), signedIn());
-    const tiles = await screen.findByRole('region', { name: 'At a glance' });
-    await within(tiles).findByText('$20');
-    const text = [...tiles.querySelectorAll('.tile')].map((t) => t.textContent ?? '');
-    expect(text[0]).toBe('Added a month$20By the parts asked for and the warm option. Not a bill.');
-    expect(text[1]).toBe('Database places1 of 109 left.');
-    expect(text[2]).toContain(IP);
-    expect(text[3]).toBe('Warm optionOffNo app is kept warm; the gateway sleeps when idle.');
-    const meter = within(tiles).getByRole('img', { name: '1 of 10 database places used' });
+    const meter = within(database).getByRole('img', { name: '1 of 10 database places used' });
     expect(meter.getAttribute('class')).toBe('meter');
     expect(meter.querySelector('rect')?.getAttribute('width')).toBe('10%');
-    expect(meter.getAttribute('style')).toBeNull();
-    fireEvent.click(within(tiles).getByRole('button', { name: 'Copy fixed outbound IP' }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(IP));
+
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Plan and usage', 'Capacity', 'Database']);
+    expect(document.body.textContent?.match(/not a bill/gi)).toHaveLength(1);
+    expect(document.body.textContent).not.toContain(IP);
+    expect(document.body.textContent).not.toMatch(/outbound IP/i);
+    expect(document.body.textContent).not.toMatch(/\$50|200 apps|gateway instance/i);
   });
 
   it('shows the places meter in the warning tone when every place is taken', async () => {
@@ -241,21 +232,15 @@ describe('your environment', () => {
       },
       signedIn(),
     );
-    const tiles = await screen.findByRole('region', { name: 'At a glance' });
-    await within(tiles).findByText('$40');
-    const text = [...tiles.querySelectorAll('.tile')].map((t) => t.textContent ?? '');
-    expect(text[1]).toBe('Database places10 of 10Every place is taken.');
-    expect(text[2]).toContain('Not set yet');
-    expect(text[3]).toBe('Warm option1 appKept warm; the gateway kept warm.');
-    const meter = within(tiles).getByRole('img', { name: '10 of 10 database places used' });
+    await screen.findByRole('heading', { name: 'Database' });
+    await waitFor(() => expect(section('Plan and usage').textContent).toContain('Added a month: $40'));
+    const meter = within(section('Database')).getByRole('img', { name: '10 of 10 database places used' });
     expect(meter.getAttribute('class')).toBe('meter meter-warning');
     expect(meter.querySelector('rect')?.getAttribute('width')).toBe('100%');
   });
 
-  it('says when there is no fixed IP yet and offers the bigger database when nearly full', async () => {
+  it('offers the bigger database when nearly full', async () => {
     start('/environment', environmentRoutes(null, { places_used: 8, nearly_full: true }), signedIn());
-    expect(await screen.findByText(/has not told us its fixed outbound IP yet/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Copy IP' })).toBeNull();
     await screen.findByRole('heading', { name: 'Database' });
     const notice = within(section('Database')).getByRole('status');
     expect(notice.textContent).toContain('2 of 10 places are left');
@@ -291,8 +276,8 @@ describe('your environment', () => {
       { ...environmentRoutes(), 'PUT /v1/warm': () => json(200, saved) },
       signedIn(),
     );
-    await screen.findByRole('heading', { name: 'Warm option' });
-    const panel = section('Warm option');
+    await screen.findByRole('heading', { name: 'Capacity' });
+    const panel = section('Capacity');
     const app = await within(panel).findByRole('checkbox', { name: /expenses/ });
     expect(app.closest('label')?.textContent).toContain('suggested');
     expect(app.closest('label')?.textContent).toContain('used on 17 of 20 working days lately, with cold starts on 12');
@@ -317,8 +302,8 @@ describe('your environment', () => {
     });
     const [put] = api.of('PUT', '/v1/warm');
     expect(put?.body).toEqual({ environment_ids: [PROD], gateway: true, monthly_usd_shown: 20 });
-    await waitFor(() => expect(section('Warm option').textContent).toContain('being kept warm'));
-    expect((within(section('Warm option')).getByRole('checkbox', { name: /expenses/ }) as HTMLInputElement).checked).toBe(
+    await waitFor(() => expect(section('Capacity').textContent).toContain('being kept warm'));
+    expect((within(section('Capacity')).getByRole('checkbox', { name: /expenses/ }) as HTMLInputElement).checked).toBe(
       true,
     );
   });
@@ -334,8 +319,8 @@ describe('your environment', () => {
       },
       signedIn(),
     );
-    await screen.findByRole('heading', { name: 'Warm option' });
-    const panel = section('Warm option');
+    await screen.findByRole('heading', { name: 'Capacity' });
+    const panel = section('Capacity');
     await waitFor(() => expect(panel.textContent).toContain('could not be changed'));
     expect(panel.textContent).toContain('CELL_DEPLOYER_FAILED');
     fireEvent.click(within(panel).getByRole('checkbox', { name: /expenses/ }));

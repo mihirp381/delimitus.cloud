@@ -51,35 +51,37 @@ afterEach(() => {
 });
 
 describe('internet access', () => {
-  it('shows the fixed IP to copy and the allowed hosts', async () => {
+  it('shows the fixed IP once, to copy, and the allowed hosts', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     await egressPage();
-    fireEvent.click(screen.getByRole('button', { name: 'Copy IP' }));
-    expect(await screen.findByText('Copied.')).toBeTruthy();
-    expect(writeText).toHaveBeenCalledWith(IP);
+    expect(document.body.textContent?.split(IP)).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy fixed outbound IP' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(IP));
     const hosts = screen.getByRole('table', { name: 'Hosts apps may reach' });
     expect(within(hosts).getByText('api.stripe.com')).toBeTruthy();
     expect(document.body.textContent).not.toContain('10.0.0.5');
   });
 
-  it('names the approval that added a host, and the admin who approved it', async () => {
+  it('names who added a host, and links the approval that did', async () => {
     const approved = { ...host('api.twilio.com'), approval_request_id: 'apr_x1' };
-    await egressPage({ 'GET /v1/egress': () => json(200, { hosts: [host('api.stripe.com'), approved], outbound_ip: IP, proxy_address: null }) });
+    const bySsc = { ...host('api.ssc.example'), added_by_user_id: null, added_by_name: null, added_by_email: null };
+    await egressPage({ 'GET /v1/egress': () => json(200, { hosts: [host('api.stripe.com'), approved, bySsc], outbound_ip: IP, proxy_address: null }) });
     const hosts = screen.getByRole('table', { name: 'Hosts apps may reach' });
     const row = within(hosts).getByText('api.twilio.com').closest('tr');
-    expect(row?.textContent).toContain('Approval (approved by Olive Owner)');
-    expect(within(row!).getByRole('link', { name: 'Approval' }).getAttribute('href')).toBe('/approvals/apr_x1');
+    expect(row?.querySelectorAll('td')[2]?.textContent).toBe('Olive Owner by approval');
+    expect(within(row!).getByRole('link', { name: 'by approval' }).getAttribute('href')).toBe('/approvals/apr_x1');
+    expect(within(hosts).getByText('api.ssc.example').closest('tr')?.querySelectorAll('td')[2]?.textContent).toBe('SSC');
     const direct = within(hosts).getByText('api.stripe.com').closest('tr');
-    expect(direct?.textContent).not.toContain('Approval');
+    expect(direct?.textContent).not.toContain('approval');
     expect(direct?.textContent).toContain('Olive Owner');
     expect(direct?.textContent).not.toContain(OWNER);
   });
 
   it('says when the cell has no fixed IP yet', async () => {
     start('/egress', routes({ 'GET /v1/egress': () => json(200, { hosts: [], outbound_ip: null, proxy_address: null }) }), signedIn());
-    expect(await screen.findByText(/has not told us its fixed outbound IP yet/, undefined, { timeout: FIRST_RENDER_MS })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Copy IP' })).toBeNull();
+    expect(await screen.findByText(/Not set yet/, undefined, { timeout: FIRST_RENDER_MS })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Copy fixed outbound IP' })).toBeNull();
     expect(screen.getByText(/No host is allowed yet/)).toBeTruthy();
   });
 
