@@ -10,6 +10,13 @@ async function continueTo(page: Page): Promise<URL> {
   return new URL((await sent).url());
 }
 
+async function postTo(page: Page): Promise<{ url: string; form: URLSearchParams }> {
+  const sent = page.waitForRequest((r) => r.url().startsWith(`${AUTH}/authorize`) && r.method() === 'POST');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  const request = await sent;
+  return { url: request.url(), form: new URLSearchParams(request.postData() ?? '') };
+}
+
 test('the sign-in field takes an organisation id or an invite code, remembers it, and forgets a miss', async ({
   page,
 }) => {
@@ -29,14 +36,17 @@ test('the sign-in field takes an organisation id or an invite code, remembers it
   await page.goto('/login');
   await expect(field).toHaveValue(ORG);
   await field.fill(INVITE);
-  const byInvite = await continueTo(page);
-  expect(byInvite.searchParams.get('invite')).toBe(INVITE);
-  expect(byInvite.searchParams.has('org')).toBe(false);
+  const byInvite = await postTo(page);
+  expect(byInvite.url).toBe(`${AUTH}/authorize`);
+  expect(byInvite.form.get('invite')).toBe(INVITE);
+  expect(byInvite.form.has('org')).toBe(false);
+  expect(byInvite.form.get('client_id')).toBe('ssc-console');
+  expect(byInvite.form.get('code_challenge_method')).toBe('S256');
 
   const back = new URLSearchParams({
     error: 'access_denied',
     error_description: 'no_sign_in',
-    state: byInvite.searchParams.get('state') ?? '',
+    state: byInvite.form.get('state') ?? '',
     iss: AUTH,
   });
   await page.goto(`/auth/callback?${back.toString()}`);

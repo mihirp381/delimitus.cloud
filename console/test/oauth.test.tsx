@@ -100,13 +100,26 @@ describe('PKCE', () => {
     expect(q.has('org') || q.has('invite')).toBe(false);
   });
 
-  it('names the org or the invite code the person entered', async () => {
+  it('names the org in the URL and returns an invite code as a form to post', async () => {
     const { oauth, went } = client();
-    await oauth.signIn('/', ORG);
-    await oauth.signIn('/', INVITE);
-    const [org, invite] = went.map((url) => new URL(url).searchParams);
-    expect([org?.get('org'), org?.has('invite')]).toEqual([ORG, false]);
-    expect([invite?.get('invite'), invite?.has('org')]).toEqual([INVITE, false]);
+    expect(await oauth.signIn('/', ORG)).toBeNull();
+    const form = await oauth.signIn('/', INVITE);
+    expect(went).toHaveLength(1);
+    const org = new URL(went[0] ?? '').searchParams;
+    expect([org.get('org'), org.has('invite')]).toEqual([ORG, false]);
+    expect(form?.action).toBe(`${AUTH}/authorize`);
+    expect(form?.fields).toEqual({
+      response_type: 'code',
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT,
+      state: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string,
+      code_challenge: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string,
+      code_challenge_method: 'S256',
+      resource: AUDIENCE,
+      invite: INVITE,
+    });
+    const pending = JSON.parse(window.sessionStorage.getItem(PENDING_KEY) ?? '{}') as Record<string, string>;
+    expect(pending.state).toBe(form?.fields.state);
   });
 });
 
@@ -354,12 +367,23 @@ describe('sign-in screens', () => {
   it('fills in the last organisation id or code and sends an invite code as one', async () => {
     window.localStorage.setItem(HINT_KEY, INVITE);
     const { oauth, went } = client();
+    const submitted: HTMLFormElement[] = [];
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+      submitted.push(this);
+    });
     mount('/login', oauth);
     const field = await screen.findByLabelText<HTMLInputElement>('Organisation id or invite code');
     expect(field.value).toBe(INVITE);
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    await waitFor(() => expect(went).toHaveLength(1));
-    expect(new URL(went[0] ?? '').searchParams.get('invite')).toBe(INVITE);
+    await waitFor(() => expect(submitted).toHaveLength(1));
+    submit.mockRestore();
+    const form = submitted[0];
+    expect([form?.method, form?.action]).toEqual(['post', `${AUTH}/authorize`]);
+    const fields = Object.fromEntries(new FormData(form));
+    expect(fields.invite).toBe(INVITE);
+    expect([fields.client_id, fields.redirect_uri, fields.resource]).toEqual([CLIENT_ID, REDIRECT, AUDIENCE]);
+    expect(fields.code_challenge_method).toBe('S256');
+    expect(went).toEqual([]);
   });
 
   it('refuses what is neither an organisation id nor an invite code', async () => {
@@ -404,9 +428,8 @@ describe('sign-in screens', () => {
 
   it('remembers the organisation id, not the invite code, once an invite has signed the person in', async () => {
     window.localStorage.setItem(HINT_KEY, INVITE);
-    const { oauth, went } = client();
-    await oauth.signIn('/', INVITE);
-    const state = new URL(went[0] ?? '').searchParams.get('state') ?? '';
+    const { oauth } = client();
+    const state = (await oauth.signIn('/', INVITE))?.fields.state ?? '';
     const { session } = mount(`/auth/callback${answer({ code: 'c-1', state, iss: AUTH })}`, oauth);
     await waitFor(() => expect(window.localStorage.getItem(HINT_KEY)).toBe('org_ffffffffffffffffffff'));
     session.clear();

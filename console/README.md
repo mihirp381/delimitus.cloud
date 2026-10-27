@@ -52,8 +52,9 @@ console image's build context leaves those files out.
 
 The sign-in card asks for an organisation id (`org_` and 20 characters, from the person's admin)
 or a pilot invite code (`inv_` and 16 characters), checks its shape and keeps the last one in
-`localStorage` (`ssc.signInHint`). "Continue" sends the person to the auth host's `/authorize`
-with `org=` or `invite=` (decision 029, amendment of 2026-10-26) and on to the org's WorkOS
+`localStorage` (`ssc.signInHint`). "Continue" sends the person to the auth host's `/authorize`,
+a GET with `org=` or, for an invite code, a hidden form posted from the bundle so the code stays
+out of URLs (decision 029, amendment of 2026-10-26), and on to the org's WorkOS
 sign-in, then back to `/auth/callback`, which exchanges the code at `/token`, using the auth
 settings below. When the auth host finds no sign-in it answers `access_denied` with
 `no_sign_in`; the callback forgets the kept value and returns to `/login?error=no_sign_in`.

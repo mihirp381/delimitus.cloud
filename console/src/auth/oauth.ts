@@ -44,12 +44,18 @@ export interface Refresher {
   revoke(refreshToken: string): Promise<void>;
 }
 
+/** A sign-in the caller posts as a top-level form, so an invite code never sits in a URL. */
+export interface AuthorizeForm {
+  readonly action: string;
+  readonly fields: Readonly<Record<string, string>>;
+}
+
 export interface OAuthClient extends Refresher {
   /**
-   * Sends the browser to the auth host; `next` is the same-site path to come back to, `hint` an
-   * organisation id or invite code naming the sign-in.
+   * Starts sign-in; `next` is the same-site path to come back to, `hint` an organisation id or
+   * invite code. Navigates to the auth host, or for an invite code returns the form to post.
    */
-  signIn(next?: string, hint?: string): Promise<void>;
+  signIn(next?: string, hint?: string): Promise<AuthorizeForm | null>;
   /** Checks the callback's query and exchanges its code; throws `SignInError` on any mismatch. */
   complete(search: string): Promise<{ tokens: TokenSet; next: string }>;
 }
@@ -210,7 +216,7 @@ export function createOAuth(config: OAuthConfig): OAuthClient {
       const state = randomString(32);
       const pending: Pending = { verifier, state, next };
       config.storage.setItem(PENDING_KEY, JSON.stringify(pending));
-      const query = new URLSearchParams({
+      const fields: Record<string, string> = {
         response_type: 'code',
         client_id: CLIENT_ID,
         redirect_uri: config.redirectUri,
@@ -218,9 +224,13 @@ export function createOAuth(config: OAuthConfig): OAuthClient {
         code_challenge: challenge,
         code_challenge_method: 'S256',
         resource: config.audience,
-      });
-      if (hint) query.set(INVITE_CODE.test(hint) ? 'invite' : 'org', hint);
-      go(`${config.authUrl}/authorize?${query.toString()}`);
+      };
+      const action = `${config.authUrl}/authorize`;
+      if (hint && INVITE_CODE.test(hint)) return { action, fields: { ...fields, invite: hint } };
+      const query = new URLSearchParams(fields);
+      if (hint) query.set('org', hint);
+      go(`${action}?${query.toString()}`);
+      return null;
     },
 
     async complete(search) {
