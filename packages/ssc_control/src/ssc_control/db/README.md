@@ -5,7 +5,7 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
 
 ## Rules
 
-1. **Every table carries `org_id`** (exceptions: `org_index`, rule 14; `oauth_client`, rule 17; `cell` and `onboarding`, rule 18). Foreign keys are `(org_id, id)` pairs, so a row can never
+1. **Every table carries `org_id`** (exceptions: `org_index`, rule 14; `oauth_client`, rule 17; `cell`, `onboarding` and `pilot_invite`, rule 18). Foreign keys are `(org_id, id)` pairs, so a row can never
    point at another customer's row. Every table has `UNIQUE (org_id, id)` for that purpose.
 2. **Row-level security is enabled and forced on every table in `catalog.TABLES`.** One
    policy per table:
@@ -85,6 +85,11 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     exists. Its `label` references `ssc.cell(label)` (the only foreign key on a platform table);
     its `org_id` is the pre-generated org id, unique, with no foreign key. Only the onboarding
     CLI (`python -m ssc_control.onboarding`) and the worker's `onboarding.tick` write it.
+    `ssc.pilot_invite` (revision 0042, decision 029 amendment of 2026-10-26) is the third, with
+    the same grants and TRUNCATE guard and no RLS, because `/authorize` reads it before any org
+    is bound: one row per pilot invite code, kept only as its SHA-256, with an `org_id` and no
+    foreign key. The invite CLI (`python -m ssc_control.identity invite`) writes it, and the auth
+    host counts a use when a console session opens. Rows are revoked, never deleted.
 
 ## Migrations
 
@@ -131,6 +136,7 @@ after that code is out. Revisions so far, all pure expand:
 | `0039_cells` | Ticket 19 | `ssc.cell` (rule 18): one row per cell the control plane serves, `building`, `ready`, `failed` or `retired`, with its stage (`staging` or `prod`), public identity JWKS (a JSON object, required when `ready`), project number, the org it was built for and `last_error`; the label is checked as `ssc_shared.hosts.check_cell_label` does. `ready` does not require the project number, because cells imported from `SSC_CELLS` have none. No RLS; `SELECT, INSERT, UPDATE` for the app role; TRUNCATE is `SC006`. The audit vocabulary gains `cell.requested`, `cell.ready`, `cell.failed` and `cell.retired`, which `python -m ssc_control.cells` writes in the chain of the org the cell is for. Downgrade drops the table and restores the vocabulary `NOT VALID` (development databases only) |
 | `0040_onboarding` | Ticket 19D | `ssc.onboarding` (rule 18): one row per customer being onboarded, `onb_` id, the pre-generated org id (unique, no foreign key), the cell label (unique, references `ssc.cell`), the stage, the customer's name, domain and first admin's email (`PII.md`), the WorkOS organisation id (unique) and the two Admin Portal links, the join rule, `status` (`open`, `live`, `abandoned`), the two tracks `cell_state` (`awaiting_cell`, `cell_ready`) and `idp_state` (`requested`, `awaiting_idp`, `org_created`), the waiting `reason`, the operator and `last_error`. CHECKs: the links exist once `idp_state` leaves `requested`; `org_created` and `live` need a join rule; `live` needs both tracks done; a reason only while open and waiting on the identity track (`WORKOS_ERROR` also in `requested`). No RLS; `SELECT, INSERT, UPDATE` for the app role; TRUNCATE is `SC006`. `notification_outbox.kind` gains `welcome`, which like `digest` names no approval. The audit vocabulary gains `org.onboarded`. Downgrade drops the table and restores both vocabularies and the outbox check `NOT VALID` (development databases only) |
 | `0041_admin_self_decide` | Decision 016 amendment 2026-10-26 | Drops `approval_request_not_self`: an org admin may decide their own request (founder decision; a one-admin org could not approve its own agent's requests). `check_decider` still refuses a non-admin connection owner deciding their own `exceed_ceiling` request; `approval_request_decided_via_agent_check` stays. Downgrade restores the check `NOT VALID` (development databases only) |
+| `0042_pilot_invite` | Decision 029 amendment 2026-10-26 | `ssc.pilot_invite` (rule 18): one row per pilot invite code, `pinv_` id, the code's SHA-256 (unique), the org id (no foreign key), expiry, `max_uses` (over 0) and `uses` (0 to `max_uses`), an optional note (`PII.md`), the creating operator and `revoked_at`; no DELETE, TRUNCATE refused. Adds `invite.created`, `invite.revoked` and `invite.used` to the audit action check; downgrade drops the table and restores the 0040 list `NOT VALID`. |
 
 There is no `alembic.ini`. Run migrations from Python:
 

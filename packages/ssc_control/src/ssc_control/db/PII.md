@@ -3,7 +3,7 @@
 The written list the ticket asks for (SSC-010). The catalog test
 `test_control_db.py::test_pii_columns_are_exactly_the_declared_ones` fails when a column with a
 personal-data name (`display_name`, `email`, `subject`, `actor_ip`, `ip_address`, `given_name`,
-`family_name`, `phone`, `decision_reason`, `repository`, `customer_name`, `domain`, `admin_email`) appears on a table not listed here, or when a listed
+`family_name`, `phone`, `decision_reason`, `repository`, `customer_name`, `domain`, `admin_email`, `note`) appears on a table not listed here, or when a listed
 column is missing.
 The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 
@@ -22,6 +22,7 @@ The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 | `onboarding` | `customer_name` | The customer's company name the operator typed at `onboarding start`; a sole trader's name is a person's name | Naming the WorkOS organisation and the onboarding row; read by the operator CLI (`python -m ssc_control.onboarding`) and the worker's onboarding tick only | Rows are never deleted, `abandon` keeps them; overwrite on request |
 | `onboarding` | `domain` | The customer's email domain, which can be a person's own domain | Finding and creating the WorkOS organisation; read by the operator CLI and the onboarding tick only | Rows are never deleted, `abandon` keeps them; overwrite on request |
 | `onboarding` | `admin_email` | The work email of the customer's first admin, stored lower-case | Finding that person in the connected directory to make them the org's first admin; read by the operator CLI and the onboarding tick only, never logged (log lines name the row id and state) | Rows are never deleted, `abandon` keeps them; overwrite on request |
+| `pilot_invite` | `note` | Optional free text an operator writes at `invite create` (1 to 200 characters, vetted like a `restore-admin` reason: no `@`, no run of six digits); it may name the customer | Telling an org's invites apart in `invite list`; never in the audit body or a log line | Overwrite on request; rows are revoked, never deleted |
 
 Also personal data, but not stored here:
 

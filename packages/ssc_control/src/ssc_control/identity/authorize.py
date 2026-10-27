@@ -10,14 +10,22 @@
   ``code_challenge`` (``plain`` is refused) and the ``resource`` (RFC 8707): the MCP endpoint for
   a registered client, the API's user audience for the console. Anything wrong from here on goes
   back to the client as ``error`` with ``state`` and ``iss`` (RFC 9207).
-* Which org: a live auth-host session cookie names it; otherwise the person types a work email.
-  Its domain is looked up in WorkOS (verified domains only) and the WorkOS organisation in
-  ``ssc.org_for_workos_organization``, which answers only for an active connection. Every miss,
-  whatever the reason, gets ``pages.NO_SIGN_IN`` by the same path. Twenty tries an hour per
-  address and per domain.
+* ``POST /authorize`` without a ``pending`` field takes the same parameters in a form body and
+  answers as GET does, except that a hit gets :func:`pages.continue_to`. With ``pending`` it is
+  the work-email step.
+* Which org: a live auth-host session cookie names it; else an ``org`` hint (an org id), or for
+  the console an ``invite`` code (``identity.invites``, POST body only, so request logs never
+  carry it), names one with an active connection.
+  The console gets every miss back as ``access_denied`` with ``error_description=no_sign_in``,
+  whatever the reason. A registered client with no hit gets the work-email step: the domain is
+  looked up in WorkOS (verified domains only) and the WorkOS organisation in
+  ``ssc.org_for_workos_organization``, which answers only for an active connection; every miss
+  gets ``pages.NO_SIGN_IN`` by the same path. Twenty emails an hour per address and per domain;
+  sixty ``org`` hints and twenty ``invite`` codes an hour per address.
 * WorkOS single sign-on through ``/callback``, the pending request riding in the sealed login
   cookie (``flow: oauth``). Then :meth:`OAuthFlow.finish`: the console goes straight back with a
-  code; a registered client first gets a consent page (``POST /authorize/consent``, answered
+  code and the auth-host session cookie, counting the invite's use if one led here; a registered
+  client first gets a consent page (``POST /authorize/consent``, answered
   only with the sealed answer token and the consent cookie it is bound to).
 * ``/token`` with ``authorization_code``: :meth:`OAuthFlow.code_token`. A code works once; a code
   presented again revokes the session it opened (``code_reuse``) and is audited.
@@ -39,6 +47,7 @@ from typing import Any, Final, Protocol, cast
 from urllib.parse import parse_qs, urlencode
 
 from fastapi import FastAPI, Request, Response
+from fastapi.datastructures import QueryParams
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -46,9 +55,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.db import bound_org, check_org_id
-from ssc_control.identity import connections, oauth, pages, sessions, tokens
+from ssc_control.identity import connections, invites, oauth, pages, sessions, tokens
 from ssc_control.identity.limits import (
     EMAIL_PER_HOUR,
+    INVITE_PER_HOUR,
+    ORG_HINT_PER_HOUR,
     REGISTER_PER_HOUR,
     RateLimit,
     client_address,
@@ -61,6 +72,7 @@ log = logging.getLogger("ssc.auth")
 AUTHORIZE_SECONDS: Final = 600
 CONSENT_SECONDS: Final = 600
 MAX_REGISTRATION_BYTES: Final = 16_384
+MAX_AUTHORIZE_BYTES: Final = 8_192
 GRANT_TYPES: Final = ("authorization_code", "refresh_token")
 DEVICE_GRANT: Final = "urn:ietf:params:oauth:grant-type:device_code"
 UNNAMED_CLIENT: Final = "Unnamed MCP client"
@@ -71,6 +83,8 @@ _NO_ORGANIZATION: Final = "org_none"
 _DOMAIN: Final = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}")
 _FIND_ORG = text("select ssc.org_for_workos_organization(:workos)")
 _ORG_NAME = text("select name from ssc.org where id = :org")
+NO_SIGN_IN: Final = {"error": "access_denied", "error_description": "no_sign_in"}
+"""The console's one answer for every miss (decision 029)."""
 
 
 class Seals(Protocol):
@@ -202,6 +216,15 @@ def _form(body: bytes) -> dict[str, str]:
     return {k: v[0] for k, v in parsed.items() if len(v) == 1}
 
 
+def _params(body: bytes) -> QueryParams | None:
+    if len(body) > MAX_AUTHORIZE_BYTES:
+        return None
+    try:
+        return QueryParams(body.decode())
+    except UnicodeDecodeError:
+        return None
+
+
 def _org(raw: object) -> str | None:
     try:
         return check_org_id(str(raw))
@@ -228,6 +251,8 @@ class OAuthFlow:
         self._registrations = RateLimit(kit.clock, REGISTER_PER_HOUR)
         self._emails_by_address = RateLimit(kit.clock, EMAIL_PER_HOUR)
         self._emails_by_domain = RateLimit(kit.clock, EMAIL_PER_HOUR)
+        self._org_hints = RateLimit(kit.clock, ORG_HINT_PER_HOUR)
+        self._invite_codes = RateLimit(kit.clock, INVITE_PER_HOUR)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -287,13 +312,41 @@ class OAuthFlow:
                 if found is not None:
                     break
             await conn.rollback()
-        if found is None:
-            return None
-        async with bound_org(self._kit.engine, found) as conn:
-            connection = await connections.load(conn, found)
+        return None if found is None else await self._active(found)
+
+    async def _active(self, org_id: str) -> connections.DirectoryConnection | None:
+        async with bound_org(self._kit.engine, org_id) as conn:
+            connection = await connections.load(conn, org_id)
         if connection is None or connection.frozen:
             return None
         return connection
+
+    async def _hinted(  # noqa: PLR0911  (one answer per check)
+        self, request: Request, q: QueryParams, *, invite_ok: bool
+    ) -> tuple[connections.DirectoryConnection | None, str | None] | None:
+        """The org an ``org`` hint or, when ``invite_ok``, an ``invite`` code names: its active
+        connection (or None) and the invite id; None when over the limit."""
+        address = self._address(request)
+        if "org" in q:
+            if not self._org_hints.allow(address):
+                return None
+            org_id = _org(q["org"])
+            return (None if org_id is None else await self._active(org_id)), None
+        if not invite_ok or "invite" not in q:
+            return None, None
+        if not self._invite_codes.allow(address):
+            return None
+        code = q["invite"]
+        if not invites.CODE.fullmatch(code):
+            return None, None
+        async with self._kit.engine.connect() as conn:
+            found = await invites.find(conn, code)
+            await conn.rollback()
+        if found is None:
+            return None, None
+        invite_id, org_id = found
+        connection = await self._active(org_id)
+        return connection, (invite_id if connection is not None else None)
 
     async def _approve(  # noqa: PLR0913  (keyword-only)
         self,
@@ -378,6 +431,11 @@ class OAuthFlow:
         if client is None or not oauth.allowed_redirect(client, pending["redirect_uri"]):
             return self._html(pages.UNKNOWN_CLIENT, 400)
         if client.first_party:
+            invite_id = str(login.get("invite") or "")
+            if invite_id and not await invites.claim(conn, org_id, invite_id):
+                return self._back(
+                    pending["redirect_uri"], {**NO_SIGN_IN, "state": pending["state"]}
+                )
             session_id = await sessions.open_session(
                 conn,
                 org_id,
@@ -386,9 +444,25 @@ class OAuthFlow:
                 connection_id=connection_id,
                 actor=Actor(ActorKind.USER, user_id),
             )
-            return await self._approve(
+            if invite_id:
+                await invites.audit_use(
+                    conn,
+                    org_id,
+                    invite_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    client_id=client.client_id,
+                )
+            response = await self._approve(
                 conn, org_id, user_id=user_id, session_id=session_id, client=client, pending=pending
             )
+            remembered = kit.sealer.seal(
+                "session",
+                {"org": org_id, "sid": session_id},
+                self._now() + sessions.SESSION_SECONDS,
+            )
+            kit.set_cookie(response, kit.session_cookie, remembered, sessions.SESSION_SECONDS)
+            return response
         nonce = secrets.token_urlsafe(24)
         answer = kit.sealer.seal(
             "consent",
@@ -482,6 +556,84 @@ class OAuthFlow:
             "authorization code presented again in %s: session %s revoked", org_id, session_id
         )
 
+    async def _start(  # noqa: PLR0911  (one answer per check)
+        self, request: Request, q: QueryParams, *, from_form: bool = False
+    ) -> Response:
+        if any(len(q.getlist(k)) > 1 for k in q):
+            return self._html(pages.UNKNOWN_CLIENT, 400)
+        redirect_uri = q.get("redirect_uri", "")
+        client = await self._client(q.get("client_id", ""))
+        if client is None or not oauth.allowed_redirect(client, redirect_uri):
+            return self._html(pages.UNKNOWN_CLIENT, 400)
+        state = q.get("state", "")
+        if q.get("response_type") != "code":
+            return self._back(redirect_uri, {"error": "unsupported_response_type", "state": state})
+        challenge = q.get("code_challenge", "")
+        if (
+            not state
+            or len(state) > oauth.MAX_STATE_LENGTH
+            or q.get("code_challenge_method") != "S256"
+            or not oauth.challenge_ok(challenge)
+        ):
+            return self._back(redirect_uri, {"error": "invalid_request", "state": state})
+        resource = self._resource(client)
+        if not same_resource(q.get("resource", ""), resource):
+            return self._back(redirect_uri, {"error": "invalid_target", "state": state})
+        pending = {
+            "client_id": client.client_id,
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "challenge": challenge,
+            "resource": resource,
+        }
+        connection = await self._remembered(request)
+        if connection is not None:
+            return self._kit.to_workos(
+                connection,
+                {"flow": "oauth", "org": connection.org_id, **pending},
+                from_form=from_form,
+            )
+        hinted = await self._hinted(request, q, invite_ok=client.first_party and from_form)
+        connection, invite_id = hinted or (None, None)
+        if connection is not None:
+            login = {"flow": "oauth", "org": connection.org_id, **pending}
+            return self._kit.to_workos(
+                connection,
+                login | ({"invite": invite_id} if invite_id else {}),
+                from_form=from_form,
+            )
+        if client.first_party:
+            return self._back(redirect_uri, {**NO_SIGN_IN, "state": state})
+        if hinted is None:
+            return self._html(pages.TOO_MANY, 429)
+        sealed = self._kit.sealer.seal("authorize", pending, self._now() + AUTHORIZE_SECONDS)
+        return self._html(pages.work_email(sealed))
+
+    async def _email(self, request: Request, raw: bytes) -> Response:
+        if not _same_site(request):
+            return self._html(pages.BAD_REQUEST, 400)
+        form = _form(raw)
+        sealed = self._kit.sealer.open("authorize", form.get("pending", ""), self._now())
+        if sealed is None:
+            return self._html(pages.BAD_REQUEST, 400)
+        domain = email_domain(form.get("email", ""))
+        by_address = self._emails_by_address.allow(self._address(request))
+        if not by_address or (domain is not None and not self._emails_by_domain.allow(domain)):
+            return self._html(pages.TOO_MANY, 429)
+        connection = None
+        if domain is not None:
+            try:
+                organizations = await self._kit.workos.organizations_for_domain(domain)
+            except WorkOSError as e:
+                log.warning("WorkOS organisation lookup failed: %s", e)
+                return self._html(pages.UNAVAILABLE, 503)
+            connection = await self._org_for(organizations)
+        if connection is None:
+            return self._html(pages.NO_SIGN_IN)
+        pending = {k: str(sealed.get(k, "")) for k in PENDING}
+        login = {"flow": "oauth", "org": connection.org_id, **pending}
+        return self._kit.to_workos(connection, login, from_form=True)
+
     # ── routes ────────────────────────────────────────────────────────────────
 
     def add_routes(self, app: FastAPI) -> None:  # noqa: C901, PLR0915  (one route table)
@@ -532,70 +684,16 @@ class OAuthFlow:
             )
 
         @app.get("/authorize")
-        async def authorize(request: Request) -> Response:  # noqa: PLR0911  (one answer per check)
-            q = request.query_params
-            if any(len(q.getlist(k)) > 1 for k in q):
-                return self._html(pages.UNKNOWN_CLIENT, 400)
-            redirect_uri = q.get("redirect_uri", "")
-            client = await self._client(q.get("client_id", ""))
-            if client is None or not oauth.allowed_redirect(client, redirect_uri):
-                return self._html(pages.UNKNOWN_CLIENT, 400)
-            state = q.get("state", "")
-            if q.get("response_type") != "code":
-                return self._back(
-                    redirect_uri, {"error": "unsupported_response_type", "state": state}
-                )
-            challenge = q.get("code_challenge", "")
-            if (
-                not state
-                or len(state) > oauth.MAX_STATE_LENGTH
-                or q.get("code_challenge_method") != "S256"
-                or not oauth.challenge_ok(challenge)
-            ):
-                return self._back(redirect_uri, {"error": "invalid_request", "state": state})
-            resource = self._resource(client)
-            if not same_resource(q.get("resource", ""), resource):
-                return self._back(redirect_uri, {"error": "invalid_target", "state": state})
-            pending = {
-                "client_id": client.client_id,
-                "redirect_uri": redirect_uri,
-                "state": state,
-                "challenge": challenge,
-                "resource": resource,
-            }
-            connection = await self._remembered(request)
-            if connection is not None:
-                return kit.to_workos(
-                    connection, {"flow": "oauth", "org": connection.org_id, **pending}
-                )
-            sealed = kit.sealer.seal("authorize", pending, self._now() + AUTHORIZE_SECONDS)
-            return self._html(pages.work_email(sealed))
+        async def authorize(request: Request) -> Response:
+            return await self._start(request, request.query_params)
 
         @app.post("/authorize")
-        async def authorize_email(request: Request) -> Response:
-            if not _same_site(request):
-                return self._html(pages.BAD_REQUEST, 400)
-            form = _form(await request.body())
-            sealed = kit.sealer.open("authorize", form.get("pending", ""), self._now())
-            if sealed is None:
-                return self._html(pages.BAD_REQUEST, 400)
-            domain = email_domain(form.get("email", ""))
-            by_address = self._emails_by_address.allow(self._address(request))
-            if not by_address or (domain is not None and not self._emails_by_domain.allow(domain)):
-                return self._html(pages.TOO_MANY, 429)
-            connection = None
-            if domain is not None:
-                try:
-                    organizations = await kit.workos.organizations_for_domain(domain)
-                except WorkOSError as e:
-                    log.warning("WorkOS organisation lookup failed: %s", e)
-                    return self._html(pages.UNAVAILABLE, 503)
-                connection = await self._org_for(organizations)
-            if connection is None:
-                return self._html(pages.NO_SIGN_IN)
-            pending = {k: str(sealed.get(k, "")) for k in PENDING}
-            login = {"flow": "oauth", "org": connection.org_id, **pending}
-            return kit.to_workos(connection, login, from_form=True)
+        async def authorize_post(request: Request) -> Response:
+            raw = await request.body()
+            params = _params(raw)
+            if params is not None and "pending" not in params:
+                return await self._start(request, params, from_form=True)
+            return await self._email(request, raw)
 
         @app.post("/authorize/consent")
         async def consent(request: Request) -> Response:
