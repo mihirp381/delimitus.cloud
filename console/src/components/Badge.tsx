@@ -22,13 +22,17 @@ export function StatusBadge({ status }: { readonly status: string }) {
   return <Badge tone={STATUS_TONE[status] ?? 'warning'}>{status}</Badge>;
 }
 
-const APPROVAL_TONE: Readonly<Record<string, Tone>> = {
-  pending: 'warning',
-  approved: 'success',
-  denied: 'danger',
-  cancelled: 'neutral',
+const APPROVAL: Readonly<Record<string, readonly [Tone, string]>> = {
+  pending: ['warning', 'Waiting'],
+  approved: ['success', 'Approved'],
+  denied: ['danger', 'Rejected'],
+  cancelled: ['neutral', 'Withdrawn'],
 };
 
+export function approvalWord(state: string): string {
+  return APPROVAL[state]?.[1] ?? state;
+}
+
 export function ApprovalBadge({ state }: { readonly state: string }) {
-  return <Badge tone={APPROVAL_TONE[state] ?? 'neutral'}>{state}</Badge>;
+  return <Badge tone={APPROVAL[state]?.[0] ?? 'neutral'}>{approvalWord(state)}</Badge>;
 }

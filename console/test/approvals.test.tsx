@@ -137,16 +137,23 @@ describe('approvals inbox', () => {
     const { api } = start('/approvals', routes(page([EXCEED, WIDEN])), signedIn());
     expect(await screen.findByText('2 requests waiting for you')).toBeTruthy();
     expect([...api.of('GET', '/v1/approvals')[0]!.query.entries()]).toEqual([['inbox', 'true']]);
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Request', 'Requested by', 'Age', 'Status']);
 
-    const exceed = rowOf('Share beyond the audience ceiling of the connection');
-    expect(within(exceed).getByText('warehouse')).toBeTruthy();
-    expect(within(exceed).getByText(/Bea Builder/)).toBeTruthy();
-    expect(within(exceed).getByRole('link', { name: 'expenses' }).getAttribute('href')).toBe(`/apps/${APP_ID}`);
-    expect(within(exceed).getByText('prod')).toBeTruthy();
-    expect(within(exceed).getByRole('link', { name: 'Open' }).getAttribute('href')).toBe(
+    const exceed = rowOf('Share beyond the ceiling of warehouse');
+    expect(within(exceed).getByText('Bea Builder')).toBeTruthy();
+    expect(exceed.textContent).toContain('expenses Production');
+    expect(within(exceed).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual([
       '/approvals/apr_000000000000000000e1',
-    );
+    ]);
+    expect(within(exceed).getByText('Waiting')).toBeTruthy();
     expect(api.calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
+
+  it('opens a request from anywhere on its row', async () => {
+    const { router } = start('/approvals', routes(page([WIDEN])), signedIn());
+    await screen.findByText('1 request waiting for you');
+    fireEvent.click(rowOf('Olivia Owner').querySelectorAll('td')[3]!);
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/approvals/${WIDEN.id}`));
   });
 
   it('says so when nothing is waiting', async () => {
@@ -154,34 +161,31 @@ describe('approvals inbox', () => {
     expect(await screen.findByText('Nothing is waiting for you.')).toBeTruthy();
   });
 
-  it('lists every request, with its decision, in the all view', async () => {
+  it('lists every request with one status in words, in the all view', async () => {
     const { api } = start('/approvals?view=all', routes(page([WIDEN, AGENT_SHARE, DENIED, CANCELLED])), signedIn());
     expect(await screen.findByText('4 requests')).toBeTruthy();
     expect([...api.of('GET', '/v1/approvals')[0]!.query.keys()]).toEqual([]);
+    const table = screen.getByRole('table', { name: 'Approval requests' });
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(4);
+    const status = (row: HTMLElement) => row.querySelectorAll('td')[3]?.textContent;
 
-    const widen = rowOf('Widen who has access, to:');
-    expect(within(widen).getByText('Everyone in the organisation (user)')).toBeTruthy();
-    expect(within(widen).getByText('pending')).toBeTruthy();
-    expect(within(widen).getByText('Waiting for an approver')).toBeTruthy();
+    const widen = rowOf('Widen sharing');
+    expect(widen.textContent).toContain('expenses Production, to Everyone in the organisation (user)');
+    expect(status(widen)).toBe('Waiting');
     expect(within(widen).queryByText('agent')).toBeNull();
 
-    const share = rowOf('Sharing change made by an agent, replacing version 3, to:');
+    const share = rowOf('Sharing change by an agent, replacing version 3');
     expect(within(share).getByText('agent')).toBeTruthy();
-    expect(within(share).getByText('approved')).toBeTruthy();
-    expect(within(share).getByText(/Approved by Ada Admin/)).toBeTruthy();
-    expect(within(share).getByText('User Olivia Owner (builder)')).toBeTruthy();
-    expect(within(share).queryByText(ADMIN)).toBeNull();
-    expect(within(share).getByText(/by email on/)).toBeTruthy();
-    expect(within(share).getByText('“Fine for the pilot”')).toBeTruthy();
-    expect(within(share).getByText('op_ada')).toBeTruthy();
+    expect(status(share)).toBe('Approved');
+    expect(share.textContent).toContain('to User Olivia Owner (builder)');
+    expect(share.textContent).not.toContain(ADMIN);
+    expect(share.textContent).not.toContain('Ada Admin');
 
-    const denied = rowOf('warehouse');
-    expect(within(denied).getByText('denied')).toBeTruthy();
-    expect(within(denied).getByText(/by chat on/)).toBeTruthy();
-
-    const cancelled = rowOf('api.example.com');
-    expect(within(cancelled).getByText('Withdrawn by the requester')).toBeTruthy();
-    expect(within(cancelled).getByRole('link', { name: 'old-app' }).getAttribute('href')).toBe(`/apps/${GONE_APP}`);
+    expect(status(rowOf('Connect warehouse'))).toBe('Rejected');
+    const cancelled = rowOf('Allow api.example.com');
+    expect(status(cancelled)).toBe('Withdrawn');
+    expect(cancelled.textContent).toContain('old-app Preview');
+    expect(document.body.textContent).not.toMatch(/denied|Decision|Review/);
   });
 
   it('switches views and filters by state through the URL', async () => {
@@ -191,8 +195,10 @@ describe('approvals inbox', () => {
       signedIn(),
     );
     await screen.findByText('2 requests');
-    fireEvent.change(screen.getByLabelText('State'), { target: { value: 'pending' } });
-    expect(await screen.findByText('No pending requests.')).toBeTruthy();
+    const select = screen.getByLabelText('State') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(['Every state', 'Waiting', 'Approved', 'Rejected', 'Withdrawn']);
+    fireEvent.change(select, { target: { value: 'pending' } });
+    expect(await screen.findByText('No waiting requests.')).toBeTruthy();
     expect(router.state.location.search).toEqual({ view: 'all', state: 'pending' });
     expect(listed(api)[1]?.query.get('state')).toBe('pending');
     fireEvent.click(screen.getByRole('link', { name: 'Waiting for you' }));
@@ -374,6 +380,7 @@ describe('approval detail', () => {
     start(path, getRoute(detail(DENIED, { id: EXCEED.id })), signedIn());
     expect(await screen.findByText('“Not this quarter”')).toBeTruthy();
     expect(screen.getByText(/Rejected by/)).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1 }).parentElement?.textContent).toBe('Approval requestRejected');
     expect(screen.queryByRole('button', { name: /approve|reject|withdraw/i })).toBeNull();
   });
 

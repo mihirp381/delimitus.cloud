@@ -11,11 +11,13 @@ import {
   requestedGrants,
 } from '../../api/approvals';
 import { must } from '../../api/client';
+import { ENV_TITLE } from '../../app-detail/names';
 import { Ago } from '../../components/Ago';
-import { ApprovalBadge, Badge } from '../../components/Badge';
+import { ApprovalBadge, approvalWord, Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
+import { Person } from '../../components/Person';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
@@ -100,7 +102,7 @@ function ApprovalsPage() {
             <option value="">Every state</option>
             {APPROVAL_STATES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {approvalWord(s)}
               </option>
             ))}
           </select>
@@ -118,7 +120,7 @@ function ApprovalsPage() {
               inbox
                 ? 'Nothing is waiting for you.'
                 : state
-                  ? `No ${state} requests.`
+                  ? `No ${approvalWord(state).toLowerCase()} requests.`
                   : 'No approval requests yet.'
             }
             emptyHint={
@@ -152,113 +154,48 @@ function ApprovalsPage() {
   );
 }
 
-function Where({ approval }: { readonly approval: Approval }) {
-  return (
-    <>
-      <Link to="/apps/$appId" params={{ appId: approval.app_id }}>
-        {approval.app}
-      </Link>{' '}
-      {approval.environment}
-    </>
-  );
-}
-
-function Grants({ approval }: { readonly approval: Approval }) {
-  const grants = requestedGrants(approval.payload);
-  if (grants === null) return <code>{approval.subject_key}</code>;
-  if (grants.length === 0) return <p>Nobody has access.</p>;
-  return (
-    <ul className="plain-list">
-      {grants.map((g) => (
-        <li key={`${g.role}:${g.subject_kind}:${g.subject_id ?? ''}`}>{grantText(g, approval.subject_names)}</li>
-      ))}
-    </ul>
-  );
-}
-
-function Change({ approval }: { readonly approval: Approval }) {
-  switch (approval.kind) {
+function summary(a: Approval): string {
+  switch (a.kind) {
     case 'widen_audience':
-      return (
-        <>
-          <p>Widen who has access, to:</p>
-          <Grants approval={approval} />
-        </>
-      );
+      return 'Widen sharing';
     case 'agent_share': {
-      const version = replacedVersion(approval.payload);
-      return (
-        <>
-          <p>
-            Sharing change made by an agent
-            {version === null ? '' : `, replacing version ${version}`}, to:
-          </p>
-          <Grants approval={approval} />
-        </>
-      );
+      const version = replacedVersion(a.payload);
+      return `Sharing change by an agent${version === null ? '' : `, replacing version ${version}`}`;
     }
     case 'exceed_ceiling':
-      return (
-        <p>
-          Share beyond the audience ceiling of the connection <code>{connectionName(approval)}</code>
-        </p>
-      );
+      return `Share beyond the ceiling of ${connectionName(a)}`;
     case 'connect_data_source':
-      return (
-        <p>
-          Connect the data source <code>{approval.subject_key}</code>
-        </p>
-      );
+      return `Connect ${a.subject_key}`;
     case 'enable_internet_hosts':
-      return (
-        <p>
-          Allow the internet host <code>{approval.subject_key}</code>
-        </p>
-      );
+      return `Allow ${a.subject_key}`;
     default:
-      return <code>{approval.subject_key}</code>;
+      return 'Request';
   }
 }
 
-function Decision({ approval: a }: { readonly approval: Approval }) {
-  if (a.state === 'pending') return <span className="muted">Waiting for an approver</span>;
-  if (a.state === 'cancelled') return <span className="muted">Withdrawn by the requester</span>;
+function Request({ approval: a }: { readonly approval: Approval }) {
+  const grants = requestedGrants(a.payload);
+  const env = ENV_TITLE[a.environment as keyof typeof ENV_TITLE] ?? a.environment;
   return (
     <>
-      <p>
-        {a.state === 'approved' ? 'Approved' : 'Denied'} by{' '}
-        {a.decided_by_name ?? 'an unnamed approver'}
-        {a.decision_channel ? ` by ${a.decision_channel}` : ''}
-        {a.decided_at ? (
-          <>
-            {' '}
-            on <time dateTime={a.decided_at}>{new Date(a.decided_at).toLocaleString()}</time>
-          </>
-        ) : null}
-      </p>
-      {a.decision_reason ? <p>“{a.decision_reason}”</p> : null}
-      {a.recorded_by_operator ? (
-        <p className="muted">
-          Recorded by SSC staff <code>{a.recorded_by_operator}</code>
-        </p>
-      ) : null}
+      <Link to="/approvals/$approvalId" params={{ approvalId: a.id }}>
+        {summary(a)}
+      </Link>
+      <div className="muted">
+        {a.app} {env}
+        {grants && grants.length > 0 ? `, to ${grants.map((g) => grantText(g, a.subject_names)).join(', ')}` : ''}
+      </div>
     </>
   );
 }
 
 const COLUMNS: readonly Column<Approval>[] = [
-  {
-    header: 'Requested',
-    className: 'nowrap',
-    cell: (a) => <Ago at={a.created_at} />,
-  },
-  { header: 'App', cell: (a) => <Where approval={a} /> },
-  { header: 'Change', cell: (a) => <Change approval={a} /> },
+  { header: 'Request', cell: (a) => <Request approval={a} /> },
   {
     header: 'Requested by',
     cell: (a) => (
       <>
-        {a.requested_by_name}
+        <Person name={a.requested_by_name} email={a.requested_by_email} />
         {a.requested_via_agent ? (
           <>
             {' '}
@@ -268,14 +205,6 @@ const COLUMNS: readonly Column<Approval>[] = [
       </>
     ),
   },
-  { header: 'State', cell: (a) => <ApprovalBadge state={a.state} /> },
-  { header: 'Decision', cell: (a) => <Decision approval={a} /> },
-  {
-    header: 'Review',
-    cell: (a) => (
-      <Link to="/approvals/$approvalId" params={{ approvalId: a.id }}>
-        Open
-      </Link>
-    ),
-  },
+  { header: 'Age', className: 'nowrap', cell: (a) => <Ago at={a.created_at} /> },
+  { header: 'Status', cell: (a) => <ApprovalBadge state={a.state} /> },
 ];
