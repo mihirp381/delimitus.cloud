@@ -77,12 +77,10 @@ test('the roster fits a 390px screen, the email under the name', async ({ page, 
   await expect(cells).toHaveCount(2);
   await expect(cells.first()).toContainText(`ida-${stamp}@example.com`, { useInnerText: true });
   await expect(cells.first().locator('.badge')).toHaveText(['member', 'active']);
-  const wide = await page.evaluate(() => {
-    const wrap = document.querySelector('.table-wrap');
-    return {
-      page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      table: wrap ? wrap.scrollWidth - wrap.clientWidth : -1,
-    };
-  });
-  expect(wide).toEqual({ page: 0, table: 0 });
+  const overflow = (el: unknown) => {
+    const box = el as { scrollWidth: number; clientWidth: number };
+    return box.scrollWidth - box.clientWidth;
+  };
+  expect(await page.locator('html').evaluate(overflow)).toBe(0);
+  expect(await page.locator('.table-wrap').filter({ has: roster }).evaluate(overflow)).toBe(0);
 });

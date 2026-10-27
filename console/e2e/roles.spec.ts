@@ -220,7 +220,9 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   await expect(page.getByText('Every login so far matched a person.')).toBeVisible();
   await page.getByLabel('Search people').fill(w.builderEmail.toUpperCase());
   const found = page.getByRole('table', { name: 'People, by name' }).getByRole('row').nth(1);
-  await expect(found.getByRole('cell')).toHaveText(['builder E2E', w.builderEmail, 'member', 'active', 'Never']);
+  await expect(found.getByRole('cell')).toHaveText(['builder E2E', w.builderEmail, 'member', 'active', 'Never'], {
+    useInnerText: true,
+  });
   await found.getByRole('button', { name: 'builder E2E' }).click();
   await expect(page.getByRole('dialog', { name: 'builder E2E' })).toContainText(w.builder.id);
   await page.getByRole('dialog', { name: 'builder E2E' }).getByRole('button', { name: 'Close' }).click();
