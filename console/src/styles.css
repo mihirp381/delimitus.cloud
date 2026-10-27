@@ -1073,6 +1073,18 @@ textarea {
   max-width: 100%;
 }
 
+.filter-bar {
+  display: grid;
+  gap: var(--ssc-space-3);
+}
+
+.filter-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ssc-space-2);
+}
+
 /* One choice among a few, as joined segments. */
 .segmented {
   display: inline-flex;
