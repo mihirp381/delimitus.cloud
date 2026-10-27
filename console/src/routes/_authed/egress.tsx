@@ -17,6 +17,7 @@ import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
 import { Notice } from '../../components/Notice';
+import { copyMessage, useClipboard } from '../../components/useClipboard';
 
 export const Route = createFileRoute('/_authed/egress')({
   component: EgressPage,
@@ -70,16 +71,7 @@ function EgressPage() {
 }
 
 function OutboundIp({ ip }: { readonly ip: string | null }) {
-  const [copied, setCopied] = useState<string | null>(null);
-
-  async function copy(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied('Copied.');
-    } catch {
-      setCopied('Could not copy; select the address instead.');
-    }
-  }
+  const { state, copy } = useClipboard();
 
   return (
     <section className="panel tone-magenta" aria-labelledby="egress-ip-heading">
@@ -92,9 +84,9 @@ function OutboundIp({ ip }: { readonly ip: string | null }) {
           </p>
           <div className="toolbar">
             <Button onClick={() => void copy(ip)}>Copy IP</Button>
-            {copied ? (
+            {state !== 'idle' ? (
               <span className="muted" role="status">
-                {copied}
+                {copyMessage(state, 'address')}
               </span>
             ) : null}
           </div>

@@ -31,6 +31,7 @@ import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { Notice } from '../../components/Notice';
 import { AdminOnly } from '../../components/AdminOnly';
+import { copyMessage, useClipboard } from '../../components/useClipboard';
 
 export const Route = createFileRoute('/_authed/environment')({
   component: EnvironmentPage,
@@ -193,17 +194,8 @@ function Tiles() {
 function OutboundIp() {
   const { queries } = Route.useRouteContext();
   const egress = queries.useQuery('get', '/v1/egress');
-  const [copied, setCopied] = useState<string | null>(null);
+  const { state, copy } = useClipboard();
   const ip = egress.data?.outbound_ip ?? null;
-
-  async function copy(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied('Copied.');
-    } catch {
-      setCopied('Could not copy; select the address instead.');
-    }
-  }
 
   return (
     <section className="panel" aria-labelledby="ip-heading">
@@ -220,9 +212,9 @@ function OutboundIp() {
           </p>
           <div className="toolbar">
             <Button onClick={() => void copy(ip)}>Copy IP</Button>
-            {copied ? (
+            {state !== 'idle' ? (
               <span className="muted" role="status">
-                {copied}
+                {copyMessage(state, 'address')}
               </span>
             ) : null}
           </div>
