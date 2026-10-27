@@ -32,8 +32,8 @@ users: nothing on the page is load-bearing for a customer yet.
 
 Open with the founder (not in this branch): the meaning of point 10 ("change branding; running can become
 expensive if they wish to"); whether the remaining "pilot" wording (the chip under the examples, the cost
-column, the FAQ, the request section) stays; whether the pilot boundaries section stays as is (custom
-domains are planned, `docs/plans/custom-domains-2026-10-26.md`); the trademark line is removed on request.
+column, the FAQ, the request section) stays; the pilot boundaries section: removed on the founder's decision
+2026-10-27 (custom domains are planned, `docs/plans/custom-domains-2026-10-26.md`); the trademark line is removed on request.
 
 ## 2. Success criteria
 

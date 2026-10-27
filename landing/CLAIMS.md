@@ -46,8 +46,6 @@ a row when its truth state changes; reword the page if a feature is cut.
 | `https` | Every app address is HTTPS | Proven on our test cell, not yet with a customer | 2026-10-17 |
 | `minutes` | The hero: a secure, shareable app "in minutes, not weeks"; step 3: measured, one prompt to a running preview in 3½ minutes with Claude Code and 8 with Codex; the cost section's race lane: "3½ minutes to a running preview, measured" | Measured on our test cell, to preview, not production; a later run took 7 min 3 s | 2026-10-27 |
 | `no-public` | No public apps; every request needs a company login | Decided: apps answer a request with no login with a redirect to sign-in | 2026-10-17 |
-| `no-domains` | No custom domains | Decided | 2026-10-17 |
-| `no-webhooks` | No inbound webhooks | Decided | 2026-10-17 |
 | `retention` | Form details kept 12 months, used only to answer the request, deletion on request | True: a bucket lifecycle rule (`infra/ssc_infra/landing.py`); `privacy@delimitus.com` receives mail | 2026-10-07 |
 | `econ-cloud` | Do-it-yourself cloud bill, $129.53 a month plus $9.86 an app; the app line assumes one instance kept warm (minimum instances 1) so the first visit is not slow, a choice the company makes, not ours | Google Cloud list prices, below; unchanged when fetched again | 2026-10-27 |
 | `econ-labour` | IT rate $68 an hour; hours are our estimate | BLS figures, below; the hours are labelled "our estimate" | 2026-10-27 |

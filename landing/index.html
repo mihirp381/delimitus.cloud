@@ -800,8 +800,7 @@ table.tbl tr:last-child td { border-bottom: 0; }
 #get { --label: var(--t-magenta); }
 #security { --label: var(--t-orange); }
 #cost { --label: var(--t-blue); }
-#limits { --label: var(--t-violet); }
-#faq { --label: var(--t-purple); }
+#faq { --label: var(--t-violet); }
 
 /* ── the gap ─────────────────────────────────────────────────────────── */
 .gap__end { margin: 0; font: 600 clamp(1.2rem, 2vw, 1.5rem)/1.3 var(--display); letter-spacing: -0.02em; text-wrap: balance; }
@@ -912,13 +911,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   table.tbl--cmp th, table.tbl--cmp td { padding-left: 12px; padding-right: 10px; }
   .cmp__note { padding-left: 16px; padding-right: 16px; }
 }
-
-/* ── what it does not do ─────────────────────────────────────────────── */
-.limits { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.limits li { background: var(--card); border-radius: var(--r-xl); padding: 22px 24px; display: flex; flex-direction: column; gap: 6px; border-left: 4px solid var(--line-strong); }
-.limits b { font: 600 1.1rem/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); }
-.limits span { font-size: 0.95rem; color: var(--ink-2); }
-@media (max-width: 640px) { .limits { grid-template-columns: minmax(0, 1fr); } }
 
 /* ── request a pilot ─────────────────────────────────────────────────── */
 .form { width: 100%; max-width: 620px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; text-align: left; }
@@ -1552,26 +1544,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </section>
 
-
-<section class="band band--alt" id="limits" data-claims>
-  <div class="wrap band__grid">
-    <div class="band__label"><span class="rule"></span><p class="label">Pilot boundaries</p></div>
-    <div class="stack stack--lg">
-      <div class="head">
-        <h2 class="h2" data-claim="no-public no-domains no-webhooks data">Opinionated on purpose.</h2>
-        <p class="lede" data-claim="no-public no-domains no-webhooks data">We’re starting with the safest, most common shape of internal software.</p>
-      </div>
-      <ul class="limits">
-        <li data-claim="no-public"><b>No public apps</b><span>Every request needs a company login.</span></li>
-        <li data-claim="no-domains"><b>No custom domains</b><span>Apps live at an address on our domain.</span></li>
-        <li data-claim="no-webhooks"><b>No inbound webhooks</b><span>Outside services can’t call into your app.</span></li>
-        <li data-claim="data"><b>Company data is read-only</b><span>Apps read your company databases and never write to them.</span></li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section class="band" id="faq" data-claims>
+<section class="band band--alt" id="faq" data-claims>
   <div class="wrap band__grid">
     <div class="band__label"><span class="rule"></span><h2 class="label">Questions</h2></div>
     <div class="faq">
@@ -1615,7 +1588,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   </div>
 </section>
 
-<section class="band band--alt" id="pilot">
+<section class="band" id="pilot">
   <div class="wrap">
     <div class="cta">
       <span class="eyebrow" data-claim="pilot"><span class="dot"></span>Private pilot</span>

@@ -315,6 +315,10 @@ REMOVED = (
     "Placeholder Haulage",
     "The expensive part isn’t running the app.",
     "It’s everything around it.",
+    'id="limits"',
+    "Opinionated on purpose",
+    "No custom domains",
+    "No inbound webhooks",
 )
 ADDED = (
     "Secure data connections",
