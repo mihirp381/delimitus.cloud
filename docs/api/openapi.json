@@ -140,6 +140,11 @@
             "title": "Kind",
             "type": "string"
           },
+          "name": {
+            "description": "Who it was, as a person would say it.",
+            "title": "Name",
+            "type": "string"
+          },
           "via_agent": {
             "title": "Via Agent",
             "type": "boolean"
@@ -148,7 +153,8 @@
         "required": [
           "kind",
           "id",
-          "via_agent"
+          "via_agent",
+          "name"
         ],
         "title": "ActorOut",
         "type": "object"

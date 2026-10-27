@@ -21,7 +21,7 @@ so its answer says ``migrations_unknown`` (B-10). A ``prod`` deployment of an en
 database shows the recovery point its job recorded.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Annotated, Any, Final, Literal
 
@@ -30,12 +30,13 @@ from pydantic import Field, ValidationError
 from sqlalchemy import RowMapping, text
 
 from ssc_contracts import app_database
-from ssc_contracts.audit import AuditAction
+from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.capabilities import CapabilityDiff, EnvironmentCapabilities, diff_capabilities
 from ssc_contracts.cells import CellResourceState
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import Manifest
+from ssc_control import names
 from ssc_control.api.authz import require_app_builder, require_builder
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
@@ -154,6 +155,7 @@ class ActorOut(Strict):
     kind: ActorKindName
     id: str
     via_agent: bool
+    name: str = Field(description="Who it was, as a person would say it.")
 
 
 class DeploymentOut(Strict):
@@ -325,8 +327,22 @@ Limit = Annotated[int, Query(ge=1, le=MAX_PAGE)]
 ReleaseRef = Annotated[str, Query(pattern=r"^rel_[a-z0-9]{20}$", description="A release id.")]
 
 
-def _actor(row: RowMapping) -> ActorOut:
-    return ActorOut(kind=row["actor_kind"], id=row["actor_id"], via_agent=row["actor_via_agent"])
+def _actor(row: RowMapping, who: names.People) -> ActorOut:
+    match row["actor_kind"]:
+        case ActorKind.USER:
+            name = who.of(row["actor_id"]).name
+        case ActorKind.OPERATOR:
+            name = names.OPERATOR
+        case _:
+            name = names.SYSTEM
+    return ActorOut(
+        kind=row["actor_kind"], id=row["actor_id"], via_agent=row["actor_via_agent"], name=name
+    )
+
+
+async def _people(uow: UnitOfWork, found: Iterable[RowMapping]) -> names.People:
+    ids = [r["actor_id"] for r in found if r["actor_kind"] == ActorKind.USER]
+    return await names.people(uow.conn, uow.org_id, ids)
 
 
 def _recovery_point(row: RowMapping) -> RecoveryPointOut | None:
@@ -379,7 +395,7 @@ async def _capability_diff(
     )
 
 
-def _release(row: RowMapping) -> ReleaseOut:
+def _release(row: RowMapping, who: names.People) -> ReleaseOut:
     return ReleaseOut(
         release_id=row["release_id"],
         number=row["number"],
@@ -391,7 +407,7 @@ def _release(row: RowMapping) -> ReleaseOut:
         built_for_environment_id=row["built_for_environment_id"],
         latest_migrations=row["latest_migrations"],
         created_at=row["created_at"],
-        actor=_actor(row),
+        actor=_actor(row, who),
     )
 
 
@@ -631,6 +647,7 @@ async def list_deployments(
     await _environment(uow, app_id, environment_id)
     params = {"org": uow.org_id, "env": environment_id, "limit": limit}
     found = (await uow.conn.execute(_SELECT_DEPLOYMENTS, params)).mappings().all()
+    who = await _people(uow, found)
     items = [
         DeploymentOut(
             operation_id=r["operation_id"],
@@ -640,7 +657,7 @@ async def list_deployments(
             release_number=r["release_number"],
             failure_code=r["failure_code"],
             current=r["current"],
-            actor=_actor(r),
+            actor=_actor(r, who),
             started_at=r["started_at"],
             finished_at=r["finished_at"],
             recovery_point=_recovery_point(r),
@@ -803,7 +820,8 @@ async def list_releases(
         "limit": limit + 1,
     }
     found = (await uow.conn.execute(_SELECT_RELEASES, params)).mappings().all()
-    items = [_release(r) for r in found[:limit]]
+    who = await _people(uow, found[:limit])
+    items = [_release(r, who) for r in found[:limit]]
     more = len(found) > limit
     return ReleaseList(items=items, next_before=items[-1].number if more else None)
 
@@ -819,4 +837,4 @@ async def get_release(app_id: Id, release_id: Id, uow: UserUoW) -> ReleaseOut:
     row = (await uow.conn.execute(_SELECT_RELEASE, params)).mappings().first()
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"release_id": release_id})
-    return _release(row)
+    return _release(row, await _people(uow, [row]))

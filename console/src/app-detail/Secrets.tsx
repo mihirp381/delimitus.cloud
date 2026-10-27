@@ -54,7 +54,7 @@ const COLUMNS: readonly Column<Secret>[] = [
  */
 export function Secrets({ app, env }: Props) {
   return (
-    <Panel title="Secrets">
+    <Panel title="Secrets" id="secrets">
       <SecretsBody app={app} env={env} />
     </Panel>
   );

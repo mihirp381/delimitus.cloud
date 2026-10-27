@@ -1666,6 +1666,11 @@ export interface components {
              * @enum {string}
              */
             kind: "user" | "workload" | "schedule" | "operator" | "integration";
+            /**
+             * Name
+             * @description Who it was, as a person would say it.
+             */
+            name: string;
             /** Via Agent */
             via_agent: boolean;
         };

@@ -59,7 +59,7 @@ function previewRuns(state = 'healthy'): Record<string, Handler> {
 
 async function openPromote(routes: Record<string, Handler | Handler[]>, status?: Parameters<typeof page>[1]) {
   const result = start(`/apps/${APP_ID}`, page(routes, status), signedIn());
-  const panel = await envPanel('Production');
+  const panel = await envPanel('Preview');
   const button = within(panel).getByRole('button', { name: 'Promote preview to production' }) as HTMLButtonElement;
   return { ...result, panel, button };
 }
@@ -77,11 +77,11 @@ async function confirmPromote(button: HTMLButtonElement) {
 }
 
 describe('promote', () => {
-  it('is on production only, and off while the app is not active', async () => {
+  it('is on preview only, and off while the app is not active', async () => {
     const { button } = await openPromote({}, 'quarantined');
     expect(button.disabled).toBe(true);
-    const preview = await envPanel('Preview');
-    expect(within(preview).queryByRole('button', { name: 'Promote preview to production' })).toBeNull();
+    const prod = await envPanel('Production');
+    expect(within(prod).queryByRole('button', { name: 'Promote preview to production' })).toBeNull();
   });
 
   it('names the release preview runs, builds it, then deploys what the build made', async () => {

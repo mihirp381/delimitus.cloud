@@ -401,11 +401,14 @@ describe('app detail', () => {
     const headings = await screen.findAllByRole('heading', { level: 2 });
     expect(headings.map((h) => h.textContent)).toEqual(['Production prod', 'Preview preview']);
     const prod = screen.getByRole('region', { name: 'Production prod' });
-    await within(prod).findByText('Everyone in the organisation, 1 person');
-    expect(within(prod).getByText('dep_eeeeeeeeeeeeeeeeeeee')).toBeTruthy();
+    await within(prod).findByText('Everyone in the organisation, Olive Owner');
+    expect(within(prod).queryByText('dep_eeeeeeeeeeeeeeeeeeee')).toBeNull();
+    const details = await openSection(prod, 'Details');
+    expect(details.textContent).toContain('dep_eeeeeeeeeeeeeeeeeeee');
+    expect(within(details).getByRole('button', { name: 'Copy production deployment id' })).toBeTruthy();
     const preview = screen.getByRole('region', { name: 'Preview preview' });
     expect(await within(preview).findByText('Nobody yet')).toBeTruthy();
-    expect(within(preview).getByText('None yet')).toBeTruthy();
+    expect(within(preview).getAllByText('None yet')).toHaveLength(2);
 
     const access = await openSection(prod, 'Who has access');
     await within(access).findByText('Everyone in the organisation');
@@ -415,7 +418,12 @@ describe('app detail', () => {
 
     await openTab('Settings');
     await screen.findByRole('region', { name: 'Admin actions' });
-    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Repository', 'Admin actions']);
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+      'Secrets',
+      'Timers',
+      'Repository',
+      'Admin actions',
+    ]);
   });
 
   it('removes access only after the slug is typed, and survives a 412 by re-reading', async () => {
