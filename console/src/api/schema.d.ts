@@ -1558,6 +1558,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/users/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Invite User
+         * @description An invited member who signs in with one of the org's providers. ``201`` for a new person;
+         *     ``200`` with the person who already has the address, ignoring case. Active admins only,
+         *     never in an agent session; ``DIRECTORY_MANAGED`` in a directory org.
+         */
+        post: operations["invite_user_v1_users_invite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/users/{user_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deactivate User
+         * @description End every session and token the person holds, in this transaction, and mark the access
+         *     snapshot dirty. ``LAST_ORG_ADMIN`` for the org's last active admin.
+         */
+        post: operations["deactivate_user_v1_users__user_id__deactivate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/users/{user_id}/reactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reactivate User
+         * @description A deactivated person may sign in again; their old sessions stay ended.
+         */
+        post: operations["reactivate_user_v1_users__user_id__reactivate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/warm": {
         parameters: {
             query?: never;
@@ -2138,7 +2201,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "org.created" | "org.updated" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "auth.authorize_approved" | "auth.authorize_denied" | "auth.code_reused" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "approval.cancelled" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "connection.updated" | "connection.granted" | "connection.revoked" | "connection.ceiling_lowered" | "connection.flagged" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed" | "cell.requested" | "cell.ready" | "cell.failed" | "cell.retired" | "org.onboarded" | "invite.created" | "invite.revoked" | "invite.used" | "github.installation_bound" | "repo.connected" | "repo.disconnected";
+        AuditAction: "org.created" | "org.updated" | "user.created" | "user.updated" | "user.deactivated" | "user.reactivated" | "user.invited" | "group.synced" | "app.created" | "app.owner_transferred" | "app.disabled" | "app.quarantined" | "app.enabled" | "app.deleted" | "login.succeeded" | "login.failed" | "token.issued" | "token.revoked" | "auth.authorize_approved" | "auth.authorize_denied" | "auth.code_reused" | "secret.bound" | "secret.rotated" | "secret.removed" | "grant.added" | "grant.removed" | "bundle.stored" | "build.started" | "build.failed" | "release.created" | "deploy.started" | "deploy.finished" | "deploy.failed" | "rollback.started" | "rollback.finished" | "rollback.failed" | "kill_switch.step" | "approval.requested" | "approval.decided" | "approval.cancelled" | "schedule.created" | "schedule.updated" | "schedule.paused" | "schedule.resumed" | "schedule.deleted" | "schedule.run_requested" | "connection.created" | "connection.removed" | "connection.updated" | "connection.granted" | "connection.revoked" | "connection.ceiling_lowered" | "connection.flagged" | "operator.access" | "audit.exported" | "audit.reanchored" | "directory.connected" | "directory.frozen" | "identity.linked" | "cell.resource_requested" | "cell.resource_ready" | "cell.resource_failed" | "cell.requested" | "cell.ready" | "cell.failed" | "cell.retired" | "org.onboarded" | "invite.created" | "invite.revoked" | "invite.used" | "github.installation_bound" | "repo.connected" | "repo.disconnected";
         /** AuditActor */
         AuditActor: {
             /** Client Id */
@@ -3105,7 +3168,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "DIRECTORY_MANAGED" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -3387,6 +3450,11 @@ export interface components {
              * @description Pass as `cursor` for the next page.
              */
             next_cursor: string | null;
+        };
+        /** InviteIn */
+        InviteIn: {
+            /** Email */
+            email: string;
         };
         /** KillSwitchAccepted */
         KillSwitchAccepted: {
@@ -4323,7 +4391,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "active" | "deactivated";
+            status: "active" | "invited" | "deactivated";
         };
         /** UserMatches */
         UserMatches: {
@@ -4446,6 +4514,12 @@ export interface components {
             org_name: string | null;
             /** @description The caller's org role when the credential is an active user's; null for any other credential and for a deactivated user. Admin-only endpoints need `admin`. */
             role: components["schemas"]["OrgRole"] | null;
+            /**
+             * Sign In Mode
+             * @description `social` for a pilot org whose admins invite people by email.
+             * @enum {string}
+             */
+            sign_in_mode: "directory" | "social";
             /** Subject */
             subject: string;
         };
@@ -11201,7 +11275,7 @@ export interface operations {
                 email?: string | null;
                 /** @description Part of the name or email, ignoring case. */
                 q?: string | null;
-                status?: ("active" | "deactivated") | null;
+                status?: ("active" | "invited" | "deactivated") | null;
                 limit?: number;
                 /** @description The previous page's `next_cursor`. */
                 cursor?: string | null;
@@ -11249,6 +11323,287 @@ export interface operations {
                 };
             };
             /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    invite_user_v1_users_invite_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserMatch"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `DIRECTORY_MANAGED` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deactivate_user_v1_users__user_id__deactivate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserMatch"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `DIRECTORY_MANAGED`, `LAST_ORG_ADMIN` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reactivate_user_v1_users__user_id__reactivate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserMatch"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `DIRECTORY_MANAGED` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;

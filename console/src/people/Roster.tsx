@@ -13,8 +13,14 @@ import { type Column, Table } from '../components/Table';
 import { PersonDetail, RoleBadge, StateBadge } from './PersonDetail';
 
 const SEARCH_MS = 250;
-const FILTERS: readonly { readonly value: RosterFilter; readonly label: string }[] = [
+type Filter = { readonly value: RosterFilter; readonly label: string };
+const FILTERS: readonly Filter[] = [
   { value: 'active', label: 'Active' },
+  { value: 'all', label: 'All' },
+];
+const SOCIAL_FILTERS: readonly Filter[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'invited', label: 'Invited' },
   { value: 'all', label: 'All' },
 ];
 
@@ -57,7 +63,7 @@ function columns(open: (p: UserMatch) => void): readonly Column<UserMatch>[] {
   ];
 }
 
-export function Roster() {
+export function Roster({ social }: { readonly social: boolean }) {
   const { api } = useRouteContext({ from: '/_authed' });
   const [text, setText] = useState('');
   const [filter, setFilter] = useState<RosterFilter>('active');
@@ -87,19 +93,23 @@ export function Roster() {
           maxLength={200}
           onChange={(e) => setText(e.target.value)}
         />
-        <Segmented label="Shown" options={FILTERS} value={filter} onChange={setFilter} />
+        <Segmented label="Shown" options={social ? SOCIAL_FILTERS : FILTERS} value={filter} onChange={setFilter} />
       </div>
       <section className="panel" aria-label="People">
         {list.data ? (
           rows.length === 0 && !q ? (
             <EmptyState
               hint={
-                <>
-                  People appear here after the directory sync. <Link to="/help">Help</Link>
-                </>
+                social ? (
+                  'Invite people by email to add them.'
+                ) : (
+                  <>
+                    People appear here after the directory sync. <Link to="/help">Help</Link>
+                  </>
+                )
               }
             >
-              {filter === 'active' ? 'No active people yet.' : 'No people yet.'}
+              {filter === 'active' ? 'No active people yet.' : filter === 'invited' ? 'No one is waiting to join.' : 'No people yet.'}
             </EmptyState>
           ) : (
             <>
@@ -110,7 +120,13 @@ export function Roster() {
                 rowKey={(p) => p.id}
                 onOpen={setOpen}
                 empty={`No one matches ${q}.`}
-                emptyHint={filter === 'active' ? 'Choose All to include deactivated people.' : undefined}
+                emptyHint={
+                  filter === 'all'
+                    ? undefined
+                    : social
+                      ? 'Choose All to include everyone.'
+                      : 'Choose All to include deactivated people.'
+                }
               />
               <div className="more">
                 <p className="muted count" aria-live="polite">
@@ -137,7 +153,7 @@ export function Roster() {
         title={open ? open.display_name || open.email : 'Person'}
         onClose={() => setOpen(null)}
       >
-        {open ? <PersonDetail person={open} onClose={() => setOpen(null)} /> : null}
+        {open ? <PersonDetail person={open} social={social} onChange={setOpen} onClose={() => setOpen(null)} /> : null}
       </Dialog>
     </>
   );
