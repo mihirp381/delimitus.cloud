@@ -7,6 +7,8 @@ import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
+import { Loading } from '../components/Loading';
+import { Notice } from '../components/Notice';
 import { ProblemNotice } from '../components/ProblemNotice';
 
 const BUILD_TONE: Readonly<Record<string, Tone>> = {
@@ -124,7 +126,7 @@ function PromoteForm({ app, preview, onClose, onStarted }: FormProps) {
   return (
     <form className="stack" onSubmit={submit} aria-label="Promote to production">
       {deployments.isPending ? (
-        <p className="muted">Loading what preview runs…</p>
+        <Loading label="Loading what preview runs…" rows={2} />
       ) : deployments.isError ? (
         <ProblemNotice error={deployments.error} />
       ) : live === null ? (
@@ -135,10 +137,12 @@ function PromoteForm({ app, preview, onClose, onStarted }: FormProps) {
           source. Production keeps running what it runs now until you deploy the new release.
         </p>
       ) : (
-        <p className="notice notice-warning" role="status">
-          Release {live.release_number} in preview is {live.state}; promote needs preview to be
-          healthy.
-        </p>
+        <Notice tone="warn">
+          <p>
+            Release {live.release_number} in preview is {live.state}; promote needs preview to be
+            healthy.
+          </p>
+        </Notice>
       )}
       <label className="field" htmlFor={confirmId}>
         <span>

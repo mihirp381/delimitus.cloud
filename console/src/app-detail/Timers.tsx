@@ -21,11 +21,11 @@ import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
 import { Loading } from '../components/Loading';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { useToast } from '../components/Toast';
 import { ENV_TITLE } from './names';
-import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -64,9 +64,9 @@ interface Started {
  */
 export function Timers({ app, env }: Props) {
   return (
-    <Section title="Timers">
+    <Panel title="Timers" id="timers">
       <TimersBody app={app} env={env} />
-    </Section>
+    </Panel>
   );
 }
 
@@ -323,7 +323,7 @@ function RunDetail({ target, runId }: { readonly target: ScheduleTarget; readonl
     queryKey: ['timer-run', target.environmentId, target.scheduleId, runId],
     queryFn: ({ signal }) => readRun(api, target, runId, signal),
   });
-  if (run.isPending) return <p className="muted">Loading the run…</p>;
+  if (run.isPending) return <Loading label="Loading the run…" rows={2} />;
   if (run.isError) return <ProblemNotice error={run.error} />;
   const r = run.data;
   return (
@@ -342,7 +342,7 @@ function RunDetail({ target, runId }: { readonly target: ScheduleTarget; readonl
           {r.requested_by_user_id ? (
             <>
               {' '}
-              by <code>{r.requested_by_user_id}</code>
+              by {r.requested_by_name ?? r.requested_by_user_id}
             </>
           ) : null}
         </dd>

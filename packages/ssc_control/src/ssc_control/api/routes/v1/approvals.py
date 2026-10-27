@@ -8,6 +8,7 @@ SSC staff recording what an admin decided by email or chat. The database refuses
 even if this code is wrong.
 """
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Any, Final, Literal, cast
 
@@ -20,6 +21,7 @@ from ssc_contracts.egress import host_pattern_problem
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.manifest import Hostname, Name
 from ssc_contracts.text import PRINTABLE_LINES
+from ssc_control import names
 from ssc_control.api.auth import PrincipalKind
 from ssc_control.api.authz import require_builder
 from ssc_control.api.idempotency import UserIdempotent
@@ -105,8 +107,13 @@ class Approval(Strict):
     state: ApprovalState
     requested_by_user_id: str
     requested_by_name: str
+    requested_by_email: str | None
     requested_via_agent: bool
     decided_by_user_id: str | None
+    decided_by_name: str | None = Field(
+        description="Who decided or withdrew it; `Former member` once they are no longer active."
+    )
+    decided_by_email: str | None
     decided_at: datetime | None
     decision_reason: str | None
     decision_channel: Literal["email", "chat", "console", "cli"] | None
@@ -115,6 +122,9 @@ class Approval(Strict):
     )
     policy_decision_id: str | None
     created_at: datetime
+    subject_names: dict[str, str] = Field(
+        description="The name of each person and group the payload's grants name, by id."
+    )
 
 
 Role = Literal["builder", "user"]
@@ -246,7 +256,39 @@ class _NoPayload(Strict):
     """Connection names and hosts carry no free text: the subject key says it all."""
 
 
-def approval_out(row: ApprovalRow) -> Approval:
+def _payload_subjects(row: ApprovalRow) -> list[tuple[str, str]]:
+    grants: object = row.payload.get("grants")
+    if not isinstance(grants, list):
+        return []
+    out: list[tuple[str, str]] = []
+    for g in cast(list[object], grants):
+        if not isinstance(g, dict):
+            continue
+        grant = cast(dict[str, object], g)
+        kind, subject = grant.get("subject_kind"), grant.get("subject_id")
+        if kind in {"user", "group"} and isinstance(subject, str) and subject:
+            out.append((str(kind), subject))
+    return out
+
+
+async def approvals_out(uow: UnitOfWork, rows: Sequence[ApprovalRow]) -> list[Approval]:
+    wanted = [s for r in rows for s in _payload_subjects(r)]
+    users = await names.people(uow.conn, uow.org_id, [i for k, i in wanted if k == "user"])
+    found = await names.groups(uow.conn, uow.org_id, [i for k, i in wanted if k == "group"])
+
+    def named(kind: str, subject_id: str) -> str:
+        if kind == "user":
+            return users.of(subject_id).name
+        return found.get(subject_id, names.REMOVED_GROUP)
+
+    return [approval_out(r, {i: named(k, i) for k, i in _payload_subjects(r)}) for r in rows]
+
+
+async def approval_named(uow: UnitOfWork, row: ApprovalRow) -> Approval:
+    return (await approvals_out(uow, [row]))[0]
+
+
+def approval_out(row: ApprovalRow, subject_names: dict[str, str]) -> Approval:
     return Approval(
         id=row.id,
         app_id=row.app_id,
@@ -259,14 +301,18 @@ def approval_out(row: ApprovalRow) -> Approval:
         state=row.state,
         requested_by_user_id=row.requested_by_user_id,
         requested_by_name=row.requested_by_name,
+        requested_by_email=row.requested_by_email,
         requested_via_agent=row.requested_via_agent,
         decided_by_user_id=row.decided_by_user_id,
+        decided_by_name=row.decided_by_name,
+        decided_by_email=row.decided_by_email,
         decided_at=row.decided_at,
         decision_reason=row.decision_reason,
         decision_channel=row.decision_channel,
         recorded_by_operator=row.recorded_by_operator,
         policy_decision_id=row.policy_decision_id,
         created_at=row.created_at,
+        subject_names=subject_names,
     )
 
 
@@ -447,7 +493,7 @@ async def create_approval(body: ApprovalCreate, uow: UserUoW) -> Response:
         payload=payload,
         actor=actor_of(uow.principal),
     )
-    return uow.reply(approval_out(row), status=201 if created else 200)
+    return uow.reply(await approval_named(uow, row), status=201 if created else 200)
 
 
 async def _detail(uow: UnitOfWork, row: ApprovalRow, sees_all: bool) -> ApprovalDetail:
@@ -473,7 +519,7 @@ async def _detail(uow: UnitOfWork, row: ApprovalRow, sees_all: bool) -> Approval
         is None
     )
     return ApprovalDetail(
-        **approval_out(row).model_dump(),
+        **(await approval_named(uow, row)).model_dump(),
         grant_diff=await _diff(uow, row),
         connection=None
         if linked is None
@@ -522,7 +568,7 @@ async def list_approvals(params: Annotated[ApprovalQuery, Query()], uow: UserUoW
     if uow.principal.kind is PrincipalKind.OPERATOR:
         await uow.audit(AuditAction.OPERATOR_ACCESS, target_kind="org", target_id=uow.org_id)
     return ApprovalPage(
-        approvals=[approval_out(r) for r in page],
+        approvals=await approvals_out(uow, page),
         next_before=page[-1].id if len(rows) > params.limit else None,
     )
 
@@ -593,7 +639,7 @@ async def decide_approval(approval_id: Id, body: DecisionIn, uow: UserUoW) -> Re
         target_id=approval_id,
         policy_decision_id=row.policy_decision_id,
     )
-    return uow.reply(approval_out(row))
+    return uow.reply(await approval_named(uow, row))
 
 
 @router.post(
@@ -647,7 +693,9 @@ async def decide_as_approver(approval_id: Id, body: PersonDecisionIn, uow: UserU
         raise Refusal(_REFUSALS[e.reason], evidence={"approval_id": approval_id}) from None
     applied, reason = await apply_approved(uow, row)
     return uow.reply(
-        ApprovalDecided(**approval_out(row).model_dump(), applied=applied, applied_reason=reason)
+        ApprovalDecided(
+            **(await approval_named(uow, row)).model_dump(), applied=applied, applied_reason=reason
+        )
     )
 
 
@@ -681,4 +729,4 @@ async def cancel_approval(approval_id: Id, body: CancelIn, uow: UserUoW) -> Resp
         )
     except ApprovalRefusedError as e:
         raise Refusal(_REFUSALS[e.reason], evidence={"approval_id": approval_id}) from None
-    return uow.reply(approval_out(row))
+    return uow.reply(await approval_named(uow, row))

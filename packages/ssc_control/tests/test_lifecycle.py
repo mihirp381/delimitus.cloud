@@ -507,7 +507,12 @@ async def test_inventory_lists_a_new_app_within_a_second(b: Bench) -> None:
     (item,) = [i for i in r.json()["items"] if i["slug"] == "fresh"]
     assert elapsed < 1.0
     assert item["app_id"] == made.json()["id"]
-    assert item["owner"] == {"user_id": b.w.admin, "display_name": "Ada Admin"}
+    assert item["owner"] == {
+        "user_id": b.w.admin,
+        "display_name": "Ada Admin",
+        "name": "Ada Admin",
+        "email": "ada@example.com",
+    }
     assert item["status"] == "active" and item["last_used_at"] is None
     assert {e["name"] for e in item["environments"]} == {
         e["name"] for e in made.json()["environments"]
@@ -554,7 +559,12 @@ async def test_inventory_shows_owner_releases_sharing_and_last_use(b: Bench) -> 
     assert r.status_code == 200, r.text
     (item,) = r.json()["items"]
     assert item["slug"] == "ledger" and item["app_id"] == b.w.app
-    assert item["owner"] == {"user_id": b.w.admin, "display_name": "Ada Admin"}
+    assert item["owner"] == {
+        "user_id": b.w.admin,
+        "display_name": "Ada Admin",
+        "name": "Ada Admin",
+        "email": "ada@example.com",
+    }
     assert datetime.fromisoformat(item["last_used_at"]) == datetime(2026, 9, 20, 10, tzinfo=UTC)
     prod, preview = sorted(item["environments"], key=lambda e: e["name"] != "prod")
     assert prod["environment_id"] == b.w.prod

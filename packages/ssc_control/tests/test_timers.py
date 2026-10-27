@@ -580,6 +580,7 @@ async def test_preview_schedules_are_paused_and_run_by_hand(b: Bench) -> None:
         "manual",
         b.w.builder,
     )
+    assert queued["requested_by_name"] == "Some One"
 
     assert await fire(b, job) == "succeeded"
     assert await fire(b, job) == "stale"  # a retry of the same job
@@ -1422,6 +1423,7 @@ async def test_the_api_is_for_builders_and_finds_only_what_is_there(b: Bench) ->
         "state": "active",
         "pause_reason": None,
         "declared_by_user_id": b.w.builder,
+        "declared_by_name": "Some One",
         "last_run": None,
     }
 

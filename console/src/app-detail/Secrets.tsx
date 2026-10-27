@@ -1,15 +1,15 @@
 import { useRouteContext } from '@tanstack/react-router';
-import { useState } from 'react';
 import type { components } from '../api/schema';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { Ago } from '../components/Ago';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Loading } from '../components/Loading';
+import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
+import { copyMessage, useClipboard } from '../components/useClipboard';
 import { ENV_TITLE } from './names';
-import { Section } from './Section';
 
 type Secret = components['schemas']['SecretOut'];
 
@@ -54,9 +54,9 @@ const COLUMNS: readonly Column<Secret>[] = [
  */
 export function Secrets({ app, env }: Props) {
   return (
-    <Section title="Secrets">
+    <Panel title="Secrets" id="secrets">
       <SecretsBody app={app} env={env} />
-    </Section>
+    </Panel>
   );
 }
 
@@ -106,28 +106,19 @@ function SecretsBody({ app, env }: Props) {
 
 /** One command to paste into a terminal, with a button that copies exactly it. */
 function Command({ label, text }: { readonly label: string; readonly text: string }) {
-  const [copied, setCopied] = useState<string | null>(null);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied('Copied.');
-    } catch {
-      setCopied('Could not copy; select the command instead.');
-    }
-  }
+  const { state, copy } = useClipboard();
 
   return (
     <div className="command">
       <pre aria-label={label}>
         <code>{text}</code>
       </pre>
-      <Button onClick={() => void copy()} aria-label={`Copy the command: ${label}`}>
+      <Button onClick={() => void copy(text)} aria-label={`Copy the command: ${label}`}>
         Copy
       </Button>
-      {copied ? (
+      {state !== 'idle' ? (
         <span className="muted" role="status">
-          {copied}
+          {copyMessage(state, 'command')}
         </span>
       ) : null}
     </div>

@@ -5,6 +5,7 @@ import { INBOX_KEY, inboxPage, waitingCount } from '../api/approvals';
 import { APP_TAB_TITLE, appTab } from '../app-detail/tabs';
 import type { Whoami } from '../auth/admin';
 import { Brand, BrandRule } from '../components/Brand';
+import { Id } from '../components/Copy';
 import { Icon } from '../components/Icon';
 import { PageActionsSlot } from '../components/PageHeader';
 import { Segmented } from '../components/Segmented';
@@ -52,6 +53,7 @@ function AuthedLayout() {
   const [actions, setActions] = useState<HTMLElement | null>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const countId = useId();
   // The inbox the Approvals page shows, so the page and this count are one read.
   const waiting = useInfiniteQuery({
     queryKey: INBOX_KEY,
@@ -123,13 +125,13 @@ function AuthedLayout() {
               </button>
             </div>
             {me.data ? (
-              <p className="sidebar-org" title={me.data.org_id}>
+              <p className="sidebar-org">
                 <span className="visually-hidden">Organisation </span>
-                <code>{me.data.org_id}</code>
+                {me.data.org_name ?? 'Your organisation'}
               </p>
             ) : null}
             <nav aria-label="Main" className="sidenav">
-              <NavGroup title="Workspace">
+              <div className="nav-group">
                 <Link
                   to="/"
                   activeOptions={{ exact: true }}
@@ -139,13 +141,18 @@ function AuthedLayout() {
                   <Icon name="apps" />
                   <span>Apps</span>
                 </Link>
-                <Link to="/approvals" aria-label={count > 0 ? `Approvals, ${waitingText} waiting for you` : undefined}>
-                  <Icon name="approvals" />
-                  <span>Approvals</span>
-                  {count > 0 ? <span className="nav-count">{waitingText}</span> : null}
-                </Link>
-              </NavGroup>
-              <NavGroup title="Data and network">
+                <div className="nav-item">
+                  <Link to="/approvals" aria-describedby={count > 0 ? countId : undefined}>
+                    <Icon name="approvals" />
+                    <span>Approvals</span>
+                  </Link>
+                  {count > 0 ? (
+                    <span id={countId} className="nav-count">
+                      {waitingText}{' '}
+                      <span className="visually-hidden">waiting for you</span>
+                    </span>
+                  ) : null}
+                </div>
                 <Link to="/connections">
                   <Icon name="connections" />
                   <span>Connections</span>
@@ -154,24 +161,25 @@ function AuthedLayout() {
                   <Icon name="globe" />
                   <span>Internet access</span>
                 </Link>
-              </NavGroup>
-              {admin ? (
-                <NavGroup title="Admin">
-                  <Link to="/environment">
-                    <Icon name="server" />
-                    <span>Your environment</span>
-                  </Link>
-                  <Link to="/people">
-                    <Icon name="people" />
-                    <span>People</span>
-                  </Link>
-                  <Link to="/audit">
-                    <Icon name="audit" />
-                    <span>Audit log</span>
-                  </Link>
-                </NavGroup>
-              ) : null}
-              <div className="nav-foot">
+              </div>
+              <hr className="nav-divider" />
+              <div className="nav-group">
+                {admin ? (
+                  <div className="nav-group" role="group" aria-label="Admin">
+                    <Link to="/people">
+                      <Icon name="people" />
+                      <span>People</span>
+                    </Link>
+                    <Link to="/audit">
+                      <Icon name="audit" />
+                      <span>Audit log</span>
+                    </Link>
+                    <Link to="/environment">
+                      <Icon name="server" />
+                      <span>Usage</span>
+                    </Link>
+                  </div>
+                ) : null}
                 <Link to="/help">
                   <Icon name="help" />
                   <span>Help</span>
@@ -209,23 +217,11 @@ function AuthedLayout() {
   );
 }
 
-function NavGroup({ title, children }: { readonly title: string; readonly children: ReactNode }) {
-  const id = useId();
-  return (
-    <div className="nav-group" role="group" aria-labelledby={id}>
-      <p id={id} className="nav-title">
-        {title}
-      </p>
-      {children}
-    </div>
-  );
-}
-
 const SECTION_TITLE: Readonly<Record<string, string>> = {
   approvals: 'Approvals',
   connections: 'Connections',
   egress: 'Internet access',
-  environment: 'Your environment',
+  environment: 'Usage',
   people: 'People',
   audit: 'Audit log',
   help: 'Help',
@@ -255,8 +251,13 @@ function Breadcrumbs() {
     { params: { path: { app_id: appId ?? '' } } },
     { enabled: appId !== null },
   );
+  const connectionId = section === 'connections' && id ? id : null;
+  const connections = queries.useQuery('get', '/v1/connections', undefined, { enabled: connectionId !== null });
   const crumbs: Crumb[] = [];
-  if (appId) {
+  if (connectionId) {
+    crumbs.push({ text: 'Connections', link: <Link to="/connections">Connections</Link> });
+    crumbs.push({ text: connections.data?.connections.find((c) => c.id === connectionId)?.name ?? 'Connection' });
+  } else if (appId) {
     const slug = app.data?.slug ?? 'App';
     const tab = appTab((location.search as Record<string, unknown>).tab);
     const run = sub === 'kill-switch' ? 'Kill switch run' : sub === 'delete' ? 'Delete run' : null;
@@ -303,6 +304,7 @@ function UserMenu({ me, onSignOut }: { readonly me: Whoami | undefined; readonly
   const button = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const role = me ? (me.role ? ROLE_TEXT[me.role] : me.is_agent ? 'Agent' : 'No role') : null;
+  const who = me?.name ?? 'Your account';
 
   useEffect(() => {
     if (!open) return undefined;
@@ -334,6 +336,15 @@ function UserMenu({ me, onSignOut }: { readonly me: Whoami | undefined; readonly
     >
       {open ? (
         <div id={panelId} className="user-menu" role="group" aria-label="Your account">
+          {me ? (
+            <div className="user-menu-who">
+              <span className="user-menu-name">{who}</span>
+              {me.email ? <span className="user-menu-email">{me.email}</span> : null}
+              <span className="user-menu-org">
+                Organisation id <Id value={me.org_id} label="organisation id" />
+              </span>
+            </div>
+          ) : null}
           <div className="user-menu-row">
             <span className="menu-label" aria-hidden="true">
               Theme
@@ -358,7 +369,7 @@ function UserMenu({ me, onSignOut }: { readonly me: Whoami | undefined; readonly
         ref={button}
         type="button"
         className="user-button"
-        aria-label={me ? `Signed in as ${me.subject}, ${role}` : 'Your account'}
+        aria-label={me ? `Signed in as ${who}, ${role}` : 'Your account'}
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((was) => !was)}
@@ -368,9 +379,7 @@ function UserMenu({ me, onSignOut }: { readonly me: Whoami | undefined; readonly
         </span>
         {me ? (
           <span className="user-text">
-            <span className="user-name" title={me.subject}>
-              <code>{me.subject}</code>
-            </span>
+            <span className="user-name">{who}</span>
             <span className="user-role">{role}</span>
           </span>
         ) : (

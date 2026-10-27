@@ -24,6 +24,7 @@ from ssc_control.api.routes.v1.common import Strict
 from ssc_control.api.runtime import cell_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.egress import allowlist
+from ssc_control.names import people
 from ssc_control.runtime.cell_egress import CellEgressError, EgressInfo
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,8 @@ class EgressHostOut(Strict):
     host: str
     high_risk: bool = Field(description="A catalogue host data can leave by in bulk.")
     added_by_user_id: str | None
+    added_by_name: str | None
+    added_by_email: str | None
     approval_request_id: str | None = Field(
         description="The approved request that added it, when an approval did."
     )
@@ -83,12 +86,15 @@ class CatalogueOut(Strict):
 
 async def _hosts(uow: UnitOfWork) -> EgressHostsOut:
     rows = await allowlist.hosts(uow.conn, uow.org_id)
+    by = await people(uow.conn, uow.org_id, [r.added_by_user_id for r in rows])
     return EgressHostsOut(
         hosts=[
             EgressHostOut(
                 host=r.host,
                 high_risk=r.high_risk,
                 added_by_user_id=r.added_by_user_id,
+                added_by_name=by.name(r.added_by_user_id),
+                added_by_email=by.email(r.added_by_user_id),
                 approval_request_id=r.approval_request_id,
                 created_at=r.created_at,
             )

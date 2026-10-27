@@ -17,13 +17,15 @@ function explained(overrides: Partial<AccessExplained> = {}): AccessExplained {
     evaluated_from: 'live',
     floor: 'user',
     grants: [
-      { grant_id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null, group_name: null },
-      { grant_id: 'gnt_000000000000000000g1', role: 'builder', subject_kind: 'group', subject_id: 'grp_ffffffffffffffffffff', group_name: 'Finance' },
+      { grant_id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null, group_name: null, subject_name: null },
+      { grant_id: 'gnt_000000000000000000g1', role: 'builder', subject_kind: 'group', subject_id: 'grp_ffffffffffffffffffff', group_name: 'Finance', subject_name: 'Finance' },
     ],
     published_version: 7,
     reason: 'granted',
     role: 'builder',
     user_id: PERSON,
+    user_name: 'Pat Person',
+    user_email: 'pat@example.com',
     ...overrides,
   };
 }
@@ -46,13 +48,13 @@ describe('why a person can open an environment', () => {
     expect(api.of('GET', ACCESS)[0]?.query.get('user_id')).toBe(PERSON);
     expect(within(answer).getByText('can open')).toBeTruthy();
     expect(
-      within(answer).getByText(`${PERSON} can open production of expenses as builder, through the grants below.`),
+      within(answer).getByText('Pat Person can open production of expenses as builder, through the grants below.'),
     ).toBeTruthy();
     const facts = [...answer.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
     expect(facts).toEqual([
       ['Best role granted', 'builder'],
       ['Least role production takes', 'user'],
-      ['Person', PERSON],
+      ['Person', `Pat Person ${PERSON}`],
     ]);
     const grants = within(answer).getByRole('table', { name: 'Grants that decided access to Production' });
     expect(within(grants).getByText('Everyone in the organisation')).toBeTruthy();

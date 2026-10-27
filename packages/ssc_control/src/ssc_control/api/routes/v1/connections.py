@@ -17,6 +17,7 @@ gateway through the cell agent (GA-5.8, ``ssc_control.runtime.cell_datagw``), ke
 
 import asyncio
 import time
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Annotated, Any, Final, Literal, Self
 
@@ -41,6 +42,7 @@ from ssc_control.approvals.service import newest
 from ssc_control.connections import service
 from ssc_control.domain.approval_rules import Requirement, RequirementKind, exceed_subject_key
 from ssc_control.domain.audience import Ceiling, CeilingError, ceiling_json, parse_ceiling
+from ssc_control.names import REMOVED_GROUP, People, groups, people
 from ssc_control.ports import SnapshotPort
 from ssc_control.runtime import cell_datagw
 from ssc_control.runtime.cell_datagw import CellSchemaError, CellSchemas, SchemaRefusal
@@ -224,6 +226,8 @@ class ConnectionOut(Strict):
     name: str
     kind: Kind
     owner_user_id: str | None
+    owner_name: str | None
+    owner_email: str | None
     classification: Classification
     ceiling: CeilingDoc
     allowed_schemas: list[str] = Field(description=SCHEMAS_DESCRIPTION)
@@ -231,6 +235,12 @@ class ConnectionOut(Strict):
     setup_status: Literal["pending", "ready"]
     status: Literal["active", "suspended"]
     preview_access: PreviewAccessDoc
+    preview_access_group_name: str | None = Field(
+        description="The name of the group `preview_access` names, for a group rule."
+    )
+    ceiling_subject_names: dict[str, str] = Field(
+        description="The name of each group and person the ceiling lists, by id."
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -304,21 +314,41 @@ def _ceiling_doc(ceiling: Ceiling) -> CeilingDoc:
     return CeilingDoc.model_validate({"subjects": [], **ceiling_json(ceiling)})
 
 
-def _out(c: service.Connection) -> ConnectionOut:
+async def _outs(uow: UnitOfWork, found: Iterable[service.Connection]) -> list[ConnectionOut]:
+    found = list(found)
+    listed = [s for c in found for s in c.ceiling.subjects or ()]
+    users = [c.owner_user_id for c in found] + [i for k, i in listed if k == "user"]
+    group_ids = [c.preview_access.group_id for c in found] + [i for k, i in listed if k == "group"]
+    owners = await people(uow.conn, uow.org_id, users)
+    named = await groups(uow.conn, uow.org_id, group_ids)
+    return [_out(c, owners, named) for c in found]
+
+
+async def _one(uow: UnitOfWork, c: service.Connection) -> ConnectionOut:
+    return (await _outs(uow, [c]))[0]
+
+
+def _out(c: service.Connection, owners: People, named: dict[str, str]) -> ConnectionOut:
+    group = c.preview_access.group_id
     return ConnectionOut(
         id=c.id,
         name=c.name,
         kind=c.kind,
         owner_user_id=c.owner_user_id,
+        owner_name=owners.name(c.owner_user_id),
+        owner_email=owners.email(c.owner_user_id),
         classification=c.classification,
         ceiling=_ceiling_doc(c.ceiling),
         allowed_schemas=list(c.allowed_schemas),
         limits=SnapshotLimits.model_validate(c.limits),
         setup_status=c.setup_status,
         status=c.status,
-        preview_access=PreviewAccessDoc(
-            who=c.preview_access.who, group_id=c.preview_access.group_id
-        ),
+        preview_access=PreviewAccessDoc(who=c.preview_access.who, group_id=group),
+        preview_access_group_name=None if group is None else named.get(group, REMOVED_GROUP),
+        ceiling_subject_names={
+            i: owners.of(i).name if k == "user" else named.get(i, REMOVED_GROUP)
+            for k, i in c.ceiling.subjects or ()
+        },
         created_at=c.created_at,
         updated_at=c.updated_at,
     )
@@ -380,16 +410,18 @@ async def _environment(uow: UnitOfWork, app_id: str, environment_id: str) -> Non
 
 
 async def environment_out(uow: UnitOfWork, environment_id: str) -> EnvironmentConnectionsOut:
+    links = await service.links(uow.conn, uow.org_id, environment_id)
+    shown = await _outs(uow, [link.connection for link in links])
     return EnvironmentConnectionsOut(
         connections=[
             EnvironmentConnectionOut(
                 environment_id=environment_id,
-                connection=_out(link.connection),
+                connection=out,
                 limits=SnapshotLimits.model_validate(link.limits),
                 over_ceiling_since=link.over_ceiling_since,
                 granted_at=link.created_at,
             )
-            for link in await service.links(uow.conn, uow.org_id, environment_id)
+            for link, out in zip(links, shown, strict=True)
         ]
     )
 
@@ -439,7 +471,7 @@ async def create_connection(body: ConnectionIn, uow: UserUoW) -> Any:
         )
     except service.ConnectionChangeError as exc:
         raise _refusal(exc, body.name) from None
-    return uow.reply(_out(made), status=201)
+    return uow.reply(await _one(uow, made), status=201)
 
 
 def _refusal(exc: service.ConnectionChangeError, name: str) -> Refusal:
@@ -463,7 +495,7 @@ async def list_connections(uow: UserUoW) -> ConnectionsOut:
     await _reader(uow)
     await _audit_operator(uow)
     return ConnectionsOut(
-        connections=[_out(c) for c in await service.list_all(uow.conn, uow.org_id)]
+        connections=await _outs(uow, await service.list_all(uow.conn, uow.org_id))
     )
 
 
@@ -479,7 +511,7 @@ async def get_connection(name: Name, uow: UserUoW) -> ConnectionOut:
     if found is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
     await _audit_operator(uow)
-    return _out(found)
+    return await _one(uow, found)
 
 
 @router.patch(
@@ -517,7 +549,7 @@ async def patch_connection(name: Name, body: ConnectionPatch, uow: UserUoW) -> C
         raise _refusal(exc, name) from None
     if changed is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"connection": name})
-    return _out(changed)
+    return await _one(uow, changed)
 
 
 @router.get(

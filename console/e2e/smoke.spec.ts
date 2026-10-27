@@ -43,8 +43,13 @@ test('sign in, find an app, and remove access through a stale version', async ({
   await page.getByLabel('API token').fill(token);
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  // The inventory shows the app.
+  // The inventory shows the app and its owner by name; the shell names the org and the person.
   await expect(page.getByRole('heading', { name: 'Apps' })).toBeVisible();
+  await expect(page.locator('.sidebar-org')).toHaveText('Organisation Dev org');
+  await expect(page.getByRole('button', { name: /^Signed in as Dev Admin,/ })).toBeVisible();
+  const row = page.getByRole('row').filter({ has: page.getByRole('link', { name: slug }) });
+  await expect(row).toContainText('Dev Admin');
+  await expect(row).not.toContainText(app.owner_user_id);
   await page.getByRole('link', { name: slug }).click();
 
   // App detail lists prod and preview.
@@ -59,6 +64,7 @@ test('sign in, find an app, and remove access through a stale version', async ({
   await expect(page).toHaveURL(/tab=access/);
   const access = page.getByRole('region', { name: 'Who has access' });
   await expect(access.getByRole('table')).toContainText('Everyone in the organisation');
+  await expect(access.getByRole('table')).toContainText('Dev Admin');
 
   // Someone else changes prod's sharing after the page read it.
   const current = await grantsOf(request, grantsPath);
@@ -93,4 +99,42 @@ test('sign in, find an app, and remove access through a stale version', async ({
 
   const final = await grantsOf(request, grantsPath);
   expect(final.body.grants).toEqual([]);
+});
+
+test('walk an app from the overview to each panel of Settings', async ({ page, request }) => {
+  expect(token, 'run through e2e/run.mjs, which mints the token').not.toBe('');
+  const slug = `e2e-walk-${Date.now().toString(36)}`;
+  const created = await request.post('/v1/apps', {
+    headers: { ...auth, 'Idempotency-Key': randomUUID() },
+    data: { slug },
+  });
+  expect(created.status()).toBe(201);
+  const app = await created.json();
+
+  await page.goto(`/apps/${app.id}`);
+  await page.getByLabel('API token').fill(token);
+  await page.getByLabel('Keep it for this tab').check();
+  await page.getByRole('button', { name: 'Sign in' }).click();
+
+  const sections = page.getByRole('navigation', { name: 'App sections' });
+  await expect(sections.getByRole('link')).toHaveText(['Overview', 'Logs', 'Access', 'Settings']);
+  const prod = page.getByRole('region', { name: 'Production prod' });
+  const preview = page.getByRole('region', { name: 'Preview preview' });
+  await expect(prod.locator('.btn-primary')).toHaveCount(1);
+  await expect(prod.getByRole('button', { name: 'Share Production' })).toHaveClass(/btn-primary/);
+  await expect(preview.locator('.btn-primary')).toHaveCount(1);
+  await expect(preview.getByRole('button', { name: 'Promote preview to production' })).toHaveClass(/btn-primary/);
+  await expect(prod.getByText('Config version')).toBeHidden();
+
+  await sections.getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(page).toHaveURL(/tab=settings/);
+  const panels = ['Secrets', 'Timers', 'Repository', 'Admin actions'];
+  for (const name of panels) {
+    await expect(page.getByRole('region', { name, exact: true })).toBeVisible();
+  }
+  await expect(page.locator('main h2')).toHaveText(panels);
+
+  await page.goto(`/apps/${app.id}?tab=timers`);
+  await expect(page).toHaveURL(new RegExp(`/apps/${app.id}\\?tab=settings#timers$`));
+  await expect(page.getByRole('region', { name: 'Timers', exact: true })).toBeVisible();
 });

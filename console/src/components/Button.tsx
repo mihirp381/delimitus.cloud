@@ -1,8 +1,8 @@
-import type { ButtonHTMLAttributes } from 'react';
+import type { ComponentPropsWithRef } from 'react';
 
 type Variant = 'primary' | 'secondary' | 'danger';
 
-interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
+interface Props extends ComponentPropsWithRef<'button'> {
   readonly variant?: Variant;
 }
 

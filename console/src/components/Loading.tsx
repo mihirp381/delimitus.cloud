@@ -3,10 +3,20 @@ interface Props {
   readonly label: string;
   /** How many placeholder rows to draw. */
   readonly rows?: number;
+  /** One bar in a line of text, in place of a value. */
+  readonly inline?: boolean;
 }
 
 /** Placeholder rows while a list loads, in the shape of the table that replaces them. */
-export function Loading({ label, rows = 4 }: Props) {
+export function Loading({ label, rows = 4, inline }: Props) {
+  if (inline) {
+    return (
+      <span className="skeleton-inline" role="status">
+        <span className="visually-hidden">{label}</span>
+        <span className="skeleton-bar" aria-hidden="true" />
+      </span>
+    );
+  }
   return (
     <div className="skeleton" role="status">
       <span className="visually-hidden">{label}</span>

@@ -147,6 +147,7 @@ from ssc_control.deploy.deployments import (
 from ssc_control.deploy.gates import approvals_prod_gate
 from ssc_control.lifecycle import kill_switch
 from ssc_control.metrics import metrics_port
+from ssc_control.names import FORMER_MEMBER
 from ssc_control.ports import (
     DeclaredSchedule,
     GateResult,
@@ -591,6 +592,7 @@ async def test_a_build_makes_the_next_numbered_release(b: Bench) -> None:
     listed = get(b, f"/v1/apps/{b.w.app}/releases/{release['id']}").json()
     assert listed["label"] == "R1"
     assert listed["built_for_environment_id"] == b.w.preview
+    assert listed["actor"].pop("name") not in ("", FORMER_MEMBER)
     assert listed["actor"] == {"kind": "user", "id": b.w.builder, "via_agent": False}
     # A rerun of a finished build changes nothing.
     assert await run_build(b.ports, org_id=b.w.org, build_id=build) == "succeeded"
@@ -922,6 +924,7 @@ async def test_a_healthy_deploy_moves_the_pointer_and_traffic(b: Bench) -> None:
     assert [(i["operation_id"], i["current"], i["release_number"]) for i in history["items"]] == [
         (op, True, 1)
     ]
+    assert history["items"][0]["actor"]["name"] not in ("", FORMER_MEMBER)
     # A rerun of a finished deployment changes nothing.
     b.runtime.reset_calls()
     assert await run(b, op) == "healthy"

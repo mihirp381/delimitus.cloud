@@ -242,24 +242,24 @@ a.brand:hover {
   border-top: 1px solid var(--ssc-border-subtle);
 }
 
-.nav-group,
-.nav-foot {
+.nav-group {
   display: grid;
   gap: var(--ssc-space-0);
 }
 
-.nav-foot {
-  margin-top: auto;
+.nav-divider {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--ssc-border-subtle);
 }
 
-.nav-title {
-  padding: var(--ssc-space-1) var(--ssc-space-2);
-  font-size: var(--ssc-type-size-tiny);
-  font-weight: 600;
-  line-height: var(--ssc-type-leading-tight);
-  letter-spacing: var(--ssc-type-tracking-caps);
-  text-transform: uppercase;
-  color: var(--ssc-text-muted);
+.nav-item {
+  display: grid;
+}
+
+.nav-item > * {
+  grid-area: 1 / 1;
 }
 
 .sidenav a {
@@ -301,8 +301,10 @@ a.brand:hover {
 }
 
 .nav-count {
+  align-self: center;
+  justify-self: end;
   min-width: 20px;
-  margin-left: auto;
+  margin-right: var(--ssc-space-2);
   padding: 0 var(--ssc-space-1);
   border-radius: var(--ssc-radius-full);
   font-size: var(--ssc-type-size-tiny);
@@ -312,6 +314,7 @@ a.brand:hover {
   text-align: center;
   color: var(--ssc-feedback-warning);
   background: var(--ssc-feedback-warning-soft);
+  pointer-events: none;
 }
 
 /* Who is signed in, and the menu that opens above it. */
@@ -393,6 +396,30 @@ a.brand:hover {
   box-shadow: var(--ssc-shadow-soft);
 }
 
+.user-menu-who {
+  display: grid;
+  gap: var(--ssc-space-0);
+  min-width: 0;
+  padding: var(--ssc-space-1) var(--ssc-space-1) var(--ssc-space-2);
+  border-bottom: 1px solid var(--ssc-border-subtle);
+}
+
+.user-menu-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu-email,
+.user-menu-org {
+  overflow: hidden;
+  font-size: var(--ssc-type-size-tiny);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ssc-text-muted);
+}
+
 .user-menu-row {
   display: grid;
   gap: var(--ssc-space-1);
@@ -433,8 +460,41 @@ a.brand:hover {
   cursor: pointer;
 }
 
-.menu-item:hover {
+.menu-item:hover,
+.menu-item:focus-visible {
   background: var(--ssc-surface-hover);
+}
+
+.menu-wrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + var(--ssc-space-1));
+  right: 0;
+  z-index: 60;
+  display: grid;
+  min-width: 200px;
+  padding: var(--ssc-space-1);
+  background: var(--ssc-surface-overlay);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-md);
+  box-shadow: var(--ssc-shadow-soft);
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--ssc-accent-ink);
+  background: transparent;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
 }
 
 .icon-btn {
@@ -591,11 +651,17 @@ a.brand:hover {
   overflow-wrap: anywhere;
 }
 
-.page-purpose {
+.page-purpose,
+.page-about {
   max-width: 78ch;
   font-size: var(--ssc-type-size-small);
   color: var(--ssc-text-muted);
   text-wrap: pretty;
+}
+
+.page-about-body {
+  display: grid;
+  gap: var(--ssc-space-2);
 }
 
 /* What an app is, under its name: owner, id, when it was made. */
@@ -661,6 +727,7 @@ a.brand:hover {
 
 /* What can stop or hand over an app, set apart. */
 .danger-zone {
+  margin-top: var(--ssc-space-6);
   border-color: var(--ssc-feedback-danger-line);
 }
 
@@ -678,26 +745,6 @@ a.brand:hover {
   white-space: nowrap;
   color: var(--ssc-tone-blue);
   background: var(--ssc-tone-blue-soft);
-}
-
-.tone-violet .chip {
-  color: var(--ssc-tone-violet);
-  background: var(--ssc-tone-violet-soft);
-}
-
-.tone-purple .chip {
-  color: var(--ssc-tone-purple);
-  background: var(--ssc-tone-purple-soft);
-}
-
-.tone-magenta .chip {
-  color: var(--ssc-tone-magenta);
-  background: var(--ssc-tone-magenta-soft);
-}
-
-.tone-orange .chip {
-  color: var(--ssc-tone-orange);
-  background: var(--ssc-tone-orange-soft);
 }
 
 /* Definition list */
@@ -1078,6 +1125,36 @@ textarea {
   max-width: 100%;
 }
 
+.filter-bar {
+  display: grid;
+  gap: var(--ssc-space-3);
+}
+
+.filter-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ssc-space-2);
+}
+
+.filter-bar-row input[type='search'] {
+  width: 240px;
+  max-width: 100%;
+}
+
+.filter-count {
+  min-width: 18px;
+  padding: 0 var(--ssc-space-1);
+  border-radius: var(--ssc-radius-full);
+  font-size: var(--ssc-type-size-tiny);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
+  color: var(--ssc-accent-ink);
+  background: var(--ssc-accent-soft);
+}
+
 /* One choice among a few, as joined segments. */
 .segmented {
   display: inline-flex;
@@ -1246,9 +1323,7 @@ a.segment.current {
 .panel > .field > input,
 .panel > .field > select,
 .panel > form > .field > input,
-.panel > form > .field > select,
-.panel > .stack > .field > select,
-.panel > form.stack > .field > select {
+.panel > .stack > .field > select {
   max-width: 480px;
 }
 
@@ -1343,15 +1418,11 @@ a.segment.current {
   background: var(--ssc-surface-hover);
 }
 
-.panel > .table-wrap th:first-child,
-.panel > .table-wrap td:first-child,
 .table th:first-child,
 .table td:first-child {
   padding-left: var(--ssc-space-4);
 }
 
-.panel > .table-wrap th:last-child,
-.panel > .table-wrap td:last-child,
 .table th:last-child,
 .table td:last-child {
   padding-right: var(--ssc-space-4);
@@ -1422,12 +1493,8 @@ a.segment.current {
   color: var(--ssc-border-strong);
 }
 
-.owner {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--ssc-space-2);
-  min-width: 0;
-  max-width: 100%;
+.person {
+  white-space: nowrap;
 }
 
 /* One environment of an app in the list: its release, in the tone of its last deploy. */
@@ -1572,6 +1639,16 @@ a.segment.current {
   padding: 0;
 }
 
+.skeleton-inline {
+  display: inline-flex;
+  width: 8rem;
+  vertical-align: middle;
+}
+
+.skeleton-inline > .skeleton-bar {
+  flex: 1;
+}
+
 .skeleton-row:last-child {
   border-bottom: 0;
 }
@@ -1592,6 +1669,7 @@ a.segment.current {
 
 /* Filters and details */
 .filters {
+  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
   align-items: end;
   gap: var(--ssc-space-3);
@@ -1658,27 +1736,6 @@ details[open] > summary {
   margin-bottom: var(--ssc-space-3);
 }
 
-/* A card's own sections that open: a full-width row under a hairline. */
-.panel > details {
-  padding-top: var(--ssc-space-3);
-  border-top: 1px solid var(--ssc-border-subtle);
-}
-
-.panel > .table-wrap + details {
-  border-top: 0;
-}
-
-.panel > details > summary {
-  display: flex;
-  justify-content: space-between;
-  font-weight: 600;
-  color: var(--ssc-text-primary);
-}
-
-.panel > details > summary::after {
-  color: var(--ssc-text-muted);
-}
-
 /* Logs: what the app wrote, in the mono face, each line with its time and severity. The box
    scrolls; the page does not grow with it. */
 .logs {
@@ -1722,7 +1779,7 @@ details[open] > summary {
   color: var(--ssc-feedback-warning);
 }
 
-details pre,
+.event-json,
 .command pre {
   max-width: 100%;
   margin: 0;
@@ -1735,8 +1792,9 @@ details pre,
   border-radius: var(--ssc-radius-sm);
 }
 
-details pre {
-  max-width: 420px;
+.event-json {
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 /* A command to paste into a terminal, and the button that copies it. */
@@ -2039,6 +2097,36 @@ details pre {
   }
 }
 
+/* Under 480px the roster is two columns: the name with its email and badges under it, and the
+   last sign-in. */
+.roster-narrow {
+  display: none;
+}
+
+@media (max-width: 479px) {
+  .roster-wide {
+    display: none;
+  }
+
+  .roster-narrow {
+    display: grid;
+    gap: var(--ssc-space-1);
+    margin-top: var(--ssc-space-1);
+  }
+
+  .roster-email {
+    font-size: var(--ssc-type-size-micro);
+    font-weight: 400;
+    color: var(--ssc-text-muted);
+  }
+
+  .roster-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ssc-space-1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -2047,4 +2135,29 @@ details pre {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Picked groups and people, each with its remove button. */
+.picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ssc-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ssc-space-1);
+  padding-left: var(--ssc-space-2);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-sm);
+  font-size: var(--ssc-type-size-small);
+}
+
+.pick .icon-btn {
+  width: 24px;
+  height: 24px;
 }

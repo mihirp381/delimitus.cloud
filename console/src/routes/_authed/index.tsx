@@ -18,7 +18,7 @@ import { ENV_TITLE } from '../../app-detail/names';
 import { Ago } from '../../components/Ago';
 import { Badge, STATUS_TONE, StatusBadge } from '../../components/Badge';
 import { Button } from '../../components/Button';
-import { Id } from '../../components/Copy';
+import { Person } from '../../components/Person';
 import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
@@ -72,8 +72,7 @@ function AppName({ id, slug, status }: { readonly id: string; readonly slug: str
 
 const COLUMNS: readonly Column<AppSummary>[] = [
   { header: 'App', cell: (app) => <AppName id={app.id} slug={app.slug} status={app.status} /> },
-  { header: 'Owner', cell: (app) => <Id value={app.owner_user_id} label="owner id" /> },
-  { header: 'App id', cell: (app) => <Id value={app.id} label="app id" /> },
+  { header: 'Owner', cell: (app) => <Person name={app.owner_name} email={app.owner_email} /> },
 ];
 
 /**
@@ -96,7 +95,7 @@ function Inventory() {
     <>
       <PageHeader
         title="Apps"
-        purpose="The apps in your organisation. Open one to see how it is running and who can use it."
+        purpose="The apps in your organisation: open one to see how it is running and who can use it."
       />
       <div className="search">
         <label htmlFor={textId} className="visually-hidden">
@@ -150,7 +149,7 @@ function AppList({ filter }: { readonly filter: AppFilter }) {
   if (apps.isPending) return <Loading label="Loading apps…" />;
   if (apps.isError) return <ProblemNotice error={apps.error} />;
   const all = [...apps.data.apps].sort((a, b) => a.slug.localeCompare(b.slug));
-  const shown = all.filter((app) => matchesFilter({ ...app, owner: [app.owner_user_id] }, filter));
+  const shown = all.filter((app) => matchesFilter({ ...app, owner: [app.owner_name, app.owner_email ?? '', app.owner_user_id] }, filter));
   return (
     <section className="panel">
       <Table
@@ -251,7 +250,7 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
 
   const all = pages.data.pages.flatMap((p) => p.items);
   const shown = all.filter((app) =>
-    matchesFilter({ slug: app.slug, status: app.status, owner: [app.owner.user_id, app.owner.display_name] }, filter),
+    matchesFilter({ slug: app.slug, status: app.status, owner: [app.owner.name, app.owner.email ?? '', app.owner.user_id] }, filter),
   );
   const billed = new Map((usage.data?.environments ?? []).map((u) => [u.environment_id, u]));
   const names = ENV_NAMES.filter((name) => !env || name === env);
@@ -266,14 +265,7 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
     { header: 'App', cell: (app) => <AppName id={app.app_id} slug={app.slug} status={app.status} /> },
     {
       header: 'Owner',
-      cell: (app) => (
-        <span className="owner">
-          <span className="nowrap">{app.owner.display_name}</span>{' '}
-          <code className="truncate muted" title={app.owner.user_id}>
-            {app.owner.user_id}
-          </code>
-        </span>
-      ),
+      cell: (app) => <Person name={app.owner.name} email={app.owner.email} />,
     },
     ...names.map(envColumn),
     {

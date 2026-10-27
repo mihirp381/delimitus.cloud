@@ -13,7 +13,7 @@ const composeProject = process.env.SSC_E2E_COMPOSE_PROJECT ?? '';
 const composeFile = process.env.SSC_E2E_COMPOSE_FILE ?? '';
 
 const EVERYONE = ['Apps', 'Approvals', 'Connections', 'Internet access'];
-const ADMIN_ONLY = ['Your environment', 'People', 'Audit log'];
+const ADMIN_ONLY = ['People', 'Audit log', 'Usage'];
 const HELP = 'Help';
 const FORBIDDEN = 'Your credential is valid but does not allow this action.';
 
@@ -137,7 +137,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
   // The app list is the plain one, not the admin inventory, and the shared app is in it.
   await page.goto('/');
   await expect(page.getByRole('link', { name: w.slug })).toBeVisible();
-  await expect(page.getByRole('columnheader')).toHaveText(['App', 'Owner', 'App id']);
+  await expect(page.getByRole('columnheader')).toHaveText(['App', 'Owner']);
   await expect(page.getByLabel('Environment')).toHaveCount(0);
 
   // Typing an admin screen's address shows a line, not the screen, and the API refuses the read.
@@ -146,7 +146,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
   await expect(page.getByRole('form', { name: 'Filter events' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Export/ })).toHaveCount(0);
   await page.goto('/environment');
-  await expect(page.getByText('Only org admins can see the environment.')).toBeVisible();
+  await expect(page.getByText('Only org admins can see usage.')).toBeVisible();
   await page.goto('/people');
   await expect(page.getByText('Only org admins can look people up and link logins.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Unmatched logins' })).toHaveCount(0);
@@ -159,6 +159,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
     '/v1/usage',
     '/v1/cell',
     '/v1/unlinked-logins',
+    '/v1/users',
     `/v1/users?email=${encodeURIComponent(w.builderEmail)}`,
   ];
   for (const path of adminReads) {
@@ -191,10 +192,8 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
 test('an org admin sees every screen and the admin actions', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', adminToken);
-  await expect(nav(page)).toHaveText(
-    [...EVERYONE, ...ADMIN_ONLY, HELP].map((name) => (name === 'Approvals' ? /^Approvals(\d+\+?)?$/ : name)),
-  );
-  // Eight links: every one is on show, the sidebar does not hide one below the fold.
+  await expect(nav(page)).toHaveText([...EVERYONE, ...ADMIN_ONLY, HELP]);
+  // Eight links, the count outside the Approvals link: every one is on show, none below the fold.
   await expect(nav(page).first()).toBeInViewport({ ratio: 1 });
   await expect(nav(page).last()).toBeInViewport({ ratio: 1 });
 
@@ -204,24 +203,29 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
 
   await nav(page).filter({ hasText: 'Audit log' }).click();
   await expect(page.getByRole('form', { name: 'Filter events' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Export JSON Lines' })).toBeVisible();
-  await nav(page).filter({ hasText: 'Your environment' }).click();
-  await expect(page.getByRole('heading', { name: 'Your environment' })).toBeVisible();
-  await expect(page.getByText('Only org admins can see the environment.')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveAttribute('aria-haspopup', 'menu');
+  await nav(page).filter({ hasText: 'Usage' }).click();
+  await expect(page.getByRole('heading', { name: 'Usage', level: 1 })).toBeVisible();
+  await expect(page.getByText('Only org admins can see usage.')).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText(['Plan and usage', 'Capacity', 'Database']);
+  await expect(page.getByText(/not a bill/i)).toHaveCount(1);
+  await expect(page.getByText(/outbound IP/i)).toHaveCount(0);
+  await nav(page).filter({ hasText: 'Internet access' }).click();
+  await expect(page.getByRole('heading', { name: 'Internet access', level: 1 })).toBeVisible();
+  await expect(page.getByText('Fixed outbound IP', { exact: true })).toHaveCount(1);
 
-  // People: the unmatched logins (none here, every person was pushed by the operator), and a
-  // person found by their whole email address.
+  // People: the roster, searched by part of an address, and the unmatched logins (none here,
+  // every person was pushed by the operator).
   await nav(page).filter({ hasText: 'People' }).click();
   await expect(page.getByText('Every login so far matched a person.')).toBeVisible();
-  const person = page.getByRole('form', { name: 'Look up a person' });
-  await person.getByLabel('Email address').fill(w.builderEmail.toUpperCase());
-  await person.getByRole('button', { name: 'Find' }).click();
-  const found = page.getByRole('table', { name: /People with the email/ }).getByRole('row').nth(1);
-  await expect(found.getByRole('cell')).toHaveText(['builder E2E', w.builderEmail, 'member', 'active', w.builder.id]);
-  const group = page.getByRole('form', { name: 'Look up a group' });
-  await group.getByLabel('Group name').fill(`No such group ${w.slug}`);
-  await group.getByRole('button', { name: 'Find' }).click();
-  await expect(page.getByText(`No group is named exactly No such group ${w.slug}.`)).toBeVisible();
+  await page.getByLabel('Search people').fill(w.builderEmail.toUpperCase());
+  const found = page.getByRole('table', { name: 'People, by name' }).getByRole('row').nth(1);
+  await expect(found.getByRole('cell')).toHaveText(['builder E2E', w.builderEmail, 'member', 'active', 'Never'], {
+    useInnerText: true,
+  });
+  await found.getByRole('button', { name: 'builder E2E' }).click();
+  await expect(page.getByRole('dialog', { name: 'builder E2E' })).toContainText(w.builder.id);
+  await page.getByRole('dialog', { name: 'builder E2E' }).getByRole('button', { name: 'Close' }).click();
 
   await seesHelp(page);
 
@@ -239,7 +243,7 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
 test('a builder sees nothing admin, and can share and open rollback on their app', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', w.builder.token);
-  await expect(page.getByText(w.builder.id)).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Signed in as builder E2E,/ })).toBeVisible();
   await seesNothingAdmin(page, request, w, w.builder);
 
   // Share: the API takes a builder's change.
@@ -263,7 +267,7 @@ test('a builder sees nothing admin, and can share and open rollback on their app
   await rollback.getByRole('button', { name: 'Cancel' }).click();
 
   // Secrets: a builder may read the names and versions, and is shown the command to set one.
-  await openTab(page, 'Secrets');
+  await openTab(page, 'Settings');
   const secrets = page.getByRole('region', { name: 'Secrets' });
   await expect(secrets.getByText(`Production of ${w.slug} has no secrets.`)).toBeVisible();
   await expect(secrets.getByLabel('Set a secret in production', { exact: true })).toHaveText(
@@ -274,7 +278,7 @@ test('a builder sees nothing admin, and can share and open rollback on their app
 test('a user sees nothing admin, and the API refuses the actions shown to everyone', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', w.user.token);
-  await expect(page.getByText(w.user.id)).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Signed in as reader E2E,/ })).toBeVisible();
   await seesNothingAdmin(page, request, w, w.user);
 
   // Share is shown to everyone; the API's refusal is shown as it came.
@@ -296,8 +300,8 @@ test('a user sees nothing admin, and the API refuses the actions shown to everyo
   await expect(rollback.getByRole('alert').first()).toContainText(FORBIDDEN);
   await rollback.getByRole('button', { name: 'Cancel' }).click();
 
-  // And the secrets' names: the tab opens for everyone, and the API refuses a user.
-  await openTab(page, 'Secrets');
+  // And the secrets' names: Settings opens for everyone, and the API refuses a user.
+  await openTab(page, 'Settings');
   const secrets = page.getByRole('region', { name: 'Secrets' });
   await expect(secrets.getByRole('heading', { name: 'Set or rotate a secret' })).toBeVisible();
   await expect(secrets.getByRole('alert')).toContainText(FORBIDDEN);

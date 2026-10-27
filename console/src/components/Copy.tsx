@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
+import { copyMessage, useClipboard } from './useClipboard';
 
 interface CopyProps {
   readonly value: string;
@@ -15,27 +15,12 @@ const SHOWN_MS = 1600;
  * where the browser refuses the clipboard it says so, and the text beside it can still be selected.
  */
 export function CopyButton({ value, label }: CopyProps) {
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  useEffect(() => {
-    if (state === 'idle') return undefined;
-    const timer = window.setTimeout(() => setState('idle'), SHOWN_MS);
-    return () => window.clearTimeout(timer);
-  }, [state]);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setState('copied');
-    } catch {
-      setState('failed');
-    }
-  }
-
+  const { state, copy } = useClipboard(SHOWN_MS);
   return (
-    <button type="button" className="copy" aria-label={`Copy ${label}`} title={`Copy ${label}`} onClick={() => void copy()}>
+    <button type="button" className="copy" aria-label={`Copy ${label}`} title={`Copy ${label}`} onClick={() => void copy(value)}>
       <Icon name={state === 'copied' ? 'check' : 'copy'} />
       <span className="visually-hidden" role="status">
-        {state === 'copied' ? 'Copied.' : state === 'failed' ? 'Could not copy; select the text instead.' : ''}
+        {copyMessage(state, 'text')}
       </span>
     </button>
   );

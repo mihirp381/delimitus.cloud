@@ -75,13 +75,30 @@
             "description": "The best role granted.",
             "title": "Role"
           },
+          "user_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Email"
+          },
           "user_id": {
             "title": "User Id",
+            "type": "string"
+          },
+          "user_name": {
+            "title": "User Name",
             "type": "string"
           }
         },
         "required": [
           "user_id",
+          "user_name",
+          "user_email",
           "environment_id",
           "allowed",
           "role",
@@ -123,6 +140,11 @@
             "title": "Kind",
             "type": "string"
           },
+          "name": {
+            "description": "Who it was, as a person would say it.",
+            "title": "Name",
+            "type": "string"
+          },
           "via_agent": {
             "title": "Via Agent",
             "type": "boolean"
@@ -131,7 +153,8 @@
         "required": [
           "kind",
           "id",
-          "via_agent"
+          "via_agent",
+          "name"
         ],
         "title": "ActorOut",
         "type": "object"
@@ -432,6 +455,21 @@
             "title": "Id",
             "type": "string"
           },
+          "owner_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Email"
+          },
+          "owner_name": {
+            "title": "Owner Name",
+            "type": "string"
+          },
           "owner_user_id": {
             "title": "Owner User Id",
             "type": "string"
@@ -455,6 +493,8 @@
           "id",
           "slug",
           "owner_user_id",
+          "owner_name",
+          "owner_email",
           "status",
           "created_at",
           "environments"
@@ -469,6 +509,21 @@
             "title": "Id",
             "type": "string"
           },
+          "owner_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Email"
+          },
+          "owner_name": {
+            "title": "Owner Name",
+            "type": "string"
+          },
           "owner_user_id": {
             "title": "Owner User Id",
             "type": "string"
@@ -492,6 +547,8 @@
           "id",
           "slug",
           "owner_user_id",
+          "owner_name",
+          "owner_email",
           "status"
         ],
         "title": "AppSummary",
@@ -534,6 +591,29 @@
               }
             ],
             "title": "Decided At"
+          },
+          "decided_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By Email"
+          },
+          "decided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who decided or withdrew it; `Former member` once they are no longer active.",
+            "title": "Decided By Name"
           },
           "decided_by_user_id": {
             "anyOf": [
@@ -621,6 +701,17 @@
             "description": "The SSC operator who recorded the decision, when one did.",
             "title": "Recorded By Operator"
           },
+          "requested_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Email"
+          },
           "requested_by_name": {
             "title": "Requested By Name",
             "type": "string"
@@ -647,6 +738,14 @@
             "description": "What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).",
             "title": "Subject Key",
             "type": "string"
+          },
+          "subject_names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The name of each person and group the payload's grants name, by id.",
+            "title": "Subject Names",
+            "type": "object"
           }
         },
         "required": [
@@ -661,14 +760,18 @@
           "state",
           "requested_by_user_id",
           "requested_by_name",
+          "requested_by_email",
           "requested_via_agent",
           "decided_by_user_id",
+          "decided_by_name",
+          "decided_by_email",
           "decided_at",
           "decision_reason",
           "decision_channel",
           "recorded_by_operator",
           "policy_decision_id",
-          "created_at"
+          "created_at",
+          "subject_names"
         ],
         "title": "Approval",
         "type": "object"
@@ -808,6 +911,29 @@
             ],
             "title": "Decided At"
           },
+          "decided_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By Email"
+          },
+          "decided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who decided or withdrew it; `Former member` once they are no longer active.",
+            "title": "Decided By Name"
+          },
           "decided_by_user_id": {
             "anyOf": [
               {
@@ -894,6 +1020,17 @@
             "description": "The SSC operator who recorded the decision, when one did.",
             "title": "Recorded By Operator"
           },
+          "requested_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Email"
+          },
           "requested_by_name": {
             "title": "Requested By Name",
             "type": "string"
@@ -920,6 +1057,14 @@
             "description": "What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).",
             "title": "Subject Key",
             "type": "string"
+          },
+          "subject_names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The name of each person and group the payload's grants name, by id.",
+            "title": "Subject Names",
+            "type": "object"
           }
         },
         "required": [
@@ -934,14 +1079,18 @@
           "state",
           "requested_by_user_id",
           "requested_by_name",
+          "requested_by_email",
           "requested_via_agent",
           "decided_by_user_id",
+          "decided_by_name",
+          "decided_by_email",
           "decided_at",
           "decision_reason",
           "decision_channel",
           "recorded_by_operator",
           "policy_decision_id",
           "created_at",
+          "subject_names",
           "applied",
           "applied_reason"
         ],
@@ -997,6 +1146,29 @@
               }
             ],
             "title": "Decided At"
+          },
+          "decided_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By Email"
+          },
+          "decided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who decided or withdrew it; `Former member` once they are no longer active.",
+            "title": "Decided By Name"
           },
           "decided_by_user_id": {
             "anyOf": [
@@ -1095,6 +1267,17 @@
             "description": "The SSC operator who recorded the decision, when one did.",
             "title": "Recorded By Operator"
           },
+          "requested_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Email"
+          },
           "requested_by_name": {
             "title": "Requested By Name",
             "type": "string"
@@ -1121,6 +1304,14 @@
             "description": "What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).",
             "title": "Subject Key",
             "type": "string"
+          },
+          "subject_names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The name of each person and group the payload's grants name, by id.",
+            "title": "Subject Names",
+            "type": "object"
           }
         },
         "required": [
@@ -1135,14 +1326,18 @@
           "state",
           "requested_by_user_id",
           "requested_by_name",
+          "requested_by_email",
           "requested_via_agent",
           "decided_by_user_id",
+          "decided_by_name",
+          "decided_by_email",
           "decided_at",
           "decision_reason",
           "decision_channel",
           "recorded_by_operator",
           "policy_decision_id",
           "created_at",
+          "subject_names",
           "grant_diff",
           "connection",
           "can_decide",
@@ -1273,12 +1468,29 @@
             ],
             "title": "Client Id"
           },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person's email, while they are an active member.",
+            "title": "Email"
+          },
           "id": {
             "title": "Id",
             "type": "string"
           },
           "kind": {
             "$ref": "#/components/schemas/ActorKind"
+          },
+          "name": {
+            "description": "Who, in words: the person; `<client id> for <person>` in an agent session; `Delimitus operator`; `System` for a workload, a schedule or an integration.",
+            "title": "Name",
+            "type": "string"
           },
           "via_agent": {
             "title": "Via Agent",
@@ -1289,7 +1501,9 @@
           "kind",
           "id",
           "via_agent",
-          "client_id"
+          "client_id",
+          "name",
+          "email"
         ],
         "title": "AuditActor",
         "type": "object"
@@ -1416,11 +1630,24 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The app's slug, the person's, group's, connection's or org's name, or `<slug> <environment>`; null for other kinds.",
+            "title": "Name"
           }
         },
         "required": [
           "kind",
-          "id"
+          "id",
+          "name"
         ],
         "title": "AuditTarget",
         "type": "object"
@@ -2493,6 +2720,14 @@
           "ceiling": {
             "$ref": "#/components/schemas/CeilingDoc"
           },
+          "ceiling_subject_names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The name of each group and person the ceiling lists, by id.",
+            "title": "Ceiling Subject Names",
+            "type": "object"
+          },
           "classification": {
             "enum": [
               "internal",
@@ -2534,6 +2769,28 @@
             "title": "Name",
             "type": "string"
           },
+          "owner_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Email"
+          },
+          "owner_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Name"
+          },
           "owner_user_id": {
             "anyOf": [
               {
@@ -2547,6 +2804,18 @@
           },
           "preview_access": {
             "$ref": "#/components/schemas/PreviewAccessDoc"
+          },
+          "preview_access_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The name of the group `preview_access` names, for a group rule.",
+            "title": "Preview Access Group Name"
           },
           "setup_status": {
             "enum": [
@@ -2575,6 +2844,8 @@
           "name",
           "kind",
           "owner_user_id",
+          "owner_name",
+          "owner_email",
           "classification",
           "ceiling",
           "allowed_schemas",
@@ -2582,6 +2853,8 @@
           "setup_status",
           "status",
           "preview_access",
+          "preview_access_group_name",
+          "ceiling_subject_names",
           "created_at",
           "updated_at"
         ],
@@ -3442,6 +3715,28 @@
       "EgressHostOut": {
         "additionalProperties": false,
         "properties": {
+          "added_by_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By Email"
+          },
+          "added_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By Name"
+          },
           "added_by_user_id": {
             "anyOf": [
               {
@@ -3484,6 +3779,8 @@
           "host",
           "high_risk",
           "added_by_user_id",
+          "added_by_name",
+          "added_by_email",
           "approval_request_id",
           "created_at"
         ],
@@ -3788,6 +4085,18 @@
             ],
             "title": "Subject Kind",
             "type": "string"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person's or group's name; null for the org.",
+            "title": "Subject Name"
           }
         },
         "required": [
@@ -3795,7 +4104,8 @@
           "role",
           "subject_kind",
           "subject_id",
-          "group_name"
+          "group_name",
+          "subject_name"
         ],
         "title": "ExplainedGrant",
         "type": "object"
@@ -3921,6 +4231,18 @@
             "title": "Role",
             "type": "string"
           },
+          "subject_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An active person's email.",
+            "title": "Subject Email"
+          },
           "subject_id": {
             "anyOf": [
               {
@@ -3940,13 +4262,27 @@
             ],
             "title": "Subject Kind",
             "type": "string"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person's or group's name; null for the org. `Former member` for a person no longer active.",
+            "title": "Subject Name"
           }
         },
         "required": [
           "id",
           "role",
           "subject_kind",
-          "subject_id"
+          "subject_id",
+          "subject_name",
+          "subject_email"
         ],
         "title": "GrantOut",
         "type": "object"
@@ -4705,14 +5041,31 @@
             "title": "Identity Link Id",
             "type": "string"
           },
+          "user_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Email"
+          },
           "user_id": {
             "title": "User Id",
+            "type": "string"
+          },
+          "user_name": {
+            "title": "User Name",
             "type": "string"
           }
         },
         "required": [
           "identity_link_id",
-          "user_id"
+          "user_id",
+          "user_name",
+          "user_email"
         ],
         "title": "Linked",
         "type": "object"
@@ -4996,6 +5349,21 @@
             "title": "Display Name",
             "type": "string"
           },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
           "user_id": {
             "title": "User Id",
             "type": "string"
@@ -5003,7 +5371,9 @@
         },
         "required": [
           "user_id",
-          "display_name"
+          "display_name",
+          "name",
+          "email"
         ],
         "title": "Owner",
         "type": "object"
@@ -5671,6 +6041,10 @@
             "title": "Cron",
             "type": "string"
           },
+          "declared_by_name": {
+            "title": "Declared By Name",
+            "type": "string"
+          },
           "declared_by_user_id": {
             "description": "Whose authority it runs on, with the app's owner: who last deployed or resumed it.",
             "title": "Declared By User Id",
@@ -5773,6 +6147,7 @@
           "pause_reason",
           "next_run_at",
           "declared_by_user_id",
+          "declared_by_name",
           "last_run"
         ],
         "title": "ScheduleOut",
@@ -6170,6 +6545,17 @@
             ],
             "title": "Http Status"
           },
+          "requested_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Name"
+          },
           "requested_by_user_id": {
             "anyOf": [
               {
@@ -6252,6 +6638,7 @@
           "duration_ms",
           "scheduled_for",
           "requested_by_user_id",
+          "requested_by_name",
           "created_at",
           "started_at",
           "finished_at"
@@ -6501,6 +6888,11 @@
       "UserMatch": {
         "additionalProperties": false,
         "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
           "display_name": {
             "title": "Display Name",
             "type": "string"
@@ -6512,6 +6904,19 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "last_sign_in_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The start of the person's latest browser, console or command-line session.",
+            "title": "Last Sign In At"
           },
           "role": {
             "$ref": "#/components/schemas/OrgRole"
@@ -6530,7 +6935,9 @@
           "display_name",
           "email",
           "role",
-          "status"
+          "status",
+          "created_at",
+          "last_sign_in_at"
         ],
         "title": "UserMatch",
         "type": "object"
@@ -6538,6 +6945,18 @@
       "UserMatches": {
         "additionalProperties": false,
         "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as `cursor` for the next page; null on the last page and with `email`.",
+            "title": "Next Cursor"
+          },
           "users": {
             "items": {
               "$ref": "#/components/schemas/UserMatch"
@@ -6547,7 +6966,8 @@
           }
         },
         "required": [
-          "users"
+          "users",
+          "next_cursor"
         ],
         "title": "UserMatches",
         "type": "object"
@@ -6736,6 +7156,17 @@
             "title": "Credential Id",
             "type": "string"
           },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
           "is_agent": {
             "title": "Is Agent",
             "type": "boolean"
@@ -6743,9 +7174,32 @@
           "kind": {
             "$ref": "#/components/schemas/PrincipalKind"
           },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The user's display name; null for other credentials.",
+            "title": "Name"
+          },
           "org_id": {
             "title": "Org Id",
             "type": "string"
+          },
+          "org_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org Name"
           },
           "role": {
             "anyOf": [
@@ -6770,7 +7224,10 @@
           "credential_id",
           "is_agent",
           "client_id",
-          "role"
+          "role",
+          "org_name",
+          "name",
+          "email"
         ],
         "title": "Whoami",
         "type": "object"
@@ -16375,21 +16832,100 @@
     },
     "/v1/users": {
       "get": {
-        "description": "Active org admins with a user credential only (``FORBIDDEN``).",
-        "operationId": "find_users_v1_users_get",
+        "description": "Active org admins with a user credential only (``FORBIDDEN``); the roster, without\n``email``, never in an agent session (``AGENT_SESSION_REFUSED``). By name, then id.",
+        "operationId": "list_users_v1_users_get",
         "parameters": [
           {
-            "description": "Matched whole, ignoring case. Deactivated people are included.",
+            "description": "Matched whole, ignoring case; deactivated people are included. Not with `q`, `status` or `cursor`.",
             "in": "query",
             "name": "email",
-            "required": true,
+            "required": false,
             "schema": {
-              "description": "Matched whole, ignoring case. Deactivated people are included.",
-              "maxLength": 320,
-              "minLength": 3,
-              "pattern": "^[^@\\s\\x00-\\x1f\\x7f]+@[^@\\s\\x00-\\x1f\\x7f]+$",
-              "title": "Email",
-              "type": "string"
+              "anyOf": [
+                {
+                  "maxLength": 320,
+                  "minLength": 3,
+                  "pattern": "^[^@\\s\\x00-\\x1f\\x7f]+@[^@\\s\\x00-\\x1f\\x7f]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Matched whole, ignoring case; deactivated people are included. Not with `q`, `status` or `cursor`.",
+              "title": "Email"
+            }
+          },
+          {
+            "description": "Part of the name or email, ignoring case.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Part of the name or email, ignoring case.",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "active",
+                    "deactivated"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The previous page's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^usr_[a-z0-9]{20}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The previous page's `next_cursor`.",
+              "title": "Cursor"
             }
           }
         ],
@@ -16422,7 +16958,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "413": {
             "content": {
@@ -16455,7 +16991,7 @@
             "description": "`RATE_LIMITED`"
           }
         },
-        "summary": "Find Users",
+        "summary": "List Users",
         "tags": [
           "v1"
         ]

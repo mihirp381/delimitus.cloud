@@ -5,7 +5,7 @@ from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import Field
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
@@ -18,6 +18,7 @@ from ssc_control.api.routes.v1.common import Id, Slug, Strict, require_user
 from ssc_control.api.routes.v1.grants import grant_owner_preview
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
+from ssc_control.names import people
 from ssc_control.snapshot.service import mark_dirty
 from ssc_shared.hosts import Environment, app_origin, slug_problem
 
@@ -45,6 +46,8 @@ class AppOut(Strict):
     id: str
     slug: str
     owner_user_id: str
+    owner_name: str
+    owner_email: str | None
     status: Literal["active", "disabled", "quarantined", "deleting"]
     created_at: datetime
     environments: list[EnvironmentOut]
@@ -54,6 +57,8 @@ class AppSummary(Strict):
     id: str
     slug: str
     owner_user_id: str
+    owner_name: str
+    owner_email: str | None
     status: Literal["active", "disabled", "quarantined", "deleting"]
 
 
@@ -109,6 +114,16 @@ async def environments_of(uow: UnitOfWork, app_id: str, apps_domain: str) -> lis
     ]
 
 
+async def app_out(uow: UnitOfWork, row: RowMapping, apps_domain: str) -> AppOut:
+    owner = (await people(uow.conn, uow.org_id, [row["owner_user_id"]])).of(row["owner_user_id"])
+    return AppOut(
+        **dict(row),
+        owner_name=owner.name,
+        owner_email=owner.email,
+        environments=await environments_of(uow, row["id"], apps_domain),
+    )
+
+
 @router.post(
     "/apps",
     status_code=201,
@@ -136,7 +151,7 @@ async def create_app(body: AppCreate, uow: UserUoW, request: Request) -> Respons
         )
     await grant_owner_preview(uow, app_id, owner)
     apps_domain = runtime_of(request).settings.apps_domain
-    out = AppOut(**dict(row), environments=await environments_of(uow, app_id, apps_domain))
+    out = await app_out(uow, row, apps_domain)
     await uow.audit(
         AuditAction.APP_CREATED,
         target_kind="app",
@@ -163,8 +178,16 @@ async def list_apps(
     ] = None,
 ) -> AppList:
     """Every app of the org, by slug. ``builder=me`` needs a user credential (``FORBIDDEN``)."""
-    rows = (await uow.conn.execute(_SELECT_APPS, {"org": uow.org_id})).mappings()
-    apps = [AppSummary(**dict(r)) for r in rows]
+    rows = (await uow.conn.execute(_SELECT_APPS, {"org": uow.org_id})).mappings().all()
+    owners = await people(uow.conn, uow.org_id, [r["owner_user_id"] for r in rows])
+    apps = [
+        AppSummary(
+            **r,
+            owner_name=owners.of(r["owner_user_id"]).name,
+            owner_email=owners.of(r["owner_user_id"]).email,
+        )
+        for r in rows
+    ]
     if builder == "me":
         mine = await buildable_app_ids(uow)
         apps = [a for a in apps if a.id in mine]
@@ -183,4 +206,4 @@ async def get_app(app_id: Id, uow: UserUoW, request: Request) -> AppOut:
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"app_id": app_id})
     apps_domain = runtime_of(request).settings.apps_domain
-    return AppOut(**dict(row), environments=await environments_of(uow, app_id, apps_domain))
+    return await app_out(uow, row, apps_domain)

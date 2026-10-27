@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
 import { sscAnswers, supportEmail, trustUrl } from '../../help';
 
 export const Route = createFileRoute('/_authed/help')({
@@ -19,8 +20,7 @@ function HelpPage() {
         title="Help"
         purpose="How to reach support, and whether SSC is answering right now."
       />
-      <section className="panel" aria-labelledby="help-support">
-        <h2 id="help-support">Support</h2>
+      <Panel title="Support">
         {email ? (
           <p>
             Write to <a href={`mailto:${email}`}>{email}</a>.
@@ -32,10 +32,9 @@ function HelpPage() {
           If an action failed, include the request id shown under the error: it lets us find
           exactly what happened. Never send a password, a token or a secret&apos;s value.
         </p>
-      </section>
+      </Panel>
       {trust ? (
-        <section className="panel" aria-labelledby="help-trust">
-          <h2 id="help-trust">Trust pack</h2>
+        <Panel title="Trust pack">
           <p>
             How SSC is built and run, what it keeps and who can reach it:{' '}
             <a href={trust} target="_blank" rel="noreferrer noopener">
@@ -43,7 +42,7 @@ function HelpPage() {
             </a>
             .
           </p>
-        </section>
+        </Panel>
       ) : null}
       <Status />
     </>
@@ -80,8 +79,7 @@ function Status() {
   }, [check]);
 
   return (
-    <section className="panel" aria-labelledby="help-status">
-      <h2 id="help-status">Status</h2>
+    <Panel title="Status">
       <p role="status" aria-label="SSC status">
         {checked ? (
           <>
@@ -108,6 +106,6 @@ function Status() {
           {checking ? 'Checking…' : 'Check again'}
         </Button>
       </div>
-    </section>
+    </Panel>
   );
 }

@@ -14,6 +14,9 @@ export const WHOAMI = () =>
     is_agent: false,
     client_id: null,
     role: 'admin',
+    org_name: 'Acme',
+    name: 'Dev Admin',
+    email: 'dev@example.com',
   });
 
 /** Renders the console at `path` against a fake API that also answers `GET /v1/whoami`. */

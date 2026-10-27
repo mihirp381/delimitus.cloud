@@ -16,13 +16,14 @@ import { Ago } from '../components/Ago';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
-import { Phrases } from '../components/Phrases';
 import { Loading } from '../components/Loading';
+import { Notice } from '../components/Notice';
+import { Panel } from '../components/Panel';
+import { Phrases } from '../components/Phrases';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { useToast } from '../components/Toast';
 import { ENV_TITLE } from './names';
-import { Section } from './Section';
 
 interface Props {
   readonly app: AppOut;
@@ -38,9 +39,9 @@ const SCHEMA_PATH = '/v1/apps/{app_id}/environments/{environment_id}/connections
  */
 export function EnvConnections({ app, env }: Props) {
   return (
-    <Section title="Data connections">
+    <Panel title="Data connections" id="data-connections">
       <ConnectionsBody app={app} env={env} />
-    </Section>
+    </Panel>
   );
 }
 
@@ -264,7 +265,7 @@ function LinkForm({ app, env, held, onSaved }: LinkProps) {
     }
   }
 
-  if (all.isPending) return <p className="muted">Loading connections to link…</p>;
+  if (all.isPending) return <Loading label="Loading connections to link…" rows={2} />;
   if (all.isError) return <ProblemNotice error={all.error} />;
   return (
     <form className="stack" onSubmit={submit} aria-label={`Link a connection to ${ENV_TITLE[env.name]}`}>
@@ -282,7 +283,7 @@ function LinkForm({ app, env, held, onSaved }: LinkProps) {
       </label>
       {error ? <ProblemNotice error={error} /> : null}
       {needsApproval && !asked ? (
-        <div className="notice notice-info" role="note">
+        <Notice tone="info" role="note">
           <p>
             This environment is shared wider than <code>{needsApproval}</code> allows. Its owner or
             an org admin must approve that; ask here, then link it again once it is approved.
@@ -292,16 +293,18 @@ function LinkForm({ app, env, held, onSaved }: LinkProps) {
               Ask for approval
             </Button>
           </div>
-        </div>
+        </Notice>
       ) : null}
       {asked ? (
-        <p className="notice notice-success" role="status">
-          Asked for approval:{' '}
-          <Link to="/approvals/$approvalId" params={{ approvalId: asked.id }}>
-            {asked.id}
-          </Link>{' '}
-          ({asked.state}). Link it again once it is approved.
-        </p>
+        <Notice tone="success">
+          <p>
+            Asked for approval:{' '}
+            <Link to="/approvals/$approvalId" params={{ approvalId: asked.id }}>
+              open the request
+            </Link>{' '}
+            ({asked.state}). Link it again once it is approved.
+          </p>
+        </Notice>
       ) : null}
       <div>
         <Button type="submit" variant="primary" disabled={!choice || busy}>

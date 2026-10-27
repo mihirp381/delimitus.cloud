@@ -703,6 +703,8 @@ def test_explain_names_the_grant_and_the_group(
     assert ok.status_code == 200, ok.text
     assert ok.json() == {
         "user_id": una,
+        "user_name": "Una User",
+        "user_email": "una@example.com",
         "environment_id": world.prod,
         "allowed": True,
         "role": "user",
@@ -715,6 +717,7 @@ def test_explain_names_the_grant_and_the_group(
                 "subject_kind": "group",
                 "subject_id": gid,
                 "group_name": "Finance",
+                "subject_name": "Finance",
             }
         ],
         "evaluated_from": "live",
@@ -817,30 +820,33 @@ def test_admins_find_people_by_email(
     # Email is not a key: every match comes back, deactivated people too, never another org's.
     found = find(world.admin_token, "SHARED@example.COM")
     assert found.status_code == 200, found.text
-    assert found.json() == {
-        "users": [
-            {
-                "id": al,
-                "display_name": "Al One",
-                "email": "shared@example.com",
-                "role": "member",
-                "status": "deactivated",
-            },
-            {
-                "id": bea,
-                "display_name": "Bea Two",
-                "email": "Shared@Example.com",
-                "role": "member",
-                "status": "active",
-            },
-        ]
-    }
+    body = found.json()
+    assert body["next_cursor"] is None
+    assert [
+        {k: u[k] for k in ("id", "display_name", "email", "role", "status")} for u in body["users"]
+    ] == [
+        {
+            "id": al,
+            "display_name": "Al One",
+            "email": "shared@example.com",
+            "role": "member",
+            "status": "deactivated",
+        },
+        {
+            "id": bea,
+            "display_name": "Bea Two",
+            "email": "Shared@Example.com",
+            "role": "member",
+            "status": "active",
+        },
+    ]
+    assert [u["last_sign_in_at"] for u in body["users"]] == [None, None]
     ada = find(world.admin_token, "ada@example.com").json()["users"]
     assert [(u["id"], u["role"]) for u in ada] == [(world.admin, "admin")]
     # The whole address or nothing: no prefix or pattern search.
     for miss in ("nobody@example.com", "shared@example", "%@example.com", "_hared@example.com"):
-        assert find(world.admin_token, miss).json() == {"users": []}
-    for bad in (None, "", "no-at-sign", "a@b@c", "sp ace@example.com", "x" * 320 + "@e.c"):
+        assert find(world.admin_token, miss).json() == {"users": [], "next_cursor": None}
+    for bad in ("", "no-at-sign", "a@b@c", "sp ace@example.com", "x" * 320 + "@e.c"):
         assert_problem(find(world.admin_token, bad), ErrorCode.VALIDATION_FAILED)
     for bad in ("ada\x00@example.com", "ada@example.com\x00", "ada\x7f@example.com"):
         assert_problem(find(world.admin_token, bad), ErrorCode.VALIDATION_FAILED)
@@ -859,6 +865,103 @@ def test_admins_find_people_by_email(
     ]
     for token in refused:
         assert_problem(find(token, "shared@example.com"), ErrorCode.FORBIDDEN)
+
+
+def _signed_in(dsns: Dsns, org: str, user: str, kind: str, at: str) -> None:
+    ci = kind == "ci"
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(
+            "insert into ssc.auth_session (id, org_id, user_id, kind, connection_id, created_at, "
+            "expires_at, scope, label) values (%s, %s, %s, %s, 'conn_x', %s::timestamptz, "
+            "%s::timestamptz + interval '1 hour', %s, %s)",
+            (
+                new_id("ses"),
+                org,
+                user,
+                kind,
+                at,
+                at,
+                "preview" if ci else None,
+                "a/b" if ci else None,
+            ),
+        )
+
+
+def test_admins_list_the_roster(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    def roster(token: str, **params: object) -> Response:
+        return client.get("/v1/users", params=params, headers=auth(token))
+
+    def sync(w: World, name: str, email: str, **kw: str) -> str:
+        r = sync_user(client, w, f"sub-{uuid.uuid4().hex}", name=name, email=email, **kw)
+        assert r.status_code == 200, r.text
+        return r.json()["user_id"]
+
+    cy = sync(world, "cy Three", "cy@example.com")
+    bo = sync(world, "Bo Two", "bo@corp.example", status="deactivated")
+    di = sync(world, "Di Four", "di@example.com", role="admin")
+    other_org, other_admin, _ = new_org(dsns.app)
+    elsewhere = World(
+        **{
+            **world.__dict__,
+            "org": other_org,
+            "operator_token": internal_token(signing_key, other_org, "operator"),
+        }
+    )
+    sync(elsewhere, "Bo Elsewhere", "bo@corp.example")
+    _signed_in(dsns, world.org, cy, "browser", "2026-10-01T09:00:00Z")
+    _signed_in(dsns, world.org, cy, "cli", "2026-10-02T09:00:00Z")
+    _signed_in(dsns, world.org, cy, "ci", "2026-10-03T09:00:00Z")
+    _signed_in(dsns, other_org, other_admin, "browser", "2026-10-04T09:00:00Z")
+
+    everyone = roster(world.admin_token)
+    assert everyone.status_code == 200, everyone.text
+    users = everyone.json()["users"]
+    assert [u["display_name"] for u in users] == ["Ada Admin", "Bo Two", "cy Three", "Di Four"]
+    assert everyone.json()["next_cursor"] is None
+    by_id = {u["id"]: u for u in users}
+    # The latest session the person started, a CI token's not counted; never signed in is null.
+    assert by_id[cy]["last_sign_in_at"].startswith("2026-10-02T09:00:00")
+    assert by_id[di]["last_sign_in_at"] is None
+    assert (by_id[bo]["status"], by_id[di]["role"]) == ("deactivated", "admin")
+    assert all(u["created_at"] for u in users)
+
+    def names(**params: object) -> list[str]:
+        r = roster(world.admin_token, **params)
+        assert r.status_code == 200, r.text
+        return [u["display_name"] for u in r.json()["users"]]
+
+    assert names(status="active") == ["Ada Admin", "cy Three", "Di Four"]
+    assert names(status="deactivated") == ["Bo Two"]
+    assert names(q="CORP") == ["Bo Two"]
+    assert names(q="y th") == ["cy Three"]
+    assert names(q="%") == []
+    assert names(q="example.com", status="active") == ["Ada Admin", "cy Three", "Di Four"]
+
+    first = roster(world.admin_token, limit=2).json()
+    assert [u["display_name"] for u in first["users"]] == ["Ada Admin", "Bo Two"]
+    assert first["next_cursor"] == bo
+    second = roster(world.admin_token, limit=2, cursor=first["next_cursor"]).json()
+    assert [u["display_name"] for u in second["users"]] == ["cy Three", "Di Four"]
+    assert second["next_cursor"] is None
+
+    for bad in ({"limit": 0}, {"limit": 201}, {"cursor": "bo"}, {"q": ""}, {"q": "a\x00"}):
+        assert_problem(roster(world.admin_token, **bad), ErrorCode.VALIDATION_FAILED)
+    for mixed in ({"q": "bo"}, {"status": "active"}, {"cursor": bo}):
+        assert_problem(
+            roster(world.admin_token, email="bo@corp.example", **mixed), ErrorCode.VALIDATION_FAILED
+        )
+
+    agent = mint(signing_key, org=world.org, sub=world.admin, agent=True, client_id="cli_x")
+    assert_problem(roster(agent), ErrorCode.AGENT_SESSION_REFUSED)
+    for token in (
+        user_token(signing_key, world.org, cy),
+        user_token(signing_key, world.org, bo),
+        mint(signing_key, org=world.org, sub=world.admin, kind="workload"),
+        mint(signing_key, org=world.org, sub=world.admin, kind="operator"),
+    ):
+        assert_problem(roster(token), ErrorCode.FORBIDDEN)
 
 
 type Check = Callable[[UnitOfWork, str], Awaitable[str]]

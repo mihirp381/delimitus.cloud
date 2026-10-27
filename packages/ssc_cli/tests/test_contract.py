@@ -175,9 +175,9 @@ def test_release_paging_matches_the_api():
 
 def test_lookups_are_checked_as_the_api_checks_them():
     paths = json.loads(OPENAPI.read_text())["paths"]
-    (email,) = paths["/v1/users"]["get"]["parameters"]
-    e = email["schema"]
-    assert (email["name"], e["pattern"]) == ("email", f"^{share.EMAIL.pattern}$")
+    (email,) = [p for p in paths["/v1/users"]["get"]["parameters"] if p["name"] == "email"]
+    e = email["schema"]["anyOf"][0]
+    assert e["pattern"] == f"^{share.EMAIL.pattern}$"
     assert (e["minLength"], e["maxLength"]) == (share.MIN_EMAIL, share.MAX_EMAIL)
     name, match = paths["/v1/groups"]["get"]["parameters"]
     assert (name["name"], name["schema"]["minLength"]) == ("name", 1)

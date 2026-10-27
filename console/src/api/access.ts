@@ -45,6 +45,6 @@ export function accessSentence(r: AccessExplained, who: string, where: string, e
 /** Who a deciding grant names, in words. */
 export function grantSubject(g: ExplainedGrant): string {
   if (g.subject_kind === 'org') return 'Everyone in the organisation';
-  if (g.subject_kind === 'group') return `Group ${g.group_name ?? g.subject_id ?? ''}`;
-  return `User ${g.subject_id ?? ''}`;
+  if (g.subject_kind === 'group') return `Group ${g.subject_name ?? g.group_name ?? g.subject_id ?? ''}`;
+  return `User ${g.subject_name ?? g.subject_id ?? ''}`;
 }

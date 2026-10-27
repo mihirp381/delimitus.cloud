@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { type FormEvent, type ReactNode, useState } from 'react';
+import { type FormEvent, useState } from 'react';
 import {
   BILLING_TEXT,
   CAUSE_TEXT,
@@ -21,12 +21,14 @@ import {
   warmCost,
 } from '../../api/warm';
 import { ENV_TITLE } from '../../app-detail/names';
+import { AdminOnly } from '../../components/AdminOnly';
 import { Badge, type Tone } from '../../components/Badge';
 import { Button } from '../../components/Button';
-import { Id } from '../../components/Copy';
-import { Meter } from '../../components/Meter';
 import { Loading } from '../../components/Loading';
+import { Meter } from '../../components/Meter';
+import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 
@@ -43,61 +45,28 @@ const STATE_TONE: Readonly<Record<CellResource['state'], Tone>> = {
 };
 
 function EnvironmentPage() {
-  const { queries, isAdmin } = Route.useRouteContext();
-  const me = queries.useQuery('get', '/v1/whoami');
-  if (isAdmin(me.data)) {
-    return <YourEnvironment />;
-  }
   return (
-    <>
-      <PageHeader title="Your environment" />
-      {me.isPending ? (
-        <p className="muted">Loading…</p>
-      ) : me.isError ? (
-        <ProblemNotice error={me.error} />
-      ) : (
-        <p className="muted">Only org admins can see the environment.</p>
-      )}
-    </>
+    <AdminOnly title="Usage" refusal="Only org admins can see usage.">
+      <YourEnvironment />
+    </AdminOnly>
   );
 }
 
 function YourEnvironment() {
   const { queries } = Route.useRouteContext();
   const cell = queries.useQuery('get', '/v1/cell');
-  const usage = queries.useQuery('get', '/v1/usage');
   return (
     <>
-      <PageHeader
-        title="Your environment"
-        purpose={
-          <>
-            What your company&apos;s cell runs and what each part adds a month. These figures are
-            not a bill: you pay a flat fee, and they show what a choice sets off.
-          </>
-        }
-      />
-      <Tiles />
-      <OutboundIp />
+      <PageHeader title="Usage" purpose="What your cell runs and what each part adds a month; this is not a bill." />
       {cell.isPending ? (
         <Loading label="Loading the cell…" rows={3} />
       ) : cell.isError ? (
         <ProblemNotice error={cell.error} />
       ) : (
         <>
-          <Resources resources={cell.data.resources} />
+          <PlanPanel resources={cell.data.resources} environments={cell.data.environments} />
           <WarmPanel />
           <DatabasePanel database={cell.data.database} environments={cell.data.environments} />
-          <section className="panel" aria-labelledby="usage-heading">
-            <h2 id="usage-heading">Usage this month</h2>
-            {usage.isPending ? (
-              <Loading label="Loading usage…" rows={3} />
-            ) : usage.isError ? (
-              <ProblemNotice error={usage.error} />
-            ) : (
-              <UsageTable usage={usage.data.environments} environments={cell.data.environments} />
-            )}
-          </section>
         </>
       )}
     </>
@@ -107,143 +76,41 @@ function YourEnvironment() {
 /** A part adds its figure once it was asked for; one that is off, or failed, adds nothing. */
 const SET_OFF: ReadonlySet<CellResource['state']> = new Set(['requested', 'creating', 'ready']);
 
-/** "$20", or the wait for it. */
-function Figure({ pending, children }: { readonly pending: boolean; readonly children: ReactNode }) {
-  return <span className="tile-figure">{pending ? <span className="muted">…</span> : children}</span>;
-}
-
-/**
- * The page at a glance: what the cell's parts and the warm option add a month, how many of the
- * database's places are taken, the address apps reach the internet from, and what is kept warm.
- * Each tile reads what its section below reads, so nothing is asked twice, and says "Not
- * available" on its own when its read fails: the section below shows why.
- */
-function Tiles() {
+function PlanPanel({
+  resources,
+  environments,
+}: {
+  readonly resources: readonly CellResource[];
+  readonly environments: readonly CellEnvironment[];
+}) {
   const { queries } = Route.useRouteContext();
-  const cell = queries.useQuery('get', '/v1/cell');
+  const usage = queries.useQuery('get', '/v1/usage');
   const warm = queries.useQuery('get', '/v1/warm');
-  const egress = queries.useQuery('get', '/v1/egress');
-  const database = cell.data?.database;
-  const parts = cell.data
-    ? cell.data.resources.filter((r) => SET_OFF.has(r.state)).reduce((sum, r) => sum + r.monthly_usd, 0)
-    : null;
-  const total = parts !== null && warm.data ? parts + warm.data.monthly_usd : null;
-  const left = database ? database.places_total - database.places_used : 0;
-  const full = database ? left <= 0 || database.nearly_full : false;
-  const warmApps = warm.data ? warm.data.environments.filter((e) => e.warm).length : 0;
-  const ip = egress.data?.outbound_ip ?? null;
-
+  const parts = resources.filter((r) => SET_OFF.has(r.state)).reduce((sum, r) => sum + r.monthly_usd, 0);
+  const total = warm.data ? parts + warm.data.monthly_usd : null;
   return (
-    <section className="tiles" aria-label="At a glance">
-      <div className="tile">
-        <span className="tile-label">Added a month</span>
-        <Figure pending={cell.isPending || warm.isPending}>
-          {total === null ? <span className="muted">Not available</span> : total === 0 ? 'Nothing' : `$${total}`}
-        </Figure>
-        <span className="tile-note">By the parts asked for and the warm option. Not a bill.</span>
-      </div>
-      <div className="tile">
-        <span className="tile-label">Database places</span>
-        <Figure pending={cell.isPending}>
-          {database ? (
-            `${database.places_used} of ${database.places_total}`
-          ) : (
-            <span className="muted">Not available</span>
-          )}
-        </Figure>
-        {database ? (
-          <>
-            <Meter
-              value={database.places_used}
-              max={database.places_total}
-              label={`${database.places_used} of ${database.places_total} database places used`}
-              warning={full}
-            />
-            <span className="tile-note">{left <= 0 ? 'Every place is taken.' : `${left} left.`}</span>
-          </>
-        ) : null}
-      </div>
-      <div className="tile">
-        <span className="tile-label">Fixed outbound IP</span>
-        <Figure pending={egress.isPending}>
-          {egress.isError ? (
-            <span className="muted">Not available</span>
-          ) : ip ? (
-            <Id value={ip} label="fixed outbound IP" />
-          ) : (
-            <span className="muted">Not set yet</span>
-          )}
-        </Figure>
-        <span className="tile-note">Where your apps reach the internet from.</span>
-      </div>
-      <div className="tile">
-        <span className="tile-label">Warm option</span>
-        <Figure pending={warm.isPending}>
-          {warm.data ? (
-            warmApps === 0 ? (
-              'Off'
-            ) : (
-              `${warmApps} ${warmApps === 1 ? 'app' : 'apps'}`
-            )
-          ) : (
-            <span className="muted">Not available</span>
-          )}
-        </Figure>
-        {warm.data ? (
-          <span className="tile-note">
-            {warmApps === 0 ? 'No app is kept warm' : 'Kept warm'}; the gateway{' '}
-            {GATEWAY_TEXT[warm.data.gateway.state]}.
-          </span>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function OutboundIp() {
-  const { queries } = Route.useRouteContext();
-  const egress = queries.useQuery('get', '/v1/egress');
-  const [copied, setCopied] = useState<string | null>(null);
-  const ip = egress.data?.outbound_ip ?? null;
-
-  async function copy(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied('Copied.');
-    } catch {
-      setCopied('Could not copy; select the address instead.');
-    }
-  }
-
-  return (
-    <section className="panel" aria-labelledby="ip-heading">
-      <h2 id="ip-heading">Fixed outbound IP</h2>
-      {egress.isPending ? (
-        <p className="muted">Loading…</p>
-      ) : egress.isError ? (
-        <ProblemNotice error={egress.error} />
-      ) : ip ? (
-        <>
-          <p>
-            Your apps reach the internet from <code>{ip}</code>. Give it to a partner whose firewall
-            only lets known addresses in.
-          </p>
-          <div className="toolbar">
-            <Button onClick={() => void copy(ip)}>Copy IP</Button>
-            {copied ? (
-              <span className="muted" role="status">
-                {copied}
-              </span>
-            ) : null}
-          </div>
-        </>
+    <Panel title="Plan and usage">
+      <p>
+        Added a month:{' '}
+        <strong>{warm.isPending ? '…' : total === null ? 'Not available' : total === 0 ? 'nothing' : `$${total}`}</strong>
+        , by the parts asked for and the warm option.
+      </p>
+      {usage.isPending ? (
+        <Loading label="Loading usage…" rows={3} />
+      ) : usage.isError ? (
+        <ProblemNotice error={usage.error} />
       ) : (
-        <p className="muted">
-          Your cell has not told us its fixed outbound IP yet. It is created when your cell is set
-          up; if it stays missing, ask your operator.
-        </p>
+        <UsageTable usage={usage.data.environments} environments={environments} />
       )}
-    </section>
+      <details>
+        <summary>Details</summary>
+        <p className="muted">
+          Request-billed apps count only while they answer, instance-billed ones the whole time they run.
+        </p>
+        {usage.data ? <UsageTable usage={usage.data.environments} environments={environments} more /> : null}
+        <Resources resources={resources} />
+      </details>
+    </Panel>
   );
 }
 
@@ -261,7 +128,11 @@ function AskedBy({ resource }: { readonly resource: CellResource }) {
       {resource.approval_id ? (
         <>
           {' '}
-          (approval <code>{resource.approval_id}</code>)
+          (
+          <Link to="/approvals/$approvalId" params={{ approvalId: resource.approval_id }}>
+            approval
+          </Link>
+          )
         </>
       ) : null}
     </>
@@ -289,8 +160,8 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
     { header: 'Adds', cell: (r) => monthly(r.monthly_usd) },
   ];
   return (
-    <section className="panel" aria-labelledby="resources-heading">
-      <h2 id="resources-heading">Parts created when first needed</h2>
+    <>
+      <h3>Parts created when first needed</h3>
       <p className="muted">
         Each part is created the first time an app needs it and then stays: a database for the
         first app that stores data, the egress proxy for the first allowed internet host, the data
@@ -304,7 +175,7 @@ function Resources({ resources }: { readonly resources: readonly CellResource[] 
         empty="No parts."
         emptyHint="A part appears here the first time an app needs it."
       />
-    </section>
+    </>
   );
 }
 
@@ -337,21 +208,20 @@ function WarmPanel() {
       q.state.data?.gateway.state.startsWith('turning') ? GATEWAY_POLL_MS : false,
   });
   return (
-    <section className="panel" aria-labelledby="warm-heading">
-      <h2 id="warm-heading">Warm option</h2>
+    <Panel title="Capacity">
       <p className="muted">
         Every app sleeps when nobody uses it, and its first visitor waits while it wakes. A warm
         production app keeps one instance running, so it opens straight away. Preview apps are never
         warm.
       </p>
       {warm.isPending ? (
-        <p className="muted">Loading…</p>
+        <Loading label="Loading the warm option…" rows={3} />
       ) : warm.isError ? (
         <ProblemNotice error={warm.error} />
       ) : (
         <WarmForm key={savedSetting(warm.data)} warm={warm.data} />
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -429,16 +299,16 @@ function WarmForm({ warm }: { readonly warm: WarmOut }) {
         </span>
       </label>
       {chosen.size > 0 && !gateway ? (
-        <div className="notice notice-warning" role="status">
+        <Notice tone="warn">
           <p>
             A warm app behind a sleeping gateway still waits: every visit passes through the gateway,
             and it wakes first.
           </p>
           <Button onClick={() => setGateway(true)}>Keep the gateway warm too</Button>
-        </div>
+        </Notice>
       ) : null}
       <p>
-        As chosen, the warm option adds <strong>{monthly(cost)}</strong>. This is not a bill.
+        As chosen, the warm option adds <strong>{monthly(cost)}</strong>.
       </p>
       {error ? <ProblemNotice error={error} /> : null}
       <div>
@@ -461,9 +331,9 @@ function DatabasePanel({
   const offerBigger = database.nearly_full || database.tier_full_at !== null;
   const taken = database.places_used * database.connection_limit;
   const total = database.places_total * database.connection_limit;
+  const left = database.places_total - database.places_used;
   return (
-    <section className="panel" aria-labelledby="database-heading">
-      <h2 id="database-heading">Database</h2>
+    <Panel title="Database">
       <dl className="facts">
         <dt>Tier</dt>
         <dd>
@@ -472,6 +342,12 @@ function DatabasePanel({
         <dt>Places used</dt>
         <dd>
           {database.places_used} of {database.places_total}
+          <Meter
+            value={database.places_used}
+            max={database.places_total}
+            label={`${database.places_used} of ${database.places_total} database places used`}
+            warning={left <= 0 || database.nearly_full}
+          />
         </dd>
         <dt>Connections</dt>
         <dd>
@@ -480,7 +356,7 @@ function DatabasePanel({
         </dd>
       </dl>
       {offerBigger ? (
-        <div className="notice notice-warning" role="status">
+        <Notice tone="warn">
           {database.tier_full_at ? (
             <p>
               A deploy was refused on{' '}
@@ -501,7 +377,7 @@ function DatabasePanel({
             Or give places back: deleting an app, from the admin actions on its Settings tab,
             frees the places of its databases.
           </p>
-        </div>
+        </Notice>
       ) : null}
       {withDatabase.length === 0 ? (
         <p className="muted">No app has a database yet.</p>
@@ -517,55 +393,56 @@ function DatabasePanel({
           ))}
         </ul>
       )}
-    </section>
+    </Panel>
   );
 }
 
 function UsageTable({
   usage,
   environments,
+  more,
 }: {
   readonly usage: readonly Usage[];
   readonly environments: readonly CellEnvironment[];
+  readonly more?: boolean;
 }) {
   const named = new Map(environments.map((e) => [e.environment_id, e]));
-  const columns: readonly Column<Usage>[] = [
-    {
-      header: 'App',
-      cell: (u) => {
-        const env = named.get(u.environment_id);
-        if (!env) return <code>{u.environment_id}</code>;
-        return (
-          <>
-            <Link to="/apps/$appId" params={{ appId: env.app_id }}>
-              {env.app_slug}
-            </Link>{' '}
-            <span className="muted">{ENV_TITLE[env.name]}</span>
-          </>
-        );
-      },
+  const app: Column<Usage> = {
+    header: 'App',
+    cell: (u) => {
+      const env = named.get(u.environment_id);
+      if (!env) return <code>{u.environment_id}</code>;
+      return (
+        <>
+          <Link to="/apps/$appId" params={{ appId: env.app_id }}>
+            {env.app_slug}
+          </Link>{' '}
+          <span className="muted">{ENV_TITLE[env.name]}</span>
+        </>
+      );
     },
-    { header: 'Billed', cell: (u) => (u.billing ? BILLING_TEXT[u.billing] : 'No hours') },
-    { header: 'Session hours', cell: (u) => hours(u.session_hours) },
-    { header: 'Instance hours', cell: (u) => hours(u.instance_hours) },
-    { header: 'Cold starts', cell: coldStarts },
-    { header: 'Kind of use', cell: (u) => u.usage_type ?? 'None' },
-  ];
+  };
+  const columns: readonly Column<Usage>[] = more
+    ? [
+        app,
+        { header: 'Instance hours', cell: (u) => hours(u.instance_hours) },
+        { header: 'Kind of use', cell: (u) => u.usage_type ?? 'None' },
+      ]
+    : [
+        app,
+        { header: 'Billed', cell: (u) => (u.billing ? BILLING_TEXT[u.billing] : 'No hours') },
+        { header: 'Session hours', cell: (u) => hours(u.session_hours) },
+        { header: 'Cold starts', cell: coldStarts },
+      ];
   return (
-    <>
-      <p className="muted">
-        An app sleeps when nobody uses it; a cold start is the wait while it wakes. Request-billed
-        apps count only while they answer, instance-billed ones the whole time they run.
-      </p>
-      <Table
-        caption="Usage of each app this month"
-        dense
-        columns={columns}
-        rows={usage}
-        rowKey={(u) => u.environment_id}
-        empty="No app has run this month."
-        emptyHint="Use appears here once someone opens an app."
-      />
-    </>
+    <Table
+      caption={more ? 'More usage figures this month' : 'Usage of each app this month'}
+      dense={more}
+      columns={columns}
+      rows={usage}
+      rowKey={(u) => u.environment_id}
+      empty="No app has run this month."
+      emptyHint="Use appears here once someone opens an app."
+    />
   );
 }

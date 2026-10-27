@@ -9,8 +9,8 @@ The machine-readable copy is `ssc_control.db.catalog.PII_COLUMNS`.
 
 | Table | Column | What it is | Why we hold it | Erasure |
 |---|---|---|---|---|
-| `user_account` | `display_name` | The person's name from the directory | Shown in the console, in `ssc access explain`, in identity notes, and to active org admins by `GET /v1/users?email=` | Overwrite on request |
-| `user_account` | `email` | Work email from the directory | Display, and finding people to share with: `GET /v1/users?email=` returns every exact match, ignoring case, to active org admins only. Never a key: emails are reused and reassigned. The key is `identity_link` | Overwrite on request |
+| `user_account` | `display_name` | The person's name from the directory | Shown in the console, in `ssc access explain`, in identity notes, and to active org admins by `GET /v1/users` (the exact `email=` lookup and the roster, searched by `q`) | Overwrite on request |
+| `user_account` | `email` | Work email from the directory | Display, and finding people to share with: `GET /v1/users?email=` returns every exact match, ignoring case, to active org admins only; the roster, `GET /v1/users`, lists and searches it for them outside agent sessions. Never a key: emails are reused and reassigned. The key is `identity_link` | Overwrite on request |
 | `user_group` | `display_name` | Cached group name (for example "Finance") | Rendering and finding a group to share with: `GET /v1/groups?name=` returns every exact match, ignoring case, to those who may change some app's sharing. Never authorisation; the key is `directory_ref` | Overwrite on request |
 | `identity_link` | `subject` | The identity provider's stable id for the person | The join between a login and a directory record | Delete the link |
 | `audit_event` | `actor_ip` | Client address at the time of an action | Security investigation | Cannot be edited (the log is immutable); redact on export |
@@ -78,7 +78,7 @@ same fields and nothing else.
 `ssc.directory_connection`, `ssc.auth_session`, `ssc.login_code`, `ssc.refresh_token` and
 `ssc.device_grant` (SSC-019) hold no personal data: WorkOS ids, opaque SSC ids, states, times, an
 app host and SHA-256 hashes of one-time codes and tokens (never the codes or tokens). A user code
-is eight random letters. `user_account.sessions_not_before` is a time.
+is eight random letters. `user_account.sessions_not_before` is a time, and so is the roster's `last_sign_in_at`, read from `auth_session.created_at`.
 
 `ssc.kill_switch_run` (SSC-025) holds no personal data: ids, a mode, states, step timings,
 reason codes, schedule ids and the actor tuple (opaque ids). It has no free-text reason column.

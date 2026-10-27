@@ -34,7 +34,7 @@ function app(status: Status = 'active', owner = OWNER) {
 const APP_PATH = `/v1/apps/${APP_ID}`;
 const PROD_GRANTS = `${APP_PATH}/environments/${PROD}/grants`;
 const PREVIEW_GRANTS = `${APP_PATH}/environments/${PREVIEW}/grants`;
-const ORG_USER = { id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null } as const;
+const ORG_USER = { id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null, subject_name: null, subject_email: null } as const;
 
 function grants(env: string, version: number, list: Grants['grants'] = []): Grants {
   return { environment_id: env, grants_version: version, grants: list };
@@ -155,7 +155,7 @@ describe('share dialog', () => {
   });
 
   it('lets an admin find a person by email and replaces the role they had', async () => {
-    const had = { id: 'gnt_000000000000000000u1', role: 'user', subject_kind: 'user', subject_id: PERSON } as const;
+    const had = { id: 'gnt_000000000000000000u1', role: 'user', subject_kind: 'user', subject_id: PERSON, subject_name: 'Olive Owner', subject_email: 'olive@example.com' } as const;
     const { api } = start(
       `/apps/${APP_ID}?tab=access`,
       page({
@@ -316,7 +316,7 @@ describe('share dialog', () => {
     expect(ask?.body).toEqual({ environment_id: PROD, kind: 'widen_audience', payload: { grants: SHARED } });
     expect(api.of('POST', '/v1/approvals')).toHaveLength(1);
     const status = await within(dialog).findByRole('status');
-    expect(status.textContent).toContain('apr_bbbbbbbbbbbbbbbbbbbb');
+    expect([...status.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/approvals/apr_bbbbbbbbbbbbbbbbbbbb']);
     expect(status.textContent).toContain('widen the audience');
     expect(within(dialog).queryByRole('note')).toBeNull();
   });
@@ -346,7 +346,7 @@ describe('share dialog', () => {
     // The desired grants, not the ones in force: the approval must match the refused PUT.
     expect(api.of('GET', PROD_GRANTS)).toHaveLength(reads);
     const status = await within(dialog).findByRole('status');
-    expect(status.textContent).toContain('apr_cccccccccccccccccccc');
+    expect([...status.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/approvals/apr_cccccccccccccccccccc']);
     expect(status.textContent).toContain('finance');
   });
 
@@ -376,9 +376,9 @@ describe('share dialog', () => {
       { environment_id: PROD, kind: 'exceed_ceiling', payload: { connection: 'finance', grants: SHARED } },
     ]);
     const items = within(await within(dialog).findByRole('status')).getAllByRole('listitem');
-    expect(items.map((i) => i.textContent)).toEqual([
-      expect.stringContaining('apr_11111111111111111111'),
-      expect.stringContaining('apr_22222222222222222222'),
+    expect(items.map((i) => i.querySelector('a')?.getAttribute('href'))).toEqual([
+      '/approvals/apr_11111111111111111111',
+      '/approvals/apr_22222222222222222222',
     ]);
   });
 
@@ -397,15 +397,16 @@ describe('share dialog', () => {
     const { dialog } = await openShare('Production');
     fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: GROUP } });
     await submitShare(dialog);
-    expect((await within(dialog).findByRole('note')).textContent).toContain('apr_dddddddddddddddddddd');
+    const note = await within(dialog).findByRole('note');
+    expect(within(note).getByRole('link', { name: 'pending request' }).getAttribute('href')).toBe('/approvals/apr_dddddddddddddddddddd');
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Ask for approval' }));
     });
     expect(api.of('POST', '/v1/approvals').map((c) => (c.body as { kind: string }).kind)).toEqual(['exceed_ceiling']);
     const items = within(await within(dialog).findByRole('status')).getAllByRole('listitem');
-    expect(items.map((i) => i.textContent)).toEqual([
-      expect.stringMatching(/apr_dddddddddddddddddddd.*pending/),
-      expect.stringMatching(/apr_eeeeeeeeeeeeeeeeeeee.*pending/),
+    expect(items.map((i) => [i.querySelector('a')?.getAttribute('href'), i.textContent?.endsWith('(pending)')])).toEqual([
+      ['/approvals/apr_dddddddddddddddddddd', true],
+      ['/approvals/apr_eeeeeeeeeeeeeeeeeeee', true],
     ]);
   });
 
@@ -423,7 +424,7 @@ describe('share dialog', () => {
 
   it('gives a subject one grant, replacing the role it had', () => {
     const builder = { role: 'builder', subject_kind: 'org' } as const;
-    const owner = { id: 'gnt_000000000000000000b1', role: 'builder', subject_kind: 'user', subject_id: OWNER } as const;
+    const owner = { id: 'gnt_000000000000000000b1', role: 'builder', subject_kind: 'user', subject_id: OWNER, subject_name: 'Olive Owner', subject_email: 'olive@example.com' } as const;
     expect(withGrant(builder)([ORG_USER, owner])).toEqual([owner, builder]);
   });
 

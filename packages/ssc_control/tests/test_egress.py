@@ -230,6 +230,7 @@ async def test_an_admin_lists_a_host_and_it_turns_on_egress(b: Bench) -> None:
         False,
         b.w.admin,
     )
+    assert (host["added_by_name"], host["added_by_email"]) == ("Ada Admin", "ada@example.com")
     resource = egress_resource(b)
     assert resource is not None
     assert (resource["state"], resource["cause"]) == ("requested", "admin")

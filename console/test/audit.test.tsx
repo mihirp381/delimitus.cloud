@@ -15,8 +15,8 @@ function event(seq: number, overrides: Record<string, unknown> = {}) {
     seq,
     at: '2026-09-29T10:00:00Z',
     action: 'app.created',
-    actor: { kind: 'user', id: USER, via_agent: false, client_id: null },
-    target: { kind: 'app', id: APP_ID },
+    actor: { kind: 'user', id: USER, via_agent: false, client_id: null, name: 'Cat User', email: 'cat@example.com' },
+    target: { kind: 'app', id: APP_ID, name: 'expenses' },
     before: null,
     after: null,
     policy_decision_id: null,
@@ -28,8 +28,8 @@ function event(seq: number, overrides: Record<string, unknown> = {}) {
 
 const REMOVED_BY_AGENT = event(12, {
   action: 'grant.removed',
-  actor: { kind: 'user', id: USER, via_agent: true, client_id: 'claude-code' },
-  target: { kind: 'app_grant', id: 'gnt_000000000000000000o1' },
+  actor: { kind: 'user', id: USER, via_agent: true, client_id: 'claude-code', name: 'claude-code for Cat User', email: 'cat@example.com' },
+  target: { kind: 'app_grant', id: 'gnt_000000000000000000o1', name: null },
   before: { role: 'user', subject_kind: 'org', subject_id: null, environment_id: 'env_prod0000000000000000' },
   policy_decision_id: 'pdc_bbbbbbbbbbbbbbbbbbbb',
 });
@@ -47,23 +47,57 @@ describe('audit log', () => {
   it('lists events newest first, marks agent actions and links app targets', async () => {
     const { api } = start('/audit', { 'GET /v1/audit': page([REMOVED_BY_AGENT, CREATED]) }, signedIn());
     await screen.findByText('2 events');
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Time', 'Actor', 'Action', 'Target']);
     const rows = screen.getAllByRole('row').slice(1);
-    expect(rows.map((r) => within(r).getAllByRole('cell').at(-1)?.textContent)).toEqual(['12', '11']);
+    expect(rows.map((r) => within(r).getByRole('button').textContent)).toEqual(['grant.removed', 'app.created']);
     expect(within(rows[0]!).getByText('agent')).toBeTruthy();
-    expect(within(rows[0]!).getByText('claude-code')).toBeTruthy();
-    expect(within(rows[0]!).getByText('pdc_bbbbbbbbbbbbbbbbbbbb')).toBeTruthy();
-    expect(within(rows[0]!).getByText(/"subject_kind": "org"/)).toBeTruthy();
+    expect(within(rows[0]!).getByText('claude-code for Cat User')).toBeTruthy();
     expect(within(rows[1]!).queryByText('agent')).toBeNull();
-    expect(within(rows[1]!).getByRole('link', { name: APP_ID }).getAttribute('href')).toBe(`/apps/${APP_ID}`);
+    expect(within(rows[1]!).getByRole('link', { name: 'expenses' }).getAttribute('href')).toBe(`/apps/${APP_ID}`);
+    expect(within(rows[1]!).getAllByRole('cell')[1]?.textContent).toBe('Cat User');
+    const time = rows[1]!.querySelector('time');
+    expect(time?.getAttribute('title')).toBe(new Date('2026-09-29T10:00:00Z').toLocaleString());
     expect(screen.queryByRole('button', { name: 'Load older events' })).toBeNull();
     expect(entries(api.of('GET', '/v1/audit')[0]!.query)).toEqual([]);
     expect(api.of('GET', '/v1/audit')[0]?.headers.get('Authorization')).toBe('Bearer tok-admin');
   });
 
+  it('shows no JSON until a row is opened, then the event with its ids and a copy', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    start('/audit', { 'GET /v1/audit': page([REMOVED_BY_AGENT, CREATED]) }, signedIn());
+    await screen.findByText('2 events');
+    expect(document.querySelector('pre')).toBeNull();
+    expect(screen.queryByText('pdc_bbbbbbbbbbbbbbbbbbbb')).toBeNull();
+    fireEvent.click(screen.getAllByRole('row')[1]!.querySelector('td')!);
+    const dialog = await screen.findByRole('dialog', { name: 'Event 12' });
+    expect(within(dialog).getByText('pdc_bbbbbbbbbbbbbbbbbbbb')).toBeTruthy();
+    expect(within(dialog).getByText(USER)).toBeTruthy();
+    expect(dialog.querySelector('pre')?.textContent).toContain('"subject_kind": "org"');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy JSON' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(JSON.stringify(REMOVED_BY_AGENT, null, 2)));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(document.querySelector('pre')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'app.created' }));
+    expect(await screen.findByRole('dialog', { name: 'Event 11' })).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it('searches the loaded events by action, person or target', async () => {
+    const { api } = start('/audit', { 'GET /v1/audit': page([REMOVED_BY_AGENT, CREATED]) }, signedIn());
+    await screen.findByText('2 events');
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search' }), { target: { value: 'EXPENSES' } });
+    expect(screen.getByText('1 of 2 events')).toBeTruthy();
+    expect(screen.getAllByRole('row')).toHaveLength(2);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search' }), { target: { value: 'nobody' } });
+    expect(screen.getByText('No event matches the filters.')).toBeTruthy();
+    expect(api.of('GET', '/v1/audit')).toHaveLength(1);
+  });
+
   it('links a kill switch step to its run when the row names the app', async () => {
     const run = 'ksr_rrrrrrrrrrrrrrrrrrrr';
     const step = (seq: number, after: Record<string, unknown> | null) =>
-      event(seq, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run }, after });
+      event(seq, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run, name: null }, after });
     start(
       '/audit',
       { 'GET /v1/audit': page([step(21, { app_id: APP_ID, step: 'gateway_deny' }), step(20, { app_id: '../x' }), step(19, null)]) },
@@ -71,12 +105,13 @@ describe('audit log', () => {
     );
     await screen.findByText('3 events');
     const rows = screen.getAllByRole('row').slice(1);
-    expect(within(rows[0]!).getByRole('link', { name: run }).getAttribute('href')).toBe(
+    expect(within(rows[0]!).getByRole('link', { name: 'Open run' }).getAttribute('href')).toBe(
       `/apps/${APP_ID}/kill-switch/${run}`,
     );
-    expect(within(rows[1]!).queryByRole('link', { name: run })).toBeNull();
-    expect(within(rows[2]!).queryByRole('link', { name: run })).toBeNull();
-    expect(within(rows[2]!).getByText(run)).toBeTruthy();
+    expect(within(rows[1]!).queryByRole('link', { name: 'Open run' })).toBeNull();
+    expect(within(rows[2]!).queryByRole('link', { name: 'Open run' })).toBeNull();
+    fireEvent.click(within(rows[2]!).getByRole('button', { name: 'kill_switch.step' }));
+    expect(within(await screen.findByRole('dialog', { name: 'Event 19' })).getByText(run)).toBeTruthy();
   });
 
   it('links a step of an app removal to the delete run', async () => {
@@ -84,16 +119,37 @@ describe('audit log', () => {
     const after = { app_id: APP_ID, mode: 'delete', step: 'drop_databases', removed: 2 };
     start(
       '/audit',
-      { 'GET /v1/audit': page([event(22, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run }, after })]) },
+      { 'GET /v1/audit': page([event(22, { action: 'kill_switch.step', target: { kind: 'kill_switch_run', id: run, name: null }, after })]) },
       signedIn(),
     );
     await screen.findByText('1 event');
-    expect(screen.getByRole('link', { name: run }).getAttribute('href')).toBe(`/apps/${APP_ID}/delete/${run}`);
+    expect(screen.getByRole('link', { name: 'Open run' }).getAttribute('href')).toBe(`/apps/${APP_ID}/delete/${run}`);
+  });
+
+  it('keeps the filters past search and dates closed, and counts the ones set', async () => {
+    start('/audit?action=app.created&target_kind=app&since=2026-09-01T00:00:00Z', { 'GET /v1/audit': page([CREATED]) }, signedIn());
+    const form = await screen.findByRole('form', { name: 'Filter events' });
+    expect(within(form).getByRole('searchbox', { name: 'Search' })).toBeTruthy();
+    expect(within(form).getByLabelText('From (inclusive)')).toBeTruthy();
+    expect(within(form).getByLabelText('Until (exclusive)')).toBeTruthy();
+    const toggle = within(form).getByRole('button', { name: /^More filters/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.textContent).toBe('More filters 2 set');
+    expect(within(form).queryByRole('combobox', { name: 'Action' })).toBeNull();
+    fireEvent.click(toggle);
+    expect((within(form).getByRole('combobox', { name: 'Action' }) as HTMLSelectElement).value).toBe('app.created');
+  });
+
+  it('shows no count on the toggle when no hidden filter is set', async () => {
+    start('/audit?since=2026-09-01T00:00:00Z', { 'GET /v1/audit': page([CREATED]) }, signedIn());
+    const form = await screen.findByRole('form', { name: 'Filter events' });
+    expect(within(form).getByRole('button', { name: /^More filters/ }).textContent).toBe('More filters');
   });
 
   it('applies filters through the URL and sends only the ones that are set', async () => {
     const { api, router } = start('/audit', { 'GET /v1/audit': page([CREATED]) }, signedIn());
     const form = await screen.findByRole('form', { name: 'Filter events' });
+    fireEvent.click(within(form).getByRole('button', { name: 'More filters' }));
     fireEvent.change(within(form).getByLabelText('Action'), { target: { value: 'grant.removed' } });
     fireEvent.change(within(form).getByLabelText('Actor id'), { target: { value: `  ${USER} ` } });
     fireEvent.change(within(form).getByLabelText('From (inclusive)'), { target: { value: '2026-09-01T00:00' } });
@@ -110,6 +166,7 @@ describe('audit log', () => {
     const again = screen.getByRole('form', { name: 'Filter events' });
     expect((within(again).getByLabelText('Action') as HTMLSelectElement).value).toBe('grant.removed');
     expect((within(again).getByLabelText('From (inclusive)') as HTMLInputElement).value).toBe('2026-09-01T00:00');
+    expect(within(again).getByRole('button', { name: /^More filters/ }).textContent).toBe('More filters 2 set');
 
     fireEvent.click(within(again).getByRole('button', { name: 'Clear filters' }));
     await waitFor(() => expect(api.of('GET', '/v1/audit')).toHaveLength(3));
@@ -179,6 +236,40 @@ describe('audit export', () => {
 
   const csv = 'seq,at,action\n11,2026-09-29T10:00:00+00:00,app.created\n';
 
+  async function exportAs(name: string) {
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('menuitem', { name }));
+    });
+  }
+
+  it('offers the export formats and the check of a saved file in one menu', async () => {
+    start('/audit', { 'GET /v1/audit': page([CREATED]) }, signedIn());
+    await screen.findByText('1 event');
+    const button = screen.getByRole('button', { name: 'Export' });
+    expect(button.getAttribute('aria-haspopup')).toBe('menu');
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.keyDown(button, { key: 'ArrowDown' });
+    const menu = await screen.findByRole('menu', { name: 'Export' });
+    const items = within(menu).getAllByRole('menuitem');
+    expect(items.map((i) => i.textContent)).toEqual(['Export CSV', 'Export JSON Lines', 'Verify a file…']);
+    await waitFor(() => expect(document.activeElement).toBe(items[0]));
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(items[2]);
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+    const input = screen.getByLabelText('Verify a file') as HTMLInputElement;
+    const picked = vi.spyOn(input, 'click').mockImplementation(() => undefined);
+    fireEvent.click(button);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Verify a file…' }));
+    expect(picked).toHaveBeenCalledOnce();
+  });
+
   it('saves the events matching the applied filters and refreshes the log', async () => {
     const { api } = start(
       '/audit?action=app.created',
@@ -196,9 +287,7 @@ describe('audit export', () => {
       signedIn(),
     );
     await screen.findByText('1 event');
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
-    });
+    await exportAs('Export CSV');
     expect(await toast()).toBe('Saved audit-org_ffffffffffffffffffff.csv.');
     const [call] = api.of('GET', '/v1/audit/export');
     expect(entries(call!.query)).toEqual([
@@ -235,9 +324,7 @@ describe('audit export', () => {
 
   async function exportJsonLines() {
     await screen.findByText('1 event');
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Export JSON Lines' }));
-    });
+    await exportAs('Export JSON Lines');
   }
 
   it('checks the hash chain of a JSON Lines export and saves the bytes the API sent', async () => {
@@ -306,9 +393,7 @@ describe('audit export', () => {
       signedIn(),
     );
     await screen.findByText('1 event');
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
-    });
+    await exportAs('Export CSV');
     expect(await toast()).toBe('Saved audit.csv.');
     expect(screen.queryByRole('status', { name: 'Hash chain check' })).toBeNull();
   });
@@ -349,12 +434,10 @@ describe('audit export', () => {
       signedIn(),
     );
     await screen.findByText('1 event');
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Export JSON Lines' }));
-    });
+    await exportAs('Export JSON Lines');
     expect((await screen.findByRole('alert')).textContent).toContain('Agent sessions cannot export');
     expect(saved).toEqual([]);
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryAllByRole('status').filter((s) => s.textContent)).toEqual([]);
   });
 });
 
@@ -372,7 +455,7 @@ describe('admin gating', () => {
     });
 
   it('answers from the role whoami gives', () => {
-    const me = { org_id: 'o', subject: USER, kind: 'user', credential_id: 'c', is_agent: false, client_id: null } as const;
+    const me = { org_id: 'o', subject: USER, kind: 'user', credential_id: 'c', is_agent: false, client_id: null, org_name: 'Acme', name: 'Ada', email: 'ada@example.com' } as const;
     expect(isAdmin({ ...me, role: 'admin' })).toBe(true);
     expect(isAdmin({ ...me, role: 'member' })).toBe(false);
     expect(isAdmin({ ...me, role: null })).toBe(false);
@@ -388,9 +471,9 @@ describe('admin gating', () => {
         'Approvals',
         'Connections',
         'Internet access',
-        'Your environment',
         'People',
         'Audit log',
+        'Usage',
         'Help',
       ]),
     );

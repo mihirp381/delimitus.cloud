@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { type FormEvent, useId, useState } from 'react';
 import {
   allowHost,
@@ -11,8 +11,12 @@ import { Ago } from '../../components/Ago';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ConfirmAction } from '../../components/ConfirmAction';
+import { Id } from '../../components/Copy';
 import { Loading } from '../../components/Loading';
+import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Person } from '../../components/Person';
+import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
@@ -42,15 +46,11 @@ function EgressPage() {
     <>
       <PageHeader
         title="Internet access"
-        purpose={
-          <>
-            Apps reach the internet only through your cell&apos;s egress proxy, and only the hosts
-            listed here. Partners see every call come from one fixed IP.
-          </>
-        }
+        purpose="Apps reach the internet only through your cell's egress proxy, and only the hosts listed here."
+        about={<p>Partners see every call come from the fixed outbound IP; give it to a partner whose firewall only lets known addresses in.</p>}
       />
       {egress.isPending ? (
-        <p className="muted">Loading…</p>
+        <Loading label="Loading internet access…" rows={3} />
       ) : egress.isError ? (
         <ProblemNotice error={egress.error} />
       ) : (
@@ -69,42 +69,20 @@ function EgressPage() {
 }
 
 function OutboundIp({ ip }: { readonly ip: string | null }) {
-  const [copied, setCopied] = useState<string | null>(null);
-
-  async function copy(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied('Copied.');
-    } catch {
-      setCopied('Could not copy; select the address instead.');
-    }
-  }
-
   return (
-    <section className="panel tone-magenta" aria-labelledby="egress-ip-heading">
-      <h2 id="egress-ip-heading">Fixed outbound IP</h2>
-      {ip ? (
-        <>
-          <p>
-            Your apps reach the internet from <code>{ip}</code>. Give it to a partner whose firewall
-            only lets known addresses in.
-          </p>
-          <div className="toolbar">
-            <Button onClick={() => void copy(ip)}>Copy IP</Button>
-            {copied ? (
-              <span className="muted" role="status">
-                {copied}
-              </span>
-            ) : null}
-          </div>
-        </>
-      ) : (
-        <p className="muted">
-          Your cell has not told us its fixed outbound IP yet. It is created with the egress proxy,
-          when the first host is allowed; if it stays missing, ask your operator.
-        </p>
-      )}
-    </section>
+    <dl className="panel facts">
+      <dt>Fixed outbound IP</dt>
+      <dd>
+        {ip ? (
+          <Id value={ip} label="fixed outbound IP" />
+        ) : (
+          <span className="muted">
+            Not set yet. It is created with the egress proxy, when the first host is allowed; if it stays missing,
+            ask your operator.
+          </span>
+        )}
+      </dd>
+    </dl>
   );
 }
 
@@ -131,22 +109,19 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
     },
     {
       header: 'Added by',
-      cell: (h) =>
-        h.approval_request_id ? (
-          <>
-            Approval <code>{h.approval_request_id}</code>
-            {h.added_by_user_id ? (
-              <>
-                {' '}
-                (approved by <code>{h.added_by_user_id}</code>)
-              </>
-            ) : null}
-          </>
-        ) : h.added_by_user_id ? (
-          <code>{h.added_by_user_id}</code>
-        ) : (
-          'SSC'
-        ),
+      cell: (h) => (
+        <>
+          <Person name={h.added_by_name} email={h.added_by_email} fallback="SSC" />
+          {h.approval_request_id ? (
+            <>
+              {' '}
+              <Link to="/approvals/$approvalId" params={{ approvalId: h.approval_request_id }}>
+                by approval
+              </Link>
+            </>
+          ) : null}
+        </>
+      ),
     },
   ];
   if (admin) {
@@ -170,8 +145,7 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
     });
   }
   return (
-    <section className="panel tone-magenta" aria-labelledby="egress-hosts-heading">
-      <h2 id="egress-hosts-heading">Allowed hosts</h2>
+    <Panel title="Allowed hosts">
       <Table
         caption="Hosts apps may reach"
         columns={columns}
@@ -184,7 +158,7 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
             : 'Ask an org admin to allow the hosts your app calls.'
         }
       />
-    </section>
+    </Panel>
   );
 }
 
@@ -249,8 +223,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
   ];
 
   return (
-    <section className="panel tone-magenta" aria-labelledby="egress-add-heading">
-      <h2 id="egress-add-heading">Allow a host</h2>
+    <Panel title="Allow a host">
       <form className="stack" onSubmit={submit} aria-label="Allow a host">
         <label className="field" htmlFor={hostId}>
           <span>Host, such as api.example.com or *.example.com</span>
@@ -268,7 +241,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
           &lt;bucket&gt;.s3.amazonaws.com.
         </p>
         {highRisk ? (
-          <div className="notice notice-warning" role="note">
+          <Notice tone="warn" role="note">
             <p>
               <strong>{typed}</strong> is high risk: {entry?.note || 'anyone can put data there.'}
             </p>
@@ -281,7 +254,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
               />
               <span>Apps may send company data to {typed}, and I accept that</span>
             </label>
-          </div>
+          </Notice>
         ) : null}
         {error ? <ProblemNotice error={error} /> : null}
         <div>
@@ -305,6 +278,6 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
           emptyHint="Type the host you need in the field above."
         />
       )}
-    </section>
+    </Panel>
   );
 }
