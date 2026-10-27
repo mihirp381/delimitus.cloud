@@ -4,6 +4,7 @@ import { Badge } from '../components/Badge';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { clock, STATE_TONE, took } from './KillSwitchRun';
+import { Notice } from '../components/Notice';
 
 type Step = AppDeleteRun['steps'][number];
 
@@ -103,13 +104,13 @@ export function DeleteProgress({ appId, runId, page = false }: Props) {
           <Link to="/">Back to Apps</Link>
         </p>
       ) : r.state === 'failed' ? (
-        <div className="notice notice-warning" role="status">
+        <Notice tone="warn">
           <p>
             The removal stopped{failed ? ` at "${STEP_TEXT[failed.name]}"` : ''}. What it removed
             before that stays removed, and the app stays stopped. Delete the app again from its
             Settings tab to continue.
           </p>
-        </div>
+        </Notice>
       ) : null}
       <Table
         caption="Delete steps"

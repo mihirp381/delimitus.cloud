@@ -1,10 +1,11 @@
 import { ApiProblem } from '../api/problem';
+import { Notice } from './Notice';
 
 /** Shows why a call failed: the API's title and detail, and the request id to quote. */
 export function ProblemNotice({ error }: { readonly error: unknown }) {
   if (error instanceof ApiProblem) {
     return (
-      <div className="notice notice-danger" role="alert">
+      <Notice tone="danger">
         <p>
           <strong>{error.title}</strong>
           {error.code ? <span className="muted"> ({error.code})</span> : null}
@@ -15,7 +16,7 @@ export function ProblemNotice({ error }: { readonly error: unknown }) {
             Request id <code>{error.requestId}</code>
           </p>
         ) : null}
-      </div>
+      </Notice>
     );
   }
   const message =
@@ -25,8 +26,8 @@ export function ProblemNotice({ error }: { readonly error: unknown }) {
         ? error.message
         : 'Something went wrong.';
   return (
-    <div className="notice notice-danger" role="alert">
+    <Notice tone="danger">
       <p>{message}</p>
-    </div>
+    </Notice>
   );
 }

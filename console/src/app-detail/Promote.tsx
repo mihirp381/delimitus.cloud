@@ -8,6 +8,7 @@ import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
 import { ProblemNotice } from '../components/ProblemNotice';
+import { Notice } from '../components/Notice';
 
 const BUILD_TONE: Readonly<Record<string, Tone>> = {
   queued: 'info',
@@ -135,10 +136,12 @@ function PromoteForm({ app, preview, onClose, onStarted }: FormProps) {
           source. Production keeps running what it runs now until you deploy the new release.
         </p>
       ) : (
-        <p className="notice notice-warning" role="status">
-          Release {live.release_number} in preview is {live.state}; promote needs preview to be
-          healthy.
-        </p>
+        <Notice tone="warn">
+          <p>
+            Release {live.release_number} in preview is {live.state}; promote needs preview to be
+            healthy.
+          </p>
+        </Notice>
       )}
       <label className="field" htmlFor={confirmId}>
         <span>

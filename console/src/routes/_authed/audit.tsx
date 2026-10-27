@@ -22,6 +22,7 @@ import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
 import { saveBlob } from '../../download';
+import { Notice } from '../../components/Notice';
 
 export const Route = createFileRoute('/_authed/audit')({
   validateSearch: auditFilters,
@@ -206,31 +207,25 @@ function AuditLog() {
 function ChainNotice({ check }: { readonly check: Check }) {
   if (check.state === 'checking') {
     return (
-      <p className="notice notice-info" role="status" aria-label="Hash chain check">
-        Checking the hash chain of {check.fileName}…
-      </p>
+      <Notice tone="info" aria-label="Hash chain check">
+        <p>Checking the hash chain of {check.fileName}…</p>
+      </Notice>
     );
   }
   if (check.state === 'failed') {
     return (
-      <div className="notice notice-danger" role="alert" aria-label="Hash chain check">
-        <p>
-          <strong>The hash chain of {check.fileName} could not be checked.</strong>
-        </p>
+      <Notice tone="danger" aria-label="Hash chain check" title={`The hash chain of ${check.fileName} could not be checked.`}>
         <p>{check.error instanceof Error ? check.error.message : 'The file could not be read.'}</p>
-      </div>
+      </Notice>
     );
   }
   const verdict = chainVerdict(check.fileName, check.report, check.rowFilters);
   return (
-    <div
-      className={`notice notice-${verdict.tone}`}
-      role={verdict.tone === 'danger' ? 'alert' : 'status'}
+    <Notice
+      tone={verdict.tone === 'warning' ? 'warn' : verdict.tone}
       aria-label="Hash chain check"
+      title={verdict.headline}
     >
-      <p>
-        <strong>{verdict.headline}</strong>
-      </p>
       {verdict.lines.map((line) => (
         <p key={line}>{line}</p>
       ))}
@@ -243,7 +238,7 @@ function ChainNotice({ check }: { readonly check: Check }) {
         Checked in this browser, in {check.fileName} as saved. <code>ssc audit verify</code> makes the same
         check.
       </p>
-    </div>
+    </Notice>
   );
 }
 

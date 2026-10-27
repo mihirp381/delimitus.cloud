@@ -29,6 +29,7 @@ import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
+import { Notice } from '../../components/Notice';
 
 export const Route = createFileRoute('/_authed/environment')({
   component: EnvironmentPage,
@@ -429,13 +430,13 @@ function WarmForm({ warm }: { readonly warm: WarmOut }) {
         </span>
       </label>
       {chosen.size > 0 && !gateway ? (
-        <div className="notice notice-warning" role="status">
+        <Notice tone="warn">
           <p>
             A warm app behind a sleeping gateway still waits: every visit passes through the gateway,
             and it wakes first.
           </p>
           <Button onClick={() => setGateway(true)}>Keep the gateway warm too</Button>
-        </div>
+        </Notice>
       ) : null}
       <p>
         As chosen, the warm option adds <strong>{monthly(cost)}</strong>. This is not a bill.
@@ -480,7 +481,7 @@ function DatabasePanel({
         </dd>
       </dl>
       {offerBigger ? (
-        <div className="notice notice-warning" role="status">
+        <Notice tone="warn">
           {database.tier_full_at ? (
             <p>
               A deploy was refused on{' '}
@@ -501,7 +502,7 @@ function DatabasePanel({
             Or give places back: deleting an app, from the admin actions on its Settings tab,
             frees the places of its databases.
           </p>
-        </div>
+        </Notice>
       ) : null}
       {withDatabase.length === 0 ? (
         <p className="muted">No app has a database yet.</p>

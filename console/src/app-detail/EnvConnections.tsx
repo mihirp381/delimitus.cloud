@@ -23,6 +23,7 @@ import { type Column, Table } from '../components/Table';
 import { useToast } from '../components/Toast';
 import { ENV_TITLE } from './names';
 import { Section } from './Section';
+import { Notice } from '../components/Notice';
 
 interface Props {
   readonly app: AppOut;
@@ -282,7 +283,7 @@ function LinkForm({ app, env, held, onSaved }: LinkProps) {
       </label>
       {error ? <ProblemNotice error={error} /> : null}
       {needsApproval && !asked ? (
-        <div className="notice notice-info" role="note">
+        <Notice tone="info" role="note">
           <p>
             This environment is shared wider than <code>{needsApproval}</code> allows. Its owner or
             an org admin must approve that; ask here, then link it again once it is approved.
@@ -292,16 +293,18 @@ function LinkForm({ app, env, held, onSaved }: LinkProps) {
               Ask for approval
             </Button>
           </div>
-        </div>
+        </Notice>
       ) : null}
       {asked ? (
-        <p className="notice notice-success" role="status">
-          Asked for approval:{' '}
-          <Link to="/approvals/$approvalId" params={{ approvalId: asked.id }}>
-            {asked.id}
-          </Link>{' '}
-          ({asked.state}). Link it again once it is approved.
-        </p>
+        <Notice tone="success">
+          <p>
+            Asked for approval:{' '}
+            <Link to="/approvals/$approvalId" params={{ approvalId: asked.id }}>
+              {asked.id}
+            </Link>{' '}
+            ({asked.state}). Link it again once it is approved.
+          </p>
+        </Notice>
       ) : null}
       <div>
         <Button type="submit" variant="primary" disabled={!choice || busy}>

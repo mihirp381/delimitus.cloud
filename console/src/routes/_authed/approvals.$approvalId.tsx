@@ -17,6 +17,7 @@ import { ApprovalBadge, Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
+import { Notice } from '../../components/Notice';
 
 export const Route = createFileRoute('/_authed/approvals/$approvalId')({
   component: ApprovalPage,
@@ -118,9 +119,9 @@ function Detail({ approval: a }: { readonly approval: ApprovalDetail }) {
         <Outcome approval={a} />
       </section>
       {result ? (
-        <div className="notice notice-info" role="status">
+        <Notice tone="info">
           <p>{result}</p>
-        </div>
+        </Notice>
       ) : null}
       {a.can_decide ? (
         <form className="panel tone-violet" onSubmit={submit} aria-label="Decide this request">

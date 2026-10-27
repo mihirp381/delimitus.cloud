@@ -35,6 +35,7 @@ import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
+import { Notice } from '../../components/Notice';
 
 export const Route = createFileRoute('/_authed/apps/$appId')({
   validateSearch: appSearch,
@@ -301,9 +302,9 @@ function EnvironmentCard({ app, env, preview }: CardProps) {
         {env.name === 'prod' && preview ? <Promote app={app} prod={env} preview={preview} /> : null}
       </div>
       {waiting ? (
-        <p className="notice notice-info" role="status">
-          {waiting}
-        </p>
+        <Notice tone="info">
+          <p>{waiting}</p>
+        </Notice>
       ) : null}
     </section>
   );
@@ -352,9 +353,9 @@ function Access({ app, env }: { readonly app: AppOut; readonly env: EnvironmentO
       actions={<ShareDialog app={app} env={env} seen={seen} onDone={(u, m) => void applied(u, m)} />}
     >
       {waiting ? (
-        <p className="notice notice-info" role="status">
-          {waiting}
-        </p>
+        <Notice tone="info">
+          <p>{waiting}</p>
+        </Notice>
       ) : null}
       {grants.isPending ? (
         <Loading label="Loading access…" rows={3} />

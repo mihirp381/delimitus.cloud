@@ -16,6 +16,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
 import { useToast } from '../../components/Toast';
+import { Notice } from '../../components/Notice';
 
 export const Route = createFileRoute('/_authed/egress')({
   component: EgressPage,
@@ -268,7 +269,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
           &lt;bucket&gt;.s3.amazonaws.com.
         </p>
         {highRisk ? (
-          <div className="notice notice-warning" role="note">
+          <Notice tone="warn" role="note">
             <p>
               <strong>{typed}</strong> is high risk: {entry?.note || 'anyone can put data there.'}
             </p>
@@ -281,7 +282,7 @@ function AddHost({ onSaved }: { readonly onSaved: HostsProps['onSaved'] }) {
               />
               <span>Apps may send company data to {typed}, and I accept that</span>
             </label>
-          </div>
+          </Notice>
         ) : null}
         {error ? <ProblemNotice error={error} /> : null}
         <div>
