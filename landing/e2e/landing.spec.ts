@@ -149,6 +149,25 @@ test('the list bursts out of the prompt and settles in place', async ({ page }) 
   await expect(page.locator('#burst .burst__url')).toHaveCSS('opacity', '1', { timeout: 4000 });
 });
 
+test('the long way races once it is in view, and plays again', async ({ page }) => {
+  await page.goto('/');
+  const race = page.locator('#race');
+  const last = race.locator('.race__lane--diy li').last();
+  const wait = race.locator('.race__lane--dlm li').last();
+  await expect(race).toHaveClass(/is-armed/);
+  await expect(last).not.toHaveClass(/is-done/);
+  await race.scrollIntoViewIfNeeded();
+  await expect(race).toHaveClass(/is-in/);
+  await expect(last).toHaveClass(/is-done/, { timeout: 8000 });
+  await expect(race.locator('[data-race="hours"]')).toHaveText('92');
+  await expect(race.locator('[data-race="total"]')).toHaveText('$32,658');
+  await expect(wait).toHaveClass(/is-wait/);
+  await expect(wait).not.toHaveClass(/is-done/);
+  await race.locator('.race__replay').click();
+  await expect(last).not.toHaveClass(/is-done/);
+  await expect(last).toHaveClass(/is-done/, { timeout: 8000 });
+});
+
 test('the hero zooms into the app where there is room, and holds still where there is not', async ({ page }) => {
   await page.goto('/');
   const room = await page.evaluate(() => matchMedia('(min-width: 1100px) and (min-height: 640px)').matches);
@@ -183,6 +202,16 @@ test.describe('reduced motion', () => {
     await expect(nodes).toHaveCount(5);
     for (const node of await nodes.all()) expect(await node.getAttribute('class')).toContain('is-done');
   });
+  test('shows the long way finished at load', async ({ page }) => {
+    await page.goto('/');
+    const race = page.locator('#race');
+    await expect(race).not.toHaveClass(/is-armed/);
+    for (const stage of await race.locator('.race__lane--diy li, .race__lane--dlm li:not(:last-child)').all()) {
+      expect(await stage.getAttribute('class')).toContain('is-done');
+    }
+    expect(await race.locator('.race__lane--dlm li').last().getAttribute('class')).toContain('is-wait');
+    expect(await race.locator('[data-race="hours"]').textContent()).toBe('92');
+  });
   test('keeps the hero still', async ({ page }) => {
     await page.goto('/');
     await page.mouse.wheel(0, 900);
@@ -211,6 +240,17 @@ test.describe('without JavaScript', () => {
     for (const node of await page.locator('#term .term__pipe li').all()) await expect(node).toHaveClass(/is-done/);
     await expect(page.locator('#term .chat__url')).toBeVisible();
     await expect(page.locator('#how .hiw__replay')).toBeHidden();
+  });
+
+  test('shows the long way finished', async ({ page }) => {
+    await page.goto('/');
+    const stages = page.locator('#race .race__lane--diy li, #race .race__lane--dlm li:not(:last-child)');
+    await expect(stages).toHaveCount(10);
+    for (const stage of await stages.all()) await expect(stage).toHaveClass(/is-done/);
+    await expect(page.locator('#race .race__lane--dlm li').last()).toHaveClass(/is-wait/);
+    await expect(page.locator('#race [data-race="hours"]')).toHaveText('92');
+    await expect(page.locator('#race [data-race="total"]')).toBeVisible();
+    await expect(page.locator('#race .race__replay')).toBeHidden();
   });
 
   test('sends the form as a plain post the server takes', async ({ page }, info) => {

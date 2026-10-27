@@ -354,3 +354,30 @@ def test_the_case_panel_shows_the_warehouse_asks_without_javascript() -> None:
     assert re.findall(r"<li>(.*?)</li>", _bound("get")) == re.findall(r'"([^"]+)"', big[3])
     assert simple[1] == "A page that shows which doors are free right now."
     assert "Company login on, with no setup" in simple[2]
+
+
+def test_the_long_way_agrees_with_the_calculator_vectors() -> None:
+    vectors = json.loads((LANDING / "calculator_vectors.json").read_text(encoding="utf-8"))
+    default = vectors["vectors"][0]
+    cost = re.search(r'<section[^>]*id="cost".*?</section>', HTML, flags=re.S)
+    assert cost is not None
+    race = re.search(
+        r'<div class="race" id="race".*?<button[^>]*class="race__replay"', cost[0], re.S
+    )
+    assert race is not None
+    hours = re.search(r'data-race="hours">(\d+)<', race[0])
+    assert hours is not None
+    assert int(hours[1]) == default["in"]["setup"] + default["in"]["perApp"] == 92
+    fixed = re.search(r"var CLOUD_FIXED_CENTS = (\d+);", HTML)
+    per_app = re.search(r"var CLOUD_PER_APP_CENTS = (\d+);", HTML)
+    assert fixed is not None and per_app is not None
+    cloud = (int(fixed[1]) + int(per_app[1]) * default["in"]["apps"]) * 12 / 100
+    assert round(cloud) == default["out"]["cloud"]
+    assert "$129.53 a month before the first app" in race[0]
+    assert int(fixed[1]) == 12953
+    total = re.search(r'data-race="total">\$([\d,]+)<', race[0])
+    assert total is not None
+    assert int(total[1].replace(",", "")) == default["out"]["total"] == 32658
+    assert "First year, 10 apps: " in race[0]
+    for word in ("approved", "granted"):
+        assert word not in race[0]

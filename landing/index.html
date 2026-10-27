@@ -435,9 +435,9 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .hiw__bar { position: absolute; left: clamp(16px, 2vw, 22px); right: clamp(16px, 2vw, 22px); bottom: 6px; height: 3px; border-radius: 3px; background: var(--step); transform: scaleX(0); transform-origin: 0 50%; }
 .hiw__bar.is-run { transform: scaleX(1); transition: transform var(--dur, 2400ms) linear; }
 .hiw__bar.is-full { transform: scaleX(1); }
-.hiw__replay { margin: 14px 0 0; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 980px; border: 1px solid var(--line-strong); background: #FFFFFF; font-size: 0.85rem; font-weight: 500; color: var(--accent-ink); cursor: pointer; transition: background 160ms var(--ease); }
-.hiw__replay::before { content: "↻"; content: "↻" / ""; }
-.hiw__replay:hover { background: var(--accent-soft); }
+.hiw__replay, .race__replay { margin: 14px 0 0; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 980px; border: 1px solid var(--line-strong); background: #FFFFFF; font-size: 0.85rem; font-weight: 500; color: var(--accent-ink); cursor: pointer; transition: background 160ms var(--ease); }
+.hiw__replay::before, .race__replay::before { content: "↻"; content: "↻" / ""; }
+.hiw__replay:hover, .race__replay:hover { background: var(--accent-soft); }
 .hiw__n { grid-row: span 3; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--step); color: #FFFFFF; font: 700 0.8rem var(--sans); }
 .hiw__t { font: 600 1.14rem/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); transition: color 160ms var(--ease); }
 .hiw__d { font-size: 0.92rem; line-height: 1.5; color: var(--ink-3); }
@@ -755,6 +755,26 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .trio__fig { margin: auto 0 0; padding-top: 10px; font: 700 2rem/1.1 var(--display); letter-spacing: -0.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .trio__fig span { display: block; margin-top: 4px; font: 400 0.85rem/1.4 var(--sans); letter-spacing: 0; color: var(--ink-3); }
 .trio__fig--txt { font-size: 1.1rem; letter-spacing: -0.015em; }
+.race { display: flex; flex-direction: column; gap: 18px; padding: clamp(20px, 3vw, 32px); border-radius: var(--r-xl); background: var(--card); }
+.race__k { margin: 0; font: 600 clamp(1.15rem, 1.8vw, 1.4rem)/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); text-wrap: balance; }
+.race__lane { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+.race__lane--diy { --tone: var(--t-orange); --fill: var(--s-orange); }
+.race__lane--dlm { --tone: var(--t-blue); --fill: var(--s-blue); }
+.race__t { margin: 0; font: 600 0.78rem var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--tone); }
+.race__track { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 12px 6px; }
+.race__track li { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; font-size: 0.78rem; line-height: 1.3; color: var(--ink-3); transition: color 300ms var(--ease); }
+.race__track li::before { content: ""; align-self: stretch; height: 6px; border-radius: 3px; background: linear-gradient(var(--fill), var(--fill)) 0 0 / 0% 100% no-repeat, var(--overlay); transition: background-size 600ms var(--ease); }
+.race__track li.is-done { color: var(--ink); }
+.race__track li.is-done::before { background-size: 100% 100%; }
+.race__track li.is-wait { grid-column: span 2; color: var(--caution); }
+.race__track li.is-wait::before { background: var(--caution-fill); animation: hold 1.2s ease-in-out infinite; }
+@keyframes hold { 50% { opacity: 0.4; } }
+.race__figs { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; font-size: 0.92rem; color: var(--ink-2); }
+.race__figs b { font: 700 1.6rem/1.1 var(--display); letter-spacing: -0.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.race__end { margin: 0; font-weight: 600; color: var(--ink); transition: opacity 400ms var(--ease); }
+.race.is-armed:not(.is-total) .race__end { opacity: 0; }
+.race__replay { align-self: flex-start; margin: 0; }
+@media (max-width: 640px) { .race__track { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .model > summary { font-size: 1.05rem; }
 .model > .stack { padding-bottom: 8px; }
 @media (max-width: 760px) { .trio { grid-template-columns: minmax(0, 1fr); } }
@@ -1426,6 +1446,33 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         <h2 class="h2">The expensive part isn’t running the app.</h2>
         <p class="lede">It’s everything around it.</p>
       </div>
+      <div class="race" id="race" data-claim="econ-labour econ-cloud minutes agents approvals">
+        <p class="race__k">From “it works on my laptop” to “the team can open it”</p>
+        <div class="race__lane race__lane--diy">
+          <p class="race__t">Deploy it yourself</p>
+          <ol class="race__track">
+            <li class="is-done">Ticket to IT</li>
+            <li class="is-done">Cloud account</li>
+            <li class="is-done">Company login</li>
+            <li class="is-done">Database and secrets</li>
+            <li class="is-done">Network rules</li>
+            <li class="is-done">Security review</li>
+            <li class="is-done">First app live</li>
+            <li class="is-done">Upkeep, every month</li>
+          </ol>
+          <p class="race__figs"><span><b data-race="hours">92</b> hours of IT time before the first app is live</span><span>and the cloud bill starts in week one: $129.53 a month before the first app</span></p>
+          <p class="race__end">First year, 10 apps: <b data-race="total">$32,658</b></p>
+        </div>
+        <div class="race__lane race__lane--dlm">
+          <p class="race__t">Deploy with Delimitus</p>
+          <ol class="race__track">
+            <li class="is-done">One prompt</li>
+            <li class="is-done">3½ minutes to a running preview, measured</li>
+            <li class="is-wait">IT approves what matters <span class="chip chip--caution">waiting for IT</span></li>
+          </ol>
+        </div>
+        <button type="button" class="race__replay" hidden>Play again</button>
+      </div>
       <div class="trio">
         <article class="trio__card">
           <p class="trio__k">Build</p>
@@ -1898,6 +1945,61 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     Array.prototype.forEach.call(ins, function (el) { el.addEventListener("input", paint); });
     document.getElementById("calcIn").hidden = false;
     paint();
+  }
+
+  /* ── cost: the long way, raced ────────────────────────────────────── */
+  var race = document.getElementById("race");
+  if (race) {
+    var field = function (k) { return parseFloat(document.querySelector('[data-in="' + k + '"]').defaultValue); };
+    var RACE = { hours: field("setup") + field("perApp"), every: 650, quick: 1600 };
+    var diyStages = race.querySelectorAll(".race__lane--diy li");
+    var dlmStages = race.querySelectorAll(".race__lane--dlm li");
+    var hours = race.querySelector('[data-race="hours"]');
+    var trio = document.getElementById("trioDiy");
+    race.querySelector('[data-race="total"]').textContent = trio.firstChild.nodeValue;
+    hours.textContent = String(RACE.hours);
+    if (!calm && watching) {
+      var raceTimers = [];
+      var at = function (fn, ms) { raceTimers.push(window.setTimeout(fn, ms)); };
+      var rest = function () {
+        raceTimers.forEach(window.clearTimeout);
+        raceTimers = [];
+        each(diyStages, function (l) { l.classList.remove("is-done"); });
+        each(dlmStages, function (l) { l.classList.remove("is-done", "is-wait"); });
+        race.classList.remove("is-total");
+        hours.textContent = "0";
+      };
+      var run = function () {
+        rest();
+        var last = dlmStages.length - 1;
+        var span = RACE.every * diyStages.length;
+        each(dlmStages, function (l, i) {
+          if (i < last) { at(function () { l.classList.add("is-done"); }, RACE.quick * (i + 1) / last); }
+          else { at(function () { l.classList.add("is-wait"); }, RACE.quick + 200); }
+        });
+        each(diyStages, function (l, i) { at(function () { l.classList.add("is-done"); }, RACE.every * (i + 1)); });
+        at(function () { race.classList.add("is-total"); }, span);
+        var start = Date.now();
+        var count = function () {
+          var t = Math.min(1, (Date.now() - start) / span);
+          hours.textContent = String(Math.round(RACE.hours * t));
+          if (t < 1) { at(count, 50); }
+        };
+        count();
+      };
+      rest();
+      race.classList.add("is-armed");
+      var replayRace = race.querySelector(".race__replay");
+      replayRace.hidden = false;
+      replayRace.addEventListener("click", run);
+      var raced = new IntersectionObserver(function (entries) {
+        if (!entries[0].isIntersecting) { return; }
+        raced.disconnect();
+        race.classList.add("is-in");
+        run();
+      }, { threshold: 0.4 });
+      raced.observe(race);
+    }
   }
 
   /* ── request a pilot ───────────────────────────────────────────────── */
