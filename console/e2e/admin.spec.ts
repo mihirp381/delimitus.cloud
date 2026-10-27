@@ -32,15 +32,15 @@ test('an admin may decide their own request; the audit log filters and exports',
   await page.getByLabel('API token').fill(token);
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  // Your own request is listed under all requests as pending, and as an admin you may decide it.
+  // Your own request is listed under all requests as waiting, and as an admin you may decide it.
   await expect(page.getByRole('heading', { name: 'Approvals' })).toBeVisible();
   await page.getByRole('link', { name: 'All requests' }).click();
+  await expect(page.getByRole('columnheader')).toHaveText(['Request', 'Requested by', 'Age', 'Status']);
   const row = page.getByRole('row').filter({ hasText: connection });
-  await expect(row).toContainText('pending');
-  await expect(row).toContainText('Waiting for an approver');
-  await expect(row.getByRole('link', { name: slug })).toBeVisible();
-  await expect(row).toContainText('prod');
-  await row.getByRole('link', { name: 'Open' }).click();
+  await expect(row.getByRole('cell').last()).toHaveText('Waiting');
+  await expect(row).toContainText(`${slug} Production`);
+  await expect(row.getByRole('link')).toHaveCount(1);
+  await row.getByRole('link', { name: `Connect ${connection}` }).click();
   await expect(page.getByRole('button', { name: /approve|reject/i })).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Withdraw this request' })).toBeVisible();
   const decision = page.getByRole('form', { name: 'Decide this request' });
@@ -50,20 +50,39 @@ test('an admin may decide their own request; the audit log filters and exports',
   await expect(page.getByText(/^Rejected by /)).toBeVisible();
   await expect(page.getByText('“No warehouse in the dev stack”')).toBeVisible();
   await expect(page.getByRole('form', { name: 'Decide this request' })).toHaveCount(0);
+  await expect(page.locator('.page-head .badge')).toHaveText('Rejected');
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Approvals' }).click();
+  await page.getByRole('link', { name: 'All requests' }).click();
+  await expect(page.getByRole('row').filter({ hasText: connection }).getByRole('cell').last()).toHaveText('Rejected');
+  await expect(page.getByText(/Denied/)).toHaveCount(0);
 
   // The audit log finds the request by action and target.
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Audit log' }).click();
   const filters = page.getByRole('form', { name: 'Filter events' });
+  const more = filters.getByRole('button', { name: /^More filters/ });
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  await expect(filters.getByLabel('Action')).toBeHidden();
+  await expect(page.locator('pre')).toHaveCount(0);
+  await more.click();
   await filters.getByLabel('Action').selectOption('approval.requested');
   await filters.getByLabel('Target id').fill(approval.id);
   await filters.getByRole('button', { name: 'Search' }).click();
   await expect(page).toHaveURL(new RegExp(`target_id=${approval.id}`));
   await expect(page.getByText('1 event', { exact: true })).toBeVisible();
-  await expect(page.getByRole('row').filter({ hasText: 'approval.requested' })).toContainText(approval.id);
+  await expect(more).toHaveText('More filters 2 set');
+  await expect(page.locator('pre')).toHaveCount(0);
+  await page.getByRole('row').filter({ hasText: 'approval.requested' }).getByRole('button', { name: 'approval.requested' }).click();
+  const event = page.getByRole('dialog', { name: /^Event \d+$/ });
+  await expect(event).toContainText(approval.id);
+  await expect(event.locator('pre')).toContainText('"action": "approval.requested"');
+  await event.getByRole('button', { name: 'Close' }).click();
+  await expect(event).toBeHidden();
 
   // Export downloads the matching events as a file.
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export CSV' }).click();
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await expect(page.getByRole('menuitem')).toHaveText(['Export CSV', 'Export JSON Lines', 'Verify a file…']);
+  await page.getByRole('menuitem', { name: 'Export CSV' }).click();
   const file = await download;
   expect(file.suggestedFilename()).toMatch(/^audit-org_[a-z0-9]+\.csv$/);
   const csv = await readFile(await file.path(), 'utf8');
@@ -74,6 +93,7 @@ test('an admin may decide their own request; the audit log filters and exports',
   ).toBeVisible();
 
   // The export is itself in the log.
+  await more.click();
   await filters.getByLabel('Action').selectOption('audit.exported');
   await filters.getByLabel('Target id').fill('');
   await filters.getByRole('button', { name: 'Search' }).click();
@@ -83,8 +103,10 @@ test('an admin may decide their own request; the audit log filters and exports',
   // the browser from the first event to the last row of the file that was saved.
   await filters.getByRole('button', { name: 'Clear filters' }).click();
   await expect(page).not.toHaveURL(/action=/);
+  await expect(more).toHaveText('More filters');
   const chainDownload = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export JSON Lines' }).click();
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Export JSON Lines' }).click();
   const chainFile = await chainDownload;
   expect(chainFile.suggestedFilename()).toMatch(/^audit-org_[a-z0-9]+\.jsonl$/);
   const check = page.getByRole('status', { name: 'Hash chain check' });

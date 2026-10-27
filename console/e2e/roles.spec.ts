@@ -202,10 +202,16 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
 
   await nav(page).filter({ hasText: 'Audit log' }).click();
   await expect(page.getByRole('form', { name: 'Filter events' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Export JSON Lines' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveAttribute('aria-haspopup', 'menu');
   await nav(page).filter({ hasText: 'Usage' }).click();
   await expect(page.getByRole('heading', { name: 'Usage' })).toBeVisible();
   await expect(page.getByText('Only org admins can see usage.')).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText(['Plan and usage', 'Capacity', 'Database']);
+  await expect(page.getByText(/not a bill/i)).toHaveCount(1);
+  await expect(page.getByText(/outbound IP/i)).toHaveCount(0);
+  await nav(page).filter({ hasText: 'Internet access' }).click();
+  await expect(page.getByRole('heading', { name: 'Internet access', level: 1 })).toBeVisible();
+  await expect(page.getByText('Fixed outbound IP', { exact: true })).toHaveCount(1);
 
   // People: the unmatched logins (none here, every person was pushed by the operator), and a
   // person found by their whole email address.

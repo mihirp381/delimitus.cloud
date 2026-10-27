@@ -460,8 +460,41 @@ a.brand:hover {
   cursor: pointer;
 }
 
-.menu-item:hover {
+.menu-item:hover,
+.menu-item:focus-visible {
   background: var(--ssc-surface-hover);
+}
+
+.menu-wrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + var(--ssc-space-1));
+  right: 0;
+  z-index: 60;
+  display: grid;
+  min-width: 200px;
+  padding: var(--ssc-space-1);
+  background: var(--ssc-surface-overlay);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-md);
+  box-shadow: var(--ssc-shadow-soft);
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--ssc-accent-ink);
+  background: transparent;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
 }
 
 .icon-btn {
@@ -1104,6 +1137,24 @@ textarea {
   gap: var(--ssc-space-2);
 }
 
+.filter-bar-row input[type='search'] {
+  width: 240px;
+  max-width: 100%;
+}
+
+.filter-count {
+  min-width: 18px;
+  padding: 0 var(--ssc-space-1);
+  border-radius: var(--ssc-radius-full);
+  font-size: var(--ssc-type-size-tiny);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
+  color: var(--ssc-accent-ink);
+  background: var(--ssc-accent-soft);
+}
+
 /* One choice among a few, as joined segments. */
 .segmented {
   display: inline-flex;
@@ -1618,6 +1669,7 @@ a.segment.current {
 
 /* Filters and details */
 .filters {
+  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
   align-items: end;
   gap: var(--ssc-space-3);
@@ -1727,7 +1779,7 @@ details[open] > summary {
   color: var(--ssc-feedback-warning);
 }
 
-details pre,
+.event-json,
 .command pre {
   max-width: 100%;
   margin: 0;
@@ -1740,8 +1792,9 @@ details pre,
   border-radius: var(--ssc-radius-sm);
 }
 
-details pre {
-  max-width: 420px;
+.event-json {
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 /* A command to paste into a terminal, and the button that copies it. */

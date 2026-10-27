@@ -31,7 +31,7 @@ export function exact(value: string): string {
 
 /**
  * A time that is secondary to its row: shown as how long ago, with the exact time in the title.
- * Where the exact time is the point (the audit log, a timer's history) the page writes it out.
+ * Where the exact time is the point (a timer's history) the page writes it out.
  */
 export function Ago({ at }: { readonly at: string }) {
   return (
