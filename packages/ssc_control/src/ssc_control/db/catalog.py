@@ -65,6 +65,8 @@ control plane serves, which the operator writes after building one. Platform dat
 table either.
 Revision 0040 adds ``onboarding`` (ticket 19D) to ``PLATFORM_TABLES``: one row per customer being
 onboarded, written before its org exists, so its ``org_id`` has no foreign key.
+Revision 0042 adds ``pilot_invite`` (decision 029 amendment of 2026-10-26) to ``PLATFORM_TABLES``:
+pilot invite codes, read by ``/authorize`` before any org is bound; only a code's SHA-256.
 """
 
 from collections.abc import Mapping
@@ -132,8 +134,9 @@ GLOBAL_TABLES: Final[tuple[str, ...]] = ("oauth_client",)
 
 # The platform's own tables: no RLS, an org_id with no foreign key that names an org without
 # holding its data. The cells the control plane serves (revision 0039, decision 030) and the
-# onboarding of each customer (revision 0040); db/README.md rule 18.
-PLATFORM_TABLES: Final[tuple[str, ...]] = ("cell", "onboarding")
+# onboarding of each customer (revision 0040), pilot invite codes (revision 0042); db/README.md
+# rule 18.
+PLATFORM_TABLES: Final[tuple[str, ...]] = ("cell", "onboarding", "pilot_invite")
 
 # Tables keyed by something other than a type-prefixed id; they have no (org_id, id) pair.
 UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
@@ -225,6 +228,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
     "cell": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; retired, never deleted
     "onboarding": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; abandoned, never deleted
+    "pilot_invite": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; revoked, never deleted
 }
 
 # Procrastinate's schema (revision 0006): the app role's privileges on its tables and sequences.
@@ -256,6 +260,7 @@ PII_COLUMNS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("onboarding", "customer_name"),
         ("onboarding", "domain"),
         ("onboarding", "admin_email"),
+        ("pilot_invite", "note"),
     }
 )
 PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(
@@ -273,6 +278,7 @@ PII_COLUMN_NAMES: Final[frozenset[str]] = frozenset(
         "customer_name",
         "domain",
         "admin_email",
+        "note",
     }
 )
 

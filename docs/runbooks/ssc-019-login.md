@@ -70,6 +70,152 @@ or token. Rerunning the checks above many times from one machine can reach them:
 hour or restart `auth`, which keeps its counts only in memory. There is no operator override in
 production; the person waits up to an hour or signs in from another network.
 
+## Invite codes
+
+A pilot user without an org id signs in to the console with an invite code (decision 029,
+amendment of 2026-10-26). With `SSC_DATABASE_DSN` set:
+
+```
+uv run python -m ssc_control.identity invite create --org <org_…> --operator op_<you> --expires-in 14d --max-uses 10 [--note "pilot cohort"]
+uv run python -m ssc_control.identity invite list --org <org_…>
+uv run python -m ssc_control.identity invite revoke <pinv_…> --operator op_<you>
+```
+
+`create` prints the code once on stdout (the row goes to stderr); only its SHA-256 is kept, so
+a lost code is revoked and made again. A revoked, expired or used-up code gets the same "We
+could not find a sign-in" answer as a wrong one.
+
+## Pilot tenant branded as Delimitus
+
+The pilot org signs in through an Okta tenant Delimitus runs, branded so the person sees
+Delimitus on the console card, Delimitus on the password page, then the console. Nothing in SSC
+is Okta-specific: the tenant is an ordinary WorkOS organisation and SSC org. Steps marked
+**[real]** create or change a real resource; run them in order. No value from Okta or WorkOS
+goes into a file, a ticket or this runbook.
+
+### 1. The Okta tenant **[real]**
+
+1. Sign up for an Okta developer org at `developer.okta.com` with an operator's Delimitus
+   address. Turn on MFA for that admin account.
+2. Customizations → Brands → the default brand: set the brand name to `Delimitus`.
+
+### 2. Custom domain **[real]**
+
+1. Customizations → Brands → Delimitus → Domains → Add domain: `signin.delimitus.com`,
+   certificate **Okta-managed**. Okta lists a TXT record (ownership) and a CNAME (the host).
+2. Add both to the `delimitus` Cloud DNS zone in `ssc-platform-0`, with the names and values
+   exactly as Okta shows them:
+
+   ```sh
+   gcloud dns record-sets create <TXT name Okta shows>. --zone=delimitus --project=ssc-platform-0 \
+     --type=TXT --ttl=300 --rrdatas='"<TXT value>"'
+   gcloud dns record-sets create signin.delimitus.com. --zone=delimitus --project=ssc-platform-0 \
+     --type=CNAME --ttl=300 --rrdatas=<CNAME target Okta shows>.
+   ```
+
+3. Back in Okta, Verify. The certificate is issued once both records resolve.
+
+Pass: `dig +short CNAME signin.delimitus.com` prints Okta's target, Okta shows the domain
+verified, and `https://signin.delimitus.com` opens the sign-in page with a valid certificate.
+
+### 3. Brand **[real]**
+
+1. Theme: upload the Delimitus logo (the mark from `console/src/components/Brand.tsx` with the
+   word Delimitus, as a PNG) and a favicon; primary colour `#0071e3`, secondary `#1d1d1f`,
+   background `#f5f5f7` (the console's `accent`, `textPrimary` and `surfaceSunken` tokens,
+   `console/src/tokens/tokens.css`).
+2. Sign-in page: title `Sign in to Delimitus`, the help and footer links pointed at
+   `delimitus.com` or removed, and every "Okta" removed (page title, footer, "Powered by").
+   The code editor needs the custom domain from step 2.
+3. Error page: the same theme and no Okta name.
+4. Emails: sender name `Delimitus`; a custom email domain under `delimitus.com` (add the
+   records Okta lists to the same zone as in step 2; if Okta asks for an SPF TXT on a name that
+   already has one, merge the include into that record instead of adding a second). Edit every
+   template a pilot user can receive (activation, password reset, MFA, account unlock) so no
+   subject or body names Okta.
+
+Pass: in a private window, `https://signin.delimitus.com` and a test activation mail show
+Delimitus and no Okta name.
+
+### 4. WorkOS and SCIM **[real]**
+
+1. Create the WorkOS organisation for the pilot in the production dashboard and verify a domain
+   for it that the pilot accounts' emails use (a Delimitus subdomain, verified by its TXT record
+   in the same zone). WorkOS's default domain policy refuses a profile whose email is outside
+   the organisation's domains (Before you start, above); SSC does not check the email domain
+   itself, and WorkOS support can relax the policy. Keep the default, so pilot users get
+   accounts on that domain, not their own company's.
+2. Connect the tenant as SAML (or OIDC) and Okta SCIM directory sync, as in Before you start
+   and `docs/runbooks/ssc-110-onboarding.md` step 2 (the Admin Portal links, followed here as
+   the tenant's admin). Create the Okta app after step 2 so its sign-on URL is on
+   `signin.delimitus.com`; check that the metadata WorkOS shows starts there.
+3. Assign the pilot users (and the founder) to the app in Okta; wait for WorkOS to list them as
+   directory users.
+4. Note the organisation, directory and connection ids and the founder's `idp_id` from WorkOS
+   (Before you start; `docs/runbooks/ssc-064-control-plane.md` step 10 has the `curl` that
+   lists them).
+
+### 5. The pilot org **[real]**
+
+With the database reachable as in `docs/runbooks/ssc-064-control-plane.md` step 10 (production
+un-parked, `SSC_DATABASE_DSN` as `ssc_app`, both WorkOS settings read into the shell):
+
+```sh
+ORG=$(uv run python -m ssc_control.identity create-org --name "Delimitus pilot" \
+  --founder-name "<founder name>" --founder-email "<founder email>" --founder-idp-id "<founder idp_id>" \
+  --operator op_<you> --workos-org <org_01…> --directory <directory_01…> --sso <conn_01…> \
+  --join-rule idp_id --cell-label l$(openssl rand -hex 6))
+echo $ORG
+```
+
+Pass: the org id on stdout and `ok` for the founder on stderr. A refusal writes nothing and
+says why. Building the org's cell for apps follows `docs/runbooks/ssc-110-onboarding.md`; the
+sign-in check below needs no cell.
+
+Then mint the pilot's invite codes as in Invite codes, above (`invite create --org $ORG …`), and
+hand each code to its person by a channel other than this runbook.
+
+### 6. First sign-in **[real]**
+
+In a private window, as a pilot user who is not the founder:
+
+1. `https://console.delimitus.com/login`: enter the org id (or an invite code), Continue.
+2. The browser reaches `https://signin.delimitus.com`: Delimitus logo and colours, no Okta name.
+3. Sign in with the Okta username and password (and MFA if set).
+4. The console opens signed in; reload and it stays signed in without the card.
+
+Pass: all four. "We could not find a sign-in for that organisation or code" on the card means
+the hint missed: a wrong id, a revoked, expired or used-up code, a frozen connection or too many
+tries. It never says which; check the id, `invite list --org $ORG` and the WorkOS connection.
+Record the date, the pass or fail and the person's `usr_` id under Record.
+
+### 7. Teardown **[real]**
+
+1. Revoke every live code: `invite list --org $ORG`, then `invite revoke <pinv_…> --operator
+   op_<you>` for each.
+2. Retire the org as the existing runbooks allow: delete the directory in WorkOS (sync freezes
+   the org's connection, `directory.frozen`, and every later sign-in misses), then the WorkOS
+   organisation. The SSC org row and its audit chain stay; there is no org-delete command. A
+   cell built for it is retired as `docs/runbooks/ssc-110-onboarding.md` describes.
+3. Delete the Okta tenant (Okta support or the account's settings).
+4. Delete the DNS records added in steps 2–4:
+
+   ```sh
+   gcloud dns record-sets delete signin.delimitus.com. --type=CNAME --zone=delimitus --project=ssc-platform-0
+   gcloud dns record-sets delete <TXT name>. --type=TXT --zone=delimitus --project=ssc-platform-0
+   ```
+
+   and each email-domain and WorkOS verification record the same way (merge back any SPF change).
+
+### Google Workspace or Microsoft Entra
+
+The same flow works with a Google Workspace SAML app or a Microsoft Entra enterprise app as the
+WorkOS connection: the SSC side (WorkOS organisation, `create-org`, invite codes, the console
+card) is identical, since nothing in the code is Okta-specific. Only the identity provider's own
+branding differs: Google Workspace and Entra show their own sign-in page, branded in their
+admin consoles (Entra company branding; Google has no custom domain for its page). Which
+providers are offered and proven is decided by `landing/CLAIMS.md` (`idp`), not by this runbook.
+
 ## Record
 
 Copy the times, the `usr_` ids and the pass or fail lines into the SSC-019 status in the tickets file. Stop both servers with Ctrl-C; `.ssc-dev/` keeps the state for a rerun.

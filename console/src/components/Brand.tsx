@@ -1,8 +1,9 @@
 /**
  * The brand: the Delimitus mark, drawn in the text colour as in the landing page's footer, and
- * the console's name. The caller wraps it in a link where there is somewhere to go.
+ * a name, the console's unless a sign-in card names Delimitus. The caller wraps it in a link where
+ * there is somewhere to go.
  */
-export function Brand() {
+export function Brand({ name = 'SSC console' }: { name?: string }) {
   return (
     <>
       <svg className="brand-mark" viewBox="0 0 22 22" aria-hidden="true" focusable="false">
@@ -12,7 +13,7 @@ export function Brand() {
           d="M6 3H11.5A8 8 0 0 1 11.5 19H6A2 2 0 0 1 4 17V5A2 2 0 0 1 6 3ZM7.52 16L10.16 16A0.35 0.35 0 0 0 10.49 15.78L14.25 6.48A0.35 0.35 0 0 0 13.92 6L11.28 6A0.35 0.35 0 0 0 10.95 6.22L7.19 15.52A0.35 0.35 0 0 0 7.52 16Z"
         />
       </svg>
-      <span>SSC console</span>
+      <span>{name}</span>
     </>
   );
 }

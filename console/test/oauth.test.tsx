@@ -5,7 +5,10 @@ import {
   challengeFor,
   CLIENT_ID,
   createOAuth,
+  HINT_KEY,
   newPkce,
+  NO_SIGN_IN_MESSAGE,
+  NoSignIn,
   type OAuthClient,
   PENDING_KEY,
   type Refresher,
@@ -21,6 +24,8 @@ import { WHOAMI } from './harness';
 const AUTH = 'https://auth.test';
 const AUDIENCE = 'https://api.test';
 const REDIRECT = `${ORIGIN}/auth/callback`;
+const ORG = 'org_aaaaaaaaaaaaaaaaaaaa';
+const INVITE = 'inv_0123456789abcdef';
 
 interface Sent {
   readonly url: string;
@@ -92,6 +97,29 @@ describe('PKCE', () => {
     expect(pending.state).toBe(q.get('state'));
     expect(pending.next).toBe('/apps');
     expect(await challengeFor(pending.verifier ?? '')).toBe(q.get('code_challenge'));
+    expect(q.has('org') || q.has('invite')).toBe(false);
+  });
+
+  it('names the org in the URL and returns an invite code as a form to post', async () => {
+    const { oauth, went } = client();
+    expect(await oauth.signIn('/', ORG)).toBeNull();
+    const form = await oauth.signIn('/', INVITE);
+    expect(went).toHaveLength(1);
+    const org = new URL(went[0] ?? '').searchParams;
+    expect([org.get('org'), org.has('invite')]).toEqual([ORG, false]);
+    expect(form?.action).toBe(`${AUTH}/authorize`);
+    expect(form?.fields).toEqual({
+      response_type: 'code',
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT,
+      state: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string,
+      code_challenge: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string,
+      code_challenge_method: 'S256',
+      resource: AUDIENCE,
+      invite: INVITE,
+    });
+    const pending = JSON.parse(window.sessionStorage.getItem(PENDING_KEY) ?? '{}') as Record<string, string>;
+    expect(pending.state).toBe(form?.fields.state);
   });
 });
 
@@ -149,6 +177,13 @@ describe('the callback', () => {
     await expect(oauth.complete(answer({ error: 'access_denied', state, iss: AUTH }))).rejects.toThrow(
       'Sign-in was cancelled.',
     );
+  });
+
+  it('tells a missing sign-in apart and keeps where the person was going', async () => {
+    const { oauth, state } = await begin();
+    const refused = oauth.complete(answer({ error: 'access_denied', error_description: 'no_sign_in', state, iss: AUTH }));
+    await expect(refused).rejects.toEqual(new NoSignIn('/apps'));
+    await expect(refused).rejects.toMatchObject({ next: '/apps', message: NO_SIGN_IN_MESSAGE });
   });
 
   it('refuses a token answer it does not understand or that the auth host refused', async () => {
@@ -317,10 +352,67 @@ describe('sign-in screens', () => {
   it('sends the person to the auth host from the login page with where they were going', async () => {
     const { oauth, went } = client();
     mount('/apps/app_aaaaaaaaaaaaaaaaaaaa', oauth);
-    fireEvent.click(await screen.findByRole('button', { name: 'Continue with your work account' }));
+    expect(await screen.findByRole('heading', { name: 'Sign in to Delimitus' })).toBeTruthy();
+    expect(document.querySelector('.login-card .brand')?.textContent).toBe('Delimitus');
+    const field = screen.getByLabelText('Organisation id or invite code');
+    expect(field.getAttribute('autocomplete')).toBe('off');
+    fireEvent.change(field, { target: { value: `  ${ORG.toUpperCase()} ` } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(went).toHaveLength(1));
+    expect(new URL(went[0] ?? '').searchParams.get('org')).toBe(ORG);
+    expect(window.localStorage.getItem(HINT_KEY)).toBe(ORG);
     const pending = JSON.parse(window.sessionStorage.getItem(PENDING_KEY) ?? '{}') as { next: string };
     expect(pending.next).toBe('/apps/app_aaaaaaaaaaaaaaaaaaaa');
+  });
+
+  it('fills in the last organisation id or code and sends an invite code as one', async () => {
+    window.localStorage.setItem(HINT_KEY, INVITE);
+    const { oauth, went } = client();
+    const submitted: HTMLFormElement[] = [];
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+      submitted.push(this);
+    });
+    mount('/login', oauth);
+    const field = await screen.findByLabelText<HTMLInputElement>('Organisation id or invite code');
+    expect(field.value).toBe(INVITE);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(submitted).toHaveLength(1));
+    submit.mockRestore();
+    const form = submitted[0];
+    expect([form?.method, form?.action]).toEqual(['post', `${AUTH}/authorize`]);
+    const fields = Object.fromEntries(new FormData(form));
+    expect(fields.invite).toBe(INVITE);
+    expect([fields.client_id, fields.redirect_uri, fields.resource]).toEqual([CLIENT_ID, REDIRECT, AUDIENCE]);
+    expect(fields.code_challenge_method).toBe('S256');
+    expect(went).toEqual([]);
+  });
+
+  it('refuses what is neither an organisation id nor an invite code', async () => {
+    const { oauth, went } = client();
+    mount('/login', oauth);
+    const field = await screen.findByLabelText('Organisation id or invite code');
+    for (const value of ['', 'acme', 'org_short', 'inv_0123456789abcdeg!', 'usr_aaaaaaaaaaaaaaaaaaaa']) {
+      fireEvent.change(field, { target: { value } });
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      expect((await screen.findByRole('alert')).textContent).toBe('That is not an organisation id or invite code.');
+    }
+    expect(went).toEqual([]);
+    expect(window.localStorage.getItem(HINT_KEY)).toBeNull();
+  });
+
+  it('comes back to the login page when no sign-in was found, and forgets the hint', async () => {
+    window.localStorage.setItem(HINT_KEY, ORG);
+    const { oauth, went } = client();
+    await oauth.signIn('/approvals', ORG);
+    const state = new URL(went[0] ?? '').searchParams.get('state') ?? '';
+    const back = answer({ error: 'access_denied', error_description: 'no_sign_in', state, iss: AUTH });
+    const { session, router } = mount(`/auth/callback${back}`, oauth);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(router.state.location.search).toEqual({ error: 'no_sign_in', next: '/approvals' });
+    expect((await screen.findByRole('alert')).textContent).toBe(NO_SIGN_IN_MESSAGE);
+    expect(window.localStorage.getItem(HINT_KEY)).toBeNull();
+    expect(screen.getByLabelText<HTMLInputElement>('Organisation id or invite code').value).toBe('');
+    expect(session.token()).toBeNull();
   });
 
   it('finishes sign-in on /auth/callback and goes where the person was going', async () => {
@@ -335,6 +427,15 @@ describe('sign-in screens', () => {
     session.clear();
   });
 
+  it('remembers the organisation id, not the invite code, once an invite has signed the person in', async () => {
+    window.localStorage.setItem(HINT_KEY, INVITE);
+    const { oauth } = client();
+    const state = (await oauth.signIn('/', INVITE))?.fields.state ?? '';
+    const { session } = mount(`/auth/callback${answer({ code: 'c-1', state, iss: AUTH })}`, oauth);
+    await waitFor(() => expect(window.localStorage.getItem(HINT_KEY)).toBe('org_ffffffffffffffffffff'));
+    session.clear();
+  });
+
   it('shows why a callback was refused and signs nobody in', async () => {
     const { oauth, sent } = client();
     await oauth.signIn('/');
@@ -343,6 +444,7 @@ describe('sign-in screens', () => {
     expect(session.token()).toBeNull();
     expect(sent).toEqual([]);
     expect(screen.getByRole('link', { name: 'Try again' })).toBeTruthy();
+    expect(document.querySelector('.login-card .brand')?.textContent).toBe('Delimitus');
   });
 
   describe('a 401 from the whoami poll', () => {

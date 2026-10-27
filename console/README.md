@@ -50,15 +50,21 @@ console image's build context leaves those files out.
 
 ## Production sign-in
 
-"Continue with your work account" sends the person to the auth host's `/authorize` (decision 029)
-and back to `/auth/callback`, which exchanges the code at `/token`, using the auth settings below.
+The sign-in card asks for an organisation id (`org_` and 20 characters, from the person's admin)
+or a pilot invite code (`inv_` and 16 characters), checks its shape and keeps the last one in
+`localStorage` (`ssc.signInHint`). "Continue" sends the person to the auth host's `/authorize`,
+a GET with `org=` or, for an invite code, a hidden form posted from the bundle so the code stays
+out of URLs (decision 029, amendment of 2026-10-26), and on to the org's WorkOS
+sign-in, then back to `/auth/callback`, which exchanges the code at `/token`, using the auth
+settings below. When the auth host finds no sign-in it answers `access_denied` with
+`no_sign_in`; the callback forgets the kept value and returns to `/login?error=no_sign_in`.
 
 In production the console is served at `https://console.delimitus.com` by `packages/ssc_console_host` (its Dockerfile runs `npm ci && npm run build` with the first four settings below as build arguments), and the control entry sends `/v1` on that host to the API; see "Console" in `infra/README.md`.
 
 The auth host must know the console's origin as `SSC_CONSOLE_URL`: its client `ssc-console`
 redirects only to `<SSC_CONSOLE_URL>/auth/callback`, and `/token` and `/revoke` answer CORS for that
-origin alone. Tokens live in memory, so a reload asks the auth host again (its own session cookie
-skips the email step). Sign-out calls `/revoke`.
+origin alone. Tokens live in memory, so a reload asks the auth host again (its own session cookie,
+set by the console sign-in, skips the org). Sign-out calls `/revoke`.
 
 While a signed-in page is on show the shell asks `/v1/whoami` every 4 seconds
 (`WHOAMI_EVERY_MS` in `src/routes/_authed.tsx`). A 401 there, as for a person deactivated in the

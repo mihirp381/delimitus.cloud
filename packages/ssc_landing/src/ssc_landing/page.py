@@ -29,6 +29,9 @@ SECURITY_HEADERS: Final = {
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
 }
 
+SIGN_IN: Final = "https://console.delimitus.com/login"
+"""The one link to another origin: a navigation to the console's sign-in, never a load."""
+
 PLAIN_CSP: Final = "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 """For every answer that is not the page: it runs nothing and loads nothing."""
 
@@ -84,7 +87,7 @@ def check_page(html: str, size: int) -> None:
         raise PageError("a style= attribute would be blocked by the content security policy")
     if _HANDLER_ATTRIBUTE.search(outside):
         raise PageError("an inline event handler would be blocked by the content security policy")
-    if _EXTERNAL.search(outside):
+    if _EXTERNAL.search(outside.replace(f'href="{SIGN_IN}"', "")):
         raise PageError("the page links a resource or action on another origin")
 
 

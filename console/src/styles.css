@@ -826,6 +826,11 @@ a.brand:hover {
   border-top: 1px solid var(--ssc-border-subtle);
 }
 
+.login-card form.sign-in {
+  padding-top: 0;
+  border-top: 0;
+}
+
 /* Controls: one height, a small radius. Blue is the one that acts. */
 .btn {
   display: inline-flex;
