@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
-import { keepHint, NoSignIn, safeNext, signInMessage } from '../auth/oauth';
+import { INVITE_CODE, keepHint, NoSignIn, ORG_ID, readHint, safeNext, signInMessage } from '../auth/oauth';
 import { Brand, BrandRule } from '../components/Brand';
 
 /**
@@ -13,7 +13,7 @@ export const Route = createFileRoute('/auth/callback')({
 });
 
 function Callback() {
-  const { oauth, session, queryClient } = Route.useRouteContext();
+  const { oauth, session, queryClient, queries } = Route.useRouteContext();
   const router = useRouter();
   // The raw query, before the router parses it; captured once, as the answer is good once.
   const search = useRef(router.history.location.search);
@@ -27,6 +27,14 @@ function Callback() {
       ({ tokens, next }) => {
         queryClient.clear();
         session.start(tokens);
+        if (INVITE_CODE.test(readHint())) {
+          void queryClient.fetchQuery(queries.queryOptions('get', '/v1/whoami')).then(
+            (me) => {
+              if (ORG_ID.test(me.org_id)) keepHint(me.org_id);
+            },
+            () => undefined,
+          );
+        }
         router.history.replace(safeNext(next) ?? '/');
       },
       (e: unknown) => {
@@ -43,7 +51,7 @@ function Callback() {
         });
       },
     );
-  }, [oauth, session, queryClient, router]);
+  }, [oauth, session, queryClient, queries, router]);
 
   return (
     <main className="login">

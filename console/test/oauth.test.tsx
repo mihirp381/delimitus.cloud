@@ -402,6 +402,16 @@ describe('sign-in screens', () => {
     session.clear();
   });
 
+  it('remembers the organisation id, not the invite code, once an invite has signed the person in', async () => {
+    window.localStorage.setItem(HINT_KEY, INVITE);
+    const { oauth, went } = client();
+    await oauth.signIn('/', INVITE);
+    const state = new URL(went[0] ?? '').searchParams.get('state') ?? '';
+    const { session } = mount(`/auth/callback${answer({ code: 'c-1', state, iss: AUTH })}`, oauth);
+    await waitFor(() => expect(window.localStorage.getItem(HINT_KEY)).toBe('org_ffffffffffffffffffff'));
+    session.clear();
+  });
+
   it('shows why a callback was refused and signs nobody in', async () => {
     const { oauth, sent } = client();
     await oauth.signIn('/');
