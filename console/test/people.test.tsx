@@ -26,15 +26,32 @@ const PAT_LOGIN = login('pat');
 const SAML_LOGIN = login('sam', { reason: 'ambiguous_email', attempts: 1, linkable: false, subject: 'sam@example.com' });
 
 function user(id: string, name: string, extra: Record<string, unknown> = {}) {
-  return { id, display_name: name, email: `${name.toLowerCase()}@example.com`, role: 'member', status: 'active', ...extra };
+  return {
+    id,
+    display_name: name,
+    email: `${name.toLowerCase()}@example.com`,
+    role: 'member',
+    status: 'active',
+    created_at: '2026-09-01T09:00:00Z',
+    last_sign_in_at: null,
+    ...extra,
+  };
 }
+
+const people = (list: unknown[], next: string | null = null): Handler => () =>
+  json(200, { users: list, next_cursor: next });
 
 const logins = (...list: unknown[]): Handler => () => json(200, { unlinked_logins: list });
 
 async function peoplePage(routes: Record<string, Handler | Handler[]>, role: 'admin' | 'member' = 'admin') {
   const result = start(
     '/people',
-    { 'GET /v1/whoami': whoami(role), 'GET /v1/unlinked-logins': logins(PAT_LOGIN, SAML_LOGIN), ...routes },
+    {
+      'GET /v1/whoami': whoami(role),
+      'GET /v1/unlinked-logins': logins(PAT_LOGIN, SAML_LOGIN),
+      'GET /v1/users': people([user(PAT, 'Pat')]),
+      ...routes,
+    },
     signedIn(),
   );
   await screen.findByRole('heading', { name: 'People', level: 1 }, { timeout: FIRST_RENDER_MS });
@@ -48,15 +65,7 @@ describe('people page', () => {
     expect(within(screen.getByRole('navigation', { name: 'Main' })).queryByRole('link', { name: 'People' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Unmatched logins' })).toBeNull();
     expect(api.of('GET', '/v1/unlinked-logins')).toHaveLength(0);
-  });
-
-  it('says the directory is managed in the identity provider', async () => {
-    await peoplePage({});
-    await screen.findByRole('table', { name: /Unmatched logins/ });
-    expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'People' })).toBeDefined();
-    expect(document.querySelector('.page-purpose')?.textContent).toContain(
-      'People and groups are managed in your identity provider',
-    );
+    expect(api.of('GET', '/v1/users')).toHaveLength(0);
   });
 
   it('lists the unmatched logins in the words of ssc logins list', async () => {
@@ -96,7 +105,6 @@ describe('people page', () => {
   it('links a login to the active person found by exact email', async () => {
     const { api } = await peoplePage({
       'GET /v1/unlinked-logins': [logins(PAT_LOGIN, SAML_LOGIN), logins(SAML_LOGIN)],
-      'GET /v1/users': () => json(200, { users: [user(PAT, 'Pat')] }),
       [`POST /v1/unlinked-logins/${PAT_LOGIN.id}/link`]: () =>
         json(200, { identity_link_id: 'idl_1', user_id: PAT, user_name: 'Pat', user_email: 'pat@example.com' }),
     });
@@ -111,7 +119,7 @@ describe('people page', () => {
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
     });
-    expect(api.of('GET', '/v1/users')[0]?.query.get('email')).toBe('Pat@Example.com');
+    expect(api.of('GET', '/v1/users').at(-1)?.query.get('email')).toBe('Pat@Example.com');
     expect((await within(dialog).findByRole('radio', { name: /Pat/ }) as HTMLInputElement).checked).toBe(true);
     expect(link.disabled).toBe(false);
     await act(async () => {
@@ -137,13 +145,13 @@ describe('people page', () => {
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Link' }));
     });
-    expect(api.of('GET', '/v1/users')).toHaveLength(0);
+    expect(api.of('GET', '/v1/users').filter((c) => c.query.has('email'))).toHaveLength(0);
     expect(await toast()).toBe('Linked pat@example.com to Pat Lee. Their next login signs them in.');
   });
 
   it('does not let a deactivated person be picked', async () => {
     const { api } = await peoplePage({
-      'GET /v1/users': () => json(200, { users: [user(PAT, 'Pat', { status: 'deactivated' })] }),
+      'GET /v1/users': people([user(PAT, 'Pat', { status: 'deactivated' })]),
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Link pat@example.com to a person' }));
     const dialog = await screen.findByRole('dialog', { name: 'Link pat@example.com to a person' });
@@ -178,87 +186,100 @@ describe('people page', () => {
   });
 });
 
-describe('looking a person or a group up', () => {
-  async function find(form: string, label: string, text: string) {
-    const element = await screen.findByRole('form', { name: form });
-    fireEvent.change(within(element).getByLabelText(label), { target: { value: text } });
-    await act(async () => {
-      fireEvent.submit(element);
-    });
+describe('the roster', () => {
+  const ROSTER = 'People, by name';
+
+  async function roster(routes: Record<string, Handler | Handler[]> = {}) {
+    const result = await peoplePage(routes);
+    const table = await screen.findByRole('table', { name: ROSTER });
+    return { ...result, table };
   }
 
-  it('shows a person by exact email: name, role, status and id, read-only', async () => {
-    const { api } = await peoplePage({
-      'GET /v1/users': () =>
-        json(200, {
-          users: [user(PAT, 'Pat', { role: 'admin' }), user(SAM, 'Sam', { email: 'pat@example.com', status: 'deactivated' })],
-        }),
+  it('lists people by name, never by id, active ones first asked for', async () => {
+    const { api, table } = await roster({
+      'GET /v1/users': people([
+        user(PAT, 'Pat', { role: 'admin', last_sign_in_at: '2026-10-08T17:30:00Z' }),
+        user(SAM, 'Sam'),
+      ]),
     });
-    await find('Look up a person', 'Email address', ' pat@example.com ');
-    const table = await screen.findByRole('table', { name: 'People with the email pat@example.com' });
-    expect(api.of('GET', '/v1/users')[0]?.query.get('email')).toBe('pat@example.com');
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'Name',
+      'Email',
+      'Role',
+      'State',
+      'Last sign-in',
+    ]);
     const [, pat, sam] = within(table).getAllByRole('row');
-    expect(within(pat!).getAllByRole('cell').map((c) => c.textContent)).toEqual([
-      `Pat ${PAT}`,
+    expect(within(pat!).getAllByRole('cell').slice(0, 4).map((c) => c.textContent)).toEqual([
+      'Pat',
       'pat@example.com',
       'admin',
       'active',
     ]);
-    expect(within(sam!).getAllByRole('cell').map((c) => c.textContent)).toEqual([
-      `Sam ${SAM}`,
-      'pat@example.com',
-      'member',
-      'deactivated',
-    ]);
-    expect(sam?.querySelector('.badge-danger')?.textContent).toBe('deactivated');
-    // Nothing here changes a person.
-    const section = screen.getByRole('region', { name: 'Look up a person' });
-    expect(within(section).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
-      'Find',
-      'Copy person id',
-      'Copy person id',
-    ]);
-    expect(section.textContent).toContain('change them in your identity provider');
+    expect(pat?.querySelector('time')?.getAttribute('datetime')).toBe('2026-10-08T17:30:00Z');
+    expect(within(sam!).getAllByRole('cell')[4]?.textContent).toBe('Never');
+    expect(table.textContent).not.toContain('usr_');
+    const [call] = api.of('GET', '/v1/users');
+    expect(call?.query.get('status')).toBe('active');
+    expect(call?.query.has('q')).toBe(false);
   });
 
-  it('says when no one has the address, and does not ask for half an address', async () => {
-    const { api } = await peoplePage({ 'GET /v1/users': () => json(200, { users: [] }) });
-    await find('Look up a person', 'Email address', 'nobody@example.com');
-    expect(await screen.findByText('No one in the organisation has the address nobody@example.com.')).toBeDefined();
-    await find('Look up a person', 'Email address', 'nobody');
-    const section = screen.getByRole('region', { name: 'Look up a person' });
-    expect((await within(section).findByRole('alert')).textContent).toContain('Type a whole email address.');
-    expect(api.of('GET', '/v1/users')).toHaveLength(1);
-  });
-
-  it('shows a group by exact name: id and active members', async () => {
-    const { api } = await peoplePage({
-      'GET /v1/groups': () =>
-        json(200, { groups: [{ id: 'grp_ffffffffffffffffffff', name: 'Finance', member_count: 3 }] }),
+  it('searches on the server and switches to everyone', async () => {
+    const { api } = await roster({
+      'GET /v1/users': [
+        people([user(PAT, 'Pat')]),
+        people([user(PAT, 'Pat')]),
+        people([user(SAM, 'Sam', { status: 'deactivated' })]),
+      ],
     });
-    await find('Look up a group', 'Group name', 'finance');
-    const table = await screen.findByRole('table', { name: 'Groups named finance' });
-    expect(api.of('GET', '/v1/groups')[0]?.query.get('name')).toBe('finance');
-    expect(within(within(table).getAllByRole('row')[1]!).getAllByRole('cell').map((c) => c.textContent)).toEqual([
-      'Finance grp_ffffffffffffffffffff',
-      '3 active members',
-    ]);
-    const section = screen.getByRole('region', { name: 'Look up a group' });
-    expect(within(section).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
-      'Find',
-      'Copy group id',
-    ]);
-    expect(section.textContent).toContain('change it in your identity provider');
+    fireEvent.change(screen.getByLabelText('Search people'), { target: { value: ' pat ' } });
+    await waitFor(() => expect(api.of('GET', '/v1/users')).toHaveLength(2));
+    expect(api.of('GET', '/v1/users')[1]?.query.get('q')).toBe('pat');
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
+    await waitFor(() => expect(api.of('GET', '/v1/users')).toHaveLength(3));
+    const last = api.of('GET', '/v1/users')[2];
+    expect(last?.query.has('status')).toBe(false);
+    expect(last?.query.get('q')).toBe('pat');
+    const cell = await screen.findByRole('cell', { name: 'deactivated' });
+    expect(cell.querySelector('.badge')?.className).toBe('badge badge-neutral');
   });
 
-  it('says when no group has the name, and shows a refusal', async () => {
-    await peoplePage({
-      'GET /v1/groups': [() => json(200, { groups: [] }), () => problem(403, 'FORBIDDEN', 'Not for agents')],
+  it('says when no one matches the search', async () => {
+    await roster({ 'GET /v1/users': [people([user(PAT, 'Pat')]), people([])] });
+    fireEvent.change(screen.getByLabelText('Search people'), { target: { value: 'zed' } });
+    expect(await screen.findByText('No one matches zed.')).toBeDefined();
+  });
+
+  it('opens a person with their id and how to change them', async () => {
+    const { table } = await roster();
+    fireEvent.click(within(table).getByRole('button', { name: 'Pat' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Pat' });
+    expect(dialog.textContent).toContain('pat@example.com');
+    expect(dialog.textContent).toContain('Never');
+    expect(dialog.textContent).toContain(PAT);
+    expect(within(dialog).getByRole('button', { name: 'Copy person id' })).toBeDefined();
+    expect(dialog.textContent).toContain('change them in your identity provider');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Pat' })).toBeNull());
+  });
+
+  it('loads the next page from the cursor', async () => {
+    const { api } = await roster({
+      'GET /v1/users': [people([user(PAT, 'Pat')], PAT), people([user(SAM, 'Sam')])],
     });
-    await find('Look up a group', 'Group name', 'Nobody');
-    expect(await screen.findByText('No group is named exactly Nobody.')).toBeDefined();
-    await find('Look up a group', 'Group name', 'Nobody2');
-    const section = screen.getByRole('region', { name: 'Look up a group' });
-    expect((await within(section).findByRole('alert')).textContent).toContain('Not for agents');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Load more people' }));
+    });
+    await screen.findByRole('button', { name: 'Sam' });
+    expect(api.of('GET', '/v1/users')[1]?.query.get('cursor')).toBe(PAT);
+    expect(screen.queryByRole('button', { name: 'Load more people' })).toBeNull();
+  });
+
+  it('says people come from the directory sync when there are none', async () => {
+    await peoplePage({ 'GET /v1/users': people([]) });
+    expect(await screen.findByText('No active people yet.')).toBeDefined();
+    expect(screen.getByText(/People appear here after the directory sync/)).toBeDefined();
+    const region = screen.getByRole('region', { name: 'People' });
+    expect(within(region).getByRole('link', { name: 'Help' }).getAttribute('href')).toBe('/help');
   });
 });
