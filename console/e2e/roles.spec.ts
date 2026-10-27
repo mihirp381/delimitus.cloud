@@ -261,7 +261,7 @@ test('a builder sees nothing admin, and can share and open rollback on their app
   await rollback.getByRole('button', { name: 'Cancel' }).click();
 
   // Secrets: a builder may read the names and versions, and is shown the command to set one.
-  await openTab(page, 'Secrets');
+  await openTab(page, 'Settings');
   const secrets = page.getByRole('region', { name: 'Secrets' });
   await expect(secrets.getByText(`Production of ${w.slug} has no secrets.`)).toBeVisible();
   await expect(secrets.getByLabel('Set a secret in production', { exact: true })).toHaveText(
@@ -294,8 +294,8 @@ test('a user sees nothing admin, and the API refuses the actions shown to everyo
   await expect(rollback.getByRole('alert').first()).toContainText(FORBIDDEN);
   await rollback.getByRole('button', { name: 'Cancel' }).click();
 
-  // And the secrets' names: the tab opens for everyone, and the API refuses a user.
-  await openTab(page, 'Secrets');
+  // And the secrets' names: Settings opens for everyone, and the API refuses a user.
+  await openTab(page, 'Settings');
   const secrets = page.getByRole('region', { name: 'Secrets' });
   await expect(secrets.getByRole('heading', { name: 'Set or rotate a secret' })).toBeVisible();
   await expect(secrets.getByRole('alert')).toContainText(FORBIDDEN);

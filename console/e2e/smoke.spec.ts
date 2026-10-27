@@ -100,3 +100,41 @@ test('sign in, find an app, and remove access through a stale version', async ({
   const final = await grantsOf(request, grantsPath);
   expect(final.body.grants).toEqual([]);
 });
+
+test('walk an app from the overview to each panel of Settings', async ({ page, request }) => {
+  expect(token, 'run through e2e/run.mjs, which mints the token').not.toBe('');
+  const slug = `e2e-walk-${Date.now().toString(36)}`;
+  const created = await request.post('/v1/apps', {
+    headers: { ...auth, 'Idempotency-Key': randomUUID() },
+    data: { slug },
+  });
+  expect(created.status()).toBe(201);
+  const app = await created.json();
+
+  await page.goto(`/apps/${app.id}`);
+  await page.getByLabel('API token').fill(token);
+  await page.getByLabel('Keep it for this tab').check();
+  await page.getByRole('button', { name: 'Sign in' }).click();
+
+  const sections = page.getByRole('navigation', { name: 'App sections' });
+  await expect(sections.getByRole('link')).toHaveText(['Overview', 'Logs', 'Access', 'Settings']);
+  const prod = page.getByRole('region', { name: 'Production prod' });
+  const preview = page.getByRole('region', { name: 'Preview preview' });
+  await expect(prod.locator('.btn-primary')).toHaveCount(1);
+  await expect(prod.getByRole('button', { name: 'Share Production' })).toHaveClass(/btn-primary/);
+  await expect(preview.locator('.btn-primary')).toHaveCount(1);
+  await expect(preview.getByRole('button', { name: 'Promote preview to production' })).toHaveClass(/btn-primary/);
+  await expect(prod.getByText('Config version')).toBeHidden();
+
+  await sections.getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(page).toHaveURL(/tab=settings/);
+  const panels = ['Secrets', 'Timers', 'Repository', 'Admin actions'];
+  for (const name of panels) {
+    await expect(page.getByRole('region', { name, exact: true })).toBeVisible();
+  }
+  await expect(page.locator('main h2')).toHaveText(panels);
+
+  await page.goto(`/apps/${app.id}?tab=timers`);
+  await expect(page).toHaveURL(new RegExp(`/apps/${app.id}\\?tab=settings#timers$`));
+  await expect(page.getByRole('region', { name: 'Timers', exact: true })).toBeVisible();
+});
