@@ -140,6 +140,8 @@ KNOWN: Final[Mapping[str, Callable[[Ids], Probe]]] = {
     ),
     "DELETE /v1/egress/hosts/{host}": lambda _: Probe("DELETE", f"/v1/egress/hosts/{NO_HOST}"),
     "PUT /v1/egress/hosts/{host}": lambda _: Probe("PUT", f"/v1/egress/hosts/{HIGH_RISK_HOST}", {}),
+    # The roster names everyone; the exact email lookup stays open to an admin's agent.
+    "GET /v1/users": lambda _: Probe("GET", "/v1/users"),
     "PUT /v1/org/agent-policy": lambda i: Probe("PUT", "/v1/org/agent-policy", {"logs": i.logs}),
     "POST /v1/unlinked-logins/{unlinked_login_id}/link": lambda i: Probe(
         "POST", f"/v1/unlinked-logins/ulg_{ZERO}/link", {"user_id": i.user}

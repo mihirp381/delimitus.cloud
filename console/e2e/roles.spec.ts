@@ -159,6 +159,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
     '/v1/usage',
     '/v1/cell',
     '/v1/unlinked-logins',
+    '/v1/users',
     `/v1/users?email=${encodeURIComponent(w.builderEmail)}`,
   ];
   for (const path of adminReads) {
@@ -204,7 +205,7 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   await expect(page.getByRole('form', { name: 'Filter events' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export', exact: true })).toHaveAttribute('aria-haspopup', 'menu');
   await nav(page).filter({ hasText: 'Usage' }).click();
-  await expect(page.getByRole('heading', { name: 'Usage' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Usage', level: 1 })).toBeVisible();
   await expect(page.getByText('Only org admins can see usage.')).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 2 })).toHaveText(['Plan and usage', 'Capacity', 'Database']);
   await expect(page.getByText(/not a bill/i)).toHaveCount(1);
@@ -213,19 +214,18 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   await expect(page.getByRole('heading', { name: 'Internet access', level: 1 })).toBeVisible();
   await expect(page.getByText('Fixed outbound IP', { exact: true })).toHaveCount(1);
 
-  // People: the unmatched logins (none here, every person was pushed by the operator), and a
-  // person found by their whole email address.
+  // People: the roster, searched by part of an address, and the unmatched logins (none here,
+  // every person was pushed by the operator).
   await nav(page).filter({ hasText: 'People' }).click();
   await expect(page.getByText('Every login so far matched a person.')).toBeVisible();
-  const person = page.getByRole('form', { name: 'Look up a person' });
-  await person.getByLabel('Email address').fill(w.builderEmail.toUpperCase());
-  await person.getByRole('button', { name: 'Find' }).click();
-  const found = page.getByRole('table', { name: /People with the email/ }).getByRole('row').nth(1);
-  await expect(found.getByRole('cell')).toHaveText([`builder E2E ${w.builder.id}`, w.builderEmail, 'member', 'active']);
-  const group = page.getByRole('form', { name: 'Look up a group' });
-  await group.getByLabel('Group name').fill(`No such group ${w.slug}`);
-  await group.getByRole('button', { name: 'Find' }).click();
-  await expect(page.getByText(`No group is named exactly No such group ${w.slug}.`)).toBeVisible();
+  await page.getByLabel('Search people').fill(w.builderEmail.toUpperCase());
+  const found = page.getByRole('table', { name: 'People, by name' }).getByRole('row').nth(1);
+  await expect(found.getByRole('cell')).toHaveText(['builder E2E', w.builderEmail, 'member', 'active', 'Never'], {
+    useInnerText: true,
+  });
+  await found.getByRole('button', { name: 'builder E2E' }).click();
+  await expect(page.getByRole('dialog', { name: 'builder E2E' })).toContainText(w.builder.id);
+  await page.getByRole('dialog', { name: 'builder E2E' }).getByRole('button', { name: 'Close' }).click();
 
   await seesHelp(page);
 

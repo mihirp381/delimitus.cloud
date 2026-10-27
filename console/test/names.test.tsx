@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { APP_ID, APP_PATH, FIRST_RENDER_MS, OWNER, openTab, page, PROD_GRANTS, whoami } from './appPage';
 import { type Handler, json } from './fakeApi';
@@ -153,11 +153,29 @@ const LISTS: readonly [string, string, string | RegExp, Record<string, Handler>]
   ],
   ['approvals', '/approvals?view=all', /requests/i, { 'GET /v1/whoami': whoami('admin'), 'GET /v1/approvals': () => json(200, { approvals: [approval], next_before: null }) }],
   [
+    'the people roster',
+    '/people',
+    'People, by name',
+    {
+      'GET /v1/whoami': whoami('admin'),
+      'GET /v1/unlinked-logins': () => json(200, { unlinked_logins: [] }),
+      'GET /v1/users': () =>
+        json(200, {
+          users: [
+            { id: OWNER, display_name: OLIVE.name, email: OLIVE.email, role: 'member', status: 'active', created_at: '2026-09-01T09:00:00Z', last_sign_in_at: null },
+            { id: 'usr_gggggggggggggggggggg', display_name: '', email: 'nameless@example.com', role: 'admin', status: 'deactivated', created_at: '2026-09-01T09:00:00Z', last_sign_in_at: '2026-10-01T09:00:00Z' },
+          ],
+          next_cursor: null,
+        }),
+    },
+  ],
+  [
     'unmatched logins',
     '/people',
     /Unmatched logins/,
     {
       'GET /v1/whoami': whoami('admin'),
+      'GET /v1/users': () => json(200, { users: [], next_cursor: null }),
       'GET /v1/unlinked-logins': () =>
         json(200, {
           unlinked_logins: [
@@ -172,32 +190,6 @@ describe('lists show names, not ids', () => {
   it.each(LISTS)('%s', async (_, path, table, routes) => {
     start(path, routes, signedIn());
     await rows(table);
-    expect(rawCells()).toEqual([]);
-  });
-
-  it('the people and group lookups', async () => {
-    start(
-      '/people',
-      {
-        'GET /v1/whoami': whoami('admin'),
-        'GET /v1/unlinked-logins': () => json(200, { unlinked_logins: [] }),
-        'GET /v1/users': () => json(200, { users: [{ id: OWNER, display_name: OLIVE.name, email: OLIVE.email, role: 'member', status: 'active' }] }),
-        'GET /v1/groups': () => json(200, { groups: [{ id: GROUP, name: 'Finance', member_count: 3 }] }),
-      },
-      signedIn(),
-    );
-    for (const [region, label, value] of [
-      ['Look up a person', 'Email address', OLIVE.email],
-      ['Look up a group', 'Group name', 'Finance'],
-    ] as const) {
-      const section = await screen.findByRole('region', { name: region }, { timeout: FIRST_RENDER_MS });
-      fireEvent.change(within(section).getByLabelText(label), { target: { value } });
-      await act(async () => {
-        fireEvent.click(within(section).getByRole('button', { name: 'Find' }));
-      });
-    }
-    await rows(/People with the email/);
-    await rows(/Groups named/);
     expect(rawCells()).toEqual([]);
   });
 

@@ -3,7 +3,6 @@ import type { components } from './schema';
 
 export type UnlinkedLogin = components['schemas']['UnlinkedLogin'];
 export type UserMatch = components['schemas']['UserMatch'];
-export type GroupMatch = components['schemas']['GroupMatch'];
 export type Linked = components['schemas']['Linked'];
 
 /** Why a login matched no person, in the words of `ssc logins list`. */
@@ -29,15 +28,20 @@ export async function linkLogin(api: ApiClient, unlinkedLoginId: string, userId:
   );
 }
 
-const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+$/;
+export type RosterFilter = 'active' | 'all';
 
-/** The org's people with exactly this email, ignoring case, deactivated ones included. */
-export async function peopleByEmail(api: ApiClient, email: string): Promise<readonly UserMatch[]> {
-  if (!EMAIL_PATTERN.test(email)) throw new Error('Type a whole email address.');
-  return must(await api.GET('/v1/users', { params: { query: { email } } })).users;
-}
-
-/** The org's groups with exactly this name, ignoring case. */
-export async function groupsByName(api: ApiClient, name: string): Promise<readonly GroupMatch[]> {
-  return must(await api.GET('/v1/groups', { params: { query: { name } } })).groups;
+/** One page of the roster, by name: `q` is part of a name or email, ignoring case. Org admins only. */
+export async function rosterPage(
+  api: ApiClient,
+  q: string,
+  filter: RosterFilter,
+  cursor: string | null,
+  signal?: AbortSignal,
+): Promise<components['schemas']['UserMatches']> {
+  const query = {
+    ...(q ? { q } : {}),
+    ...(filter === 'active' ? { status: 'active' as const } : {}),
+    ...(cursor ? { cursor } : {}),
+  };
+  return must(await api.GET('/v1/users', { params: { query }, signal }));
 }

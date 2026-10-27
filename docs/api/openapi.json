@@ -6888,6 +6888,11 @@
       "UserMatch": {
         "additionalProperties": false,
         "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
           "display_name": {
             "title": "Display Name",
             "type": "string"
@@ -6899,6 +6904,19 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "last_sign_in_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The start of the person's latest browser, console or command-line session.",
+            "title": "Last Sign In At"
           },
           "role": {
             "$ref": "#/components/schemas/OrgRole"
@@ -6917,7 +6935,9 @@
           "display_name",
           "email",
           "role",
-          "status"
+          "status",
+          "created_at",
+          "last_sign_in_at"
         ],
         "title": "UserMatch",
         "type": "object"
@@ -6925,6 +6945,18 @@
       "UserMatches": {
         "additionalProperties": false,
         "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as `cursor` for the next page; null on the last page and with `email`.",
+            "title": "Next Cursor"
+          },
           "users": {
             "items": {
               "$ref": "#/components/schemas/UserMatch"
@@ -6934,7 +6966,8 @@
           }
         },
         "required": [
-          "users"
+          "users",
+          "next_cursor"
         ],
         "title": "UserMatches",
         "type": "object"
@@ -16799,21 +16832,100 @@
     },
     "/v1/users": {
       "get": {
-        "description": "Active org admins with a user credential only (``FORBIDDEN``).",
-        "operationId": "find_users_v1_users_get",
+        "description": "Active org admins with a user credential only (``FORBIDDEN``); the roster, without\n``email``, never in an agent session (``AGENT_SESSION_REFUSED``). By name, then id.",
+        "operationId": "list_users_v1_users_get",
         "parameters": [
           {
-            "description": "Matched whole, ignoring case. Deactivated people are included.",
+            "description": "Matched whole, ignoring case; deactivated people are included. Not with `q`, `status` or `cursor`.",
             "in": "query",
             "name": "email",
-            "required": true,
+            "required": false,
             "schema": {
-              "description": "Matched whole, ignoring case. Deactivated people are included.",
-              "maxLength": 320,
-              "minLength": 3,
-              "pattern": "^[^@\\s\\x00-\\x1f\\x7f]+@[^@\\s\\x00-\\x1f\\x7f]+$",
-              "title": "Email",
-              "type": "string"
+              "anyOf": [
+                {
+                  "maxLength": 320,
+                  "minLength": 3,
+                  "pattern": "^[^@\\s\\x00-\\x1f\\x7f]+@[^@\\s\\x00-\\x1f\\x7f]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Matched whole, ignoring case; deactivated people are included. Not with `q`, `status` or `cursor`.",
+              "title": "Email"
+            }
+          },
+          {
+            "description": "Part of the name or email, ignoring case.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Part of the name or email, ignoring case.",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "active",
+                    "deactivated"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The previous page's `next_cursor`.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^usr_[a-z0-9]{20}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The previous page's `next_cursor`.",
+              "title": "Cursor"
             }
           }
         ],
@@ -16846,7 +16958,7 @@
                 }
               }
             },
-            "description": "`FORBIDDEN`"
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
           },
           "413": {
             "content": {
@@ -16879,7 +16991,7 @@
             "description": "`RATE_LIMITED`"
           }
         },
-        "summary": "Find Users",
+        "summary": "List Users",
         "tags": [
           "v1"
         ]
