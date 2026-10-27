@@ -233,7 +233,7 @@ pulumi up --stack platform \
 gcloud run jobs execute ssc-control-migrate --project=$P --region=us-central1 --wait
 ```
 
-Pass: the execution succeeds, and the job's log ends with Alembic at the head revision. The job runs as `ssc-control-migrate`, the only account that can read `SSC_MIGRATE_DSN`.
+Pass: the execution succeeds (exit code 0). The job prints no revision; a failed migration exits non-zero and the execution fails. The job runs as `ssc-control-migrate`, the only account that can read `SSC_MIGRATE_DSN`.
 
 ## 9. Full apply: the release runs **[real]**
 

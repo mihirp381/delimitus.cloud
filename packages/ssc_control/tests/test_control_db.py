@@ -2338,3 +2338,18 @@ def test_pilot_invites_belong_to_no_org_and_are_checked(dsns: Dsns) -> None:
     assert refused(dsns.app, None, delete, (good["id"],)) == INSUFFICIENT_PRIVILEGE
     assert refused(dsns.app, None, "truncate ssc.pilot_invite") == INSUFFICIENT_PRIVILEGE
     assert refused(dsns.migrate, None, "truncate ssc.pilot_invite") == SqlState.TRUNCATE_REFUSED
+
+
+def test_0043_indexes_the_roster_sign_in_lookup_and_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database roster owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="roster").render_as_string(hide_password=False)
+    index = "select indexdef from pg_indexes where schemaname = 'ssc' and indexname = %s"
+    name = ("auth_session_last_sign_in",)
+    upgrade(dsn, "0043_roster_sign_in_index")
+    ((definition,),) = run(dsn, None, index, name)
+    assert definition.endswith("ON ssc.auth_session USING btree (org_id, user_id, created_at DESC)")
+    downgrade(dsn, "0042_pilot_invite")
+    assert run(dsn, None, index, name) == []
+    upgrade(dsn, "0043_roster_sign_in_index")
+    assert run(dsn, None, index, name) == [(definition,)]
