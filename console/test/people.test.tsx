@@ -210,12 +210,12 @@ describe('the roster', () => {
       'Last sign-in',
     ]);
     const [, pat, sam] = within(table).getAllByRole('row');
-    expect(within(pat!).getAllByRole('cell').slice(0, 4).map((c) => c.textContent)).toEqual([
-      'Pat',
-      'pat@example.com',
-      'admin',
-      'active',
-    ]);
+    const cells = within(pat!).getAllByRole('cell');
+    expect(within(cells[0]!).getByRole('button').textContent).toBe('Pat');
+    expect(cells.slice(1, 4).map((c) => c.textContent)).toEqual(['pat@example.com', 'admin', 'active']);
+    expect(cells.slice(1, 4).map((c) => c.className)).toEqual(['roster-wide', 'roster-wide', 'roster-wide']);
+    const narrow = cells[0]?.querySelector('.roster-narrow');
+    expect(narrow?.textContent).toBe('pat@example.comadminactive');
     expect(pat?.querySelector('time')?.getAttribute('datetime')).toBe('2026-10-08T17:30:00Z');
     expect(within(sam!).getAllByRole('cell')[4]?.textContent).toBe('Never');
     expect(table.textContent).not.toContain('usr_');

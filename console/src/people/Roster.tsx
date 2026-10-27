@@ -32,14 +32,23 @@ function columns(open: (p: UserMatch) => void): readonly Column<UserMatch>[] {
     {
       header: 'Name',
       cell: (p) => (
-        <button type="button" className="link-btn" aria-haspopup="dialog" onClick={() => open(p)}>
-          {p.display_name || p.email}
-        </button>
+        <>
+          <button type="button" className="link-btn" aria-haspopup="dialog" onClick={() => open(p)}>
+            {p.display_name || p.email}
+          </button>
+          <span className="roster-narrow">
+            {p.display_name ? <span className="roster-email">{p.email}</span> : null}
+            <span className="roster-badges">
+              <RoleBadge role={p.role} />
+              <StateBadge status={p.status} />
+            </span>
+          </span>
+        </>
       ),
     },
-    { header: 'Email', cell: (p) => p.email },
-    { header: 'Role', cell: (p) => <RoleBadge role={p.role} /> },
-    { header: 'State', cell: (p) => <StateBadge status={p.status} /> },
+    { header: 'Email', className: 'roster-wide', cell: (p) => p.email },
+    { header: 'Role', className: 'roster-wide', cell: (p) => <RoleBadge role={p.role} /> },
+    { header: 'State', className: 'roster-wide', cell: (p) => <StateBadge status={p.status} /> },
     {
       header: 'Last sign-in',
       className: 'nowrap',

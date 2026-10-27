@@ -39,13 +39,10 @@ test('the roster: search, active or all, and a person opened', async ({ page, re
   await page.getByLabel('Search people').fill(`roster ${stamp}`.toUpperCase());
   await expect(roster.getByRole('row')).toHaveCount(2);
   const rae = roster.getByRole('row').filter({ hasText: `Rae Roster ${stamp}` });
-  await expect(rae.getByRole('cell')).toHaveText([
-    `Rae Roster ${stamp}`,
-    `rae-${stamp}@example.com`,
-    'member',
-    'active',
-    'Never',
-  ]);
+  await expect(rae.getByRole('cell')).toHaveText(
+    [`Rae Roster ${stamp}`, `rae-${stamp}@example.com`, 'member', 'active', 'Never'],
+    { useInnerText: true },
+  );
 
   await page.getByRole('group', { name: 'Shown' }).getByText('All', { exact: true }).click();
   await expect(page.getByRole('radio', { name: 'All' })).toBeChecked();
@@ -62,4 +59,30 @@ test('the roster: search, active or all, and a person opened', async ({ page, re
   await page.getByLabel('Search people').fill(`nobody ${stamp}`);
   await expect(page.getByText(`No one matches nobody ${stamp}.`)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Unmatched logins' })).toBeVisible();
+});
+
+test('the roster fits a 390px screen, the email under the name', async ({ page, request }) => {
+  const stamp = Date.now().toString(36);
+  await addPerson(request, 'Ida', stamp, 'active');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/people');
+  await page.getByLabel('API token').fill(token);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+
+  const roster = page.getByRole('table', { name: 'People, by name' });
+  await page.getByLabel('Search people').fill(`ida roster ${stamp}`);
+  await expect(roster.getByRole('row')).toHaveCount(2);
+  await expect(roster.getByRole('columnheader')).toHaveText(['Name', 'Last sign-in']);
+  const cells = roster.getByRole('row').nth(1).getByRole('cell');
+  await expect(cells).toHaveCount(2);
+  await expect(cells.first()).toContainText(`ida-${stamp}@example.com`, { useInnerText: true });
+  await expect(cells.first().locator('.badge')).toHaveText(['member', 'active']);
+  const wide = await page.evaluate(() => {
+    const wrap = document.querySelector('.table-wrap');
+    return {
+      page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      table: wrap ? wrap.scrollWidth - wrap.clientWidth : -1,
+    };
+  });
+  expect(wide).toEqual({ page: 0, table: 0 });
 });

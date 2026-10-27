@@ -2092,6 +2092,36 @@ details[open] > summary {
   }
 }
 
+/* Under 480px the roster is two columns: the name with its email and badges under it, and the
+   last sign-in. */
+.roster-narrow {
+  display: none;
+}
+
+@media (max-width: 479px) {
+  .roster-wide {
+    display: none;
+  }
+
+  .roster-narrow {
+    display: grid;
+    gap: var(--ssc-space-1);
+    margin-top: var(--ssc-space-1);
+  }
+
+  .roster-email {
+    font-size: var(--ssc-type-size-micro);
+    font-weight: 400;
+    color: var(--ssc-text-muted);
+  }
+
+  .roster-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ssc-space-1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
