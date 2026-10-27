@@ -16,10 +16,10 @@ import { Ago } from '../components/Ago';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
+import { Loading } from '../components/Loading';
 import { Notice } from '../components/Notice';
 import { Panel } from '../components/Panel';
 import { Phrases } from '../components/Phrases';
-import { Loading } from '../components/Loading';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
 import { useToast } from '../components/Toast';
@@ -265,7 +265,7 @@ function LinkForm({ app, env, held, onSaved }: LinkProps) {
     }
   }
 
-  if (all.isPending) return <p className="muted">Loading connections to link…</p>;
+  if (all.isPending) return <Loading label="Loading connections to link…" rows={2} />;
   if (all.isError) return <ProblemNotice error={all.error} />;
   return (
     <form className="stack" onSubmit={submit} aria-label={`Link a connection to ${ENV_TITLE[env.name]}`}>

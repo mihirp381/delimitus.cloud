@@ -256,7 +256,7 @@ function EnvironmentCard({ app, env, preview }: CardProps) {
               <dt>Release</dt>
               <dd className="num">
                 {deployments.isPending ? (
-                  <span className="muted">Loading…</span>
+                  <Loading label="Loading the release…" inline />
                 ) : deployments.isError || !live ? (
                   <span className="muted">Not available</span>
                 ) : (
@@ -279,7 +279,7 @@ function EnvironmentCard({ app, env, preview }: CardProps) {
         <dt>Shared with</dt>
         <dd>
           {grants.isPending ? (
-            <span className="muted">Loading…</span>
+            <Loading label="Loading who has access…" inline />
           ) : grants.isError ? (
             <span className="muted">Not available</span>
           ) : (

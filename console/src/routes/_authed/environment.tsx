@@ -25,8 +25,8 @@ import { AdminOnly } from '../../components/AdminOnly';
 import { Badge, type Tone } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Id } from '../../components/Copy';
-import { Meter } from '../../components/Meter';
 import { Loading } from '../../components/Loading';
+import { Meter } from '../../components/Meter';
 import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
 import { Panel } from '../../components/Panel';
@@ -200,7 +200,7 @@ function OutboundIp() {
   return (
     <Panel title="Fixed outbound IP">
       {egress.isPending ? (
-        <p className="muted">Loading…</p>
+        <Loading label="Loading the outbound IP…" rows={1} />
       ) : egress.isError ? (
         <ProblemNotice error={egress.error} />
       ) : ip ? (
@@ -324,7 +324,7 @@ function WarmPanel() {
         warm.
       </p>
       {warm.isPending ? (
-        <p className="muted">Loading…</p>
+        <Loading label="Loading the warm option…" rows={3} />
       ) : warm.isError ? (
         <ProblemNotice error={warm.error} />
       ) : (

@@ -1579,6 +1579,16 @@ a.segment.current {
   padding: 0;
 }
 
+.skeleton-inline {
+  display: inline-flex;
+  width: 8rem;
+  vertical-align: middle;
+}
+
+.skeleton-inline > .skeleton-bar {
+  flex: 1;
+}
+
 .skeleton-row:last-child {
   border-bottom: 0;
 }

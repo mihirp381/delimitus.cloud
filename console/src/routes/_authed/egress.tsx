@@ -53,7 +53,7 @@ function EgressPage() {
         }
       />
       {egress.isPending ? (
-        <p className="muted">Loading…</p>
+        <Loading label="Loading internet access…" rows={3} />
       ) : egress.isError ? (
         <ProblemNotice error={egress.error} />
       ) : (

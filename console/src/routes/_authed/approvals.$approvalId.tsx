@@ -15,6 +15,7 @@ import {
 import { must } from '../../api/client';
 import { ApprovalBadge, Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
+import { Loading } from '../../components/Loading';
 import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemNotice } from '../../components/ProblemNotice';
@@ -43,7 +44,7 @@ function ApprovalPage() {
       ) : detail.isError ? (
         <ProblemNotice error={detail.error} />
       ) : (
-        <p className="muted">Loading the request…</p>
+        <Loading label="Loading the request…" rows={3} />
       )}
     </>
   );

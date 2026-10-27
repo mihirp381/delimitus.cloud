@@ -17,6 +17,7 @@ import { ApiProblem } from '../api/problem';
 import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
+import { Loading } from '../components/Loading';
 import { Notice } from '../components/Notice';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { ENV_TITLE } from './names';
@@ -164,7 +165,7 @@ function RollbackForm({ app, env, title, onClose, onStarted }: FormProps) {
         <p className="muted">Production runs only releases built for production.</p>
       ) : null}
       {releases.isPending || deployments.isPending ? (
-        <p className="muted">Loading releases…</p>
+        <Loading label="Loading releases…" rows={3} />
       ) : releases.isError && items.length === 0 ? (
         <ProblemNotice error={releases.error} />
       ) : deployments.isError ? (

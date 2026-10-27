@@ -323,7 +323,7 @@ function RunDetail({ target, runId }: { readonly target: ScheduleTarget; readonl
     queryKey: ['timer-run', target.environmentId, target.scheduleId, runId],
     queryFn: ({ signal }) => readRun(api, target, runId, signal),
   });
-  if (run.isPending) return <p className="muted">Loading the run…</p>;
+  if (run.isPending) return <Loading label="Loading the run…" rows={2} />;
   if (run.isError) return <ProblemNotice error={run.error} />;
   const r = run.data;
   return (

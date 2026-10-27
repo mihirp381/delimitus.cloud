@@ -7,6 +7,7 @@ import { Badge, type Tone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { Dialog } from '../components/Dialog';
+import { Loading } from '../components/Loading';
 import { Notice } from '../components/Notice';
 import { ProblemNotice } from '../components/ProblemNotice';
 
@@ -125,7 +126,7 @@ function PromoteForm({ app, preview, onClose, onStarted }: FormProps) {
   return (
     <form className="stack" onSubmit={submit} aria-label="Promote to production">
       {deployments.isPending ? (
-        <p className="muted">Loading what preview runs…</p>
+        <Loading label="Loading what preview runs…" rows={2} />
       ) : deployments.isError ? (
         <ProblemNotice error={deployments.error} />
       ) : live === null ? (

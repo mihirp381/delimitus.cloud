@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { BILLING_TEXT, coldStarts, type Health, hours, size } from '../api/cell';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { Badge, type Tone } from '../components/Badge';
+import { Loading } from '../components/Loading';
 
 const HEALTH: Readonly<Record<NonNullable<Health['state']>, { tone: Tone; text: string }>> = {
   running: { tone: 'success', text: 'running' },
@@ -70,7 +71,7 @@ export function Running({
       <dt>This month</dt>
       <dd>
         {usage.isPending ? (
-          <span className="muted">Loading…</span>
+          <Loading label="Loading use this month…" inline />
         ) : usage.isError ? (
           <span className="muted">Not available</span>
         ) : (
@@ -84,7 +85,7 @@ export function Running({
       <dt>Database</dt>
       <dd>
         {database.isPending ? (
-          <span className="muted">Loading…</span>
+          <Loading label="Loading the database…" inline />
         ) : database.isError || !db ? (
           <span className="muted">Not available</span>
         ) : !db.present ? (
