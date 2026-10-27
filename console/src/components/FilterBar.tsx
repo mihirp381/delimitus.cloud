@@ -20,7 +20,6 @@ export function FilterBar({ label, primary, more, defaultOpen = false, count = 0
         {more ? (
           <Button
             id={buttonId}
-            className="btn-sm"
             aria-expanded={open}
             aria-controls={panelId}
             onClick={() => setOpen((was) => !was)}
