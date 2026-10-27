@@ -95,12 +95,18 @@ class WorkOSClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    def authorize_url(self, *, organization: str, redirect_uri: str, state: str) -> str:
+    def authorize_url(
+        self, *, organization: str = "", provider: str = "", redirect_uri: str, state: str
+    ) -> str:
+        """Exactly one of ``organization`` and ``provider`` (a social connection)."""
+        if bool(organization) == bool(provider):
+            raise ValueError("authorize needs exactly one of organization and provider")
+        target = {"organization": organization} if organization else {"provider": provider}
         query = {
             "client_id": self._client_id,
             "redirect_uri": redirect_uri,
             "response_type": "code",
-            "organization": organization,
+            **target,
             "state": state,
         }
         return f"{self._base}/sso/authorize?{urlencode(query)}"

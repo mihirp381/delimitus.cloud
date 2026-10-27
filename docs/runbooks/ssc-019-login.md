@@ -216,6 +216,52 @@ branding differs: Google Workspace and Entra show their own sign-in page, brande
 admin consoles (Entra company branding; Google has no custom domain for its page). Which
 providers are offered and proven is decided by `landing/CLAIMS.md` (`idp`), not by this runbook.
 
+## Pilot social sign-in
+
+Pilot orgs only (decision 002 amendment 2026-10-27; `landing/CLAIMS.md` row `social`). SSC uses
+WorkOS `/sso/authorize` with `provider=` and `/sso/token` only, never User Management or AuthKit.
+
+### WorkOS setup **[real]**
+
+1. In the WorkOS dashboard, Authentication, enable each provider the pilot needs: Google OAuth,
+   Microsoft OAuth, GitHub OAuth. For production, give each its own OAuth client (Google Cloud
+   console, Microsoft Entra app registration, GitHub OAuth app) with the redirect URI WorkOS
+   shows for that provider; WorkOS's shared test credentials are for staging only. Register the
+   Microsoft app for "Personal Microsoft accounts only" (WorkOS requires it, and SSC trusts the
+   address only from personal accounts). GitHub sign-in is refused until SSC checks GitHub's
+   verified addresses (decision 002 amendment), so leave `github` out of `--providers` for now.
+2. Keep `<auth_url>/callback` (`http://localhost:8100/callback` on the rig) as a WorkOS redirect
+   URI, as in Before you start.
+3. Put the org in social mode with the providers it may use:
+
+   ```sh
+   uv run python -m ssc_control.identity set-sign-in --org <org_…> --mode social \
+     --providers google,microsoft --operator op_<you>
+   ```
+
+   Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` reverts it; directory
+   sync skips an org while it is in social mode.
+4. As an org admin, open People in the console, Invite by email, and invite each pilot person.
+   They show under Invited until their first sign-in. A person signs in with one provider: the
+   first one links, and another provider with the same address is refused, so each provider's
+   check below needs its own invited address.
+
+### Live check **[real]**
+
+Not yet run. Tick each line and record the date and the `usr_` ids under Record.
+
+- [ ] The sign-in page for the org lists exactly its enabled providers and nothing that names the org.
+- [ ] An invited person signs in with Google; People shows them active.
+- [ ] An invited person signs in with Microsoft.
+- [ ] With `github` enabled for a moment, an invited person's GitHub sign-in is refused with the
+      same page and `login.failed` reason `email_not_verified`; then set the providers back.
+- [ ] An address nobody invited is refused with the same page as every other refusal, and the
+      audit chain has `login.failed` with the reason.
+- [ ] `ssc login` from the command line goes through the same chooser.
+- [ ] Deactivate a signed-in person from People: their next console request and `ssc whoami` fail,
+      and the command line's refresh fails.
+- [ ] Reactivate them: they sign in again with the same `usr_` id.
+
 ## Record
 
 Copy the times, the `usr_` ids and the pass or fail lines into the SSC-019 status in the tickets file. Stop both servers with Ctrl-C; `.ssc-dev/` keeps the state for a rerun.

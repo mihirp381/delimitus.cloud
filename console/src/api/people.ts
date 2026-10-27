@@ -4,6 +4,7 @@ import type { components } from './schema';
 export type UnlinkedLogin = components['schemas']['UnlinkedLogin'];
 export type UserMatch = components['schemas']['UserMatch'];
 export type Linked = components['schemas']['Linked'];
+export type SignInMode = components['schemas']['Whoami']['sign_in_mode'];
 
 /** Why a login matched no person, in the words of `ssc logins list`. */
 export const REASON_TEXT: Readonly<Record<UnlinkedLogin['reason'], string>> = {
@@ -28,7 +29,7 @@ export async function linkLogin(api: ApiClient, unlinkedLoginId: string, userId:
   );
 }
 
-export type RosterFilter = 'active' | 'all';
+export type RosterFilter = 'active' | 'invited' | 'all';
 
 /** One page of the roster, by name: `q` is part of a name or email, ignoring case. Org admins only. */
 export async function rosterPage(
@@ -40,8 +41,21 @@ export async function rosterPage(
 ): Promise<components['schemas']['UserMatches']> {
   const query = {
     ...(q ? { q } : {}),
-    ...(filter === 'active' ? { status: 'active' as const } : {}),
+    ...(filter === 'all' ? {} : { status: filter }),
     ...(cursor ? { cursor } : {}),
   };
   return must(await api.GET('/v1/users', { params: { query }, signal }));
+}
+
+/** An invited member, or the person who already has the address. Social orgs, admins only. */
+export async function invitePerson(api: ApiClient, email: string): Promise<UserMatch> {
+  return must(await api.POST('/v1/users/invite', { body: { email } }));
+}
+
+export async function deactivatePerson(api: ApiClient, userId: string): Promise<UserMatch> {
+  return must(await api.POST('/v1/users/{user_id}/deactivate', { params: { path: { user_id: userId } } }));
+}
+
+export async function reactivatePerson(api: ApiClient, userId: string): Promise<UserMatch> {
+  return must(await api.POST('/v1/users/{user_id}/reactivate', { params: { path: { user_id: userId } } }));
 }

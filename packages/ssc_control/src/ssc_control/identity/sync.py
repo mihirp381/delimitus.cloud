@@ -81,9 +81,10 @@ _FAILED = text(
     "where org_id = :org"
 )
 _DUE_FULL = text(
-    "select last_full_sync_at is null, "
-    "coalesce(last_full_sync_at < now() - make_interval(secs => :secs), true) "
-    "from ssc.directory_connection where org_id = :org"
+    "select c.last_full_sync_at is null, "
+    "coalesce(c.last_full_sync_at < now() - make_interval(secs => :secs), true) "
+    "from ssc.directory_connection c join ssc.org o on o.id = c.org_id "
+    "where c.org_id = :org and o.sign_in_mode = 'directory'"
 )
 _LINKED = text(
     "select l.subject, u.id, u.role, u.status, u.display_name, u.email "
@@ -331,7 +332,8 @@ async def _apply_groups(
 
 
 async def tick(engine: AsyncEngine, client: WorkOSClient, org_id: str) -> TickReport | None:
-    """One sync of one org. None when the org has no active connection or another tick won."""
+    """One sync of one org. None when the org has no active connection, signs in with social
+    providers, or another tick won."""
     async with bound_org(engine, org_id) as conn:
         connection = await connections.load(conn, org_id)
         due = (

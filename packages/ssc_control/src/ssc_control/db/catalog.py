@@ -67,6 +67,8 @@ Revision 0040 adds ``onboarding`` (ticket 19D) to ``PLATFORM_TABLES``: one row p
 onboarded, written before its org exists, so its ``org_id`` has no foreign key.
 Revision 0042 adds ``pilot_invite`` (decision 029 amendment of 2026-10-26) to ``PLATFORM_TABLES``:
 pilot invite codes, read by ``/authorize`` before any org is bound; only a code's SHA-256.
+Revision 0044 adds columns only (decision 002 amendment of 2026-10-27): ``org.sign_in_mode`` and
+``org.social_providers``, the provider names a pilot org signs in with, never a credential.
 """
 
 from collections.abc import Mapping

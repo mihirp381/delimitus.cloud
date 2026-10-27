@@ -95,6 +95,7 @@ class FakeWorkOS:
         organization_id: str | None = None,
         connection_id: str | None = None,
         connection_type: str = "OktaSAML",
+        **extra: Any,
     ) -> None:
         self.profiles[code] = {
             "id": f"prof_{code}",
@@ -105,6 +106,7 @@ class FakeWorkOS:
             "email": email,
             "first_name": "Pat",
             "last_name": "Doe",
+            **extra,
         }
 
     # ── serving ───────────────────────────────────────────────────────────────

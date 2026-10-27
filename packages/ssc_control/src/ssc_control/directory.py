@@ -96,6 +96,20 @@ _UPDATE_USER = text(
     "when status = 'deactivated' then deactivated_at else now() end "
     "where org_id = :org and id = :id"
 )
+_LOCK_STATUS = text(
+    "select status from ssc.user_account where org_id = :org and id = :id for update"
+)
+_SET_STATUS = text(
+    "update ssc.user_account set status = :status, deactivated_at = "
+    "case when cast(:status as text) = 'deactivated' then now() end "
+    "where org_id = :org and id = :id"
+)
+_LOCK_ORG = text("select 1 from ssc.org where id = :org for update")
+_LAST_ADMIN = text(
+    "select exists (select 1 from ssc.user_account where org_id = :org and id = :id "
+    "and role = 'admin' and status = 'active') and not exists (select 1 from ssc.user_account "
+    "where org_id = :org and id <> :id and role = 'admin' and status = 'active')"
+)
 _INSERT_GROUP = text(
     "insert into ssc.user_group (id, org_id, directory_ref, display_name) "
     "values (:id, :org, :ref, :name) on conflict (org_id, directory_ref) do nothing returning id"
@@ -228,24 +242,51 @@ async def upsert_user(
             after={"role": user.role} if role_changed else None,
         )
     if status != user.status:
-        await _audit(
-            conn,
-            org_id,
-            actor,
-            AuditAction.USER_DEACTIVATED
-            if user.status == "deactivated"
-            else AuditAction.USER_REACTIVATED,
-            target_kind="user_account",
-            target_id=user_id,
-            before={"status": status},
-            after={"status": user.status},
-        )
-        await mark_dirty(conn, org_id)
-        if user.status == "deactivated":
-            await revoke_user(conn, org_id, user_id, "user_deactivated", actor=actor)
+        await _status_changed(conn, org_id, user_id, status, user.status, actor)
     if (role, status) != (user.role, user.status):
         await pause_blocked(conn, org_id)
     return UserResult(user_id=user_id, created=False)
+
+
+async def _status_changed(  # noqa: PLR0913, PLR0917
+    conn: AsyncConnection, org_id: str, user_id: str, before: str, after: Status, actor: Actor
+) -> None:
+    await _audit(
+        conn,
+        org_id,
+        actor,
+        AuditAction.USER_DEACTIVATED if after == "deactivated" else AuditAction.USER_REACTIVATED,
+        target_kind="user_account",
+        target_id=user_id,
+        before={"status": before},
+        after={"status": after},
+    )
+    await mark_dirty(conn, org_id)
+    if after == "deactivated":
+        await revoke_user(conn, org_id, user_id, "user_deactivated", actor=actor)
+
+
+async def set_status(
+    conn: AsyncConnection, org_id: str, user_id: str, status: Status, *, actor: Actor
+) -> str | None:
+    """An admin's deactivation or reactivation, through the directory's lockout path. The
+    status before, or None for no such person. Reactivating an invited person changes nothing."""
+    row = (await conn.execute(_LOCK_STATUS, {"org": org_id, "id": user_id})).one_or_none()
+    if row is None:
+        return None
+    before = str(row[0])
+    if before == status or (before == "invited" and status == "active"):
+        return before
+    await conn.execute(_SET_STATUS, {"org": org_id, "id": user_id, "status": status})
+    await _status_changed(conn, org_id, user_id, before, status, actor)
+    await pause_blocked(conn, org_id)
+    return before
+
+
+async def is_last_active_admin(conn: AsyncConnection, org_id: str, user_id: str) -> bool:
+    """With the org row locked, so two admins deactivating each other cannot both pass."""
+    await conn.execute(_LOCK_ORG, {"org": org_id})
+    return bool((await conn.execute(_LAST_ADMIN, {"org": org_id, "id": user_id})).scalar_one())
 
 
 async def upsert_group(

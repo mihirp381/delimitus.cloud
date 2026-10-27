@@ -75,14 +75,15 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     ),
     "audit": frozenset({"format", "filters"}),
     "audit_anchor": frozenset({"restored_to", "prior_anchor_seq", "head_seq", "ref"}),
-    "org": frozenset({"name", "agent_logs", "cell_label"}),  # cell_label: SSC-097
+    "org": frozenset({"name", "agent_logs", "cell_label"})  # cell_label: SSC-097
+    | frozenset({"sign_in_mode", "social_providers", "reason"}),
     # SSC-019; scope and expires_at: a CI token (GA-7.7), whose label is not recorded.
     "auth_session": frozenset({"kind", "user_id", "reason", "via", "client_id"})
     | frozenset({"scope", "expires_at"}),
     "directory_connection": frozenset(
         {"state", "reason", "join_rule", "connection_type", "workos_directory_id"}
     ),  # SSC-019
-    "identity_link": frozenset({"user_id", "source", "unlinked_login_id"}),  # SSC-019
+    "identity_link": frozenset({"user_id", "source", "unlinked_login_id", "issuer"}),  # SSC-019
     # Decision 029: a remote MCP client the person approved or denied. The name is the one the
     # client registered with; the redirect host is where its codes went.
     "oauth_client": frozenset({"client_id", "client_name", "session_id", "redirect_host"}),

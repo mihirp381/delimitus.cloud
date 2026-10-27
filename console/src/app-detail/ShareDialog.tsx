@@ -72,11 +72,12 @@ const KINDS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'user', label: 'A person' },
   { kind: 'org', label: 'Everyone in the organisation' },
 ];
+const SOCIAL_KINDS = KINDS.filter((k) => k.kind !== 'group');
 
 /**
  * Shares one environment with a group, a person or the whole org. Groups are found by name by
  * anyone who may share. People are found by email only by org admins (the API keeps email
- * lookup to them); everyone else enters a `usr_` id.
+ * lookup to them); everyone else enters a `usr_` id. A social org has no groups.
  */
 export function ShareDialog({ app, env, seen, onDone }: Props) {
   const { api, queries, isAdmin } = useRouteContext({ from: '/_authed/apps/$appId' });
@@ -93,6 +94,8 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
   const generation = useRef(0);
   const roleId = useId();
   const title = `Share ${ENV_TITLE[env.name].toLowerCase()}`;
+  const kinds = me.data?.sign_in_mode === 'social' ? SOCIAL_KINDS : KINDS;
+  const firstKind = kinds[0]?.kind ?? 'group';
 
   /** Forgets a refusal and an approval request, which were for the grant set as it was. */
   function forget() {
@@ -113,14 +116,14 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
   }
 
   function show() {
-    setKind('group');
+    setKind(firstKind);
     reset();
     setOpen(true);
   }
 
   function close() {
     setOpen(false);
-    setKind('group');
+    setKind(firstKind);
     reset();
   }
 
@@ -225,7 +228,7 @@ export function ShareDialog({ app, env, seen, onDone }: Props) {
         <form className="stack" onSubmit={submit} aria-label={title}>
           <fieldset className="choices">
             <legend>Share with</legend>
-            {KINDS.map((k) => (
+            {kinds.map((k) => (
               <label key={k.kind} className="check">
                 <input
                   type="radio"

@@ -186,7 +186,10 @@ async def compile_document(
             "grants": by_env,
             "groups_by_user": groups,
             "users": {
-                user_id: {"status": status, "sessions_not_before": not_before}
+                user_id: {
+                    "status": "active" if status == "active" else "deactivated",
+                    "sessions_not_before": not_before,
+                }
                 for user_id, status, not_before in users
             },
             "ceiling": None,

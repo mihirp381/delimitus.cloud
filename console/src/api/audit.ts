@@ -15,6 +15,7 @@ const ACTIONS: Readonly<Record<AuditAction, true>> = {
   'user.updated': true,
   'user.deactivated': true,
   'user.reactivated': true,
+  'user.invited': true,
   'group.synced': true,
   'app.created': true,
   'app.owner_transferred': true,

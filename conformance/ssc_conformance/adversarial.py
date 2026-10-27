@@ -29,6 +29,7 @@ AGENT_SESSION_REFUSED: Final = "AGENT_SESSION_REFUSED"
 ZERO: Final = "0" * 20
 NO_CONNECTION: Final = "ssc-adversarial-probe"
 NO_HOST: Final = "ssc-adversarial-probe.example.com"
+NO_EMAIL: Final = "ssc-adversarial-probe@example.com"
 HIGH_RISK_HOST: Final = "wetransfer.com"
 NO_REPOSITORY: Final = "ssc-adversarial/never-installed"
 RESERVED_SECRET: Final = "SSC_TOKEN"  # noqa: S105  (a secret name, not a value)
@@ -142,6 +143,13 @@ KNOWN: Final[Mapping[str, Callable[[Ids], Probe]]] = {
     "PUT /v1/egress/hosts/{host}": lambda _: Probe("PUT", f"/v1/egress/hosts/{HIGH_RISK_HOST}", {}),
     # The roster names everyone; the exact email lookup stays open to an admin's agent.
     "GET /v1/users": lambda _: Probe("GET", "/v1/users"),
+    "POST /v1/users/invite": lambda _: Probe("POST", "/v1/users/invite", {"email": NO_EMAIL}),
+    "POST /v1/users/{user_id}/deactivate": lambda _: Probe(
+        "POST", f"/v1/users/usr_{ZERO}/deactivate"
+    ),
+    "POST /v1/users/{user_id}/reactivate": lambda _: Probe(
+        "POST", f"/v1/users/usr_{ZERO}/reactivate"
+    ),
     "PUT /v1/org/agent-policy": lambda i: Probe("PUT", "/v1/org/agent-policy", {"logs": i.logs}),
     "POST /v1/unlinked-logins/{unlinked_login_id}/link": lambda i: Probe(
         "POST", f"/v1/unlinked-logins/ulg_{ZERO}/link", {"user_id": i.user}

@@ -2353,3 +2353,36 @@ def test_0043_indexes_the_roster_sign_in_lookup_and_round_trips(dsns: Dsns) -> N
     assert run(dsn, None, index, name) == []
     upgrade(dsn, "0043_roster_sign_in_index")
     assert run(dsn, None, index, name) == [(definition,)]
+
+
+def test_0044_adds_social_sign_in_and_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database social owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="social").render_as_string(hide_password=False)
+    cols = (
+        "select column_name, column_default from information_schema.columns "
+        "where table_schema = 'ssc' and table_name = 'org' "
+        "and column_name in ('sign_in_mode', 'social_providers') order by 1"
+    )
+    upgrade(dsn, "0044_social_sign_in")
+    assert [name for name, _ in run(dsn, None, cols)] == ["sign_in_mode", "social_providers"]
+    assert action_check(dsn) == (action_check(dsn)[0], True)
+    assert "'user.invited'" in action_check(dsn)[0]
+    downgrade(dsn, "0043_roster_sign_in_index")
+    assert run(dsn, None, cols) == []
+    assert "'user.invited'" not in action_check(dsn)[0]
+    upgrade(dsn, "0044_social_sign_in")
+    assert len(run(dsn, None, cols)) == 2
+
+
+def test_social_sign_in_columns_are_checked(dsns: Dsns) -> None:
+    org = make_org(dsns.app)
+    mode = "update ssc.org set sign_in_mode = %s, social_providers = %s where id = %s returning id"
+    for bad in (("social", []), ("social", ["facebook"]), ("sso", [])):
+        assert refused(dsns.app, org.org_id, mode, (*bad, org.org_id)) == CHECK_VIOLATION, bad
+    ok = ("social", ["google", "github"], org.org_id)
+    assert run(dsns.app, org.org_id, mode, ok) == [(org.org_id,)]
+    status = "update ssc.user_account set status = %s where id = %s returning id"
+    user = org.admin_user_id
+    assert run(dsns.app, org.org_id, status, ("invited", user)) == [(user,)]
+    assert refused(dsns.app, org.org_id, status, ("pending", user)) == CHECK_VIOLATION

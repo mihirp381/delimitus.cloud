@@ -455,7 +455,7 @@ describe('admin gating', () => {
     });
 
   it('answers from the role whoami gives', () => {
-    const me = { org_id: 'o', subject: USER, kind: 'user', credential_id: 'c', is_agent: false, client_id: null, org_name: 'Acme', name: 'Ada', email: 'ada@example.com' } as const;
+    const me = { org_id: 'o', subject: USER, kind: 'user', credential_id: 'c', is_agent: false, client_id: null, org_name: 'Acme', name: 'Ada', email: 'ada@example.com', sign_in_mode: 'directory' } as const;
     expect(isAdmin({ ...me, role: 'admin' })).toBe(true);
     expect(isAdmin({ ...me, role: 'member' })).toBe(false);
     expect(isAdmin({ ...me, role: null })).toBe(false);

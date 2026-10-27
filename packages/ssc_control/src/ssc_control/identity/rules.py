@@ -22,7 +22,7 @@ login finds the new one.
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final, Literal, cast
 from urllib.parse import urlsplit
 
 from ssc_shared.hosts import parse_app_host
@@ -94,6 +94,7 @@ class SsoProfile:
     email: str
     first_name: str
     last_name: str
+    email_verified: bool | None = None
 
     @classmethod
     def from_wire(cls, data: Mapping[str, object]) -> SsoProfile:
@@ -105,7 +106,22 @@ class SsoProfile:
             email=_text(data, "email").lower(),
             first_name=_text(data, "first_name"),
             last_name=_text(data, "last_name"),
+            email_verified=_verified(data.get("raw_attributes")),
         )
+
+
+def _verified(raw: object) -> bool | None:
+    """The provider's own email-verified flag, when it sends one."""
+    if not isinstance(raw, dict):
+        return None
+    attrs = cast(dict[str, object], raw)
+    for key in ("email_verified", "verified_email"):
+        value = attrs.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in {"true", "false"}:
+            return value.lower() == "true"
+    return None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
