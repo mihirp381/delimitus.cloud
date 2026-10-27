@@ -2714,6 +2714,14 @@
           "ceiling": {
             "$ref": "#/components/schemas/CeilingDoc"
           },
+          "ceiling_subject_names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The name of each group and person the ceiling lists, by id.",
+            "title": "Ceiling Subject Names",
+            "type": "object"
+          },
           "classification": {
             "enum": [
               "internal",
@@ -2840,6 +2848,7 @@
           "status",
           "preview_access",
           "preview_access_group_name",
+          "ceiling_subject_names",
           "created_at",
           "updated_at"
         ],

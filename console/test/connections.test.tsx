@@ -5,6 +5,7 @@ import { type Call, json, problem } from './fakeApi';
 import { signedIn, start, toast } from './harness';
 
 const GROUP = 'grp_ffffffffffffffffffff';
+const OWNER_TWO = 'usr_dddddddddddddddddddd';
 const HOST = 'db.internal.example.com';
 const DATABASE = 'ledger_main';
 
@@ -24,6 +25,7 @@ function connection(name: string, extra: Record<string, unknown> = {}) {
     status: 'active',
     preview_access: { who: 'builders', group_id: null },
     preview_access_group_name: null,
+    ceiling_subject_names: {},
     created_at: '2026-10-01T10:00:00Z',
     updated_at: '2026-10-01T10:00:00Z',
     ...extra,
@@ -31,7 +33,7 @@ function connection(name: string, extra: Record<string, unknown> = {}) {
 }
 
 const LEDGER = connection('ledger');
-const CRM = connection('crm', { classification: 'confidential', ceiling: { audience: 'subjects', subjects: [{ kind: 'group', id: GROUP }] }, setup_status: 'pending', preview_access: { who: 'group', group_id: GROUP }, preview_access_group_name: 'Finance' });
+const CRM = connection('crm', { classification: 'confidential', ceiling: { audience: 'subjects', subjects: [{ kind: 'group', id: GROUP }] }, setup_status: 'pending', preview_access: { who: 'group', group_id: GROUP }, preview_access_group_name: 'Finance', ceiling_subject_names: { [GROUP]: 'Finance' } });
 const ENV_CONNECTIONS = `${APP_PATH}/environments/${PROD}/connections`;
 
 function linked(...list: ReturnType<typeof connection>[]) {
@@ -51,60 +53,149 @@ function created({ body }: Call) {
   return json(201, connection(b.name as string, { classification: b.classification, ceiling: b.ceiling, setup_status: 'pending' }));
 }
 
-async function connectionsPage(routes: Record<string, (c: Call) => Response | Promise<Response>>, role: 'admin' | 'member' = 'admin') {
-  const result = start('/connections', { 'GET /v1/whoami': whoami(role), 'GET /v1/connections': () => json(200, { connections: [LEDGER, CRM] }), ...routes }, signedIn());
-  await screen.findByRole('heading', { name: 'Connections', level: 1 }, { timeout: FIRST_RENDER_MS });
-  await screen.findByText('ledger');
+async function connectionsPage(routes: Record<string, (c: Call) => Response | Promise<Response>>, role: 'admin' | 'member' = 'admin', path = '/connections') {
+  const result = start(path, { 'GET /v1/whoami': whoami(role), 'GET /v1/connections': () => json(200, { connections: [LEDGER, CRM] }), ...routes }, signedIn());
+  await screen.findByRole('heading', { level: 1 }, { timeout: FIRST_RENDER_MS });
   return result;
 }
 
+async function detail(name: 'ledger' | 'crm', routes: Record<string, (c: Call) => Response | Promise<Response>> = {}, role: 'admin' | 'member' = 'admin') {
+  const id = name === 'ledger' ? LEDGER.id : CRM.id;
+  const result = await connectionsPage(routes, role, `/connections/${id}`);
+  await screen.findByRole('heading', { name, level: 1 });
+  return result;
+}
+
+const panel = (name: string) => screen.getByRole('region', { name });
+
+async function openAdd() {
+  await screen.findByText('ledger');
+  fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+  return screen.findByRole('dialog', { name: 'Add a connection' });
+}
+
+async function stepOne(dialog: HTMLElement) {
+  fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: 'warehouse' } });
+  fireEvent.change(within(dialog).getByLabelText('Owner: email or usr_ id'), { target: { value: OWNER } });
+  fireEvent.change(within(dialog).getByLabelText('Host'), { target: { value: HOST } });
+  fireEvent.change(within(dialog).getByLabelText('Database'), { target: { value: DATABASE } });
+}
+
+async function submitIn(dialog: HTMLElement, name: string) {
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name }));
+  });
+}
+
+async function change(region: string) {
+  fireEvent.click(within(panel(region)).getByRole('button', { name: 'Change' }));
+  return panel(region);
+}
+
+const GROUPS = () => json(200, { groups: [{ id: GROUP, name: 'Finance', member_count: 3 }] });
+const OLU = () => json(200, { users: [{ id: OWNER_TWO, display_name: 'Olu', email: 'olu@example.com', role: 'member', status: 'active' }] });
+
+async function find(region: HTMLElement, label: string | RegExp, text: string, pick: RegExp) {
+  const input = within(region).getByLabelText(label);
+  fireEvent.change(input, { target: { value: text } });
+  const box = input.closest('.stack') as HTMLElement;
+  await act(async () => {
+    fireEvent.click(within(box).getByRole('button', { name: 'Find' }));
+  });
+  await within(region).findByRole('radio', { name: pick });
+}
+
 describe('connections page', () => {
-  it('lists every connection the caller may see, never an address', async () => {
+  it('lists four columns by name, never an id or an address', async () => {
     await connectionsPage({});
-    const table = screen.getByRole('table', { name: 'Connections' });
-    expect(within(table).getByText('crm')).toBeTruthy();
-    expect(within(table).getByText('1 listed group or person')).toBeTruthy();
-    expect(within(table).getAllByText('Rows per query 1000')).toHaveLength(2);
-    expect(within(table).getByText('pending')).toBeTruthy();
-    expect(within(table).getByText('Builders')).toBeTruthy();
-    expect(within(table).getByText('Group Finance')).toBeTruthy();
+    const table = await screen.findByRole('table', { name: 'Connections' });
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Name', 'Kind', 'State', 'Owner']);
+    expect(within(table).getByRole('link', { name: 'crm' }).getAttribute('href')).toBe(`/connections/${CRM.id}`);
     expect(within(table).getAllByText('Olive Owner')).toHaveLength(2);
-    expect(table.textContent).not.toContain(GROUP);
-    expect(table.textContent).not.toContain(OWNER);
+    expect(within(table).getByText('pending')).toBeTruthy();
+    for (const id of [GROUP, OWNER, LEDGER.id, CRM.id]) expect(table.textContent).not.toContain(id);
     expect(document.body.textContent).not.toContain('host');
+    expect(screen.queryByRole('searchbox')).toBeNull();
   });
 
-  it('adds a connection with its address in the body only, then forgets the address', async () => {
-    const { api, queryClient } = await connectionsPage({
-      'GET /v1/users': () =>
-        json(200, { users: [{ id: OWNER, display_name: 'Olu', email: 'olu@example.com', role: 'member', status: 'active' }] }),
-      'POST /v1/connections': created,
+  it('filters by name or kind once there are more than ten', async () => {
+    const many = Array.from({ length: 11 }, (_, i) => connection(`db-${String.fromCharCode(97 + i)}`));
+    await connectionsPage({ 'GET /v1/connections': () => json(200, { connections: [...many, connection('sheet', { kind: 'gsheets' })] }) });
+    await screen.findByText('db-a');
+    const box = screen.getByRole('searchbox', { name: 'Filter connections' });
+    fireEvent.change(box, { target: { value: 'google' } });
+    const table = screen.getByRole('table', { name: 'Connections' });
+    expect(within(table).getAllByRole('row')).toHaveLength(2);
+    expect(within(table).getByText('sheet')).toBeTruthy();
+  });
+
+  it('opens a row as its own page', async () => {
+    const { router } = await connectionsPage({});
+    const row = (await screen.findByRole('link', { name: 'crm' })).closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByText('PostgreSQL'));
+    await screen.findByRole('heading', { name: 'crm', level: 1 });
+    expect(router.state.location.pathname).toBe(`/connections/${CRM.id}`);
+  });
+
+  it('shows the overview, schemas, limits and ceiling, and status of one connection', async () => {
+    await detail('crm');
+    for (const name of ['Overview', 'Schemas', 'Limits and ceiling', 'Status']) expect(panel(name)).toBeTruthy();
+    const overview = panel('Overview');
+    expect(overview.textContent).toContain('Olive Owner');
+    expect(overview.textContent).toContain('confidential');
+    expect(overview.textContent).toContain('Finance');
+    expect(overview.textContent).toContain('Members of Finance');
+    expect(within(overview).getByRole('button', { name: 'Copy connection id' })).toBeTruthy();
+    expect(document.body.textContent?.split(CRM.id)).toHaveLength(2);
+    expect(document.body.textContent).not.toContain(GROUP);
+    expect(panel('Limits and ceiling').textContent).toContain('Rows per query 1000');
+    expect(within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getByText('crm')).toBeTruthy();
+  });
+
+  it('adds a connection with only the first step filled, on the defaults', async () => {
+    const { api } = await connectionsPage({ 'POST /v1/connections': created });
+    const dialog = await openAdd();
+    expect((within(dialog).getByText('More options').closest('details') as HTMLDetailsElement).open).toBe(false);
+    await stepOne(dialog);
+    await submitIn(dialog, 'Add connection');
+    expect(api.of('POST', '/v1/connections')[0]?.body).toEqual({
+      name: 'warehouse',
+      kind: 'postgres',
+      owner_user_id: OWNER,
+      classification: 'internal',
+      ceiling: { audience: 'org' },
+      allowed_schemas: ['public'],
+      limits: {},
+      preview_access: { who: 'builders' },
+      host: HOST,
+      port: 5432,
+      database: DATABASE,
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Add a connection' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Add a connection' });
+    expect(await toast()).toContain('Added warehouse.');
+  });
+
+  it('adds a connection with more options, its address in the body only, then forgets the address', async () => {
+    const { api, queryClient } = await connectionsPage({ 'GET /v1/users': OLU, 'GET /v1/groups': GROUPS, 'POST /v1/connections': created });
+    const dialog = await openAdd();
     fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: 'warehouse' } });
     fireEvent.change(within(dialog).getByLabelText('Classification'), { target: { value: 'restricted' } });
-    fireEvent.change(within(dialog).getByLabelText('Owner: email or usr_ id'), { target: { value: 'olu@example.com' } });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
-    });
-    await within(dialog).findByRole('radio', { name: /Olu/ });
+    await find(dialog, 'Owner: email or usr_ id', 'olu@example.com', /Olu/);
     fireEvent.change(within(dialog).getByLabelText('Host'), { target: { value: HOST } });
     fireEvent.change(within(dialog).getByLabelText('Port'), { target: { value: '6432' } });
     fireEvent.change(within(dialog).getByLabelText('Database'), { target: { value: DATABASE } });
     fireEvent.change(within(dialog).getByLabelText(/^Schemas/), { target: { value: 'public, finance' } });
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Only the groups and people listed' }));
-    fireEvent.change(within(dialog).getByLabelText(/one grp_ or usr_ id per line/), { target: { value: GROUP } });
+    await find(dialog, /^Group name, email/, 'Finance', /Finance/);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
+    expect(within(within(dialog).getByRole('list', { name: 'Groups and people' })).getByText('Finance')).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText('Rows per query'), { target: { value: '500' } });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Add connection' }));
-    });
+    await submitIn(dialog, 'Add connection');
     const post = api.of('POST', '/v1/connections')[0];
     expect(post?.headers.get('Idempotency-Key')).toBeTruthy();
     expect(post?.body).toEqual({
       name: 'warehouse',
       kind: 'postgres',
-      owner_user_id: OWNER,
+      owner_user_id: OWNER_TWO,
       classification: 'restricted',
       ceiling: { audience: 'subjects', subjects: [{ kind: 'group', id: GROUP }] },
       allowed_schemas: ['public', 'finance'],
@@ -116,68 +207,42 @@ describe('connections page', () => {
     });
     expect(await toast()).toContain('Added warehouse.');
     expect(screen.queryByRole('dialog')).toBeNull();
-    // The address reached nothing but that one request body.
     for (const call of api.calls) expect(`${call.path}?${call.query.toString()}`).not.toContain(HOST);
     const cached = JSON.stringify(queryClient.getQueryCache().getAll().map((q) => [q.queryKey, q.state.data]));
     expect(cached).not.toContain(HOST);
     expect(cached).not.toContain(DATABASE);
-    fireEvent.click(screen.getByRole('button', { name: 'Add a connection' }));
-    const again = await screen.findByRole('dialog', { name: 'Add a connection' });
+    const again = await openAdd();
     expect((within(again).getByLabelText('Host') as HTMLInputElement).value).toBe('');
     expect((within(again).getByLabelText('Database') as HTMLInputElement).value).toBe('');
   });
 
   it('starts preview access from the classification until it is picked, and sends a group rule', async () => {
     const { api } = await connectionsPage({ 'POST /v1/connections': created });
-    fireEvent.click(screen.getByRole('button', { name: 'Add a connection' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Add a connection' });
+    const dialog = await openAdd();
     const preview = within(dialog).getByLabelText('Preview access') as HTMLSelectElement;
     expect(preview.value).toBe('builders');
     fireEvent.change(within(dialog).getByLabelText('Classification'), { target: { value: 'confidential' } });
     expect(preview.value).toBe('approval');
-    expect(within(dialog).queryByLabelText('Group (grp_ id)')).toBeNull();
+    expect(within(dialog).queryByLabelText('Group name or grp_ id')).toBeNull();
     fireEvent.change(preview, { target: { value: 'group' } });
     fireEvent.change(within(dialog).getByLabelText('Classification'), { target: { value: 'internal' } });
     expect(preview.value).toBe('group');
-    fireEvent.change(within(dialog).getByLabelText('Group (grp_ id)'), { target: { value: GROUP } });
-    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: 'warehouse' } });
-    fireEvent.change(within(dialog).getByLabelText('Owner: email or usr_ id'), { target: { value: OWNER } });
-    fireEvent.change(within(dialog).getByLabelText('Host'), { target: { value: HOST } });
-    fireEvent.change(within(dialog).getByLabelText('Database'), { target: { value: DATABASE } });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Add connection' }));
-    });
+    fireEvent.change(within(dialog).getByLabelText('Group name or grp_ id'), { target: { value: GROUP } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Use' }));
+    await stepOne(dialog);
+    await submitIn(dialog, 'Add connection');
     const body = api.of('POST', '/v1/connections')[0]?.body as Record<string, unknown>;
     expect(body.classification).toBe('internal');
     expect(body.preview_access).toEqual({ who: 'group', group_id: GROUP });
-  });
-
-  it('sends the preview access rule when it was changed', async () => {
-    const { api } = await connectionsPage({
-      'PATCH /v1/connections/ledger': ({ body }) => json(200, { ...LEDGER, ...(body as object) }),
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Change ledger' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Change ledger' });
-    fireEvent.change(within(dialog).getByLabelText('Preview access'), { target: { value: 'approval' } });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
-    });
-    expect(api.of('PATCH', '/v1/connections/ledger')[0]?.body).toEqual({ preview_access: { who: 'approval' } });
   });
 
   it('clears the address once sent even when the API refuses, and shows why', async () => {
     const { api } = await connectionsPage({
       'POST /v1/connections': () => problem(422, 'CEILING_REQUIRED', 'This connection needs an audience ceiling.'),
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Add a connection' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Add a connection' });
-    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: 'warehouse' } });
-    fireEvent.change(within(dialog).getByLabelText('Owner: email or usr_ id'), { target: { value: OWNER } });
-    fireEvent.change(within(dialog).getByLabelText('Host'), { target: { value: HOST } });
-    fireEvent.change(within(dialog).getByLabelText('Database'), { target: { value: DATABASE } });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Add connection' }));
-    });
+    const dialog = await openAdd();
+    await stepOne(dialog);
+    await submitIn(dialog, 'Add connection');
     expect(api.of('POST', '/v1/connections')).toHaveLength(1);
     expect((await within(dialog).findByRole('alert')).textContent).toContain('CEILING_REQUIRED');
     expect((within(dialog).getByLabelText('Host') as HTMLInputElement).value).toBe('');
@@ -186,147 +251,143 @@ describe('connections page', () => {
     expect((within(dialog).getByRole('button', { name: 'Add connection' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('changes only what was edited, and sends the ceiling with a move to confidential', async () => {
-    const { api } = await connectionsPage({
+  it('says by the schemas field that the data gateway does not enforce them, when adding and changing', async () => {
+    const hint = (root: HTMLElement) => {
+      const field = within(root).getByLabelText(/^Schemas/);
+      return document.getElementById(field.getAttribute('aria-describedby') ?? '')?.textContent ?? '';
+    };
+    await connectionsPage({});
+    const adding = await openAdd();
+    expect(hint(adding)).toContain('not enforced by the data gateway');
+    fireEvent.click(within(adding).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('link', { name: 'ledger' }));
+    await screen.findByRole('heading', { name: 'ledger', level: 1 });
+    expect(panel('Schemas').textContent).toContain('not enforced by the data gateway');
+    expect(hint(await change('Schemas'))).toContain('not enforced by the data gateway');
+  });
+
+  it('changes the owner through the same lookup as adding', async () => {
+    const { api } = await detail('ledger', {
+      'GET /v1/users': OLU,
       'PATCH /v1/connections/ledger': ({ body }) => json(200, { ...LEDGER, ...(body as object) }),
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Change ledger' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Change ledger' });
-    fireEvent.change(within(dialog).getByLabelText('Classification'), { target: { value: 'confidential' } });
-    fireEvent.change(within(dialog).getByLabelText('Setup'), { target: { value: 'pending' } });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    const overview = await change('Overview');
+    await find(overview, 'Owner: email or usr_ id', 'olu@example.com', /Olu/);
+    await submitIn(overview, 'Save changes');
+    expect(api.of('PATCH', '/v1/connections/ledger')[0]?.body).toEqual({ owner_user_id: OWNER_TWO });
+    expect(await toast()).toBe('Changed ledger.');
+    await waitFor(() => expect(within(panel('Overview')).queryByRole('button', { name: 'Save changes' })).toBeNull());
+  });
+
+  it('changes only what was edited, and sends the ceiling with a move to confidential', async () => {
+    const { api } = await detail('ledger', {
+      'PATCH /v1/connections/ledger': ({ body }) => json(200, { ...LEDGER, ...(body as object) }),
     });
+    const overview = await change('Overview');
+    fireEvent.change(within(overview).getByLabelText('Classification'), { target: { value: 'confidential' } });
+    fireEvent.change(within(overview).getByLabelText('Setup'), { target: { value: 'pending' } });
+    fireEvent.change(within(overview).getByLabelText('Preview access'), { target: { value: 'approval' } });
+    await submitIn(overview, 'Save changes');
     expect(api.of('PATCH', '/v1/connections/ledger')[0]?.body).toEqual({
       classification: 'confidential',
       ceiling: { audience: 'org' },
+      preview_access: { who: 'approval' },
       setup_status: 'pending',
     });
-    expect(await toast()).toBe('Changed ledger.');
   });
 
-  it('says by the schemas field that the data gateway does not enforce them, when adding and changing', async () => {
-    await connectionsPage({});
-    const hint = (dialog: HTMLElement) => {
-      const field = within(dialog).getByLabelText(/^Schemas/);
-      return document.getElementById(field.getAttribute('aria-describedby') ?? '')?.textContent ?? '';
-    };
-    fireEvent.click(screen.getByRole('button', { name: 'Add a connection' }));
-    const adding = await screen.findByRole('dialog', { name: 'Add a connection' });
-    expect(hint(adding)).toContain('not enforced by the data gateway');
-    fireEvent.click(within(adding).getByRole('button', { name: 'Cancel' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Change ledger' }));
-    const changing = await screen.findByRole('dialog', { name: 'Change ledger' });
-    expect(hint(changing)).toContain('not enforced by the data gateway');
-  });
-
-  it('suspends a connection only once its name is typed, and says apps lose it within seconds', async () => {
-    const { api } = await connectionsPage({
+  it('edits the ceiling as names, keeping ids underneath', async () => {
+    const { api } = await detail('crm', {
+      'GET /v1/users': OLU,
       'PATCH /v1/connections/crm': ({ body }) => json(200, { ...CRM, ...(body as object) }),
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
-    // The status is not one of the form's fields: saving the form cannot suspend.
-    expect(within(dialog).queryByRole('combobox', { name: 'Status' })).toBeNull();
-    const status = within(dialog).getByRole('region', { name: 'Status' });
+    const limits = await change('Limits and ceiling');
+    const picks = within(limits).getByRole('list', { name: 'Groups and people' });
+    expect(picks.textContent).toContain('Finance');
+    expect(limits.textContent).not.toContain(GROUP);
+    await find(limits, /^Group name, email/, 'olu@example.com', /Olu/);
+    fireEvent.click(within(limits).getByRole('button', { name: 'Add' }));
+    fireEvent.click(within(limits).getByRole('button', { name: 'Remove Finance' }));
+    await submitIn(limits, 'Save changes');
+    expect(api.of('PATCH', '/v1/connections/crm')[0]?.body).toEqual({
+      ceiling: { audience: 'subjects', subjects: [{ kind: 'user', id: OWNER_TWO }] },
+    });
+  });
+
+  it('suspends inline, asking once for the name, and says apps lose it within seconds', async () => {
+    const { api } = await detail('crm', {
+      'PATCH /v1/connections/crm': ({ body }) => json(200, { ...CRM, ...(body as object) }),
+    });
+    const status = panel('Status');
     expect(status.textContent).toContain('Suspending stops every query on it, for every app');
     expect(within(status).queryByRole('button', { name: /Resume/ })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(within(status).getByRole('button', { name: 'Suspend this connection' }));
-
     const confirm = await screen.findByRole('dialog', { name: 'Suspend crm' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
     expect(confirm.textContent).toContain('Every app linked to crm loses it within a few seconds');
     const go = within(confirm).getByRole('button', { name: 'Suspend' }) as HTMLButtonElement;
     expect(go.disabled).toBe(true);
     fireEvent.change(within(confirm).getByLabelText(/to confirm/), { target: { value: 'ledger' } });
     expect(go.disabled).toBe(true);
-    expect(api.of('PATCH', '/v1/connections/crm')).toHaveLength(0);
     fireEvent.change(within(confirm).getByLabelText(/to confirm/), { target: { value: 'crm' } });
-    expect(go.disabled).toBe(false);
     await act(async () => {
       fireEvent.click(go);
     });
-
     const [call] = api.of('PATCH', '/v1/connections/crm');
     expect(call?.body).toEqual({ status: 'suspended' });
     expect(call?.headers.get('Idempotency-Key')).toBeTruthy();
     expect(await toast()).toBe(
       'Suspended crm. Apps linked to it lose it within a few seconds: every query on it is refused until it is resumed.',
     );
-    // The list is read again, and both dialogs are closed.
     await waitFor(() => expect(api.of('GET', '/v1/connections').length).toBeGreaterThan(1));
-    expect(screen.queryByRole('dialog', { name: 'Suspend crm' })).toBeNull();
-    expect(screen.queryByRole('dialog', { name: 'Change crm' })).toBeNull();
-  });
-
-  it('shows a refused suspension in the confirmation and keeps it open', async () => {
-    await connectionsPage({
-      'PATCH /v1/connections/crm': () => problem(403, 'AGENT_SESSION_REFUSED', 'Not in an agent session'),
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend this connection' }));
-    const confirm = await screen.findByRole('dialog', { name: 'Suspend crm' });
-    fireEvent.change(within(confirm).getByLabelText(/to confirm/), { target: { value: 'crm' } });
-    await act(async () => {
-      fireEvent.click(within(confirm).getByRole('button', { name: 'Suspend' }));
-    });
-    expect((await within(confirm).findByRole('alert')).textContent).toContain('AGENT_SESSION_REFUSED');
-    expect(screen.queryByRole('status')).toBeNull();
-  });
-
-  it('resumes a suspended connection with one click', async () => {
-    const suspended = connection('crm', { status: 'suspended' });
-    const { api } = await connectionsPage({
-      'GET /v1/connections': () => json(200, { connections: [LEDGER, suspended] }),
-      'PATCH /v1/connections/crm': ({ body }) => json(200, { ...suspended, ...(body as object) }),
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
-    const status = within(dialog).getByRole('region', { name: 'Status' });
-    expect(status.textContent).toContain('Every query on it is refused.');
-    expect(within(status).queryByRole('button', { name: /Suspend/ })).toBeNull();
-    await act(async () => {
-      fireEvent.click(within(status).getByRole('button', { name: 'Resume this connection' }));
-    });
-    expect(api.of('PATCH', '/v1/connections/crm').map((c) => c.body)).toEqual([{ status: 'active' }]);
-    expect(await toast()).toBe(
-      'Resumed crm. Apps linked to it can query it again within a few seconds.',
-    );
-    expect(screen.queryByRole('dialog', { name: 'Change crm' })).toBeNull();
-  });
-
-  it('shows a refused resume where the button is', async () => {
-    const suspended = connection('crm', { status: 'suspended' });
-    await connectionsPage({
-      'GET /v1/connections': () => json(200, { connections: [LEDGER, suspended] }),
-      'PATCH /v1/connections/crm': () => problem(403, 'FORBIDDEN', 'Org admins only'),
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Resume this connection' }));
-    });
-    expect((await within(dialog).findByRole('alert')).textContent).toContain('Org admins only');
-    expect((within(dialog).getByRole('button', { name: 'Resume this connection' }) as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it('sends nothing when nothing changed', async () => {
-    const { api } = await connectionsPage({});
-    fireEvent.click(screen.getByRole('button', { name: 'Change crm' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Change crm' });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
-    });
-    expect(api.of('PATCH', '/v1/connections/crm')).toHaveLength(0);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('shows a member the list without any way to change it', async () => {
+  it('shows a refused suspension in the confirmation and keeps it open', async () => {
+    await detail('crm', { 'PATCH /v1/connections/crm': () => problem(403, 'AGENT_SESSION_REFUSED', 'Not in an agent session') });
+    fireEvent.click(within(panel('Status')).getByRole('button', { name: 'Suspend this connection' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Suspend crm' });
+    fireEvent.change(within(confirm).getByLabelText(/to confirm/), { target: { value: 'crm' } });
+    await submitIn(confirm, 'Suspend');
+    expect((await within(confirm).findByRole('alert')).textContent).toContain('AGENT_SESSION_REFUSED');
+  });
+
+  it('resumes a suspended connection after one confirming click', async () => {
+    const suspended = { ...CRM, status: 'suspended' };
+    const { api } = await detail('crm', {
+      'GET /v1/connections': () => json(200, { connections: [LEDGER, suspended] }),
+      'PATCH /v1/connections/crm': ({ body }) => json(200, { ...suspended, ...(body as object) }),
+    });
+    const status = panel('Status');
+    expect(status.textContent).toContain('Every query on it is refused.');
+    expect(within(status).queryByRole('button', { name: /Suspend/ })).toBeNull();
+    fireEvent.click(within(status).getByRole('button', { name: 'Resume this connection' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Resume crm' });
+    expect(within(confirm).queryByLabelText(/to confirm/)).toBeNull();
+    await submitIn(confirm, 'Resume');
+    expect(api.of('PATCH', '/v1/connections/crm').map((c) => c.body)).toEqual([{ status: 'active' }]);
+    expect(await toast()).toBe('Resumed crm. Apps linked to it can query it again within a few seconds.');
+  });
+
+  it('sends nothing when nothing changed', async () => {
+    const { api } = await detail('crm');
+    for (const name of ['Overview', 'Schemas', 'Limits and ceiling']) {
+      await submitIn(await change(name), 'Save changes');
+    }
+    expect(api.of('PATCH', '/v1/connections/crm')).toHaveLength(0);
+  });
+
+  it('shows a member the list and the page without any way to change them', async () => {
     await connectionsPage({}, 'member');
+    await screen.findByText('ledger');
     expect(screen.getByText(/Only org admins can add or change connections/)).toBeTruthy();
     expect(screen.getByText(/You see every connection of the org, never its address/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Add a connection' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Change ledger' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add connection' })).toBeNull();
+    fireEvent.click(screen.getByRole('link', { name: 'crm' }));
+    await screen.findByRole('heading', { name: 'crm', level: 1 });
+    expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Suspend|Resume/ })).toBeNull();
   });
 });
 

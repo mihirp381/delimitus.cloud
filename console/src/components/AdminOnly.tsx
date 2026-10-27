@@ -4,16 +4,16 @@ import { Loading } from './Loading';
 import { PageHeader } from './PageHeader';
 import { ProblemNotice } from './ProblemNotice';
 
-interface Props {
-  readonly title: string;
-  readonly refusal: string;
-  readonly children: ReactNode;
-}
+type Props =
+  | { readonly title: string; readonly refusal: string; readonly children: ReactNode }
+  | { readonly quiet: true; readonly children: ReactNode };
 
-export function AdminOnly({ title, refusal, children }: Props) {
+export function AdminOnly(props: Props) {
   const { queries, isAdmin } = useRouteContext({ from: '/_authed' });
   const me = queries.useQuery('get', '/v1/whoami');
-  if (isAdmin(me.data)) return children;
+  if (isAdmin(me.data)) return props.children;
+  if ('quiet' in props) return null;
+  const { title, refusal } = props;
   return (
     <>
       <PageHeader title={title} />

@@ -2622,6 +2622,13 @@ export interface components {
             allowed_schemas: string[];
             ceiling: components["schemas"]["CeilingDoc"];
             /**
+             * Ceiling Subject Names
+             * @description The name of each group and person the ceiling lists, by id.
+             */
+            ceiling_subject_names: {
+                [key: string]: string;
+            };
+            /**
              * Classification
              * @enum {string}
              */
