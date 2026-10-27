@@ -42,6 +42,13 @@ describe('the filter bar', () => {
     expect(within(group).getByRole('region', { name: 'More filters' })).toBeTruthy();
   });
 
+  it('shows how many of the hidden filters are set on the toggle', () => {
+    render(<FilterBar label="Filter events" count={2} primary={<input aria-label="Search" />} more={<input aria-label="Actor" />} />);
+    const toggle = screen.getByRole('button', { name: 'More filters 2 set' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.querySelector('.filter-count')?.textContent).toBe('2');
+  });
+
   it('has no toggle without more controls', () => {
     render(<FilterBar label="Filter apps" primary={<input aria-label="Search" />} />);
     expect(screen.queryByRole('button')).toBeNull();

@@ -6,9 +6,10 @@ interface Props {
   readonly primary: ReactNode;
   readonly more?: ReactNode;
   readonly defaultOpen?: boolean;
+  readonly count?: number;
 }
 
-export function FilterBar({ label, primary, more, defaultOpen = false }: Props) {
+export function FilterBar({ label, primary, more, defaultOpen = false, count = 0 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
   const buttonId = useId();
   const panelId = useId();
@@ -25,6 +26,13 @@ export function FilterBar({ label, primary, more, defaultOpen = false }: Props) 
             onClick={() => setOpen((was) => !was)}
           >
             More filters
+            {count > 0 ? (
+              <>
+                {' '}
+                <span className="filter-count">{count}</span>{' '}
+                <span className="visually-hidden">set</span>
+              </>
+            ) : null}
           </Button>
         ) : null}
       </div>
