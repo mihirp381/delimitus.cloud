@@ -1998,7 +1998,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       race.classList.add("is-armed");
       var replayRace = race.querySelector(".race__replay");
       replayRace.hidden = false;
-      replayRace.addEventListener("click", run);
+      replayRace.addEventListener("click", function () { raced.disconnect(); run(); });
       var raced = new IntersectionObserver(function (entries) {
         if (!entries[0].isIntersecting) { return; }
         raced.disconnect();
