@@ -64,7 +64,7 @@ from ssc_control.api.auth import Principal, PrincipalKind, Verifier
 from ssc_control.api.problems import Refusal
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.db import bound_org, check_org_id
-from ssc_control.identity import connections, join, pages, sessions, tokens
+from ssc_control.identity import join, pages, sessions, social, tokens
 from ssc_control.identity.authorize import DEVICE_GRANT, Kit, OAuthFlow
 from ssc_control.identity.cell_callers import CallerCheck
 from ssc_control.identity.limits import (
@@ -280,17 +280,19 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
     def clear(response: Response, name: str) -> None:
         response.delete_cookie(name, path="/", secure=secure, httponly=True, samesite="lax")
 
-    async def audit_failure(
-        conn: AsyncConnection, connection: connections.DirectoryConnection, reason: str
-    ) -> None:
+    async def audit_failure(conn: AsyncConnection, target: social.SignIn, reason: str) -> None:
+        if isinstance(target, social.SocialSignIn):
+            actor, kind, target_id = social.ACTOR, "org", target.org_id
+        else:
+            actor, kind, target_id = target.id, "directory_connection", target.id
         await append_event(
             conn,
             NewEvent(
-                org_id=connection.org_id,
+                org_id=target.org_id,
                 action=AuditAction.LOGIN_FAILED,
-                actor=Actor(kind=ActorKind.INTEGRATION, id=connection.id),
-                target_kind="directory_connection",
-                target_id=connection.id,
+                actor=Actor(kind=ActorKind.INTEGRATION, id=actor),
+                target_kind=kind,
+                target_id=target_id,
                 after={"reason": reason},
             ),
         )
@@ -310,16 +312,21 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         return RedirectResponse(f"https://{host_name}/.ssc/callback?{query}", status_code=302)
 
     def to_workos(
-        connection: connections.DirectoryConnection,
+        target: social.SignIn,
         login: dict[str, Any],
         *,
         from_form: bool = False,
     ) -> Response:
         """On to WorkOS: a redirect, or after a form a page that moves on by itself
-        (:func:`pages.continue_to`), so the form's CSP does not stop the IdP's redirects."""
+        (:func:`pages.continue_to`), so the form's CSP does not stop the IdP's redirects. A
+        social org first chooses its provider."""
+        if isinstance(target, social.SocialSignIn):
+            choose = sealer.seal("choose", login, now() + LOGIN_SECONDS)
+            labels = {p: social.LABELS[p] for p in target.providers if p in social.LABELS}
+            return html(pages.social_choice(choose, labels))
         check = secrets.token_urlsafe(24)
         url = host.workos.authorize_url(
-            organization=connection.workos_organization_id,
+            organization=target.workos_organization_id,
             redirect_uri=f"{s.auth_url}/callback",
             state=check,
         )
@@ -329,6 +336,20 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             else RedirectResponse(url, status_code=302, headers={"cache-control": "no-store"})
         )
         sealed = sealer.seal("login", {**login, "check": check}, now() + LOGIN_SECONDS)
+        set_cookie(response, login_cookie, sealed, LOGIN_SECONDS)
+        return response
+
+    def to_provider(provider: str, login: dict[str, Any]) -> Response:
+        check = secrets.token_urlsafe(24)
+        url = host.workos.authorize_url(
+            provider=social.WORKOS_PROVIDERS[provider],
+            redirect_uri=f"{s.auth_url}/callback",
+            state=check,
+        )
+        response = html(pages.continue_to(url))
+        sealed = sealer.seal(
+            "login", {**login, "provider": provider, "check": check}, now() + LOGIN_SECONDS
+        )
         set_cookie(response, login_cookie, sealed, LOGIN_SECONDS)
         return response
 
@@ -421,9 +442,9 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             _limited("/login", "org", org_id)
             return too_many()
         async with bound_org(host.engine, org_id) as conn:
-            connection = await connections.load(conn, org_id)
+            sign_in = await social.resolve(conn, org_id)
             cell = (await conn.execute(_ORG_CELL, {"org": org_id})).one_or_none()
-            if connection is None or connection.frozen or cell is None or cell[0] is None:
+            if sign_in is None or cell is None or cell[0] is None:
                 log.info("login refused for %s: no active connection or cell", org_id)
                 return bad_request()
             target = parse_return_to(
@@ -443,10 +464,31 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
                 live = await sessions.live_session(conn, org_id, str(existing.get("sid")))
                 if live is not None and live.kind == "browser":
                     return await hand_back(conn, org_id, live.id, flow)
-        return to_workos(connection, flow)
+        return to_workos(sign_in, flow)
+
+    @app.post("/login/social")
+    async def login_social(request: Request) -> Response:
+        if request.headers.get("sec-fetch-site", "same-origin") not in {"same-origin", "none"}:
+            return bad_request()
+        address = _address(request, s.trusted_hops)
+        if not login_by_address.allow(address):
+            _limited("/login/social", "address", address)
+            return too_many()
+        form = _form(await request.body())
+        login = sealer.open("choose", form.get("pending", ""), now())
+        org_id = None if login is None else _org(str(login.get("org", "")))
+        provider = form.get("provider", "")
+        if login is None or org_id is None:
+            return bad_request()
+        async with bound_org(host.engine, org_id) as conn:
+            target = await social.resolve(conn, org_id)
+        if not isinstance(target, social.SocialSignIn) or provider not in target.providers:
+            return bad_request()
+        login.pop("exp", None)
+        return to_provider(provider, login)
 
     @app.get("/callback")
-    async def callback(request: Request) -> Response:  # noqa: C901, PLR0911, PLR0912
+    async def callback(request: Request) -> Response:  # noqa: C901, PLR0911, PLR0912, PLR0915
         address = _address(request, s.trusted_hops)
         if not callback_limit.allow(address):
             _limited("/callback", "address", address)
@@ -480,15 +522,19 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             log.warning("WorkOS profile exchange failed for %s: %s", org_id, e)
             return refuse()
         async with bound_org(host.engine, org_id) as conn:
-            connection = await connections.load(conn, org_id)
-            if connection is None or connection.frozen:
+            target = await social.resolve(conn, org_id)
+            if target is None:
                 return refuse()
-            found = await join.find_person(conn, connection, profile)
-            reason: LoginRefusal | None = found if isinstance(found, str) else None
+            found: join.Person | LoginRefusal | social.SocialRefusal
+            if isinstance(target, social.SocialSignIn):
+                found = await social.find_person(conn, target, profile, login.get("provider"))
+            else:
+                found = await join.find_person(conn, target, profile)
+            reason: str | None = found if isinstance(found, str) else None
             if not isinstance(found, str) and not found.active:
                 reason = "not_active"
             if reason is not None or isinstance(found, str):
-                await audit_failure(conn, connection, reason or "no_match")
+                await audit_failure(conn, target, reason or "no_match")
                 log.info("login refused for %s: %s", org_id, reason)
                 response: Response = refuse()
             elif login.get("flow") == "oauth":
@@ -567,8 +613,7 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
         if org_id is None or (agent is not None and not tokens.AGENT_CLIENT.fullmatch(agent)):
             return _oauth_error("invalid_request")
         async with bound_org(host.engine, org_id) as conn:
-            connection = await connections.load(conn, org_id)
-            if connection is None or connection.frozen:
+            if await social.resolve(conn, org_id) is None:
                 return _oauth_error("invalid_request")
             start = await tokens.start_device(conn, org_id, agent)
         verify = f"{s.auth_url}/device?{urlencode({'org': org_id})}"
@@ -609,16 +654,16 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             _limited("/device", "org", org_id)
             return too_many()
         async with bound_org(host.engine, org_id) as conn:
-            connection = await connections.load(conn, org_id)
+            target = await social.resolve(conn, org_id)
             grant = await tokens.pending_grant(conn, org_id, form.get("user_code", ""))
             agent = None if grant is None else await tokens.grant_agent(conn, org_id, grant)
-        if connection is None or connection.frozen or grant is None:
+        if target is None or grant is None:
             return bad_request()
         if agent is not None and form.get("agent") != agent:
             code = tokens.normal_user_code(form.get("user_code", ""))
             return html(pages.agent_consent(org_id, code, agent))
         login = {"flow": "device", "org": org_id, "grant": grant, "agent": agent}
-        return to_workos(connection, login, from_form=True)
+        return to_workos(target, login, from_form=True)
 
     async def device_token(device_code: str) -> JSONResponse:
         parsed = tokens.org_of(device_code)

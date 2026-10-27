@@ -158,6 +158,20 @@ TOO_MANY: Final = page(
 UNAVAILABLE: Final = page("Sign-in is unavailable", "<p>Try again in a few minutes.</p>")
 
 
+def social_choice(pending: str, providers: dict[str, str]) -> str:
+    """Pilot social sign-in: one button per provider the org enabled."""
+    buttons = "".join(
+        f"<button name=provider value='{escape(name)}'>Continue with {escape(label)}</button>"
+        for name, label in providers.items()
+    )
+    return page(
+        "Sign in to Delimitus",
+        "<p>Choose how you sign in.</p>"
+        "<form method=post action='/login/social'>"
+        f"<input type=hidden name=pending value='{escape(pending)}'>{buttons}</form>",
+    )
+
+
 def work_email(pending: str) -> str:
     """The step that finds the company's sign-in when nothing else names the org."""
     return page(

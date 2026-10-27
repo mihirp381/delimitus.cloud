@@ -55,7 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.db import bound_org, check_org_id
-from ssc_control.identity import connections, invites, oauth, pages, sessions, tokens
+from ssc_control.identity import invites, oauth, pages, sessions, social, tokens
 from ssc_control.identity.limits import (
     EMAIL_PER_HOUR,
     INVITE_PER_HOUR,
@@ -107,7 +107,7 @@ class TokenReply(Protocol):
 class ToWorkos(Protocol):
     def __call__(
         self,
-        connection: connections.DirectoryConnection,
+        target: social.SignIn,
         login: dict[str, Any],
         *,
         from_form: bool = False,
@@ -285,8 +285,8 @@ class OAuthFlow:
             await conn.rollback()
         return client
 
-    async def _remembered(self, request: Request) -> connections.DirectoryConnection | None:
-        """The org of a live auth-host session in this browser, if its connection is active."""
+    async def _remembered(self, request: Request) -> social.SignIn | None:
+        """The org of a live auth-host session in this browser, if it can sign in."""
         kit = self._kit
         existing = kit.sealer.open(
             "session", request.cookies.get(kit.session_cookie, ""), self._now()
@@ -296,14 +296,10 @@ class OAuthFlow:
             return None
         async with bound_org(kit.engine, org_id) as conn:
             live = await sessions.live_session(conn, org_id, str(existing.get("sid")))
-            connection = await connections.load(conn, org_id)
-        if live is None or connection is None or connection.frozen:
-            return None
-        return connection
+            target = await social.resolve(conn, org_id)
+        return None if live is None else target
 
-    async def _org_for(
-        self, organizations: Sequence[str]
-    ) -> connections.DirectoryConnection | None:
+    async def _org_for(self, organizations: Sequence[str]) -> social.SignIn | None:
         """The active connection of the org one of these WorkOS organisations belongs to."""
         found: str | None = None
         async with self._kit.engine.connect() as conn:
@@ -314,16 +310,13 @@ class OAuthFlow:
             await conn.rollback()
         return None if found is None else await self._active(found)
 
-    async def _active(self, org_id: str) -> connections.DirectoryConnection | None:
+    async def _active(self, org_id: str) -> social.SignIn | None:
         async with bound_org(self._kit.engine, org_id) as conn:
-            connection = await connections.load(conn, org_id)
-        if connection is None or connection.frozen:
-            return None
-        return connection
+            return await social.resolve(conn, org_id)
 
     async def _hinted(  # noqa: PLR0911  (one answer per check)
         self, request: Request, q: QueryParams, *, invite_ok: bool
-    ) -> tuple[connections.DirectoryConnection | None, str | None] | None:
+    ) -> tuple[social.SignIn | None, str | None] | None:
         """The org an ``org`` hint or, when ``invite_ok``, an ``invite`` code names: its active
         connection (or None) and the invite id; None when over the limit."""
         address = self._address(request)

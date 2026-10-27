@@ -19,6 +19,7 @@ class AuditAction(StrEnum):
     USER_UPDATED = "user.updated"
     USER_DEACTIVATED = "user.deactivated"
     USER_REACTIVATED = "user.reactivated"
+    USER_INVITED = "user.invited"
     GROUP_SYNCED = "group.synced"
     APP_CREATED = "app.created"
     APP_OWNER_TRANSFERRED = "app.owner_transferred"

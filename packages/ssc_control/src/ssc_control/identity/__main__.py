@@ -19,6 +19,8 @@
 * ``invite create --org ID --operator op_x --expires-in 14d --max-uses 10 [--note TEXT]``,
   ``invite list --org ID``, ``invite revoke ID --operator op_x``: pilot invite codes
   (``identity.invites``). ``create`` prints the code once; only its SHA-256 is kept.
+* ``set-sign-in --org ID --mode social --providers google,microsoft,github --operator op_x``, or
+  ``--mode directory``: a pilot org's sign-in mode, audited (``identity.social``).
 
 Every command connects with ``SSC_DATABASE_DSN``; ``sync``, ``connect`` and ``create-org`` read
 ``SSC_WORKOS_API_KEY``, ``SSC_WORKOS_CLIENT_ID`` and optionally ``SSC_WORKOS_BASE``.
@@ -35,7 +37,7 @@ from typing import Final
 from ssc_contracts.audit import ActorKind
 from ssc_control.audit.chain import Actor
 from ssc_control.db import all_org_ids, bound_org, check_org_id, make_engine
-from ssc_control.identity import connections, invites, operator, sync
+from ssc_control.identity import connections, invites, operator, social, sync
 from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
 from ssc_shared import redaction
 
@@ -175,6 +177,22 @@ async def run_invite(dsn: str, args: argparse.Namespace) -> list[str]:
         await engine.dispose()
 
 
+async def run_set_sign_in(dsn: str, args: argparse.Namespace) -> bool:
+    engine = make_engine(dsn)
+    providers = args.providers or ()
+    try:
+        async with bound_org(engine, args.org) as conn:
+            return await social.set_sign_in(
+                conn,
+                args.org,
+                args.mode,
+                providers if args.mode == "social" else (),
+                actor=Actor(kind=ActorKind.OPERATOR, id=args.operator),
+            )
+    finally:
+        await engine.dispose()
+
+
 def serve(host: str, port: int) -> None:
     import uvicorn  # noqa: PLC0415  (only the serving process needs it)
 
@@ -199,7 +217,7 @@ def serve(host: str, port: int) -> None:
     uvicorn.run(app, host=host, port=port, proxy_headers=True, log_level="info", access_log=False)
 
 
-def _parser() -> argparse.ArgumentParser:
+def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915  (one parser)
     parser = argparse.ArgumentParser(prog="python -m ssc_control.identity")
     sub = parser.add_subparsers(dest="command", required=True)
     p_serve = sub.add_parser("serve")
@@ -246,6 +264,11 @@ def _parser() -> argparse.ArgumentParser:
     p_revoke = p_invite.add_parser("revoke")
     p_revoke.add_argument("id")
     p_revoke.add_argument("--operator", type=operator.check_operator_id, required=True)
+    p_sign_in = sub.add_parser("set-sign-in")
+    p_sign_in.add_argument("--org", type=check_org_id, required=True)
+    p_sign_in.add_argument("--mode", choices=["directory", "social"], required=True)
+    p_sign_in.add_argument("--providers", type=social.check_providers)
+    p_sign_in.add_argument("--operator", type=operator.check_operator_id, required=True)
     return parser
 
 
@@ -264,7 +287,18 @@ def main(argv: list[str] | None = None) -> int:
     return _run(args, dsn, env)
 
 
-def _run(args: argparse.Namespace, dsn: str, env: dict[str, str]) -> int:  # noqa: PLR0911
+def _run(args: argparse.Namespace, dsn: str, env: dict[str, str]) -> int:  # noqa: C901, PLR0911, PLR0912
+    if args.command == "set-sign-in":
+        if (args.mode == "social") != bool(args.providers):
+            sys.stderr.write("not set: --providers goes with --mode social, and only with it\n")
+            return 2
+        try:
+            changed = asyncio.run(run_set_sign_in(dsn, args))
+        except social.SignInError as e:
+            sys.stderr.write(f"not set: {e}\n")
+            return 1
+        sys.stdout.write(f"{args.org} {args.mode}{'' if changed else ' (unchanged)'}\n")
+        return 0
     if args.command == "invite":
         try:
             lines = asyncio.run(run_invite(dsn, args))
