@@ -43,6 +43,18 @@ test('loads only from its own origin, sets no cookie and breaks no policy', asyn
   expect(await page.context().cookies()).toEqual([]);
 });
 
+test('signs in at the console from the nav and the hero', async ({ page }) => {
+  await page.goto('/');
+  const signIn = page.locator('a[href="https://console.delimitus.com/login"]');
+  await expect(signIn).toHaveCount(2);
+  await expect(page.locator('.nav__act .nav__link')).toHaveText('Sign in');
+  await expect(page.locator('.nav__act .nav__link')).toBeVisible();
+  await expect(page.locator('.hero__cta .btn', { hasText: 'Sign in' })).toBeVisible();
+  // WebKit leaves links out of the Tab order by default, so focus it directly.
+  await page.locator('.nav__act .nav__link').focus();
+  await expect(page.locator('.nav__act .nav__link')).toBeFocused();
+});
+
 test('has no sideways scroll', async ({ page }) => {
   await page.goto('/');
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

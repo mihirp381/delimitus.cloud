@@ -138,9 +138,11 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .nav__links { display: flex; gap: 28px; margin-left: auto; }
 .nav__links a { color: var(--ink-2); text-decoration: none; font-size: 0.8rem; letter-spacing: -0.005em; transition: color 140ms var(--ease); }
 .nav__links a:hover { color: var(--ink); }
-.nav__act { display: flex; align-items: center; margin-left: 12px; }
+.nav__act { display: flex; align-items: center; gap: 20px; margin-left: 12px; }
+.nav__link { color: var(--ink-2); text-decoration: none; font-size: 0.8rem; letter-spacing: -0.005em; white-space: nowrap; padding-block: 10px; transition: color 140ms var(--ease); }
+.nav__link:hover { color: var(--ink); }
 @media (max-width: 860px) { .nav__in { gap: 18px; } .nav__links { gap: 18px; } .nav__act { margin-left: 0; } }
-@media (max-width: 699px) { .nav__links { display: none; } .nav__act { margin-left: auto; } }
+@media (max-width: 699px) { .nav__links { display: none; } .nav__act { margin-left: auto; gap: 14px; } }
 
 /* ── buttons and chips ───────────────────────────────────────────────── */
 .btn {
@@ -905,6 +907,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <a href="#faq">Questions</a>
     </div>
     <div class="nav__act">
+      <a class="nav__link" href="https://console.delimitus.com/login">Sign in</a>
       <a class="btn btn--primary btn--sm" href="#pilot">Request a pilot</a>
     </div>
   </div>
@@ -923,6 +926,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         <div class="hero__cta">
           <a class="btn btn--primary" href="#pilot">Request a pilot</a>
           <a class="btn btn--ghost" href="#how">See how it works</a>
+          <a class="btn btn--ghost" href="https://console.delimitus.com/login">Sign in</a>
         </div>
         <p class="enter__note" data-claim="pilot">Private pilot. Not generally available yet.</p>
       </div>

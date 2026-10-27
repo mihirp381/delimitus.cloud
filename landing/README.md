@@ -59,14 +59,8 @@ redirected to the apex by the service.
   block. Its flows' moving dots are SMIL, which ignores the reduced-motion CSS, so that CSS
   hides them.
 
-## Adding "Sign in" later
+## Sign in
 
-When the console is live (SSC-064, SSC-057), add a link in `.nav__act` before "Request a pilot":
-
-```html
-<a class="nav__link" href="https://console.delimitus.com/">Sign in</a>
-```
-
-A link to another origin is a navigation, not a load, so the policy needs no change, but
-`page.py`'s check refuses any `href` to another origin today; allow `https://console.delimitus.com/`
-there and in the test.
+The nav and the hero link to the console's sign-in, `https://console.delimitus.com/login`; a link is
+a navigation, not a load, so the content security policy needs no change. `page.py`'s check allows
+that exact `href` (`SIGN_IN`) and still refuses every other `href`, `src` or `action` to another origin.

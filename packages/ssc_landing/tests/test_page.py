@@ -9,6 +9,7 @@ import pytest
 
 from ssc_landing.page import (
     MAX_PAGE_BYTES,
+    SIGN_IN,
     PageError,
     check_page,
     content_security_policy,
@@ -76,6 +77,8 @@ def test_no_dollar_figure_outside_the_cost_section() -> None:
 
 def test_nothing_is_loaded_from_another_origin() -> None:
     text = _text_without_styles()
+    assert text.count(f'href="{SIGN_IN}"') == 2
+    text = text.replace(f'href="{SIGN_IN}"', "")
     assert re.findall(r"""(?:src|href|action|srcset)\s*=\s*["']?(?:https?:)?//""", text) == []
     assert "@import" not in HTML
     assert re.findall(r"url\(\s*['\"]?(?:https?:)?//", HTML) == []
@@ -211,6 +214,10 @@ def test_text_contrast_is_at_least_4_5_to_1(fg: str, bg: str) -> None:
         ('<img src="https://example.com/a.png">', "another origin"),
         ('<link rel="stylesheet" href="//example.com/a.css">', "another origin"),
         ('<form action="https://example.com/post"></form>', "another origin"),
+        ('<a href="https://console.delimitus.com/other">x</a>', "another origin"),
+        ('<img src="https://console.delimitus.com/x.png">', "another origin"),
+        ('<form action="https://console.delimitus.com/login"></form>', "another origin"),
+        ('<a href="https://console.delimitus.com/login/x">x</a>', "another origin"),
     ],
 )
 def test_a_page_the_policy_would_break_is_refused(page: str, message: str) -> None:
@@ -221,6 +228,12 @@ def test_a_page_the_policy_would_break_is_refused(page: str, message: str) -> No
 def test_a_page_over_the_weight_limit_is_refused() -> None:
     with pytest.raises(PageError, match="limit"):
         check_page("<p>x</p>", MAX_PAGE_BYTES + 1)
+
+
+def test_the_sign_in_link_is_the_one_link_to_another_origin() -> None:
+    assert SIGN_IN == "https://console.delimitus.com/login"
+    page = f'<a class="nav__link" href="{SIGN_IN}">Sign in</a><a href="{SIGN_IN}">Sign in</a>'
+    check_page(page, len(page))
 
 
 def test_inline_blocks_and_mailto_links_are_allowed() -> None:
