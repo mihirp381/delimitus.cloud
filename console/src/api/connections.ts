@@ -1,5 +1,5 @@
 import { type ApiClient, must } from './client';
-import { GROUP_ID_PATTERN } from './directory';
+import { findGroups, findPeople, GROUP_ID_PATTERN, type Match } from './directory';
 import { type Approval, type Grant, type GrantInput, readGrants, toInput } from './grants';
 import type { components } from './schema';
 
@@ -139,11 +139,6 @@ export function defaultPreviewWho(classification: Classification): PreviewWho {
   return classification === 'internal' ? 'builders' : 'approval';
 }
 
-export function previewAccessText(rule: PreviewAccess, groupName?: string | null): string {
-  if (rule.who === 'group') return `Group ${groupName ?? rule.group_id ?? ''}`;
-  return rule.who === 'builders' ? 'Builders' : 'Approval';
-}
-
 /** Throws an Error when a group rule's id is not a grp_ id. */
 export function previewAccessOf(who: PreviewWho, group: string): PreviewAccess {
   if (who !== 'group') return { who };
@@ -178,32 +173,27 @@ export function limitPhrases(limits: Limits): string[] {
   return set.map((k) => `${LIMIT_TITLE[k]} ${String(limits[k])}`);
 }
 
-/** Who may use an app on the connection, in words. */
-export function ceilingText(ceiling: Ceiling): string {
-  if (ceiling.audience === 'org') return 'Anyone in the organisation';
-  const subjects = ceiling.subjects ?? [];
-  return `${subjects.length} listed ${subjects.length === 1 ? 'group or person' : 'groups and people'}`;
+export const SUBJECT_PATTERN = /^(usr|grp)_[a-z0-9]{20}$/;
+
+export function subjectMatches(c: Connection): Match[] {
+  return (c.ceiling.subjects ?? []).map((s) => ({ id: s.id, label: c.ceiling_subject_names[s.id] ?? s.id }));
 }
 
-const SUBJECT_PATTERN = /^(usr|grp)_[a-z0-9]{20}$/;
-
-/**
- * The subjects of a ceiling typed one per line as `usr_…` or `grp_…` ids. Throws an Error naming
- * the first line that is neither.
- */
-export function parseSubjects(text: string): Subject[] {
-  const ids = text
-    .split(/[\s,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return [...new Set(ids)].map((id) => {
-    if (!SUBJECT_PATTERN.test(id)) throw new Error(`${id} is not a usr_ or grp_ id.`);
-    return { kind: id.startsWith('usr_') ? 'user' : 'group', id };
-  });
+export function subjectsOf(picked: readonly Match[]): Subject[] {
+  return picked
+    .map((m): Subject => ({ kind: m.id.startsWith('usr_') ? 'user' : 'group', id: m.id }))
+    .sort((a, b) => (a.kind === b.kind ? (a.id < b.id ? -1 : 1) : a.kind < b.kind ? -1 : 1));
 }
 
-export function subjectsText(ceiling: Ceiling): string {
-  return (ceiling.subjects ?? []).map((s) => s.id).join('\n');
+export function ceilingText(c: Connection): string {
+  if (c.ceiling.audience === 'org') return 'Anyone in the organisation';
+  return subjectMatches(c)
+    .map((m) => m.label)
+    .join(', ');
+}
+
+export function findSubjects(api: ApiClient, text: string): Promise<readonly Match[]> {
+  return text.includes('@') ? findPeople(api, text) : findGroups(api, text);
 }
 
 /** Schema names typed with commas or spaces between them. */

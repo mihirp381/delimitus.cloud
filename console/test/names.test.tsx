@@ -33,6 +33,7 @@ const connection = {
   status: 'active',
   preview_access: { who: 'group', group_id: GROUP },
   preview_access_group_name: 'Finance',
+  ceiling_subject_names: {},
   created_at: '2026-10-01T10:00:00Z',
   updated_at: '2026-10-01T10:00:00Z',
 };

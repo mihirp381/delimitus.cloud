@@ -251,8 +251,13 @@ function Breadcrumbs() {
     { params: { path: { app_id: appId ?? '' } } },
     { enabled: appId !== null },
   );
+  const connectionId = section === 'connections' && id ? id : null;
+  const connections = queries.useQuery('get', '/v1/connections', undefined, { enabled: connectionId !== null });
   const crumbs: Crumb[] = [];
-  if (appId) {
+  if (connectionId) {
+    crumbs.push({ text: 'Connections', link: <Link to="/connections">Connections</Link> });
+    crumbs.push({ text: connections.data?.connections.find((c) => c.id === connectionId)?.name ?? 'Connection' });
+  } else if (appId) {
     const slug = app.data?.slug ?? 'App';
     const tab = appTab((location.search as Record<string, unknown>).tab);
     const run = sub === 'kill-switch' ? 'Kill switch run' : sub === 'delete' ? 'Delete run' : null;

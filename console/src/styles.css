@@ -2047,3 +2047,28 @@ details pre {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Picked groups and people, each with its remove button. */
+.picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ssc-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ssc-space-1);
+  padding-left: var(--ssc-space-2);
+  border: 1px solid var(--ssc-border-subtle);
+  border-radius: var(--ssc-radius-sm);
+  font-size: var(--ssc-type-size-small);
+}
+
+.pick .icon-btn {
+  width: 24px;
+  height: 24px;
+}
