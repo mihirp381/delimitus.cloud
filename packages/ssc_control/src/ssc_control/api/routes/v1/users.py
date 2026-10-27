@@ -1,26 +1,36 @@
 """``GET /v1/users``: the org's people for active org admins. With ``email=``, every exact match,
 for sharing by address; without it, the roster, paged by name. Email is display data, never a key
-(``db/PII.md``): callers act on the ``usr_`` id they pick."""
+(``db/PII.md``): callers act on the ``usr_`` id they pick.
+
+In a pilot org that signs in with social providers (decision 002 amendment 2026-10-27), admins
+invite people by email and deactivate or reactivate them; a directory org refuses all three."""
 
 from datetime import datetime
 from typing import Annotated, Final, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from pydantic import Field
 from sqlalchemy import text
 
+from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
+from ssc_contracts.ids import new_id
 from ssc_contracts.text import PRINTABLE
+from ssc_control import directory
 from ssc_control.api.authz import OrgRole, require_admin
+from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
-from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
-from ssc_control.api.routes.v1.common import Strict
-from ssc_control.api.uow import UserUoW
+from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
+from ssc_control.api.routes.v1.common import Id, Strict
+from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
+from ssc_control.identity import social
+from ssc_control.snapshot.service import mark_dirty
 
 router = APIRouter()
 
 MAX_PAGE: Final = 200
-Status = Literal["active", "deactivated"]
+Status = Literal["active", "invited", "deactivated"]
+EMAIL: Final = r"^[^@\s\x00-\x1f\x7f]+@[^@\s\x00-\x1f\x7f]+$"
 
 
 class UserMatch(Strict):
@@ -47,7 +57,7 @@ class UsersQuery(Strict):
         default=None,
         min_length=3,
         max_length=320,
-        pattern=r"^[^@\s\x00-\x1f\x7f]+@[^@\s\x00-\x1f\x7f]+$",
+        pattern=EMAIL,
         description="Matched whole, ignoring case; deactivated people are included. Not with "
         "`q`, `status` or `cursor`.",
     )
@@ -111,3 +121,111 @@ async def list_users(params: Annotated[UsersQuery, Query()], uow: UserUoW) -> Us
     more = len(users) > params.limit
     users = users[: params.limit]
     return UserMatches(users=users, next_cursor=users[-1].id if more else None)
+
+
+class InviteIn(Strict):
+    email: str = Field(min_length=3, max_length=320, pattern=EMAIL)
+
+
+_PERSON = text(
+    "select u.id, u.display_name, u.email, u.role, u.status, u.created_at, s.last_sign_in_at "
+    "from ssc.user_account u left join lateral (select max(created_at) as last_sign_in_at "
+    "from ssc.auth_session where org_id = u.org_id and user_id = u.id and kind <> 'ci') s on true "
+    "where u.org_id = :org and u.id = :id"
+)
+_LOCK_ORG = text("select 1 from ssc.org where id = :org for update")
+_INVITED = text(
+    "select id from ssc.user_account where org_id = :org and lower(email) = :email "
+    "order by created_at, id limit 1"
+)
+_INVITE = text(
+    "insert into ssc.user_account (id, org_id, display_name, email, role, status) "
+    "values (:id, :org, :email, :email, 'member', 'invited')"
+)
+_PEOPLE_CHANGES: Final = (
+    *POST_COMMON,
+    ErrorCode.FORBIDDEN,
+    ErrorCode.AGENT_SESSION_REFUSED,
+    ErrorCode.DIRECTORY_MANAGED,
+)
+
+
+async def _social_admin(uow: UnitOfWork) -> None:
+    await require_admin(uow)
+    if uow.principal.is_agent:
+        raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
+    if await social.mode(uow.conn, uow.org_id) != "social":
+        raise Refusal(ErrorCode.DIRECTORY_MANAGED)
+
+
+async def _person(uow: UnitOfWork, user_id: str) -> UserMatch:
+    row = (await uow.conn.execute(_PERSON, {"org": uow.org_id, "id": user_id})).mappings().one()
+    return UserMatch(**dict(row))
+
+
+@router.post(
+    "/users/invite",
+    response_model=UserMatch,
+    status_code=201,
+    dependencies=[UserIdempotent],
+    responses=problem_responses(*_PEOPLE_CHANGES),
+)
+async def invite_user(body: InviteIn, uow: UserUoW) -> Response:
+    """An invited member who signs in with one of the org's providers. ``201`` for a new person;
+    ``200`` with the person who already has the address, ignoring case. Active admins only,
+    never in an agent session; ``DIRECTORY_MANAGED`` in a directory org."""
+    await _social_admin(uow)
+    email = body.email.lower()
+    await uow.conn.execute(_LOCK_ORG, {"org": uow.org_id})
+    found = (
+        await uow.conn.execute(_INVITED, {"org": uow.org_id, "email": email})
+    ).scalar_one_or_none()
+    if found is not None:
+        return uow.reply(await _person(uow, str(found)))
+    user_id = new_id("usr")
+    await uow.conn.execute(_INVITE, {"id": user_id, "org": uow.org_id, "email": email})
+    await uow.audit(
+        AuditAction.USER_INVITED,
+        target_kind="user_account",
+        target_id=user_id,
+        after={"role": "member", "status": "invited"},
+    )
+    await mark_dirty(uow.conn, uow.org_id)
+    return uow.reply(await _person(uow, user_id), status=201)
+
+
+async def _set_status(uow: UnitOfWork, user_id: str, status: directory.Status) -> Response:
+    await _social_admin(uow)
+    if status == "deactivated" and await directory.is_last_active_admin(
+        uow.conn, uow.org_id, user_id
+    ):
+        raise Refusal(ErrorCode.LAST_ORG_ADMIN)
+    before = await directory.set_status(
+        uow.conn, uow.org_id, user_id, status, actor=actor_of(uow.principal)
+    )
+    if before is None:
+        raise Refusal(ErrorCode.NOT_FOUND)
+    return uow.reply(await _person(uow, user_id))
+
+
+@router.post(
+    "/users/{user_id}/deactivate",
+    response_model=UserMatch,
+    dependencies=[UserIdempotent],
+    responses=problem_responses(*_PEOPLE_CHANGES, ErrorCode.NOT_FOUND, ErrorCode.LAST_ORG_ADMIN),
+)
+async def deactivate_user(user_id: Id, uow: UserUoW) -> Response:
+    """End every session and token the person holds, in this transaction, and mark the access
+    snapshot dirty. ``LAST_ORG_ADMIN`` for the org's last active admin."""
+    return await _set_status(uow, user_id, "deactivated")
+
+
+@router.post(
+    "/users/{user_id}/reactivate",
+    response_model=UserMatch,
+    dependencies=[UserIdempotent],
+    responses=problem_responses(*_PEOPLE_CHANGES, ErrorCode.NOT_FOUND),
+)
+async def reactivate_user(user_id: Id, uow: UserUoW) -> Response:
+    """A deactivated person may sign in again; their old sessions stay ended."""
+    return await _set_status(uow, user_id, "active")

@@ -46,7 +46,7 @@ FORMER: Final = Person(FORMER_MEMBER, None)
 
 
 def person(display_name: str | None, email: str | None, status: str | None) -> Person:
-    if status != "active" or email is None:
+    if status not in {"active", "invited"} or email is None:
         return FORMER
     return Person((display_name or "").strip() or email, email)
 

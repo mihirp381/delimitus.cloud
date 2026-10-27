@@ -48,6 +48,7 @@ class ErrorCode(StrEnum):
     REFERENCE_NOT_FOUND = "REFERENCE_NOT_FOUND"
     DEPLOYMENT_IN_FLIGHT = "DEPLOYMENT_IN_FLIGHT"
     LAST_ORG_ADMIN = "LAST_ORG_ADMIN"
+    DIRECTORY_MANAGED = "DIRECTORY_MANAGED"
     OWNER_NOT_ACTIVE = "OWNER_NOT_ACTIVE"
     RECORD_IMMUTABLE = "RECORD_IMMUTABLE"
     SCHEDULE_DELETED = "SCHEDULE_DELETED"
@@ -212,6 +213,11 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         409,
         "An organisation needs at least one active admin.",
         "Make another person an admin before removing this one.",
+    ),
+    ErrorCode.DIRECTORY_MANAGED: CatalogueEntry(
+        409,
+        "People here come from your company directory.",
+        "Invite, deactivate and reactivate people in your identity provider.",
     ),
     ErrorCode.OWNER_NOT_ACTIVE: CatalogueEntry(
         422,
