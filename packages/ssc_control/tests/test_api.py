@@ -231,6 +231,7 @@ def test_whoami_describes_the_credential(world: World) -> None:
         "org_name": "Org A",
         "name": "Ada Admin",
         "email": "ada@example.com",
+        "sign_in_mode": "directory",
     }
 
 

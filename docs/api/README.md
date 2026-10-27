@@ -81,6 +81,10 @@ only) returns every person with that address, ignoring case, because email is no
 `email`, `GET /v1/users` is the roster (active admins, never an agent session): by name, `q` a part
 of the name or email ignoring case, `status`, `limit` and `cursor`, each person with
 `last_sign_in_at`, the start of their latest browser, console or command-line session.
+In a pilot org in social mode (`whoami.sign_in_mode`), active admins outside an agent session
+`POST /v1/users/invite` an address (`201`, or `200` with the person who already has it) and
+`POST /v1/users/{id}/deactivate` or `/reactivate`; deactivation ends every session and refresh token
+in the same transaction. A directory org answers `DIRECTORY_MANAGED`.
 `GET /v1/apps?builder=me` lists the apps the caller may ship source to: every app for an admin,
 the apps they own, and those with a builder grant on any environment. `GET /v1/groups?name=`
 returns every group with that name, ignoring case, with its active member count, to anyone who
