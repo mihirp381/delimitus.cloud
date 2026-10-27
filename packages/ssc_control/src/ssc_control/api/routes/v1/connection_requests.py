@@ -14,7 +14,7 @@ from ssc_control.api.authz import require_builder
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import POST_COMMON, problem_responses
-from ssc_control.api.routes.v1.approvals import Approval, approval_out
+from ssc_control.api.routes.v1.approvals import Approval, approval_named
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.routes.v1.connections import EnvironmentConnectionOut, Name, environment_out
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
@@ -161,4 +161,4 @@ async def request_connection(  # noqa: PLR0913  (FastAPI maps each parameter)
         payload={},
         actor=actor_of(uow.principal),
     )
-    return await answer("pending", approval=approval_out(row))
+    return await answer("pending", approval=await approval_named(uow, row))

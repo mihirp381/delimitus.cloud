@@ -16,7 +16,7 @@ The run stays readable after the app is ``deleted`` and gone from every other ro
 """
 
 from datetime import datetime
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import Field
@@ -28,7 +28,7 @@ from ssc_control.api.authz import require_admin
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
-from ssc_control.api.routes.v1.apps import AppOut, environments_of
+from ssc_control.api.routes.v1.apps import AppOut, app_out
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.routes.v1.grants import LOCK_PREVIEW, grant_owner_preview
 from ssc_control.api.runtime import runtime_of
@@ -41,6 +41,7 @@ from ssc_control.lifecycle.kill_switch import (
     StepName,
     StepState,
 )
+from ssc_control.names import person
 from ssc_control.snapshot.service import mark_dirty
 
 router = APIRouter()
@@ -52,6 +53,8 @@ _SLUG_PATTERN = r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$"
 class Owner(Strict):
     user_id: str
     display_name: str
+    name: str
+    email: str | None
 
 
 class CurrentRelease(Strict):
@@ -193,8 +196,14 @@ _STATUS_ACTION = {
 
 async def _app_out(uow: UnitOfWork, app_id: str, request: Request) -> AppOut:
     row = (await uow.conn.execute(_SELECT_APP, {"org": uow.org_id, "id": app_id})).mappings().one()
-    envs = await environments_of(uow, app_id, runtime_of(request).settings.apps_domain)
-    return AppOut(**dict(row), environments=envs)
+    return await app_out(uow, row, runtime_of(request).settings.apps_domain)
+
+
+def _owner(raw: dict[str, Any]) -> Owner:
+    who = person(raw["display_name"], raw["email"], raw["status"])
+    return Owner(
+        user_id=raw["user_id"], display_name=raw["display_name"], name=who.name, email=who.email
+    )
 
 
 @router.get(
@@ -213,7 +222,8 @@ async def get_inventory(
     await require_admin(uow)
     rows, next_cursor = await inventory.page(uow.conn, uow.org_id, limit=limit, cursor=cursor)
     return InventoryPage(
-        items=[InventoryApp.model_validate(r) for r in rows], next_cursor=next_cursor
+        items=[InventoryApp.model_validate({**r, "owner": _owner(r["owner"])}) for r in rows],
+        next_cursor=next_cursor,
     )
 
 

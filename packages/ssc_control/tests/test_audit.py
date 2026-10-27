@@ -614,8 +614,10 @@ def test_search_shows_the_chain_fields_and_never_an_ip(api: Api) -> None:
             "id": api.org.admin_user_id,
             "via_agent": True,
             "client_id": "@evil",
+            "name": "@evil for Ada Admin",
+            "email": "ada@example.com",
         },
-        "target": {"kind": "schedule", "id": "=1+2"},
+        "target": {"kind": "schedule", "id": "=1+2", "name": None},
         "before": None,
         "after": {"name": "=1+2", "cron": "0 1 * * *"},
         "policy_decision_id": None,
@@ -804,3 +806,20 @@ def test_the_audit_entrypoint_installs_log_redaction() -> None:
         main(["verify", "--org", new_id("org")])
     assert exited.value.code == 2
     assert redaction.installed()
+
+
+def test_search_names_actors_and_targets(api: Api) -> None:
+    events = search(api).json()["events"]
+    named = {(e["action"], e["target"]["id"]): (e["actor"], e["target"]) for e in events}
+    actor, _ = named[("schedule.created", "sch_one")]
+    assert (actor["name"], actor["email"]) == ("Ada Admin", "ada@example.com")
+    actor, target = named[("app.created", "app_4")]
+    assert (actor["name"], actor["email"], target["name"]) == ("Former member", None, None)
+    actor, _ = named[("grant.added", "gnt_one")]
+    assert (actor["name"], actor["email"]) == ("System", None)
+    first = events[-1]
+    assert (first["actor"]["kind"], first["actor"]["name"], first["target"]["name"]) == (
+        "operator",
+        "Delimitus operator",
+        "Audit Org",
+    )

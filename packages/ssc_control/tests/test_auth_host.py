@@ -993,7 +993,8 @@ def test_an_admin_links_an_unlinked_login(dsns: Dsns) -> None:
         assert_problem(link(by_subject["eve@example.com"]["id"], bob), ErrorCode.VALIDATION_FAILED)
         r = link(target, bob)
         assert r.status_code == 200, r.text
-        assert r.json()["user_id"] == bob
+        assert (r.json()["user_id"], r.json()["user_email"]) == (bob, "bob@example.com")
+        assert r.json()["user_name"] not in ("", bob)
         assert_problem(link(target, bob), ErrorCode.NOT_FOUND)
         after = client.get("/v1/unlinked-logins", headers=admin).json()["unlinked_logins"]
         assert stranger not in {u["subject"] for u in after}

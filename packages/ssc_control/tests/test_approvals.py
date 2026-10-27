@@ -825,6 +825,9 @@ def test_an_admin_decides_their_own_request_an_owner_not(
     done = post(client, f"/v1/approvals/{apr}/decision", tokens.operator, decision(world.admin))
     assert done.status_code == 200, done.text
     assert (done.json()["state"], done.json()["decided_by_user_id"]) == ("approved", world.admin)
+    named = client.get(f"/v1/approvals/{apr}", headers=auth(tokens.admin)).json()
+    assert (named["decided_by_name"], named["decided_by_email"]) == ("Ada Admin", "ada@example.com")
+    assert named["requested_by_email"] == "ada@example.com"
     with psycopg.connect(dsns.app) as conn:
         bind_org_sync(conn, world.org)
         conn.execute(
@@ -854,6 +857,12 @@ def test_an_admin_decides_their_own_request_an_owner_not(
     assert_problem(by_owner, ErrorCode.SELF_APPROVAL_REFUSED)
     got = client.get(f"/v1/approvals/{own}", headers=auth(tokens.builder))
     assert (got.json()["state"], got.json()["can_decide"]) == ("pending", False)
+    assert (got.json()["decided_by_name"], got.json()["subject_names"]) == (
+        None,
+        {world.member: "Some One"},
+    )
+    listed = client.get("/v1/approvals", headers=auth(tokens.builder)).json()["approvals"]
+    assert next(a for a in listed if a["id"] == own)["subject_names"] == {world.member: "Some One"}
 
 
 def test_a_one_admin_org_approves_what_its_agent_asked_for(

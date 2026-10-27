@@ -703,6 +703,8 @@ def test_explain_names_the_grant_and_the_group(
     assert ok.status_code == 200, ok.text
     assert ok.json() == {
         "user_id": una,
+        "user_name": "Una User",
+        "user_email": "una@example.com",
         "environment_id": world.prod,
         "allowed": True,
         "role": "user",
@@ -715,6 +717,7 @@ def test_explain_names_the_grant_and_the_group(
                 "subject_kind": "group",
                 "subject_id": gid,
                 "group_name": "Finance",
+                "subject_name": "Finance",
             }
         ],
         "evaluated_from": "live",

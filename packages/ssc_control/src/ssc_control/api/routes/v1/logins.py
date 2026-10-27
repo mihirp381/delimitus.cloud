@@ -18,6 +18,7 @@ from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.uow import UserUoW, actor_of
 from ssc_control.identity.join import LinkError, link_unlinked
 from ssc_control.identity.rules import subject_problem
+from ssc_control.names import people
 
 router = APIRouter()
 
@@ -47,6 +48,8 @@ class LinkIn(Strict):
 class Linked(Strict):
     identity_link_id: str
     user_id: str
+    user_name: str
+    user_email: str | None
 
 
 _PENDING = text(
@@ -107,4 +110,9 @@ async def link_login(unlinked_login_id: Id, body: LinkIn, uow: UserUoW) -> Respo
         raise Refusal(
             _REFUSALS[reason], evidence={"unlinked_login_id": unlinked_login_id, "reason": reason}
         ) from None
-    return uow.reply(Linked(identity_link_id=link_id, user_id=body.user_id))
+    who = (await people(uow.conn, uow.org_id, [body.user_id])).of(body.user_id)
+    return uow.reply(
+        Linked(
+            identity_link_id=link_id, user_id=body.user_id, user_name=who.name, user_email=who.email
+        )
+    )

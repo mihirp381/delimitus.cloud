@@ -10,6 +10,7 @@ from pydantic import AwareDatetime, Field
 from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.text import PRINTABLE
+from ssc_control import names
 from ssc_control.api.auth import UserPrincipal
 from ssc_control.api.authz import require_admin
 from ssc_control.api.problems import Refusal, request_id_of
@@ -65,11 +66,20 @@ class AuditActor(Strict):
     id: str
     via_agent: bool
     client_id: str | None
+    name: str = Field(
+        description="Who, in words: the person; `<client id> for <person>` in an agent session; "
+        "`Delimitus operator`; `System` for a workload, a schedule or an integration."
+    )
+    email: str | None = Field(description="The person's email, while they are an active member.")
 
 
 class AuditTarget(Strict):
     kind: str
     id: str
+    name: str | None = Field(
+        description="The app's slug, the person's, group's, connection's or org's name, or "
+        "`<slug> <environment>`; null for other kinds."
+    )
 
 
 class AuditEvent(Strict):
@@ -92,6 +102,48 @@ class AuditPage(Strict):
     )
 
 
+_TARGETS: Final = {
+    "app": names.apps,
+    "user_group": names.groups,
+    "connection": names.connections,
+    "environment": names.environments,
+    "org": names.orgs,
+}
+
+
+def _actor_name(actor: dict[str, Any], who: names.People) -> str:
+    match actor["kind"]:
+        case ActorKind.USER:
+            person = who.of(actor["id"]).name
+            if actor["via_agent"]:
+                return f"{actor['client_id'] or 'An agent'} for {person}"
+            return person
+        case ActorKind.OPERATOR:
+            return names.OPERATOR
+        case _:
+            return names.SYSTEM
+
+
+async def _name(uow: UnitOfWork, records: list[dict[str, Any]]) -> None:
+    users = [r["actor"]["id"] for r in records if r["actor"]["kind"] == ActorKind.USER]
+    users += [r["target"]["id"] for r in records if r["target"]["kind"] == "user_account"]
+    who = await names.people(uow.conn, uow.org_id, users)
+    found: dict[str, dict[str, str]] = {}
+    for kind, lookup in _TARGETS.items():
+        ids = [r["target"]["id"] for r in records if r["target"]["kind"] == kind]
+        found[kind] = await lookup(uow.conn, uow.org_id, ids) if ids else {}
+    for r in records:
+        actor, target = r["actor"], r["target"]
+        actor["name"] = _actor_name(actor, who)
+        actor["email"] = who.email(actor["id"]) if actor["kind"] == ActorKind.USER else None
+        if target["kind"] == "user_account":
+            target["name"] = who.of(target["id"]).name
+        elif target["kind"] == "user_group":
+            target["name"] = found["user_group"].get(target["id"], names.REMOVED_GROUP)
+        else:
+            target["name"] = found.get(target["kind"], {}).get(target["id"])
+
+
 @router.get(
     "/audit",
     response_model=AuditPage,
@@ -104,7 +156,9 @@ async def search_audit(params: Annotated[AuditSearchQuery, Query()], uow: UserUo
         uow.org_id, params.filters(), before_seq=params.before_seq, limit=params.limit + 1
     )
     rows = (await uow.conn.execute(query)).mappings().all()
-    events = [AuditEvent.model_validate(event_record(r)) for r in rows[: params.limit]]
+    records = [event_record(r) for r in rows[: params.limit]]
+    await _name(uow, records)
+    events = [AuditEvent.model_validate(r) for r in records]
     more = len(rows) > params.limit
     return AuditPage(events=events, next_before_seq=events[-1].seq if more else None)
 

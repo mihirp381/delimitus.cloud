@@ -53,6 +53,7 @@ from ssc_control.domain.approval_rules import (
     widens,
 )
 from ssc_control.egress import allowlist
+from ssc_control.names import person
 from ssc_control.notifications import service as notifications
 
 log = logging.getLogger(__name__)
@@ -92,8 +93,15 @@ _E: Final = table(
 )
 _A: Final = table("app", column("org_id"), column("id"), column("slug"), schema="ssc")
 _U: Final = table(
-    "user_account", column("org_id"), column("id"), column("display_name"), schema="ssc"
+    "user_account",
+    column("org_id"),
+    column("id"),
+    column("display_name"),
+    column("email"),
+    column("status"),
+    schema="ssc",
 )
+_D: Final = _U.alias("decider")
 _C: Final = table(
     "connection", column("org_id"), column("name"), column("owner_user_id"), schema="ssc"
 )
@@ -109,6 +117,11 @@ def _select() -> Select[Any]:
         _A.c.slug.label("app"),
         _E.c.name.label("environment"),
         _U.c.display_name.label("requested_by_name"),
+        _U.c.email.label("requested_by_email"),
+        _U.c.status.label("requested_by_status"),
+        _D.c.display_name.label("decided_by_display_name"),
+        _D.c.email.label("decided_by_email"),
+        _D.c.status.label("decided_by_status"),
         r.environment_id,
         r.kind,
         r.subject_key,
@@ -127,6 +140,7 @@ def _select() -> Select[Any]:
         _R.join(_E, and_(_E.c.org_id == r.org_id, _E.c.id == r.environment_id))
         .join(_A, and_(_A.c.org_id == _E.c.org_id, _A.c.id == _E.c.app_id))
         .join(_U, and_(_U.c.org_id == r.org_id, _U.c.id == r.requested_by_user_id))
+        .outerjoin(_D, and_(_D.c.org_id == r.org_id, _D.c.id == r.decided_by_user_id))
     )
 
 
@@ -176,8 +190,11 @@ class ApprovalRow:
     state: ApprovalState
     requested_by_user_id: str
     requested_by_name: str
+    requested_by_email: str | None
     requested_via_agent: bool
     decided_by_user_id: str | None
+    decided_by_name: str | None
+    decided_by_email: str | None
     decided_at: datetime | None
     decision_reason: str | None
     decision_channel: DecisionChannel | None
@@ -216,6 +233,16 @@ def approval_row(row: Mapping[Any, Any]) -> ApprovalRow:
     if state not in _STATES:
         raise ValueError(f"unknown approval state {state!r}")
     channel = row["decision_channel"]
+    requester = person(
+        row["requested_by_name"], row["requested_by_email"], row["requested_by_status"]
+    )
+    decider = (
+        None
+        if row["decided_by_user_id"] is None
+        else person(
+            row["decided_by_display_name"], row["decided_by_email"], row["decided_by_status"]
+        )
+    )
     return ApprovalRow(
         id=str(row["id"]),
         app_id=str(row["app_id"]),
@@ -228,8 +255,11 @@ def approval_row(row: Mapping[Any, Any]) -> ApprovalRow:
         state=cast(ApprovalState, state),
         requested_by_user_id=str(row["requested_by_user_id"]),
         requested_by_name=str(row["requested_by_name"]),
+        requested_by_email=requester.email,
         requested_via_agent=bool(row["requested_via_agent"]),
         decided_by_user_id=row["decided_by_user_id"],
+        decided_by_name=None if decider is None else decider.name,
+        decided_by_email=None if decider is None else decider.email,
         decided_at=row["decided_at"],
         decision_reason=row["decision_reason"],
         decision_channel=cast(DecisionChannel | None, channel),

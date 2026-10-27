@@ -7,6 +7,7 @@ stored paused and only run this way. An agent credential is ``AGENT_SESSION_REFU
 change, before any lookup.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Final, Literal, NoReturn
 
@@ -21,6 +22,7 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
+from ssc_control.names import People, people
 from ssc_control.timers import service
 from ssc_control.timers.service import PauseReason, RefusalReason, ScheduleRefusedError
 
@@ -68,6 +70,7 @@ class TimerRunOut(Strict):
         description="The instant a scheduled run was for; when a manual run was asked for."
     )
     requested_by_user_id: str | None = Field(description="Who asked for a manual run.")
+    requested_by_name: str | None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -89,6 +92,7 @@ class ScheduleOut(Strict):
         description="Whose authority it runs on, with the app's owner: who last deployed or "
         "resumed it."
     )
+    declared_by_name: str
     last_run: TimerRunOut | None
 
 
@@ -166,11 +170,15 @@ async def _environment(uow: UnitOfWork, app_id: str, environment_id: str) -> str
     return await require_builder(uow, environment_id)
 
 
-def _run(row: RowMapping) -> TimerRunOut:
-    return TimerRunOut(**dict(row))
+def _run(row: RowMapping, by: People) -> TimerRunOut:
+    return TimerRunOut(**dict(row), requested_by_name=by.name(row["requested_by_user_id"]))
 
 
-def _schedule(row: RowMapping) -> ScheduleOut:
+async def _people(uow: UnitOfWork, rows: Sequence[RowMapping], *keys: str) -> People:
+    return await people(uow.conn, uow.org_id, [r[k] for r in rows for k in keys])
+
+
+def _schedule(row: RowMapping, by: People) -> ScheduleOut:
     last = None
     if row["run_id"] is not None:
         last = TimerRunOut(
@@ -184,6 +192,7 @@ def _schedule(row: RowMapping) -> ScheduleOut:
             duration_ms=row["duration_ms"],
             scheduled_for=row["scheduled_for"],
             requested_by_user_id=row["requested_by_user_id"],
+            requested_by_name=by.name(row["requested_by_user_id"]),
             created_at=row["created_at"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
@@ -201,6 +210,7 @@ def _schedule(row: RowMapping) -> ScheduleOut:
         pause_reason=row["pause_reason"],
         next_run_at=row["next_run_at"],
         declared_by_user_id=row["declared_by_user_id"],
+        declared_by_name=by.of(row["declared_by_user_id"]).name,
         last_run=last,
     )
 
@@ -210,7 +220,7 @@ async def _one(uow: UnitOfWork, environment_id: str, schedule_id: str) -> Schedu
     row = (await uow.conn.execute(_SELECT_SCHEDULE, params)).mappings().first()
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"schedule_id": schedule_id})
-    return _schedule(row)
+    return _schedule(row, await _people(uow, [row], "declared_by_user_id", "requested_by_user_id"))
 
 
 @router.get(
@@ -223,7 +233,8 @@ async def list_schedules(app_id: Id, environment_id: Id, uow: UserUoW) -> Schedu
     await _environment(uow, app_id, environment_id)
     params = {"org": uow.org_id, "env": environment_id}
     rows = (await uow.conn.execute(_SELECT_SCHEDULES, params)).mappings().all()
-    return ScheduleList(environment_id=environment_id, items=[_schedule(r) for r in rows])
+    by = await _people(uow, rows, "declared_by_user_id", "requested_by_user_id")
+    return ScheduleList(environment_id=environment_id, items=[_schedule(r, by) for r in rows])
 
 
 @router.get(
@@ -261,7 +272,8 @@ async def list_runs(  # noqa: PLR0913  (FastAPI maps each parameter to the reque
     if before is not None and (await uow.conn.execute(_SELECT_BEFORE, params)).first() is None:
         raise Refusal(ErrorCode.VALIDATION_FAILED, evidence={"before": before})
     rows = (await uow.conn.execute(_SELECT_RUNS, {**params, "limit": limit})).mappings().all()
-    items = [_run(r) for r in rows]
+    by = await _people(uow, rows, "requested_by_user_id")
+    items = [_run(r, by) for r in rows]
     return TimerRunList(items=items, next_before=items[-1].run_id if len(items) == limit else None)
 
 
@@ -279,7 +291,7 @@ async def get_run(
     row = (await uow.conn.execute(_SELECT_RUN, params)).mappings().first()
     if row is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"run_id": run_id})
-    return _run(row)
+    return _run(row, await _people(uow, [row], "requested_by_user_id"))
 
 
 @router.post(

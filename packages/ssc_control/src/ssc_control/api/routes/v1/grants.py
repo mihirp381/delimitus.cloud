@@ -56,6 +56,7 @@ from ssc_control.domain.approval_rules import (
 )
 from ssc_control.domain.audience import Ceiling
 from ssc_control.metrics.source_tool import SOURCE_TOOL_HEADER, source_tool_of
+from ssc_control.names import REMOVED_GROUP, person
 from ssc_control.ports import MetricKind
 from ssc_control.snapshot.service import mark_dirty
 from ssc_control.timers.service import pause_blocked
@@ -98,6 +99,11 @@ class GrantOut(Strict):
     role: Literal["builder", "user"]
     subject_kind: Literal["user", "group", "org"]
     subject_id: str | None
+    subject_name: str | None = Field(
+        description="The person's or group's name; null for the org. `Former member` for a "
+        "person no longer active."
+    )
+    subject_email: str | None = Field(description="An active person's email.")
 
 
 class GrantsOut(Strict):
@@ -157,8 +163,12 @@ _SELECT_ENV = text(
     "where org_id = :org and app_id = :app and id = :env"
 )
 _SELECT_GRANTS = text(
-    "select id, role, subject_kind, user_id, group_id from ssc.app_grant "
-    "where org_id = :org and environment_id = :env order by role, subject_kind, user_id, group_id"
+    "select g.id, g.role, g.subject_kind, g.user_id, g.group_id, u.display_name, u.email, "
+    "u.status, ug.display_name as group_name from ssc.app_grant g "
+    "left join ssc.user_account u on u.org_id = g.org_id and u.id = g.user_id "
+    "left join ssc.user_group ug on ug.org_id = g.org_id and ug.id = g.group_id "
+    "where g.org_id = :org and g.environment_id = :env "
+    "order by g.role, g.subject_kind, g.user_id, g.group_id"
 )
 _DELETE_GRANT = text("delete from ssc.app_grant where org_id = :org and id = :id")
 _SELECT_SUBJECTS = text(
@@ -220,11 +230,19 @@ async def grant_owner_preview(uow: UnitOfWork, app_id: str, owner: str) -> bool:
 
 
 def _grant_out(row: dict[str, Any]) -> GrantOut:
+    name, email = None, None
+    if row["user_id"]:
+        who = person(row["display_name"], row["email"], row["status"])
+        name, email = who.name, who.email
+    elif row["group_id"]:
+        name = row["group_name"] or REMOVED_GROUP
     return GrantOut(
         id=str(row["id"]),
         role=row["role"],
         subject_kind=row["subject_kind"],
         subject_id=row["user_id"] or row["group_id"],
+        subject_name=name,
+        subject_email=email,
     )
 
 
@@ -360,7 +378,10 @@ async def _write(  # noqa: PLR0913  (keyword-only)
                 AuditAction.GRANT_REMOVED,
                 target_kind="app_grant",
                 target_id=old.id,
-                before={"environment_id": environment_id, **old.model_dump(exclude={"id"})},
+                before={
+                    "environment_id": environment_id,
+                    **old.model_dump(include={"role", "subject_kind", "subject_id"}),
+                },
                 policy_decision_id=policy_id,
             )
     for key, new in desired.items():
