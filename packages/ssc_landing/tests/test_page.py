@@ -297,3 +297,37 @@ def test_every_approval_names_who_approves() -> None:
     assert "Only an admin can approve" not in text
     assert not re.search(r"(?i)\b(another|a second|a different) admin", text)
     assert text.lower().count("an admin of your company") == 7
+
+
+REMOVED = (
+    "Private pilot. Not generally available",
+    "Illustration ·",
+    "Example data",
+    "example data",
+    "Product names belong to their owners",
+    "Your data connections",
+    "The rest is ours.",
+    "Example Freight",
+    "Sample Linehaul",
+    "Demo Carriers",
+    "Placeholder Haulage",
+)
+ADDED = (
+    "Secure data connections",
+    "<span>“Deploy this on Delimitus.”</span> <span>Say it once. We run everything behind it."
+    " IT approves what matters.</span>",
+    "Northline Freight",
+    "Cascade Linehaul",
+    "Redwood Carriers",
+    "Pioneer Haulage",
+)
+
+
+def test_the_refreshed_copy_replaces_the_old() -> None:
+    assert [s for s in REMOVED if s in HTML] == []
+    assert [s for s in ADDED if s not in HTML] == []
+    og = re.search(r'<meta property="og:description" content="([^"]*)">', HTML)
+    assert og is not None
+    assert "Private pilot" not in og[1]
+    register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
+    assert "| `names` |" not in register

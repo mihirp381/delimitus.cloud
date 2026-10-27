@@ -6,7 +6,7 @@
 <title>Delimitus · Where coding agents deploy company software</title>
 <meta name="description" content="Build with your coding agent. Deploy on Delimitus. The tool your team built comes back as a company app, behind your login, with its data, its secrets and IT’s rules. Private pilot.">
 <meta property="og:title" content="Delimitus">
-<meta property="og:description" content="Build with your coding agent. Deploy on Delimitus. Where coding agents deploy company software. Private pilot.">
+<meta property="og:description" content="Build with your coding agent. Deploy on Delimitus. Where coding agents deploy company software.">
 <meta name="theme-color" content="#FFFFFF">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Cdefs%3E%3ClinearGradient%20id='f'%20x1='0.82'%20y1='13.4'%20x2='14.08'%20y2='3.77'%20gradientUnits='userSpaceOnUse'%3E%3Cstop%20offset='0'%20stop-color='%230071E3'/%3E%3Cstop%20offset='0.22'%20stop-color='%230A84FF'/%3E%3Cstop%20offset='0.5'%20stop-color='%236E5BFF'/%3E%3Cstop%20offset='0.7'%20stop-color='%23C24BF0'/%3E%3Cstop%20offset='0.87'%20stop-color='%23FF378C'/%3E%3Cstop%20offset='1'%20stop-color='%23FF9F0A'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath%20fill='url(%23f)'%20fill-rule='evenodd'%20d='M3%201H8.5A7%207%200%200%201%208.5%2015H3A2%202%200%200%201%201%2013V3A2%202%200%200%201%203%201ZM4.45%2012L6.9%2012A0.3%200.3%200%200%200%207.18%2011.81L10.17%204.41A0.3%200.3%200%200%200%209.89%204L7.44%204A0.3%200.3%200%200%200%207.16%204.19L4.17%2011.59A0.3%200.3%200%200%200%204.45%2012Z'/%3E%3C/svg%3E">
 <style>
@@ -215,10 +215,7 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .enter__ui .h1 .grad { padding-bottom: 0.06em; }
 .enter__ui .lede { max-width: 46ch; color: var(--ink-2); }
 .hero__cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-.enter__note { display: flex; align-items: center; gap: 10px; margin: -4px 0 0; font-size: 0.875rem; color: var(--ink-2); }
-.enter__note::before { content: ""; width: 22px; height: 2px; border-radius: 2px; background: var(--spectrum); flex: none; }
 .enter__art { container-type: inline-size; min-width: 0; width: 100%; max-width: 960px; justify-self: center; }
-.scene__note { margin: 10px 0 0; text-align: right; font-size: 0.75rem; color: var(--ink-3); opacity: var(--rest, 1); }
 
 /* the scene, laid out on a 960 × 590 board */
 .scene { position: relative; width: 60em; height: 36.875em; font-size: calc(100cqw / 60); letter-spacing: -0.01em; line-height: 1.4; }
@@ -396,7 +393,7 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
   .enter__into { display: flex; }
 }
 @media (max-height: 760px) and (min-width: 1100px) {
-  .enter__ui .eyebrow, .scene__note { display: none; }
+  .enter__ui .eyebrow { display: none; }
 }
 /* phones: the scene restacks as a column, at a size its text can be read */
 @media (max-width: 639px) {
@@ -632,12 +629,11 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .cta .lede { color: var(--ink-2); max-width: 40ch; text-wrap: balance; }
 
 /* ── footer ──────────────────────────────────────────────────────────── */
-.foot { padding-top: 44px; padding-bottom: 20px; display: flex; flex-wrap: wrap; gap: 22px 40px; justify-content: space-between; align-items: flex-start; }
+.foot { padding-top: 44px; padding-bottom: 44px; display: flex; flex-wrap: wrap; gap: 22px 40px; justify-content: space-between; align-items: flex-start; }
 .foot__brand { display: flex; flex-direction: column; gap: 12px; }
 .foot__links { display: flex; flex-wrap: wrap; gap: 0 24px; margin-top: -10px; }
 .foot__links a { color: var(--ink-2); font-size: 0.85rem; text-decoration: none; padding-block: 10px; }
 .foot__links a:hover { color: var(--ink); text-decoration: underline; }
-.foot__fine { padding: 18px 0 44px; border-top: 1px solid var(--line); font-size: 0.8rem; }
 
 /* ── the prompt: one line the page keeps coming back to ───────────────── */
 .prompt {
@@ -795,7 +791,6 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .dots i:nth-child(1) { background: #FF5F57; }
 .dots i:nth-child(2) { background: #FEBC2E; }
 .dots i:nth-child(3) { background: #28C840; }
-.mock-note { margin: 14px 4px 0; text-align: right; font-size: 0.8rem; color: var(--ink-2); }
 .hiw__fig { margin: 0; width: 100%; max-width: 660px; }
 
 /* ── example: four viewers, one app ──────────────────────────────────── */
@@ -928,7 +923,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <a class="btn btn--ghost" href="#how">See how it works</a>
           <a class="btn btn--ghost" href="https://console.delimitus.com/login">Sign in</a>
         </div>
-        <p class="enter__note" data-claim="pilot">Private pilot. Not generally available yet.</p>
       </div>
       <div class="enter__art">
         <div class="scene" id="scene" aria-hidden="true">
@@ -1022,13 +1016,12 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 
           <span class="scene__mark"><svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path fill="url(#dl-nav)" fill-rule="evenodd" d="M6 3H11.5A8 8 0 0 1 11.5 19H6A2 2 0 0 1 4 17V5A2 2 0 0 1 6 3ZM7.52 16L10.16 16A0.35 0.35 0 0 0 10.49 15.78L14.25 6.48A0.35 0.35 0 0 0 13.92 6L11.28 6A0.35 0.35 0 0 0 10.95 6.22L7.19 15.52A0.35 0.35 0 0 0 7.52 16Z"/></svg></span>
           <ul class="does">
-            <li class="does--blue" data-claim="data"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13"/><path d="M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></span><span class="does__t">Your data connections</span></li>
+            <li class="does--blue" data-claim="data"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13"/><path d="M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></span><span class="does__t">Secure data connections</span></li>
             <li class="does--violet" data-claim="login"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="does__t">Company security &amp; access control</span></li>
             <li class="does--purple" data-claim="cloud account"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"/></svg></span><span class="does__t">Managed infrastructure</span></li>
             <li class="does--orange" data-claim="share"><span class="does__i"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.9-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2c2.4-.3 4.6 1.2 5 4.3"/></svg></span><span class="does__t">Share with anyone in your team</span></li>
           </ul>
         </div>
-        <p class="scene__note">Illustration · example data</p>
       </div>
     </div>
     <ol class="enter__in enter__steps" id="heroSteps">
@@ -1038,7 +1031,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     </ol>
     <div class="enter__into" id="into">
       <p class="label">One prompt</p>
-      <p class="h3"><span>“Deploy this on Delimitus.”</span> <span>The rest is ours. IT keeps the last word.</span></p>
+      <p class="h3"><span>“Deploy this on Delimitus.”</span> <span>Say it once. We run everything behind it. IT approves what matters.</span></p>
     </div>
   </div>
 </header>
@@ -1091,7 +1084,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
                 <p class="chat__ai" data-s="3" data-claim="approvals agents">IT has two requests to approve: the Snowflake connection and sharing with Inbound team.</p>
               </div>
             </div>
-            <figcaption class="mock-note">Illustration · example app</figcaption>
           </figure>
         </div>
       </div>
@@ -1203,7 +1195,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
                 <h4 class="app__title">Inbound dock board</h4>
                 <p class="app__sub">Reno distribution centre · today</p>
               </div>
-              <span class="chip">Example data</span>
             </div>
             <div class="kpis">
               <div class="kpi"><span class="kpi__l">Trucks due today</span><span class="kpi__v">38</span></div>
@@ -1214,10 +1205,10 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
               <table class="tbl">
                 <thead><tr><th scope="col">Door</th><th scope="col">Carrier</th><th scope="col" class="r">Booked</th><th scope="col">Status</th></tr></thead>
                 <tbody>
-                  <tr><td>D04</td><td>Example Freight Co.</td><td class="r">06:30</td><td><span class="chip chip--live st-chip">Unloading</span></td></tr>
-                  <tr><td>D07</td><td>Sample Linehaul</td><td class="r">07:15</td><td><span class="chip chip--danger st-chip">40 min late</span></td></tr>
-                  <tr><td>D11</td><td>Demo Carriers</td><td class="r">08:00</td><td><span class="chip chip--caution st-chip">At the gate</span></td></tr>
-                  <tr><td>D02</td><td>Placeholder Haulage</td><td class="r">08:45</td><td><span class="chip st-chip">Expected</span></td></tr>
+                  <tr><td>D04</td><td>Northline Freight</td><td class="r">06:30</td><td><span class="chip chip--live st-chip">Unloading</span></td></tr>
+                  <tr><td>D07</td><td>Cascade Linehaul</td><td class="r">07:15</td><td><span class="chip chip--danger st-chip">40 min late</span></td></tr>
+                  <tr><td>D11</td><td>Redwood Carriers</td><td class="r">08:00</td><td><span class="chip chip--caution st-chip">At the gate</span></td></tr>
+                  <tr><td>D02</td><td>Pioneer Haulage</td><td class="r">08:45</td><td><span class="chip st-chip">Expected</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -1228,7 +1219,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
             <p data-bind="deniedText"></p>
           </div>
         </div>
-        <p class="mock-note" data-claim="names">Illustration · example data</p>
       </div>
     </div>
   </div>
@@ -1266,7 +1256,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         </div>
       </div>
       <p class="small" data-claim="langs">Python and Node apps.</p>
-      <p class="small" data-claim="names">Product names belong to their owners. Delimitus is not affiliated with or endorsed by them.</p>
     </div>
   </div>
 </section>
@@ -1573,7 +1562,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <a href="#pilot">Request a pilot</a>
     </nav>
   </div>
-  <div class="wrap"><p class="small foot__fine" data-claim="names">Every screen on this page shows example data. Product names belong to their owners.</p></div>
 </footer>
 <script>
 (function () {

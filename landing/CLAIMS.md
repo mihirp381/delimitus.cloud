@@ -26,7 +26,6 @@ a row when its truth state changes; reword the page if a feature is cut.
 | `cloud` | Runs on Google Cloud | True by design | 2026-10-17 |
 | `account` | In the US, each company in a cloud account of its own | True for the cell layout: each company runs in a cell of its own in us-central1; another cell's app is refused by the network and by IAM | 2026-10-17 |
 | `idp` | Sign in with Okta | Okta only, proven on our test cell. Google Workspace is not offered in V1 and Microsoft Entra is untested. An Okta Suspend does not revoke access; Deactivate or unassign does | 2026-10-17 |
-| `names` | Product names belong to their owners; no affiliation | True | 2026-10-17 |
 | `db` | A database for each app | Proven on our test cell, not yet with a customer: a password rotation kept the app healthy, a production deploy has a recovery point, and the eleventh database refused `DB_TIER_FULL` with the bigger-tier hint | 2026-10-17 |
 | `timers` | Timers for scheduled jobs | Proven on our test cell, not yet with a customer: runs on time, no overlap, paused by the kill switch. Known gap: a run longer than 300 s is cut on an app without sessions | 2026-10-17 |
 | `files` | File storage | Proven on our test cell, not yet with a customer: put, get by a 10-minute link, link refused after 600 s, environments kept apart, new links suspended by the kill switch. No console files screen yet | 2026-10-17 |
