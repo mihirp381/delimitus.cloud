@@ -20,6 +20,7 @@ describe('the filter bar', () => {
     expect(within(group).getByRole('textbox', { name: 'Search' })).toBeTruthy();
     const toggle = within(group).getByRole('button', { name: 'More filters' });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.className).toBe('btn btn-secondary');
     expect(within(group).queryByRole('textbox', { name: 'Actor' })).toBeNull();
     expect(within(group).queryByRole('region')).toBeNull();
   });
