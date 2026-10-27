@@ -369,9 +369,7 @@ def test_the_long_way_agrees_with_the_calculator_vectors() -> None:
     default = vectors["vectors"][0]
     cost = re.search(r'<section[^>]*id="cost".*?</section>', HTML, flags=re.S)
     assert cost is not None
-    race = re.search(
-        r'<div class="race" id="race".*?<button[^>]*class="race__replay"', cost[0], re.S
-    )
+    race = re.search(r'<div class="race" id="race".*?<div class="trio">', cost[0], re.S)
     assert race is not None
     hours = re.search(r'data-race="hours">(\d+)<', race[0])
     assert hours is not None
