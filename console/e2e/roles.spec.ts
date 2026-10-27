@@ -137,7 +137,7 @@ async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World
   // The app list is the plain one, not the admin inventory, and the shared app is in it.
   await page.goto('/');
   await expect(page.getByRole('link', { name: w.slug })).toBeVisible();
-  await expect(page.getByRole('columnheader')).toHaveText(['App', 'Owner', 'App id']);
+  await expect(page.getByRole('columnheader')).toHaveText(['App', 'Owner']);
   await expect(page.getByLabel('Environment')).toHaveCount(0);
 
   // Typing an admin screen's address shows a line, not the screen, and the API refuses the read.
@@ -215,7 +215,7 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   await person.getByLabel('Email address').fill(w.builderEmail.toUpperCase());
   await person.getByRole('button', { name: 'Find' }).click();
   const found = page.getByRole('table', { name: /People with the email/ }).getByRole('row').nth(1);
-  await expect(found.getByRole('cell')).toHaveText(['builder E2E', w.builderEmail, 'member', 'active', w.builder.id]);
+  await expect(found.getByRole('cell')).toHaveText([`builder E2E ${w.builder.id}`, w.builderEmail, 'member', 'active']);
   const group = page.getByRole('form', { name: 'Look up a group' });
   await group.getByLabel('Group name').fill(`No such group ${w.slug}`);
   await group.getByRole('button', { name: 'Find' }).click();
@@ -237,7 +237,7 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
 test('a builder sees nothing admin, and can share and open rollback on their app', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', w.builder.token);
-  await expect(page.getByText(w.builder.id)).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Signed in as builder E2E,/ })).toBeVisible();
   await seesNothingAdmin(page, request, w, w.builder);
 
   // Share: the API takes a builder's change.
@@ -272,7 +272,7 @@ test('a builder sees nothing admin, and can share and open rollback on their app
 test('a user sees nothing admin, and the API refuses the actions shown to everyone', async ({ page, request }) => {
   const w = await world(request);
   await signIn(page, '/', w.user.token);
-  await expect(page.getByText(w.user.id)).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Signed in as reader E2E,/ })).toBeVisible();
   await seesNothingAdmin(page, request, w, w.user);
 
   // Share is shown to everyone; the API's refusal is shown as it came.

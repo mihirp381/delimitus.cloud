@@ -15,6 +15,9 @@ const MEMBER = () =>
     is_agent: false,
     client_id: null,
     role: 'member',
+    org_name: 'Acme',
+    name: 'Mo Member',
+    email: 'mo@example.com',
   });
 
 function request(id: string, state: string) {
@@ -95,7 +98,7 @@ describe('the shell', () => {
   it('shows a member no admin group', async () => {
     shell();
     const nav = await screen.findByRole('navigation', { name: 'Main' });
-    await screen.findByRole('button', { name: /Signed in as dev-member/ });
+    await screen.findByRole('button', { name: /Signed in as Mo Member/ });
     expect(within(nav).queryByRole('group', { name: 'Admin' })).toBeNull();
     expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
       'Apps',
@@ -108,7 +111,8 @@ describe('the shell', () => {
 
   it('shows the organisation under the brand', async () => {
     shell();
-    expect((await screen.findByText('org_ffffffffffffffffffff')).closest('aside')).not.toBeNull();
+    expect((await screen.findByText('Acme')).closest('aside')).not.toBeNull();
+    expect(screen.queryByText('org_ffffffffffffffffffff')).toBeNull();
     expect(screen.getByRole('link', { name: 'SSC console' }).getAttribute('href')).toBe('/');
   });
 
@@ -237,7 +241,7 @@ describe('the user menu', () => {
 
   it('names the person and their role, and holds the theme and Sign out', async () => {
     shell();
-    const button = await screen.findByRole('button', { name: 'Signed in as dev-member, Member' });
+    const button = await screen.findByRole('button', { name: 'Signed in as Mo Member, Member' });
     expect(button.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
     const { menu } = await openMenu();
@@ -247,12 +251,14 @@ describe('the user menu', () => {
       'dark',
       'system',
     ]);
+    expect(within(menu).getByText('Mo Member')).toBeTruthy();
+    expect(within(menu).getByText('mo@example.com')).toBeTruthy();
     expect(within(menu).getByRole('button', { name: 'Sign out' })).toBeTruthy();
   });
 
   it('calls an admin an org admin', async () => {
     start('/connections', { ...APPS, 'GET /v1/whoami': WHOAMI }, signedIn());
-    expect(await screen.findByRole('button', { name: 'Signed in as dev-admin, Org admin' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Signed in as Dev Admin, Org admin' })).toBeTruthy();
   });
 
   it('closes on Escape, with the focus back on its button', async () => {

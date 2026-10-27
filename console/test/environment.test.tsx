@@ -179,7 +179,9 @@ describe('your environment', () => {
     expect(text[1]).toContain(`A deploy that needed a database (deploy ${DEPLOY})`);
     expect(text[1]).toContain('about $13 a month');
     expect(text[2]).toContain('Egress proxy');
-    expect(text[2]).toContain(`An allowed internet host (approval ${APPROVAL})`);
+    expect(text[2]).toContain('An allowed internet host (approval)');
+    expect(within(rows[2]!).getByRole('link', { name: 'approval' }).getAttribute('href')).toBe(`/approvals/${APPROVAL}`);
+    expect(text[2]).not.toContain(APPROVAL);
     expect(text[2]).toContain('Asked for');
     expect(text[2]).toContain('about $7 a month');
     expect(text[3]).toContain('Data gateway');

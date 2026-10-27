@@ -20,10 +20,14 @@ function approval(id: string, overrides: Record<string, unknown>) {
     state: 'pending',
     requested_by_user_id: OWNER,
     requested_by_name: 'Olivia Owner',
+    requested_by_email: 'olivia@example.com',
     app: 'expenses',
     environment: 'prod',
     requested_via_agent: false,
     decided_by_user_id: null,
+    decided_by_name: null,
+    decided_by_email: null,
+    subject_names: {},
     decided_at: null,
     decision_reason: null,
     decision_channel: null,
@@ -46,6 +50,9 @@ const AGENT_SHARE = approval('apr_000000000000000000s1', {
   state: 'approved',
   requested_via_agent: true,
   decided_by_user_id: ADMIN,
+  decided_by_name: 'Ada Admin',
+  decided_by_email: 'ada@example.com',
+  subject_names: { [OWNER]: 'Olivia Owner' },
   decided_at: '2026-09-29T11:00:00Z',
   decision_reason: 'Fine for the pilot',
   decision_channel: 'email',
@@ -55,6 +62,8 @@ const AGENT_SHARE = approval('apr_000000000000000000s1', {
 const DENIED = approval('apr_000000000000000000d1', {
   state: 'denied',
   decided_by_user_id: ADMIN,
+  decided_by_name: 'Ada Admin',
+  decided_by_email: 'ada@example.com',
   decided_at: '2026-09-29T12:00:00Z',
   decision_reason: 'Not this quarter',
   decision_channel: 'chat',
@@ -159,7 +168,9 @@ describe('approvals inbox', () => {
     const share = rowOf('Sharing change made by an agent, replacing version 3, to:');
     expect(within(share).getByText('agent')).toBeTruthy();
     expect(within(share).getByText('approved')).toBeTruthy();
-    expect(within(share).getByText(ADMIN)).toBeTruthy();
+    expect(within(share).getByText(/Approved by Ada Admin/)).toBeTruthy();
+    expect(within(share).getByText('User Olivia Owner (builder)')).toBeTruthy();
+    expect(within(share).queryByText(ADMIN)).toBeNull();
     expect(within(share).getByText(/by email on/)).toBeTruthy();
     expect(within(share).getByText('“Fine for the pilot”')).toBeTruthy();
     expect(within(share).getByText('op_ada')).toBeTruthy();

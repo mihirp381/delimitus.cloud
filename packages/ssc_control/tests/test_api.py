@@ -228,7 +228,16 @@ def test_whoami_describes_the_credential(world: World) -> None:
         "is_agent": False,
         "client_id": None,
         "role": "admin",
+        "org_name": "Org A",
+        "name": "Ada Admin",
+        "email": "ada@example.com",
     }
+
+
+def test_whoami_names_no_one_for_a_workload(world: World) -> None:
+    token = mint(world.key, org=world.org.org_id, sub=new_id("env"), kind="workload")
+    body = world.client.get("/v1/whoami", headers=auth(token)).json()
+    assert (body["org_name"], body["name"], body["email"]) == ("Org A", None, None)
 
 
 def test_user_credential_is_forbidden_on_internal(world: World) -> None:
@@ -571,11 +580,50 @@ def test_list_and_get_apps(world: World) -> None:
         "id": app["id"],
         "slug": "listed",
         "owner_user_id": app["owner_user_id"],
+        "owner_name": "Ada Admin",
+        "owner_email": "ada@example.com",
         "status": "active",
     } in listed.json()["apps"]
     got = world.client.get(f"/v1/apps/{app['id']}", headers=auth(world.user_token))
     assert got.status_code == 200
     assert got.json() == app
+
+
+def test_an_owner_without_a_name_shows_their_email_and_a_former_one_shows_no_email(
+    world: World,
+) -> None:
+    app = create_app_via_api(world, "handed-on")
+    uid = add_user(world.dsns.app, world.org.org_id)
+    org = world.org.org_id
+    rows(
+        world.dsns.app,
+        org,
+        "update ssc.user_account set display_name = '' where id = %s returning id",
+        (uid,),
+    )
+    rows(
+        world.dsns.app,
+        org,
+        "update ssc.app set owner_user_id = %s where id = %s returning id",
+        (uid, app["id"]),
+    )
+
+    def owner() -> tuple[str, str | None]:
+        got = world.client.get(f"/v1/apps/{app['id']}", headers=auth(world.user_token)).json()
+        listed = world.client.get("/v1/apps", headers=auth(world.user_token)).json()["apps"]
+        row = next(a for a in listed if a["id"] == app["id"])
+        assert (row["owner_name"], row["owner_email"]) == (got["owner_name"], got["owner_email"])
+        return got["owner_name"], got["owner_email"]
+
+    assert owner() == ("someone@example.com", "someone@example.com")
+    rows(
+        world.dsns.app,
+        org,
+        "update ssc.user_account set status = 'deactivated', deactivated_at = now() "
+        "where id = %s returning id",
+        (uid,),
+    )
+    assert owner() == ("Former member", None)
 
 
 def test_another_org_cannot_see_the_app(world: World) -> None:
@@ -662,6 +710,10 @@ def test_grant_edits_are_diffed_and_audited(world: World) -> None:
     )
     assert first.status_code == 200, first.text
     kept = next(g for g in first.json()["grants"] if g["subject_kind"] == "org")
+    named = {
+        g["subject_kind"]: (g["subject_name"], g["subject_email"]) for g in first.json()["grants"]
+    }
+    assert named == {"user": ("Some One", "someone@example.com"), "org": (None, None)}
     second = world.client.put(
         url,
         json={"grants": [{"role": "user", "subject_kind": "org"}]},
@@ -679,6 +731,13 @@ def test_grant_edits_are_diffed_and_audited(world: World) -> None:
         (env_of(app, "prod")["id"], env_of(app, "prod")["id"]),
     )
     assert [a[0] for a in actions] == ["grant.added", "grant.added", "grant.removed"]
+    (removed,) = rows(
+        world.dsns.app,
+        world.org.org_id,
+        "select before from ssc.audit_event where action = 'grant.removed' and target_id = %s",
+        (next(g for g in first.json()["grants"] if g["subject_kind"] == "user")["id"],),
+    )
+    assert set(removed[0]) == {"environment_id", "role", "subject_kind", "subject_id"}
 
 
 def test_grant_for_unknown_user_is_a_reference_problem(world: World) -> None:

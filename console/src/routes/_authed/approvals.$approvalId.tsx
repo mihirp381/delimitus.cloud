@@ -240,7 +240,7 @@ function Outcome({ approval: a }: { readonly approval: ApprovalDetail }) {
       <h2>Decision</h2>
       <p>
         {a.state === 'approved' ? 'Approved' : 'Rejected'} by{' '}
-        {a.decided_by_user_id ? <code>{a.decided_by_user_id}</code> : 'an unnamed approver'}
+        {a.decided_by_name ?? 'an unnamed approver'}
         {a.decision_channel ? ` by ${a.decision_channel}` : ''}
         {a.decided_at ? (
           <>

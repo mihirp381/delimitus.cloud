@@ -16,7 +16,8 @@ MAX_PAGE: Final = 100
 _PAGE = text(
     """
 select a.id as app_id, a.slug, a.status, a.created_at,
-       jsonb_build_object('user_id', u.id, 'display_name', u.display_name) as owner,
+       jsonb_build_object('user_id', u.id, 'display_name', u.display_name, 'email', u.email,
+                          'status', u.status) as owner,
        used.last_used_at, envs.environments
 from ssc.app a
 join ssc.user_account u on u.org_id = a.org_id and u.id = a.owner_user_id

@@ -1645,8 +1645,12 @@ export interface components {
              * @description The best role granted.
              */
             role: ("builder" | "user") | null;
+            /** User Email */
+            user_email: string | null;
             /** User Id */
             user_id: string;
+            /** User Name */
+            user_name: string;
         };
         /**
          * ActorKind
@@ -1786,6 +1790,10 @@ export interface components {
             environments: components["schemas"]["EnvironmentOut"][];
             /** Id */
             id: string;
+            /** Owner Email */
+            owner_email: string | null;
+            /** Owner Name */
+            owner_name: string;
             /** Owner User Id */
             owner_user_id: string;
             /** Slug */
@@ -1800,6 +1808,10 @@ export interface components {
         AppSummary: {
             /** Id */
             id: string;
+            /** Owner Email */
+            owner_email: string | null;
+            /** Owner Name */
+            owner_name: string;
             /** Owner User Id */
             owner_user_id: string;
             /** Slug */
@@ -1828,6 +1840,13 @@ export interface components {
             created_at: string;
             /** Decided At */
             decided_at: string | null;
+            /** Decided By Email */
+            decided_by_email: string | null;
+            /**
+             * Decided By Name
+             * @description Who decided or withdrew it; `Former member` once they are no longer active.
+             */
+            decided_by_name: string | null;
             /** Decided By User Id */
             decided_by_user_id: string | null;
             /** Decision Channel */
@@ -1855,6 +1874,8 @@ export interface components {
              * @description The SSC operator who recorded the decision, when one did.
              */
             recorded_by_operator: string | null;
+            /** Requested By Email */
+            requested_by_email: string | null;
             /** Requested By Name */
             requested_by_name: string;
             /** Requested By User Id */
@@ -1871,6 +1892,13 @@ export interface components {
              * @description What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).
              */
             subject_key: string;
+            /**
+             * Subject Names
+             * @description The name of each person and group the payload's grants name, by id.
+             */
+            subject_names: {
+                [key: string]: string;
+            };
         };
         /**
          * ApprovalConnection
@@ -1938,6 +1966,13 @@ export interface components {
             created_at: string;
             /** Decided At */
             decided_at: string | null;
+            /** Decided By Email */
+            decided_by_email: string | null;
+            /**
+             * Decided By Name
+             * @description Who decided or withdrew it; `Former member` once they are no longer active.
+             */
+            decided_by_name: string | null;
             /** Decided By User Id */
             decided_by_user_id: string | null;
             /** Decision Channel */
@@ -1965,6 +2000,8 @@ export interface components {
              * @description The SSC operator who recorded the decision, when one did.
              */
             recorded_by_operator: string | null;
+            /** Requested By Email */
+            requested_by_email: string | null;
             /** Requested By Name */
             requested_by_name: string;
             /** Requested By User Id */
@@ -1981,6 +2018,13 @@ export interface components {
              * @description What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).
              */
             subject_key: string;
+            /**
+             * Subject Names
+             * @description The name of each person and group the payload's grants name, by id.
+             */
+            subject_names: {
+                [key: string]: string;
+            };
         };
         /**
          * ApprovalDetail
@@ -2012,6 +2056,13 @@ export interface components {
             created_at: string;
             /** Decided At */
             decided_at: string | null;
+            /** Decided By Email */
+            decided_by_email: string | null;
+            /**
+             * Decided By Name
+             * @description Who decided or withdrew it; `Former member` once they are no longer active.
+             */
+            decided_by_name: string | null;
             /** Decided By User Id */
             decided_by_user_id: string | null;
             /** Decision Channel */
@@ -2041,6 +2092,8 @@ export interface components {
              * @description The SSC operator who recorded the decision, when one did.
              */
             recorded_by_operator: string | null;
+            /** Requested By Email */
+            requested_by_email: string | null;
             /** Requested By Name */
             requested_by_name: string;
             /** Requested By User Id */
@@ -2057,6 +2110,13 @@ export interface components {
              * @description What exactly is asked: a connection name, a host, or a `sha256:` digest of the grant set (and, for `agent_share`, the grants version it replaces).
              */
             subject_key: string;
+            /**
+             * Subject Names
+             * @description The name of each person and group the payload's grants name, by id.
+             */
+            subject_names: {
+                [key: string]: string;
+            };
         };
         /** ApprovalPage */
         ApprovalPage: {
@@ -2077,9 +2137,19 @@ export interface components {
         AuditActor: {
             /** Client Id */
             client_id: string | null;
+            /**
+             * Email
+             * @description The person's email, while they are an active member.
+             */
+            email: string | null;
             /** Id */
             id: string;
             kind: components["schemas"]["ActorKind"];
+            /**
+             * Name
+             * @description Who, in words: the person; `<client id> for <person>` in an agent session; `Delimitus operator`; `System` for a workload, a schedule or an integration.
+             */
+            name: string;
             /** Via Agent */
             via_agent: boolean;
         };
@@ -2132,6 +2202,11 @@ export interface components {
             id: string;
             /** Kind */
             kind: string;
+            /**
+             * Name
+             * @description The app's slug, the person's, group's, connection's or org's name, or `<slug> <environment>`; null for other kinds.
+             */
+            name: string | null;
         };
         /** BuildAccepted */
         BuildAccepted: {
@@ -2566,9 +2641,18 @@ export interface components {
             limits: components["schemas"]["SnapshotLimits"];
             /** Name */
             name: string;
+            /** Owner Email */
+            owner_email: string | null;
+            /** Owner Name */
+            owner_name: string | null;
             /** Owner User Id */
             owner_user_id: string | null;
             preview_access: components["schemas"]["PreviewAccessDoc"];
+            /**
+             * Preview Access Group Name
+             * @description The name of the group `preview_access` names, for a group rule.
+             */
+            preview_access_group_name: string | null;
             /**
              * Setup Status
              * @enum {string}
@@ -2917,6 +3001,10 @@ export interface components {
         };
         /** EgressHostOut */
         EgressHostOut: {
+            /** Added By Email */
+            added_by_email: string | null;
+            /** Added By Name */
+            added_by_name: string | null;
             /** Added By User Id */
             added_by_user_id: string | null;
             /**
@@ -3026,6 +3114,11 @@ export interface components {
              * @enum {string}
              */
             subject_kind: "user" | "group" | "org";
+            /**
+             * Subject Name
+             * @description The person's or group's name; null for the org.
+             */
+            subject_name: string | null;
         };
         /** FixedResourceOut */
         FixedResourceOut: {
@@ -3083,6 +3176,11 @@ export interface components {
              * @enum {string}
              */
             role: "builder" | "user";
+            /**
+             * Subject Email
+             * @description An active person's email.
+             */
+            subject_email: string | null;
             /** Subject Id */
             subject_id: string | null;
             /**
@@ -3090,6 +3188,11 @@ export interface components {
              * @enum {string}
              */
             subject_kind: "user" | "group" | "org";
+            /**
+             * Subject Name
+             * @description The person's or group's name; null for the org. `Former member` for a person no longer active.
+             */
+            subject_name: string | null;
         };
         /** GrantsIn */
         GrantsIn: {
@@ -3396,8 +3499,12 @@ export interface components {
         Linked: {
             /** Identity Link Id */
             identity_link_id: string;
+            /** User Email */
+            user_email: string | null;
             /** User Id */
             user_id: string;
+            /** User Name */
+            user_name: string;
         };
         /** LogLineOut */
         LogLineOut: {
@@ -3520,6 +3627,10 @@ export interface components {
         Owner: {
             /** Display Name */
             display_name: string;
+            /** Email */
+            email: string | null;
+            /** Name */
+            name: string;
             /** User Id */
             user_id: string;
         };
@@ -3833,6 +3944,8 @@ export interface components {
         ScheduleOut: {
             /** Cron */
             cron: string;
+            /** Declared By Name */
+            declared_by_name: string;
             /**
              * Declared By User Id
              * @description Whose authority it runs on, with the app's owner: who last deployed or resumed it.
@@ -4016,6 +4129,8 @@ export interface components {
             finished_at: string | null;
             /** Http Status */
             http_status: number | null;
+            /** Requested By Name */
+            requested_by_name: string | null;
             /**
              * Requested By User Id
              * @description Who asked for a manual run.
@@ -4287,11 +4402,20 @@ export interface components {
             client_id: string | null;
             /** Credential Id */
             credential_id: string;
+            /** Email */
+            email: string | null;
             /** Is Agent */
             is_agent: boolean;
             kind: components["schemas"]["PrincipalKind"];
+            /**
+             * Name
+             * @description The user's display name; null for other credentials.
+             */
+            name: string | null;
             /** Org Id */
             org_id: string;
+            /** Org Name */
+            org_name: string | null;
             /** @description The caller's org role when the credential is an active user's; null for any other credential and for a deactivated user. Admin-only endpoints need `admin`. */
             role: components["schemas"]["OrgRole"] | null;
             /** Subject */

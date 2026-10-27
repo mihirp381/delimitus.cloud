@@ -139,8 +139,8 @@ export function defaultPreviewWho(classification: Classification): PreviewWho {
   return classification === 'internal' ? 'builders' : 'approval';
 }
 
-export function previewAccessText(rule: PreviewAccess): string {
-  if (rule.who === 'group') return `Group ${rule.group_id ?? ''}`;
+export function previewAccessText(rule: PreviewAccess, groupName?: string | null): string {
+  if (rule.who === 'group') return `Group ${groupName ?? rule.group_id ?? ''}`;
   return rule.who === 'builders' ? 'Builders' : 'Approval';
 }
 

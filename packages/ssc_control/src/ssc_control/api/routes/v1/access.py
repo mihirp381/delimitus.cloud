@@ -18,6 +18,7 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
 from ssc_control.api.uow import UserUoW
+from ssc_control.names import REMOVED_GROUP, People, groups, people
 from ssc_control.snapshot.compiler import compile_document
 from ssc_shared.access import AccessView, Reason, decide
 
@@ -30,10 +31,13 @@ class ExplainedGrant(Strict):
     subject_kind: Literal["user", "group", "org"]
     subject_id: str | None
     group_name: str | None = Field(description="The group's cached name, for a group grant.")
+    subject_name: str | None = Field(description="The person's or group's name; null for the org.")
 
 
 class AccessExplained(Strict):
     user_id: str
+    user_name: str
+    user_email: str | None
     environment_id: str
     allowed: bool
     role: Literal["builder", "user"] | None = Field(description="The best role granted.")
@@ -53,10 +57,16 @@ _SELECT_ENV = text(
     "select id from ssc.environment where org_id = :org and app_id = :app and id = :env"
 )
 _PUBLISHED = text("select max(version) from ssc.access_snapshot where org_id = :org")
-_GROUP_NAMES = text(
-    "select id, display_name from ssc.user_group "
-    "where org_id = :org and id = any(cast(:ids as text[]))"
-)
+
+
+def _subject_name(
+    kind: str, subject_id: str | None, users: People, names: dict[str, str]
+) -> str | None:
+    if subject_id is None:
+        return None
+    if kind == "user":
+        return users.of(subject_id).name
+    return names.get(subject_id, REMOVED_GROUP)
 
 
 @router.get(
@@ -89,13 +99,17 @@ async def explain_access(
     group_ids = sorted(
         {g.subject_id for g in decision.via if g.subject_kind == "group" and g.subject_id}
     )
-    names: dict[str, str] = {}
-    if group_ids:
-        rows = await uow.conn.execute(_GROUP_NAMES, {"org": uow.org_id, "ids": group_ids})
-        names = {str(i): str(n) for i, n in rows}
+    names = await groups(uow.conn, uow.org_id, group_ids)
+    users = await people(
+        uow.conn,
+        uow.org_id,
+        [who, *(g.subject_id for g in decision.via if g.subject_kind == "user")],
+    )
     published = (await uow.conn.execute(_PUBLISHED, {"org": uow.org_id})).scalar_one()
     return AccessExplained(
         user_id=who,
+        user_name=users.of(who).name,
+        user_email=users.of(who).email,
         environment_id=environment_id,
         allowed=decision.allowed,
         role=decision.role,
@@ -108,6 +122,7 @@ async def explain_access(
                 subject_kind=g.subject_kind,
                 subject_id=g.subject_id,
                 group_name=names.get(g.subject_id) if g.subject_id else None,
+                subject_name=_subject_name(g.subject_kind, g.subject_id, users, names),
             )
             for g in decision.via
         ],

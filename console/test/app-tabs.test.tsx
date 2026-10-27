@@ -163,7 +163,7 @@ describe("the app page's header and overview", () => {
             grants_version: 4,
             grants: [
               ORG_USER,
-              { id: 'gnt_000000000000000000u1', role: 'builder', subject_kind: 'user', subject_id: 'usr_dddddddddddddddddddd' },
+              { id: 'gnt_000000000000000000u1', role: 'builder', subject_kind: 'user', subject_id: 'usr_dddddddddddddddddddd', subject_name: 'Olive Owner', subject_email: 'olive@example.com' },
               { id: 'gnt_000000000000000000u2', role: 'user', subject_kind: 'user', subject_id: 'usr_eeeeeeeeeeeeeeeeeeee' },
               { id: 'gnt_000000000000000000g1', role: 'user', subject_kind: 'group', subject_id: 'grp_ffffffffffffffffffff' },
             ],

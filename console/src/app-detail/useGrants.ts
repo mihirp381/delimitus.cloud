@@ -9,7 +9,7 @@ const PATH = '/v1/apps/{app_id}/environments/{environment_id}/grants' as const;
 /** Who a grant names, as a person would say it. */
 export function who(g: Grant): string {
   if (g.subject_kind === 'org') return 'Everyone in the organisation';
-  return `${g.subject_kind === 'user' ? 'User' : 'Group'} ${g.subject_id ?? ''}`;
+  return `${g.subject_kind === 'user' ? 'User' : 'Group'} ${g.subject_name ?? g.subject_id ?? ''}`;
 }
 
 /**

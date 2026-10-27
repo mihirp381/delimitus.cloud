@@ -16,6 +16,7 @@ import { AdminOnly } from '../../components/AdminOnly';
 import { Badge } from '../../components/Badge';
 import { Ago } from '../../components/Ago';
 import { Button } from '../../components/Button';
+import { Id } from '../../components/Copy';
 import { Dialog } from '../../components/Dialog';
 import { Loading } from '../../components/Loading';
 import { PageHeader } from '../../components/PageHeader';
@@ -160,8 +161,7 @@ function LinkForm({ login, title, onClose, onDone }: LinkFormProps) {
     setError(null);
     try {
       const linked = await linkLogin(api, login.id, person.id);
-      const who = person.label === linked.user_id ? linked.user_id : `${person.label} (${linked.user_id})`;
-      onDone(`Linked ${login.email} to ${who}. Their next login signs them in.`);
+      onDone(`Linked ${login.email} to ${linked.user_name}. Their next login signs them in.`);
     } catch (e) {
       setError(e);
     } finally {
@@ -306,14 +306,20 @@ function Finder<T>(props: FinderProps<T>) {
 }
 
 const PERSON_COLUMNS: readonly Column<UserMatch>[] = [
-  { header: 'Name', cell: (u) => u.display_name },
+  {
+    header: 'Name',
+    cell: (u) => (
+      <>
+        {u.display_name || u.email} <Id value={u.id} label="person id" />
+      </>
+    ),
+  },
   { header: 'Email', cell: (u) => u.email },
   { header: 'Role', cell: (u) => <Badge tone={u.role === 'admin' ? 'info' : 'neutral'}>{u.role}</Badge> },
   {
     header: 'Status',
     cell: (u) => <Badge tone={u.status === 'active' ? 'success' : 'danger'}>{u.status}</Badge>,
   },
-  { header: 'Id', cell: (u) => <code>{u.id}</code> },
 ];
 
 function FindPerson() {
@@ -338,12 +344,18 @@ function FindPerson() {
 }
 
 const GROUP_COLUMNS: readonly Column<GroupMatch>[] = [
-  { header: 'Name', cell: (g) => g.name },
+  {
+    header: 'Name',
+    cell: (g) => (
+      <>
+        {g.name} <Id value={g.id} label="group id" />
+      </>
+    ),
+  },
   {
     header: 'Members',
     cell: (g) => `${g.member_count} active ${g.member_count === 1 ? 'member' : 'members'}`,
   },
-  { header: 'Id', cell: (g) => <code>{g.id}</code> },
 ];
 
 function FindGroup() {

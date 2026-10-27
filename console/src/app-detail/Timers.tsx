@@ -342,7 +342,7 @@ function RunDetail({ target, runId }: { readonly target: ScheduleTarget; readonl
           {r.requested_by_user_id ? (
             <>
               {' '}
-              by <code>{r.requested_by_user_id}</code>
+              by {r.requested_by_name ?? r.requested_by_user_id}
             </>
           ) : null}
         </dd>

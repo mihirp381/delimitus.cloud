@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { type FormEvent, useId, useState } from 'react';
 import {
   allowHost,
@@ -14,6 +14,7 @@ import { ConfirmAction } from '../../components/ConfirmAction';
 import { Loading } from '../../components/Loading';
 import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
+import { Person } from '../../components/Person';
 import { Panel } from '../../components/Panel';
 import { ProblemNotice } from '../../components/ProblemNotice';
 import { type Column, Table } from '../../components/Table';
@@ -123,16 +124,13 @@ function Hosts({ hosts, admin, onSaved }: HostsProps) {
       cell: (h) =>
         h.approval_request_id ? (
           <>
-            Approval <code>{h.approval_request_id}</code>
-            {h.added_by_user_id ? (
-              <>
-                {' '}
-                (approved by <code>{h.added_by_user_id}</code>)
-              </>
-            ) : null}
+            <Link to="/approvals/$approvalId" params={{ approvalId: h.approval_request_id }}>
+              Approval
+            </Link>
+            {h.added_by_name ? ` (approved by ${h.added_by_name})` : null}
           </>
-        ) : h.added_by_user_id ? (
-          <code>{h.added_by_user_id}</code>
+        ) : h.added_by_name ? (
+          <Person name={h.added_by_name} email={h.added_by_email} />
         ) : (
           'SSC'
         ),

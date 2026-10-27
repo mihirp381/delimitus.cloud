@@ -14,8 +14,8 @@ function grants(version: number, list: Grants['grants']): Grants {
   return { environment_id: ENV, grants_version: version, grants: list };
 }
 
-const ORG_USER = { id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null } as const;
-const OWNER_BUILDER = { id: 'gnt_000000000000000000b1', role: 'builder', subject_kind: 'user', subject_id: OWNER } as const;
+const ORG_USER = { id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null, subject_name: null, subject_email: null } as const;
+const OWNER_BUILDER = { id: 'gnt_000000000000000000b1', role: 'builder', subject_kind: 'user', subject_id: OWNER, subject_name: 'Olive Owner', subject_email: 'olive@example.com' } as const;
 
 describe('createApiClient', () => {
   it('sends the Bearer token and an Idempotency-Key on each POST only', async () => {

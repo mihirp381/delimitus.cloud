@@ -396,6 +396,30 @@ a.brand:hover {
   box-shadow: var(--ssc-shadow-soft);
 }
 
+.user-menu-who {
+  display: grid;
+  gap: var(--ssc-space-0);
+  min-width: 0;
+  padding: var(--ssc-space-1) var(--ssc-space-1) var(--ssc-space-2);
+  border-bottom: 1px solid var(--ssc-border-subtle);
+}
+
+.user-menu-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu-email,
+.user-menu-org {
+  overflow: hidden;
+  font-size: var(--ssc-type-size-tiny);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ssc-text-muted);
+}
+
 .user-menu-row {
   display: grid;
   gap: var(--ssc-space-1);
@@ -1417,12 +1441,8 @@ a.segment.current {
   color: var(--ssc-border-strong);
 }
 
-.owner {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--ssc-space-2);
-  min-width: 0;
-  max-width: 100%;
+.person {
+  white-space: nowrap;
 }
 
 /* One environment of an app in the list: its release, in the tone of its last deploy. */

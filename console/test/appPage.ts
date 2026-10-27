@@ -20,6 +20,8 @@ export function app(status: Status = 'active') {
     id: APP_ID,
     slug: 'expenses',
     owner_user_id: OWNER,
+    owner_name: 'Olive Owner',
+    owner_email: 'olive@example.com',
     status,
     created_at: '2026-09-28T10:00:00Z',
     environments: [
@@ -29,7 +31,14 @@ export function app(status: Status = 'active') {
   };
 }
 
-export const ORG_USER = { id: 'gnt_000000000000000000o1', role: 'user', subject_kind: 'org', subject_id: null } as const;
+export const ORG_USER = {
+  id: 'gnt_000000000000000000o1',
+  role: 'user',
+  subject_kind: 'org',
+  subject_id: null,
+  subject_name: null,
+  subject_email: null,
+} as const;
 
 export function whoami(role: 'admin' | 'member' | null): Handler {
   return () =>
@@ -41,6 +50,9 @@ export function whoami(role: 'admin' | 'member' | null): Handler {
       is_agent: false,
       client_id: null,
       role,
+      org_name: 'Acme',
+      name: 'Olive Owner',
+      email: 'olive@example.com',
     });
 }
 

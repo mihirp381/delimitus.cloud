@@ -170,7 +170,7 @@ function Grants({ approval }: { readonly approval: Approval }) {
   return (
     <ul className="plain-list">
       {grants.map((g) => (
-        <li key={`${g.role}:${g.subject_kind}:${g.subject_id ?? ''}`}>{grantText(g)}</li>
+        <li key={`${g.role}:${g.subject_kind}:${g.subject_id ?? ''}`}>{grantText(g, approval.subject_names)}</li>
       ))}
     </ul>
   );
@@ -227,7 +227,7 @@ function Decision({ approval: a }: { readonly approval: Approval }) {
     <>
       <p>
         {a.state === 'approved' ? 'Approved' : 'Denied'} by{' '}
-        {a.decided_by_user_id ? <code>{a.decided_by_user_id}</code> : 'an unnamed approver'}
+        {a.decided_by_name ?? 'an unnamed approver'}
         {a.decision_channel ? ` by ${a.decision_channel}` : ''}
         {a.decided_at ? (
           <>

@@ -875,6 +875,10 @@ def test_names_are_unique_and_the_owner_is_an_active_user(
     )
     moved = patch(client, tokens.admin, "finance", {"owner_user_id": world.builder})
     assert moved.json()["owner_user_id"] == world.builder
+    assert (moved.json()["owner_name"], moved.json()["owner_email"]) == (
+        "Some One",
+        "someone@example.com",
+    )
 
 
 def test_a_confidential_or_restricted_connection_needs_a_ceiling(
@@ -1565,6 +1569,12 @@ def test_a_preview_access_group_is_one_the_org_has(
     rule = {"who": "group", "group_id": group}
     made = create_connection(client, tokens.admin, world.member, "hr", preview_access=rule)
     assert made.json()["preview_access"] == rule
+    assert made.json()["preview_access_group_name"] == "Finance"
+    listed = client.get("/v1/connections", headers=auth(tokens.admin)).json()["connections"]
+    assert {c["name"]: c["preview_access_group_name"] for c in listed} == {
+        "finance": None,
+        "hr": "Finance",
+    }
     for bad in ({"who": "group"}, {"who": "builders", "group_id": group}, {"who": "anyone"}):
         r = patch(client, tokens.admin, "finance", {"preview_access": bad})
         assert r.status_code == 422, (bad, r.text)

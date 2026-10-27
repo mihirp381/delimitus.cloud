@@ -5,6 +5,7 @@ import { findAnyone, type Match, USER_ID_PATTERN } from '../api/directory';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
+import { Id } from '../components/Copy';
 import { Panel } from '../components/Panel';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { type Column, Table } from '../components/Table';
@@ -19,7 +20,7 @@ interface Props {
 const GRANT_COLUMNS: readonly Column<ExplainedGrant>[] = [
   { header: 'Role', cell: (g) => g.role },
   { header: 'Who', cell: (g) => grantSubject(g) },
-  { header: 'Grant', cell: (g) => <code>{g.grant_id}</code> },
+  { header: 'Grant', cell: (g) => <Id value={g.grant_id} label="grant id" /> },
 ];
 
 /**
@@ -98,7 +99,7 @@ function Body({ app, env }: Props) {
         <div className="stack" role="status" aria-label="Access explained">
           <p>
             <Badge tone={r.allowed ? 'success' : 'danger'}>{r.allowed ? 'can open' : 'cannot open'}</Badge>{' '}
-            {accessSentence(r, answer.who.label, `${envTitle} of ${app.slug}`, envTitle)}
+            {accessSentence(r, answer.who.label === r.user_id ? r.user_name : answer.who.label, `${envTitle} of ${app.slug}`, envTitle)}
           </p>
           <dl className="facts">
             <dt>Best role granted</dt>
@@ -107,7 +108,7 @@ function Body({ app, env }: Props) {
             <dd>{r.floor}</dd>
             <dt>Person</dt>
             <dd>
-              <code>{r.user_id}</code>
+              {r.user_name} <Id value={r.user_id} label="person id" />
             </dd>
           </dl>
           {r.grants.length > 0 ? (
