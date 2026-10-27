@@ -238,6 +238,9 @@ class ConnectionOut(Strict):
     preview_access_group_name: str | None = Field(
         description="The name of the group `preview_access` names, for a group rule."
     )
+    ceiling_subject_names: dict[str, str] = Field(
+        description="The name of each group and person the ceiling lists, by id."
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -313,8 +316,11 @@ def _ceiling_doc(ceiling: Ceiling) -> CeilingDoc:
 
 async def _outs(uow: UnitOfWork, found: Iterable[service.Connection]) -> list[ConnectionOut]:
     found = list(found)
-    owners = await people(uow.conn, uow.org_id, [c.owner_user_id for c in found])
-    named = await groups(uow.conn, uow.org_id, [c.preview_access.group_id for c in found])
+    listed = [s for c in found for s in c.ceiling.subjects or ()]
+    users = [c.owner_user_id for c in found] + [i for k, i in listed if k == "user"]
+    group_ids = [c.preview_access.group_id for c in found] + [i for k, i in listed if k == "group"]
+    owners = await people(uow.conn, uow.org_id, users)
+    named = await groups(uow.conn, uow.org_id, group_ids)
     return [_out(c, owners, named) for c in found]
 
 
@@ -339,6 +345,10 @@ def _out(c: service.Connection, owners: People, named: dict[str, str]) -> Connec
         status=c.status,
         preview_access=PreviewAccessDoc(who=c.preview_access.who, group_id=group),
         preview_access_group_name=None if group is None else named.get(group, REMOVED_GROUP),
+        ceiling_subject_names={
+            i: owners.of(i).name if k == "user" else named.get(i, REMOVED_GROUP)
+            for k, i in c.ceiling.subjects or ()
+        },
         created_at=c.created_at,
         updated_at=c.updated_at,
     )

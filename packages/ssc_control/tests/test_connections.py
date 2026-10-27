@@ -1580,6 +1580,21 @@ def test_a_preview_access_group_is_one_the_org_has(
         assert r.status_code == 422, (bad, r.text)
 
 
+def test_the_ceiling_names_its_groups_and_people(
+    client: TestClient, world: World, tokens: Tokens, dsns: Dsns
+) -> None:
+    group = add_group(dsns.app, world, [world.builder])
+    ceiling = ceiling_doc(("group", group), ("user", world.builder))
+    made = create_connection(client, tokens.admin, world.member, ceiling=ceiling)
+    assert made.status_code == 201, made.text
+    names = {group: "Finance", world.builder: "Some One"}
+    assert made.json()["ceiling_subject_names"] == names
+    listed = client.get("/v1/connections", headers=auth(tokens.admin)).json()["connections"]
+    assert [c["ceiling_subject_names"] for c in listed] == [names]
+    widened = patch(client, tokens.admin, "finance", {"ceiling": ceiling_doc()})
+    assert widened.json()["ceiling_subject_names"] == {}
+
+
 def test_a_preview_access_change_is_audited(
     client: TestClient, world: World, tokens: Tokens, dsns: Dsns
 ) -> None:
