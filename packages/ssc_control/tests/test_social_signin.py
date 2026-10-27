@@ -190,6 +190,24 @@ async def test_an_invited_member_signs_in_and_becomes_active(rig: OAuthRig) -> N
     assert [a[2]["source"] for a in await rig.w.audit(AuditAction.IDENTITY_LINKED)] == ["social"]
 
 
+async def test_an_invited_member_signs_in_with_microsoft(dsns: Dsns) -> None:
+    async with rig_for(dsns, ("microsoft",)) as rig:
+        bob = await invite(rig.w, "bob@example.com")
+        page = await rig.browser.login(secrets.token_urlsafe(32))
+        assert page.text.count("<button") == 1 and "value='microsoft'" in page.text
+        signed_in(
+            await social_login(rig, "AAAAAAAAAAAAAAAAAAAAAMsft", ADA, provider="microsoft"), rig
+        )
+        signed_in(
+            await social_login(
+                rig, "AAAAAAAAAAAAAAAAAAAAABob", "bob@example.com", provider="microsoft"
+            ),
+            rig,
+        )
+        (row,) = await rig.w.rows("select status from ssc.user_account where id = :id", id=bob)
+        assert tuple(row) == ("active",)
+
+
 async def test_github_links_only_an_address_it_says_is_verified(rig: OAuthRig) -> None:
     bob = await invite(rig.w, "bob@example.com")
     refused = await social_login(rig, GITHUB_SUB, "bob@example.com", provider="github")
