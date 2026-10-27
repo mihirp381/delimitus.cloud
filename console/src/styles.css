@@ -680,26 +680,6 @@ a.brand:hover {
   background: var(--ssc-tone-blue-soft);
 }
 
-.tone-violet .chip {
-  color: var(--ssc-tone-violet);
-  background: var(--ssc-tone-violet-soft);
-}
-
-.tone-purple .chip {
-  color: var(--ssc-tone-purple);
-  background: var(--ssc-tone-purple-soft);
-}
-
-.tone-magenta .chip {
-  color: var(--ssc-tone-magenta);
-  background: var(--ssc-tone-magenta-soft);
-}
-
-.tone-orange .chip {
-  color: var(--ssc-tone-orange);
-  background: var(--ssc-tone-orange-soft);
-}
-
 /* Definition list */
 .facts {
   display: grid;
@@ -1253,9 +1233,7 @@ a.segment.current {
 .panel > .field > input,
 .panel > .field > select,
 .panel > form > .field > input,
-.panel > form > .field > select,
-.panel > .stack > .field > select,
-.panel > form.stack > .field > select {
+.panel > .stack > .field > select {
   max-width: 480px;
 }
 
@@ -1350,15 +1328,11 @@ a.segment.current {
   background: var(--ssc-surface-hover);
 }
 
-.panel > .table-wrap th:first-child,
-.panel > .table-wrap td:first-child,
 .table th:first-child,
 .table td:first-child {
   padding-left: var(--ssc-space-4);
 }
 
-.panel > .table-wrap th:last-child,
-.panel > .table-wrap td:last-child,
 .table th:last-child,
 .table td:last-child {
   padding-right: var(--ssc-space-4);
@@ -1673,27 +1647,6 @@ details[open] > summary::after {
 
 details[open] > summary {
   margin-bottom: var(--ssc-space-3);
-}
-
-/* A card's own sections that open: a full-width row under a hairline. */
-.panel > details {
-  padding-top: var(--ssc-space-3);
-  border-top: 1px solid var(--ssc-border-subtle);
-}
-
-.panel > .table-wrap + details {
-  border-top: 0;
-}
-
-.panel > details > summary {
-  display: flex;
-  justify-content: space-between;
-  font-weight: 600;
-  color: var(--ssc-text-primary);
-}
-
-.panel > details > summary::after {
-  color: var(--ssc-text-muted);
 }
 
 /* Logs: what the app wrote, in the mono face, each line with its time and severity. The box
