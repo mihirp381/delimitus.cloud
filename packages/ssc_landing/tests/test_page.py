@@ -196,6 +196,8 @@ def _pairs() -> list[tuple[str, str]]:
     for fg in ("#FFFFFF", "#C7C7CC", "#7EE2A0", "#8CC4FF", "#AEAEB2", "#FFD479"):
         pairs += [(fg, "#1D1D1F"), (fg, "#2B2B2D")]
     pairs.append(("#C7C7CC", "#2C2C2E"))
+    # The pipeline's pills: 5% white and 12% #7EE2A0 over the terminal's ground.
+    pairs += [("#AEAEB2", "#28282A"), ("#7EE2A0", "#29352E")]
     return pairs
 
 

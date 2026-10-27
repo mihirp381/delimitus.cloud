@@ -431,6 +431,13 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .hiw__item:nth-child(2) { --step: var(--t-violet); }
 .hiw__item:nth-child(3) { --step: var(--t-orange); }
 .hiw__item:hover { background: rgba(255, 255, 255, 0.6); }
+.hiw__item { position: relative; }
+.hiw__bar { position: absolute; left: clamp(16px, 2vw, 22px); right: clamp(16px, 2vw, 22px); bottom: 6px; height: 3px; border-radius: 3px; background: var(--step); transform: scaleX(0); transform-origin: 0 50%; }
+.hiw__bar.is-run { transform: scaleX(1); transition: transform var(--dur, 2400ms) linear; }
+.hiw__bar.is-full { transform: scaleX(1); }
+.hiw__replay { margin: 14px 0 0; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 980px; border: 1px solid var(--line-strong); background: #FFFFFF; font-size: 0.85rem; font-weight: 500; color: var(--accent-ink); cursor: pointer; transition: background 160ms var(--ease); }
+.hiw__replay::before { content: "↻"; content: "↻" / ""; }
+.hiw__replay:hover { background: var(--accent-soft); }
 .hiw__n { grid-row: span 3; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--step); color: #FFFFFF; font: 700 0.8rem var(--sans); }
 .hiw__t { font: 600 1.14rem/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); transition: color 160ms var(--ease); }
 .hiw__d { font-size: 0.92rem; line-height: 1.5; color: var(--ink-3); }
@@ -654,12 +661,18 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .chat__me { color: #FFFFFF; }
 .chat__ai, .chat__sys { color: #C7C7CC; }
 .chat__ok { color: #7EE2A0; }
-.chat__ok::before { content: "✓ "; }
+.chat__ok::before { content: "✓ "; display: inline-block; white-space: pre; }
+.chat__ok:not([data-later])::before { animation: tick 0.45s var(--ease) both; animation-delay: calc(var(--i, 0) * 140ms + 120ms); }
 .chat__wait { color: #FFD479; }
-.chat__wait::before { content: "◷ "; }
+.chat__wait::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 9px; vertical-align: 1px; border-radius: 50%; background: #FFD479; animation: wait 1.2s ease-in-out infinite; }
+@keyframes wait { 50% { opacity: 0.25; transform: scale(0.7); } }
 .chat__url { color: #8CC4FF; }
 .chat [data-on] { background: rgba(255, 255, 255, 0.08); box-shadow: inset 3px 0 0 var(--s-violet); }
+.chat p:not([data-later]) { transition-delay: calc(var(--i, 0) * 140ms); }
 .chat [data-later] { opacity: 0; transform: translateY(6px); visibility: hidden; }
+.chat .chat__url[data-later] { transform: translateY(8px); }
+.chat__me.is-typing::after { content: ""; display: inline-block; width: 0.55em; height: 1.1em; margin-left: 2px; vertical-align: -0.2em; background: #FFFFFF; animation: caret 0.9s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
 .hiw__alt { padding: 14px clamp(24px, 4vw, 52px) 18px; border-top: 1px solid var(--line); color: var(--ink-2); }
 
 /* ── the gap: everything one prompt sets off ──────────────────────────── */
@@ -744,6 +757,7 @@ table.tbl tr:last-child td { border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
   .exit::after { animation: none; }
+  .chat p, .chat p::before { transition-delay: 0s !important; animation-delay: 0s !important; }
   /* SMIL ignores the rules above, so the dots on the hero's flows go */
   .flow__dot { display: none; }
 }
@@ -785,6 +799,16 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .term { width: 100%; max-width: 660px; background: #1D1D1F; color: #F5F5F7; border-radius: var(--r-xl); overflow: hidden; box-shadow: var(--shadow-lift); }
 .term__bar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #2C2C2E; }
 .term__title { font: 500 0.78rem var(--sans); color: #C7C7CC; }
+.term__pipe { list-style: none; margin: 0; padding: 12px 16px 2px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.term__pipe li { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.05); font: 600 0.7rem var(--sans); color: #AEAEB2; white-space: nowrap; transition: color 300ms var(--ease), background 300ms var(--ease); }
+.term__pipe li::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: #48484A; transition: background 300ms var(--ease); }
+.term__pipe li.is-done { color: #7EE2A0; background: rgba(126, 226, 160, 0.12); }
+.term__pipe li.is-done::before { background: #34C759; animation: tick 0.45s var(--ease) both; }
+@media (max-width: 480px) {
+  .term__pipe { padding: 10px 10px 2px; gap: 4px; }
+  .term__pipe li { padding: 5px 2px; font-size: 0.64rem; }
+  .term__pipe li::before { display: none; }
+}
 .term__body { margin: 0; padding: 16px 0 20px; font: 400 0.8rem/1.7 var(--mono); letter-spacing: 0; }
 .dots { display: flex; gap: 6px; flex: none; }
 .dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
@@ -1048,17 +1072,20 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <div class="hiw__body">
         <div class="hiw__list" role="group" aria-label="Steps">
           <button class="hiw__item" type="button" data-step="1" aria-pressed="true">
+            <span class="hiw__bar" aria-hidden="true"></span>
             <span class="hiw__n" aria-hidden="true">1</span>
             <span class="hiw__t">Ask your agent</span>
             <span class="hiw__d" data-claim="agent">Tell your coding agent to deploy on Delimitus. It calls Delimitus from the editor, so nobody learns a new tool.</span>
             <span class="hiw__chips" data-claim="tools"><span class="chip">Claude Code</span><span class="chip">Codex</span></span>
           </button>
           <button class="hiw__item" type="button" data-step="2" aria-pressed="false">
+            <span class="hiw__bar" aria-hidden="true"></span>
             <span class="hiw__n" aria-hidden="true">2</span>
             <span class="hiw__t">Delimitus does the rest</span>
             <span class="hiw__d" data-claim="langs leaks secrets login preview">It builds the app, checks it for leaked keys, keeps its secrets, and puts it behind company login at its own preview address.</span>
           </button>
           <button class="hiw__item" type="button" data-step="3" aria-pressed="false">
+            <span class="hiw__bar" aria-hidden="true"></span>
             <span class="hiw__n" aria-hidden="true">3</span>
             <span class="hiw__t">IT keeps the last word</span>
             <span class="hiw__d" data-claim="share data approvals agents">Sharing and company data wait for an admin of your company to approve. The agent can ask. It can’t approve.</span>
@@ -1068,6 +1095,13 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <figure class="hiw__fig">
             <div class="term" id="term">
               <div class="term__bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="term__title">Coding agent · dock-board</span></div>
+              <ol class="term__pipe" aria-hidden="true" data-claim="langs leaks secrets login preview">
+                <li class="is-done" data-node="build">Build</li>
+                <li class="is-done" data-node="keys">Keys</li>
+                <li class="is-done" data-node="secrets">Secrets</li>
+                <li class="is-done" data-node="login">Login</li>
+                <li class="is-done" data-node="preview">Preview</li>
+              </ol>
               <div class="term__body chat" aria-label="A coding agent deploys an app called dock-board on Delimitus">
                 <p class="chat__me" data-s="1" data-on data-claim="snowflake"><b>You</b>Build an inbound dock scheduler from our Snowflake data and deploy it on Delimitus.</p>
                 <p class="chat__ai" data-s="1" data-on data-claim="agent langs"><b>Agent</b>Built dock-board, a Node app. Deploying it with Delimitus.</p>
@@ -1084,6 +1118,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
                 <p class="chat__ai" data-s="3" data-claim="approvals agents">IT has two requests to approve: the Snowflake connection and sharing with Inbound team.</p>
               </div>
             </div>
+            <button type="button" class="hiw__replay" hidden>Play again</button>
           </figure>
         </div>
       </div>
@@ -1651,37 +1686,111 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
   var calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var watching = "IntersectionObserver" in window;
 
-  /* ── how it works: the conversation grows one step at a time ─────────── */
+  /* ── how it works: the prompt is typed, then the conversation grows one step at a time ── */
+  var each = function (list, fn) { Array.prototype.forEach.call(list, fn); };
   var how = document.getElementById("how");
   if (how) {
+    var STEP = 2400, HOLD = 1200, KEY = 28, LAND = 140;
     var steps = how.querySelectorAll("[data-step]");
     var lines = how.querySelectorAll("[data-s]");
-    var timer = null;
-    var pick = function (key) {
-      Array.prototype.forEach.call(steps, function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-step") === key)); });
-      Array.prototype.forEach.call(lines, function (l) {
+    var nodes = how.querySelectorAll("[data-node]");
+    var oks = how.querySelectorAll(".chat__ok");
+    var me = how.querySelector(".chat__me");
+    var said = me.lastChild;
+    var prompt = said.nodeValue;
+    var replay = how.querySelector(".hiw__replay");
+    var timers = [];
+    var seen = null;
+    var later = function (fn, ms) { timers.push(window.setTimeout(fn, ms)); };
+    var place = {};
+    var landAt = [];
+    each(lines, function (l) {
+      var s = l.getAttribute("data-s");
+      place[s] = place[s] || 0;
+      l.style.setProperty("--i", String(place[s]));
+      if (l.classList.contains("chat__ok")) { landAt.push(place[s] * LAND + 210); }
+      place[s] += 1;
+    });
+    var bars = function (key, dur) {
+      each(steps, function (b) {
+        var bar = b.querySelector(".hiw__bar"), n = b.getAttribute("data-step");
+        bar.classList.remove("is-run", "is-full");
+        if (n === key && dur) {
+          bar.style.setProperty("--dur", dur + "ms");
+          void bar.offsetWidth;
+          bar.classList.add("is-run");
+        } else if (n <= key) {
+          bar.classList.add("is-full");
+        }
+      });
+    };
+    var light = function (on, timed) {
+      each(nodes, function (node, k) {
+        if (!on) { node.classList.remove("is-done"); }
+        else if (timed) { later(function () { node.classList.add("is-done"); }, landAt[k]); }
+        else { node.classList.add("is-done"); }
+      });
+    };
+    var pick = function (key, dur) {
+      each(steps, function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-step") === key)); });
+      each(lines, function (l) {
         var s = l.getAttribute("data-s");
         l.toggleAttribute("data-on", s === key);
         l.toggleAttribute("data-later", s > key);
       });
+      bars(key, dur);
+      light(key >= "2", !!dur && key === "2");
     };
-    var stop = function () { if (timer) { window.clearInterval(timer); timer = null; } };
-    Array.prototype.forEach.call(steps, function (b) {
-      b.addEventListener("click", function () { stop(); pick(b.getAttribute("data-step")); });
+    var stop = function () {
+      timers.forEach(window.clearTimeout);
+      timers = [];
+      said.nodeValue = prompt;
+      me.classList.remove("is-typing");
+    };
+    var hold = function (on) {
+      each(lines, function (l) { if (l !== me && l.getAttribute("data-s") === "1") { l.toggleAttribute("data-later", on); } });
+    };
+    var play = function () {
+      stop();
+      pick("1", prompt.length * KEY + HOLD);
+      hold(true);
+      said.nodeValue = "";
+      me.classList.add("is-typing");
+      var start = Date.now();
+      var type = function () {
+        var n = Math.min(prompt.length, Math.ceil((Date.now() - start) / KEY));
+        said.nodeValue = prompt.slice(0, n);
+        if (n < prompt.length) { later(type, KEY); return; }
+        me.classList.remove("is-typing");
+        hold(false);
+        later(function () {
+          pick("2", STEP);
+          later(function () { pick("3", STEP); }, STEP);
+        }, HOLD);
+      };
+      later(type, KEY);
+    };
+    each(steps, function (b) {
+      b.addEventListener("click", function () {
+        if (seen) { seen.disconnect(); }
+        stop();
+        pick(b.getAttribute("data-step"));
+      });
     });
     if (calm || !watching) {
       pick("3");
     } else {
       pick("1");
-      var seen = new IntersectionObserver(function (entries) {
+      bars("0");
+      light(false);
+      hold(true);
+      said.nodeValue = "";
+      replay.hidden = false;
+      replay.addEventListener("click", function () { if (seen) { seen.disconnect(); } play(); });
+      seen = new IntersectionObserver(function (entries) {
         if (!entries[0].isIntersecting) { return; }
         seen.disconnect();
-        var n = 1;
-        timer = window.setInterval(function () {
-          n += 1;
-          pick(String(n));
-          if (n >= steps.length) { stop(); }
-        }, 2400);
+        play();
       }, { threshold: 0.5 });
       seen.observe(document.getElementById("term"));
     }

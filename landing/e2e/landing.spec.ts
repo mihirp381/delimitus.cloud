@@ -4,6 +4,8 @@ import { expect, test, type Page } from '@playwright/test';
 // cookie, nothing blocked by its own policy, a still hero under reduced motion, the table with
 // JavaScript off, and a form that only confirms on the server's answer.
 
+const PROMPT = 'YouBuild an inbound dock scheduler from our Snowflake data and deploy it on Delimitus.';
+
 function watch(page: Page, origin: string) {
   const foreign: string[] = [];
   const cookies: string[] = [];
@@ -99,6 +101,28 @@ test('the agent conversation plays once it is in view, and a step can be picked'
   await expect(page.locator('#term .chat__me')).toBeVisible();
 });
 
+test('the prompt is typed, the pipeline lights, and Play again starts over', async ({ page }) => {
+  await page.goto('/');
+  const me = page.locator('#term .chat__me');
+  const reply = page.locator('#term .chat__ai[data-s="1"]');
+  const url = page.locator('#term .chat__url');
+  const nodes = page.locator('#term .term__pipe li');
+  await expect(nodes).toHaveCount(5);
+  await page.locator('#term').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  expect(((await me.textContent()) ?? '').length).toBeLessThan(PROMPT.length);
+  await expect(reply).toBeHidden();
+  await expect(me).toHaveText(PROMPT, { timeout: 4000 });
+  await expect(reply).toBeVisible();
+  await expect(url).toBeVisible({ timeout: 8000 });
+  for (const node of await nodes.all()) await expect(node).toHaveClass(/is-done/);
+  await page.locator('#how .hiw__replay').click();
+  await expect(url).toBeHidden();
+  await expect(nodes.first()).not.toHaveClass(/is-done/);
+  await expect(url).toBeVisible({ timeout: 10000 });
+  for (const node of await nodes.all()) await expect(node).toHaveClass(/is-done/);
+});
+
 test('the list bursts out of the prompt and settles in place', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#burst')).toHaveClass(/is-armed/);
@@ -136,6 +160,13 @@ test.describe('reduced motion', () => {
     await expect(page.locator('#term .chat__url')).toBeVisible();
     await expect(page.locator('#burst')).not.toHaveClass(/is-armed/);
   });
+  test('shows the typed prompt and the lit pipeline at once', async ({ page }) => {
+    await page.goto('/');
+    expect(await page.locator('#term .chat__me').textContent()).toBe(PROMPT);
+    const nodes = page.locator('#term .term__pipe li');
+    await expect(nodes).toHaveCount(5);
+    for (const node of await nodes.all()) expect(await node.getAttribute('class')).toContain('is-done');
+  });
   test('keeps the hero still', async ({ page }) => {
     await page.goto('/');
     await page.mouse.wheel(0, 900);
@@ -154,6 +185,16 @@ test.describe('without JavaScript', () => {
     await expect(page.locator('[data-out="cloud"]')).toHaveText('$2,738');
     await expect(page.locator('#term .chat__url')).toBeVisible();
     await expect(page.locator('#burst .burst__chips li').first()).toBeVisible();
+  });
+
+  test('shows the whole conversation and the lit pipeline', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#term .chat__me')).toHaveText(PROMPT);
+    await expect(page.locator('#term .term__pipe li')).toHaveCount(5);
+    await expect(page.locator('#how .hiw__replay')).toHaveCount(1);
+    for (const node of await page.locator('#term .term__pipe li').all()) await expect(node).toHaveClass(/is-done/);
+    await expect(page.locator('#term .chat__url')).toBeVisible();
+    await expect(page.locator('#how .hiw__replay')).toBeHidden();
   });
 
   test('sends the form as a plain post the server takes', async ({ page }, info) => {
