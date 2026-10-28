@@ -136,7 +136,7 @@ _PERSON = text(
     "from ssc.auth_session where org_id = u.org_id and user_id = u.id and kind <> 'ci') s on true "
     "where u.org_id = :org and u.id = :id"
 )
-_LOCK_ORG = text("select invite_domains from ssc.org where id = :org for update")
+_LOCK_ORG = text("select invite_domains from ssc.org where id = :org for no key update")
 _EMAIL_OF = text("select email from ssc.user_account where org_id = :org and id = :id")
 _INVITED = text(
     "select id from ssc.user_account where org_id = :org and lower(email) = :email "
@@ -209,12 +209,13 @@ async def _set_status(uow: UnitOfWork, user_id: str, status: directory.Status) -
     ):
         raise Refusal(ErrorCode.LAST_ORG_ADMIN)
     if status == "active":
+        domains = (await uow.conn.execute(_LOCK_ORG, {"org": uow.org_id})).scalar_one()
         email = (
             await uow.conn.execute(_EMAIL_OF, {"org": uow.org_id, "id": user_id})
         ).scalar_one_or_none()
         if email is None:
             raise Refusal(ErrorCode.NOT_FOUND)
-        if not social.at_domains(email, await social.invite_domains(uow.conn, uow.org_id)):
+        if not social.at_domains(email, domains):
             raise Refusal(ErrorCode.INVITE_DOMAIN_NOT_ALLOWED)
     before = await directory.set_status(
         uow.conn, uow.org_id, user_id, status, actor=actor_of(uow.principal)

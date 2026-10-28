@@ -14,6 +14,7 @@ fake WorkOS.
 
 import secrets
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -536,6 +537,40 @@ def test_invites_and_reactivations_outside_the_domains_are_refused(dsns: Dsns) -
         ):
             made = api.post("/v1/users/invite", ada, {"email": email})
             assert (made.status_code, made.json()["email"]) == (201, stored)
+
+
+def test_invite_and_reactivate_wait_for_a_domain_change(dsns: Dsns) -> None:
+    w, ids, _ = social_world(dsns)
+    gone = add_person(dsns, w.org, "gone@example.com", "deactivated")
+    pem = tokens.new_signing_pem()
+    signer = tokens.Signer(pem, "k1", AUTH)
+    with (
+        TestClient(
+            create_app(Settings(database_dsn=dsns.app, jwks=signer.jwks(), issuer=AUTH))
+        ) as c,
+        ThreadPoolExecutor(2) as pool,
+    ):
+        api = Api(c, signer, pem, w.org)
+        ada = api.token(w.founder, ids["ada"])
+        with psycopg.connect(dsns.superuser) as held:
+            held.execute("select 1 from ssc.org where id = %s for no key update", (w.org,))
+            calls = [
+                pool.submit(api.post, f"/v1/users/{gone}/reactivate", ada),
+                pool.submit(api.post, "/v1/users/invite", ada, {"email": "new@example.com"}),
+            ]
+            done, _ = wait(calls, timeout=1)
+            assert not done
+            held.execute(
+                "update ssc.org set invite_domains = '{example.org}' where id = %s", (w.org,)
+            )
+        for call in calls:
+            assert_problem(call.result(timeout=10), ErrorCode.INVITE_DOMAIN_NOT_ALLOWED)
+    with psycopg.connect(dsns.superuser) as conn:
+        assert conn.execute(
+            "select array_agg(email order by email) from ssc.user_account "
+            "where org_id = %s and status <> 'active'",
+            (w.org,),
+        ).fetchone() == (["gone@example.com"],)
 
 
 def test_deactivation_locks_out_on_the_next_request(dsns: Dsns) -> None:

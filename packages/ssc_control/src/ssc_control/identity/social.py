@@ -127,10 +127,6 @@ def at_domains(email: str, domains: Iterable[str]) -> bool:
     return "@" in email and domain_of(email) in set(domains)
 
 
-async def invite_domains(conn: AsyncConnection, org_id: str) -> tuple[str, ...]:
-    return tuple((await conn.execute(_DOMAINS, {"org": org_id})).scalar_one_or_none() or ())
-
-
 def check_providers(raw: str) -> tuple[str, ...]:
     names = tuple(dict.fromkeys(p.strip().lower() for p in raw.split(",") if p.strip()))
     unknown = [p for p in names if p not in WORKOS_PROVIDERS]
@@ -143,7 +139,6 @@ _MODE = text("select sign_in_mode, social_providers, invite_domains from ssc.org
 _LOCK_MODE = text(
     "select sign_in_mode, social_providers, invite_domains from ssc.org where id = :org for update"
 )
-_DOMAINS = text("select invite_domains from ssc.org where id = :org")
 _IN_USE = text(
     "select id, lower(email) from ssc.user_account where org_id = :org "
     "and status in ('invited', 'active') and not (lower(regexp_replace(email, '^.*@', '')) "
