@@ -175,6 +175,10 @@ Success: answered above 2026-10-26; decision 004 amendment drafted (CD-7.1) with
 - Refuse suffix with fewer than three labels, on the Public Suffix List (vendored list, refreshed by the
   7-day rule), or equal to, above or below any other org's suffix, current or previous.
 - Success: unit tests for each refusal; DB unique constraint plus the ancestor check in one transaction.
+- Amended 2026-10-28 (CD-5.3): the vendored list (ICANN section only) is refreshed by
+  `tools/psl_refresh.py`, and `test_psl.py` fails once its `// VERSION:` date is more than 90 days
+  old, not 7: the list changes slowly. Names under `delimitus.com` and `delimitusapps.com` are
+  refused too, and the overlap check holds advisory lock `(31, 0)` until the request commits.
 
 ### CD-6 Surfaces (~4 days)
 

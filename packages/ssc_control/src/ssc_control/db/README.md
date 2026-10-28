@@ -51,7 +51,9 @@ Schema `ssc`, Postgres 18. Decision record: `docs/decisions/README.md` 009.
     as `(21, hashtext(org_id))`: shared by every transaction that changes what the gateway decides (`snapshot.service.mark_dirty`), exclusive by the compile
     (`snapshot.compiler.publish`), both transaction-scoped (decision 019). Class `12` is the
     org's audit anchor lock, `(12, hashtext(org_id))`, held exclusively by
-    `audit.anchor.write_anchor` for its transaction (decision 012). A new class takes an unused
+    `audit.anchor.write_anchor` for its transaction (decision 012). Class `31` is the suffix
+    admission lock, `(31, 0)`, one key for every org, held by `domains.admission.admit` to the
+    end of the request that inserts the `org_domain` row (CD-5.3). A new class takes an unused
     number and is listed here.
 16. **Every org has a cell label** (`org.cell_label`, founder default D1: app hosts are
     `<slug>[--preview].<cell_label>.<apps domain>`). Since revision 0011 the column's default

@@ -188,7 +188,8 @@ async def test_admission_refuses_what_cannot_be_the_org_s_suffix(b: Bench) -> No
         b.w.org,
         name(b, "old"),
     )
-    for suffix in ("localhost", "UPPER.testorg.com", default(b), name(b, "old")):
+    refusals = (default(b), name(b, "old"), "tools.co.uk", "apps.delimitus.com")
+    for suffix in ("localhost", "UPPER.testorg.com", *refusals):
         r = put(b, suffix, b.t.admin)
         assert_problem(r, ErrorCode.VALIDATION_FAILED)
     execute(b.dsn, b.w.org, "update ssc.org set apps_suffix = %s", name(b, "mine"))
