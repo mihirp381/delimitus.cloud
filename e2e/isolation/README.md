@@ -191,7 +191,7 @@ In the staging cell, before the first run:
 
 | Case (spec) | What it proves | Fast | Row |
 | --- | --- | --- | --- |
-| A POST from app A to app B is refused before it reaches B (`cross-app`) | Fetch-Metadata: a same-site `fetch` and form `POST` from A get 403 and never reach B; B's own `POST` works | pass | login sessions |
+| A POST from app A to app B is refused before it reaches B (`cross-app`) | Fetch-Metadata: a same-site `fetch` from A gets 403 and never reaches B; a form `POST` from A is blocked in the browser by A's `form-action` (CD-5.2); B's own `POST` works | pass | login sessions |
 | A script, an image or a frame on A cannot load from B (`cross-app`) | Fetch-Metadata: same-site subresources and frames are refused before B | pass | login sessions |
 | From another site a form POST to B is refused and a link opens it (`cross-app`) | a cross-site `POST` is 403; a cross-site top-level `GET` navigation is allowed | pass | public entry and TLS |
 | A link from A opens B (`cross-app`) | a same-site top-level `GET` navigation is allowed, signed in | pass | login sessions |
