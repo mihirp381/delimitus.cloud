@@ -66,7 +66,8 @@ class Ports:
     (SSC-064). ``github`` None leaves a push job with nothing to do (SSC-047); ``apps_domain``
     makes the preview address it reports. ``mailer`` None leaves queued approval mail waiting
     (SSC-049); ``console_url`` is the link those mails carry; ``mail_from`` (``SSC_MAIL_FROM``)
-    decides whether the welcome offers help by reply. ``resolvers`` None skips the domains tick."""
+    decides whether the welcome offers help by reply. ``resolvers`` None skips the domains tick.
+    ``operator_mail`` (``SSC_OPERATOR_MAIL``) is also mailed when a certificate stalls."""
 
     engine: AsyncEngine
     cells: CellPorts | None = None
@@ -87,6 +88,7 @@ class Ports:
     console_url: str = ""
     mail_from: str | None = None
     resolvers: Mapping[str, Resolver] | None = None
+    operator_mail: str | None = None
 
 
 class PortsMissingError(RuntimeError):

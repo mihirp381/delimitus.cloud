@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -11,11 +12,14 @@ from ssc_control.db import bind_org_sync, bound_org, make_engine
 from ssc_control.db.domains import OrgDomain, domain_of, insert_domain, open_domains
 from ssc_control.domains import jobs
 from ssc_control.domains.probe import DOH_ENDPOINTS, FakeResolver, ProbeError, Resolver
-from ssc_control.domains.tick import NO_DELEGATION, STALLED_MARKER, tick
+from ssc_control.domains.tick import NO_DELEGATION, STALLED_MARKER, StallNotice, tick
+from ssc_control.notifications import delivery, messages
+from ssc_control.notifications.mailer import LogMailer, Mail
 from ssc_control.runtime.cell_domains import FAKE_NAME_SERVERS, FakeCellDomains
 from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.worker_ports import Ports
 
+CONSOLE = "https://console.example.test"
 OTHER_NS = frozenset({"ada.ns.cloudflare.com", "bob.ns.cloudflare.com"})
 
 
@@ -40,6 +44,15 @@ def audit(dsn: str, org: str) -> list[tuple[Any, ...]]:
         return conn.execute(
             "select action, actor_kind, before, after from ssc.audit_event "
             "where action like 'domain.%' order by seq"
+        ).fetchall()
+
+
+def outbox(dsn: str, org: str) -> list[tuple[Any, ...]]:
+    with psycopg.connect(dsn) as conn:
+        bind_org_sync(conn, org)
+        return conn.execute(
+            "select o.kind, u.email from ssc.notification_outbox o "
+            "join ssc.user_account u on u.id = o.user_id order by o.created_at"
         ).fetchall()
 
 
@@ -240,3 +253,88 @@ async def test_the_job_needs_resolvers(engine: AsyncEngine) -> None:
     assert await jobs.tick_with(Ports(engine=engine)) is None
     report = await jobs.tick_with(Ports(engine=engine, resolvers=resolvers({})))
     assert report is not None and report.errors == ()
+
+
+def test_the_domain_mails_read_plainly() -> None:
+    subject, body = messages.domain_active("tools.acme.com", f"{CONSOLE}/")
+    assert subject == "Your own address tools.acme.com is ready"
+    assert f"{CONSOLE}/domain" in body
+    subject, body = messages.domain_failed("tools.acme.com", "no delegation", CONSOLE)
+    assert "could not be set up" in subject
+    assert "failed: no delegation." in body
+    assert f"Try again: {CONSOLE}/domain" in body
+
+
+async def test_active_and_failed_mail_every_active_admin(
+    dsns: Dsns, org: str, other: str, engine: AsyncEngine
+) -> None:
+    fake = FakeCellDomains()
+    ready, broken = await requested(engine, org, fake), await requested(engine, other, fake)
+    right = resolvers({s: frozenset(FAKE_NAME_SERVERS) for s in (ready.suffix, broken.suffix)})
+    now = datetime.now(UTC)
+    await tick(engine, cells(fake), right, now)
+    assert outbox(dsns.app, org) == []
+    fake.advance(ready.suffix, "active")
+    fake.advance(broken.suffix, "failed", "AUTHORIZATION_ISSUE no CNAME")
+    await tick(engine, cells(fake), right, now)
+    await tick(engine, cells(fake), right, now)
+    assert outbox(dsns.app, org) == [("domain_active", "ada@example.com")]
+    assert outbox(dsns.app, other) == [("domain_failed", "ada@example.com")]
+    sender = LogMailer()
+    assert await delivery.flush(engine, sender, org_id=org, console_url=CONSOLE) == 1
+    assert await delivery.flush(engine, sender, org_id=other, console_url=CONSOLE) == 1
+    active = messages.domain_active(ready.suffix, CONSOLE)
+    failed = messages.domain_failed(broken.suffix, "AUTHORIZATION_ISSUE no CNAME", CONSOLE)
+    assert list(sender.sent) == [
+        Mail(to="ada@example.com", subject=active[0], body=active[1]),
+        Mail(to="ada@example.com", subject=failed[0], body=failed[1]),
+    ]
+
+
+async def test_a_stall_mails_the_operator_once(org: str, engine: AsyncEngine) -> None:
+    fake = FakeCellDomains()
+    row = await requested(engine, org, fake)
+    right = resolvers({row.suffix: frozenset(FAKE_NAME_SERVERS)})
+    now = datetime.now(UTC)
+    await tick(engine, cells(fake), right, now)
+    fake.advance(row.suffix, "provisioning", "tools: AUTHORIZING")
+    sender = LogMailer()
+    notice = StallNotice(mailer=sender, to="ops@example.test", console_url=CONSOLE)
+    for minutes in (119, 120, 121, 180):
+        await tick(engine, cells(fake), right, now + timedelta(minutes=minutes), notice=notice)
+    [mail] = sender.sent
+    assert mail.to == "ops@example.test"
+    assert mail.subject == f"Certificate for {row.suffix} still issuing after two hours"
+    assert mail.body.splitlines() == [
+        f"Org: {org}",
+        f"Suffix: {row.suffix}",
+        "Certificate authority says: tools: AUTHORIZING",
+        f"Console: {CONSOLE}/domain",
+    ]
+
+
+async def test_the_job_mails_a_stall_only_with_an_operator_address(
+    org: str, other: str, engine: AsyncEngine
+) -> None:
+    fake = FakeCellDomains()
+    first, second = await requested(engine, org, fake), await requested(engine, other, fake)
+    now = datetime.now(UTC)
+    await tick(engine, cells(fake), resolvers({first.suffix: frozenset(FAKE_NAME_SERVERS)}), now)
+    right = resolvers({s: frozenset(FAKE_NAME_SERVERS) for s in (first.suffix, second.suffix)})
+    await tick(engine, cells(fake), right, now + timedelta(minutes=60))
+    sender = LogMailer()
+    quiet = Ports(engine=engine, cells=cells(fake), resolvers=right, mailer=sender)
+    report = await jobs.tick_with(replace(quiet, clock=lambda: now + timedelta(minutes=120)))
+    assert report is not None and report.stalled == (first.id,)
+    assert list(sender.sent) == []
+    loud = replace(
+        quiet,
+        clock=lambda: now + timedelta(minutes=180),
+        operator_mail="ops@example.test",
+        console_url=CONSOLE,
+    )
+    report = await jobs.tick_with(loud)
+    assert report is not None and report.stalled == (second.id,)
+    assert [(m.to, m.subject.split()[2]) for m in sender.sent] == [
+        ("ops@example.test", second.suffix)
+    ]

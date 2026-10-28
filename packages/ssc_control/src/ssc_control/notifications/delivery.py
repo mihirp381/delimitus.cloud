@@ -17,11 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from ssc_control.approvals import service as approvals
 from ssc_control.db.bind import bound_org
+from ssc_control.db.domains import domain_of
 from ssc_control.notifications import mailer, messages
 from ssc_control.notifications import service as outbox
 
 log = logging.getLogger(__name__)
 
+DOMAIN_KINDS: Final = {"domain_active": "active", "domain_failed": "failed"}
 BATCH: Final = 50
 MAX_ATTEMPTS: Final = 5
 REMIND_AFTER_HOURS: Final = 72
@@ -94,6 +96,24 @@ async def _waiting(
     return [_request(r) for r in rows]
 
 
+async def _org_mail(  # noqa: PLR0913, PLR0917
+    conn: AsyncConnection, org_id: str, to: str, kind: str, console_url: str, mail_from: str | None
+) -> mailer.Mail | None:
+    """A mail about the org, not a request: the welcome, or its own address's outcome."""
+    if kind == "welcome":
+        subject, body = messages.welcome(console_url, org_id, mail_from=mail_from)
+        return mailer.Mail(to=to, subject=subject, body=body)
+    domain = await domain_of(conn, org_id)
+    if domain is None or domain.state != DOMAIN_KINDS[kind]:
+        return None
+    if kind == "domain_active":
+        subject, body = messages.domain_active(domain.suffix, console_url)
+    else:
+        reason = domain.failure or "no reason given"
+        subject, body = messages.domain_failed(domain.suffix, reason, console_url)
+    return mailer.Mail(to=to, subject=subject, body=body)
+
+
 async def _build(
     conn: AsyncConnection,
     org_id: str,
@@ -106,9 +126,8 @@ async def _build(
     if who is None or who[2] != "active":
         return None
     to, kind = str(who[0]), str(row["kind"])
-    if kind == "welcome":
-        subject, body = messages.welcome(console_url, org_id, mail_from=mail_from)
-        return mailer.Mail(to=to, subject=subject, body=body)
+    if kind == "welcome" or kind in DOMAIN_KINDS:
+        return await _org_mail(conn, org_id, to, kind, console_url, mail_from)
     if kind == "digest":
         waiting = await _waiting(conn, org_id, str(row["user_id"]), admin=who[1] == "admin")
         if not waiting:

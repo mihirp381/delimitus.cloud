@@ -68,6 +68,7 @@ from ssc_control.worker import (
     build_app,
     console_url_from_env,
     mailer_from_env,
+    operator_mail_from_env,
     refuse_fakes,
 )
 from ssc_control.worker_ports import Ports
@@ -643,6 +644,10 @@ def test_the_mail_settings() -> None:
     with pytest.raises(CompositionError):
         console_url_from_env({"SSC_CONSOLE_URL": "http://console.example.test"})
     assert console_url_from_env({"SSC_ENV": "test", "SSC_CONSOLE_URL": "http://x.test"})
+    assert operator_mail_from_env({}) is None
+    assert operator_mail_from_env({"SSC_OPERATOR_MAIL": " ops@example.test "}) == "ops@example.test"
+    with pytest.raises(CompositionError, match="SSC_OPERATOR_MAIL"):
+        operator_mail_from_env({"SSC_OPERATOR_MAIL": "ops"})
 
 
 def test_the_log_mailer_is_refused_outside_dev_and_test() -> None:

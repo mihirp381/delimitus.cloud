@@ -24,7 +24,16 @@ async def tick_with(ports: Ports) -> domains_tick.TickReport | None:
     if ports.resolvers is None:
         log.warning("domains tick skipped: no resolvers")
         return None
-    report = await domains_tick.tick(ports.engine, ports.cells, ports.resolvers, ports.clock())
+    notice = (
+        domains_tick.StallNotice(
+            mailer=ports.mailer, to=ports.operator_mail, console_url=ports.console_url
+        )
+        if ports.mailer is not None and ports.operator_mail
+        else None
+    )
+    report = await domains_tick.tick(
+        ports.engine, ports.cells, ports.resolvers, ports.clock(), notice=notice
+    )
     log.info(
         "domains tick: %d open, %d changed, %d stalled, %d errors",
         report.checked,

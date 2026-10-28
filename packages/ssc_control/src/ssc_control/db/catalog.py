@@ -77,6 +77,7 @@ Revision 0047 adds ``org_domain.provider`` and ``stalled_at`` (CD-4): the DNS pr
 at request time and when a stalled certificate was first logged.
 Revision 0048 adds ``form_target`` (CD-5.2), keyed by org, environment and origin, so it is in
 ``UNKEYED_TABLES``: origins an environment's forms may post to, nothing else.
+Revision 0049 adds the ``domain_active`` and ``domain_failed`` outbox kinds (CD-6.3).
 """
 
 from collections.abc import Mapping

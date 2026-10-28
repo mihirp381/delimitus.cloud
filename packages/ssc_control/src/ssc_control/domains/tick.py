@@ -1,7 +1,8 @@
 """The delegation tick (CD-4.1): ``pending_dns`` to ``issuing`` when every resolver answers our
 name servers, ``issuing`` to ``active`` or ``failed`` on the certificate's state, ``failed`` after
-72 hours without a delegation. Network calls run before the row's transaction; one row's error
-never stops the others."""
+72 hours without a delegation. ``active`` and ``failed`` queue a mail to every active admin; a
+stall also mails the operator when a notice is given. Network calls run before the row's
+transaction; one row's error never stops the others."""
 
 import logging
 from collections.abc import Mapping
@@ -23,6 +24,9 @@ from ssc_control.db.domains import (
     update_state,
 )
 from ssc_control.domains.probe import ProbeError, Resolver, delegation_seen, observe
+from ssc_control.notifications import messages
+from ssc_control.notifications import service as outbox
+from ssc_control.notifications.mailer import Mail, Mailer
 from ssc_control.runtime.cell_domains import CellDomainNotFoundError, CellDomainsError
 from ssc_control.runtime.cells import CellPorts, CellUnavailableError
 
@@ -51,6 +55,13 @@ class Step:
     delegated: bool = False
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StallNotice:
+    mailer: Mailer
+    to: str
+    console_url: str
+
+
 @dataclass(frozen=True, slots=True)
 class TickReport:
     checked: int
@@ -64,6 +75,8 @@ async def tick(
     cells: CellPorts | None,
     resolvers: Mapping[str, Resolver],
     now: datetime,
+    *,
+    notice: StallNotice | None = None,
 ) -> TickReport:
     rows = await open_domains(engine)
     changed: list[str] = []
@@ -74,7 +87,7 @@ async def tick(
             step = await _step(row, cells, resolvers, now)
             if step is None:
                 continue
-            outcome = await _apply(engine, row, step, now)
+            outcome = await _apply(engine, row, step, now, notice)
             if outcome == "changed":
                 changed.append(row.id)
             elif outcome == "stalled":
@@ -129,7 +142,9 @@ async def _issuing(row: OrgDomain, cells: CellPorts | None) -> Step | None:
     return Step("issuing", failure=status.detail)
 
 
-async def _apply(engine: AsyncEngine, seen: OrgDomain, step: Step, now: datetime) -> str | None:
+async def _apply(
+    engine: AsyncEngine, seen: OrgDomain, step: Step, now: datetime, notice: StallNotice | None
+) -> str | None:
     async with bound_org(engine, seen.org_id) as conn:
         row = await lock_domain(conn, seen.org_id, seen.id)
         if row is None or row.state != seen.state:
@@ -140,6 +155,8 @@ async def _apply(engine: AsyncEngine, seen: OrgDomain, step: Step, now: datetime
             outcome = await _move(conn, row, step, now)
     if outcome == "stalled":
         _log_stalled(row)
+        if notice is not None:
+            await _mail_stalled(notice, row)
     elif outcome == "changed":
         log.info(
             "domain %s: %s to %s",
@@ -191,6 +208,14 @@ async def _move(conn: AsyncConnection, row: OrgDomain, step: Step, now: datetime
             after=body,
         ),
     )
+    if after.state in {"active", "failed"}:
+        await outbox.domain_changed(
+            conn,
+            org_id=row.org_id,
+            domain_id=row.id,
+            kind=f"domain_{after.state}",
+            at=after.updated_at,
+        )
     return "changed"
 
 
@@ -212,11 +237,23 @@ def _log_stalled(row: OrgDomain) -> None:
     )
 
 
+async def _mail_stalled(notice: StallNotice, row: OrgDomain) -> None:
+    subject, body = messages.domain_stalled(row.org_id, row.suffix, row.failure, notice.console_url)
+    try:
+        await notice.mailer.send(Mail(to=notice.to, subject=subject, body=body))
+    except Exception as exc:
+        log.warning(
+            "stall notice not sent",
+            extra={"domain_id": row.id, "error": type(exc).__name__},
+        )
+
+
 __all__ = [
     "NO_DELEGATION",
     "PENDING_LIMIT",
     "STALLED_MARKER",
     "STALL_AFTER",
+    "StallNotice",
     "TICK_ACTOR",
     "TickReport",
     "tick",

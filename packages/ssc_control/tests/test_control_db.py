@@ -2547,3 +2547,35 @@ def test_form_targets_are_https_origins_of_the_org_s_own_environments(
     assert run(dsns.app, a.org, delete, (a.org,)) == [(pay,)]
     assert refused(dsns.app, None, "truncate ssc.form_target") == INSUFFICIENT_PRIVILEGE
     assert refused(dsns.migrate, None, "truncate ssc.form_target") == SqlState.TRUNCATE_REFUSED
+
+
+def test_0049_adds_the_domain_mail_kinds_and_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database domain_mail owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="domain_mail").render_as_string(hide_password=False)
+    kinds = (
+        "select pg_get_constraintdef(oid) from pg_constraint "
+        "where conrelid = 'ssc.notification_outbox'::regclass "
+        "and conname = 'notification_outbox_kind_check'"
+    )
+    upgrade(dsn, "0048_form_target")
+    assert "'domain_active'" not in run(dsn, None, kinds)[0][0]
+    upgrade(dsn, "0049_domain_mail")
+    assert "'domain_failed'" in run(dsn, None, kinds)[0][0]
+    downgrade(dsn, "0048_form_target")
+    assert "'domain_active'" not in run(dsn, None, kinds)[0][0]
+    upgrade(dsn, "0049_domain_mail")
+    assert "'domain_active'" in run(dsn, None, kinds)[0][0]
+
+
+def test_a_domain_mail_needs_no_approval(dsns: Dsns) -> None:
+    org = make_org(dsns.app, "Own address")
+    insert = (
+        "insert into ssc.notification_outbox (id, org_id, user_id, kind, approval_id, dedupe_key) "
+        "values (%s, %s, %s, %s, %s, %s)"
+    )
+    for kind in ("domain_active", "domain_failed"):
+        row = (new_id("ntf"), org.org_id, org.admin_user_id, kind, None, f"{kind}:x")
+        assert run(dsns.app, org.org_id, insert + " returning kind", row) == [(kind,)]
+        approval = (new_id("ntf"), org.org_id, org.admin_user_id, kind, new_id("apr"), f"{kind}:y")
+        assert refused(dsns.app, org.org_id, insert, approval) == CHECK_VIOLATION

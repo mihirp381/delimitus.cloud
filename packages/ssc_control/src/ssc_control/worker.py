@@ -119,6 +119,7 @@ SMTP_TLS_ENV: Final = "SSC_SMTP_TLS"
 SMTP_USER_ENV: Final = "SSC_SMTP_USER"
 SMTP_PASSWORD_ENV: Final = "SSC_SMTP_PASSWORD"  # noqa: S105  (an environment variable name)
 MAIL_FROM_ENV: Final = "SSC_MAIL_FROM"
+OPERATOR_MAIL_ENV: Final = "SSC_OPERATOR_MAIL"
 ONBOARDING_TICK_CRON_ENV: Final = "SSC_ONBOARDING_TICK_CRON"
 CONSOLE_URL_ENV: Final = "SSC_CONSOLE_URL"
 DEV_CONSOLE_URL: Final = "http://localhost:5173"
@@ -453,6 +454,14 @@ def console_url_from_env(env: Mapping[str, str]) -> str:
     return url.rstrip("/")
 
 
+def operator_mail_from_env(env: Mapping[str, str]) -> str | None:
+    """``SSC_OPERATOR_MAIL``: where a stalled certificate is reported besides the log."""
+    value = env.get(OPERATOR_MAIL_ENV, "").strip()
+    if value and "@" not in value:
+        raise CompositionError(f"{OPERATOR_MAIL_ENV} is not a mail address")
+    return value or None
+
+
 def mailer_from_env(env: Mapping[str, str], console_url: str) -> Mailer | None:
     """``SSC_MAIL_TRANSPORT``: unset is the log mailer in development and tests and none
     elsewhere (queued mail waits), ``log`` the log mailer, ``smtp`` plain SMTP to
@@ -557,6 +566,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         console_url=console_url,
         mail_from=env.get(MAIL_FROM_ENV) or None,
         resolvers=doh_resolvers(),
+        operator_mail=operator_mail_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports
@@ -635,6 +645,7 @@ __all__ = [
     "core_blueprint",
     "directory_from_env",
     "mailer_from_env",
+    "operator_mail_from_env",
     "metrics_from_env",
     "ports_of",
     "queue_conninfo",
