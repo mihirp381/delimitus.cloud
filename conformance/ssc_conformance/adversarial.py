@@ -161,6 +161,14 @@ KNOWN: Final[Mapping[str, Callable[[Ids], Probe]]] = {
     ),
 }
 
+AGENT_READS: Final[Mapping[str, Callable[[Ids], Probe]]] = {
+    "GET /v1/me/apps": lambda _: Probe("GET", "/v1/me/apps", expected="FORBIDDEN"),
+    "GET /v1/users/{user_id}/apps": lambda i: Probe(
+        "GET", f"/v1/users/{i.user}/apps", expected="FORBIDDEN"
+    ),
+}
+"""Reads for a person's own credential only: an agent's is ``FORBIDDEN``."""
+
 AGENT_MAY: Final[Mapping[str, str]] = {
     "POST /v1/approvals": "asks; a person decides (decision 016)",
     "POST /v1/approvals/{approval_id}/cancel": "withdraws its own request (decision 016)",
@@ -295,6 +303,9 @@ def refusals(c: httpx2.Client, spec: Mapping[str, Any], ids: Ids) -> list[Row]:
             out.append(Row("1", key, problem(build(ids).expected), f"skipped: {why}", SKIP))
             continue
         probe = build(ids)
+        out.append(judged("1", key, problem(probe.expected), got_of(send(c, probe))))
+    for key, read in sorted(AGENT_READS.items()):
+        probe = read(ids)
         out.append(judged("1", key, problem(probe.expected), got_of(send(c, probe))))
     for key in sorted(unmarked_writes(spec) - AGENT_MAY.keys()):
         out.append(Row("1", key, "refused or listed", "unlisted write", FAIL))

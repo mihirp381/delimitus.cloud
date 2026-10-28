@@ -34,7 +34,7 @@ from test_auth_host import settings as auth_settings
 from test_mcp import CLIENT_ID, JSONRPC_HEADERS, env_id, rows, rpc_call, serving, settings
 
 from ssc_conformance import adversarial
-from ssc_conformance.adversarial import KNOWN, got_of, problem, send
+from ssc_conformance.adversarial import AGENT_READS, KNOWN, got_of, problem, send
 from ssc_contracts.ids import new_id
 from ssc_control.api.mcp.tools import TOOLS
 from ssc_control.api.openapi import build_spec
@@ -131,6 +131,16 @@ def test_refused_in_an_agent_session(arena: Arena, key: str) -> None:
         got = got_of(send(c, probe))
     assert got == problem(probe.expected)
     assert changed(before, arena.snapshot()) == []
+
+
+@pytest.mark.parametrize("key", sorted(AGENT_READS))
+def test_an_agent_reads_no_ones_apps(arena: Arena, key: str) -> None:
+    assert key in {k for k, _ in adversarial.operations(SPEC)}
+    probe = AGENT_READS[key](arena.a.ids)
+    with arena.v1(arena.a.api.access) as c:
+        assert got_of(send(c, probe)) == problem(probe.expected)
+    with arena.v1(arena.a.human) as c:
+        assert send(c, probe).status_code == 200
 
 
 def test_an_operator_agent_is_refused_a_decision(arena: Arena) -> None:
