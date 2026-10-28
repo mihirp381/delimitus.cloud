@@ -97,7 +97,7 @@ _SELECT_ENVS = text(
 )
 
 
-def _url(slug: str, environment: str, suffix: str) -> str | None:
+def app_url(slug: str, environment: str, suffix: str) -> str | None:
     """No address for a slug stored before the host rule refused it. Every org has a cell label
     matching the rule (revision 0011 and its CHECK)."""
     if slug_problem(slug) is not None:
@@ -115,7 +115,7 @@ async def environments_of(uow: UnitOfWork, app_id: str, apps_domain: str) -> lis
             config_version=r["config_version"],
             grants_version=r["grants_version"],
             current_deployment_id=r["current_deployment_id"],
-            url=_url(
+            url=app_url(
                 r["slug"], r["name"], suffix_of(r["cell_label"], r["apps_suffix"], apps_domain)
             ),
             form_targets=list(r["form_targets"]),

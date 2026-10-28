@@ -69,6 +69,8 @@ Revision 0042 adds ``pilot_invite`` (decision 029 amendment of 2026-10-26) to ``
 pilot invite codes, read by ``/authorize`` before any org is bound; only a code's SHA-256.
 Revision 0044 adds columns only (decision 002 amendment of 2026-10-27): ``org.sign_in_mode`` and
 ``org.social_providers``, the provider names a pilot org signs in with, never a credential.
+Revision 0045 adds a column only (decision 002 amendment of 2026-10-28): ``org.invite_domains``,
+the email domains a social org may invite.
 Revision 0045 adds ``org.apps_suffix`` and ``org_suffix_retired`` (CD-1), keyed by org and
 suffix, so it is in ``UNKEYED_TABLES``: host names the org's apps answered at, nothing else.
 Revision 0046 adds ``org_domain`` (CD-3), an ordinary org-scoped table: an org's delegated zone,

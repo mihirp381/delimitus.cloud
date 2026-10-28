@@ -9,6 +9,7 @@ import { ConfirmAction } from '../components/ConfirmAction';
 import { Id } from '../components/Copy';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { useToast } from '../components/Toast';
+import { PersonApps } from './PersonApps';
 
 const STATE_TONE: Readonly<Record<UserMatch['status'], Tone>> = {
   active: 'success',
@@ -62,6 +63,7 @@ export function PersonDetail({ person, social, onChange, onClose }: Props) {
           <Id value={person.id} label="person id" />
         </dd>
       </dl>
+      <PersonApps person={person} />
       {social ? (
         <AdminOnly quiet>
           <StateActions person={person} onChange={onChange} />

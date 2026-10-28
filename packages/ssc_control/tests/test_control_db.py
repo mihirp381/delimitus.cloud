@@ -2377,10 +2377,14 @@ def test_0044_adds_social_sign_in_and_round_trips(dsns: Dsns) -> None:
 
 def test_social_sign_in_columns_are_checked(dsns: Dsns) -> None:
     org = make_org(dsns.app)
-    mode = "update ssc.org set sign_in_mode = %s, social_providers = %s where id = %s returning id"
-    for bad in (("social", []), ("social", ["facebook"]), ("sso", [])):
+    mode = (
+        "update ssc.org set sign_in_mode = %s, social_providers = %s, invite_domains = %s "
+        "where id = %s returning id"
+    )
+    domains = ["example.com"]
+    for bad in (("social", [], domains), ("social", ["facebook"], domains), ("sso", [], [])):
         assert refused(dsns.app, org.org_id, mode, (*bad, org.org_id)) == CHECK_VIOLATION, bad
-    ok = ("social", ["google", "github"], org.org_id)
+    ok = ("social", ["google", "github"], domains, org.org_id)
     assert run(dsns.app, org.org_id, mode, ok) == [(org.org_id,)]
     status = "update ssc.user_account set status = %s where id = %s returning id"
     user = org.admin_user_id
@@ -2579,3 +2583,60 @@ def test_a_domain_mail_needs_no_approval(dsns: Dsns) -> None:
         assert run(dsns.app, org.org_id, insert + " returning kind", row) == [(kind,)]
         approval = (new_id("ntf"), org.org_id, org.admin_user_id, kind, new_id("apr"), f"{kind}:y")
         assert refused(dsns.app, org.org_id, insert, approval) == CHECK_VIOLATION
+
+
+def test_0045_backfills_invite_domains_and_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database invite_domains owner {MIGRATE_ROLE}")
+    dsn = (
+        make_url(dsns.migrate).set(database="invite_domains").render_as_string(hide_password=False)
+    )
+    app = make_url(dsns.app).set(database="invite_domains").render_as_string(hide_password=False)
+    upgrade(dsn)
+    social, plain = make_org(app, "Social").org_id, make_org(app, "Plain").org_id
+    run(
+        dsn,
+        social,
+        "update ssc.org set sign_in_mode = 'social', social_providers = '{google}', "
+        "invite_domains = '{example.com}' where id = %s returning id",
+        (social,),
+    )
+    person = (
+        "insert into ssc.user_account (id, org_id, display_name, email, role, status, "
+        "deactivated_at) values (%s, %s, 'P', %s, 'member', %s, "
+        "case when %s = 'deactivated' then now() end) returning id"
+    )
+    for email, status in (
+        ("bob@Acme.CO.UK", "invited"),
+        ("cat@eng.acme.com", "active"),
+        ("dan@old.io", "deactivated"),
+    ):
+        run(dsn, social, person, (new_id("usr"), social, email, status, status))
+    domains = "select invite_domains from ssc.org where id = %s"
+    downgrade(dsn, "0044_social_sign_in")
+    with pytest.raises(psycopg.errors.UndefinedColumn):
+        run(dsn, social, domains, (social,))
+    upgrade(dsn, "0045_invite_domains")
+    assert run(dsn, social, domains, (social,)) == [
+        (["acme.co.uk", "eng.acme.com", "example.com"],)
+    ]
+    assert run(dsn, plain, domains, (plain,)) == [([],)]
+    update = "update ssc.org set invite_domains = %s where id = %s returning id"
+    for org, bad in (
+        (social, []),
+        (social, [f"d{i}.com" for i in range(11)]),
+        (social, ["Acme.com"]),
+        (social, ["ada@acme.com"]),
+        (social, [""]),
+        (social, [None]),
+        (plain, ["acme.com"]),
+    ):
+        assert refused(app, org, update, (bad, org)) == CHECK_VIOLATION, bad
+    assert run(app, social, update, ([f"d{i}.com" for i in range(10)], social)) == [(social,)]
+    downgrade(dsn, "0044_social_sign_in")
+    assert run(
+        dsn,
+        None,
+        "select count(*) from information_schema.columns "
+        "where table_schema = 'ssc' and column_name = 'invite_domains'",
+    ) == [(0,)]

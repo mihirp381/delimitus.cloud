@@ -16,9 +16,21 @@ function inApi(...command: string[]): string {
   return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }).trim();
 }
 
-function setSignIn(org: string, mode: 'social' | 'directory'): void {
-  const providers = mode === 'social' ? ' --providers google,github' : '';
-  const cli = `python -m ssc_control.identity set-sign-in --org ${org} --mode ${mode}${providers} --operator op_e2e`;
+// set-sign-in refuses a directory org social mode, so the test writes the mode itself.
+const FORCE_SOCIAL = [
+  'import json, sys, psycopg',
+  'from ssc_control.db import bind_org_sync',
+  'with psycopg.connect(json.load(open("/state/state.json"))["database_dsn"]) as c:',
+  '    bind_org_sync(c, sys.argv[1])',
+  "    c.execute(\"update ssc.org set sign_in_mode = 'social', social_providers = '{google,github}', invite_domains = '{example.com}' where id = %s\", (sys.argv[1],))",
+].join('\n');
+
+function toSocial(org: string): void {
+  inApi('python', '-c', FORCE_SOCIAL, org);
+}
+
+function toDirectory(org: string): void {
+  const cli = `python -m ssc_control.identity set-sign-in --org ${org} --mode directory --operator op_e2e`;
   inApi('sh', '-c', `SSC_DATABASE_DSN=${APP_DSN} ${cli}`);
 }
 
@@ -27,11 +39,11 @@ let org = '';
 test.beforeAll(async ({ request }) => {
   expect(token && operatorToken && composeProject, 'run through e2e/run.mjs').toBeTruthy();
   org = (await (await request.get(`${apiUrl}/v1/whoami`, { headers: bearer(token) })).json()).org_id;
-  setSignIn(org, 'social');
+  toSocial(org);
 });
 
 test.afterAll(() => {
-  if (org) setSignIn(org, 'directory');
+  if (org) toDirectory(org);
 });
 
 test('a social org invites by email and deactivates from the People page', async ({ page, request }) => {
@@ -50,7 +62,7 @@ test('a social org invites by email and deactivates from the People page', async
   expect(added.status(), await added.text()).toBe(200);
   const vic = inApi('python', 'tools/dev_stack.py', '--dir', '/state', 'token', '--sub', (await added.json()).user_id);
   const before = await (await request.get(`${apiUrl}/v1/whoami`, { headers: bearer(vic) })).json();
-  expect([before.role, before.sign_in_mode]).toEqual(['member', 'social']);
+  expect([before.role, before.sign_in_mode, before.invite_domains]).toEqual(['member', 'social', ['example.com']]);
 
   await page.goto('/people');
   await page.getByLabel('API token').fill(token);
@@ -59,6 +71,17 @@ test('a social org invites by email and deactivates from the People page', async
 
   await page.getByRole('button', { name: 'Invite by email' }).click();
   const invite = page.getByRole('dialog', { name: 'Invite by email' });
+  await expect(invite.getByText('You can invite addresses at example.com.')).toBeVisible();
+  await invite.getByRole('textbox', { name: 'Email' }).fill(`ivy-${stamp}@gmail.com`);
+  await invite.getByRole('button', { name: 'Invite', exact: true }).click();
+  await expect(invite.getByRole('alert')).toHaveText(
+    `ivy-${stamp}@gmail.com is not at example.com. Invite an address at one of these domains.`,
+  );
+  const outside = await request.post(`${apiUrl}/v1/users/invite`, {
+    headers: { ...bearer(token), 'Idempotency-Key': randomUUID() },
+    data: { email: `ivy-${stamp}@gmail.com` },
+  });
+  expect([outside.status(), (await outside.json()).code]).toEqual([422, 'INVITE_DOMAIN_NOT_ALLOWED']);
   await invite.getByRole('textbox', { name: 'Email' }).fill(`ivy-${stamp}@example.com`);
   await invite.getByRole('button', { name: 'Invite', exact: true }).click();
   await expect(page.getByText(`Invited ivy-${stamp}@example.com. They join the first time they sign in.`)).toBeVisible();

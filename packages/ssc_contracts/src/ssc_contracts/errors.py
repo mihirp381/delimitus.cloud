@@ -49,6 +49,7 @@ class ErrorCode(StrEnum):
     DEPLOYMENT_IN_FLIGHT = "DEPLOYMENT_IN_FLIGHT"
     LAST_ORG_ADMIN = "LAST_ORG_ADMIN"
     DIRECTORY_MANAGED = "DIRECTORY_MANAGED"
+    INVITE_DOMAIN_NOT_ALLOWED = "INVITE_DOMAIN_NOT_ALLOWED"
     OWNER_NOT_ACTIVE = "OWNER_NOT_ACTIVE"
     RECORD_IMMUTABLE = "RECORD_IMMUTABLE"
     SCHEDULE_DELETED = "SCHEDULE_DELETED"
@@ -226,6 +227,12 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         409,
         "People here come from your company directory.",
         "Invite, deactivate and reactivate people in your identity provider.",
+    ),
+    ErrorCode.INVITE_DOMAIN_NOT_ALLOWED: CatalogueEntry(
+        422,
+        "This address is not at one of your organisation's email domains.",
+        "Your organisation can invite and reactivate only addresses at its own email domains, "
+        "which the invite dialog lists. To add a domain, contact Delimitus support.",
     ),
     ErrorCode.OWNER_NOT_ACTIVE: CatalogueEntry(
         422,

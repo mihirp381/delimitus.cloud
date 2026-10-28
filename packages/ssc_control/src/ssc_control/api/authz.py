@@ -4,7 +4,8 @@ SSC-021 adds the per-app roles; this module starts with the org-admin check the 
 and the builder check approval requests need. ``active_role`` is the one answer to "is the caller
 an admin": ``require_admin`` and ``GET /v1/whoami`` both use it. ``buildable_app_ids`` lists the
 apps ``require_app_builder`` would allow, for ``GET /v1/apps?builder=me``. ``require_sharer``
-admits those who may change some app's sharing, for ``GET /v1/groups``.
+admits those who may change some app's sharing, for ``GET /v1/groups``. ``require_person`` admits
+a person's own credential only, for the lists of what a person may open.
 """
 
 from typing import Literal
@@ -38,6 +39,19 @@ async def active_role(uow: UnitOfWork) -> OrgRole | None:
             return "member"
         case _:
             return None
+
+
+def require_person(uow: UnitOfWork) -> str:
+    """The caller's user id when the credential is a person's own: not an agent's, not a CI token
+    or any other scoped credential. ``FORBIDDEN`` otherwise."""
+    principal = uow.principal
+    if principal.kind is not PrincipalKind.USER:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"kind": principal.kind.value})
+    if principal.is_agent:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"reason": "agent"})
+    if principal.scope is not None:
+        raise Refusal(ErrorCode.FORBIDDEN, evidence={"scope": principal.scope.value})
+    return principal.subject
 
 
 async def require_admin(uow: UnitOfWork) -> str:

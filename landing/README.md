@@ -58,9 +58,8 @@ redirected to the apex by the service.
   motion is allowed and scripts run (`scripting: enabled`); everywhere else the hero is a static
   block. Its flows' moving dots are SMIL, which ignores the reduced-motion CSS, so that CSS
   hides them.
-  The three steps under the hero ease in on load, one after another once the agent panel's ticks
-  are done, each line between them growing after the step before it; pure CSS, so under reduced
-  motion they are still and simply shown.
+  The three steps under the hero light up in order from 1 to 3 with the line between them filling,
+  hold, reset and repeat every 5.6s; pure CSS, so under reduced motion they are still and shown lit.
   How it works plays itself once it is in view: each step's bar fills, step 1 types the prompt,
   the chat lines land one by one and the pipeline lights, once per page load. Under reduced
   motion, or with no IntersectionObserver, it shows step 3 finished; with

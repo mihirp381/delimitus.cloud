@@ -13,17 +13,28 @@
   label in one transaction (``identity.operator``). The label is required: an org left with its
   generated label has no applied cell, and its snapshot and anchor jobs would have nowhere to
   write (one such org, 2026-10-07). Prints the org id.
+* ``create-social-org --name N --admin-email E [--confirm-admin-email E] --providers
+  google[,microsoft] --invite-domains acme.com[,acme.co.uk] [--allow-consumer-domain]
+  --cell-label L --operator op_x``: a pilot org in social mode with its first admin invited,
+  linked at their first sign-in, and the cell label, in one transaction
+  (``identity.operator``). The admin email must be at one of the domains. Asks for the admin
+  email again unless ``--confirm-admin-email`` gives it, then shows the org and writes it only on
+  ``confirm`` from stdin. Prints the org id.
 * ``restore-admin --org ID --user ID --operator op_x --reason TEXT [--outside-admin-group]
   [--already-applied-at TIME]``: make a person an active admin again, audited
-  (``identity.operator``).
+  (``identity.operator``). In a social org the person must have signed in once and be at one
+  of the org's invite domains.
 * ``invite create --org ID --operator op_x --expires-in 14d --max-uses 10 [--note TEXT]``,
   ``invite list --org ID``, ``invite revoke ID --operator op_x``: pilot invite codes
   (``identity.invites``). ``create`` prints the code once; only its SHA-256 is kept.
-* ``set-sign-in --org ID --mode social --providers google,microsoft,github --operator op_x``, or
-  ``--mode directory``: a pilot org's sign-in mode, audited (``identity.social``).
+* ``set-sign-in --org ID --mode social --providers google,microsoft,github --invite-domains D[,D]
+  [--allow-consumer-domain] --operator op_x``, or ``--mode directory``: a social org's providers
+  and invite domains, or back to directory mode, audited (``identity.social``). A directory org
+  is refused social mode; removing a domain an invited or active person uses is refused.
 
 Every command connects with ``SSC_DATABASE_DSN``; ``sync``, ``connect`` and ``create-org`` read
-``SSC_WORKOS_API_KEY``, ``SSC_WORKOS_CLIENT_ID`` and optionally ``SSC_WORKOS_BASE``.
+``SSC_WORKOS_API_KEY``, ``SSC_WORKOS_CLIENT_ID`` and optionally ``SSC_WORKOS_BASE``; the others
+need no WorkOS settings.
 """
 
 import argparse
@@ -42,6 +53,7 @@ from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
 from ssc_shared import redaction
 
 INTERVAL_SECONDS: Final = 60
+CONFIRM: Final = "confirm"
 log = logging.getLogger("ssc.identity")
 
 
@@ -130,6 +142,70 @@ async def run_create_org(dsn: str, client: WorkOSClient, args: argparse.Namespac
         await engine.dispose()
 
 
+async def run_create_social_org(dsn: str, args: argparse.Namespace) -> str:
+    engine = make_engine(dsn)
+    try:
+        made = await operator.create_social_org(
+            engine,
+            name=args.name,
+            admin_email=args.admin_email,
+            providers=args.providers,
+            invite_domains=args.invite_domains,
+            cell_label=args.cell_label,
+            actor=Actor(kind=ActorKind.OPERATOR, id=args.operator),
+            allow_consumer=args.allow_consumer_domain,
+        )
+        return made.org_id
+    finally:
+        await engine.dispose()
+
+
+def _ask(prompt: str) -> str | None:
+    sys.stderr.write(prompt)
+    sys.stderr.flush()
+    line = sys.stdin.readline()
+    if not line:
+        sys.stderr.write("\n")
+        return None
+    return line.rstrip("\r\n")
+
+
+def _summary(args: argparse.Namespace) -> str:
+    return (
+        "\nCreate this social org:\n\n"
+        f"  ADMIN EMAIL  {args.admin_email}\n"
+        "               The first admin signs in with this address; it cannot be changed later.\n\n"
+        f"  Org name     {args.name}\n"
+        f"  Providers    {', '.join(args.providers)}\n"
+        f"  Domains      {', '.join(args.invite_domains)}\n"
+        f"  Cell label   {args.cell_label}\n\n"
+    )
+
+
+def _confirm_social_org(args: argparse.Namespace) -> str | None:
+    problem = operator.social_org_problem(
+        args.admin_email, args.invite_domains, allow_consumer=args.allow_consumer_domain
+    )
+    if problem is not None:
+        return problem
+    typed = args.confirm_admin_email
+    if typed is None:
+        typed = _ask("Confirm admin email: ")
+    if typed is None:
+        return "the admin email was not confirmed"
+    try:
+        same = operator.check_email(typed) == args.admin_email
+    except ValueError:
+        same = False
+    if not same:
+        return f"the admin email {args.admin_email} and its confirmation {typed.strip()!r} differ"
+    sys.stderr.write(_summary(args))
+    answer = _ask(f"Type {CONFIRM} to create it, or cancel: ")
+    if answer is None or answer.strip().lower() != CONFIRM:
+        return "cancelled"
+    return None
+
+
 async def run_restore_admin(dsn: str, args: argparse.Namespace) -> operator.Restored:
     engine = make_engine(dsn)
     try:
@@ -179,15 +255,17 @@ async def run_invite(dsn: str, args: argparse.Namespace) -> list[str]:
 
 async def run_set_sign_in(dsn: str, args: argparse.Namespace) -> bool:
     engine = make_engine(dsn)
-    providers = args.providers or ()
+    social_mode = args.mode == "social"
     try:
         async with bound_org(engine, args.org) as conn:
             return await social.set_sign_in(
                 conn,
                 args.org,
                 args.mode,
-                providers if args.mode == "social" else (),
+                (args.providers or ()) if social_mode else (),
                 actor=Actor(kind=ActorKind.OPERATOR, id=args.operator),
+                invite_domains=(args.invite_domains or ()) if social_mode else (),
+                allow_consumer=args.allow_consumer_domain,
             )
     finally:
         await engine.dispose()
@@ -246,6 +324,15 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915  (one parser)
     p_make.add_argument("--join-rule", choices=["idp_id", "email"], required=True)
     p_make.add_argument("--admin-group")
     p_make.add_argument("--cell-label", type=operator.check_cell_label, required=True)
+    p_social = sub.add_parser("create-social-org")
+    p_social.add_argument("--name", type=operator.check_org_name, required=True)
+    p_social.add_argument("--admin-email", type=operator.check_email, required=True)
+    p_social.add_argument("--confirm-admin-email")
+    p_social.add_argument("--providers", type=social.check_providers, required=True)
+    p_social.add_argument("--invite-domains", type=social.check_invite_domains, required=True)
+    p_social.add_argument("--allow-consumer-domain", action="store_true")
+    p_social.add_argument("--cell-label", type=operator.check_cell_label, required=True)
+    p_social.add_argument("--operator", type=operator.check_operator_id, required=True)
     p_restore = sub.add_parser("restore-admin")
     p_restore.add_argument("--org", type=check_org_id, required=True)
     p_restore.add_argument("--user", required=True)
@@ -268,6 +355,8 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915  (one parser)
     p_sign_in.add_argument("--org", type=check_org_id, required=True)
     p_sign_in.add_argument("--mode", choices=["directory", "social"], required=True)
     p_sign_in.add_argument("--providers", type=social.check_providers)
+    p_sign_in.add_argument("--invite-domains", type=social.check_invite_domains)
+    p_sign_in.add_argument("--allow-consumer-domain", action="store_true")
     p_sign_in.add_argument("--operator", type=operator.check_operator_id, required=True)
     return parser
 
@@ -289,8 +378,15 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run(args: argparse.Namespace, dsn: str, env: dict[str, str]) -> int:  # noqa: C901, PLR0911, PLR0912
     if args.command == "set-sign-in":
-        if (args.mode == "social") != bool(args.providers):
-            sys.stderr.write("not set: --providers goes with --mode social, and only with it\n")
+        social_mode = args.mode == "social"
+        if social_mode != bool(args.providers) or social_mode != bool(args.invite_domains):
+            sys.stderr.write(
+                "not set: --providers and --invite-domains go with --mode social, and only "
+                "with it\n"
+            )
+            return 2
+        if args.allow_consumer_domain and not social_mode:
+            sys.stderr.write("not set: --allow-consumer-domain goes with --mode social\n")
             return 2
         try:
             changed = asyncio.run(run_set_sign_in(dsn, args))
@@ -306,6 +402,18 @@ def _run(args: argparse.Namespace, dsn: str, env: dict[str, str]) -> int:  # noq
             sys.stderr.write(f"not done: {e}\n")
             return 1
         sys.stdout.writelines(f"{line}\n" for line in lines)
+        return 0
+    if args.command == "create-social-org":
+        refused = _confirm_social_org(args)
+        if refused is not None:
+            sys.stderr.write(f"not created: {refused}; nothing was written\n")
+            return 1
+        try:
+            org_id = asyncio.run(run_create_social_org(dsn, args))
+        except connections.ConnectError as e:
+            sys.stderr.write(f"not created: {e}\n")
+            return 1
+        sys.stdout.write(org_id + "\n")
         return 0
     if args.command == "restore-admin":
         try:

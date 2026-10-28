@@ -81,13 +81,36 @@ const approval = {
 
 const LISTS: readonly [string, string, string | RegExp, Record<string, Handler>][] = [
   [
-    'the apps list',
+    'the apps you can open',
     '/',
-    'Apps in this organisation',
+    'Apps you can open',
     {
       'GET /v1/whoami': whoami('member'),
-      'GET /v1/apps': () =>
-        json(200, { apps: [{ id: APP_ID, slug: 'expenses', owner_user_id: OWNER, owner_name: OLIVE.name, owner_email: OLIVE.email, status: 'active' }] }),
+      'GET /v1/me/apps': () =>
+        json(200, {
+          user_id: OWNER,
+          user_name: OLIVE.name,
+          user_status: 'active',
+          published_version: null,
+          apps: [
+            {
+              app_id: APP_ID,
+              slug: 'expenses',
+              status: 'active',
+              owner_name: OLIVE.name,
+              owner_email: OLIVE.email,
+              environments: [
+                {
+                  environment_id: 'env_prod0000000000000000',
+                  name: 'prod',
+                  url: 'https://expenses.acme.apps.example',
+                  role: 'user',
+                  via: [{ kind: 'group', name: 'Finance' }],
+                },
+              ],
+            },
+          ],
+        }),
     },
   ],
   [

@@ -355,15 +355,30 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .enter__n { flex: none; width: 2.75rem; height: 2.75rem; border-radius: 50%; display: grid; place-items: center; background: var(--violet-soft); color: var(--t-violet); font-weight: 600; font-size: 1.05rem; }
 .enter__steps p { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.95rem; line-height: 1.45; color: var(--ink-2); }
 .enter__steps b { font-size: 1.05rem; font-weight: 600; color: var(--ink); }
-/* on load, after the agent panel's ticks: each step rises in, then the line after it grows */
+/* after the agent panel's ticks, every 5.6s: circles light 1 to 3, lines fill, hold, reset; shared delay, timing in the keyframes */
 @media (prefers-reduced-motion: no-preference) {
-  .enter__steps li { animation: steprise 480ms ease-out backwards; }
-  .enter__steps li:nth-child(1) { animation-delay: 1.75s; }
-  .enter__steps li:nth-child(2) { animation-delay: 1.93s; }
-  .enter__steps li:nth-child(3) { animation-delay: 2.11s; }
+  .enter__n { animation: stepc1 5.6s ease-out 1.75s infinite backwards; }
+  .enter__steps li:nth-child(2) .enter__n { animation-name: stepc2s; }
+  .enter__steps li:nth-child(3) .enter__n { animation-name: stepc3s; }
 }
-@keyframes steprise { from { opacity: 0; transform: translateY(8px); } }
-@keyframes stepline { from { transform: scaleX(0); } }
+@keyframes stepc1 {
+  0% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  2.81% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  8.04%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
+@keyframes stepc2s {
+  0%, 8.93% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  11.74% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  16.96%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
+@keyframes stepc3s {
+  0%, 17.86% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  20.67% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  25.89%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
 
 .enter__glow {
   position: absolute; left: 50%; top: var(--gy, 50%); z-index: 1; width: var(--gw, 0); height: 40px; margin-top: -20px;
@@ -387,13 +402,38 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
   .enter__steps p { flex: 0 1 auto; max-width: 19rem; }
   .enter__steps li:not(:last-child)::after {
     content: ""; flex: 1 1 auto; min-width: 20px; height: 1.5px; margin: 1.35rem 22px 0;
-    background: linear-gradient(90deg, rgba(110, 91, 255, 0.12), rgba(194, 75, 240, 0.5), rgba(255, 94, 58, 0.35));
+    background:
+      linear-gradient(90deg, rgba(110, 91, 255, 0.12), rgba(194, 75, 240, 0.5), rgba(255, 94, 58, 0.35)) left / 100% 100% no-repeat,
+      linear-gradient(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.08)) right / 0% 100% no-repeat;
   }
 }
 @media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
-  .enter__steps li:not(:last-child)::after { transform-origin: left center; animation: stepline 520ms ease-out backwards; }
-  .enter__steps li:nth-child(1)::after { animation-delay: 2.05s; }
-  .enter__steps li:nth-child(2)::after { animation-delay: 2.23s; }
+  .enter__steps li:not(:last-child)::after { animation: stepl1 5.6s ease-in-out 1.75s infinite backwards; }
+  .enter__steps li:nth-child(2)::after { animation-name: stepl2; }
+  .enter__steps li:nth-child(2) .enter__n { animation-name: stepc2; }
+  .enter__steps li:nth-child(3) .enter__n { animation-name: stepc3; }
+}
+@keyframes stepc2 {
+  0%, 16.96% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  19.78% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  25%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
+@keyframes stepc3 {
+  0%, 33.93% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  36.74% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  41.96%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
+@keyframes stepl1 {
+  0%, 6.25% { background-size: 0% 100%, 100% 100%; }
+  17.86%, 78.57% { background-size: 100% 100%, 0% 100%; }
+  85.71%, 100% { background-size: 0% 100%, 100% 100%; }
+}
+@keyframes stepl2 {
+  0%, 23.21% { background-size: 0% 100%, 100% 100%; }
+  34.82%, 78.57% { background-size: 100% 100%, 0% 100%; }
+  85.71%, 100% { background-size: 0% 100%, 100% 100%; }
 }
 @media (min-width: 1100px) {
   .enter__grid { grid-template-columns: minmax(0, 36fr) minmax(0, 58fr); gap: clamp(24px, 2.6vw, 44px); }

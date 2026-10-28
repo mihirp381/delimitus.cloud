@@ -1540,6 +1540,55 @@ a.segment.current {
   max-width: none;
 }
 
+.access-btn {
+  max-width: 100%;
+}
+
+.view-switch {
+  margin-bottom: var(--ssc-space-3);
+}
+
+/* The apps a person may open: how they have each, and a button per environment. */
+.open-access,
+.open-buttons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ssc-space-2);
+}
+
+.who-env + .who-env {
+  margin-top: var(--ssc-space-4);
+}
+
+.who-env h3,
+.dialog-section > h3 {
+  margin-bottom: var(--ssc-space-2);
+  font-size: var(--ssc-type-size-small);
+  font-weight: 600;
+}
+
+.who-list {
+  display: grid;
+  gap: var(--ssc-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.who-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ssc-space-2);
+}
+
+.dialog .who-actions {
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--ssc-space-4);
+}
+
 /* A long id that may give way to its neighbours; the element's title carries all of it. */
 .truncate {
   display: inline-block;
@@ -2124,6 +2173,39 @@ details[open] > summary {
     display: flex;
     flex-wrap: wrap;
     gap: var(--ssc-space-1);
+  }
+}
+
+/* Under 480px a row of the apps a person may open stacks: the app, how they have it, the buttons. */
+@media (max-width: 479px) {
+  .open-apps .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .open-apps .table tbody tr {
+    display: grid;
+    gap: var(--ssc-space-1);
+    padding: var(--ssc-space-2) var(--ssc-space-4);
+    border-bottom: 1px solid var(--ssc-border-subtle);
+  }
+
+  .open-apps .table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .open-apps .table td,
+  .open-apps .table td.fill {
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    padding: 0;
+    border-bottom: 0;
   }
 }
 

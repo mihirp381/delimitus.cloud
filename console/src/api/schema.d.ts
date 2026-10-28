@@ -1508,6 +1508,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Apps
+         * @description The environments the caller may open, from the one access evaluator on a live compile.
+         *     A person's own credential only: an agent's, a CI token and any other credential are
+         *     ``FORBIDDEN``. Org admins see only what is shared with them, like everyone else.
+         */
+        get: operations["list_my_apps_v1_me_apps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/operations/{operation_id}": {
         parameters: {
             query?: never;
@@ -1667,9 +1689,31 @@ export interface paths {
          * Invite User
          * @description An invited member who signs in with one of the org's providers. ``201`` for a new person;
          *     ``200`` with the person who already has the address, ignoring case. Active admins only,
-         *     never in an agent session; ``DIRECTORY_MANAGED`` in a directory org.
+         *     never in an agent session; ``DIRECTORY_MANAGED`` in a directory org;
+         *     ``INVITE_DOMAIN_NOT_ALLOWED`` for an address outside the org's invite domains.
          */
         post: operations["invite_user_v1_users_invite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/users/{user_id}/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Person Apps
+         * @description ``GET /v1/me/apps`` for another person of the org. Active org admins only, with their own
+         *     credential (``FORBIDDEN``); ``REFERENCE_NOT_FOUND`` for a person not in the org.
+         */
+        get: operations["list_person_apps_v1_users__user_id__apps_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1709,6 +1753,7 @@ export interface paths {
         /**
          * Reactivate User
          * @description A deactivated person may sign in again; their old sessions stay ended.
+         *     ``INVITE_DOMAIN_NOT_ALLOWED`` when their address is outside the org's invite domains.
          */
         post: operations["reactivate_user_v1_users__user_id__reactivate_post"];
         delete?: never;
@@ -1811,6 +1856,19 @@ export interface components {
             user_id: string;
             /** User Name */
             user_name: string;
+        };
+        /** AccessVia */
+        AccessVia: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "group" | "org";
+            /**
+             * Name
+             * @description The person's or group's name: `Former member` for a person no longer active, `Removed group` for a group gone from the directory; null for the org.
+             */
+            name: string | null;
         };
         /**
          * ActorKind
@@ -3346,7 +3404,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "DIRECTORY_MANAGED" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "DOMAIN_NOT_READY" | "DOMAIN_STATE" | "DOMAIN_SUFFIX_TOO_SHORT" | "DOMAIN_SUFFIX_PUBLIC" | "DOMAIN_SUFFIX_RESERVED" | "DOMAIN_SUFFIX_HELD" | "DOMAIN_SUFFIX_OWN" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "DIRECTORY_MANAGED" | "INVITE_DOMAIN_NOT_ALLOWED" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "DOMAIN_NOT_READY" | "DOMAIN_STATE" | "DOMAIN_SUFFIX_TOO_SHORT" | "DOMAIN_SUFFIX_PUBLIC" | "DOMAIN_SUFFIX_RESERVED" | "DOMAIN_SUFFIX_HELD" | "DOMAIN_SUFFIX_OWN" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -4585,6 +4643,75 @@ export interface components {
              */
             usage_type: ("rare" | "daily" | "session" | "heavy") | null;
         };
+        /** UserApp */
+        UserApp: {
+            /** App Id */
+            app_id: string;
+            /**
+             * Environments
+             * @description Production before preview.
+             */
+            environments: components["schemas"]["UserAppEnvironment"][];
+            /** Owner Email */
+            owner_email: string | null;
+            /** Owner Name */
+            owner_name: string;
+            /** Slug */
+            slug: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "disabled" | "quarantined" | "deleting";
+        };
+        /** UserAppEnvironment */
+        UserAppEnvironment: {
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "prod" | "preview";
+            /**
+             * Role
+             * @description The best role granted.
+             * @enum {string}
+             */
+            role: "builder" | "user";
+            /**
+             * Url
+             * @description As `EnvironmentOut.url`.
+             */
+            url: string | null;
+            /**
+             * Via
+             * @description The grants that count, one per subject.
+             */
+            via: components["schemas"]["AccessVia"][];
+        };
+        /** UserApps */
+        UserApps: {
+            /**
+             * Apps
+             * @description By slug; only apps with an environment to open.
+             */
+            apps: components["schemas"]["UserApp"][];
+            /**
+             * Published Version
+             * @description The org's newest published snapshot; null before the first.
+             */
+            published_version: number | null;
+            /** User Id */
+            user_id: string;
+            /** User Name */
+            user_name: string;
+            /**
+             * User Status
+             * @enum {string}
+             */
+            user_status: "active" | "invited" | "deactivated";
+        };
         /** UserMatch */
         UserMatch: {
             /**
@@ -4717,6 +4844,11 @@ export interface components {
             credential_id: string;
             /** Email */
             email: string | null;
+            /**
+             * Invite Domains
+             * @description The email domains a social org's admins may invite; empty in a directory org.
+             */
+            invite_domains: string[];
             /** Is Agent */
             is_agent: boolean;
             kind: components["schemas"]["PrincipalKind"];
@@ -11440,6 +11572,71 @@ export interface operations {
             };
         };
     };
+    list_my_apps_v1_me_apps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserApps"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     get_operation_v1_operations__operation_id__get: {
         parameters: {
             query?: never;
@@ -12073,7 +12270,74 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_person_apps_v1_users__user_id__apps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserApps"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -12169,7 +12433,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -12265,7 +12529,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED` */
             422: {
                 headers: {
                     [name: string]: unknown;

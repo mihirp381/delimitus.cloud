@@ -3,12 +3,13 @@ for sharing by address; without it, the roster, paged by name. Email is display 
 (``db/PII.md``): callers act on the ``usr_`` id they pick.
 
 In a pilot org that signs in with social providers (decision 002 amendment 2026-10-27), admins
-invite people by email and deactivate or reactivate them; a directory org refuses all three."""
+invite people by email at the org's invite domains and deactivate or reactivate them; a directory
+org refuses all three."""
 
 from datetime import datetime
 from typing import Annotated, Final, Literal
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Request, Response
 from pydantic import Field
 from sqlalchemy import text
 
@@ -17,11 +18,13 @@ from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.text import PRINTABLE
 from ssc_control import directory
-from ssc_control.api.authz import OrgRole, require_admin
+from ssc_control.api.authz import OrgRole, require_admin, require_person
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
+from ssc_control.api.routes.v1.open_apps import RESPONSES, UserApps, user_apps
+from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.identity import social
 from ssc_control.snapshot.service import mark_dirty
@@ -133,7 +136,8 @@ _PERSON = text(
     "from ssc.auth_session where org_id = u.org_id and user_id = u.id and kind <> 'ci') s on true "
     "where u.org_id = :org and u.id = :id"
 )
-_LOCK_ORG = text("select 1 from ssc.org where id = :org for update")
+_LOCK_ORG = text("select invite_domains from ssc.org where id = :org for no key update")
+_EMAIL_OF = text("select email from ssc.user_account where org_id = :org and id = :id")
 _INVITED = text(
     "select id from ssc.user_account where org_id = :org and lower(email) = :email "
     "order by created_at, id limit 1"
@@ -147,6 +151,7 @@ _PEOPLE_CHANGES: Final = (
     ErrorCode.FORBIDDEN,
     ErrorCode.AGENT_SESSION_REFUSED,
     ErrorCode.DIRECTORY_MANAGED,
+    ErrorCode.INVITE_DOMAIN_NOT_ALLOWED,
 )
 
 
@@ -173,10 +178,13 @@ async def _person(uow: UnitOfWork, user_id: str) -> UserMatch:
 async def invite_user(body: InviteIn, uow: UserUoW) -> Response:
     """An invited member who signs in with one of the org's providers. ``201`` for a new person;
     ``200`` with the person who already has the address, ignoring case. Active admins only,
-    never in an agent session; ``DIRECTORY_MANAGED`` in a directory org."""
+    never in an agent session; ``DIRECTORY_MANAGED`` in a directory org;
+    ``INVITE_DOMAIN_NOT_ALLOWED`` for an address outside the org's invite domains."""
     await _social_admin(uow)
     email = body.email.lower()
-    await uow.conn.execute(_LOCK_ORG, {"org": uow.org_id})
+    domains = (await uow.conn.execute(_LOCK_ORG, {"org": uow.org_id})).scalar_one()
+    if not social.at_domains(email, domains):
+        raise Refusal(ErrorCode.INVITE_DOMAIN_NOT_ALLOWED, evidence={"domains": list(domains)})
     found = (
         await uow.conn.execute(_INVITED, {"org": uow.org_id, "email": email})
     ).scalar_one_or_none()
@@ -200,6 +208,15 @@ async def _set_status(uow: UnitOfWork, user_id: str, status: directory.Status) -
         uow.conn, uow.org_id, user_id
     ):
         raise Refusal(ErrorCode.LAST_ORG_ADMIN)
+    if status == "active":
+        domains = (await uow.conn.execute(_LOCK_ORG, {"org": uow.org_id})).scalar_one()
+        email = (
+            await uow.conn.execute(_EMAIL_OF, {"org": uow.org_id, "id": user_id})
+        ).scalar_one_or_none()
+        if email is None:
+            raise Refusal(ErrorCode.NOT_FOUND)
+        if not social.at_domains(email, domains):
+            raise Refusal(ErrorCode.INVITE_DOMAIN_NOT_ALLOWED)
     before = await directory.set_status(
         uow.conn, uow.org_id, user_id, status, actor=actor_of(uow.principal)
     )
@@ -227,5 +244,15 @@ async def deactivate_user(user_id: Id, uow: UserUoW) -> Response:
     responses=problem_responses(*_PEOPLE_CHANGES, ErrorCode.NOT_FOUND),
 )
 async def reactivate_user(user_id: Id, uow: UserUoW) -> Response:
-    """A deactivated person may sign in again; their old sessions stay ended."""
+    """A deactivated person may sign in again; their old sessions stay ended.
+    ``INVITE_DOMAIN_NOT_ALLOWED`` when their address is outside the org's invite domains."""
     return await _set_status(uow, user_id, "active")
+
+
+@router.get("/users/{user_id}/apps", response_model=UserApps, responses=RESPONSES)
+async def list_person_apps(user_id: Id, uow: UserUoW, request: Request) -> UserApps:
+    """``GET /v1/me/apps`` for another person of the org. Active org admins only, with their own
+    credential (``FORBIDDEN``); ``REFERENCE_NOT_FOUND`` for a person not in the org."""
+    require_person(uow)
+    await require_admin(uow)
+    return await user_apps(uow, user_id, runtime_of(request).settings.apps_domain)

@@ -111,6 +111,38 @@
         "title": "AccessExplained",
         "type": "object"
       },
+      "AccessVia": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "user",
+              "group",
+              "org"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person's or group's name: `Former member` for a person no longer active, `Removed group` for a group gone from the directory; null for the org.",
+            "title": "Name"
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ],
+        "title": "AccessVia",
+        "type": "object"
+      },
       "ActorKind": {
         "enum": [
           "user",
@@ -4209,6 +4241,7 @@
           "DEPLOYMENT_IN_FLIGHT",
           "LAST_ORG_ADMIN",
           "DIRECTORY_MANAGED",
+          "INVITE_DOMAIN_NOT_ALLOWED",
           "OWNER_NOT_ACTIVE",
           "RECORD_IMMUTABLE",
           "SCHEDULE_DELETED",
@@ -7221,6 +7254,168 @@
         "title": "UsageOut",
         "type": "object"
       },
+      "UserApp": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "environments": {
+            "description": "Production before preview.",
+            "items": {
+              "$ref": "#/components/schemas/UserAppEnvironment"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "owner_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Email"
+          },
+          "owner_name": {
+            "title": "Owner Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "disabled",
+              "quarantined",
+              "deleting"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "slug",
+          "status",
+          "owner_name",
+          "owner_email",
+          "environments"
+        ],
+        "title": "UserApp",
+        "type": "object"
+      },
+      "UserAppEnvironment": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "name": {
+            "enum": [
+              "prod",
+              "preview"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "description": "The best role granted.",
+            "enum": [
+              "builder",
+              "user"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "As `EnvironmentOut.url`.",
+            "title": "Url"
+          },
+          "via": {
+            "description": "The grants that count, one per subject.",
+            "items": {
+              "$ref": "#/components/schemas/AccessVia"
+            },
+            "title": "Via",
+            "type": "array"
+          }
+        },
+        "required": [
+          "environment_id",
+          "name",
+          "url",
+          "role",
+          "via"
+        ],
+        "title": "UserAppEnvironment",
+        "type": "object"
+      },
+      "UserApps": {
+        "additionalProperties": false,
+        "properties": {
+          "apps": {
+            "description": "By slug; only apps with an environment to open.",
+            "items": {
+              "$ref": "#/components/schemas/UserApp"
+            },
+            "title": "Apps",
+            "type": "array"
+          },
+          "published_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The org's newest published snapshot; null before the first.",
+            "title": "Published Version"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "user_name": {
+            "title": "User Name",
+            "type": "string"
+          },
+          "user_status": {
+            "enum": [
+              "active",
+              "invited",
+              "deactivated"
+            ],
+            "title": "User Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "user_name",
+          "user_status",
+          "published_version",
+          "apps"
+        ],
+        "title": "UserApps",
+        "type": "object"
+      },
       "UserMatch": {
         "additionalProperties": false,
         "properties": {
@@ -7504,6 +7699,14 @@
             ],
             "title": "Email"
           },
+          "invite_domains": {
+            "description": "The email domains a social org's admins may invite; empty in a directory org.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Invite Domains",
+            "type": "array"
+          },
           "is_agent": {
             "title": "Is Agent",
             "type": "boolean"
@@ -7574,7 +7777,8 @@
           "org_name",
           "name",
           "email",
-          "sign_in_mode"
+          "sign_in_mode",
+          "invite_domains"
         ],
         "title": "Whoami",
         "type": "object"
@@ -17141,6 +17345,78 @@
         ]
       }
     },
+    "/v1/me/apps": {
+      "get": {
+        "description": "The environments the caller may open, from the one access evaluator on a live compile.\nA person's own credential only: an agent's, a CI token and any other credential are\n``FORBIDDEN``. Org admins see only what is shared with them, like everyone else.",
+        "operationId": "list_my_apps_v1_me_apps_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserApps"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "List My Apps",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
     "/v1/operations/{operation_id}": {
       "get": {
         "operationId": "get_operation_v1_operations__operation_id__get",
@@ -17913,7 +18189,7 @@
     },
     "/v1/users/invite": {
       "post": {
-        "description": "An invited member who signs in with one of the org's providers. ``201`` for a new person;\n``200`` with the person who already has the address, ignoring case. Active admins only,\nnever in an agent session; ``DIRECTORY_MANAGED`` in a directory org.",
+        "description": "An invited member who signs in with one of the org's providers. ``201`` for a new person;\n``200`` with the person who already has the address, ignoring case. Active admins only,\nnever in an agent session; ``DIRECTORY_MANAGED`` in a directory org;\n``INVITE_DOMAIN_NOT_ALLOWED`` for an address outside the org's invite domains.",
         "operationId": "invite_user_v1_users_invite_post",
         "parameters": [
           {
@@ -18012,7 +18288,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED`"
           },
           "429": {
             "content": {
@@ -18026,6 +18302,90 @@
           }
         },
         "summary": "Invite User",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/users/{user_id}/apps": {
+      "get": {
+        "description": "``GET /v1/me/apps`` for another person of the org. Active org admins only, with their own\ncredential (``FORBIDDEN``); ``REFERENCE_NOT_FOUND`` for a person not in the org.",
+        "operationId": "list_person_apps_v1_users__user_id__apps_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserApps"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`, `REFERENCE_NOT_FOUND`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "List Person Apps",
         "tags": [
           "v1"
         ]
@@ -18142,7 +18502,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED`"
           },
           "429": {
             "content": {
@@ -18163,7 +18523,7 @@
     },
     "/v1/users/{user_id}/reactivate": {
       "post": {
-        "description": "A deactivated person may sign in again; their old sessions stay ended.",
+        "description": "A deactivated person may sign in again; their old sessions stay ended.\n``INVITE_DOMAIN_NOT_ALLOWED`` when their address is outside the org's invite domains.",
         "operationId": "reactivate_user_v1_users__user_id__reactivate_post",
         "parameters": [
           {
@@ -18272,7 +18632,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED`"
           },
           "429": {
             "content": {

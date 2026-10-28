@@ -221,6 +221,15 @@ providers are offered and proven is decided by `landing/CLAIMS.md` (`idp`), not 
 Pilot orgs only (decision 002 amendment 2026-10-27; `landing/CLAIMS.md` row `social`). SSC uses
 WorkOS `/sso/authorize` with `provider=` and `/sso/token` only, never User Management or AuthKit.
 
+Tell the pilot's IT contact before the pilot starts: invite domains check the address, not who
+manages the account. A person can sign in with a personal Google account made with a company
+address on a domain the company does not manage in Google Workspace, or a personal Microsoft
+account with a company address (SSC's Microsoft sign-in is personal accounts only). Disabling
+their work account does not end that personal account, so when someone leaves, a pilot admin
+must deactivate them in People; only that ends their SSC access. SSC cannot see whether an
+account is company-managed. Moving the org to company SSO with directory sync closes this. For a
+company pilot, offer Google sign-in first.
+
 ### WorkOS setup **[real]**
 
 1. In the WorkOS dashboard, Authentication, enable each provider the pilot needs: Google OAuth,
@@ -232,19 +241,90 @@ WorkOS `/sso/authorize` with `provider=` and `/sso/token` only, never User Manag
    verified addresses (decision 002 amendment), so leave `github` out of `--providers` for now.
 2. Keep `<auth_url>/callback` (`http://localhost:8100/callback` on the rig) as a WorkOS redirect
    URI, as in Before you start.
-3. Put the org in social mode with the providers it may use:
 
-   ```sh
-   uv run python -m ssc_control.identity set-sign-in --org <org_…> --mode social \
-     --providers google,microsoft --operator op_<you>
-   ```
+### Create a social org **[real]**
 
-   Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` reverts it; directory
-   sync skips an org while it is in social mode.
-4. As an org admin, open People in the console, Invite by email, and invite each pilot person.
-   They show under Invited until their first sign-in. A person signs in with one provider: the
-   first one links, and another provider with the same address is refused, so each provider's
-   check below needs its own invited address.
+A small team pilots without a WorkOS organisation, a directory or an SSO connection. With the
+database reachable as in `docs/runbooks/ssc-064-control-plane.md` step 10 (`SSC_DATABASE_DSN` as
+`ssc_app`; no WorkOS settings needed):
+
+```sh
+LABEL=l$(openssl rand -hex 6)
+ORG=$(uv run python -m ssc_control.identity create-social-org --name "<org name>" \
+  --admin-email <admin email> --providers google,microsoft --invite-domains <company domain> \
+  --cell-label $LABEL --operator op_<you>)
+echo $ORG
+```
+
+The command asks for the admin email again (`Confirm admin email:`; `--confirm-admin-email`
+gives it in a script) and refuses if the two differ. It then shows the admin email, the org
+name, the providers, the invite domains and the cell label, and writes the org only if you type `confirm`; anything
+else, or no answer, writes nothing. Check the address letter by letter: it cannot be fixed
+afterwards, since `restore-admin` refuses an invited person who never signed in. The prompts go
+to stderr, so `ORG=$(...)` still captures only the org id.
+
+`--invite-domains` takes 1 to 10 comma-separated domains, such as `acme.com,acme.co.uk`. Only
+addresses whose part after the last `@` equals one of them exactly may be invited, reactivated or
+signed in: `eng.acme.com` needs its own entry, and there are no wildcards. The admin email must be
+at one of them, or the command refuses before the prompt. A consumer mail domain such as
+`gmail.com` is refused unless `--allow-consumer-domain` is given, for a founder test org on the
+rig only; the audit `after` records it. On the rig, with Gmail test accounts:
+
+```sh
+uv run python -m ssc_control.identity create-social-org --name "Rig pilot" \
+  --admin-email <you>@gmail.com --providers google --invite-domains gmail.com \
+  --allow-consumer-domain --cell-label $LABEL --operator op_<you>
+```
+
+Such an org lets in any Gmail account its admin invites; never make one for a customer.
+
+Pass: the org id on stdout. One transaction makes the org in social mode, its first admin as an
+invited person and its cell label, audited `org.created`, `org.updated` (the mode),
+`user.invited` and `org.updated` (the label). A bad provider, label or address, or a label
+another org has, or a missing or bad `--invite-domains`, writes nothing and says why. Leave `github` out of `--providers`, as above. The org has no
+onboarding row and directory sync skips it.
+
+Then build the org's cell, before anyone deploys an app, the way `create-org` expects: the label
+names the cell, and the build takes the org id the command printed.
+
+```sh
+uv run python -m ssc_control.cells request --label $LABEL --stage prod --org-id $ORG --operator op_<you>
+uv run python -m ssc_infra.onboard $LABEL --stage prod --settings settings.json --set org_id=$ORG \
+  --probe-image <probe image>
+```
+
+and run the `cells ready` line it prints last (`docs/runbooks/ssc-110-onboarding.md`, step 3).
+Signing in and inviting people need no cell.
+
+The admin signs in first, at `https://console.delimitus.com/login` with the org id and one of the
+org's providers: the sign-in links them, makes them active and takes their name from the profile.
+Until then People shows them as Invited, and `restore-admin` refuses them: in a social org it
+restores only a person who has signed in once and whose address is at one of the org's domains.
+
+### Change a social org's providers or domains **[real]**
+
+`create-social-org` is the only way into social mode: a directory org is never moved to it, and
+`set-sign-in --mode social` on one refuses and writes nothing. For an org already in social mode:
+
+```sh
+uv run python -m ssc_control.identity set-sign-in --org <org_…> --mode social \
+  --providers google,microsoft --invite-domains acme.com,acme.co.uk --operator op_<you>
+```
+
+Both lists are given in full each time and replace the old ones. Removing a domain that an invited
+or active person still uses is refused with their `usr_` ids and addresses; deactivate them in
+People first. A person whose domain is removed is refused at their next sign-in.
+
+Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` or `--invite-domains`
+takes the org out of social mode, for good.
+
+### Invite people **[real]**
+
+As an org admin, open People in the console, Invite by email, and invite each pilot person. The
+dialog lists the org's domains and refuses any other address before sending it. They
+show under Invited until their first sign-in. A person signs in with one provider: the first one
+links, and another provider with the same address is refused, so each provider's check below
+needs its own invited address.
 
 ### Live check **[real]**
 
@@ -257,10 +337,83 @@ Not yet run. Tick each line and record the date and the `usr_` ids under Record.
       same page and `login.failed` reason `email_not_verified`; then set the providers back.
 - [ ] An address nobody invited is refused with the same page as every other refusal, and the
       audit chain has `login.failed` with the reason.
+- [ ] Inviting an address outside the org's domains (another company, a Gmail address, a
+      subdomain) is refused in the dialog, and `POST /v1/users/invite` answers
+      `INVITE_DOMAIN_NOT_ALLOWED` and writes nothing.
+- [ ] After `set-sign-in` drops a domain whose only person was deactivated, reactivating them is
+      refused with `INVITE_DOMAIN_NOT_ALLOWED`.
 - [ ] `ssc login` from the command line goes through the same chooser.
 - [ ] Deactivate a signed-in person from People: their next console request and `ssc whoami` fail,
       and the command line's refresh fails.
 - [ ] Reactivate them: they sign in again with the same `usr_` id.
+- [x] `create-social-org` on the staging or pilot cell, or on the rig (below); its admin signs
+      in with Google and People shows them as an active admin. Passed 2026-10-28 on the rig
+      against WorkOS staging: the email asked twice, `confirm`, then the admin's Google sign-in
+      linked them (`identity.linked`, `login.succeeded`).
+- [x] That admin invites one person, who signs in with Google. Passed 2026-10-28 on the rig:
+      `user.invited` by the admin's `usr_`, then the person's Google sign-in made them active.
+
+### The last two lines on the rig **[real]**
+
+The real console (`npm run dev`) signs in through the rig auth host; no cell is needed, and the
+cell label is only recorded. In WorkOS staging: `http://localhost:8100/callback` is a redirect
+URI and Google OAuth is enabled (the shared test credentials are fine). Use two Google accounts.
+
+Terminal 1, from the repository root (any free port instead of 55432):
+
+```sh
+docker run -d --rm --name ssc-rig-pg -e POSTGRES_PASSWORD=pw -p 55432:5432 postgres:18
+until docker exec ssc-rig-pg pg_isready -q -h 127.0.0.1 -U postgres; do sleep 1; done
+eval "$(uv run python tools/dev_stack.py up --dsn postgresql://postgres:pw@localhost:55432/postgres)"
+LABEL=l$(openssl rand -hex 6)
+ORG=$(uv run python -m ssc_control.identity create-social-org --name "Rig pilot" \
+  --admin-email <admin's Google address> --providers google --cell-label $LABEL --operator op_<you>)
+echo $ORG
+uv run python tools/dev_stack.py serve --port 8000
+```
+
+`up` exports `SSC_DATABASE_DSN` as the rig's `ssc_app` role (also `database_dsn` in
+`.ssc-dev/state.json`), which `create-social-org` uses; at its prompts, type the admin address
+again, then `confirm`.
+
+Terminal 2, with your WorkOS staging keys (this terminal only, never in a file):
+
+```sh
+export SSC_WORKOS_API_KEY=<staging sk_test_…> SSC_WORKOS_CLIENT_ID=<staging client_…>
+uv run python tools/dev_stack.py auth --port 8100
+```
+
+It prints `SSC_AUTH_URL=http://localhost:8100` and `SSC_CONSOLE_URL=http://localhost:5173`.
+
+Terminal 3:
+
+```sh
+cd console && npm ci && VITE_SSC_AUTH_URL=http://localhost:8100 npm run dev
+```
+
+`/v1` goes to the API on 127.0.0.1:8000 (`SSC_API_URL` to change it). The access token's audience
+and issuer need nothing set: the console asks for `https://api.delimitus.com`, and `serve` trusts
+the dev issuer the auth host signs with.
+
+In the browser, at `http://localhost:5173` exactly (not `127.0.0.1`, whose origin the auth host
+does not allow):
+
+1. `/login`, enter `$ORG`, Continue: the chooser shows Google only. Sign in as the admin.
+   People shows them Active, Admin.
+2. People, Invite by email, the second Google address: it shows Invited.
+3. In a private window, `http://localhost:5173/login`, `$ORG`, Google as the second account: the
+   console opens. Back in the admin's window, People shows them Active.
+
+Check (any terminal):
+
+```sh
+docker exec ssc-rig-pg psql -U postgres -c "select email, role, status from ssc.user_account where org_id = '<org_…>' order by role, email"
+docker exec ssc-rig-pg psql -U postgres -c "select seq, action, actor_id, target_id from ssc.audit_event where org_id = '<org_…>' and action in ('user.invited', 'login.succeeded') order by seq"
+```
+
+Pass: both people `active` (the admin `admin`); the audit has `user.invited` (operator) and
+`login.succeeded` for the admin, then `user.invited` by the admin's `usr_` and
+`login.succeeded` by the second person's. Stop with Ctrl-C and `docker stop ssc-rig-pg`.
 
 ## Record
 

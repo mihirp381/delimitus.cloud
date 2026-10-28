@@ -25,6 +25,7 @@ interface Person {
 interface World {
   readonly slug: string;
   readonly appId: string;
+  readonly prodUrl: string;
   readonly grants: string;
   readonly builder: Person;
   readonly builderEmail: string;
@@ -91,6 +92,7 @@ function world(request: APIRequestContext): Promise<World> {
     return {
       slug,
       appId: app.id,
+      prodUrl: prod.url,
       grants,
       builder: { id: builderId ?? '', token: mint(builderId ?? '') },
       builderEmail: `builder-${stamp}@example.com`,
@@ -134,10 +136,17 @@ async function seesHelp(page: Page) {
 async function seesNothingAdmin(page: Page, request: APIRequestContext, w: World, person: Person) {
   await expect(nav(page)).toHaveText([...EVERYONE, HELP]);
 
-  // The app list is the plain one, not the admin inventory, and the shared app is in it.
+  // The app list is the apps they may open, not the admin inventory, and the shared app is in it
+  // with its Open link. Only a builder's slug opens the app's page.
   await page.goto('/');
-  await expect(page.getByRole('link', { name: w.slug })).toBeVisible();
-  await expect(page.getByRole('columnheader')).toHaveText(['App', 'Owner']);
+  await expect(page.getByRole('heading', { name: 'Your apps', level: 1 })).toBeVisible();
+  const row = page.getByRole('table', { name: 'Apps you can open' }).getByRole('row').filter({ hasText: w.slug });
+  await expect(page.getByRole('columnheader')).toHaveText(['App', 'Access', 'Open']);
+  await expect(row.getByRole('cell').nth(1)).toContainText('Shared with you');
+  const open = row.getByRole('link', { name: `Open production ${w.slug}` });
+  await expect(open).toHaveAttribute('href', w.prodUrl);
+  await expect(open).toHaveAttribute('rel', 'noopener');
+  await expect(row.getByRole('link', { name: w.slug, exact: true })).toHaveCount(person === w.builder ? 1 : 0);
   await expect(page.getByLabel('Environment')).toHaveCount(0);
 
   // Typing an admin screen's address shows a line, not the screen, and the API refuses the read.
@@ -197,8 +206,37 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   await expect(nav(page).first()).toBeInViewport({ ratio: 1 });
   await expect(nav(page).last()).toBeInViewport({ ratio: 1 });
 
-  // The inventory, with its environment filter.
+  // The inventory, with its environment filter, and who can use each app from its Access cell.
   await expect(page.getByRole('link', { name: w.slug })).toBeVisible();
+  await expect(page.getByLabel('Environment')).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Apps in this organisation' }).getByRole('columnheader')).toHaveText([
+    'App',
+    'Owner',
+    'Production',
+    'Preview',
+    'Last used',
+    'Access',
+  ]);
+  const listed = page.getByRole('row').filter({ has: page.getByRole('link', { name: w.slug, exact: true }) });
+  await listed.getByRole('button', { name: /^\d+ people/ }).click();
+  const who = page.getByRole('dialog', { name: `Who can use ${w.slug}` });
+  const whoProd = who.getByRole('region', { name: 'Production' });
+  await expect(whoProd.getByRole('listitem').filter({ hasText: 'builder E2E' })).toHaveText('User builder E2Ebuilder');
+  await expect(whoProd.getByRole('listitem').filter({ hasText: 'reader E2E' })).toHaveText('User reader E2Euser');
+  await expect(who.getByRole('link', { name: 'Change on the Access tab' })).toHaveAttribute(
+    'href',
+    `/apps/${w.appId}?tab=access`,
+  );
+  await page.keyboard.press('Escape');
+  await expect(who).toBeHidden();
+
+  // The apps the admin may open: the owner's builder grant on preview, and no production.
+  await page.getByText('Apps I can open', { exact: true }).click();
+  const mine = page.getByRole('table', { name: 'Apps you can open' }).getByRole('row').filter({ hasText: w.slug });
+  await expect(mine.getByRole('link', { name: `Open preview ${w.slug}` })).toBeVisible();
+  await expect(mine.getByRole('link', { name: `Open production ${w.slug}` })).toHaveCount(0);
+  await expect(page.getByLabel('Environment')).toHaveCount(0);
+  await page.getByText('All apps', { exact: true }).click();
   await expect(page.getByLabel('Environment')).toBeVisible();
 
   await nav(page).filter({ hasText: 'Audit log' }).click();
@@ -305,4 +343,23 @@ test('a user sees nothing admin, and the API refuses the actions shown to everyo
   const secrets = page.getByRole('region', { name: 'Secrets' });
   await expect(secrets.getByRole('heading', { name: 'Set or rotate a secret' })).toBeVisible();
   await expect(secrets.getByRole('alert')).toContainText(FORBIDDEN);
+});
+
+test('your apps fit a 390px screen, access and open under the app', async ({ page, request }) => {
+  const w = await world(request);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, '/', w.user.token);
+  const table = page.getByRole('table', { name: 'Apps you can open' });
+  const cells = table.getByRole('row').filter({ hasText: w.slug }).getByRole('cell');
+  await expect(cells).toHaveCount(3);
+  const [app, access, open] = await Promise.all([0, 1, 2].map(async (i) => (await cells.nth(i).boundingBox())!));
+  expect(access!.y).toBeGreaterThanOrEqual(app!.y + app!.height - 1);
+  expect(open!.y).toBeGreaterThanOrEqual(access!.y + access!.height - 1);
+  for (const box of [app!, access!, open!]) expect(box.x + box.width).toBeLessThanOrEqual(390);
+  const overflow = (el: unknown) => {
+    const box = el as { scrollWidth: number; clientWidth: number };
+    return box.scrollWidth - box.clientWidth;
+  };
+  expect(await page.locator('html').evaluate(overflow)).toBe(0);
+  expect(await page.locator('.table-wrap').filter({ has: table }).evaluate(overflow)).toBe(0);
 });

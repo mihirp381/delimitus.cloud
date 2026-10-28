@@ -510,3 +510,15 @@ async def test_a_ci_session_takes_only_a_preview_scoped_credential(rig: Rig) -> 
     with api(rig) as client:
         assert_problem(client.get("/v1/whoami", headers=auth(unscoped)), ErrorCode.UNAUTHENTICATED)
         assert client.get("/v1/whoami", headers=auth(made["token"])).status_code == 200
+
+
+async def test_a_ci_token_or_an_agent_lists_no_ones_apps(rig: Rig) -> None:
+    founder = rig.w.founder
+    full = access(rig, await open_session(rig))
+    ci = (await ci_token(rig))["token"]
+    agent = access(rig, await open_session(rig, agent="claude-code"), agent_client_id="claude-code")
+    with api(rig) as client:
+        for path in ("/v1/me/apps", f"/v1/users/{founder}/apps"):
+            assert client.get(path, headers=auth(full)).status_code == 200
+            for token in (ci, agent):
+                assert_problem(client.get(path, headers=auth(token)), ErrorCode.FORBIDDEN)
