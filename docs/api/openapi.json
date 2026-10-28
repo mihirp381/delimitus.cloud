@@ -1448,6 +1448,11 @@
           "invite.created",
           "invite.revoked",
           "invite.used",
+          "domain.requested",
+          "domain.active",
+          "domain.failed",
+          "domain.flipped",
+          "domain.retired",
           "github.installation_bound",
           "repo.connected",
           "repo.disconnected"

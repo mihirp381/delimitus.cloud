@@ -2386,3 +2386,78 @@ def test_social_sign_in_columns_are_checked(dsns: Dsns) -> None:
     user = org.admin_user_id
     assert run(dsns.app, org.org_id, status, ("invited", user)) == [(user,)]
     assert refused(dsns.app, org.org_id, status, ("pending", user)) == CHECK_VIOLATION
+
+
+DOMAIN_ACTIONS = {f"domain.{a}" for a in ("requested", "active", "failed", "flipped", "retired")}
+INSERT_DOMAIN = (
+    "insert into ssc.org_domain (id, org_id, suffix, zone_name, name_servers, state, observed_ns, "
+    "failure) values (%(id)s, %(org)s, %(suffix)s, %(zone)s, %(ns)s, %(state)s, %(observed)s, "
+    "%(failure)s) returning id"
+)
+
+
+def domain_row(org_id: str, **change: object) -> dict[str, object]:
+    return {
+        "id": new_id("dom"),
+        "org": org_id,
+        "suffix": f"tools{secrets.token_hex(3)}.example.com",
+        "zone": "ssc-d-" + secrets.token_hex(6),
+        "ns": ["ns-cloud-a1.googledomains.com"],
+        "state": "pending_dns",
+        "observed": None,
+        "failure": None,
+    } | change
+
+
+def test_0046_adds_org_domain_and_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database domains owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="domains").render_as_string(hide_password=False)
+    exists = "select to_regclass('ssc.org_domain') is not null"
+    upgrade(dsn, "0045_org_suffix")
+    before = action_check(dsn)
+    upgrade(dsn, "0046_org_domain")
+    assert run(dsn, None, exists) == [(True,)]
+    after = action_check(dsn)
+    assert after[1]
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | DOMAIN_ACTIONS
+    downgrade(dsn, "0045_org_suffix")
+    assert run(dsn, None, exists) == [(False,)]
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    upgrade(dsn, "0046_org_domain")
+    assert action_check(dsn) == after
+
+
+def test_one_live_domain_per_org_and_its_columns_are_checked(dsns: Dsns) -> None:
+    org = make_org(dsns.app)
+    good = domain_row(org.org_id)
+    assert run(dsns.app, org.org_id, INSERT_DOMAIN, good) == [(good["id"],)]
+    bad: list[dict[str, object]] = [
+        {"id": new_id("org")},
+        {"suffix": "example.com"},
+        {"suffix": "Tools.example.com"},
+        {"zone": "ssc-cell"},
+        {"zone": "ssc-d-ABCDEF012345"},
+        {"ns": ["ns"] * 17},
+        {"state": "deleted"},
+        {"observed": "[]"},
+        {"failure": ""},
+    ]
+    other = make_org(dsns.app)
+    for change in bad:
+        row = domain_row(other.org_id, **change)
+        assert refused(dsns.app, other.org_id, INSERT_DOMAIN, row) == CHECK_VIOLATION, change
+    second = domain_row(org.org_id)
+    assert refused(dsns.app, org.org_id, INSERT_DOMAIN, second) == UNIQUE_VIOLATION
+    for taken in ({"suffix": good["suffix"]}, {"zone": good["zone"]}):
+        row = domain_row(other.org_id, **taken)
+        assert refused(dsns.app, other.org_id, INSERT_DOMAIN, row) == UNIQUE_VIOLATION, taken
+    retire = "update ssc.org_domain set state = 'retired' where id = %s returning id"
+    assert run(dsns.app, org.org_id, retire, (good["id"],)) == [(good["id"],)]
+    assert run(dsns.app, org.org_id, INSERT_DOMAIN, second) == [(second["id"],)]
+    assert run(dsns.app, other.org_id, "select id from ssc.org_domain") == []
+    delete = "delete from ssc.org_domain where id = %s"
+    assert refused(dsns.app, org.org_id, delete, (good["id"],)) == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.app, None, "truncate ssc.org_domain") == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.migrate, None, "truncate ssc.org_domain") == SqlState.TRUNCATE_REFUSED

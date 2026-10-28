@@ -24,7 +24,9 @@ an IPv4 address exits 2. App files (SSC-046) need ``SSC_CELL_BUCKET``, the cell 
 unset, the agent refuses to drop them. Schema reads (GA-5.8) need both ``SSC_DATAGW_URL``, the
 cell's data gateway (``https://``), and ``SSC_DATAGW_AUDIENCE``, the audience it checks tokens
 for; with neither the agent refuses them, and one without the other, or a URL that is not https,
-exits 2.
+exits 2. Customer domains (CD-3) need both ``SSC_ENTRY_IP``, the load balancer's IPv4 address, and
+``SSC_CERTIFICATE_MAP``, the name of its certificate map; with neither the agent refuses them,
+and one without the other, or a bad value, exits 2.
 """
 
 import ipaddress
@@ -33,7 +35,7 @@ import os
 import re
 import sys
 from collections.abc import Mapping
-from typing import Final
+from typing import Final, cast
 
 import uvicorn
 
@@ -45,6 +47,7 @@ from ssc_agent.cloud_monitoring import CellUsageReader, CloudMonitoringSeries
 from ssc_agent.cloud_run import CellRuntime, CloudRunDriver
 from ssc_agent.cloud_sql import CloudSqlAdmin
 from ssc_agent.datagw import DataGateway
+from ssc_agent.domains import CellDomains
 from ssc_agent.egress import ProxyCredentials
 from ssc_agent.files import CellFiles
 from ssc_agent.metadata import MetadataAccessTokens, MetadataIdTokens
@@ -84,6 +87,9 @@ BUCKET_ENV: Final = "SSC_CELL_BUCKET"
 ORG_ENV: Final = "SSC_ORG_ID"
 DATAGW_URL_ENV: Final = "SSC_DATAGW_URL"
 DATAGW_AUDIENCE_ENV: Final = "SSC_DATAGW_AUDIENCE"
+ENTRY_IP_ENV: Final = "SSC_ENTRY_IP"
+CERTIFICATE_MAP_ENV: Final = "SSC_CERTIFICATE_MAP"
+CERTIFICATE_MAP: Final = re.compile(r"[a-z]([a-z0-9-]{0,61}[a-z0-9])?")
 
 
 class ConfigError(ValueError):
@@ -169,6 +175,19 @@ def datagw_from_env(env: Mapping[str, str]) -> tuple[str, str] | None:
     return url, audience
 
 
+def domains_from_env(env: Mapping[str, str]) -> tuple[str, str] | None:
+    """The entry address and certificate map; None when neither is set, ``ConfigError`` when
+    only one is or either is malformed."""
+    entry, cert_map = env.get(ENTRY_IP_ENV, ""), env.get(CERTIFICATE_MAP_ENV, "")
+    if not entry and not cert_map:
+        return None
+    if not entry or not cert_map:
+        raise ConfigError(f"set both {ENTRY_IP_ENV} and {CERTIFICATE_MAP_ENV}, or neither")
+    if CERTIFICATE_MAP.fullmatch(cert_map) is None:
+        raise ConfigError(f"{CERTIFICATE_MAP_ENV} is not a certificate map name")
+    return cast(str, ipv4_from_env(env, ENTRY_IP_ENV)), cert_map
+
+
 def org_from_env(env: Mapping[str, str]) -> str:
     """``SSC_ORG_ID``; ``ConfigError`` when it is missing or not an org id."""
     value = env.get(ORG_ENV, "")
@@ -203,6 +222,7 @@ def main() -> int:
         proxy_address = ipv4_from_env(os.environ, PROXY_ADDRESS_ENV)
         outbound_ip = ipv4_from_env(os.environ, OUTBOUND_IP_ENV)
         gateway = datagw_from_env(os.environ)
+        entry = domains_from_env(os.environ)
     except ConfigError as exc:
         print(f"ssc-agent: {exc}", file=sys.stderr)  # noqa: T201
         return 2
@@ -227,6 +247,11 @@ def main() -> int:
     bucket = os.environ.get(BUCKET_ENV, "")
     files = CellFiles(bucket, tokens) if bucket else None
     datagw = None if gateway is None else DataGateway(gateway[0], MetadataIdTokens(gateway[1]))
+    domains = (
+        None
+        if entry is None
+        else CellDomains(cell.project, tokens, entry_ip=entry[0], certificate_map=entry[1])
+    )
     app = create_app(
         driver,
         builder,
@@ -238,6 +263,7 @@ def main() -> int:
         egress=egress,
         files=files,
         datagw=datagw,
+        domains=domains,
     )
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
     return 0

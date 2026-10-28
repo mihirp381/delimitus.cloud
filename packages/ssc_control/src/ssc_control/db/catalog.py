@@ -71,6 +71,8 @@ Revision 0044 adds columns only (decision 002 amendment of 2026-10-27): ``org.si
 ``org.social_providers``, the provider names a pilot org signs in with, never a credential.
 Revision 0045 adds ``org.apps_suffix`` and ``org_suffix_retired`` (CD-1), keyed by org and
 suffix, so it is in ``UNKEYED_TABLES``: host names the org's apps answered at, nothing else.
+Revision 0046 adds ``org_domain`` (CD-3), an ordinary org-scoped table: an org's delegated zone,
+its name servers and its certificate's state; retired, never deleted.
 """
 
 from collections.abc import Mapping
@@ -126,6 +128,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "notification_outbox",  # SSC-049, revision 0032
         "oauth_code",  # SSC gap 7, revision 0033
         "org_suffix_retired",  # CD-1, revision 0045
+        "org_domain",  # CD-3, revision 0046
     }
 )
 
@@ -232,6 +235,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "oauth_code": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
     "oauth_client": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # unused ones pruned
     "org_suffix_retired": frozenset({"SELECT", "INSERT", "DELETE"}),  # pruned after until
+    "org_domain": frozenset({"SELECT", "INSERT", "UPDATE"}),  # retired, never deleted
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
     "cell": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; retired, never deleted
     "onboarding": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; abandoned, never deleted
