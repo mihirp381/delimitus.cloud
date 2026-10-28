@@ -719,6 +719,15 @@ def test_the_operator_changes_the_invite_domains(
     assert cli.main([*on, "example.com,Acme.co.uk"]) == 0
     assert domains_of(dsns, org) == ["example.com", "acme.co.uk"]
     capsys.readouterr()
+    newcomer = add_person(dsns, org, "New@Acme.co.uk", "invited")
+    assert cli.main([*on, "example.com"]) == 1
+    assert capsys.readouterr().err.endswith(f": {newcomer} new@acme.co.uk\n")
+    with psycopg.connect(dsns.superuser) as conn:
+        conn.execute(
+            "update ssc.user_account set status = 'deactivated', deactivated_at = now() "
+            "where id = %s",
+            (newcomer,),
+        )
     before = written(dsns, org)
     assert cli.main([*on, "acme.co.uk"]) == 1
     assert capsys.readouterr().err == (
