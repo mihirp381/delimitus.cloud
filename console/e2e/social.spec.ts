@@ -22,7 +22,7 @@ const FORCE_SOCIAL = [
   'from ssc_control.db import bind_org_sync',
   'with psycopg.connect(json.load(open("/state/state.json"))["database_dsn"]) as c:',
   '    bind_org_sync(c, sys.argv[1])',
-  "    c.execute(\"update ssc.org set sign_in_mode = 'social', social_providers = '{google,github}' where id = %s\", (sys.argv[1],))",
+  "    c.execute(\"update ssc.org set sign_in_mode = 'social', social_providers = '{google,github}', invite_domains = '{example.com}' where id = %s\", (sys.argv[1],))",
 ].join('\n');
 
 function toSocial(org: string): void {
@@ -62,7 +62,7 @@ test('a social org invites by email and deactivates from the People page', async
   expect(added.status(), await added.text()).toBe(200);
   const vic = inApi('python', 'tools/dev_stack.py', '--dir', '/state', 'token', '--sub', (await added.json()).user_id);
   const before = await (await request.get(`${apiUrl}/v1/whoami`, { headers: bearer(vic) })).json();
-  expect([before.role, before.sign_in_mode]).toEqual(['member', 'social']);
+  expect([before.role, before.sign_in_mode, before.invite_domains]).toEqual(['member', 'social', ['example.com']]);
 
   await page.goto('/people');
   await page.getByLabel('API token').fill(token);
@@ -71,6 +71,17 @@ test('a social org invites by email and deactivates from the People page', async
 
   await page.getByRole('button', { name: 'Invite by email' }).click();
   const invite = page.getByRole('dialog', { name: 'Invite by email' });
+  await expect(invite.getByText('You can invite addresses at example.com.')).toBeVisible();
+  await invite.getByRole('textbox', { name: 'Email' }).fill(`ivy-${stamp}@gmail.com`);
+  await invite.getByRole('button', { name: 'Invite', exact: true }).click();
+  await expect(invite.getByRole('alert')).toHaveText(
+    `ivy-${stamp}@gmail.com is not at example.com. Invite an address at one of these domains.`,
+  );
+  const outside = await request.post(`${apiUrl}/v1/users/invite`, {
+    headers: { ...bearer(token), 'Idempotency-Key': randomUUID() },
+    data: { email: `ivy-${stamp}@gmail.com` },
+  });
+  expect([outside.status(), (await outside.json()).code]).toEqual([422, 'INVITE_DOMAIN_NOT_ALLOWED']);
   await invite.getByRole('textbox', { name: 'Email' }).fill(`ivy-${stamp}@example.com`);
   await invite.getByRole('button', { name: 'Invite', exact: true }).click();
   await expect(page.getByText(`Invited ivy-${stamp}@example.com. They join the first time they sign in.`)).toBeVisible();

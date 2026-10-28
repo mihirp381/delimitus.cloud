@@ -7,10 +7,15 @@ fake WorkOS.
   3 the chooser lists the enabled providers; misses unchanged -> test_the_chooser_..., test_..._miss
   4 deactivation locks out on the next request               -> test_deactivation_locks_out_...
   5 invites: idempotent, admins only, never agents           -> test_admins_invite_people_by_email
+  6 invite domains: invite, reactivate, sign-in, set-sign-in  -> test_..._outside_the_domains_...,
+                                                                test_a_linked_person_is_refused_...,
+                                                                test_the_operator_changes_the_...,
+                                                                test_invite_and_reactivate_wait_...
 """
 
 import secrets
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -27,7 +32,7 @@ from test_identity import OPERATOR, World, new_world
 from test_oauth import CONSOLE, CONSOLE_CALLBACK, OAuthRig, at_console, hidden, query
 
 from ssc_contracts.audit import ActorKind, AuditAction
-from ssc_contracts.errors import ErrorCode
+from ssc_contracts.errors import CATALOGUE, ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control import directory
 from ssc_control.api import Settings, create_app
@@ -45,8 +50,8 @@ GOOGLE_SUB, GITHUB_SUB = "110248495921238986420", "583231"
 BOB_SUB = "117512345678901234567"
 SOCIAL_CONN = "conn_01SOCIAL"
 _FORCE_SOCIAL = text(
-    "update ssc.org set sign_in_mode = 'social', social_providers = cast(:providers as text[]) "
-    "where id = :org"
+    "update ssc.org set sign_in_mode = 'social', social_providers = cast(:providers as text[]), "
+    "invite_domains = '{example.com}' where id = :org"
 )
 
 
@@ -243,7 +248,7 @@ async def test_later_sign_ins_match_the_subject_only(rig: OAuthRig) -> None:
         "update ssc.user_account set email = 'ada.renamed@example.com' where id = :id",
         id=rig.w.founder,
     )
-    signed_in(await social_login(rig, email="someone@else.example"), rig)
+    signed_in(await social_login(rig, email="someone@example.com"), rig)
     other = await social_login(rig, "999", "ada.renamed@example.com")
     assert (other.status_code, other.text) == (403, pages.REFUSED)
     assert await reasons(rig.w) == ["subject_mismatch"]
@@ -288,6 +293,33 @@ async def test_every_social_refusal_is_the_same_page(rig: OAuthRig) -> None:
     ]
     failed = await rig.w.audit(AuditAction.LOGIN_FAILED)
     assert {(kind, target) for kind, target, _ in failed} == {("org", rig.w.org)}
+
+
+async def test_a_first_sign_in_outside_the_domains_is_refused_and_links_nothing(
+    rig: OAuthRig,
+) -> None:
+    bob = await invite(rig.w, "bob@evil.io")
+    outside = ("bob@evil.io", "x@sub.example.com", "x@example.com.evil.io", "x@evilexample.com")
+    attempts = [await social_login(rig, BOB_SUB, email) for email in outside]
+    assert {(r.status_code, r.text) for r in attempts} == {(403, pages.REFUSED)}
+    assert await reasons(rig.w) == ["email_domain_not_allowed"] * len(outside)
+    assert await rig.w.rows("select 1 from ssc.identity_link where user_id = :id", id=bob) == []
+    (row,) = await rig.w.rows("select status from ssc.user_account where id = :id", id=bob)
+    assert tuple(row) == ("invited",)
+    assert await rig.w.audit(AuditAction.IDENTITY_LINKED) == []
+
+
+async def test_a_linked_person_is_refused_once_their_domain_is_removed(rig: OAuthRig) -> None:
+    signed_in(await social_login(rig), rig)
+    set_domains = "update ssc.org set invite_domains = cast(:d as text[]) where id = :org"
+    await rig.w.rows(set_domains, d=["example.org"])
+    refused = await social_login(rig)
+    assert (refused.status_code, refused.text) == (403, pages.REFUSED)
+    await rig.w.rows(set_domains, d=["example.com"])
+    signed_in(await social_login(rig), rig)
+    other = await social_login(rig, email="ada@evil.io")
+    assert (other.status_code, other.text) == (403, pages.REFUSED)
+    assert await reasons(rig.w) == ["email_domain_not_allowed"] * 2
 
 
 async def test_a_deactivated_member_with_a_link_is_refused(rig: OAuthRig) -> None:
@@ -442,6 +474,106 @@ def test_admins_invite_people_by_email(dsns: Dsns) -> None:
             )
 
 
+def add_person(dsns: Dsns, org: str, email: str, status: str) -> str:
+    user = new_id("usr")
+    with psycopg.connect(dsns.superuser) as conn:
+        conn.execute(
+            "insert into ssc.user_account (id, org_id, display_name, email, role, status, "
+            "deactivated_at) values (%s, %s, %s, %s, 'member', %s, "
+            "case when %s = 'deactivated' then now() end)",
+            (user, org, email, email, status, status),
+        )
+    return user
+
+
+def written(dsns: Dsns, org: str) -> tuple[Any, ...] | None:
+    with psycopg.connect(dsns.superuser) as conn:
+        return conn.execute(
+            "select (select count(*) from ssc.user_account where org_id = %s), "
+            "(select count(*) from ssc.audit_event where org_id = %s), "
+            "(select array_agg(status order by id) from ssc.user_account where org_id = %s)",
+            (org, org, org),
+        ).fetchone()
+
+
+def test_invites_and_reactivations_outside_the_domains_are_refused(dsns: Dsns) -> None:
+    w, ids, _ = social_world(dsns)
+    add_person(dsns, w.org, "old@evil.io", "active")
+    gone = add_person(dsns, w.org, "gone@evil.io", "deactivated")
+    pem = tokens.new_signing_pem()
+    signer = tokens.Signer(pem, "k1", AUTH)
+    with TestClient(
+        create_app(Settings(database_dsn=dsns.app, jwks=signer.jwks(), issuer=AUTH))
+    ) as c:
+        api = Api(c, signer, pem, w.org)
+        ada = api.token(w.founder, ids["ada"])
+        assert c.get("/v1/whoami", headers=ada).json()["invite_domains"] == ["example.com"]
+        before = written(dsns, w.org)
+        for email in (
+            "eve@evil.io",
+            "Old@Evil.io",
+            "eve@sub.example.com",
+            "eve@example.com.evil.io",
+            "eve@evilexample.com",
+            "eve@ample.com",
+            '"eve"@evil.io',
+        ):
+            r = api.post("/v1/users/invite", ada, {"email": email})
+            assert_problem(r, ErrorCode.INVITE_DOMAIN_NOT_ALLOWED)
+            assert (r.status_code, r.json()["detail"]) == (
+                422,
+                CATALOGUE[ErrorCode.INVITE_DOMAIN_NOT_ALLOWED].detail,
+            ), email
+        for email in ("eve@evil.io@example.com", "eve@example.com@evil.io", '"a@b"@example.com'):
+            assert_problem(
+                api.post("/v1/users/invite", ada, {"email": email}), ErrorCode.VALIDATION_FAILED
+            )
+        refused = api.post(f"/v1/users/{gone}/reactivate", ada)
+        assert_problem(refused, ErrorCode.INVITE_DOMAIN_NOT_ALLOWED)
+        assert_problem(api.post(f"/v1/users/{new_id('usr')}/reactivate", ada), ErrorCode.NOT_FOUND)
+        assert written(dsns, w.org) == before
+        for email, stored in (
+            ("Zed@EXAMPLE.COM", "zed@example.com"),
+            ('"Eve"@example.com', '"eve"@example.com'),
+        ):
+            made = api.post("/v1/users/invite", ada, {"email": email})
+            assert (made.status_code, made.json()["email"]) == (201, stored)
+
+
+def test_invite_and_reactivate_wait_for_a_domain_change(dsns: Dsns) -> None:
+    w, ids, _ = social_world(dsns)
+    gone = add_person(dsns, w.org, "gone@example.com", "deactivated")
+    pem = tokens.new_signing_pem()
+    signer = tokens.Signer(pem, "k1", AUTH)
+    with (
+        TestClient(
+            create_app(Settings(database_dsn=dsns.app, jwks=signer.jwks(), issuer=AUTH))
+        ) as c,
+        ThreadPoolExecutor(2) as pool,
+    ):
+        api = Api(c, signer, pem, w.org)
+        ada = api.token(w.founder, ids["ada"])
+        with psycopg.connect(dsns.superuser) as held:
+            held.execute("select 1 from ssc.org where id = %s for no key update", (w.org,))
+            calls = [
+                pool.submit(api.post, f"/v1/users/{gone}/reactivate", ada),
+                pool.submit(api.post, "/v1/users/invite", ada, {"email": "new@example.com"}),
+            ]
+            done, _ = wait(calls, timeout=1)
+            assert not done
+            held.execute(
+                "update ssc.org set invite_domains = '{example.org}' where id = %s", (w.org,)
+            )
+        for call in calls:
+            assert_problem(call.result(timeout=10), ErrorCode.INVITE_DOMAIN_NOT_ALLOWED)
+    with psycopg.connect(dsns.superuser) as conn:
+        assert conn.execute(
+            "select array_agg(email order by email) from ssc.user_account "
+            "where org_id = %s and status <> 'active'",
+            (w.org,),
+        ).fetchone() == (["gone@example.com"],)
+
+
 def test_deactivation_locks_out_on_the_next_request(dsns: Dsns) -> None:
     w, ids, refresh = social_world(dsns)
     pem = tokens.new_signing_pem()
@@ -527,21 +659,26 @@ def test_the_operator_changes_a_social_orgs_providers_and_reverts_it(
             name="Pilot",
             admin_email=ADA,
             providers=("google",),
+            invite_domains=("example.com",),
             cell_label="s" + secrets.token_hex(6),
             actor=OPERATOR,
         ),
     ).org_id
     base = ["set-sign-in", "--org", org, "--operator", "op_dana"]
-    assert cli.main([*base, "--mode", "social", "--providers", "google,GitHub"]) == 0
-    assert cli.main([*base, "--mode", "social", "--providers", "google,github"]) == 0
+    on = [*base, "--mode", "social", "--invite-domains", "example.com"]
+    assert cli.main([*on, "--providers", "google,GitHub"]) == 0
+    assert cli.main([*on, "--providers", "google,github"]) == 0
     assert capsys.readouterr().out.splitlines() == [f"{org} social", f"{org} social (unchanged)"]
-    assert cli.main([*base, "--mode", "social"]) == 2
+    assert cli.main(on) == 2
+    assert cli.main([*base, "--mode", "social", "--providers", "google"]) == 2
     assert cli.main([*base, "--mode", "directory", "--providers", "google"]) == 2
+    assert cli.main([*base, "--mode", "directory", "--invite-domains", "example.com"]) == 2
+    assert cli.main([*base, "--mode", "directory", "--allow-consumer-domain"]) == 2
     with pytest.raises(SystemExit):
-        cli.main([*base, "--mode", "social", "--providers", "facebook"])
+        cli.main([*on, "--providers", "facebook"])
     assert cli.main([*base, "--mode", "directory"]) == 0
     capsys.readouterr()
-    assert cli.main([*base, "--mode", "social", "--providers", "google"]) == 1
+    assert cli.main([*on, "--providers", "google"]) == 1
     assert "cannot move to social mode" in capsys.readouterr().err
     rows = org_updates(dsns, org)
     assert [(r[0], r[1], r[2]["social_providers"], r[3]["sign_in_mode"]) for r in rows] == [
@@ -550,6 +687,96 @@ def test_the_operator_changes_a_social_orgs_providers_and_reverts_it(
     ]
     assert rows[0][3]["social_providers"] == ["google", "github"]
     assert mode_of(dsns, org) == ("directory", [])
+
+
+def domains_of(dsns: Dsns, org: str) -> list[str]:
+    with psycopg.connect(dsns.superuser) as conn:
+        row = conn.execute("select invite_domains from ssc.org where id = %s", (org,)).fetchone()
+    assert row is not None
+    return list(row[0])
+
+
+def test_the_operator_changes_the_invite_domains(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SSC_DATABASE_DSN", dsns.app)
+    made = run(
+        dsns,
+        lambda e: operator.create_social_org(
+            e,
+            name="Pilot",
+            admin_email=ADA,
+            providers=("google",),
+            invite_domains=("example.com",),
+            cell_label="s" + secrets.token_hex(6),
+            actor=OPERATOR,
+        ),
+    )
+    org = made.org_id
+    add_person(dsns, org, "old@acme.co.uk", "deactivated")
+    on = ["set-sign-in", "--org", org, "--operator", "op_dana", "--mode", "social"]
+    on = [*on, "--providers", "google", "--invite-domains"]
+    assert cli.main([*on, "example.com,Acme.co.uk"]) == 0
+    assert domains_of(dsns, org) == ["example.com", "acme.co.uk"]
+    capsys.readouterr()
+    newcomer = add_person(dsns, org, "New@Acme.co.uk", "invited")
+    assert cli.main([*on, "example.com"]) == 1
+    assert capsys.readouterr().err.endswith(f": {newcomer} new@acme.co.uk\n")
+    with psycopg.connect(dsns.superuser) as conn:
+        conn.execute(
+            "update ssc.user_account set status = 'deactivated', deactivated_at = now() "
+            "where id = %s",
+            (newcomer,),
+        )
+    before = written(dsns, org)
+    assert cli.main([*on, "acme.co.uk"]) == 1
+    assert capsys.readouterr().err == (
+        "not set: invited or active people are outside those domains; deactivate them first: "
+        f"{made.admin_user_id} ada@example.com\n"
+    )
+    assert cli.main([*on, "example.com,gmail.com"]) == 1
+    assert "gmail.com is a consumer mail domain" in capsys.readouterr().err
+    assert written(dsns, org) == before
+    assert domains_of(dsns, org) == ["example.com", "acme.co.uk"]
+    assert cli.main([*on, "example.com,gmail.com", "--allow-consumer-domain"]) == 0
+    assert cli.main([*on, "example.com"]) == 0
+    assert domains_of(dsns, org) == ["example.com"]
+    assert (
+        cli.main(["set-sign-in", "--org", org, "--operator", "op_dana", "--mode", "directory"]) == 0
+    )
+    assert domains_of(dsns, org) == []
+    rows = org_updates(dsns, org)
+    assert [(r[2]["invite_domains"], r[3]) for r in rows] == [
+        (
+            ["example.com"],
+            {
+                "sign_in_mode": "social",
+                "social_providers": ["google"],
+                "invite_domains": ["example.com", "acme.co.uk"],
+            },
+        ),
+        (
+            ["example.com", "acme.co.uk"],
+            {
+                "sign_in_mode": "social",
+                "social_providers": ["google"],
+                "invite_domains": ["example.com", "gmail.com"],
+                "allow_consumer_domain": True,
+            },
+        ),
+        (
+            ["example.com", "gmail.com"],
+            {
+                "sign_in_mode": "social",
+                "social_providers": ["google"],
+                "invite_domains": ["example.com"],
+            },
+        ),
+        (
+            ["example.com"],
+            {"sign_in_mode": "directory", "social_providers": [], "invite_domains": []},
+        ),
+    ]
 
 
 def test_a_directory_org_is_refused_social_mode_and_nothing_is_written(
@@ -561,7 +788,7 @@ def test_a_directory_org_is_refused_social_mode_and_nothing_is_written(
         count = "select count(*) from ssc.audit_event where org_id = %s"
         before = conn.execute(count, (org,)).fetchone()
     argv = ["set-sign-in", "--org", org, "--operator", "op_dana", "--mode", "social"]
-    assert cli.main([*argv, "--providers", "google"]) == 1
+    assert cli.main([*argv, "--providers", "google", "--invite-domains", "example.com"]) == 1
     err = capsys.readouterr().err
     assert err == (
         f"not set: {org} is a directory org and cannot move to social mode; a social pilot is "
@@ -570,7 +797,9 @@ def test_a_directory_org_is_refused_social_mode_and_nothing_is_written(
 
     async def direct(engine: AsyncEngine) -> None:
         async with bound_org(engine, org) as conn:
-            await social.set_sign_in(conn, org, "social", ("google",), actor=OPERATOR)
+            await social.set_sign_in(
+                conn, org, "social", ("google",), actor=OPERATOR, invite_domains=("example.com",)
+            )
 
     with pytest.raises(social.SignInError, match="cannot move to social mode"):
         run(dsns, direct)

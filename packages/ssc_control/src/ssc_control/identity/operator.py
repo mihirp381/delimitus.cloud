@@ -8,8 +8,9 @@ any step rolls back all of it: no org, no ``org_index`` row, no audit event. Eve
 
 ``create-social-org`` makes a pilot org in social mode (decision 002 amendment 2026-10-27) with no
 WorkOS organisation or directory, in one transaction: ``org.created``, ``org.updated`` (the
-mode), ``user.invited`` (the first admin, linked at their first sign-in) and ``org.updated`` (the
-cell label). It is the only way into social mode: a directory org never moves to it.
+mode, providers and invite domains), ``user.invited`` (the first admin, linked at their first
+sign-in) and ``org.updated`` (the cell label). It is the only way into social mode: a directory
+org never moves to it.
 
 ``restore-admin`` is for an org the directory left with no active admin (decision 024 allows
 that: sync deactivates a founder it cannot find, and an operator restores an admin). In one
@@ -55,8 +56,9 @@ MAX_ORG_NAME: Final = 200
 
 _SET_CELL_LABEL = text("update ssc.org set cell_label = :label where id = :org")
 _LOCK_USER = text(
-    "select role, status from ssc.user_account where org_id = :org and id = :id for update"
+    "select role, status, email from ssc.user_account where org_id = :org and id = :id for update"
 )
+_LOCK_DOMAINS = text("select invite_domains from ssc.org where id = :org for update")
 _LINKED = text(
     "select 1 from ssc.identity_link where org_id = :org and user_id = :user "
     "and issuer = :issuer limit 1"
@@ -202,6 +204,16 @@ async def create_org_with_directory(  # noqa: PLR0913  (keyword-only)
     return OrgSetUp(created, connection_id, founder)
 
 
+def social_org_problem(
+    admin_email: str, domains: tuple[str, ...], *, allow_consumer: bool
+) -> str | None:
+    if (problem := social.consumer_problem(domains, allow_consumer=allow_consumer)) is not None:
+        return problem
+    if not social.at_domains(admin_email, domains):
+        return f"the admin email {admin_email} is not at {', '.join(domains)}"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class SocialOrg:
     org_id: str
@@ -214,22 +226,35 @@ async def create_social_org(  # noqa: PLR0913  (keyword-only)
     name: str,
     admin_email: str,
     providers: tuple[str, ...],
+    invite_domains: tuple[str, ...],
     cell_label: str,
     actor: Actor,
+    allow_consumer: bool = False,
 ) -> SocialOrg:
     """The org in social mode with its first admin invited, and its cell label: all of it or
-    none. :class:`ConnectError` for a malformed name, address or label, or a label already
-    taken."""
+    none. :class:`ConnectError` for a malformed name, address, domain or label, or a label
+    already taken."""
     try:
         email, label = check_email(admin_email), check_cell_label(cell_label)
         name = check_org_name(name)
+        domains = social.check_invite_domains(",".join(invite_domains))
     except ValueError as e:
         raise ConnectError(str(e)) from e
+    if (problem := social_org_problem(email, domains, allow_consumer=allow_consumer)) is not None:
+        raise ConnectError(problem)
     org_id, admin_id = new_id("org"), new_id("usr")
     try:
         async with bound_org(engine, org_id) as conn:
             generated = await open_org_in(conn, org_id, name, actor=actor)
-            await social.set_sign_in(conn, org_id, "social", providers, actor=actor)
+            await social.set_sign_in(
+                conn,
+                org_id,
+                "social",
+                providers,
+                actor=actor,
+                invite_domains=domains,
+                allow_consumer=allow_consumer,
+            )
             await conn.execute(_INVITE_ADMIN, {"id": admin_id, "org": org_id, "email": email})
             await append_event(
                 conn,
@@ -287,7 +312,7 @@ def _applied_at(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-async def restore_admin(  # noqa: PLR0913, C901  (keyword-only; one list of refusals)
+async def restore_admin(  # noqa: PLR0912, PLR0913, C901  (keyword-only; one list of refusals)
     conn: AsyncConnection,
     org_id: str,
     user_id: str,
@@ -305,16 +330,23 @@ async def restore_admin(  # noqa: PLR0913, C901  (keyword-only; one list of refu
     except ValueError as e:
         raise RestoreError(str(e)) from e
     applied = None if already_applied_at is None else _applied_at(already_applied_at)
-    connection = None
+    connection, domains = None, None
     if await social.mode(conn, org_id) != "social":
         connection = await connections.load(conn, org_id)
         if connection is None:
             raise RestoreError("the org has no directory connection")
+    else:
+        domains = tuple((await conn.execute(_LOCK_DOMAINS, {"org": org_id})).scalar_one())
     row = (await conn.execute(_LOCK_USER, {"org": org_id, "id": user_id})).one_or_none()
     if row is None:
         raise RestoreError(f"{user_id} is not a user of {org_id}")
     role, status = str(row[0]), str(row[1])
     await _require_link(conn, org_id, user_id, connection)
+    if applied is None and domains is not None and not social.at_domains(str(row[2]), domains):
+        raise RestoreError(
+            f"{user_id}'s address is not at the org's invite domains ({', '.join(domains)}); "
+            "add its domain with set-sign-in first"
+        )
     warnings: list[str] = []
     ref = None if connection is None else connection.admin_group_ref
     if ref is not None:

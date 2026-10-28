@@ -4019,6 +4019,7 @@
           "DEPLOYMENT_IN_FLIGHT",
           "LAST_ORG_ADMIN",
           "DIRECTORY_MANAGED",
+          "INVITE_DOMAIN_NOT_ALLOWED",
           "OWNER_NOT_ACTIVE",
           "RECORD_IMMUTABLE",
           "SCHEDULE_DELETED",
@@ -7381,6 +7382,14 @@
             ],
             "title": "Email"
           },
+          "invite_domains": {
+            "description": "The email domains a social org's admins may invite; empty in a directory org.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Invite Domains",
+            "type": "array"
+          },
           "is_agent": {
             "title": "Is Agent",
             "type": "boolean"
@@ -7451,7 +7460,8 @@
           "org_name",
           "name",
           "email",
-          "sign_in_mode"
+          "sign_in_mode",
+          "invite_domains"
         ],
         "title": "Whoami",
         "type": "object"
@@ -17296,7 +17306,7 @@
     },
     "/v1/users/invite": {
       "post": {
-        "description": "An invited member who signs in with one of the org's providers. ``201`` for a new person;\n``200`` with the person who already has the address, ignoring case. Active admins only,\nnever in an agent session; ``DIRECTORY_MANAGED`` in a directory org.",
+        "description": "An invited member who signs in with one of the org's providers. ``201`` for a new person;\n``200`` with the person who already has the address, ignoring case. Active admins only,\nnever in an agent session; ``DIRECTORY_MANAGED`` in a directory org;\n``INVITE_DOMAIN_NOT_ALLOWED`` for an address outside the org's invite domains.",
         "operationId": "invite_user_v1_users_invite_post",
         "parameters": [
           {
@@ -17395,7 +17405,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED`"
           },
           "429": {
             "content": {
@@ -17609,7 +17619,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED`"
           },
           "429": {
             "content": {
@@ -17630,7 +17640,7 @@
     },
     "/v1/users/{user_id}/reactivate": {
       "post": {
-        "description": "A deactivated person may sign in again; their old sessions stay ended.",
+        "description": "A deactivated person may sign in again; their old sessions stay ended.\n``INVITE_DOMAIN_NOT_ALLOWED`` when their address is outside the org's invite domains.",
         "operationId": "reactivate_user_v1_users__user_id__reactivate_post",
         "parameters": [
           {
@@ -17739,7 +17749,7 @@
                 }
               }
             },
-            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `INVITE_DOMAIN_NOT_ALLOWED`"
           },
           "429": {
             "content": {
