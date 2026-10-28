@@ -69,6 +69,8 @@ Revision 0042 adds ``pilot_invite`` (decision 029 amendment of 2026-10-26) to ``
 pilot invite codes, read by ``/authorize`` before any org is bound; only a code's SHA-256.
 Revision 0044 adds columns only (decision 002 amendment of 2026-10-27): ``org.sign_in_mode`` and
 ``org.social_providers``, the provider names a pilot org signs in with, never a credential.
+Revision 0045 adds ``org.apps_suffix`` and ``org_suffix_retired`` (CD-1), keyed by org and
+suffix, so it is in ``UNKEYED_TABLES``: host names the org's apps answered at, nothing else.
 """
 
 from collections.abc import Mapping
@@ -123,6 +125,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "connection_grant",  # SSC-052, revision 0031
         "notification_outbox",  # SSC-049, revision 0032
         "oauth_code",  # SSC gap 7, revision 0033
+        "org_suffix_retired",  # CD-1, revision 0045
     }
 )
 
@@ -160,6 +163,7 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "egress_host",
         "egress_credential",
         "warm_gateway",
+        "org_suffix_retired",
     }
 )
 
@@ -227,6 +231,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "notification_outbox": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # sent ones pruned
     "oauth_code": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
     "oauth_client": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # unused ones pruned
+    "org_suffix_retired": frozenset({"SELECT", "INSERT", "DELETE"}),  # pruned after until
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
     "cell": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; retired, never deleted
     "onboarding": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; abandoned, never deleted

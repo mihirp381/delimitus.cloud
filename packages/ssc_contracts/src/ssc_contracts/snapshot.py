@@ -13,6 +13,7 @@ import re
 from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
     ConfigDict,
@@ -28,6 +29,10 @@ from ssc_contracts.identity import EnvironmentName
 
 FORMAT_V1: Final = "ssc-snapshot/v1"
 MAX_VERSION: Final = 2**53 - 1
+MAX_SUFFIX: Final = 203
+"""The longest apps suffix whose hosts all fit in 253 characters: the longest first label (49)
+and a dot take the other 50."""
+MAX_PREVIOUS_SUFFIXES: Final = 8
 
 OrgId = Annotated[str, StringConstraints(pattern=r"^org_[a-z0-9]{20}$")]
 AppId = Annotated[str, StringConstraints(pattern=r"^app_[a-z0-9]{20}$")]
@@ -47,10 +52,26 @@ AppStatus = Literal["active", "disabled", "quarantined"]
 UserStatus = Literal["active", "deactivated"]
 ConnectionStatus = Literal["active", "suspended"]
 
+_DNS_LABEL: Final = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 _SUBJECT_ID: Final = {
     "user": re.compile(r"usr_[a-z0-9]{20}"),
     "group": re.compile(r"grp_[a-z0-9]{20}"),
 }
+
+
+def check_suffix(suffix: str) -> str:
+    """A lower-case DNS name of at least three labels and at most :data:`MAX_SUFFIX`."""
+    labels = suffix.split(".")
+    if (
+        len(suffix) > MAX_SUFFIX
+        or len(labels) < 3  # noqa: PLR2004  (a label under a registrable name)
+        or not all(_DNS_LABEL.fullmatch(label) for label in labels)
+    ):
+        raise ValueError(f"not a usable apps suffix: {suffix!r}")
+    return suffix
+
+
+Suffix = Annotated[str, AfterValidator(check_suffix)]
 
 
 class _Frozen(BaseModel):
@@ -174,6 +195,13 @@ class SnapshotEgress(_Frozen):
         return value
 
 
+class SnapshotRetiredSuffix(_Frozen):
+    """A suffix the org used before, recognised until ``until``."""
+
+    suffix: Suffix
+    until: AwareDatetime
+
+
 class SnapshotDoc(_Frozen):
     """One org's snapshot. ``version`` 0 is a live evaluation that was never published."""
 
@@ -198,6 +226,18 @@ class SnapshotDoc(_Frozen):
         default=None,
         exclude_if=lambda v: v is None,
         description="The egress proxy's allowlist and credentials (SSC-053).",
+    )
+    suffix: Suffix | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description="The org's apps suffix (CD-1); absent means <cell label>.<apps domain>.",
+    )
+    previous_suffixes: tuple[SnapshotRetiredSuffix, ...] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_PREVIOUS_SUFFIXES,
+        exclude_if=lambda v: v is None,
+        description="Suffixes the org used before, by until then suffix (CD-1).",
     )
 
     @model_validator(mode="after")
@@ -225,4 +265,11 @@ class SnapshotDoc(_Frozen):
             raise ValueError(
                 "an egress credential names an environment that is not in environments"
             )
+        previous = self.previous_suffixes or ()
+        keys = [(p.until, p.suffix) for p in previous]
+        if keys != sorted(keys):
+            raise ValueError("previous_suffixes must be sorted by until, then suffix")
+        names = {p.suffix for p in previous}
+        if len(names) != len(previous) or self.suffix in names:
+            raise ValueError("a suffix is listed twice")
         return self

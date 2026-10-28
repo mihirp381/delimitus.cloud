@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from ssc_contracts.egress import MAX_CREDENTIALS
-from ssc_contracts.snapshot import FORMAT_V1, SnapshotDoc
+from ssc_contracts.snapshot import FORMAT_V1, MAX_PREVIOUS_SUFFIXES, SnapshotDoc
 from ssc_control.db.bind import bound_org
 from ssc_control.domain.grant_rules import floor_of
 from ssc_shared.blobstore import BlobError, BlobStore
@@ -53,7 +53,8 @@ _INSERT = text(
 )
 # One statement, so one read snapshot: every grant's environment and user is in the result, and
 # every proxy credential's environment. A deleted app's environments are left out (GA-12): its
-# slug may be another app's by now.
+# slug may be another app's by now. Retired suffixes past their time, or current again, are left
+# out.
 _READ_ORG = text(
     "select "
     "(select coalesce(jsonb_agg(jsonb_build_array(e.id, e.app_id, e.name, a.status, a.slug, "
@@ -79,7 +80,13 @@ _READ_ORG = text(
     "(select coalesce(jsonb_agg(jsonb_build_array(g.environment_id, g.limits) "
     "order by g.environment_id), '[]') from ssc.connection_grant g "
     "where g.org_id = k.org_id and g.connection_id = k.id)) order by k.name collate \"C\"), '[]') "
-    "from ssc.connection k where k.org_id = :org and k.setup_status = 'ready')"
+    "from ssc.connection k where k.org_id = :org and k.setup_status = 'ready'), "
+    "(select apps_suffix from ssc.org where id = :org), "
+    "(select coalesce(jsonb_agg(jsonb_build_array(r.suffix, r.until) "
+    "order by r.until, r.suffix collate \"C\"), '[]') from (select suffix, until "
+    "from ssc.org_suffix_retired where org_id = :org and until > now() and suffix <> "
+    "coalesce((select apps_suffix from ssc.org where id = :org), '') "
+    "order by until desc, suffix desc limit :previous) r)"
 )
 
 
@@ -148,8 +155,8 @@ async def compile_document(
     conn: AsyncConnection, org_id: str, *, version: int, compiled_at: datetime
 ) -> SnapshotDoc:
     """The org's snapshot as of one read. Pure reads in ``conn``'s org-bound transaction."""
-    read = {"org": org_id, "keep": MAX_CREDENTIALS}
-    envs, grants, users, members, egress_hosts, credentials, linked = (
+    read = {"org": org_id, "keep": MAX_CREDENTIALS, "previous": MAX_PREVIOUS_SUFFIXES}
+    envs, grants, users, members, egress_hosts, credentials, linked, suffix, retired = (
         await conn.execute(_READ_ORG, read)
     ).one()
     environments: dict[str, Any] = {
@@ -195,6 +202,8 @@ async def compile_document(
             "ceiling": None,
             "connections": _connections(linked, environments),
             "egress": _egress(egress_hosts, credentials, environments),
+            "suffix": suffix,
+            "previous_suffixes": [{"suffix": n, "until": u} for n, u in retired] or None,
         }
     )
 
