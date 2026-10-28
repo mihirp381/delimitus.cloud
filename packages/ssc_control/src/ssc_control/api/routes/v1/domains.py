@@ -278,8 +278,12 @@ async def flip_domain(request: Request, body: FlipIn, uow: UserUoW) -> Response:
     (``DOMAIN_NOT_READY`` until then). The suffix left stays a previous one for 30 days: its
     hosts redirect. One snapshot carries the change. Audited as ``domain.flipped``."""
     await _change(uow)
-    view = await _view(request, uow)
-    rolling = await _rolling(request, uow, view) if view.next_flip == body.to else 0
+    await _view(request, uow)
+
+    async def rolling() -> int:
+        view = await _view(request, uow)
+        return await _rolling(request, uow, view) if view.next_flip == body.to else 0
+
     try:
         await flip(
             uow.conn,

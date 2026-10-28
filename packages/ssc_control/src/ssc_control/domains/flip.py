@@ -1,6 +1,7 @@
 """Moving an org's apps to its customer suffix and back (CD-4.2), in one transaction: the
 suffix that was current stays recognised for 30 days as a previous one."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final, Literal
@@ -47,9 +48,10 @@ async def flip(  # noqa: PLR0913
     now: datetime,
     *,
     apps_domain: str,
-    rolling: int,
+    rolling: Callable[[], Awaitable[int]],
 ) -> Flipped:
-    """``rolling`` is how many environments have not yet rolled for the coming suffix."""
+    """``rolling`` counts the environments not yet rolled for the coming suffix; it is called
+    with the org row locked, so a deploy that starts before the lock is counted."""
     org = (await conn.execute(_LOCK_ORG, {"org": org_id})).one()
     if org.cell_label is None:
         raise FlipRefusedError("state", "the organization has no cell")
@@ -66,8 +68,8 @@ async def flip(  # noqa: PLR0913
         if org.apps_suffix is None:
             raise FlipRefusedError("state", "the organization already uses its default suffix")
         coming, column = default, None
-    if rolling:
-        raise FlipRefusedError("not_ready", "apps are still rolling", rolling)
+    if pending := await rolling():
+        raise FlipRefusedError("not_ready", "apps are still rolling", pending)
     await conn.execute(_FORGET, {"org": org_id, "suffix": coming})
     await conn.execute(_FORGET, {"org": org_id, "suffix": current})
     await conn.execute(_SET_SUFFIX, {"org": org_id, "suffix": column})

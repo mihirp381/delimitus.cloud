@@ -11,6 +11,8 @@ import pytest
 import test_deploy
 from fastapi import FastAPI
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import (
     Dsns,
     SigningKey,
@@ -29,6 +31,7 @@ from test_domains_tick import resolvers
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
+from ssc_control.api.routes.v1 import domains as domain_routes
 from ssc_control.api.settings import INTERNAL_AUDIENCE
 from ssc_control.db import bound_org
 from ssc_control.db.domains import suffix_list
@@ -369,6 +372,30 @@ async def test_the_flip_waits_for_every_app_to_roll_and_moves_them_both_ways(b: 
         "customer",
         "default",
     ]
+
+
+async def test_the_flip_counts_rolling_apps_under_the_org_lock(
+    b: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def rolling(_c: Any, engine: AsyncEngine, *_a: Any, org_id: str) -> int:
+        async with bound_org(engine, org_id) as other:
+            try:
+                await other.execute(
+                    text("select 1 from ssc.org where id = :org for no key update nowait"),
+                    {"org": org_id},
+                )
+            except DBAPIError:
+                return 1
+        return 0
+
+    monkeypatch.setattr(domain_routes, "rolling_for", rolling)
+    cell(b)
+    put(b, name(b), b.t.admin)
+    set_state(b, "active")
+    assert get(b, "/v1/domain", b.t.admin).json()["rolling"] == 0
+    refused = flip(b, "customer", b.t.admin)
+    assert_problem(refused, ErrorCode.DOMAIN_NOT_READY)
+    assert rows_of(b.dsn, b.w.org, "select apps_suffix from ssc.org")[0]["apps_suffix"] is None
 
 
 # ── operator retire ──────────────────────────────────────────────────────────
