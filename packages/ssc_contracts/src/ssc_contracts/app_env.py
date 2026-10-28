@@ -43,10 +43,11 @@ APP_ORIGIN: Final = "SSC_APP_ORIGIN"
 longer the identity note's audience."""
 
 STREAMLIT_ALLOWED_ORIGINS: Final = "STREAMLIT_SERVER_CORS_ALLOWED_ORIGINS"
-"""``APP_ORIGIN`` and the app's origins under the org's other recognised suffixes, comma
-separated, for every app. Behind the gateway an app sees its ``run.app`` host as
-``Host``, so Streamlit, which checks a WebSocket's ``Origin`` against ``Host``, refuses its own
-stream unless the origin is listed (SSC-086 T9). Other apps ignore it."""
+"""``APP_ORIGIN`` and the app's origins under the org's other recognised suffixes, space
+separated (Streamlit splits a list option's variable on whitespace), for every app. Behind the
+gateway an app sees its ``run.app`` host as ``Host``, so Streamlit, which checks a WebSocket's
+``Origin`` against ``Host``, refuses its own stream unless the origin is listed (SSC-086 T9).
+Other apps ignore it."""
 
 IDENTITY_KEYS_URL: Final = "SSC_IDENTITY_KEYS_URL"
 """The cell's JWKS that verifies identity notes, inline as a ``data:`` URL (no internet needed)."""
