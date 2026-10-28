@@ -6,6 +6,9 @@ postgres:18 and a fake WorkOS.
   1b the email twice, then confirm; else nothing is written  -> test_..._asks_for_the_email_...,
                                                                   test_a_mismatched_...,
                                                                   test_only_confirm_creates_...
+  1c invite domains: required, well formed, admin inside     -> test_..._too_many_domains,
+                                                                  test_an_admin_email_outside_...,
+                                                                  test_a_consumer_domain_needs_...
   2 the admin signs in and invites; the member signs in       -> test_the_invited_admin_signs_in_...
   3 restore-admin needs a social link in a social org          -> test_restore_admin_in_a_social_...
   4 sync skips a social org with no connection                 -> test_sync_skips_a_social_org_...
@@ -52,6 +55,7 @@ def argv(**change: str | None) -> list[str]:
         "--admin-email": "ada@example.com",
         "--confirm-admin-email": change.get("admin_email", "ada@example.com"),
         "--providers": "google,microsoft",
+        "--invite-domains": "example.com",
         "--cell-label": fresh_label(),
         "--operator": "op_dana",
     }
@@ -86,6 +90,7 @@ async def social_org(engine: AsyncEngine, *providers: str) -> World:
         name="Pilot",
         admin_email="Ada@Example.com",
         providers=providers or ("google",),
+        invite_domains=("example.com",),
         cell_label=fresh_label(),
         actor=OP,
     )
@@ -115,7 +120,12 @@ def test_create_social_org_makes_the_org_its_invited_admin_and_four_events(
     without_workos(dsns, monkeypatch)
     label, name = fresh_label(), f"Pilot-{secrets.token_hex(4)}"
     answer(monkeypatch, "confirm\n")
-    made = argv(name=name, admin_email=" Ada@Example.COM ", cell_label=label)
+    made = argv(
+        name=name,
+        admin_email=" Ada@Example.COM ",
+        cell_label=label,
+        invite_domains="Example.com, example.org,example.com",
+    )
     assert cli.main([*made, "--confirm-admin-email", "ada@EXAMPLE.com"]) == 0
     out, err = capsys.readouterr()
     org = out.strip()
@@ -124,6 +134,7 @@ def test_create_social_org_makes_the_org_its_invited_admin_and_four_events(
     assert "Confirm admin email" not in err
     for shown in ("ADMIN EMAIL  ada@example.com", name, "google, microsoft", label):
         assert shown in err
+    assert "Domains      example.com, example.org" in err
     with psycopg.connect(dsns.superuser) as conn:
         events = conn.execute(
             "select action, actor_kind, actor_id, target_kind, target_id, before, after "
@@ -135,7 +146,7 @@ def test_create_social_org_makes_the_org_its_invited_admin_and_four_events(
             (org,),
         ).fetchall()
         state = conn.execute(
-            "select name, sign_in_mode, social_providers, cell_label, "
+            "select name, sign_in_mode, social_providers, invite_domains, cell_label, "
             "(select count(*) from ssc.identity_link where org_id = o.id), "
             "(select count(*) from ssc.directory_connection where org_id = o.id), "
             "(select count(*) from ssc.org_index where org_id = o.id) "
@@ -144,10 +155,15 @@ def test_create_social_org_makes_the_org_its_invited_admin_and_four_events(
         ).fetchone()
     ((admin, *person),) = people
     assert tuple(person) == ("admin", "invited", "ada@example.com", "ada@example.com")
-    assert state == (name, "social", ["google", "microsoft"], label, 0, 0, 1)
+    domains = ["example.com", "example.org"]
+    assert state == (name, "social", ["google", "microsoft"], domains, label, 0, 0, 1)
     assert [e[0] for e in events] == ["org.created", "org.updated", "user.invited", "org.updated"]
     assert {(e[1], e[2]) for e in events} == {("operator", "op_dana")}
-    assert events[1][6] == {"sign_in_mode": "social", "social_providers": ["google", "microsoft"]}
+    assert events[1][6] == {
+        "sign_in_mode": "social",
+        "social_providers": ["google", "microsoft"],
+        "invite_domains": domains,
+    }
     assert events[2][3:] == ("user_account", admin, None, {"role": "admin", "status": "invited"})
     assert events[3][6] == {"cell_label": label}
 
@@ -246,14 +262,109 @@ def test_only_confirm_creates_the_org(
     assert org_rows(dsns, name) == (1, 4)
 
 
+def test_create_social_org_refuses_missing_malformed_or_too_many_domains(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    without_workos(dsns, monkeypatch)
+    name = f"Domains-{secrets.token_hex(4)}"
+    for bad in (
+        None,
+        "",
+        ",",
+        "acme",
+        "@acme.com",
+        "ada@acme.com",
+        "https://acme.com",
+        "acme.com:443",
+        "acme.com/path",
+        "*.acme.com",
+        "-acme.com",
+        "acme-.com",
+        "acme..com",
+        "acme.com.",
+        "acme_corp.com",
+        "acmé.com",
+        "\u212acme.com",
+        f"{'a' * 64}.com",
+        f"{'a.' * 126}com",
+        ",".join(f"d{i}.com" for i in range(11)),
+    ):
+        answer(monkeypatch, "ada@example.com\nconfirm\n")
+        with pytest.raises(SystemExit) as refused:
+            cli.main(argv(name=name, invite_domains=bad))
+        assert refused.value.code == 2, bad
+    capsys.readouterr()
+    answer(monkeypatch, "confirm\n")
+    assert cli.main(argv(name=name, invite_domains=",".join(f"d{i}.com" for i in range(9)))) == 1
+    assert "is not at d0.com" in capsys.readouterr().err
+    assert org_rows(dsns, name) == (0, 0)
+
+
+def test_an_admin_email_outside_the_domains_is_refused_before_the_prompt(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    without_workos(dsns, monkeypatch)
+    name = f"Outside-{secrets.token_hex(4)}"
+    for domains in ("example.org", "sub.example.com", "ample.com", "example.com.evil.io"):
+        answer(monkeypatch, "ada@example.com\nconfirm\n")
+        assert cli.main(argv(name=name, confirm_admin_email=None, invite_domains=domains)) == 1
+        err = capsys.readouterr().err
+        assert err == (
+            f"not created: the admin email ada@example.com is not at {domains}; "
+            "nothing was written\n"
+        )
+    assert org_rows(dsns, name) == (0, 0)
+
+
+def test_a_consumer_domain_needs_the_flag_and_the_flag_is_audited(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    without_workos(dsns, monkeypatch)
+    name = f"Gmail-{secrets.token_hex(4)}"
+    gmail = {"admin_email": "ada.test@gmail.com", "invite_domains": "GMAIL.com"}
+    answer(monkeypatch, "confirm\n")
+    assert cli.main(argv(name=name, **gmail)) == 1
+    assert capsys.readouterr().err == (
+        "not created: gmail.com is a consumer mail domain; pass --allow-consumer-domain only "
+        "for a test org; nothing was written\n"
+    )
+    assert org_rows(dsns, name) == (0, 0)
+    answer(monkeypatch, "confirm\n")
+    assert cli.main([*argv(name=name, **gmail), "--allow-consumer-domain"]) == 0
+    org = capsys.readouterr().out.strip()
+    with psycopg.connect(dsns.superuser) as conn:
+        after = conn.execute(
+            "select after from ssc.audit_event where org_id = %s and action = 'org.updated' "
+            "order by seq limit 1",
+            (org,),
+        ).fetchone()
+    assert after == (
+        {
+            "sign_in_mode": "social",
+            "social_providers": ["google", "microsoft"],
+            "invite_domains": ["gmail.com"],
+            "allow_consumer_domain": True,
+        },
+    )
+
+
 async def test_create_social_org_refuses_a_malformed_address_or_label(dsns: Dsns) -> None:
     engine = make_engine(dsns.app)
     try:
-        for change in ({"admin_email": "nobody"}, {"cell_label": "UPPERCASE1"}, {"name": ""}):
+        for change in (
+            {"admin_email": "nobody"},
+            {"cell_label": "UPPERCASE1"},
+            {"name": ""},
+            {"invite_domains": ()},
+            {"invite_domains": ("acme",)},
+            {"invite_domains": ("example.org",)},
+            {"invite_domains": ("gmail.com",), "admin_email": "ada@gmail.com"},
+        ):
             kw: dict[str, Any] = {
                 "name": "Bad-direct",
                 "admin_email": "ada@example.com",
                 "providers": ("google",),
+                "invite_domains": ("example.com",),
                 "cell_label": fresh_label(),
                 "actor": OP,
                 **change,

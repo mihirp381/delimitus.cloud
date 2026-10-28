@@ -76,7 +76,8 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
     "audit": frozenset({"format", "filters"}),
     "audit_anchor": frozenset({"restored_to", "prior_anchor_seq", "head_seq", "ref"}),
     "org": frozenset({"name", "agent_logs", "cell_label"})  # cell_label: SSC-097
-    | frozenset({"sign_in_mode", "social_providers", "reason"}),
+    | frozenset({"sign_in_mode", "social_providers", "reason"})
+    | frozenset({"invite_domains", "allow_consumer_domain"}),
     # SSC-019; scope and expires_at: a CI token (GA-7.7), whose label is not recorded.
     "auth_session": frozenset({"kind", "user_id", "reason", "via", "client_id"})
     | frozenset({"scope", "expires_at"}),

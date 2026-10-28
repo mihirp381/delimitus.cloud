@@ -15,7 +15,7 @@ from ssc_control.names import people
 
 router = APIRouter()
 
-_ORG = text("select name, sign_in_mode from ssc.org where id = :org")
+_ORG = text("select name, sign_in_mode, invite_domains from ssc.org where id = :org")
 
 
 class Whoami(Strict):
@@ -34,6 +34,9 @@ class Whoami(Strict):
     email: str | None
     sign_in_mode: Literal["directory", "social"] = Field(
         description="`social` for a pilot org whose admins invite people by email."
+    )
+    invite_domains: list[str] = Field(
+        description="The email domains a social org's admins may invite; empty in a directory org."
     )
 
 
@@ -56,4 +59,5 @@ async def whoami(uow: UserUoW) -> Whoami:
         name=None if who is None else who.name,
         email=None if who is None else who.email,
         sign_in_mode="directory" if org is None else org[1],
+        invite_domains=[] if org is None else list(org[2]),
     )

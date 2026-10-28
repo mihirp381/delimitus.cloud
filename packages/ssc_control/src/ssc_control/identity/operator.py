@@ -8,8 +8,9 @@ any step rolls back all of it: no org, no ``org_index`` row, no audit event. Eve
 
 ``create-social-org`` makes a pilot org in social mode (decision 002 amendment 2026-10-27) with no
 WorkOS organisation or directory, in one transaction: ``org.created``, ``org.updated`` (the
-mode), ``user.invited`` (the first admin, linked at their first sign-in) and ``org.updated`` (the
-cell label). It is the only way into social mode: a directory org never moves to it.
+mode, providers and invite domains), ``user.invited`` (the first admin, linked at their first
+sign-in) and ``org.updated`` (the cell label). It is the only way into social mode: a directory
+org never moves to it.
 
 ``restore-admin`` is for an org the directory left with no active admin (decision 024 allows
 that: sync deactivates a founder it cannot find, and an operator restores an admin). In one
@@ -202,6 +203,16 @@ async def create_org_with_directory(  # noqa: PLR0913  (keyword-only)
     return OrgSetUp(created, connection_id, founder)
 
 
+def social_org_problem(
+    admin_email: str, domains: tuple[str, ...], *, allow_consumer: bool
+) -> str | None:
+    if (problem := social.consumer_problem(domains, allow_consumer=allow_consumer)) is not None:
+        return problem
+    if not social.at_domains(admin_email, domains):
+        return f"the admin email {admin_email} is not at {', '.join(domains)}"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class SocialOrg:
     org_id: str
@@ -214,22 +225,35 @@ async def create_social_org(  # noqa: PLR0913  (keyword-only)
     name: str,
     admin_email: str,
     providers: tuple[str, ...],
+    invite_domains: tuple[str, ...],
     cell_label: str,
     actor: Actor,
+    allow_consumer: bool = False,
 ) -> SocialOrg:
     """The org in social mode with its first admin invited, and its cell label: all of it or
-    none. :class:`ConnectError` for a malformed name, address or label, or a label already
-    taken."""
+    none. :class:`ConnectError` for a malformed name, address, domain or label, or a label
+    already taken."""
     try:
         email, label = check_email(admin_email), check_cell_label(cell_label)
         name = check_org_name(name)
+        domains = social.check_invite_domains(",".join(invite_domains))
     except ValueError as e:
         raise ConnectError(str(e)) from e
+    if (problem := social_org_problem(email, domains, allow_consumer=allow_consumer)) is not None:
+        raise ConnectError(problem)
     org_id, admin_id = new_id("org"), new_id("usr")
     try:
         async with bound_org(engine, org_id) as conn:
             generated = await open_org_in(conn, org_id, name, actor=actor)
-            await social.set_sign_in(conn, org_id, "social", providers, actor=actor)
+            await social.set_sign_in(
+                conn,
+                org_id,
+                "social",
+                providers,
+                actor=actor,
+                invite_domains=domains,
+                allow_consumer=allow_consumer,
+            )
             await conn.execute(_INVITE_ADMIN, {"id": admin_id, "org": org_id, "email": email})
             await append_event(
                 conn,

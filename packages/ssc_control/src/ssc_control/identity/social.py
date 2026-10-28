@@ -3,7 +3,8 @@ social mode with the providers it may use; its admins invite people by email. A 
 links the provider's subject to the one invited or active person with the verified address;
 later sign-ins match the subject only. A directory org never moves to social mode."""
 
-from collections.abc import Sequence
+import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
@@ -38,13 +39,35 @@ SocialRefusal = Literal[
     "no_match",
     "ambiguous_email",
     "subject_mismatch",
+    "email_domain_not_allowed",
 ]
+MAX_DOMAINS: Final = 10
+MAX_DOMAIN: Final = 253
+CONSUMER_DOMAINS: Final = frozenset(
+    {
+        "gmail.com",
+        "googlemail.com",
+        "outlook.com",
+        "hotmail.com",
+        "live.com",
+        "msn.com",
+        "yahoo.com",
+        "icloud.com",
+        "me.com",
+        "aol.com",
+        "proton.me",
+        "protonmail.com",
+        "gmx.com",
+    }
+)
+_LABEL: Final = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
 @dataclass(frozen=True, slots=True)
 class SocialSignIn:
     org_id: str
     providers: tuple[str, ...]
+    invite_domains: tuple[str, ...]
 
 
 type SignIn = connections.DirectoryConnection | SocialSignIn
@@ -62,6 +85,52 @@ def provider_of(connection_type: str) -> str | None:
     return next((p for p, t in WORKOS_PROVIDERS.items() if t == connection_type), None)
 
 
+def check_domain(value: str) -> str:
+    domain = value.strip()
+    if domain.isascii():
+        domain = domain.lower()
+    labels = domain.split(".")
+    if (
+        len(domain) > MAX_DOMAIN
+        or len(labels) < 2  # noqa: PLR2004
+        or not all(_LABEL.fullmatch(label) for label in labels)
+    ):
+        raise ValueError(
+            f"{value.strip()!r} is not a domain such as acme.com: letters, digits, hyphens and "
+            "dots, with no @, scheme, port or path"
+        )
+    return domain
+
+
+def check_invite_domains(raw: str) -> tuple[str, ...]:
+    domains = tuple(dict.fromkeys(check_domain(d) for d in raw.split(",") if d.strip()))
+    if not 1 <= len(domains) <= MAX_DOMAINS:
+        raise ValueError(f"invite domains are 1 to {MAX_DOMAINS} comma-separated domains")
+    return domains
+
+
+def consumer_problem(domains: Iterable[str], *, allow_consumer: bool) -> str | None:
+    consumer = sorted(set(domains) & CONSUMER_DOMAINS)
+    if consumer and not allow_consumer:
+        return (
+            f"{', '.join(consumer)} is a consumer mail domain; pass --allow-consumer-domain only "
+            "for a test org"
+        )
+    return None
+
+
+def domain_of(email: str) -> str:
+    return email.rpartition("@")[2].lower()
+
+
+def at_domains(email: str, domains: Iterable[str]) -> bool:
+    return "@" in email and domain_of(email) in set(domains)
+
+
+async def invite_domains(conn: AsyncConnection, org_id: str) -> tuple[str, ...]:
+    return tuple((await conn.execute(_DOMAINS, {"org": org_id})).scalar_one_or_none() or ())
+
+
 def check_providers(raw: str) -> tuple[str, ...]:
     names = tuple(dict.fromkeys(p.strip().lower() for p in raw.split(",") if p.strip()))
     unknown = [p for p in names if p not in WORKOS_PROVIDERS]
@@ -70,15 +139,23 @@ def check_providers(raw: str) -> tuple[str, ...]:
     return names
 
 
-_MODE = text("select sign_in_mode, social_providers from ssc.org where id = :org")
-_LOCK_MODE = text("select sign_in_mode, social_providers from ssc.org where id = :org for update")
+_MODE = text("select sign_in_mode, social_providers, invite_domains from ssc.org where id = :org")
+_LOCK_MODE = text(
+    "select sign_in_mode, social_providers, invite_domains from ssc.org where id = :org for update"
+)
+_DOMAINS = text("select invite_domains from ssc.org where id = :org")
+_IN_USE = text(
+    "select id, lower(email) from ssc.user_account where org_id = :org "
+    "and status in ('invited', 'active') and not (lower(regexp_replace(email, '^.*@', '')) "
+    "= any(cast(:domains as text[]))) order by lower(email), id"
+)
 _EMPTY = text(
     "select not exists (select 1 from ssc.user_account where org_id = :org) "
     "and not exists (select 1 from ssc.directory_connection where org_id = :org)"
 )
 _SET_MODE = text(
-    "update ssc.org set sign_in_mode = :mode, social_providers = cast(:providers as text[]) "
-    "where id = :org"
+    "update ssc.org set sign_in_mode = :mode, social_providers = cast(:providers as text[]), "
+    "invite_domains = cast(:domains as text[]) where id = :org"
 )
 _BY_LINK = text(
     "select u.id, u.status = 'active' from ssc.identity_link l join ssc.user_account u "
@@ -115,7 +192,7 @@ async def resolve(conn: AsyncConnection, org_id: str) -> SignIn | None:
     if row is None:
         return None
     if row[0] == "social":
-        return SocialSignIn(org_id, tuple(row[1]))
+        return SocialSignIn(org_id, tuple(row[1]), tuple(row[2]))
     connection = await connections.load(conn, org_id)
     return None if connection is None or connection.frozen else connection
 
@@ -136,6 +213,8 @@ async def find_person(  # noqa: PLR0911, PLR0912  (one answer per check)
         return "bad_subject"
     if "@" not in profile.email:
         return "no_email"
+    if not at_domains(profile.email, target.invite_domains):
+        return "email_domain_not_allowed"
     org, iss = target.org_id, issuer(provider)
     linked = (
         await conn.execute(_BY_LINK, {"org": org, "issuer": iss, "subject": profile.idp_id})
@@ -205,32 +284,57 @@ async def _link(  # noqa: PLR0913  (keyword-only)
         await mark_dirty(conn, org_id)
 
 
-async def set_sign_in(
+async def set_sign_in(  # noqa: PLR0913  (keyword-only)
     conn: AsyncConnection,
     org_id: str,
     sign_in_mode: Mode,
     providers: Sequence[str],
     *,
     actor: Actor,
+    invite_domains: Sequence[str] = (),
+    allow_consumer: bool = False,
 ) -> bool:
     """Set the org's sign-in mode, audited; False when it was already so. Only an org with no
     people and no connection yet, as ``create-social-org`` opens one, may leave directory mode."""
-    if (sign_in_mode == "social") != bool(providers):
-        raise SignInError("social mode needs providers; directory mode takes none")
+    social = sign_in_mode == "social"
+    if social != bool(providers) or social != bool(invite_domains):
+        raise SignInError("social mode needs providers and invite domains; directory mode neither")
+    if len(invite_domains) > MAX_DOMAINS:
+        raise SignInError(f"at most {MAX_DOMAINS} invite domains")
+    if (problem := consumer_problem(invite_domains, allow_consumer=allow_consumer)) is not None:
+        raise SignInError(problem)
     row = (await conn.execute(_LOCK_MODE, {"org": org_id})).one_or_none()
     if row is None:
         raise SignInError(f"{org_id} is not an org")
-    if row[0] == "directory" and sign_in_mode == "social" and not await _empty(conn, org_id):
+    if row[0] == "directory" and social and not await _empty(conn, org_id):
         raise SignInError(
             f"{org_id} is a directory org and cannot move to social mode; a social pilot is a "
             "new org, made with create-social-org"
         )
-    before = {"sign_in_mode": str(row[0]), "social_providers": list(row[1])}
-    after = {"sign_in_mode": sign_in_mode, "social_providers": list(providers)}
+    if social:
+        await _refuse_domains_in_use(conn, org_id, invite_domains)
+    before = {
+        "sign_in_mode": str(row[0]),
+        "social_providers": list(row[1]),
+        "invite_domains": list(row[2]),
+    }
+    after: dict[str, object] = {
+        "sign_in_mode": sign_in_mode,
+        "social_providers": list(providers),
+        "invite_domains": list(invite_domains),
+    }
     if before == after:
         return False
+    if allow_consumer:
+        after["allow_consumer_domain"] = True
     await conn.execute(
-        _SET_MODE, {"org": org_id, "mode": sign_in_mode, "providers": list(providers)}
+        _SET_MODE,
+        {
+            "org": org_id,
+            "mode": sign_in_mode,
+            "providers": list(providers),
+            "domains": list(invite_domains),
+        },
     )
     await append_event(
         conn,
@@ -245,6 +349,17 @@ async def set_sign_in(
         ),
     )
     return True
+
+
+async def _refuse_domains_in_use(
+    conn: AsyncConnection, org_id: str, domains: Sequence[str]
+) -> None:
+    outside = (await conn.execute(_IN_USE, {"org": org_id, "domains": list(domains)})).all()
+    if outside:
+        people = "; ".join(f"{r[0]} {r[1]}" for r in outside)
+        raise SignInError(
+            "invited or active people are outside those domains; deactivate them first: " + people
+        )
 
 
 async def _empty(conn: AsyncConnection, org_id: str) -> bool:
