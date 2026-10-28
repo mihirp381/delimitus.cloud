@@ -1,6 +1,7 @@
 """The gateway's decision (SSC-018): every stage, and a forbidden app answered exactly like an
 address with no app."""
 
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -202,9 +203,96 @@ async def test_the_snapshot_suffix_names_the_hosts(world: World) -> None:
     out = await check(world, facts(host, cookie=world.cookie(session(), host)))
     assert isinstance(out, Allow)
     assert out.host == host
-    for elsewhere in (HOST, "ledger.old.testorg.com", "ledger.tools.otherorg.com"):
+    for elsewhere in (HOST, "ledger.tools.otherorg.com", "a.ledger.old.testorg.com"):
         out = await denied(world, facts(elsewhere, cookie=world.cookie(session(), elsewhere)))
         assert (out.status, out.reason) == (404, "not_app_host")
+    old = "ledger.old.testorg.com"
+    out = await denied(world, facts(old, cookie=world.cookie(session(), old)))
+    assert (out.status, out.reason) == (307, "previous_suffix")
+
+
+def moved_to(out: Deny) -> str:
+    assert (out.status, out.reason, out.body) == (307, "previous_suffix", b"")
+    headers = dict(out.headers)
+    assert set(headers) == {"location", "cache-control"}
+    assert headers["cache-control"] == "no-store"
+    return headers["location"]
+
+
+@pytest.mark.parametrize(
+    ("host", "path", "want"),
+    [
+        ("ledger.old.testorg.com", "/", f"https://ledger.{CUSTOM}/"),
+        (
+            "ledger.old.testorg.com",
+            "/report/2026?q=a%20b&tab=2#x",
+            f"https://ledger.{CUSTOM}/report/2026?q=a%20b&tab=2#x",
+        ),
+        ("ledger--preview.old.testorg.com", "/p?x=1", f"https://ledger--preview.{CUSTOM}/p?x=1"),
+        ("LEDGER.Old.TestOrg.com:443", "/a", f"https://ledger.{CUSTOM}/a"),
+        ("nothere.old.testorg.com", "/", f"https://nothere.{CUSTOM}/"),
+        ("ledger.old.testorg.com", "//evil.example/x", f"https://ledger.{CUSTOM}//evil.example/x"),
+    ],
+)
+async def test_a_previous_suffix_redirects_to_the_current_one(
+    world: World, host: str, path: str, want: str
+) -> None:
+    world.view = AccessView.from_document(snapshot(suffix=CUSTOM, previous_suffixes=RETIRED))
+    assert moved_to(await denied(world, facts(host, path))) == want
+
+
+async def test_the_redirect_comes_before_any_session_or_timer_work(world: World) -> None:
+    world.view = AccessView.from_document(snapshot(suffix=CUSTOM, previous_suffixes=RETIRED))
+    old = "ledger.old.testorg.com"
+    want = f"https://ledger.{CUSTOM}/x"
+    for f in (
+        facts(old, "/x", cookie=world.cookie(session(), old)),
+        facts(old, "/x", cookie="__Host-ssc-session=garbage"),
+        facts(old, "/x", "POST", sec_fetch_site="cross-site"),
+        facts(old, "/x", ssc_schedule_token="not-a-token"),
+    ):
+        assert moved_to(await denied(world, f)) == want
+
+
+async def test_a_previous_suffix_is_not_found_after_its_until(world: World) -> None:
+    until = int(datetime.fromisoformat(RETIRED[0]["until"]).timestamp())
+    world.view = AccessView.from_document(snapshot(suffix=CUSTOM, previous_suffixes=RETIRED))
+    for host in ("ledger.old.testorg.com", "ledger--preview.old.testorg.com"):
+        world.now = until - 1
+        assert (await denied(world, facts(host))).status == 307
+        world.now = until
+        out = await denied(world, facts(host))
+        assert (out.status, out.reason) == (404, "not_app_host")
+
+
+async def test_a_flip_and_a_flip_back_never_loop(world: World) -> None:
+    default = f"{LABEL}.{DOMAIN}"
+    t0 = NOW
+    month = 30 * 86400
+
+    def iso(t: int) -> str:
+        return datetime.fromtimestamp(t, UTC).isoformat()
+
+    flipped = snapshot(
+        2, suffix=CUSTOM, previous_suffixes=[{"suffix": default, "until": iso(t0 + month)}]
+    )
+    back = snapshot(
+        3, suffix=None, previous_suffixes=[{"suffix": CUSTOM, "until": iso(t0 + 86400 + month)}]
+    )
+    for doc, at in ((flipped, t0), (back, t0 + 86400), (back, t0 + 86400 + month + 1)):
+        world.view = AccessView.from_document(doc)
+        world.now = at
+        for first in ("ledger", "ledger--preview"):
+            for suffix in (default, CUSTOM):
+                host, hops = f"{first}.{suffix}", 0
+                while True:
+                    out = await check(world, facts(host, cookie=world.cookie(session(), host)))
+                    if not (isinstance(out, Deny) and out.status == 307):
+                        break
+                    hops += 1
+                    assert hops == 1, f"{host} redirected again"
+                    host = urlsplit(moved_to(out)).hostname or ""
+                    assert host.endswith(doc["suffix"] or default)
 
 
 async def test_the_note_names_the_environment_under_any_suffix(world: World) -> None:

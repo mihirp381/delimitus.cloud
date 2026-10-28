@@ -7,7 +7,8 @@ Stages, in order, stopping at the first refusal:
    snapshot's ``suffix``, else ``<cell label>.<apps domain>``) is ``404``. A host whose first
    label is in the snapshot's ``hosts`` but which is not under that suffix is looked up again
    after a snapshot read, so a new suffix is served without a restart. A host under one of the
-   snapshot's ``previous_suffixes`` is ``404`` too.
+   snapshot's ``previous_suffixes`` answers ``307`` to the same first label under the current
+   suffix, path and query kept, before any session work; after its ``until``, ``404``.
 2. Own paths under ``/.ssc/``: the login hand-back (``/.ssc/callback``) and ``/.ssc/logout``.
    Apps never receive these paths. The hand-back redeems the code with the login nonce this
    host set when it sent the browser to log in, so a code is good only in that browser.
@@ -105,6 +106,7 @@ type Reason = Literal[
     "signed_out",
     "bad_schedule_token",
     "app_inactive",
+    "previous_suffix",
 ]
 
 
@@ -286,14 +288,38 @@ class Gate:
         self._refresh = refresh
         self._schedule_keys = schedule_keys
 
-    def _app(self, host: str) -> AppHost | None:
+    def _parse(self, host: str) -> tuple[AppHost | None, str, AccessView | None]:
         view = self._view()
         current = (view.suffix if view else None) or default_suffix(
             self._cfg.cell_label, self._cfg.apps_domain
         )
         previous = [p.suffix for p in view.previous_suffixes] if view else []
-        app = parse_app_host(host, [current, *previous])
+        return parse_app_host(host, [current, *previous]), current, view
+
+    def _app(self, host: str) -> AppHost | None:
+        app, current, _ = self._parse(host)
         return app if app is not None and app.suffix == current else None
+
+    def _moved(self, host: str, path: str) -> Deny | None:
+        app, current, view = self._parse(host)
+        if app is None or app.suffix == current or view is None:
+            return None
+        now = self._clock()
+        if not any(
+            p.suffix == app.suffix and p.until.timestamp() > now for p in view.previous_suffixes
+        ):
+            return None
+        first = host.removesuffix("." + app.suffix)
+        local = path if path.startswith("/") else "/"
+        return Deny(
+            status=307,
+            headers=(
+                ("location", f"https://{first}.{current}{local}"),
+                ("cache-control", "no-store"),
+            ),
+            body=b"",
+            reason="previous_suffix",
+        )
 
     async def check(self, facts: Facts) -> Allow | Deny:
         host = normal_host(facts.host)
@@ -308,7 +334,7 @@ class Gate:
             await self._refresh()
             app = self._app(host)
         if app is None:
-            return not_found("not_app_host")
+            return self._moved(host, facts.path or "/") or not_found("not_app_host")
         path = facts.path or "/"
         own = urlsplit(path).path
         if own.startswith(OWN_PREFIX):

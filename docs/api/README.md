@@ -335,7 +335,8 @@ and `ready_to_flip` once `rolling`, the environments not yet rolled with the com
 their origins, is 0. `PUT /v1/domain` `{suffix}` asks the cell for the zone and certificate (the
 same suffix again changes nothing; another while one is live is `ALREADY_EXISTS` unless it
 failed). `POST /v1/domain/flip` `{to: "customer" | "default", confirm: true}` moves the org's
-suffix in one snapshot and keeps the old one 30 days as a previous suffix; `DOMAIN_NOT_READY` while apps roll, `DOMAIN_STATE` when there is
+suffix in one snapshot and keeps the old one 30 days as a previous suffix, whose hosts answer
+`307` to the same label under the current one; `DOMAIN_NOT_READY` while apps roll, `DOMAIN_STATE` when there is
 nothing to flip to. Changes are refused in an agent session. An operator retires a domain with
 `POST /internal/v1/orgs/{org_id}/domain/retire` (`DOMAIN_STATE` names why not).
 

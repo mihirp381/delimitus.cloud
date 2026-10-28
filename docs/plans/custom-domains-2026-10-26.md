@@ -40,6 +40,12 @@ failure mode owned and visible on our side.
 
 Success: answered above 2026-10-26; decision 004 amendment drafted (CD-7.1) with the answers.
 
+- Q2 note, 2026-10-28: a timer call is not retried by `timers/runner.py`, and schedule tokens still
+  use the origin as `aud`. So the HTTPS dispatcher (`timers/https.py`) sends a call once more when
+  the gateway answers a previous suffix's `307` naming the same host label and path under another
+  valid suffix, with a token minted for that origin. It follows no other redirect and never a
+  second one, so a flip costs a timer call one extra round trip, not a failed run.
+
 ## 2. Tickets
 
 ### CD-1 Suffix model in code (~4 days)
