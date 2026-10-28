@@ -15,9 +15,11 @@ cell label).
 that: sync deactivates a founder it cannot find, and an operator restores an admin). In one
 transaction it reactivates the person and makes them admin, and audits ``user.updated`` (role and
 status before and after), ``user.reactivated`` when the status changed, and ``operator.access``,
-all with the operator as actor. ``already_applied_at`` records a change somebody already made by
-hand without touching the row: the chain is append-only, so the event is appended now and carries
-the real time of the change in its body.
+all with the operator as actor. In a social org the person needs a social identity link (they
+have signed in once) instead of a link under the directory, and the admin group is not checked.
+``already_applied_at`` records a change somebody already made by hand without touching the row:
+the chain is append-only, so the event is appended now and carries the real time of the change in
+its body.
 
 All run as ``ssc_app`` with ``SSC_DATABASE_DSN`` (the role of ``connect``). There is no API route.
 """
@@ -37,7 +39,7 @@ from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.db import CreatedOrg, NewOrg, bound_org, check_org_id, create_org_in, open_org_in
 from ssc_control.db.errors import UNIQUE_VIOLATION
 from ssc_control.identity import connections, social
-from ssc_control.identity.connections import ConnectError, FounderResult
+from ssc_control.identity.connections import ConnectError, DirectoryConnection, FounderResult
 from ssc_control.identity.rules import JoinRule
 from ssc_control.identity.workos import WorkOSClient
 from ssc_control.snapshot.service import mark_dirty
@@ -57,6 +59,10 @@ _LOCK_USER = text(
 _LINKED = text(
     "select 1 from ssc.identity_link where org_id = :org and user_id = :user "
     "and issuer = :issuer limit 1"
+)
+_SOCIAL_LINKED = text(
+    "select 1 from ssc.identity_link where org_id = :org and user_id = :user "
+    "and source = 'social' limit 1"
 )
 _INVITE_ADMIN = text(
     "insert into ssc.user_account (id, org_id, display_name, email, role, status) "
@@ -289,20 +295,18 @@ async def restore_admin(  # noqa: PLR0913, C901  (keyword-only; one list of refu
     except ValueError as e:
         raise RestoreError(str(e)) from e
     applied = None if already_applied_at is None else _applied_at(already_applied_at)
-    connection = await connections.load(conn, org_id)
-    if connection is None:
-        raise RestoreError("the org has no directory connection")
+    connection = None
+    if await social.mode(conn, org_id) != "social":
+        connection = await connections.load(conn, org_id)
+        if connection is None:
+            raise RestoreError("the org has no directory connection")
     row = (await conn.execute(_LOCK_USER, {"org": org_id, "id": user_id})).one_or_none()
     if row is None:
         raise RestoreError(f"{user_id} is not a user of {org_id}")
     role, status = str(row[0]), str(row[1])
-    linked = await conn.execute(
-        _LINKED, {"org": org_id, "user": user_id, "issuer": connection.issuer}
-    )
-    if linked.one_or_none() is None:
-        raise RestoreError(f"{user_id} has no identity link under the org's directory")
+    await _require_link(conn, org_id, user_id, connection)
     warnings: list[str] = []
-    ref = connection.admin_group_ref
+    ref = None if connection is None else connection.admin_group_ref
     if ref is not None:
         in_group = await conn.execute(_IN_GROUP, {"org": org_id, "user": user_id, "ref": ref})
         if in_group.one_or_none() is None:
@@ -375,6 +379,24 @@ async def restore_admin(  # noqa: PLR0913, C901  (keyword-only; one list of refu
         conn, org_id, actor, AuditAction.OPERATOR_ACCESS, user_id, after={"reason": reason}
     )
     return Restored(user_id, role, status, False, tuple(warnings))
+
+
+async def _require_link(
+    conn: AsyncConnection, org_id: str, user_id: str, connection: DirectoryConnection | None
+) -> None:
+    if connection is None:
+        linked = await conn.execute(_SOCIAL_LINKED, {"org": org_id, "user": user_id})
+        if linked.one_or_none() is None:
+            raise RestoreError(
+                f"{user_id} has not signed in yet: they must sign in once with one of the "
+                "org's providers first"
+            )
+        return
+    linked = await conn.execute(
+        _LINKED, {"org": org_id, "user": user_id, "issuer": connection.issuer}
+    )
+    if linked.one_or_none() is None:
+        raise RestoreError(f"{user_id} has no identity link under the org's directory")
 
 
 async def _audit(  # noqa: PLR0913  (keyword-only)

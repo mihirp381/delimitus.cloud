@@ -4,6 +4,7 @@ postgres:18 and a fake WorkOS.
   1 create-social-org: one transaction, four events, no WorkOS -> test_create_social_org_makes_...,
                                                                   test_create_social_org_refuses_...
   2 the admin signs in and invites; the member signs in       -> test_the_invited_admin_signs_in_...
+  3 restore-admin needs a social link in a social org          -> test_restore_admin_in_a_social_...
   5 the chooser lists its providers; a miss is the same miss   -> test_the_chooser_of_a_created_...
   6 the directory path is unchanged                            -> every existing suite
 """
@@ -18,17 +19,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import Dsns, assert_problem
 from test_auth_host import AUTH, run
-from test_identity import World
+from test_identity import World, profile
 from test_oauth import hidden
-from test_org_admin import OP, chain_ok, events_of
-from test_social_signin import BOB_SUB, GOOGLE_SUB, Api, rig_on, signed_in, social_login
+from test_org_admin import OP, chain_ok, events_of, restore
+from test_social_signin import BOB_SUB, GOOGLE_SUB, Api, invite, rig_on, signed_in, social_login
 
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
-from ssc_control.db import make_engine
+from ssc_control.db import bound_org, make_engine
 from ssc_control.identity import __main__ as cli
-from ssc_control.identity import operator, pages
+from ssc_control.identity import operator, pages, social
 from ssc_control.identity.connections import ConnectError
 
 WORKOS_ENV = ("SSC_WORKOS_API_KEY", "SSC_WORKOS_CLIENT_ID", "SSC_WORKOS_BASE")
@@ -240,3 +241,37 @@ async def test_the_chooser_of_a_created_social_org_lists_its_providers(dsns: Dsn
         assert {(r.status_code, r.text, "set-cookie" in r.headers) for r in misses} == {
             (400, pages.BAD_REQUEST, False)
         }
+
+
+# ── restore-admin ────────────────────────────────────────────────────────────
+
+
+async def test_restore_admin_in_a_social_org_needs_a_social_link(dsns: Dsns) -> None:
+    w = await social_org(make_engine(dsns.app))
+    try:
+        bob = await invite(w, "bob@example.com")
+        async with bound_org(w.engine, w.org) as conn:
+            target = await social.resolve(conn, w.org)
+            assert isinstance(target, social.SocialSignIn)
+            found = await social.find_person(
+                conn,
+                target,
+                profile(w.wo, BOB_SUB, "bob@example.com", connection_type="GoogleOAuth"),
+                "google",
+            )
+        assert not isinstance(found, str) and found.user_id == bob
+        before = await events_of(w.engine, w.org)
+        with pytest.raises(operator.RestoreError, match="has not signed in yet"):
+            await restore(w, w.founder)
+        assert len(await events_of(w.engine, w.org)) == len(before)
+        done = await restore(w, bob)
+        assert (done.role_before, done.status_before, done.warnings) == ("member", "active", ())
+        new = (await events_of(w.engine, w.org))[len(before) :]
+        assert [(r[1], r[3], r[5]) for r in new] == [
+            ("user.updated", "op_dana", bob),
+            ("operator.access", "op_dana", bob),
+        ]
+        assert (await who(w, bob))[:2] == ("admin", "active")
+        await chain_ok(w.engine, w.org)
+    finally:
+        await w.engine.dispose()
