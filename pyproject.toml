@@ -116,6 +116,7 @@ include = [
   "packages/ssc_control/src/ssc_control/cell",
   "packages/ssc_control/src/ssc_control/connections",
   "packages/ssc_control/src/ssc_control/egress",
+  "packages/ssc_control/src/ssc_control/domains",
   "packages/ssc_egress/src",
 ]
 strict = [
@@ -156,6 +157,7 @@ strict = [
   "packages/ssc_control/src/ssc_control/cell",
   "packages/ssc_control/src/ssc_control/connections",
   "packages/ssc_control/src/ssc_control/egress",
+  "packages/ssc_control/src/ssc_control/domains",
   "packages/ssc_egress/src",
 ]
 reportMissingImports = true

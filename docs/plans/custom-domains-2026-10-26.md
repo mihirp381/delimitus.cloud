@@ -56,6 +56,8 @@ Success: answered above 2026-10-26; decision 004 amendment drafted (CD-7.1) with
 - Success: `pytest packages/ssc_shared packages/ssc_edge packages/ssc_control` green; a host under a
   previous suffix parses as `previous`; a host under no suffix of the org is a 404 at the gate exactly as
   today; `ssc status` prints the current suffix URL.
+- 2026-10-28: delegation state, zone name and NS set live in `ssc.org_domain` (one non-retired row
+  per org), not on `ssc.org`.
 
 **CD-1.2 Suffix in the access snapshot.**
 - `docs/contracts/access-snapshot.md`: optional members `suffix` (string) and `previous_suffixes`
@@ -94,6 +96,10 @@ Success: answered above 2026-10-26; decision 004 amendment drafted (CD-7.1) with
 - NS set read back once and stored on the org.
 - Success: `pulumi preview` shows zero changes to the zone on a cell rebuild; stored NS set equals the zone's
   `nameServers`; `dig +short NS` from 1.1.1.1 and 8.8.8.8 matches after delegation.
+- 2026-10-28: zone created by the cell agent; the cell stack never manages it, so a cell rebuild
+  cannot touch it.
+- 2026-10-28: delegation state, zone name and NS set live in `ssc.org_domain` (one non-retired row
+  per org), not on `ssc.org`.
 
 **CD-3.2 Wildcard certificate and map entry at runtime.**
 - Cell agent creates `DnsAuthorization`, managed `Certificate` for `*.<suffix>` and `<suffix>`, and a

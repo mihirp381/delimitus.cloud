@@ -46,6 +46,7 @@ checks, use [CONTRIBUTING.md](../CONTRIBUTING.md); for code navigation, use the
 | [Support and on call](runbooks/ssc-062-support-and-on-call.md) | Alerts, diagnosis, escalation, and status notes. |
 | [Cost reconciliation](runbooks/ssc-096-cost-reconciliation.md) | Compare usage records with cloud billing. |
 | [Kill switch drill](kill-switch-drill.md) | Measure app shutdown and revocation. |
+| [Customer domain zone](plans/custom-domains-2026-10-26.md) | Never delete a zone by hand while the probe sees the delegation; after the cap, `gcloud dns managed-zones delete` in the cell project; a retired cell's project must outlive its delegated zones (dangling-delegation takeover). |
 
 ## Known limits
 
