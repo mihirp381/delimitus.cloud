@@ -28,6 +28,11 @@ function count(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+export function countText(shown: number, all: number, more = false): string {
+  if (shown !== all) return `${shown} of ${all} apps`;
+  return `${count(all, 'app', 'apps')}${more ? ', more to load' : ''}`;
+}
+
 /** Who an environment is shared with, in a line: "Everyone in the organisation, 2 people, 1 group". */
 export function sharingSummary(s: InventoryEnvironment['sharing']): string {
   const parts = [
