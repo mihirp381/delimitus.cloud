@@ -221,6 +221,15 @@ providers are offered and proven is decided by `landing/CLAIMS.md` (`idp`), not 
 Pilot orgs only (decision 002 amendment 2026-10-27; `landing/CLAIMS.md` row `social`). SSC uses
 WorkOS `/sso/authorize` with `provider=` and `/sso/token` only, never User Management or AuthKit.
 
+Tell the pilot's IT contact before the pilot starts: invite domains check the address, not who
+manages the account. A person can sign in with a personal Google account made with a company
+address on a domain the company does not manage in Google Workspace, or a personal Microsoft
+account with a company address (SSC's Microsoft sign-in is personal accounts only). Disabling
+their work account does not end that personal account, so when someone leaves, a pilot admin
+must deactivate them in People; only that ends their SSC access. SSC cannot see whether an
+account is company-managed. Moving the org to company SSO with directory sync closes this. For a
+company pilot, offer Google sign-in first.
+
 ### WorkOS setup **[real]**
 
 1. In the WorkOS dashboard, Authentication, enable each provider the pilot needs: Google OAuth,
