@@ -5,12 +5,14 @@ import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { useToast } from '../components/Toast';
+import { atDomains, useInviteDomains } from './signInMode';
 
 const TITLE = 'Invite by email';
 
 export function InvitePerson() {
   const { api, queryClient } = useRouteContext({ from: '/_authed' });
   const toast = useToast();
+  const domains = useInviteDomains();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -27,6 +29,10 @@ export function InvitePerson() {
     event.preventDefault();
     const address = email.trim();
     if (!address || busy) return;
+    if (domains.length > 0 && !atDomains(address, domains)) {
+      setError(new Error(`${address} is not at ${domains.join(', ')}. Invite an address at one of these domains.`));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -56,6 +62,7 @@ export function InvitePerson() {
             They sign in under this address with one of your organisation&apos;s sign-in
             providers, and become a member the first time they do.
           </p>
+          {domains.length > 0 ? <p>You can invite addresses at {domains.join(', ')}.</p> : null}
           <label className="field" htmlFor={emailId}>
             <span>Email</span>
             <input

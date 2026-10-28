@@ -9,7 +9,7 @@ const BOB = 'usr_bbbbbbbbbbbbbbbbbbbb';
 
 const socialWhoami: Handler = async () => {
   const body = (await WHOAMI().json()) as Record<string, unknown>;
-  return json(200, { ...body, sign_in_mode: 'social' });
+  return json(200, { ...body, sign_in_mode: 'social', invite_domains: ['example.com', 'example.co.uk'] });
 };
 
 function user(id: string, name: string, extra: Record<string, unknown> = {}) {
@@ -76,6 +76,40 @@ describe('people in a social org', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Invite' }));
     });
     expect((await within(dialog).findByRole('alert')).textContent).toContain('DIRECTORY_MANAGED');
+  });
+
+  it('names the invite domains and refuses an outside address before sending', async () => {
+    const { api } = await peoplePage({});
+    fireEvent.click(screen.getByRole('button', { name: 'Invite by email' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Invite by email' });
+    expect(dialog.textContent).toContain('You can invite addresses at example.com, example.co.uk.');
+    for (const outside of ['eve@gmail.com', 'eve@sub.example.com', 'eve@example.com.evil.io', 'eve@evilexample.com']) {
+      fireEvent.change(within(dialog).getByLabelText('Email'), { target: { value: outside } });
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Invite' }));
+      });
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(
+        `${outside} is not at example.com, example.co.uk. Invite an address at one of these domains.`,
+      );
+    }
+    expect(api.of('POST', '/v1/users/invite')).toHaveLength(0);
+  });
+
+  it('sends an address at a domain in any case and shows the API refusal', async () => {
+    const { api } = await peoplePage({
+      'POST /v1/users/invite': () =>
+        problem(422, 'INVITE_DOMAIN_NOT_ALLOWED', "This address is not at one of your organisation's email domains."),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Invite by email' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Invite by email' });
+    fireEvent.change(within(dialog).getByLabelText('Email'), { target: { value: 'Eve@Example.CO.UK' } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Invite' }));
+    });
+    expect(api.of('POST', '/v1/users/invite')[0]?.body).toEqual({ email: 'Eve@Example.CO.UK' });
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert.textContent).toContain("This address is not at one of your organisation's email domains.");
+    expect(alert.textContent).toContain('INVITE_DOMAIN_NOT_ALLOWED');
   });
 
   it('lists the invited people on their own', async () => {
