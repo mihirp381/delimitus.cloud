@@ -3,7 +3,8 @@
 ``flush`` takes the due rows ``FOR UPDATE SKIP LOCKED`` so two workers never send one mail twice,
 reads the recipient's address only now, sends, and marks the row. A failure backs off 2, 4, 8
 and 16 minutes and the fifth marks the row ``failed``; it never touches the approval. A row
-whose request was decided meanwhile, or whose recipient left, is deleted unsent. Logs name the
+whose request was decided meanwhile, or whose recipient left, is deleted unsent, as is a
+domain mail whose recipient is no longer an admin. Logs name the
 row and the error type, never an address, a message or the server's reply.
 """
 
@@ -123,9 +124,10 @@ async def _build(
 ) -> mailer.Mail | None:
     """The mail for one outbox row, or None when it is no longer worth sending."""
     who = (await conn.execute(_RECIPIENT, {"org": org_id, "id": row["user_id"]})).first()
-    if who is None or who[2] != "active":
+    kind = str(row["kind"])
+    if who is None or who[2] != "active" or (kind in DOMAIN_KINDS and who[1] != "admin"):
         return None
-    to, kind = str(who[0]), str(row["kind"])
+    to = str(who[0])
     if kind == "welcome" or kind in DOMAIN_KINDS:
         return await _org_mail(conn, org_id, to, kind, console_url, mail_from)
     if kind == "digest":

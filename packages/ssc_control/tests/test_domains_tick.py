@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import Dsns, make_org
 
+from ssc_contracts.ids import new_id
 from ssc_control.db import bind_org_sync, bound_org, make_engine
 from ssc_control.db.domains import OrgDomain, domain_of, insert_domain, open_domains
 from ssc_control.domains import jobs
@@ -289,6 +290,32 @@ async def test_active_and_failed_mail_every_active_admin(
         Mail(to="ada@example.com", subject=active[0], body=active[1]),
         Mail(to="ada@example.com", subject=failed[0], body=failed[1]),
     ]
+
+
+async def test_a_domain_mail_is_dropped_once_its_recipient_is_no_longer_an_admin(
+    dsns: Dsns, org: str, engine: AsyncEngine
+) -> None:
+    fake = FakeCellDomains()
+    ready = await requested(engine, org, fake)
+    right = resolvers({ready.suffix: frozenset(FAKE_NAME_SERVERS)})
+    now = datetime.now(UTC)
+    await tick(engine, cells(fake), right, now)
+    fake.advance(ready.suffix, "active")
+    await tick(engine, cells(fake), right, now)
+    await tick(engine, cells(fake), right, now)
+    assert outbox(dsns.app, org) == [("domain_active", "ada@example.com")]
+    with psycopg.connect(dsns.app) as conn:
+        bind_org_sync(conn, org)
+        conn.execute(
+            "insert into ssc.user_account (id, org_id, display_name, email, role) "
+            "values (%s, %s, 'Bea Admin', 'bea@example.com', 'admin')",
+            (new_id("usr"), org),
+        )
+        conn.execute("update ssc.user_account set role = 'member' where email = 'ada@example.com'")
+    sender = LogMailer()
+    assert await delivery.flush(engine, sender, org_id=org, console_url=CONSOLE) == 0
+    assert list(sender.sent) == []
+    assert outbox(dsns.app, org) == []
 
 
 async def test_a_stall_mails_the_operator_once(org: str, engine: AsyncEngine) -> None:
