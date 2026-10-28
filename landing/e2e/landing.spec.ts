@@ -181,25 +181,30 @@ test('the long way races once it is in view', async ({ page }) => {
 });
 
 const opacity = (el: Element) => getComputedStyle(el).opacity;
+const background = (el: Element) => getComputedStyle(el).backgroundColor;
+const running = (el: Element) => el.getAnimations().length;
+const LIT = 'rgb(240, 237, 255)';
 
-test('the hero steps ease in one after another on load', async ({ page }, info) => {
+test('the hero steps light up in order on load, text always shown', async ({ page }, info) => {
   test.skip(info.project.name !== 'chromium-1440');
   await page.goto('/');
-  const third = page.locator('#heroSteps li').nth(2);
+  const circle = page.locator('#heroSteps .enter__n').nth(2);
   await page.waitForTimeout(300);
-  expect(Number(await third.evaluate(opacity))).toBeLessThan(1);
-  await expect(third).toHaveCSS('opacity', '1', { timeout: 4000 });
-  await expect(third).toHaveCSS('transform', 'none');
+  for (const step of await page.locator('#heroSteps li').all()) expect(await step.evaluate(opacity)).toBe('1');
+  expect(await circle.evaluate(background)).not.toBe(LIT);
+  await expect(circle).toHaveCSS('background-color', LIT, { timeout: 5000 });
+  await expect.poll(() => circle.evaluate(running), { timeout: 5000 }).toBe(0);
 });
 
-test('the hero steps show below the fold without a scroll', async ({ page }, info) => {
+test('the hero steps light up below the fold without a scroll', async ({ page }, info) => {
   test.skip(info.project.name !== 'chromium-1440');
   await page.setViewportSize({ width: 1440, height: 600 });
   await page.goto('/');
-  const third = page.locator('#heroSteps li').nth(2);
-  await expect(third).toHaveCSS('opacity', '1', { timeout: 4000 });
-  await third.scrollIntoViewIfNeeded();
-  expect(await third.evaluate(opacity)).toBe('1');
+  const circle = page.locator('#heroSteps .enter__n').nth(2);
+  await expect(circle).toHaveCSS('background-color', LIT, { timeout: 5000 });
+  await expect.poll(() => circle.evaluate(running), { timeout: 5000 }).toBe(0);
+  await circle.scrollIntoViewIfNeeded();
+  expect(await circle.evaluate(background)).toBe(LIT);
 });
 
 test('the hero zooms into the app where there is room, and holds still where there is not', async ({ page }) => {
@@ -246,13 +251,16 @@ test.describe('reduced motion', () => {
     expect(await race.locator('.race__lane--dlm li').last().getAttribute('class')).toContain('is-wait');
     expect(await race.locator('[data-race="hours"]').textContent()).toBe('92');
   });
-  test('shows the three hero steps at once', async ({ page }) => {
+  test('shows the three hero steps lit at once', async ({ page }) => {
     await page.goto('/');
     const steps = page.locator('#heroSteps li');
     await expect(steps).toHaveCount(3);
     for (const step of await steps.all()) {
       expect(await step.evaluate(opacity)).toBe('1');
-      expect(await step.evaluate((el) => el.getAnimations().length)).toBe(0);
+      expect(await step.evaluate(running)).toBe(0);
+      const circle = step.locator('.enter__n');
+      expect(await circle.evaluate(running)).toBe(0);
+      expect(await circle.evaluate(background)).toBe(LIT);
     }
   });
   test('keeps the hero still', async ({ page }) => {
