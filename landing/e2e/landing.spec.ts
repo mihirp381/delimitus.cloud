@@ -183,17 +183,21 @@ test('the long way races once it is in view', async ({ page }) => {
 const opacity = (el: Element) => getComputedStyle(el).opacity;
 const background = (el: Element) => getComputedStyle(el).backgroundColor;
 const running = (el: Element) => el.getAnimations().length;
+const iterations = (el: Element) => el.getAnimations()[0]?.effect?.getComputedTiming().iterations;
 const LIT = 'rgb(240, 237, 255)';
 
-test('the hero steps light up in order on load, text always shown', async ({ page }, info) => {
+test('the hero steps light up in order and loop, text always shown', async ({ page }, info) => {
   test.skip(info.project.name !== 'chromium-1440');
   await page.goto('/');
-  const circle = page.locator('#heroSteps .enter__n').nth(2);
+  const circles = page.locator('#heroSteps .enter__n');
+  const circle = circles.nth(2);
   await page.waitForTimeout(300);
   for (const step of await page.locator('#heroSteps li').all()) expect(await step.evaluate(opacity)).toBe('1');
   expect(await circle.evaluate(background)).not.toBe(LIT);
+  for (const c of await circles.all()) expect(await c.evaluate(iterations)).toBe(Infinity);
   await expect(circle).toHaveCSS('background-color', LIT, { timeout: 5000 });
-  await expect.poll(() => circle.evaluate(running), { timeout: 5000 }).toBe(0);
+  await expect.poll(() => circle.evaluate(background), { timeout: 4000 }).not.toBe(LIT);
+  await expect(circle).toHaveCSS('background-color', LIT, { timeout: 6000 });
 });
 
 test('the hero steps light up below the fold without a scroll', async ({ page }, info) => {
@@ -202,9 +206,6 @@ test('the hero steps light up below the fold without a scroll', async ({ page },
   await page.goto('/');
   const circle = page.locator('#heroSteps .enter__n').nth(2);
   await expect(circle).toHaveCSS('background-color', LIT, { timeout: 5000 });
-  await expect.poll(() => circle.evaluate(running), { timeout: 5000 }).toBe(0);
-  await circle.scrollIntoViewIfNeeded();
-  expect(await circle.evaluate(background)).toBe(LIT);
 });
 
 test('the hero zooms into the app where there is room, and holds still where there is not', async ({ page }) => {

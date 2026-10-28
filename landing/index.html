@@ -355,18 +355,30 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .enter__n { flex: none; width: 2.75rem; height: 2.75rem; border-radius: 50%; display: grid; place-items: center; background: var(--violet-soft); color: var(--t-violet); font-weight: 600; font-size: 1.05rem; }
 .enter__steps p { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.95rem; line-height: 1.45; color: var(--ink-2); }
 .enter__steps b { font-size: 1.05rem; font-weight: 600; color: var(--ink); }
-/* on load, after the agent panel's ticks: the circles light 1 to 3, the line between them filling */
+/* after the agent panel's ticks, every 5.6s: circles light 1 to 3, lines fill, hold, reset; shared delay, timing in the keyframes */
 @media (prefers-reduced-motion: no-preference) {
-  .enter__n { animation: stepon 450ms ease-out 1.75s backwards; }
-  .enter__steps li:nth-child(2) .enter__n { animation-delay: 2.25s; }
-  .enter__steps li:nth-child(3) .enter__n { animation-delay: 2.75s; }
+  .enter__n { animation: stepc1 5.6s ease-out 1.75s infinite backwards; }
+  .enter__steps li:nth-child(2) .enter__n { animation-name: stepc2s; }
+  .enter__steps li:nth-child(3) .enter__n { animation-name: stepc3s; }
 }
-@keyframes stepon {
-  from { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); }
-  35% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
-  to { box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); }
+@keyframes stepc1 {
+  0% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  2.81% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  8.04%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
 }
-@keyframes stepfill { from { background-size: 0% 100%, 100% 100%; } }
+@keyframes stepc2s {
+  0%, 8.93% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  11.74% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  16.96%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
+@keyframes stepc3s {
+  0%, 17.86% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  20.67% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  25.89%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
 
 .enter__glow {
   position: absolute; left: 50%; top: var(--gy, 50%); z-index: 1; width: var(--gw, 0); height: 40px; margin-top: -20px;
@@ -396,10 +408,32 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
   }
 }
 @media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
-  .enter__steps li:not(:last-child)::after { animation: stepfill 650ms ease-in-out 2.1s backwards; }
-  .enter__steps li:nth-child(2)::after { animation-delay: 3.05s; }
-  .enter__steps li:nth-child(2) .enter__n { animation-delay: 2.7s; }
-  .enter__steps li:nth-child(3) .enter__n { animation-delay: 3.65s; }
+  .enter__steps li:not(:last-child)::after { animation: stepl1 5.6s ease-in-out 1.75s infinite backwards; }
+  .enter__steps li:nth-child(2)::after { animation-name: stepl2; }
+  .enter__steps li:nth-child(2) .enter__n { animation-name: stepc2; }
+  .enter__steps li:nth-child(3) .enter__n { animation-name: stepc3; }
+}
+@keyframes stepc2 {
+  0%, 16.96% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  19.78% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  25%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
+@keyframes stepc3 {
+  0%, 33.93% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); transform: none; }
+  36.74% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  41.96%, 78.57% { background-color: var(--violet-soft); color: var(--t-violet); box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); transform: none; }
+  85.71%, 100% { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0); transform: none; }
+}
+@keyframes stepl1 {
+  0%, 6.25% { background-size: 0% 100%, 100% 100%; }
+  17.86%, 78.57% { background-size: 100% 100%, 0% 100%; }
+  85.71%, 100% { background-size: 0% 100%, 100% 100%; }
+}
+@keyframes stepl2 {
+  0%, 23.21% { background-size: 0% 100%, 100% 100%; }
+  34.82%, 78.57% { background-size: 100% 100%, 0% 100%; }
+  85.71%, 100% { background-size: 0% 100%, 100% 100%; }
 }
 @media (min-width: 1100px) {
   .enter__grid { grid-template-columns: minmax(0, 36fr) minmax(0, 58fr); gap: clamp(24px, 2.6vw, 44px); }
