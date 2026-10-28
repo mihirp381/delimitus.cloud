@@ -9,7 +9,8 @@ fake WorkOS.
   5 invites: idempotent, admins only, never agents           -> test_admins_invite_people_by_email
   6 invite domains: invite, reactivate, sign-in, set-sign-in  -> test_..._outside_the_domains_...,
                                                                 test_a_linked_person_is_refused_...,
-                                                                test_the_operator_changes_the_...
+                                                                test_the_operator_changes_the_...,
+                                                                test_invite_and_reactivate_wait_...
 """
 
 import secrets

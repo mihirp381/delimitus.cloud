@@ -22,7 +22,8 @@
   ``confirm`` from stdin. Prints the org id.
 * ``restore-admin --org ID --user ID --operator op_x --reason TEXT [--outside-admin-group]
   [--already-applied-at TIME]``: make a person an active admin again, audited
-  (``identity.operator``). In a social org the person must have signed in once.
+  (``identity.operator``). In a social org the person must have signed in once and be at one
+  of the org's invite domains.
 * ``invite create --org ID --operator op_x --expires-in 14d --max-uses 10 [--note TEXT]``,
   ``invite list --org ID``, ``invite revoke ID --operator op_x``: pilot invite codes
   (``identity.invites``). ``create`` prints the code once; only its SHA-256 is kept.

@@ -259,7 +259,15 @@ addresses whose part after the last `@` equals one of them exactly may be invite
 signed in: `eng.acme.com` needs its own entry, and there are no wildcards. The admin email must be
 at one of them, or the command refuses before the prompt. A consumer mail domain such as
 `gmail.com` is refused unless `--allow-consumer-domain` is given, for a founder test org on the
-rig only; the audit `after` records it.
+rig only; the audit `after` records it. On the rig, with Gmail test accounts:
+
+```sh
+uv run python -m ssc_control.identity create-social-org --name "Rig pilot" \
+  --admin-email <you>@gmail.com --providers google --invite-domains gmail.com \
+  --allow-consumer-domain --cell-label $LABEL --operator op_<you>
+```
+
+Such an org lets in any Gmail account its admin invites; never make one for a customer.
 
 Pass: the org id on stdout. One transaction makes the org in social mode, its first admin as an
 invited person and its cell label, audited `org.created`, `org.updated` (the mode),
@@ -282,7 +290,7 @@ Signing in and inviting people need no cell.
 The admin signs in first, at `https://console.delimitus.com/login` with the org id and one of the
 org's providers: the sign-in links them, makes them active and takes their name from the profile.
 Until then People shows them as Invited, and `restore-admin` refuses them: in a social org it
-restores only a person who has signed in once.
+restores only a person who has signed in once and whose address is at one of the org's domains.
 
 ### Change a social org's providers or domains **[real]**
 
