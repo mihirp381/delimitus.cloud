@@ -84,6 +84,8 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_OUTBOUND_IP",
     "SSC_CELL_BUCKET",
     "SSC_ORG_ID",
+    "SSC_ENTRY_IP",
+    "SSC_CERTIFICATE_MAP",
 }
 TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
@@ -1076,6 +1078,8 @@ def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
     assert env["SSC_PROXY_ADDRESS"] == "10.20.4.10"
     assert env["SSC_OUTBOUND_IP"] == mockcloud.nat_address("ssc-c-testcell05")
     assert env["SSC_ORG_ID"] == AGENT_ORG
+    assert env["SSC_ENTRY_IP"] == entry_address("ssc-c-testcell05")
+    assert env["SSC_CERTIFICATE_MAP"] == "ssc-entry"
     assert set(env) == AGENT_ENV
     subnet = one(declared, "gcp:compute/subnetworkIAMMember:SubnetworkIAMMember").inputs
     assert (subnet["subnetwork"], subnet["role"]) == ("apps", "roles/compute.networkUser")
@@ -1456,6 +1460,23 @@ def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Decl
     ]
 
 
+def test_the_agent_makes_domain_zones_but_never_deletes_one(cell_a: list[Declared]) -> None:
+    role = one(cell_a, "gcp:projects/iAMCustomRole:IAMCustomRole", "agent-domains").inputs
+    assert role["roleId"] == "sscCellAgentDomains"
+    assert role["permissions"] == list(cell.DOMAINS_PERMISSIONS)
+    assert len(set(cell.DOMAINS_PERMISSIONS)) == 24
+    assert "dns.managedZones.delete" not in role["permissions"]
+    assert "no zone delete on purpose" in role["description"]
+    agent = f"serviceAccount:{naming.sa_email('ssc-cell-agent', naming.cell_project(A))}"
+    grant = one(cell_a, "gcp:projects/iAMMember:IAMMember", "agent-domains").inputs
+    assert (grant["member"], grant["role"]) == (
+        agent,
+        f"projects/{naming.cell_project(A)}/roles/sscCellAgentDomains",
+    )
+    held = {p for d in cell_a if d.type.endswith("IAMCustomRole") for p in d.inputs["permissions"]}
+    assert not [p for p in held if p.startswith("dns.managedZones.delete")]
+
+
 def _grants(declared: list[Declared], member: str) -> dict[str, dict[str, str] | None]:
     return {
         d.inputs["role"]: d.inputs.get("condition")
@@ -1542,7 +1563,12 @@ def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared])
         for r, held in roles.items()
         if r.startswith("sscCellAgent") and any(p.endswith(".delete") for p in held)
     }
-    assert deleting == {"sscCellAgentRemove", "sscCellAgentDatabase", "sscCellAgentFiles"}
+    assert deleting == {
+        "sscCellAgentRemove",
+        "sscCellAgentDatabase",
+        "sscCellAgentFiles",
+        "sscCellAgentDomains",
+    }
     assert "iam.serviceAccounts.actAs" in runtime
     assert {"run.services.setIamPolicy", "run.revisions.list"} <= set(runtime)
     assert "cloudbuild.builds.create" in roles["sscCellAgentCreate"]

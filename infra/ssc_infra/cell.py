@@ -124,6 +124,8 @@ USAGE_SOURCE_ENV: Final = "SSC_USAGE_SOURCE"
 USAGE_SOURCE: Final = "monitoring"
 DATA_SA_ENV: Final = "SSC_DATA_SA"
 CONNECTION_TAG_ENV: Final = "SSC_CONNECTION_TAG"
+ENTRY_IP_ENV: Final = "SSC_ENTRY_IP"
+CERTIFICATE_MAP_ENV: Final = "SSC_CERTIFICATE_MAP"
 SECRET_KIND_KEY: Final = "ssc-secret-kind"  # noqa: S105
 CONNECTION_KIND: Final = "connection"
 INTAKE_MAX: Final = 3
@@ -193,6 +195,32 @@ DATABASE_PERMISSIONS: Final = (
 )
 USAGE_PERMISSIONS: Final = ("monitoring.timeSeries.list",)
 FILES_PERMISSIONS: Final = ("storage.objects.delete", "storage.objects.list")
+DOMAINS_PERMISSIONS: Final = (
+    "dns.managedZones.create",
+    "dns.managedZones.get",
+    "dns.managedZones.list",
+    "dns.changes.create",
+    "dns.changes.get",
+    "dns.resourceRecordSets.create",
+    "dns.resourceRecordSets.delete",
+    "dns.resourceRecordSets.get",
+    "dns.resourceRecordSets.list",
+    "dns.resourceRecordSets.update",
+    "certificatemanager.dnsauthorizations.create",
+    "certificatemanager.dnsauthorizations.get",
+    "certificatemanager.dnsauthorizations.delete",
+    "certificatemanager.dnsauthorizations.list",
+    "certificatemanager.certs.create",
+    "certificatemanager.certs.get",
+    "certificatemanager.certs.delete",
+    "certificatemanager.certs.list",
+    "certificatemanager.certmapentries.create",
+    "certificatemanager.certmapentries.get",
+    "certificatemanager.certmapentries.delete",
+    "certificatemanager.certmapentries.list",
+    "certificatemanager.certmaps.get",
+    "certificatemanager.operations.get",
+)
 FILES_PREFIX: Final = "files/"
 SNAPSHOTS_PREFIX: Final = "snapshots/"
 # The prefixes the control worker uses in a cell bucket. ssc_infra cannot import ssc_control, so
@@ -644,6 +672,7 @@ class Cell:
         self.bucket()
         self.log_views()
         self.gateway()
+        self.entry_ip = self._entry_ip()
         self.cell_agent()
         self.secret_intake()
         self.entry()
@@ -819,12 +848,23 @@ class Cell:
             permissions=list(USAGE_PERMISSIONS),
             opts=self._o(),
         )
+        domains_role = gcp.projects.IAMCustomRole(
+            "agent-domains",
+            project=self.pid,
+            role_id="sscCellAgentDomains",
+            title="SSC cell agent: customer domains",
+            description="Zones, records and certificates under ssc-d- names; no zone delete on "
+            "purpose (customer domains, decision 004 amendment pending CD-7).",
+            permissions=list(DOMAINS_PERMISSIONS),
+            opts=self._o(),
+        )
         for name, role in (
             ("agent-create", create_role),
             ("agent-runtime", runtime_role),
             ("agent-remove", remove_role),
             ("agent-database", database_role),
             ("agent-usage", usage_role),
+            ("agent-domains", domains_role),
         ):
             gcp.projects.IAMMember(
                 name, project=self.pid, member=agent, role=role.name, opts=self._o()
@@ -1808,14 +1848,6 @@ class Cell:
         serverless NEG's backend timeout is fixed at 60 minutes and cannot be set, so the
         gateway's 3600 s request timeout is what bounds a WebSocket."""
         label = self.cfg.label
-        self.entry_ip = gcp.compute.GlobalAddress(
-            "entry-ip",
-            project=self.pid,
-            name=ENTRY,
-            address_type="EXTERNAL",
-            ip_version="IPV4",
-            opts=self._o(),
-        )
         gateway = self._backend("gateway", n.GATEWAY, self.gateway_)
         agent = self._backend("agent", n.CELL_AGENT, self.agent_)
         intake = self._backend("intake", n.SECRET_INTAKE, self.intake_)
@@ -1888,6 +1920,16 @@ class Cell:
                 opts=self._o(),
             )
         self._record("dns-wildcard", f"{n.cell_wildcard(label)}.", "A", self.entry_ip.address)
+
+    def _entry_ip(self) -> gcp.compute.GlobalAddress:
+        return gcp.compute.GlobalAddress(
+            "entry-ip",
+            project=self.pid,
+            name=ENTRY,
+            address_type="EXTERNAL",
+            ip_version="IPV4",
+            opts=self._o(),
+        )
 
     def _backend(
         self, resource: str, name: str, service: gcp.cloudrunv2.Service
@@ -1988,7 +2030,9 @@ class Cell:
         ``HTTPS_PROXY`` secret, naming the proxy's reserved address, and tells the console the
         cell's fixed outbound address (SSC-053); both exist from onboarding. It deletes a gone
         environment's files from the cell bucket's ``files/`` (SSC-046). It serves ``org_id``
-        alone (``SSC_ORG_ID``) and refuses any call that names another org (decision 030).
+        alone (``SSC_ORG_ID``) and refuses any call that names another org (decision 030). It
+        makes customer domain zones and certificates under ``ssc-d-`` names, pointing them at the
+        entry address and map (``SSC_ENTRY_IP``, ``SSC_CERTIFICATE_MAP``), and never deletes a zone.
 
         With the ``connections`` flag it asks the cell's data gateway for a connection's columns
         on the control plane's behalf (GA-5.8): ``SSC_DATAGW_URL`` and ``SSC_DATAGW_AUDIENCE`` name
@@ -2009,6 +2053,8 @@ class Cell:
             PROXY_ADDRESS_ENV: self.proxy_ip.address,
             OUTBOUND_IP_ENV: self.nat_ip.address,
             BUCKET_ENV: self.bucket_.name,
+            ENTRY_IP_ENV: self.entry_ip.address,
+            CERTIFICATE_MAP_ENV: self.certificate_map.name,
         }
         if self.cfg.org_id:
             env[ORG_ENV] = self.cfg.org_id
