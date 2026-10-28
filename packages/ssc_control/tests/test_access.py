@@ -36,15 +36,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+import hypothesis.strategies as st
 import psycopg
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+from hypothesis import given, settings
 from procrastinate import App, PsycopgConnector
 from psycopg.rows import dict_row
 from sqlalchemy import TextClause, event, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncConnection
 from ssc_testkit import (
     ISSUER,
     Dsns,
@@ -59,12 +62,13 @@ from ssc_testkit import (
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
+from ssc_contracts.snapshot import SnapshotDoc
 from ssc_control.api import Settings, authz, create_app
 from ssc_control.api.auth import Principal, PrincipalKind
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.v1 import grants as grant_routes
-from ssc_control.api.routes.v1 import inventory
+from ssc_control.api.routes.v1 import inventory, open_apps
 from ssc_control.api.settings import INTERNAL_AUDIENCE
 from ssc_control.api.uow import UnitOfWork
 from ssc_control.db import (
@@ -1153,6 +1157,254 @@ def test_those_who_may_share_find_groups_by_name(
     for kind in ("workload", "operator"):
         token = mint(signing_key, org=world.org, sub=world.admin, kind=kind)
         assert_problem(find(token, "Finance"), ErrorCode.FORBIDDEN)
+
+
+# ── the apps a person may open (V1) ──────────────────────────────────────────
+
+type Via = list[tuple[str, str | None]]
+type Opened = list[tuple[str, list[tuple[str, str, Via]]]]
+
+
+def apps_of(client: TestClient, token: str, user: str | None = None) -> Response:
+    path = "/v1/me/apps" if user is None else f"/v1/users/{user}/apps"
+    return client.get(path, headers=auth(token))
+
+
+def opened(body: dict[str, Any]) -> Opened:
+    return [
+        (
+            a["slug"],
+            [
+                (e["name"], e["role"], [(v["kind"], v["name"]) for v in e["via"]])
+                for e in a["environments"]
+            ],
+        )
+        for a in body["apps"]
+    ]
+
+
+def on(world: World, app: dict[str, Any]) -> World:
+    envs = {e["name"]: e["id"] for e in app["environments"]}
+    return World(**{**world.__dict__, "app": app["id"], **envs})
+
+
+def person(client: TestClient, w: World, name: str) -> tuple[str, str]:
+    """A member called ``name``; their user id and identity subject."""
+    subject = f"sub-{uuid.uuid4().hex}"
+    email = f"{name.lower().replace(' ', '.')}@example.com"
+    r = sync_user(client, w, subject, name=name, email=email)
+    assert r.status_code == 200, r.text
+    return r.json()["user_id"], subject
+
+
+def test_me_apps_lists_exactly_what_decide_allows(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    una, gus, bo, nia = (person(client, world, n)[0] for n in ("Una U", "Gus G", "Bo B", "Nia N"))
+    dee, dee_subject = person(client, world, "Dee D")
+    olu, olu_subject = person(client, world, "Olu O")
+    gid = sync_group(client, world, "ref-finance", "Finance").json()["group_id"]
+    assert set_members(client, world, gid, [una, gus]).status_code == 200
+    atlas = on(world, create_app_as(client, user_token(signing_key, world.org, olu), "atlas"))
+    zeta = on(world, create_app_as(client, world.admin_token, "zeta"))
+    builders = [grant("builder", "user", world.admin), grant("builder", "user", bo)]
+    for w, env, grants, version in (
+        (world, world.prod, [grant("user", "user", una), grant("user", "group", gid)], 1),
+        (world, world.preview, builders, 2),
+        (atlas, atlas.prod, [grant("user", "org"), grant("user", "user", dee)], 1),
+        (zeta, zeta.prod, [grant("user", "org")], 1),
+    ):
+        r = put_grants(client, w, env, world.admin_token, grants, version)
+        assert r.status_code == 200, r.text
+    sql(
+        dsns.app,
+        world.org,
+        "insert into ssc.app_grant (id, org_id, environment_id, role, subject_kind, user_id, "
+        "granted_by_user_id) values (%s, %s, %s, 'user', 'user', %s, %s)",
+        (new_id("gnt"), world.org, atlas.preview, una, world.admin),
+    )
+    sql(dsns.app, world.org, "update ssc.app set status = 'disabled' where id = %s", (zeta.app,))
+    for subject in (dee_subject, olu_subject):
+        assert sync_user(client, world, subject, status="deactivated").status_code == 200
+
+    atlas_prod = ("atlas", [("prod", "user", [("org", None)])])
+    ledger_una = [("prod", "user", [("user", "Una U"), ("group", "Finance")])]
+    expected: dict[str, Opened] = {
+        una: [atlas_prod, ("ledger", ledger_una)],
+        gus: [atlas_prod, ("ledger", [("prod", "user", [("group", "Finance")])])],
+        bo: [atlas_prod, ("ledger", [("preview", "builder", [("user", "Bo B")])])],
+        world.admin: [atlas_prod, ("ledger", [("preview", "builder", [("user", "Ada Admin")])])],
+        nia: [atlas_prod],
+        dee: [],
+        olu: [],
+    }
+    names = {una: "Una U", gus: "Gus G", bo: "Bo B", nia: "Nia N", world.admin: "Ada Admin"}
+    owners = {"atlas": ("Former member", None), "ledger": ("Ada Admin", "ada@example.com")}
+    urls = {
+        e["id"]: e["url"]
+        for app in (world.app, atlas.app)
+        for e in client.get(f"/v1/apps/{app}", headers=auth(world.admin_token)).json()[
+            "environments"
+        ]
+    }
+    for user, apps in expected.items():
+        r = apps_of(client, world.admin_token, user)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert (user, opened(body)) == (user, apps)
+        inactive = user in {dee, olu}
+        assert (body["user_id"], body["user_name"], body["user_status"]) == (
+            user,
+            "Former member" if inactive else names[user],
+            "deactivated" if inactive else "active",
+        )
+        assert body["published_version"] is None
+        for app in body["apps"]:
+            assert (app["owner_name"], app["owner_email"], app["status"]) == (
+                *owners[app["slug"]],
+                "active",
+            )
+            for e in app["environments"]:
+                assert e["url"] is not None
+                assert e["url"] == urls[e["environment_id"]]
+        if not inactive:
+            assert apps_of(client, user_token(signing_key, world.org, user)).json() == body
+
+
+def test_only_a_persons_own_credential_lists_apps(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    una = new_member(client, world)
+    r = put_grants(client, world, world.prod, world.admin_token, [grant("user", "user", una)], 1)
+    assert r.status_code == 200, r.text
+    member = user_token(signing_key, world.org, una)
+    refused = [
+        mint(signing_key, org=world.org, sub=world.admin, agent=True, client_id="cli_x"),
+        mint(signing_key, org=world.org, sub=una, agent=True, client_id="cli_x"),
+        mint(signing_key, org=world.org, sub=world.admin, scope="preview"),
+        mint(signing_key, org=world.org, sub=una, scope="preview"),
+        mint(signing_key, org=world.org, sub=world.admin, kind="workload"),
+        mint(signing_key, org=world.org, sub=world.admin, kind="operator"),
+    ]
+    for token in refused:
+        assert_problem(apps_of(client, token), ErrorCode.FORBIDDEN)
+        assert_problem(apps_of(client, token, una), ErrorCode.FORBIDDEN)
+    assert_problem(apps_of(client, member, world.admin), ErrorCode.FORBIDDEN)
+    assert_problem(apps_of(client, member, una), ErrorCode.FORBIDDEN)
+    theirs = apps_of(client, world.admin_token, una)
+    assert theirs.status_code == 200, theirs.text
+    assert theirs.json() == apps_of(client, member).json()
+    assert [a["slug"] for a in theirs.json()["apps"]] == ["ledger"]
+    _, elsewhere, _ = new_org(dsns.app)
+    for unknown in (new_id("usr"), elsewhere):
+        assert_problem(apps_of(client, world.admin_token, unknown), ErrorCode.REFERENCE_NOT_FOUND)
+
+
+_KIND_ORDER = {"user": 0, "group": 1, "org": 2}
+
+
+def explained(client: TestClient, w: World, apps: dict[str, dict[str, str]], user: str) -> Opened:
+    """What ``/me/apps`` should list for ``user``, built from explain on every environment."""
+    found: Opened = []
+    for slug, envs in sorted(apps.items()):
+        listed: list[tuple[str, str, Via]] = []
+        for name in ("prod", "preview"):
+            r = explain(
+                client, World(**{**w.__dict__, "app": envs["id"]}), envs[name], w.admin_token, user
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            if body["allowed"]:
+                via = dict.fromkeys((g["subject_kind"], g["subject_name"]) for g in body["grants"])
+                listed.append((name, body["role"], sorted(via, key=lambda v: _KIND_ORDER[v[0]])))
+        if listed:
+            found.append((slug, listed))
+    return found
+
+
+_PEOPLE = ("p0", "p1", "p2")
+_SHARES = st.dictionaries(
+    st.sampled_from([*_PEOPLE, "group", "org"]), st.sampled_from(["user", "builder"])
+)
+
+
+@settings(max_examples=12, deadline=None)
+@given(
+    shares=st.fixed_dictionaries(
+        {k: _SHARES for k in ("alpha.prod", "alpha.preview", "bravo.prod", "bravo.preview")}
+    ),
+    members=st.sets(st.sampled_from(_PEOPLE)),
+    gone=st.sets(st.sampled_from(_PEOPLE), max_size=1),
+    disabled=st.booleans(),
+)
+def test_me_apps_agrees_with_explain(  # noqa: PLR0913
+    client: TestClient,
+    dsns: Dsns,
+    signing_key: SigningKey,
+    shares: dict[str, dict[str, str]],
+    members: set[str],
+    gone: set[str],
+    disabled: bool,  # noqa: FBT001
+) -> None:
+    org, admin, subject = new_org(dsns.app)
+    token = user_token(signing_key, org, admin)
+    operator = internal_token(signing_key, org, "operator")
+    w = World(org, admin, subject, token, operator, "", "", "", "")
+    apps: dict[str, dict[str, str]] = {}
+    for slug in ("alpha", "bravo"):
+        made = create_app_as(client, token, slug)
+        apps[slug] = {"id": made["id"], **{e["name"]: e["id"] for e in made["environments"]}}
+    people = {p: person(client, w, f"Person {p}") for p in _PEOPLE}
+    gid = sync_group(client, w, "ref-g", "G").json()["group_id"]
+    chosen = [people[p][0] for p in sorted(members)]
+    assert set_members(client, w, gid, chosen).status_code == 200
+    subjects = {p: ("user", uid) for p, (uid, _) in people.items()}
+    subjects |= {"group": ("group", gid), "org": ("org", None)}
+    for key, picked in shares.items():
+        slug, name = key.split(".")
+        rows = [
+            grant("builder" if name == "preview" else role, *subjects[s])
+            for s, role in picked.items()
+        ]
+        target = World(**{**w.__dict__, "app": apps[slug]["id"]})
+        r = put_grants(client, target, apps[slug][name], token, rows, 2 if name == "preview" else 1)
+        assert r.status_code == 200, r.text
+    for p in gone:
+        assert sync_user(client, w, people[p][1], status="deactivated").status_code == 200
+    if disabled:
+        sql(
+            dsns.app,
+            org,
+            "update ssc.app set status = 'disabled' where id = %s",
+            (apps["bravo"]["id"],),
+        )
+    for user in (admin, *(uid for uid, _ in people.values())):
+        listed = apps_of(client, token, user)
+        assert listed.status_code == 200, listed.text
+        assert opened(listed.json()) == explained(client, w, apps, user)
+
+
+def test_one_compile_answers_each_request(
+    client: TestClient, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for slug in ("atlas", "zeta"):
+        create_app_as(client, world.admin_token, slug)
+    una = new_member(client, world)
+    compiled: list[str] = []
+    real = open_apps.compile_document
+
+    async def counted(conn: AsyncConnection, org_id: str, **kw: Any) -> SnapshotDoc:
+        compiled.append(org_id)
+        return await real(conn, org_id, **kw)
+
+    monkeypatch.setattr(open_apps, "compile_document", counted)
+    for user in (None, una):
+        before = len(compiled)
+        r = apps_of(client, world.admin_token, user)
+        assert r.status_code == 200, r.text
+        assert compiled[before:] == [world.org]
+    slugs = [a["slug"] for a in apps_of(client, world.admin_token).json()["apps"]]
+    assert slugs == ["atlas", "ledger", "zeta"]
 
 
 # ── one evaluator ────────────────────────────────────────────────────────────
