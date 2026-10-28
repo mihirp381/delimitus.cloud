@@ -111,7 +111,6 @@ from ssc_shared import redaction
 from ssc_shared.access import AccessView, ViewHolder
 from ssc_shared.blobstore import BlobStore
 from ssc_shared.blobstore_gcs import GcsBlobStore, IamSigner, bucket_of
-from ssc_shared.hosts import PREVIEW_SUFFIX, app_origin, default_suffix
 from ssc_shared.snapshot_feed import SnapshotFeed
 
 log = logging.getLogger(__name__)
@@ -711,17 +710,10 @@ class DataGateway:
         if not token:
             return None, "app_only"
         env = view.environments[env_id]
-        label = next((h for h, e in sorted(view.hosts.items()) if e == env_id), None)
         try:
-            if label is None:
-                raise NoteRefusedError("wrong_audience", "the environment has no host")
-            suffix = view.suffix or default_suffix(
-                self._settings.cell_label, self._settings.apps_domain
-            )
-            audience = app_origin(label.removesuffix(PREVIEW_SUFFIX), env.name, suffix)
             note = verify_note(
                 token,
-                audience=audience,
+                audience=env_id,
                 keys=self._keys,
                 issuer=self._settings.issuer,
                 now=int(self._clock()),

@@ -445,11 +445,10 @@ async def test_an_environment_not_in_the_snapshot_is_refused(tmp_path: Path) -> 
     )
 
 
-PREVIEW_ORIGIN = app_origin("ledger", "preview", default_suffix(LABEL, DOMAIN))
 NOTES = {
     "a user of the app": (lambda: note(), PROD, ("usr_" + "a" * 20, "verified")),
     "a user of its preview": (
-        lambda: note(env="preview", aud=PREVIEW_ORIGIN),
+        lambda: note(env="preview", aud=PREVIEW),
         PREVIEW,
         ("usr_" + "a" * 20, "verified"),
     ),
@@ -476,23 +475,21 @@ async def test_the_user_the_app_acts_for_is_logged(
     assert (without["user"], without["user_context"]) == (None, "app_only")
 
 
-async def test_the_audience_follows_the_snapshot_suffix(tmp_path: Path) -> None:
-    custom = note(aud="https://ledger.tools.testorg.com")
+async def test_a_note_verifies_across_a_suffix_change(tmp_path: Path) -> None:
     clock = Clock()
     async with running(tmp_path, monotonic=clock) as w:
-        before = await w.ask(env_id=PROD, headers={IDENTITY_HEADER: custom})
+        before = await w.ask(env_id=PROD, headers={IDENTITY_HEADER: note()})
         await publish(w.blobs, 2, suffix="tools.testorg.com")
         clock.advance(RECHECK_SECONDS + 0.1)
-        after = await w.ask(env_id=PROD, headers={IDENTITY_HEADER: custom})
-        old = await w.ask(env_id=PROD, headers={IDENTITY_HEADER: note()})
-    assert (before.status_code, error(before)["code"]) == (401, "IDENTITY_REFUSED")
-    assert after.status_code == 200
-    assert (old.status_code, error(old)["code"]) == (401, "IDENTITY_REFUSED")
+        after = await w.ask(env_id=PROD, headers={IDENTITY_HEADER: note()})
+    assert (before.status_code, after.status_code) == (200, 200)
 
 
 BAD_NOTES = {
-    "another app's audience": lambda: note(
-        aud=app_origin("payroll", "prod", default_suffix(LABEL, DOMAIN))
+    "another app's audience": lambda: note(aud=PAY),
+    "its preview's audience": lambda: note(aud=PREVIEW),
+    "the app's origin as audience": lambda: note(
+        aud=app_origin("ledger", "prod", default_suffix(LABEL, DOMAIN))
     ),
     "another environment of the app": lambda: note(env="preview"),
     "another app": lambda: note(app=PAYROLL),

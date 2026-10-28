@@ -36,7 +36,7 @@ export interface IdentityNote {
 }
 
 export interface VerifyOptions {
-  /** This app's exact origin, `https://host`, no path. */
+  /** This app environment's id, `env_` and 20 characters. */
   audience: string;
   /** The cell JWKS. A URL (`data:` or `https:`) is for `IdentityVerifier`, which fetches and caches it. */
   keys: Jwks;

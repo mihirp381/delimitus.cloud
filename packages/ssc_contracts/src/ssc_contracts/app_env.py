@@ -35,11 +35,16 @@ DATABASE_CA: Final = "DATABASE_CA"
 ``DATABASE_CA_PATH`` that ``sslrootcert`` names."""
 DATABASE_CA_PATH: Final = "/etc/ssc/db-ca.crt"
 
+APP_ENV_ID: Final = "SSC_APP_ENV_ID"
+"""The app's environment id, the identity note's audience."""
+
 APP_ORIGIN: Final = "SSC_APP_ORIGIN"
-"""The app's exact origin, ``https://<host>`` with no path: the identity note's audience."""
+"""The app's own origin, ``https://<host>`` with no path, for links and Streamlit CORS. No
+longer the identity note's audience."""
 
 STREAMLIT_ALLOWED_ORIGINS: Final = "STREAMLIT_SERVER_CORS_ALLOWED_ORIGINS"
-"""Set to ``APP_ORIGIN`` for every app. Behind the gateway an app sees its ``run.app`` host as
+"""``APP_ORIGIN`` and the app's origins under the org's other recognised suffixes, comma
+separated, for every app. Behind the gateway an app sees its ``run.app`` host as
 ``Host``, so Streamlit, which checks a WebSocket's ``Origin`` against ``Host``, refuses its own
 stream unless the origin is listed (SSC-086 T9). Other apps ignore it."""
 
@@ -59,7 +64,16 @@ NO_PROXY: Final = "NO_PROXY"
 EGRESS_NAMES: Final = (HTTPS_PROXY, NODE_USE_ENV_PROXY, NO_PROXY)
 
 PLATFORM_ENV_NAMES: Final[frozenset[str]] = frozenset(
-    {PORT, HOME, DATABASE_URL, *DATABASE_PARTS, APP_ORIGIN, IDENTITY_KEYS_URL, *EGRESS_NAMES}
+    {
+        PORT,
+        HOME,
+        DATABASE_URL,
+        *DATABASE_PARTS,
+        APP_ENV_ID,
+        APP_ORIGIN,
+        IDENTITY_KEYS_URL,
+        *EGRESS_NAMES,
+    }
 )
 
 SECRET_NAME: Final = re.compile(r"[A-Z][A-Z0-9_]{0,63}")

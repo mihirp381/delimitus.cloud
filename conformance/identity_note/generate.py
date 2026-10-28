@@ -24,8 +24,10 @@ VECTORS_FILE = HERE / "vectors.json"
 
 NOW = 1_790_000_000  # 2026-09-21T09:33:20Z, fixed so the vectors never age
 ISSUER = "https://keys.delimitus.com/cell-test"
-APP_A = "https://quiet-river-7f3k.delimitusapps.com"
-APP_B = "https://brave-otter-2m9q.delimitusapps.com"
+APP_A = "env_aaaaaaaaaaaaaaaaaaaa"
+APP_A_PREVIEW = "env_cccccccccccccccccccc"
+APP_B = "env_bbbbbbbbbbbbbbbbbbbb"
+APP_A_ORIGIN = "https://quiet-river-7f3k.delimitusapps.com"
 OTHER_ISSUER = "https://keys.delimitus.com/cell-other"
 ORG = "org_0123456789abcdefghij"
 APP_A_ID = "app_aaaaaaaaaaaaaaaaaaaa"
@@ -117,11 +119,11 @@ def build_vectors() -> dict[str, Any]:  # noqa: PLR0915
         APP_A,
         user,
     )
-    builder = _user_note(role="builder", env="preview", groups=())
+    builder = _user_note(audience=APP_A_PREVIEW, role="builder", env="preview", groups=())
     ok(
         "builder note on preview, no groups",
         sign_note(builder, private_key=key_a, kid=KID_A),
-        APP_A,
+        APP_A_PREVIEW,
         builder,
     )
     sched = compose_note(
@@ -279,9 +281,15 @@ def build_vectors() -> dict[str, Any]:  # noqa: PLR0915
         "bad_claims",
     )
     refused(
-        "audience with trailing slash",
-        _raw_token(dict(note_claims(user), aud=APP_A + "/"), key_a, header),
+        "note carrying the app origin as aud",
+        _raw_token(dict(note_claims(user), aud=APP_A_ORIGIN), key_a, header),
         "wrong_audience",
+    )
+    refused(
+        "note for app A's prod verified by app A's preview",
+        sign_note(user, private_key=key_a, kid=KID_A),
+        "wrong_audience",
+        APP_A_PREVIEW,
     )
     refused("not a token", "hello", "malformed")
     refused("two segments", f"{h}.{_b64(note_claims(user))}", "malformed")
@@ -294,7 +302,7 @@ def build_vectors() -> dict[str, Any]:  # noqa: PLR0915
         "now": NOW,
         "leeway": 30,
         "issuer": ISSUER,
-        "audiences": {"app_a": APP_A, "app_b": APP_B},
+        "audiences": {"app_a": APP_A, "app_a_preview": APP_A_PREVIEW, "app_b": APP_B},
         "jwks": jwks((key_a.public_key(), KID_A), (key_b.public_key(), KID_B)),
         "cases": cases,
     }

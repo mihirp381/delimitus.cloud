@@ -37,7 +37,6 @@ PROJECT = f"ssc-c-{LABEL}"
 AUDIENCE = "https://ssc-datagw-123456789012.us-central1.run.app"
 ISSUER = f"https://keys.delimitus.com/{LABEL}"
 CERTS = "https://certs.test/oauth2/v3/certs"
-ORIGIN = f"https://ledger.{LABEL}.{DOMAIN}"
 GOOGLE_KID, NOTE_KID = "google-1", "cell-1"
 GOOGLE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 FORGED_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -111,7 +110,7 @@ def bearer(env_id: str = PROD, **changes: Any) -> dict[str, str]:
 
 
 def note(
-    *, env: str = "prod", app: str = LEDGER, sub: str = ADA, aud: str = ORIGIN, **changes: Any
+    *, env: str = "prod", app: str = LEDGER, sub: str = ADA, aud: str = PROD, **changes: Any
 ) -> str:
     """The identity note the gateway attached to the request the app is answering."""
     now = int(time.time())

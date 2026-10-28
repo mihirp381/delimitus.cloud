@@ -148,6 +148,7 @@ class ToLoadBalancer(httpx2.AsyncBaseTransport):
 class ColdCell:
     port: int
     host: str
+    environment_id: str
     keyring: Keyring
     issuer: str
     out: Path
@@ -166,7 +167,7 @@ class ColdCell:
 
     def note(self, token: str) -> IdentityNote:
         keys = jwks((self.keyring.signing_key.public_key(), self.keyring.identity_kid))
-        return verify(token, audience=f"https://{self.host}", keys=keys, issuer=self.issuer)
+        return verify(token, audience=self.environment_id, keys=keys, issuer=self.issuer)
 
 
 def _snapshot(org_id: str, app_id: str, environment_id: str, slug: str) -> dict[str, Any]:
@@ -233,6 +234,7 @@ async def cold_cell(  # noqa: PLR0913, PLR0915  (keyword-only; one stack, starte
     cell = ColdCell(
         port=0,
         host=f"{slug}.{cell_label}.{DOMAIN}",
+        environment_id=environment_id,
         keyring=keyring,
         issuer=issuer,
         out=workdir / "out",

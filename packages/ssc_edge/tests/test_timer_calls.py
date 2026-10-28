@@ -85,7 +85,7 @@ async def test_a_timer_call_needs_no_session_and_the_app_gets_a_schedule_note(
     keys = jwks((world.keyring.signing_key.public_key(), world.keyring.identity_kid))
     note = verify(
         out.headers[IDENTITY_HEADER],
-        audience=f"https://{HOST}",
+        audience=PROD,
         keys=keys,
         issuer=f"https://keys.example.test/{LABEL}",
         now=NOW,

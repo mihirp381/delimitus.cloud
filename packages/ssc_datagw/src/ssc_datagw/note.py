@@ -2,7 +2,7 @@
 
 The same note the gateway attached to the request the app is answering
 (``docs/contracts/identity-note.md``), checked as the app checks it: ES256 under the cell's
-JWKS, ``typ`` ``ssc-id+jwt``, the calling app's origin as ``aud``, at most five minutes long.
+JWKS, ``typ`` ``ssc-id+jwt``, the calling environment's id as ``aud``, at most five minutes long.
 ``ssc_app.identity`` is the app's copy; a cell service may not import it, so this one runs the
 same conformance vectors. The caller then binds the note to the calling environment.
 """

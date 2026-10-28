@@ -1,8 +1,11 @@
-"""SSC-018: every app gets the cell's identity keys and its own origin, as plain values.
+"""SSC-018: every app gets the cell's identity keys, its environment id (the note's audience)
+and its own origin, as plain values.
 
 * a note the gateway's signer makes verifies, offline, with the env ``desired_for`` gives
               -> test_a_note_the_gateway_signs_verifies_with_the_env_desired_for_gives
 * an absent setting leaves its value out          -> test_an_absent_setting_leaves_its_value_out
+* previous suffixes join Streamlit's origins
+              -> test_streamlit_allows_the_origin_under_every_suffix
 * a deployment carries the env                    -> test_a_deployment_runs_with_the_identity_env
 * an app already running gets it on the next reconcile, as drift
               -> test_a_running_app_gets_the_identity_env_from_the_reconciler
@@ -30,6 +33,7 @@ from ssc_control.runtime.driver import (
     ReleaseRow,
     ServiceSpec,
     desired_for,
+    identity_env,
     service_name,
 )
 from ssc_control.runtime.reconciler import reconcile_env
@@ -50,7 +54,8 @@ NOW = 1_790_000_000
 OLD, NEW = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
 PUBLISHED = json.dumps(jwks((OLD.public_key(), "k-old"), (NEW.public_key(), "k-new")), indent=2)
 SETTINGS = {"SSC_IDENTITY_JWKS": PUBLISHED, "SSC_IDENTITY_ISSUER": ISSUER}
-IDENTITY_NAMES = {app_env.IDENTITY_KEYS_URL, app_env.APP_ORIGIN}
+ENV_IDS = {"prod": new_id("env"), "preview": new_id("env")}
+IDENTITY_NAMES = {app_env.IDENTITY_KEYS_URL, app_env.APP_ORIGIN, app_env.APP_ENV_ID}
 
 
 @pytest.fixture
@@ -66,7 +71,7 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def spec_of(env: str, identity: AppIdentity | None, slug: str = "ledger") -> ServiceSpec:
     desired = desired_for(
-        env=EnvironmentRow(id=new_id("env"), org_id=new_id("org"), app_id=new_id("app"), name=env),
+        env=EnvironmentRow(id=ENV_IDS[env], org_id=new_id("org"), app_id=new_id("app"), name=env),
         release=ReleaseRow(id=new_id("rel"), image_digest="sha256:" + "a" * 64),
         manifest=manifest_of(),
         app_status="active",
@@ -77,10 +82,10 @@ def spec_of(env: str, identity: AppIdentity | None, slug: str = "ledger") -> Ser
     return desired
 
 
-def note_for(host: str, env: str, key: ec.EllipticCurvePrivateKey, kid: str) -> str:
+def note_for(env: str, key: ec.EllipticCurvePrivateKey, kid: str) -> str:
     note = compose_note(
         issuer=ISSUER,
-        audience=f"https://{host}",
+        audience=ENV_IDS[env],
         subject="usr_11111111111111111111",
         org="org_0123456789abcdefghij",
         app="app_aaaaaaaaaaaaaaaaaaaa",
@@ -105,20 +110,21 @@ def serving_env(b: Bench, env: str) -> dict[str, str]:
 def test_a_note_the_gateway_signs_verifies_with_the_env_desired_for_gives(env: str) -> None:
     spec = spec_of(env, app_identity_from_env(SETTINGS))
     plain = dict(spec.env)
+    assert plain[app_env.APP_ENV_ID] == ENV_IDS[env]
     assert plain[app_env.APP_ORIGIN] == f"https://{HOSTS[env]}"
     assert plain[app_env.STREAMLIT_ALLOWED_ORIGINS] == plain[app_env.APP_ORIGIN]
     assert plain[app_env.IDENTITY_KEYS_URL].startswith("data:application/json;base64,")
     assert not IDENTITY_NAMES & set(spec.secrets)
     verifier = IdentityVerifier(
-        audience=plain[app_env.APP_ORIGIN], keys=plain[app_env.IDENTITY_KEYS_URL], issuer=ISSUER
+        audience=plain[app_env.APP_ENV_ID], keys=plain[app_env.IDENTITY_KEYS_URL], issuer=ISSUER
     )
     for key, kid in ((NEW, "k-new"), (OLD, "k-old")):
-        note = verifier.verify(note_for(HOSTS[env], env, key, kid), now=NOW + 1)
-        assert (note.aud, note.env) == (f"https://{HOSTS[env]}", env)
+        note = verifier.verify(note_for(env, key, kid), now=NOW + 1)
+        assert (note.aud, note.env) == (ENV_IDS[env], env)
     other = "preview" if env == "prod" else "prod"
     refusals = {
-        "wrong_audience": note_for(HOSTS[other], other, NEW, "k-new"),
-        "unknown_key": note_for(HOSTS[env], env, ec.generate_private_key(ec.SECP256R1()), "k-x"),
+        "wrong_audience": note_for(other, NEW, "k-new"),
+        "unknown_key": note_for(env, ec.generate_private_key(ec.SECP256R1()), "k-x"),
     }
     for code, token in refusals.items():
         with pytest.raises(IdentityRefused) as refused:
@@ -130,8 +136,8 @@ def test_a_note_the_gateway_signs_verifies_with_the_env_desired_for_gives(env: s
     ("settings", "names"),
     [
         ({}, set[str]()),
-        ({"SSC_IDENTITY_JWKS": PUBLISHED}, {app_env.IDENTITY_KEYS_URL}),
-        ({"SSC_IDENTITY_ISSUER": ISSUER}, {app_env.APP_ORIGIN}),
+        ({"SSC_IDENTITY_JWKS": PUBLISHED}, {app_env.IDENTITY_KEYS_URL, app_env.APP_ENV_ID}),
+        ({"SSC_IDENTITY_ISSUER": ISSUER}, {app_env.APP_ORIGIN, app_env.APP_ENV_ID}),
         (SETTINGS, IDENTITY_NAMES),
     ],
 )
@@ -157,7 +163,29 @@ def test_the_jwks_is_inlined_compactly_so_its_whitespace_never_changes_a_spec() 
 
 def test_a_slug_from_before_the_host_rule_gets_the_keys_but_no_origin() -> None:
     plain = dict(spec_of("prod", app_identity_from_env(SETTINGS), slug="Old_Slug").env)
-    assert IDENTITY_NAMES & set(plain) == {app_env.IDENTITY_KEYS_URL}
+    assert IDENTITY_NAMES & set(plain) == {app_env.IDENTITY_KEYS_URL, app_env.APP_ENV_ID}
+
+
+def test_streamlit_allows_the_origin_under_every_suffix() -> None:
+    base = app_identity_from_env(SETTINGS)
+    assert base is not None
+    identity = replace(
+        base, suffix="tools.testorg.com", previous_suffixes=(f"{LABEL}.delimitusapps.com",)
+    )
+    plain = dict(spec_of("prod", identity).env)
+    assert plain[app_env.APP_ORIGIN] == "https://ledger.tools.testorg.com"
+    assert plain[app_env.STREAMLIT_ALLOWED_ORIGINS] == (
+        f"https://ledger.tools.testorg.com https://{HOSTS['prod']}"
+    )
+    assert plain[app_env.APP_ENV_ID] == dict(spec_of("prod", base).env)[app_env.APP_ENV_ID]
+    row = EnvironmentRow(
+        id=ENV_IDS["preview"], org_id=new_id("org"), app_id=new_id("app"), name="preview"
+    )
+    ahead = identity_env(base, "ledger", row, [f"{LABEL}.delimitusapps.com", "tools.testorg.com"])
+    assert ahead[app_env.APP_ORIGIN] == f"https://{HOSTS['preview']}"
+    assert ahead[app_env.STREAMLIT_ALLOWED_ORIGINS] == (
+        f"https://{HOSTS['preview']} https://ledger--preview.tools.testorg.com"
+    )
 
 
 @pytest.mark.parametrize(

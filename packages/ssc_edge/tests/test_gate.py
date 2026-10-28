@@ -94,7 +94,7 @@ async def test_an_allowed_request_carries_a_note_the_app_helper_accepts(world: W
     keys = jwks((world.keyring.signing_key.public_key(), world.keyring.identity_kid))
     note = verify(
         out.headers[IDENTITY_HEADER],
-        audience=f"https://{HOST}",
+        audience=PROD,
         keys=keys,
         issuer=f"https://keys.example.test/{LABEL}",
         now=NOW,
@@ -205,6 +205,21 @@ async def test_the_snapshot_suffix_names_the_hosts(world: World) -> None:
     for elsewhere in (HOST, "ledger.old.testorg.com", "ledger.tools.otherorg.com"):
         out = await denied(world, facts(elsewhere, cookie=world.cookie(session(), elsewhere)))
         assert (out.status, out.reason) == (404, "not_app_host")
+
+
+async def test_the_note_names_the_environment_under_any_suffix(world: World) -> None:
+    keys = jwks((world.keyring.signing_key.public_key(), world.keyring.identity_kid))
+    issuer = f"https://keys.example.test/{LABEL}"
+    host = f"ledger.{CUSTOM}"
+    before = await check(world, facts(cookie=world.cookie()))
+    world.view = AccessView.from_document(snapshot(2, suffix=CUSTOM))
+    after = await check(world, facts(host, cookie=world.cookie(session(), host)))
+    for out in (before, after):
+        assert isinstance(out, Allow)
+        note = verify(
+            out.headers[IDENTITY_HEADER], audience=PROD, keys=keys, issuer=issuer, now=NOW
+        )
+        assert note.aud == PROD
 
 
 async def test_a_new_suffix_is_served_after_one_read_without_a_restart(world: World) -> None:

@@ -391,9 +391,7 @@ def test_an_allowed_request_reaches_the_app_with_only_the_minted_note(stack: Sta
     assert not (dropped | {"x-serverless-authorization"}) & seen.keys()  # no tokens in tests
     (token,) = seen["x-ssc-identity"]
     keys = jwks((w.keyring.signing_key.public_key(), w.keyring.identity_kid))
-    note = verify(
-        token, audience=f"https://{HOST}", keys=keys, issuer=f"https://keys.example.test/{LABEL}"
-    )
+    note = verify(token, audience=PROD, keys=keys, issuer=f"https://keys.example.test/{LABEL}")
     assert note.app.startswith("app_")
     assert r.headers.get_list("set-cookie") == ["app=2; Path=/"]
 
@@ -419,7 +417,7 @@ def test_a_timer_call_reaches_the_app_with_a_schedule_note_and_without_its_token
     keys = jwks((w.keyring.signing_key.public_key(), w.keyring.identity_kid))
     note = verify(
         note_token,
-        audience=f"https://{HOST}",
+        audience=PROD,
         keys=keys,
         issuer=f"https://keys.example.test/{LABEL}",
     )

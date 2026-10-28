@@ -4,7 +4,7 @@
 
     from ssc_app.identity import IdentityVerifier
 
-    verifier = IdentityVerifier(audience=os.environ["SSC_APP_ORIGIN"],
+    verifier = IdentityVerifier(audience=os.environ["SSC_APP_ENV_ID"],
                                 keys=os.environ["SSC_IDENTITY_KEYS_URL"])
     note = verifier.from_headers(request.headers)
     who = note.sub          # key on this
@@ -18,9 +18,9 @@ Two rules:
   stream; the note expires after five minutes and ending open streams is the platform kill
   switch's job. Re-verifying mid-stream only breaks the stream.
 
-In a cell the platform hands the app its origin in ``SSC_APP_ORIGIN`` and the cell JWKS inline,
-as a ``data:`` URL, in ``SSC_IDENTITY_KEYS_URL``. Outside a cell, ``keys`` may be the JWKS URL
-(``https://keys.delimitus.com/<cell>/jwks.json``) or the JWKS itself.
+In a cell the platform hands the app its environment id in ``SSC_APP_ENV_ID`` and the cell JWKS
+inline, as a ``data:`` URL, in ``SSC_IDENTITY_KEYS_URL``. Outside a cell, ``keys`` may be the JWKS
+URL (``https://keys.delimitus.com/<cell>/jwks.json``) or the JWKS itself.
 
 Every refusal is an :class:`IdentityRefused` carrying one code from :data:`REFUSAL_CODES`. Treat
 all of them the same way: the request is not from a signed-in user of this app.
@@ -127,8 +127,9 @@ def verify(  # noqa: PLR0913  (keyword-only)
 ) -> IdentityNote:
     """Verify one note and return its claims, or raise :class:`IdentityRefused`.
 
-    ``audience`` is this app's exact origin, ``https://host`` with no path. A note minted for
-    another app is refused with ``wrong_audience`` even though the same cell signed it.
+    ``audience`` is this app environment's id, ``env_`` and 20 characters. A note minted for
+    another app or environment is refused with ``wrong_audience`` even though the same cell
+    signed it.
     ``keys`` is the cell JWKS as a dict, a :class:`jwt.PyJWKSet`, or a :class:`jwt.PyJWKClient`
     pointed at ``<issuer>/jwks.json``. ``now`` (Unix seconds) is for tests; default is the clock.
     """

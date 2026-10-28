@@ -26,12 +26,12 @@ Stages, in order, stopping at the first refusal:
    SSC-019) is a redirect to login with the cookie cleared.
 7. Environment and sharing rule (``ssc_shared.access.decide``): an unknown host label and any
    refusal are the same ``404`` page.
-8. Allowed: the identity note is minted, and the request goes to the environment's service with
-   the time Cloud Run will end it (``X-SSC-Request-Deadline``). A browser page load without the
-   wake cookie is marked for the "waking up" page (``ssc_edge.envoy``). A WebSocket, an event
-   stream and every other request that is not a page or a static file (:func:`relayed`) is
-   admitted to the stream relay (``ssc_edge.streams``), which asks :meth:`Gate.holds` again
-   while it is open. A timer call is never relayed.
+8. Allowed: the identity note is minted for the environment id, and the request goes to the
+   environment's service with the time Cloud Run will end it (``X-SSC-Request-Deadline``). A
+   browser page load without the wake cookie is marked for the "waking up" page
+   (``ssc_edge.envoy``). A WebSocket, an event stream and every other request that is not a page
+   or a static file (:func:`relayed`) is admitted to the stream relay (``ssc_edge.streams``),
+   which asks :meth:`Gate.holds` again while it is open. A timer call is never relayed.
 
 A refusal never names the reason to the caller; ``Deny.reason`` is for the gateway's own log.
 """
@@ -438,7 +438,7 @@ class Gate:
         now = self._clock()
         note = compose_note(
             issuer=self._cfg.issuer,
-            audience=f"https://{host}",
+            audience=env_id,
             subject=session.sub,
             org=self._cfg.org_id,
             app=env.app_id,
@@ -512,7 +512,7 @@ class Gate:
         now = self._clock()
         note = compose_note(
             issuer=self._cfg.issuer,
-            audience=f"https://{host}",
+            audience=claims.env,
             subject=claims.sub,
             org=self._cfg.org_id,
             app=env.app_id,

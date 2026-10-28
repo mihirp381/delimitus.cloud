@@ -33,7 +33,8 @@ from ssc_testkit import ISSUER, Dsns, SigningKey, auth, mint, new_key
 from test_worker import FAST, LiveEnv, fresh_db, live_env, queue_count, until
 
 import ssc_control.db
-from ssc_contracts.app_env import APP_ORIGIN, IDENTITY_KEYS_URL
+from ssc_contracts.app_env import APP_ENV_ID, APP_ORIGIN, IDENTITY_KEYS_URL
+from ssc_contracts.ids import new_id
 from ssc_contracts.manifest import default_manifest
 from ssc_control.api import Settings, create_app
 from ssc_control.api.app import cells_for
@@ -52,7 +53,7 @@ from ssc_control.runtime.cells import (
     legacy_cells,
     parse_cells,
 )
-from ssc_control.runtime.driver import AppIdentity, identity_env
+from ssc_control.runtime.driver import AppIdentity, EnvironmentRow, identity_env, identity_suffixes
 from ssc_control.runtime.specs import ReleaseSpec, StaticReleaseSpecs
 from ssc_control.worker import (
     CompositionError,
@@ -355,6 +356,47 @@ async def test_an_org_s_label_is_read_once_per_period(dsns: Dsns) -> None:
         await engine.dispose()
 
 
+async def test_an_org_s_identity_carries_its_suffix_and_previous_suffixes(dsns: Dsns) -> None:
+    e = await asyncio.to_thread(live_env, dsns.app, "Route Suffix")
+    cells, agents = configured(dsns.app, e)
+    engine = ssc_control.db.make_engine(dsns.app)
+    now = [0.0]
+    router = CellRouter(
+        engine,
+        StaticCatalog(cells),
+        apps_domain=DOMAIN,
+        id_tokens=id_token,
+        grant_tokens=id_token,
+        client=agents.client(),
+        clock=lambda: now[0],
+    )
+    label = label_of(dsns.app, e.org)
+    try:
+        before = (await router.for_org(e.org)).identity
+        assert before is not None
+        assert (before.suffix, before.previous_suffixes) == (None, ())
+        with psycopg.connect(dsns.app) as conn:
+            bind_org_sync(conn, e.org)
+            conn.execute(
+                "update ssc.org set apps_suffix = 'tools.testorg.com' where id = %s", (e.org,)
+            )
+            conn.execute(
+                "insert into ssc.org_suffix_retired (org_id, suffix, until) "
+                "values (%s, %s, now() + interval '1 day')",
+                (e.org, f"{label}.{DOMAIN}"),
+            )
+        now[0] = LABEL_SECONDS + 1
+        after = (await router.for_org(e.org)).identity
+        assert after is not None
+        assert (after.suffix, after.previous_suffixes) == (
+            "tools.testorg.com",
+            (f"{label}.{DOMAIN}",),
+        )
+        assert identity_suffixes(after) == ("tools.testorg.com", f"{label}.{DOMAIN}")
+    finally:
+        await engine.dispose()
+
+
 # ── ssc.cell (ticket 19) ─────────────────────────────────────────────────────
 
 INSERT_CELL = (
@@ -593,7 +635,10 @@ def test_a_cell_s_identity_is_the_one_cell_identity_byte_for_byte(label: str) ->
     fake = app_identity_from_env(legacy_env(label))
     assert before == from_legacy == from_cells == fake
     for env_name in ("prod", "preview"):
-        pinned = identity_env(before, "ledger", env_name)
-        assert {IDENTITY_KEYS_URL, APP_ORIGIN} <= set(pinned)
-        assert identity_env(from_cells, "ledger", env_name) == pinned
-        assert identity_env(from_legacy, "ledger", env_name) == pinned
+        row = EnvironmentRow(
+            id=new_id("env"), org_id=new_id("org"), app_id=new_id("app"), name=env_name
+        )
+        pinned = identity_env(before, "ledger", row, identity_suffixes(before))
+        assert {IDENTITY_KEYS_URL, APP_ORIGIN, APP_ENV_ID} <= set(pinned)
+        assert identity_env(from_cells, "ledger", row, identity_suffixes(from_cells)) == pinned
+        assert identity_env(from_legacy, "ledger", row, identity_suffixes(from_legacy)) == pinned
