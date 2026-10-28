@@ -565,7 +565,7 @@ async def test_the_deadline_is_the_lower_of_the_gateway_and_the_environment(
     assert out.headers[DEADLINE_HEADER] == str(NOW + told)
 
 
-POLICY = "form-action 'self'; frame-ancestors 'self'"
+POLICY = "form-action 'self' https://auth.example.test; frame-ancestors 'self'"
 
 
 @pytest.mark.parametrize("member", [{}, {"form_targets": None}], ids=["absent", "null"])
@@ -584,7 +584,8 @@ async def test_an_environment_s_form_targets_join_its_form_action(world: World) 
     out = await check(world, facts(cookie=world.cookie()))
     assert isinstance(out, Allow)
     assert dict(out.client_headers)[CSP_HEADER] == (
-        "form-action 'self' https://pay.example.com https://sso.testorg.com; frame-ancestors 'self'"
+        "form-action 'self' https://auth.example.test https://pay.example.com "
+        "https://sso.testorg.com; frame-ancestors 'self'"
     )
     preview = await check(
         world, facts(PREVIEW_HOST, cookie=world.cookie(session(ADA), PREVIEW_HOST))

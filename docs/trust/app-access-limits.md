@@ -74,8 +74,10 @@ promise beyond what is written here. Decided for MVP V1 by the founder, 2026-10-
   they reach only the app's own host, never `testorg.com` or a sibling. Every other cookie is
   passed unchanged. [ssc_edge envoy.py, `ROUTE_LUA`]
 - **Forms and frames.** Every allowed request to an app gets
-  `Content-Security-Policy: form-action 'self'; frame-ancestors 'self'` on its answer: a page
-  may post forms only to its own origin, and only its own origin may frame it. An org admin can
+  `Content-Security-Policy: form-action 'self' <auth host>; frame-ancestors 'self'` on its
+  answer: a page may post forms only to its own origin and to the sign-in host (a browser checks
+  `form-action` on a form's redirects too, and a post whose session ended is sent to sign in),
+  and only its own origin may frame it. An org admin can
   name up to 20 more origins per environment (`https://host`, no path or port) with
   `PUT /v1/apps/{app_id}/environments/{environment_id}/form-targets`, audited as `org.updated`;
   they are added to `form-action` from the next access snapshot. An app's own

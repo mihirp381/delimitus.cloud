@@ -409,7 +409,7 @@ def test_an_app_cookie_that_names_a_domain_never_reaches_the_browser(stack: Stac
         "keep=domain=x; Path=/domain=y; SameSite=Lax",
     ]
     assert r.headers.get_list("content-security-policy") == [
-        "form-action 'self'; frame-ancestors 'self'"
+        "form-action 'self' https://auth.example.test; frame-ancestors 'self'"
     ]
 
 

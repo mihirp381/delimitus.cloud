@@ -29,8 +29,10 @@ Stages, in order, stopping at the first refusal:
    refusal are the same ``404`` page.
 8. Allowed: the identity note is minted for the environment id, and the request goes to the
    environment's service with the time Cloud Run will end it (``X-SSC-Request-Deadline``). The
-   browser's answer gets ``Content-Security-Policy: form-action 'self' <form_targets>;
-   frame-ancestors 'self'`` (CD-5.2) beside any policy of the app's. A
+   browser's answer gets ``Content-Security-Policy: form-action 'self' <auth_url>
+   <form_targets>; frame-ancestors 'self'`` (CD-5.2) beside any policy of the app's; the auth
+   origin is there because a browser applies ``form-action`` to a form's redirects, and a post
+   whose session ended is sent to ``<auth_url>/login``. A
    browser page load without the wake cookie is marked for the "waking up" page
    (``ssc_edge.envoy``). A WebSocket, an event stream and every other request that is not a page
    or a static file (:func:`relayed`) is admitted to the stream relay (``ssc_edge.streams``),
@@ -180,8 +182,8 @@ def upstream_host(environment_id: str, *, project_number: str, region: str) -> s
     return f"{service_name(environment_id)}-{project_number}.{region}.run.app"
 
 
-def form_policy(targets: Iterable[str]) -> str:
-    return " ".join(("form-action 'self'", *targets)) + "; frame-ancestors 'self'"
+def form_policy(auth_url: str, targets: Iterable[str]) -> str:
+    return " ".join(("form-action 'self'", auth_url, *targets)) + "; frame-ancestors 'self'"
 
 
 def page_load(facts: Facts) -> bool:
@@ -484,7 +486,7 @@ class Gate:
         )
         upstream, headers = self._forward(env_id, env, note, now)
         client: tuple[tuple[str, str], ...] = (
-            (CSP_HEADER, form_policy(view.form_targets.get(env_id, ()))),
+            (CSP_HEADER, form_policy(self._cfg.auth_url, view.form_targets.get(env_id, ()))),
         )
         if page_load(facts) and not cookie_values(facts.headers.get("cookie", ""), WAKE_COOKIE):
             headers[WAKE_HEADER] = "1"
