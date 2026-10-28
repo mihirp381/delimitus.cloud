@@ -8,7 +8,7 @@ invite people by email and deactivate or reactivate them; a directory org refuse
 from datetime import datetime
 from typing import Annotated, Final, Literal
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Request, Response
 from pydantic import Field
 from sqlalchemy import text
 
@@ -17,11 +17,13 @@ from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.text import PRINTABLE
 from ssc_control import directory
-from ssc_control.api.authz import OrgRole, require_admin
+from ssc_control.api.authz import OrgRole, require_admin, require_person
 from ssc_control.api.idempotency import UserIdempotent
 from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import AUTHENTICATED, POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id, Strict
+from ssc_control.api.routes.v1.open_apps import RESPONSES, UserApps, user_apps
+from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW, actor_of
 from ssc_control.identity import social
 from ssc_control.snapshot.service import mark_dirty
@@ -229,3 +231,12 @@ async def deactivate_user(user_id: Id, uow: UserUoW) -> Response:
 async def reactivate_user(user_id: Id, uow: UserUoW) -> Response:
     """A deactivated person may sign in again; their old sessions stay ended."""
     return await _set_status(uow, user_id, "active")
+
+
+@router.get("/users/{user_id}/apps", response_model=UserApps, responses=RESPONSES)
+async def list_person_apps(user_id: Id, uow: UserUoW, request: Request) -> UserApps:
+    """``GET /v1/me/apps`` for another person of the org. Active org admins only, with their own
+    credential (``FORBIDDEN``); ``REFERENCE_NOT_FOUND`` for a person not in the org."""
+    require_person(uow)
+    await require_admin(uow)
+    return await user_apps(uow, user_id, runtime_of(request).settings.apps_domain)
