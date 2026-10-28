@@ -232,19 +232,61 @@ WorkOS `/sso/authorize` with `provider=` and `/sso/token` only, never User Manag
    verified addresses (decision 002 amendment), so leave `github` out of `--providers` for now.
 2. Keep `<auth_url>/callback` (`http://localhost:8100/callback` on the rig) as a WorkOS redirect
    URI, as in Before you start.
-3. Put the org in social mode with the providers it may use:
 
-   ```sh
-   uv run python -m ssc_control.identity set-sign-in --org <org_…> --mode social \
-     --providers google,microsoft --operator op_<you>
-   ```
+### Create a social org **[real]**
 
-   Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` reverts it; directory
-   sync skips an org while it is in social mode.
-4. As an org admin, open People in the console, Invite by email, and invite each pilot person.
-   They show under Invited until their first sign-in. A person signs in with one provider: the
-   first one links, and another provider with the same address is refused, so each provider's
-   check below needs its own invited address.
+A small team pilots without a WorkOS organisation, a directory or an SSO connection. With the
+database reachable as in `docs/runbooks/ssc-064-control-plane.md` step 10 (`SSC_DATABASE_DSN` as
+`ssc_app`; no WorkOS settings needed):
+
+```sh
+LABEL=l$(openssl rand -hex 6)
+ORG=$(uv run python -m ssc_control.identity create-social-org --name "<org name>" \
+  --admin-email <admin email> --providers google,microsoft --cell-label $LABEL --operator op_<you>)
+echo $ORG
+```
+
+Pass: the org id on stdout. One transaction makes the org in social mode, its first admin as an
+invited person and its cell label, audited `org.created`, `user.invited`, `org.updated` (the
+mode) and `org.updated` (the label). A bad provider, label or address, or a label another org
+has, writes nothing and says why. Leave `github` out of `--providers`, as above. The org has no
+onboarding row and directory sync skips it.
+
+Then build the org's cell, before anyone deploys an app, the way `create-org` expects: the label
+names the cell, and the build takes the org id the command printed.
+
+```sh
+uv run python -m ssc_control.cells request --label $LABEL --stage prod --org-id $ORG --operator op_<you>
+uv run python -m ssc_infra.onboard $LABEL --stage prod --settings settings.json --set org_id=$ORG \
+  --probe-image <probe image>
+```
+
+and run the `cells ready` line it prints last (`docs/runbooks/ssc-110-onboarding.md`, step 3).
+Signing in and inviting people need no cell.
+
+The admin signs in first, at `https://console.delimitus.com/login` with the org id and one of the
+org's providers: the sign-in links them, makes them active and takes their name from the profile.
+Until then People shows them as Invited, and `restore-admin` refuses them: in a social org it
+restores only a person who has signed in once.
+
+### Switch an existing org **[real]**
+
+Put an org that exists already in social mode with the providers it may use:
+
+```sh
+uv run python -m ssc_control.identity set-sign-in --org <org_…> --mode social \
+  --providers google,microsoft --operator op_<you>
+```
+
+Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` reverts it; directory
+sync skips an org while it is in social mode.
+
+### Invite people **[real]**
+
+As an org admin, open People in the console, Invite by email, and invite each pilot person. They
+show under Invited until their first sign-in. A person signs in with one provider: the first one
+links, and another provider with the same address is refused, so each provider's check below
+needs its own invited address.
 
 ### Live check **[real]**
 
@@ -261,6 +303,9 @@ Not yet run. Tick each line and record the date and the `usr_` ids under Record.
 - [ ] Deactivate a signed-in person from People: their next console request and `ssc whoami` fail,
       and the command line's refresh fails.
 - [ ] Reactivate them: they sign in again with the same `usr_` id.
+- [ ] `create-social-org` on the staging or pilot cell; its admin signs in with Google and People
+      shows them as an active admin.
+- [ ] That admin invites one person, who signs in with Google.
 
 ## Record
 
