@@ -8,7 +8,8 @@ postgres:18 and a fake WorkOS.
                                                                   test_only_confirm_creates_...
   1c invite domains: required, well formed, admin inside     -> test_..._too_many_domains,
                                                                   test_an_admin_email_outside_...,
-                                                                  test_a_consumer_domain_needs_...
+                                                                  test_a_consumer_domain_needs_...,
+                                                                  test_each_added_consumer_...
   2 the admin signs in and invites; the member signs in       -> test_the_invited_admin_signs_in_...
   3 restore-admin needs a social link in a social org          -> test_restore_admin_in_a_social_...
   4 sync skips a social org with no connection                 -> test_sync_skips_a_social_org_...
@@ -346,6 +347,23 @@ def test_a_consumer_domain_needs_the_flag_and_the_flag_is_audited(
             "allow_consumer_domain": True,
         },
     )
+
+
+@pytest.mark.parametrize(
+    "domain", ["yahoo.co.uk", "ymail.com", "rocketmail.com", "hotmail.co.uk", "outlook.co.uk"]
+)
+def test_each_added_consumer_domain_is_refused_without_the_flag(
+    domain: str, dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    without_workos(dsns, monkeypatch)
+    name = f"Consumer-{secrets.token_hex(4)}"
+    answer(monkeypatch, "confirm\n")
+    assert cli.main(argv(name=name, admin_email=f"ada@{domain}", invite_domains=domain)) == 1
+    assert capsys.readouterr().err == (
+        f"not created: {domain} is a consumer mail domain; pass --allow-consumer-domain only "
+        "for a test org; nothing was written\n"
+    )
+    assert org_rows(dsns, name) == (0, 0)
 
 
 async def test_create_social_org_refuses_a_malformed_address_or_label(dsns: Dsns) -> None:
