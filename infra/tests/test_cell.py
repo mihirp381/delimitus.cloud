@@ -2270,7 +2270,7 @@ def test_the_agent_and_intake_hosts_are_each_routed_to_their_service_alone(
     assert intake == "ssc--secrets.testcell09.delimitusapps.com"
     suffix = naming.cell_wildcard("testcell09").removeprefix("*.")
     for reserved in (host, intake):
-        assert parse_app_host(reserved, naming.APPS_DOMAIN) is None
+        assert parse_app_host(reserved, [suffix]) is None
         assert reserved.split(".", 1)[1] == suffix
     url_map = one(bare, "gcp:compute/uRLMap:URLMap", "entry-map").inputs
     assert url_map["hostRules"] == [

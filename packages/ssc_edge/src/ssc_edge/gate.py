@@ -3,7 +3,11 @@ login-code redemption, so every rule is tested without Envoy.
 
 Stages, in order, stopping at the first refusal:
 
-1. Host: lower-cased, port dropped. A host that is not an app host of this cell is ``404``.
+1. Host: lower-cased, port dropped. A host that is not an app host under the org's suffix (the
+   snapshot's ``suffix``, else ``<cell label>.<apps domain>``) is ``404``. A host whose first
+   label is in the snapshot's ``hosts`` but which is not under that suffix is looked up again
+   after a snapshot read, so a new suffix is served without a restart. A host under one of the
+   snapshot's ``previous_suffixes`` is ``404`` too.
 2. Own paths under ``/.ssc/``: the login hand-back (``/.ssc/callback``) and ``/.ssc/logout``.
    Apps never receive these paths. The hand-back redeems the code with the login nonce this
    host set when it sent the browser to log in, so a code is good only in that browser.
@@ -61,7 +65,7 @@ from ssc_edge.session import (
     wake_cookie,
 )
 from ssc_shared.access import AccessView, EnvironmentIndex, decide
-from ssc_shared.hosts import AppHost, parse_app_host
+from ssc_shared.hosts import AppHost, default_suffix, parse_app_host
 from ssc_shared.runtime import MAX_TIMEOUT_SECONDS, service_name
 
 OWN_PREFIX: Final = "/.ssc/"
@@ -282,10 +286,28 @@ class Gate:
         self._refresh = refresh
         self._schedule_keys = schedule_keys
 
+    def _app(self, host: str) -> AppHost | None:
+        view = self._view()
+        current = (view.suffix if view else None) or default_suffix(
+            self._cfg.cell_label, self._cfg.apps_domain
+        )
+        previous = [p.suffix for p in view.previous_suffixes] if view else []
+        app = parse_app_host(host, [current, *previous])
+        return app if app is not None and app.suffix == current else None
+
     async def check(self, facts: Facts) -> Allow | Deny:
         host = normal_host(facts.host)
-        app = parse_app_host(host, self._cfg.apps_domain)
-        if app is None or app.cell_label != self._cfg.cell_label:
+        app = self._app(host)
+        view = self._view()
+        if (
+            app is None
+            and self._refresh is not None
+            and view
+            and host.split(".", 1)[0] in view.hosts
+        ):
+            await self._refresh()
+            app = self._app(host)
+        if app is None:
             return not_found("not_app_host")
         path = facts.path or "/"
         own = urlsplit(path).path
@@ -394,7 +416,7 @@ class Gate:
         """Whether an open stream admitted as ``allowed`` would be admitted now: the same
         stages against the view the gate holds now, and the session not yet expired."""
         view, session = self._view(), allowed.session
-        app = parse_app_host(allowed.host, self._cfg.apps_domain)
+        app = self._app(allowed.host)
         if view is None or session is None or app is None or self._clock() >= session.exp:
             return False
         return not isinstance(self._admit(view, allowed.host, app, session), str)

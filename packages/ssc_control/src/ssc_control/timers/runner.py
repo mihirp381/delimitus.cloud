@@ -88,7 +88,8 @@ _SCHEDULE = text(
     "select s.id, s.environment_id, s.name, s.cron, s.timezone, s.path, s.method, "  # noqa: S608  (constant SQL fragments)
     "s.timeout_seconds, s.state, s.pause_reason, s.next_run_at, s.declared_by_user_id, "
     "e.name as environment_name, a.id as app_id, a.status as app_status, a.slug, "
-    "g.cell_label, coalesce(b.manifest #>> '{runtime,health_path}', '/') as health_path, "
+    "g.cell_label, g.apps_suffix, "
+    "coalesce(b.manifest #>> '{runtime,health_path}', '/') as health_path, "
     f"o.status = 'active' as owner_active, {may_build('d')} as declarer_may_build "
     "from ssc.schedule s "
     "join ssc.environment e on e.org_id = s.org_id and e.id = s.environment_id "
@@ -256,6 +257,7 @@ def _started(
         slug=s["slug"],
         environment=s["environment_name"],
         cell_label=s["cell_label"],
+        apps_suffix=s["apps_suffix"],
         health_path=s["health_path"],
     )
     return _Claim(

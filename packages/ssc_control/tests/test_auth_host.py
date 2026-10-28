@@ -22,6 +22,7 @@ import httpx2
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import Dsns, assert_problem
 from test_identity import BOB_IDP, BOB_UID, FOUNDER_IDP, World, new_world, profile
@@ -50,6 +51,7 @@ from ssc_control.identity.limits import (
     USER_CODE_PER_HOUR,
     USER_CODE_PER_ORG_PER_HOUR,
 )
+from ssc_control.identity.rules import ReturnTo, parse_return_to
 from ssc_control.identity.settings import AuthSettings
 from ssc_shared.hosts import cell_project
 
@@ -269,6 +271,35 @@ async def test_a_bad_login_link_is_refused(rig: Rig, change: dict[str, str]) -> 
     params.update({k: v.replace("LABEL", rig.label) for k, v in change.items()})
     r = await rig.http.get("/login", params=params)
     assert (r.status_code, r.text) == (400, pages.BAD_REQUEST)
+
+
+def test_a_return_to_is_an_app_host_under_the_orgs_own_suffix() -> None:
+    own = "tools.testorg.com"
+    assert parse_return_to("https://ledger.tools.testorg.com/a?b=1", suffix=own) == ReturnTo(
+        "ledger.tools.testorg.com", "/a?b=1"
+    )
+    for other in (
+        "https://ledger.tools.otherorg.com/",
+        "https://ledger.k7q2m9xa.apps.test/",
+        "https://a.ledger.tools.testorg.com/",
+        "https://tools.testorg.com/",
+    ):
+        assert parse_return_to(other, suffix=own) is None
+
+
+async def test_a_login_link_follows_the_orgs_suffix(rig: Rig) -> None:
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        await conn.execute(
+            text("update ssc.org set apps_suffix = 'login.testorg.com' where id = :org"),
+            {"org": rig.w.org},
+        )
+    params = {"org": rig.w.org, "binding": binding_of("n")}
+    custom = await rig.http.get(
+        "/login", params={**params, "return_to": "https://ledger.login.testorg.com/"}
+    )
+    assert custom.status_code == 302
+    default = await rig.http.get("/login", params={**params, "return_to": rig.app_url()})
+    assert (default.status_code, default.text) == (400, pages.BAD_REQUEST)
 
 
 async def test_a_callback_without_its_login_cookie_or_state_is_refused(rig: Rig) -> None:

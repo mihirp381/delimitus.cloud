@@ -156,6 +156,7 @@ def snapshot(
     connections: bool = True,
     ada_not_before: int | None = None,
     sales_kind: str | None = None,
+    suffix: str | None = None,
 ) -> dict[str, Any]:
     env = {"floor": "user"}
     ada: dict[str, Any] = {"status": "active"}
@@ -177,6 +178,8 @@ def snapshot(
         "users": {ADA: ada, BEN: {"status": "deactivated"}},
         "ceiling": None,
     }
+    if suffix is not None:
+        doc["suffix"] = suffix
     if connections:
         grant: dict[str, Any] = {} if grant_limits is None else {"limits": grant_limits}
         sales_doc: dict[str, Any] = {

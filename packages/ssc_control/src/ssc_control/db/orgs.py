@@ -9,6 +9,7 @@ an org that exists is always discoverable, and a rolled-back org never is. The o
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final
 
 from sqlalchemy import text
@@ -18,15 +19,20 @@ from ssc_contracts.audit import ActorKind, AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import GENESIS_HASH, Actor, NewEvent, append_event
 from ssc_control.db.bind import bound_org
+from ssc_shared.hosts import default_suffix
 
 __all__ = [
     "GENESIS_HASH",
     "SYSTEM_ACTOR",
     "CreatedOrg",
     "NewOrg",
+    "RetiredSuffix",
     "all_org_ids",
     "create_org",
     "create_org_in",
+    "load_suffix",
+    "retired_suffixes",
+    "suffix_of",
 ]
 
 SYSTEM_ACTOR: Final = Actor(kind=ActorKind.OPERATOR, id="system:create_org")
@@ -61,6 +67,35 @@ _INSERT_LINK = text(
 _INSERT_HEAD = text("insert into ssc.audit_head (org_id, seq, hash) values (:org, 0, :hash)")
 _INSERT_INDEX = text("insert into ssc.org_index (org_id) values (:org)")
 _ALL_ORG_IDS = text("select org_id from ssc.org_index order by org_id")
+_ORG_SUFFIX = text("select cell_label, apps_suffix from ssc.org where id = :org")
+_RETIRED = text(
+    "select suffix, until from ssc.org_suffix_retired where org_id = :org "
+    'order by until, suffix collate "C"'
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RetiredSuffix:
+    suffix: str
+    until: datetime
+
+
+def suffix_of(cell_label: str, apps_suffix: str | None, apps_domain: str) -> str:
+    """The org's apps suffix: its own, or the default of its cell label (CD-1)."""
+    return apps_suffix or default_suffix(cell_label, apps_domain)
+
+
+async def load_suffix(conn: AsyncConnection, org_id: str, apps_domain: str) -> str | None:
+    """:func:`suffix_of` the org in ``conn``'s org-bound transaction; None without a cell label."""
+    row = (await conn.execute(_ORG_SUFFIX, {"org": org_id})).one_or_none()
+    if row is None or row[0] is None:
+        return None
+    return suffix_of(str(row[0]), row[1], apps_domain)
+
+
+async def retired_suffixes(conn: AsyncConnection, org_id: str) -> list[RetiredSuffix]:
+    rows = (await conn.execute(_RETIRED, {"org": org_id})).all()
+    return [RetiredSuffix(str(suffix), until) for suffix, until in rows]
 
 
 async def create_org(

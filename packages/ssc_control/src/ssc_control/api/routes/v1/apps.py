@@ -18,6 +18,7 @@ from ssc_control.api.routes.v1.common import Id, Slug, Strict, require_user
 from ssc_control.api.routes.v1.grants import grant_owner_preview
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
+from ssc_control.db.orgs import suffix_of
 from ssc_control.names import people
 from ssc_control.snapshot.service import mark_dirty
 from ssc_shared.hosts import Environment, app_origin, slug_problem
@@ -83,19 +84,19 @@ _SELECT_APPS = text(
 )
 _SELECT_ENVS = text(
     "select e.id, e.name, e.config_version, e.grants_version, e.current_deployment_id, a.slug, "
-    "o.cell_label from ssc.environment e "
+    "o.cell_label, o.apps_suffix from ssc.environment e "
     "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
     "join ssc.org o on o.id = e.org_id "
     "where e.org_id = :org and e.app_id = :app order by e.name"
 )
 
 
-def _url(slug: str, environment: str, cell_label: str, apps_domain: str) -> str | None:
+def _url(slug: str, environment: str, suffix: str) -> str | None:
     """No address for a slug stored before the host rule refused it. Every org has a cell label
     matching the rule (revision 0011 and its CHECK)."""
     if slug_problem(slug) is not None:
         return None
-    return app_origin(slug, cast("Environment", environment), cell_label, apps_domain)
+    return app_origin(slug, cast("Environment", environment), suffix)
 
 
 async def environments_of(uow: UnitOfWork, app_id: str, apps_domain: str) -> list[EnvironmentOut]:
@@ -108,7 +109,9 @@ async def environments_of(uow: UnitOfWork, app_id: str, apps_domain: str) -> lis
             config_version=r["config_version"],
             grants_version=r["grants_version"],
             current_deployment_id=r["current_deployment_id"],
-            url=_url(r["slug"], r["name"], r["cell_label"], apps_domain),
+            url=_url(
+                r["slug"], r["name"], suffix_of(r["cell_label"], r["apps_suffix"], apps_domain)
+            ),
         )
         for r in rows
     ]

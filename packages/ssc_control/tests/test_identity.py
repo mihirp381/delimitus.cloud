@@ -44,6 +44,7 @@ from ssc_control.approvals import service as approvals
 from ssc_control.audit.chain import Actor
 from ssc_control.connections import service as data_connections
 from ssc_control.db import NewOrg, bound_org, create_org, make_engine
+from ssc_control.db.orgs import load_suffix, retired_suffixes
 from ssc_control.domain.approval_rules import exceed_subject_key
 from ssc_control.domain.audience import Ceiling
 from ssc_control.identity import connections, join, sessions, sync, tokens
@@ -468,6 +469,42 @@ async def test_deactivation_reaches_the_snapshot(world: World) -> None:
     view = AccessView.from_document(doc)
     assert bob not in view.active_users and bob in view.not_before
     assert decide(view, "env_" + "x" * 20, bob).allowed is False
+
+
+_RETIRE = text(
+    "insert into ssc.org_suffix_retired (org_id, suffix, until) "
+    "values (:org, :suffix, now() + make_interval(days => :days))"
+)
+
+
+async def test_the_snapshot_names_the_orgs_suffix_once_it_has_its_own(world: World) -> None:
+    at = datetime(2026, 10, 26, tzinfo=UTC)
+
+    async def compiled() -> dict[str, Any]:
+        async with bound_org(world.engine, world.org) as conn:
+            doc = await compile_document(conn, world.org, version=1, compiled_at=at)
+        return doc.model_dump(mode="json")
+
+    plain = await compiled()
+    assert "suffix" not in plain and "previous_suffixes" not in plain
+    async with bound_org(world.engine, world.org) as conn:
+        label = (await conn.execute(text("select cell_label from ssc.org"))).scalar_one()
+        assert await load_suffix(conn, world.org, "apps.test") == f"{label}.apps.test"
+        await conn.execute(
+            text("update ssc.org set apps_suffix = 'tools.testorg.com' where id = :org"),
+            {"org": world.org},
+        )
+        retired = [(f"s{n}.testorg.com", n + 1) for n in range(10)]
+        retired += [("gone.testorg.com", -1), ("tools.testorg.com", 3)]
+        for suffix, days in retired:
+            await conn.execute(_RETIRE, {"org": world.org, "suffix": suffix, "days": days})
+        assert await load_suffix(conn, world.org, "apps.test") == "tools.testorg.com"
+        assert len(await retired_suffixes(conn, world.org)) == len(retired)
+    after = await compiled()
+    assert after.pop("suffix") == "tools.testorg.com"
+    previous = after.pop("previous_suffixes")
+    assert [p["suffix"] for p in previous] == [f"s{n}.testorg.com" for n in range(2, 10)]
+    assert after == plain
 
 
 async def echo_app(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

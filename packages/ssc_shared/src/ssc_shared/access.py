@@ -19,6 +19,7 @@ from ssc_contracts.snapshot import (
     SnapshotConnection,
     SnapshotDoc,
     SnapshotEgress,
+    SnapshotRetiredSuffix,
     SubjectKind,
 )
 from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS
@@ -100,7 +101,8 @@ def _index(doc: SnapshotDoc, env_id: str) -> EnvironmentIndex:
 class AccessView:
     """A validated snapshot with its lookups built. Immutable once constructed. ``connections``
     is the data gateway's lookup (SSC-050): name to connection, empty when the document has none.
-    ``egress`` is the egress proxy's allowlist and credentials (SSC-053), None when it has none."""
+    ``egress`` is the egress proxy's allowlist and credentials (SSC-053), None when it has none.
+    ``suffix`` is the org's apps suffix (CD-1), None for the default one."""
 
     __slots__ = (
         "active_users",
@@ -112,6 +114,8 @@ class AccessView:
         "hosts",
         "not_before",
         "org_id",
+        "previous_suffixes",
+        "suffix",
         "version",
     )
 
@@ -140,6 +144,8 @@ class AccessView:
             dict(doc.connections or {})
         )
         self.egress: SnapshotEgress | None = doc.egress
+        self.suffix: str | None = doc.suffix
+        self.previous_suffixes: tuple[SnapshotRetiredSuffix, ...] = doc.previous_suffixes or ()
 
     @classmethod
     def from_document(cls, doc: SnapshotDoc | Mapping[str, object] | bytes | str) -> Self:

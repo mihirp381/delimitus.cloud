@@ -192,6 +192,42 @@ async def test_only_a_check_that_reaches_the_snapshot_refreshes_it(world: World)
     assert refreshed == [world.now]
 
 
+CUSTOM = "tools.testorg.com"
+RETIRED = [{"suffix": "old.testorg.com", "until": "2026-12-01T00:00:00Z"}]
+
+
+async def test_the_snapshot_suffix_names_the_hosts(world: World) -> None:
+    world.view = AccessView.from_document(snapshot(suffix=CUSTOM, previous_suffixes=RETIRED))
+    host = f"ledger.{CUSTOM}"
+    out = await check(world, facts(host, cookie=world.cookie(session(), host)))
+    assert isinstance(out, Allow)
+    assert out.host == host
+    for elsewhere in (HOST, "ledger.old.testorg.com", "ledger.tools.otherorg.com"):
+        out = await denied(world, facts(elsewhere, cookie=world.cookie(session(), elsewhere)))
+        assert (out.status, out.reason) == (404, "not_app_host")
+
+
+async def test_a_new_suffix_is_served_after_one_read_without_a_restart(world: World) -> None:
+    refreshed: list[int] = []
+
+    async def refresh() -> None:
+        refreshed.append(world.now)
+        world.view = AccessView.from_document(snapshot(2, suffix=CUSTOM))
+
+    gate = gate_for(
+        config(), world.keyring, view=lambda: world.view, clock=lambda: world.now, refresh=refresh
+    )
+    stray = "nothere.tools.testorg.com"
+    assert (await gate.check(facts(stray, cookie=world.cookie(session(), stray)))).status == 404
+    assert refreshed == []
+    host = f"ledger.{CUSTOM}"
+    assert isinstance(await gate.check(facts(host, cookie=world.cookie(session(), host))), Allow)
+    assert refreshed[0] == world.now
+    gone = await gate.check(facts(HOST, cookie=world.cookie()))
+    assert isinstance(gone, Deny)
+    assert (gone.status, gone.reason) == (404, "not_app_host")
+
+
 async def test_a_host_label_pointing_at_the_wrong_environment_is_not_found(world: World) -> None:
     world.view = AccessView.from_document(snapshot(hosts={"ledger--preview": PROD}))
     out = await denied(world, facts(PREVIEW_HOST, cookie=world.cookie(session(), PREVIEW_HOST)))

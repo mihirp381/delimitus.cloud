@@ -1,18 +1,21 @@
-"""App hosts (decision 004): one address per app environment on the apps domain.
+"""App hosts (decision 004): one address per app environment under its org's apps suffix.
 
-    prod     <slug>.<cell label>.<apps domain>
-    preview  <slug>--preview.<cell label>.<apps domain>
+    prod     <slug>.<suffix>
+    preview  <slug>--preview.<suffix>
 
-The cell label is the org's opaque ``ssc.org.cell_label``, so one wildcard certificate per org
-covers all its hosts and certificate logs never name a customer. A slug never contains ``--``
+The suffix is ``ssc.org.apps_suffix`` once the org delegates a subdomain of its own (CD-1), and
+until then :func:`default_suffix`, ``<cell label>.<apps domain>``: the cell label is opaque, so
+one wildcard certificate per org covers all its hosts and certificate logs never name a
+customer. A slug never contains ``--``
 (nor, therefore, starts with ``xn--``), so ``<slug>--preview`` is never another app's slug and no
 two (slug, environment) pairs share a host. A slug has at least 3 characters, so no host label
 has ``--`` in positions 3-4 (reserved by IDNA2008) except through ``--preview``. Reserved words
 are never slugs.
 
-Each cell also has two reserved hosts on its suffix, which no slug can be since a slug never
-holds ``--``: ``ssc--agent`` (the cell agent, SSC-095) and ``ssc--secrets`` (the secret intake,
-SSC-026). Its app identity tokens are issued as ``https://keys.delimitus.com/<cell label>``.
+Each cell also has two reserved hosts on ``<cell label>.<apps domain>``, which no slug can be
+since a slug never holds ``--``: ``ssc--agent`` (the cell agent, SSC-095) and ``ssc--secrets``
+(the secret intake, SSC-026). Its app identity tokens are issued as
+``https://keys.delimitus.com/<cell label>``.
 The infrastructure (``ssc_infra.naming``) and the control plane both name them from here.
 
 Pure and strict: nothing here accepts what the rule does not produce. :func:`parse_app_host`
@@ -20,8 +23,46 @@ takes the host after the caller has lower-cased it and dropped any port.
 """
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Final, Literal, get_args
+
+from ssc_contracts.snapshot import MAX_SUFFIX, check_suffix
+
+__all__ = [
+    "AGENT_HOST_LABEL",
+    "CELL_PROJECT_PREFIX",
+    "INTAKE_HOST_LABEL",
+    "ISSUER_PREFIX",
+    "LABEL_PATTERN",
+    "MAX_APPS_DOMAIN",
+    "MAX_SUFFIX",
+    "MIN_SLUG",
+    "PREVIEW_SUFFIX",
+    "PROOF_LABELS",
+    "RESERVED_SLUGS",
+    "SLUG_PATTERN",
+    "AppHost",
+    "Environment",
+    "SlugProblem",
+    "agent_host",
+    "agent_url",
+    "app_host",
+    "app_origin",
+    "cell_project",
+    "check_apps_domain",
+    "check_cell_label",
+    "check_slug",
+    "check_suffix",
+    "default_suffix",
+    "host_label",
+    "identity_issuer",
+    "intake_host",
+    "intake_url",
+    "label_of_issuer",
+    "parse_app_host",
+    "slug_problem",
+]
 
 type Environment = Literal["prod", "preview"]
 type SlugProblem = Literal["pattern", "short", "punycode", "double_dash", "reserved"]
@@ -62,7 +103,7 @@ _SLUG_MESSAGES: Final[dict[SlugProblem, str]] = {
 class AppHost:
     slug: str
     environment: Environment
-    cell_label: str
+    suffix: str
 
 
 def slug_problem(slug: str) -> SlugProblem | None:
@@ -118,15 +159,19 @@ def host_label(slug: str, environment: Environment) -> str:
     return check_slug(slug) + (PREVIEW_SUFFIX if environment == "preview" else "")
 
 
-def app_host(slug: str, environment: Environment, cell_label: str, apps_domain: str) -> str:
+def default_suffix(cell_label: str, apps_domain: str) -> str:
+    """The apps suffix of an org that has not delegated a subdomain."""
+    return f"{check_cell_label(cell_label)}.{check_apps_domain(apps_domain)}"
+
+
+def app_host(slug: str, environment: Environment, suffix: str) -> str:
     """The host of one app environment. ``ValueError`` for anything the rule refuses."""
-    first = host_label(slug, environment)
-    return f"{first}.{check_cell_label(cell_label)}.{check_apps_domain(apps_domain)}"
+    return f"{host_label(slug, environment)}.{check_suffix(suffix)}"
 
 
-def app_origin(slug: str, environment: Environment, cell_label: str, apps_domain: str) -> str:
+def app_origin(slug: str, environment: Environment, suffix: str) -> str:
     """``https://`` plus :func:`app_host`: the environment's URL and the identity note audience."""
-    return "https://" + app_host(slug, environment, cell_label, apps_domain)
+    return "https://" + app_host(slug, environment, suffix)
 
 
 def agent_host(cell_label: str, apps_domain: str) -> str:
@@ -161,17 +206,16 @@ def label_of_issuer(issuer: str) -> str:
     return check_cell_label(issuer.removeprefix(ISSUER_PREFIX))
 
 
-def parse_app_host(host: str, apps_domain: str) -> AppHost | None:
-    """The app environment ``host`` names, or ``None`` when :func:`app_host` never makes it."""
-    suffix = "." + check_apps_domain(apps_domain)
-    if not host.endswith(suffix):
+def parse_app_host(host: str, suffixes: Collection[str]) -> AppHost | None:
+    """The app environment ``host`` names under the longest of ``suffixes`` it ends with, or
+    ``None`` when :func:`app_host` never makes it."""
+    under = [s for s in map(check_suffix, suffixes) if host.endswith("." + s)]
+    if not under:
         return None
-    parts = host.removesuffix(suffix).split(".")
-    if len(parts) != 2:  # noqa: PLR2004  (first label and cell label)
-        return None
-    first, label = parts
+    suffix = max(under, key=len)
+    first = host.removesuffix("." + suffix)
     environment: Environment = "preview" if first.endswith(PREVIEW_SUFFIX) else "prod"
     slug = first.removesuffix(PREVIEW_SUFFIX)
-    if slug_problem(slug) is not None or _LABEL.fullmatch(label) is None:
+    if "." in first or slug_problem(slug) is not None:
         return None
-    return AppHost(slug, environment, label)
+    return AppHost(slug, environment, suffix)

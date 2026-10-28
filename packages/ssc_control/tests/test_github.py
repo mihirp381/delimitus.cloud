@@ -103,7 +103,7 @@ from ssc_control.worker import CompositionError, Ports, github_from_env
 from ssc_shared import redaction
 from ssc_shared.blobstore_fs import FsBlobStore, UrlSigner
 from ssc_shared.clock import SystemClock
-from ssc_shared.hosts import app_origin
+from ssc_shared.hosts import app_origin, default_suffix
 
 world = test_deploy.world
 tokens = test_deploy.tokens
@@ -297,7 +297,7 @@ def done(g: G, sha: str) -> None:
 
 def preview_url(g: G) -> str:
     (org,) = rows_of(g.b.dsn, g.b.w.org, "select cell_label from ssc.org where id = %s", g.b.w.org)
-    return app_origin("ledger", "preview", org["cell_label"], g.ports.apps_domain)
+    return app_origin("ledger", "preview", default_suffix(org["cell_label"], g.ports.apps_domain))
 
 
 def promote(g: G, token: str | None = None) -> Response:

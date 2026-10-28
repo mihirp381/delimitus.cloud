@@ -36,6 +36,7 @@ from ssc_contracts.schedule_token import (
     SCHEDULE_TOKEN_TYP,
     START_SUFFIX,
 )
+from ssc_control.db.orgs import suffix_of
 from ssc_control.timers.dispatch import DispatchResult, ScheduleDispatcher, TimerCall
 from ssc_shared.hosts import app_origin, slug_problem
 
@@ -121,7 +122,8 @@ class HttpsScheduleDispatcher(ScheduleDispatcher):
         if slug_problem(call.slug) is not None:
             return None
         try:
-            return app_origin(call.slug, call.environment, call.cell_label, self._apps_domain)
+            suffix = suffix_of(call.cell_label, call.apps_suffix, self._apps_domain)
+            return app_origin(call.slug, call.environment, suffix)
         except ValueError:
             return None
 

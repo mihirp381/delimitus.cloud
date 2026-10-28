@@ -13,6 +13,7 @@ from typing import Final, Literal
 
 from ssc_contracts import app_database, app_env, egress
 from ssc_contracts.manifest import Manifest, is_session_app, max_instances
+from ssc_control.db.orgs import suffix_of
 from ssc_shared.hosts import app_origin, slug_problem
 from ssc_shared.runtime import (
     FINGERPRINT_VERSION,
@@ -74,12 +75,14 @@ class DatabaseRow:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AppIdentity:
     """The cell's identity settings (SSC-018). ``keys_url`` is its public JWKS as a ``data:``
-    URL; ``cell_label`` and ``apps_domain`` make each app's origin. Either is None when its
-    setting is unset, and the variable it makes is then left out."""
+    URL; ``cell_label``, ``apps_domain`` and the org's ``suffix`` make each app's origin
+    (``db.orgs.suffix_of``). Either of the first two is None when its setting is unset, and the
+    variable it makes is then left out."""
 
     keys_url: str | None
     cell_label: str | None
     apps_domain: str
+    suffix: str | None = None
 
 
 def identity_env(identity: AppIdentity | None, slug: str | None, env: EnvName) -> dict[str, str]:
@@ -92,7 +95,8 @@ def identity_env(identity: AppIdentity | None, slug: str | None, env: EnvName) -
     if identity.keys_url:
         plain[app_env.IDENTITY_KEYS_URL] = identity.keys_url
     if identity.cell_label and slug and slug_problem(slug) is None:
-        origin = app_origin(slug, env, identity.cell_label, identity.apps_domain)
+        suffix = suffix_of(identity.cell_label, identity.suffix, identity.apps_domain)
+        origin = app_origin(slug, env, suffix)
         plain[app_env.APP_ORIGIN] = origin
         plain[app_env.STREAMLIT_ALLOWED_ORIGINS] = origin
     return plain

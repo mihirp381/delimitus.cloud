@@ -247,9 +247,10 @@ class ReturnTo:
         return f"https://{self.host}{self.path}"
 
 
-def parse_return_to(raw: str, *, apps_domain: str, cell_label: str) -> ReturnTo | None:
-    """An app host of the cell and a local path, or None. Never an open redirect: https only, no
-    user info, no port, no backslash or control character, the host compared whole."""
+def parse_return_to(raw: str, *, suffix: str) -> ReturnTo | None:
+    """An app host under the org's ``suffix`` and a local path, or None. Never an open redirect:
+    https only, no user info, no port, no backslash or control character, the host compared
+    whole."""
     if not raw or len(raw) > MAX_RETURN_TO or _CONTROL.search(raw):
         return None
     try:
@@ -266,8 +267,7 @@ def parse_return_to(raw: str, *, apps_domain: str, cell_label: str) -> ReturnTo 
         or parts.netloc != host
     ):
         return None
-    app = parse_app_host(host, apps_domain)
-    if app is None or app.cell_label != cell_label:
+    if parse_app_host(host, [suffix]) is None:
         return None
     path = parts.path or "/"
     if not path.startswith("/") or path.startswith("//"):
