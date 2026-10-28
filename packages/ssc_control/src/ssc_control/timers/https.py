@@ -6,7 +6,8 @@ balancer, the gateway. There is no other way in. Each request carries a schedule
 method and path as sent on the wire (percent-encoded as the client encodes it), which the
 gateway verifies and strips. Redirects are not followed, so a redirect is the run's answer
 (``http_error``), except one ``307`` from a previous suffix (CD-4.3) to the same host label and
-path under another suffix, which is sent once more with a token for that origin. The answer's
+path under the org's other suffix (its default or its own domain), which is sent once more with
+a token for that origin. The answer's
 body is read to its end and dropped, so the run lasts until the app has finished answering.
 
 The key is an EC P-256 private key from ``SSC_TIMER_SIGNING_KEY`` (PEM) with its id in
@@ -41,7 +42,7 @@ from ssc_contracts.schedule_token import (
 from ssc_contracts.snapshot import check_suffix
 from ssc_control.db.orgs import suffix_of
 from ssc_control.timers.dispatch import DispatchResult, ScheduleDispatcher, TimerCall
-from ssc_shared.hosts import app_origin, slug_problem
+from ssc_shared.hosts import app_origin, default_suffix, slug_problem
 
 log = logging.getLogger(__name__)
 
@@ -144,7 +145,8 @@ class HttpsScheduleDispatcher(ScheduleDispatcher):
         sent = httpx2.URL(origin + path).raw_path.decode("ascii")
         try:
             status, location = await self._once(call, method, origin, sent, jti)
-            moved = _moved_origin(origin, sent, location) if status == 307 else None  # noqa: PLR2004
+            suffixes = {default_suffix(call.cell_label, self._apps_domain), call.domain_suffix}
+            moved = _moved_origin(origin, sent, location, suffixes) if status == 307 else None  # noqa: PLR2004
             if moved is not None:
                 status, _ = await self._once(call, method, moved, sent, jti)
             return DispatchResult(http_status=status)
@@ -173,9 +175,11 @@ class HttpsScheduleDispatcher(ScheduleDispatcher):
         await self._client.aclose()
 
 
-def _moved_origin(origin: str, sent: str, location: str | None) -> str | None:
+def _moved_origin(
+    origin: str, sent: str, location: str | None, suffixes: set[str | None]
+) -> str | None:
     """The origin a previous suffix's ``307`` names: the same host label and path under another
-    valid suffix; None for any other redirect."""
+    of the org's ``suffixes``; None for any other redirect."""
     if location is None:
         return None
     to, was = urlsplit(location), urlsplit(origin)
@@ -185,6 +189,8 @@ def _moved_origin(origin: str, sent: str, location: str | None) -> str | None:
     if to.scheme != "https" or to.port is not None or to.username or label != first:
         return None
     if host == was.hostname or to.path + (f"?{to.query}" if to.query else "") != sent:
+        return None
+    if suffix not in suffixes:
         return None
     try:
         check_suffix(suffix)

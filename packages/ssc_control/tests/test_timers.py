@@ -555,6 +555,25 @@ async def test_a_deploy_arms_prod_only_on_live_authority(b: Bench) -> None:
     assert actions(b, tick["id"])[-1] == ("schedule.paused", "user", b.w.builder)
 
 
+async def test_the_call_names_the_org_s_own_domain_for_a_redirect(b: Bench) -> None:
+    suffix = f"tools-{b.w.org[4:]}.testorg.com"
+    execute(
+        b.dsn,
+        b.w.org,
+        "insert into ssc.org_domain (id, org_id, suffix, zone_name, state) "
+        "values (%s, %s, %s, 'ssc-d-0123456789ab', 'active')",
+        new_id("dom"),
+        b.w.org,
+        suffix,
+    )
+    await sync(b, b.w.preview, declared())
+    sid = live(b, b.w.preview)["tick"]["id"]
+    assert post(b, url(b, b.w.preview, sid, "/runs"), b.t.builder).status_code == 202
+    assert await fire(b, manual(b, sid)) == "succeeded"
+    (call,) = cast("FakeScheduleDispatcher", b.dispatcher).calls
+    assert (call.apps_suffix, call.domain_suffix) == (None, suffix)
+
+
 async def test_preview_schedules_are_paused_and_run_by_hand(b: Bench) -> None:
     await sync(b, b.w.preview, declared())
     row = live(b, b.w.preview)["tick"]
