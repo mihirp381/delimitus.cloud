@@ -100,6 +100,7 @@ include = [
   "conformance/ssc_conformance/runtime_probes.py",
   "conformance/ssc_conformance/kill_drill.py",
   "conformance/ssc_conformance/adversarial.py",
+  "conformance/ssc_conformance/suffix_walk.py",
   "packages/ssc_control/src/ssc_control/metrics",
   "packages/ssc_bundle/src",
   "packages/ssc_control/src/ssc_control/deploy",

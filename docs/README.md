@@ -39,6 +39,7 @@ checks, use [CONTRIBUTING.md](../CONTRIBUTING.md); for code navigation, use the
 | [Infrastructure](../infra/README.md) | Platform and cell stacks, networking, lazy resources, and live checks. |
 | [Control plane deployment](runbooks/ssc-064-control-plane.md) | Production setup, secrets, migrations, and release checks. |
 | [Customer onboarding](runbooks/ssc-110-onboarding.md) | Onboard a customer: the cell, the WorkOS setup, waiting reasons, and abandon. |
+| [Customer domain proof](runbooks/ssc-111-customer-domain-proof.md) | Delegate a test domain, time each state, flip, flip back and re-flip, then seven green nights of the suffix walk. |
 | [Login rig](runbooks/ssc-019-login.md) | Local SSO and directory checks with WorkOS staging tenants. |
 | [Approval email](runbooks/ssc-049-approval-email.md) | Configure delivery, diagnose failures, and rotate credentials. |
 | [Database restore](runbooks/ssc-043-restore-database.md) | Restore an app database from a point-in-time clone. |

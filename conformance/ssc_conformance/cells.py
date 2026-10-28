@@ -190,6 +190,8 @@ def section(cells: Sequence[Cell], name: str, index: int = 0) -> dict[str, str]:
             "SSC_PROBE_AGENT_URL": cell.agent_url,
             "SSC_PROBE_ORG_ID": cell.org,
             "SSC_PROBE_TLS_HOST": f"alpha.{cell.base}",
+            "SSC_PROBE_BASE": cell.base,
+            "SSC_PROBE_AUTH_URL": cell.auth_url,
         }
         if peer is not None:
             out |= {

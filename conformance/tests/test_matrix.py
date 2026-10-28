@@ -203,6 +203,7 @@ def test_every_probe_the_page_names_exists_in_the_probe_list() -> None:
         matrix.CERTIFICATE,
         matrix.DRIFT,
         matrix.DRILL,
+        matrix.SUFFIXES,
     }
     named = {p for r in ROWS for p in r.proofs} | set(ALSO)
     assert sorted(named - not_probes - set(PROBES)) == []

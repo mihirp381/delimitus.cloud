@@ -104,6 +104,11 @@ jobs:
           SSC_PROBE_DIGEST: ${{ vars.SSC_PROBE_DIGEST }}
           SSC_CONTROL_SA: ssc-control@${{ env.CONTROL_PROJECT }}.iam.gserviceaccount.com
         run: uv run python -m ssc_conformance.nightly
+      - name: Suffix walk
+        if: ${{ !cancelled() }}
+        env:
+          SSC_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: uv run python -m ssc_conformance.suffix_walk
       - name: Least privilege
         if: ${{ !cancelled() }}
         env:

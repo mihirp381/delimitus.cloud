@@ -14,7 +14,7 @@ local tests; nothing here has run against a live domain. The live proof is CD-7.
 | CD-5.1 to CD-5.3 | `Domain=` cookies dropped, `form-action` and `frame-ancestors`, admission with the PSL | A browser on staging: the cookie absent, a foreign form post blocked |
 | CD-6.1 to CD-6.3 | Console page, `ssc domains`, mails and the stall notice; each refusal its own code | Both mails and the stall notice delivered from staging |
 | CD-7.1 | Decision 004 amended, 005, 023, 024 cross-referenced; contracts match the code; `docs/trust/domain-limits.md` | - |
-| CD-7.2 | - | The proof itself; seven green nights; then CLAIMS and the landing FAQ |
+| CD-7.2 | Runbook `docs/runbooks/ssc-111-customer-domain-proof.md`; nightly `ssc_conformance.suffix_walk` (proof `suffixes`) | The proof itself; seven green nights; then CLAIMS and the landing FAQ |
 | CD-8 | Deferred (Q4) | - |
 
 Founder answers 2026-10-26: Q1 environment id; Q2 one forced re-login at flip accepted; Q3 zone kept until
