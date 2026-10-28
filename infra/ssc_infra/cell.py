@@ -2356,7 +2356,6 @@ class Cell:
                 lambda p: n.run_url(n.DATA_GATEWAY, p)
             ),
             "SSC_IDENTITY_JWKS": cfg.gateway_jwks,
-            "SSC_APPS_DOMAIN": n.APPS_DOMAIN,
             "SSC_IDENTITY_ISSUER": n.identity_issuer(cfg.label),
             "SSC_DATAGW_AGENT_ACCOUNT": self.agent_sa.email,
         }

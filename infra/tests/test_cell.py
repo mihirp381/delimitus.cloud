@@ -621,7 +621,6 @@ DATAGW_ENV = {
     "SSC_CELL_BUCKET",
     "SSC_DATAGW_AUDIENCE",
     "SSC_IDENTITY_JWKS",
-    "SSC_APPS_DOMAIN",
     "SSC_IDENTITY_ISSUER",
     "SSC_DATAGW_AGENT_ACCOUNT",
 }
@@ -648,7 +647,6 @@ def test_the_data_gateway_runs_its_image_with_the_cell_wired_in() -> None:
         naming.DATA_GATEWAY, project_number(project)
     )
     assert env["SSC_IDENTITY_JWKS"] == GATEWAY["gateway_jwks"]
-    assert env["SSC_APPS_DOMAIN"] == naming.APPS_DOMAIN
     assert env["SSC_IDENTITY_ISSUER"] == f"https://{naming.KEYS_HOST}/{label}"
     assert env["SSC_DATAGW_AGENT_ACCOUNT"] == naming.sa_email(naming.CELL_AGENT, project)
 

@@ -56,13 +56,11 @@ NOTE_JWKS = {"keys": [_jwk(NOTE_KEY.public_key(), NOTE_KID, IDENTITY_ALG)]}
 
 SETTINGS = Settings(
     org_id=ORG,
-    cell_label=LABEL,
     project_id=PROJECT,
     bucket=f"{PROJECT}-cell",
     audience=AUDIENCE,
     jwks=NOTE_JWKS,
     issuer=ISSUER,
-    apps_domain=DOMAIN,
 )
 
 ENV = {
@@ -72,7 +70,6 @@ ENV = {
     "SSC_CELL_BUCKET": f"{PROJECT}-cell",
     "SSC_DATAGW_AUDIENCE": AUDIENCE,
     "SSC_IDENTITY_JWKS": json.dumps(NOTE_JWKS),
-    "SSC_APPS_DOMAIN": DOMAIN,
 }
 
 

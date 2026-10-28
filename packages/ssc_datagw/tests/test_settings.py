@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from datagw_world import AGENT, ENV, NOTE_JWKS, PROJECT, SALES, SETTINGS, account
+from datagw_world import AGENT, ENV, LABEL, NOTE_JWKS, PROJECT, SALES, SETTINGS, account
 
 from ssc_datagw import kinds
 from ssc_datagw.postgres import PostgresTarget
@@ -20,10 +20,8 @@ def test_the_cell_environment_reads_as_the_settings() -> None:
 
 
 def test_the_defaults() -> None:
-    env = {k: v for k, v in ENV.items() if k != "SSC_APPS_DOMAIN"}
-    got = settings_from_env(env)
-    assert got.apps_domain == "delimitusapps.com"
-    assert got.issuer == f"https://keys.delimitus.com/{SETTINGS.cell_label}"
+    got = settings_from_env(ENV)
+    assert got.issuer == f"https://keys.delimitus.com/{LABEL}"
     assert got.max_stale == MAX_STALE_SECONDS
     assert settings_from_env({**ENV, "SSC_SNAPSHOT_MAX_AGE": "30"}).max_stale == 30
 
@@ -45,7 +43,6 @@ BAD = {
     "a bad project": {"SSC_PROJECT_ID": "Not_A_Project"},
     "an http audience": {"SSC_DATAGW_AUDIENCE": "http://datagw.run.app"},
     "a bad cell label": {"SSC_CELL_LABEL": "aeiou"},
-    "a bad apps domain": {"SSC_APPS_DOMAIN": "not a domain"},
     "no bucket": {"SSC_CELL_BUCKET": ""},
     "a jwks not json": {"SSC_IDENTITY_JWKS": "{"},
     "a jwks without keys": {"SSC_IDENTITY_JWKS": json.dumps({"keys": []})},
