@@ -13,9 +13,11 @@
   label in one transaction (``identity.operator``). The label is required: an org left with its
   generated label has no applied cell, and its snapshot and anchor jobs would have nowhere to
   write (one such org, 2026-10-07). Prints the org id.
-* ``create-social-org --name N --admin-email E --providers google[,microsoft] --cell-label L
-  --operator op_x``: a pilot org in social mode with its first admin invited, linked at their
-  first sign-in, and the cell label, in one transaction (``identity.operator``). Prints the org id.
+* ``create-social-org --name N --admin-email E [--confirm-admin-email E] --providers
+  google[,microsoft] --cell-label L --operator op_x``: a pilot org in social mode with its first
+  admin invited, linked at their first sign-in, and the cell label, in one transaction
+  (``identity.operator``). Asks for the admin email again unless ``--confirm-admin-email`` gives
+  it, then shows the org and writes it only on ``confirm`` from stdin. Prints the org id.
 * ``restore-admin --org ID --user ID --operator op_x --reason TEXT [--outside-admin-group]
   [--already-applied-at TIME]``: make a person an active admin again, audited
   (``identity.operator``). In a social org the person must have signed in once.
@@ -47,6 +49,7 @@ from ssc_control.identity.workos import DEFAULT_BASE, WorkOSClient
 from ssc_shared import redaction
 
 INTERVAL_SECONDS: Final = 60
+CONFIRM: Final = "confirm"
 log = logging.getLogger("ssc.identity")
 
 
@@ -149,6 +152,46 @@ async def run_create_social_org(dsn: str, args: argparse.Namespace) -> str:
         return made.org_id
     finally:
         await engine.dispose()
+
+
+def _ask(prompt: str) -> str | None:
+    sys.stderr.write(prompt)
+    sys.stderr.flush()
+    line = sys.stdin.readline()
+    if not line:
+        sys.stderr.write("\n")
+        return None
+    return line.rstrip("\r\n")
+
+
+def _summary(args: argparse.Namespace) -> str:
+    return (
+        "\nCreate this social org:\n\n"
+        f"  ADMIN EMAIL  {args.admin_email}\n"
+        "               The first admin signs in with this address; it cannot be changed later.\n\n"
+        f"  Org name     {args.name}\n"
+        f"  Providers    {', '.join(args.providers)}\n"
+        f"  Cell label   {args.cell_label}\n\n"
+    )
+
+
+def _confirm_social_org(args: argparse.Namespace) -> str | None:
+    typed = args.confirm_admin_email
+    if typed is None:
+        typed = _ask("Confirm admin email: ")
+    if typed is None:
+        return "the admin email was not confirmed"
+    try:
+        same = operator.check_email(typed) == args.admin_email
+    except ValueError:
+        same = False
+    if not same:
+        return f"the admin email {args.admin_email} and its confirmation {typed.strip()!r} differ"
+    sys.stderr.write(_summary(args))
+    answer = _ask(f"Type {CONFIRM} to create it, or cancel: ")
+    if answer is None or answer.strip().lower() != CONFIRM:
+        return "cancelled"
+    return None
 
 
 async def run_restore_admin(dsn: str, args: argparse.Namespace) -> operator.Restored:
@@ -270,6 +313,7 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915  (one parser)
     p_social = sub.add_parser("create-social-org")
     p_social.add_argument("--name", type=operator.check_org_name, required=True)
     p_social.add_argument("--admin-email", type=operator.check_email, required=True)
+    p_social.add_argument("--confirm-admin-email")
     p_social.add_argument("--providers", type=social.check_providers, required=True)
     p_social.add_argument("--cell-label", type=operator.check_cell_label, required=True)
     p_social.add_argument("--operator", type=operator.check_operator_id, required=True)
@@ -335,6 +379,10 @@ def _run(args: argparse.Namespace, dsn: str, env: dict[str, str]) -> int:  # noq
         sys.stdout.writelines(f"{line}\n" for line in lines)
         return 0
     if args.command == "create-social-org":
+        refused = _confirm_social_org(args)
+        if refused is not None:
+            sys.stderr.write(f"not created: {refused}; nothing was written\n")
+            return 1
         try:
             org_id = asyncio.run(run_create_social_org(dsn, args))
         except connections.ConnectError as e:

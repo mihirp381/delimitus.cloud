@@ -246,10 +246,17 @@ ORG=$(uv run python -m ssc_control.identity create-social-org --name "<org name>
 echo $ORG
 ```
 
+The command asks for the admin email again (`Confirm admin email:`; `--confirm-admin-email`
+gives it in a script) and refuses if the two differ. It then shows the admin email, the org
+name, the providers and the cell label, and writes the org only if you type `confirm`; anything
+else, or no answer, writes nothing. Check the address letter by letter: it cannot be fixed
+afterwards, since `restore-admin` refuses an invited person who never signed in. The prompts go
+to stderr, so `ORG=$(...)` still captures only the org id.
+
 Pass: the org id on stdout. One transaction makes the org in social mode, its first admin as an
 invited person and its cell label, audited `org.created`, `org.updated` (the mode),
-`user.invited` and `org.updated` (the label). A bad provider, label or address, or a label another org
-has, writes nothing and says why. Leave `github` out of `--providers`, as above. The org has no
+`user.invited` and `org.updated` (the label). A bad provider, label or address, or a label
+another org has, writes nothing and says why. Leave `github` out of `--providers`, as above. The org has no
 onboarding row and directory sync skips it.
 
 Then build the org's cell, before anyone deploys an app, the way `create-org` expects: the label

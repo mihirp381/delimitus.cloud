@@ -3,6 +3,9 @@ postgres:18 and a fake WorkOS.
 
   1 create-social-org: one transaction, four events, no WorkOS -> test_create_social_org_makes_...,
                                                                   test_create_social_org_refuses_...
+  1b the email twice, then confirm; else nothing is written  -> test_..._asks_for_the_email_...,
+                                                                  test_a_mismatched_...,
+                                                                  test_only_confirm_creates_...
   2 the admin signs in and invites; the member signs in       -> test_the_invited_admin_signs_in_...
   3 restore-admin needs a social link in a social org          -> test_restore_admin_in_a_social_...
   4 sync skips a social org with no connection                 -> test_sync_skips_a_social_org_...
@@ -10,7 +13,9 @@ postgres:18 and a fake WorkOS.
   6 the directory path is unchanged                            -> every existing suite
 """
 
+import io
 import secrets
+import sys
 from typing import Any
 
 import psycopg
@@ -45,12 +50,17 @@ def argv(**change: str | None) -> list[str]:
     args: dict[str, str | None] = {
         "--name": "Pilot",
         "--admin-email": "ada@example.com",
+        "--confirm-admin-email": change.get("admin_email", "ada@example.com"),
         "--providers": "google,microsoft",
         "--cell-label": fresh_label(),
         "--operator": "op_dana",
     }
     args.update({f"--{k.replace('_', '-')}": v for k, v in change.items()})
     return ["create-social-org", *(p for k, v in args.items() if v is not None for p in (k, v))]
+
+
+def answer(monkeypatch: pytest.MonkeyPatch, typed: str) -> None:
+    monkeypatch.setattr(sys, "stdin", io.StringIO(typed))
 
 
 def without_workos(dsns: Dsns, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,9 +114,16 @@ def test_create_social_org_makes_the_org_its_invited_admin_and_four_events(
 ) -> None:
     without_workos(dsns, monkeypatch)
     label, name = fresh_label(), f"Pilot-{secrets.token_hex(4)}"
-    assert cli.main(argv(name=name, admin_email=" Ada@Example.COM ", cell_label=label)) == 0
-    org = capsys.readouterr().out.strip()
+    answer(monkeypatch, "confirm\n")
+    made = argv(name=name, admin_email=" Ada@Example.COM ", cell_label=label)
+    assert cli.main([*made, "--confirm-admin-email", "ada@EXAMPLE.com"]) == 0
+    out, err = capsys.readouterr()
+    org = out.strip()
     assert org.startswith("org_")
+    assert out == org + "\n"
+    assert "Confirm admin email" not in err
+    for shown in ("ADMIN EMAIL  ada@example.com", name, "google, microsoft", label):
+        assert shown in err
     with psycopg.connect(dsns.superuser) as conn:
         events = conn.execute(
             "select action, actor_kind, actor_id, target_kind, target_id, before, after "
@@ -166,11 +183,67 @@ def test_create_social_org_refuses_bad_input_before_writing(
     capsys.readouterr()
     assert org_rows(dsns, name) == (0, 0)
     taken = fresh_label()
+    answer(monkeypatch, "confirm\n")
     assert cli.main(argv(name=f"{name}-first", cell_label=taken)) == 0
+    answer(monkeypatch, "confirm\n")
     assert cli.main(argv(name=name, cell_label=taken)) == 1
     assert "not created: the cell label or the org id" in capsys.readouterr().err
     assert org_rows(dsns, name) == (0, 0)
     assert org_rows(dsns, f"{name}-first") == (1, 4)
+
+
+def test_create_social_org_asks_for_the_email_again_on_stdin(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    without_workos(dsns, monkeypatch)
+    name = f"Prompted-{secrets.token_hex(4)}"
+    answer(monkeypatch, "  ADA@example.com \nconfirm\n")
+    assert cli.main(argv(name=name, confirm_admin_email=None)) == 0
+    out, err = capsys.readouterr()
+    assert out.startswith("org_")
+    assert err.startswith("Confirm admin email: \nCreate this social org:")
+    assert err.index("ADMIN EMAIL  ada@example.com") < err.index(f"Org name     {name}")
+    assert err.endswith("Type confirm to create it, or cancel: ")
+    assert org_rows(dsns, name) == (1, 4)
+
+
+def test_a_mismatched_or_missing_confirmation_writes_nothing(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    without_workos(dsns, monkeypatch)
+    name = f"Mismatch-{secrets.token_hex(4)}"
+    for flag, typed, why in (
+        ("ada@exmaple.com", "confirm\n", "and its confirmation 'ada@exmaple.com' differ"),
+        ("ada@example.com.", "confirm\n", "differ"),
+        (None, "bob@example.com\nconfirm\n", "and its confirmation 'bob@example.com' differ"),
+        (None, "not-an-address\nconfirm\n", "differ"),
+        (None, "\nconfirm\n", "differ"),
+        (None, "", "the admin email was not confirmed"),
+    ):
+        answer(monkeypatch, typed)
+        assert cli.main(argv(name=name, confirm_admin_email=flag)) == 1, (flag, typed)
+        err = capsys.readouterr().err
+        assert why in err and err.rstrip().endswith("nothing was written"), err
+        assert "ADMIN EMAIL" not in err
+    assert org_rows(dsns, name) == (0, 0)
+
+
+def test_only_confirm_creates_the_org(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    without_workos(dsns, monkeypatch)
+    name = f"Confirm-{secrets.token_hex(4)}"
+    for typed in ("cancel\n", "Cancel\n", "", "\n", "y\n", "yes\n", "confirmed\n", "no\n"):
+        answer(monkeypatch, typed)
+        assert cli.main(argv(name=name)) == 1, typed
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.endswith("not created: cancelled; nothing was written\n")
+    assert org_rows(dsns, name) == (0, 0)
+    answer(monkeypatch, " Confirm \n")
+    assert cli.main(argv(name=name)) == 0
+    assert capsys.readouterr().out.startswith("org_")
+    assert org_rows(dsns, name) == (1, 4)
 
 
 async def test_create_social_org_refuses_a_malformed_address_or_label(dsns: Dsns) -> None:
