@@ -1300,6 +1300,29 @@ def test_only_a_persons_own_credential_lists_apps(
         assert_problem(apps_of(client, world.admin_token, unknown), ErrorCode.REFERENCE_NOT_FOUND)
 
 
+def test_an_invited_person_lists_no_apps(client: TestClient, world: World, dsns: Dsns) -> None:
+    invited, una = new_id("usr"), new_member(client, world)
+    sql(
+        dsns.app,
+        world.org,
+        "insert into ssc.user_account (id, org_id, display_name, email, role, status) "
+        "values (%s, %s, 'Ivy I', 'ivy@example.com', 'member', 'invited')",
+        (invited, world.org),
+    )
+    r = put_grants(client, world, world.prod, world.admin_token, [grant("user", "org")], 1)
+    assert r.status_code == 200, r.text
+    sql(
+        dsns.app,
+        world.org,
+        "insert into ssc.app_grant (id, org_id, environment_id, role, subject_kind, user_id, "
+        "granted_by_user_id) values (%s, %s, %s, 'user', 'user', %s, %s)",
+        (new_id("gnt"), world.org, world.prod, invited, world.admin),
+    )
+    body = apps_of(client, world.admin_token, invited).json()
+    assert (body["user_name"], body["user_status"], body["apps"]) == ("Ivy I", "invited", [])
+    assert [a["slug"] for a in apps_of(client, world.admin_token, una).json()["apps"]] == ["ledger"]
+
+
 _KIND_ORDER = {"user": 0, "group": 1, "org": 2}
 
 
