@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { expect, type Page, test } from '@playwright/test';
+import { type APIRequestContext, expect, type Page, test } from '@playwright/test';
 
 const token = process.env.SSC_E2E_TOKEN ?? '';
 const composeProject = process.env.SSC_E2E_COMPOSE_PROJECT ?? '';
 const composeFile = process.env.SSC_E2E_COMPOSE_FILE ?? '';
 const auth = { Authorization: `Bearer ${token}` };
+const operatorToken = process.env.SSC_E2E_OPERATOR_TOKEN ?? '';
+const apiUrl = process.env.SSC_API_URL ?? '';
 
 function devStack(...args: string[]): string {
   const exec = ['compose', '-p', composeProject, '-f', composeFile, 'exec', '-T', 'api'];
@@ -76,4 +78,45 @@ test('an admin delegates a subdomain, moves the apps to it and back', async ({ p
   await expect(said).toContainText(`Your apps now live under ${defaultSuffix}.`);
   await expect(page.getByRole('button', { name: `Move my apps to ${suffix}` })).toBeEnabled();
   await expect(page.getByText(new RegExp(`Old addresses under ${suffix.replaceAll('.', '\\.')} redirect until`))).toBeVisible();
+});
+
+async function retireLiveDomain(request: APIRequestContext) {
+  const org = (await (await request.get(`${apiUrl}/v1/whoami`, { headers: auth })).json()).org_id;
+  const live = (await (await request.get(`${apiUrl}/v1/domain`, { headers: auth })).json()).delegation;
+  if (!live || live.state === 'retired') return;
+  devStack('fake-dns', live.suffix);
+  const retired = await request.post(`${apiUrl}/internal/v1/orgs/${org}/domain/retire`, {
+    headers: { Authorization: `Bearer ${operatorToken}`, 'Idempotency-Key': randomUUID() },
+  });
+  expect(retired.status(), await retired.text()).toBe(200);
+}
+
+test('a failed certificate shows the reason and asks again', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  expect(token && operatorToken && composeProject, 'run through e2e/run.mjs').toBeTruthy();
+  await retireLiveDomain(request);
+  const parent = `e2ef${Date.now().toString(36)}.example`;
+  const suffix = `tools.${parent}`;
+  const reason = 'CAA record forbids issuance';
+  devStack('fake-dns', parent, 'ns1.cloudflare.com', 'ns2.cloudflare.com');
+
+  await signIn(page, '/domain');
+  const form = page.getByRole('form', { name: 'Create your own address' });
+  await form.getByLabel('Subdomain to delegate').fill(suffix);
+  await form.getByRole('button', { name: 'Create address' }).click();
+  await expect(page.getByRole('heading', { name: 'Waiting for your DNS change' })).toBeVisible();
+  const values = page.getByRole('table', { name: 'NS records to add' }).getByRole('row').locator('td:nth-child(3) code');
+  await expect(values.first()).toBeVisible();
+
+  devStack('fake-dns', suffix, ...(await values.allTextContents()));
+  devStack('fake-certificate', suffix, 'failed', '--detail', reason);
+  devStack('domains-tick');
+  devStack('domains-tick');
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Could not set up your address' })).toBeVisible();
+  await expect(page.getByText(`${suffix}: ${reason}`)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByRole('region', { name: 'Notifications' })).toContainText(`Asked for ${suffix} again.`);
+  await expect(page.getByRole('heading', { name: 'Could not set up your address' })).toBeHidden();
 });
