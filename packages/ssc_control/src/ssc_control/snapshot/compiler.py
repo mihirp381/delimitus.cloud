@@ -86,7 +86,10 @@ _READ_ORG = text(
     "order by r.until, r.suffix collate \"C\"), '[]') from (select suffix, until "
     "from ssc.org_suffix_retired where org_id = :org and until > now() and suffix <> "
     "coalesce((select apps_suffix from ssc.org where id = :org), '') "
-    "order by until desc, suffix desc limit :previous) r)"
+    "order by until desc, suffix desc limit :previous) r), "
+    "(select coalesce(jsonb_agg(jsonb_build_array(t.environment_id, t.origin) "
+    "order by t.environment_id, t.origin collate \"C\"), '[]') from ssc.form_target t "
+    "where t.org_id = :org)"
 )
 
 
@@ -115,6 +118,14 @@ def _egress(
     if not hosts and not by_env:
         return None
     return {"hosts": hosts, "credentials": by_env}
+
+
+def _form_targets(rows: list[list[str]], known: Collection[str]) -> dict[str, Any] | None:
+    by_env: dict[str, list[str]] = {}
+    for env_id, origin in rows:
+        if env_id in known:
+            by_env.setdefault(env_id, []).append(origin)
+    return by_env or None
 
 
 def _connections(linked: list[list[Any]], known: Collection[str]) -> dict[str, Any] | None:
@@ -156,9 +167,18 @@ async def compile_document(
 ) -> SnapshotDoc:
     """The org's snapshot as of one read. Pure reads in ``conn``'s org-bound transaction."""
     read = {"org": org_id, "keep": MAX_CREDENTIALS, "previous": MAX_PREVIOUS_SUFFIXES}
-    envs, grants, users, members, egress_hosts, credentials, linked, suffix, retired = (
-        await conn.execute(_READ_ORG, read)
-    ).one()
+    (
+        envs,
+        grants,
+        users,
+        members,
+        egress_hosts,
+        credentials,
+        linked,
+        suffix,
+        retired,
+        form_targets,
+    ) = (await conn.execute(_READ_ORG, read)).one()
     environments: dict[str, Any] = {
         env_id: {
             "app_id": app_id,
@@ -204,6 +224,7 @@ async def compile_document(
             "egress": _egress(egress_hosts, credentials, environments),
             "suffix": suffix,
             "previous_suffixes": [{"suffix": n, "until": u} for n, u in retired] or None,
+            "form_targets": _form_targets(form_targets, environments),
         }
     )
 

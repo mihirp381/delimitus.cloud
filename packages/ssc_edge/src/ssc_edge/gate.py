@@ -28,7 +28,9 @@ Stages, in order, stopping at the first refusal:
 7. Environment and sharing rule (``ssc_shared.access.decide``): an unknown host label and any
    refusal are the same ``404`` page.
 8. Allowed: the identity note is minted for the environment id, and the request goes to the
-   environment's service with the time Cloud Run will end it (``X-SSC-Request-Deadline``). A
+   environment's service with the time Cloud Run will end it (``X-SSC-Request-Deadline``). The
+   browser's answer gets ``Content-Security-Policy: form-action 'self' <form_targets>;
+   frame-ancestors 'self'`` (CD-5.2) beside any policy of the app's. A
    browser page load without the wake cookie is marked for the "waking up" page
    (``ssc_edge.envoy``). A WebSocket, an event stream and every other request that is not a page
    or a static file (:func:`relayed`) is admitted to the stream relay (``ssc_edge.streams``),
@@ -40,7 +42,7 @@ A refusal never names the reason to the caller; ``Deny.reason`` is for the gatew
 import base64
 import hashlib
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, Protocol
@@ -85,6 +87,7 @@ removes it before forwarding."""
 STREAM_HEADER: Final = "x-ssc-stream"
 """Internal: the stream relay's ticket for a WebSocket or an event stream (``ssc_edge.streams``).
 Envoy sends a request carrying it to the relay, which removes it."""
+CSP_HEADER: Final = "content-security-policy"
 SCHEDULE_HEADER: Final = SCHEDULE_TOKEN_HEADER.lower()
 """A timer call's schedule token. The check reads it and Envoy removes it before forwarding."""
 REQUEST_SECONDS: Final = MAX_TIMEOUT_SECONDS
@@ -175,6 +178,10 @@ def new_nonce() -> str:
 def upstream_host(environment_id: str, *, project_number: str, region: str) -> str:
     """The deterministic ``run.app`` host of the environment's Cloud Run service (decision 014)."""
     return f"{service_name(environment_id)}-{project_number}.{region}.run.app"
+
+
+def form_policy(targets: Iterable[str]) -> str:
+    return " ".join(("form-action 'self'", *targets)) + "; frame-ancestors 'self'"
 
 
 def page_load(facts: Facts) -> bool:
@@ -476,10 +483,12 @@ class Gate:
             email=session.email or None,
         )
         upstream, headers = self._forward(env_id, env, note, now)
-        client: tuple[tuple[str, str], ...] = ()
+        client: tuple[tuple[str, str], ...] = (
+            (CSP_HEADER, form_policy(view.form_targets.get(env_id, ()))),
+        )
         if page_load(facts) and not cookie_values(facts.headers.get("cookie", ""), WAKE_COOKIE):
             headers[WAKE_HEADER] = "1"
-            client = (("set-cookie", wake_cookie()),)
+            client = (*client, ("set-cookie", wake_cookie()))
         return Allow(
             upstream=upstream,
             headers=MappingProxyType(headers),

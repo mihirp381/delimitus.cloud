@@ -628,6 +628,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app_id}/environments/{environment_id}/form-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Form Targets
+         * @description Replace the origins the environment's pages may post forms to beside their own; an
+         *     empty list leaves only the app's own origin. The gateway sends them in `form-action` once
+         *     the next snapshot is read. Audited as ``org.updated`` on ``environment``.
+         */
+        put: operations["put_form_targets_v1_apps__app_id__environments__environment_id__form_targets_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app_id}/environments/{environment_id}/grants": {
         parameters: {
             query?: never;
@@ -3299,6 +3321,11 @@ export interface components {
             config_version: number;
             /** Current Deployment Id */
             current_deployment_id: string | null;
+            /**
+             * Form Targets
+             * @description Origins the environment's pages may post forms to beside their own, by byte order; the gateway names them in `form-action`.
+             */
+            form_targets: string[];
             /** Grants Version */
             grants_version: number;
             /** Id */
@@ -3371,6 +3398,21 @@ export interface components {
              * @enum {string}
              */
             to: "customer" | "default";
+        };
+        /** FormTargetsIn */
+        FormTargetsIn: {
+            /** Origins */
+            origins: string[];
+        };
+        /** FormTargetsOut */
+        FormTargetsOut: {
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Origins
+             * @description By byte order.
+             */
+            origins: string[];
         };
         /** GrantBody */
         GrantBody: {
@@ -7523,6 +7565,87 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    put_form_targets_v1_apps__app_id__environments__environment_id__form_targets_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+                environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FormTargetsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormTargetsOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
             422: {
                 headers: {
                     [name: string]: unknown;

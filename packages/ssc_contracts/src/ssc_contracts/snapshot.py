@@ -33,6 +33,7 @@ MAX_SUFFIX: Final = 203
 """The longest apps suffix whose hosts all fit in 253 characters: the longest first label (49)
 and a dot take the other 50."""
 MAX_PREVIOUS_SUFFIXES: Final = 8
+MAX_FORM_TARGETS: Final = 20
 
 OrgId = Annotated[str, StringConstraints(pattern=r"^org_[a-z0-9]{20}$")]
 AppId = Annotated[str, StringConstraints(pattern=r"^app_[a-z0-9]{20}$")]
@@ -72,6 +73,23 @@ def check_suffix(suffix: str) -> str:
 
 
 Suffix = Annotated[str, AfterValidator(check_suffix)]
+
+
+def check_form_origin(origin: str) -> str:
+    """``https://`` and a lower-case DNS name of at least two labels; no port, path or user."""
+    host = origin.removeprefix("https://")
+    labels = host.split(".")
+    if (
+        host == origin
+        or len(host) > 253  # noqa: PLR2004  (a DNS name)
+        or len(labels) < 2  # noqa: PLR2004  (a name under a top-level domain)
+        or not all(_DNS_LABEL.fullmatch(label) for label in labels)
+    ):
+        raise ValueError(f"not an https origin: {origin!r}")
+    return origin
+
+
+FormOrigin = Annotated[str, AfterValidator(check_form_origin)]
 
 
 class _Frozen(BaseModel):
@@ -239,6 +257,23 @@ class SnapshotDoc(_Frozen):
         exclude_if=lambda v: v is None,
         description="Suffixes the org used before, by until then suffix (CD-1).",
     )
+    form_targets: dict[EnvId, tuple[FormOrigin, ...]] | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description="Origins each environment's forms may post to beside its own (CD-5.2).",
+    )
+
+    @field_validator("form_targets")
+    @classmethod
+    def _few_form_targets(
+        cls, value: dict[str, tuple[str, ...]] | None
+    ) -> dict[str, tuple[str, ...]] | None:
+        for env_id, origins in (value or {}).items():
+            if not 0 < len(origins) <= MAX_FORM_TARGETS:
+                raise ValueError(f"{env_id} lists 1 to {MAX_FORM_TARGETS} form targets")
+            if list(origins) != sorted(set(origins)):
+                raise ValueError(f"{env_id} form targets must be unique and sorted by byte order")
+        return value
 
     @model_validator(mode="after")
     def _references_resolve(self) -> Self:
@@ -265,6 +300,8 @@ class SnapshotDoc(_Frozen):
             raise ValueError(
                 "an egress credential names an environment that is not in environments"
             )
+        if not (self.form_targets or {}).keys() <= self.environments.keys():
+            raise ValueError("form_targets name an environment that is not in environments")
         previous = self.previous_suffixes or ()
         keys = [(p.until, p.suffix) for p in previous]
         if keys != sorted(keys):

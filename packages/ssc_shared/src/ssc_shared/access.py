@@ -102,7 +102,8 @@ class AccessView:
     """A validated snapshot with its lookups built. Immutable once constructed. ``connections``
     is the data gateway's lookup (SSC-050): name to connection, empty when the document has none.
     ``egress`` is the egress proxy's allowlist and credentials (SSC-053), None when it has none.
-    ``suffix`` is the org's apps suffix (CD-1), None for the default one."""
+    ``suffix`` is the org's apps suffix (CD-1), None for the default one. ``form_targets`` are
+    the origins each environment's forms may post to beside its own (CD-5.2)."""
 
     __slots__ = (
         "active_users",
@@ -110,6 +111,7 @@ class AccessView:
         "connections",
         "egress",
         "environments",
+        "form_targets",
         "groups_by_user",
         "hosts",
         "not_before",
@@ -146,6 +148,9 @@ class AccessView:
         self.egress: SnapshotEgress | None = doc.egress
         self.suffix: str | None = doc.suffix
         self.previous_suffixes: tuple[SnapshotRetiredSuffix, ...] = doc.previous_suffixes or ()
+        self.form_targets: Mapping[str, tuple[str, ...]] = MappingProxyType(
+            dict(doc.form_targets or {})
+        )
 
     @classmethod
     def from_document(cls, doc: SnapshotDoc | Mapping[str, object] | bytes | str) -> Self:

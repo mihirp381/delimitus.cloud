@@ -57,7 +57,7 @@ VIEWS: Final[Mapping[str, frozenset[str]]] = {
         {"role", "status"} | {"reason", "applied_at", "applied_via"}  # SSC-097: restore-admin
     ),
     "user_group": frozenset({"directory_ref", "added", "removed"}),
-    "environment": frozenset({"name", "profile", "grants_version"}),
+    "environment": frozenset({"name", "profile", "grants_version", "form_targets"}),  # CD-5.2
     "approval_request": frozenset(
         {
             "kind",

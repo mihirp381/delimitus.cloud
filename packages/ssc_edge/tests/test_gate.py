@@ -33,6 +33,7 @@ from edge_world import (
 from ssc_app.identity import verify
 from ssc_edge import pages
 from ssc_edge.gate import (
+    CSP_HEADER,
     DEADLINE_HEADER,
     IDENTITY_HEADER,
     REQUEST_SECONDS,
@@ -564,6 +565,41 @@ async def test_the_deadline_is_the_lower_of_the_gateway_and_the_environment(
     assert out.headers[DEADLINE_HEADER] == str(NOW + told)
 
 
+POLICY = "form-action 'self'; frame-ancestors 'self'"
+
+
+@pytest.mark.parametrize("member", [{}, {"form_targets": None}], ids=["absent", "null"])
+async def test_every_allowed_request_gets_the_form_and_frame_policy(
+    world: World, member: dict[str, Any]
+) -> None:
+    world.view = AccessView.from_document(snapshot(2, **member))
+    out = await check(world, facts(cookie=world.cookie()))
+    assert isinstance(out, Allow)
+    assert out.client_headers == ((CSP_HEADER, POLICY),)
+
+
+async def test_an_environment_s_form_targets_join_its_form_action(world: World) -> None:
+    targets = ["https://pay.example.com", "https://sso.testorg.com"]
+    world.view = AccessView.from_document(snapshot(2, form_targets={PROD: targets}))
+    out = await check(world, facts(cookie=world.cookie()))
+    assert isinstance(out, Allow)
+    assert dict(out.client_headers)[CSP_HEADER] == (
+        "form-action 'self' https://pay.example.com https://sso.testorg.com; frame-ancestors 'self'"
+    )
+    preview = await check(
+        world, facts(PREVIEW_HOST, cookie=world.cookie(session(ADA), PREVIEW_HOST))
+    )
+    assert isinstance(preview, Allow)
+    assert dict(preview.client_headers)[CSP_HEADER] == POLICY
+
+
+async def test_a_refusal_carries_no_form_policy(world: World) -> None:
+    out = await denied(world, facts(PAY_HOST, cookie=world.cookie(session(BEN), PAY_HOST)))
+    assert CSP_HEADER not in dict(out.headers)
+    login = await denied(world, facts())
+    assert CSP_HEADER not in dict(login.headers)
+
+
 PAGE_LOAD = {
     "sec_fetch_site": "none",
     "sec_fetch_mode": "navigate",
@@ -578,7 +614,7 @@ async def test_a_page_load_is_marked_for_the_waking_page_and_gets_the_cookie(
     out = await check(world, facts(cookie=world.cookie(), **PAGE_LOAD))
     assert isinstance(out, Allow)
     assert out.headers[WAKE_HEADER] == "1"
-    assert out.client_headers == (("set-cookie", wake_cookie()),)
+    assert out.client_headers == ((CSP_HEADER, POLICY), ("set-cookie", wake_cookie()))
     assert wake_cookie() == (
         f"{WAKE_COOKIE}=1; Path=/; Max-Age=120; Secure; HttpOnly; SameSite=Lax"
     )
@@ -607,7 +643,7 @@ async def test_nothing_else_is_marked(world: World, method: str, changes: dict[s
     out = await check(world, facts(method=method, cookie=cookie, **headers))
     assert isinstance(out, Allow), out
     assert WAKE_HEADER not in out.headers
-    assert out.client_headers == ()
+    assert out.client_headers == ((CSP_HEADER, POLICY),)
 
 
 async def test_a_refused_page_load_is_never_marked(world: World) -> None:

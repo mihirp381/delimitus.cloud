@@ -41,6 +41,10 @@ class EnvironmentOut(Strict):
         ", with `--preview` after the slug for preview (decision 004). Null only for a slug stored "
         "before the host rule refused it."
     )
+    form_targets: list[str] = Field(
+        description="Origins the environment's pages may post forms to beside their own, by "
+        "byte order; the gateway names them in `form-action`."
+    )
 
 
 class AppOut(Strict):
@@ -84,7 +88,9 @@ _SELECT_APPS = text(
 )
 _SELECT_ENVS = text(
     "select e.id, e.name, e.config_version, e.grants_version, e.current_deployment_id, a.slug, "
-    "o.cell_label, o.apps_suffix from ssc.environment e "
+    "o.cell_label, o.apps_suffix, coalesce((select array_agg(t.origin order by t.origin "
+    'collate "C") from ssc.form_target t where t.org_id = e.org_id '
+    "and t.environment_id = e.id), '{}') as form_targets from ssc.environment e "
     "join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
     "join ssc.org o on o.id = e.org_id "
     "where e.org_id = :org and e.app_id = :app order by e.name"
@@ -112,6 +118,7 @@ async def environments_of(uow: UnitOfWork, app_id: str, apps_domain: str) -> lis
             url=_url(
                 r["slug"], r["name"], suffix_of(r["cell_label"], r["apps_suffix"], apps_domain)
             ),
+            form_targets=list(r["form_targets"]),
         )
         for r in rows
     ]

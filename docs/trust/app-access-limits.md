@@ -61,3 +61,32 @@ promise beyond what is written here. Decided for MVP V1 by the founder, 2026-10-
   replaced machine gets the newest stable Container-Optimized OS. Automatic updates are off on
   the machine, which is patched by replacing it. Pinning an exact image is not in V1.
   [cell.py:72, 2148; infra/README.md, Egress proxy]
+
+## Forms and cookies on your own domain
+
+- With a customer domain (CD-1 to CD-4), apps live under your own name, for example
+  `ledger.tools.testorg.com`, and so share a site with every other `*.testorg.com` system. Browsers
+  treat requests between them as same-site: `SameSite` cookies do not stop a page on one host
+  from posting a form to another, so an app could be used for cross-site request forgery
+  (CSRF) against your other systems. The gateway draws two lines for that reason.
+- **Cookies.** The gateway drops every `Set-Cookie` from an app that carries a `Domain`
+  attribute, in any case, and logs how many it dropped. An app's cookies are therefore host-only:
+  they reach only the app's own host, never `testorg.com` or a sibling. Every other cookie is
+  passed unchanged. [ssc_edge envoy.py, `ROUTE_LUA`]
+- **Forms and frames.** Every allowed request to an app gets
+  `Content-Security-Policy: form-action 'self'; frame-ancestors 'self'` on its answer: a page
+  may post forms only to its own origin, and only its own origin may frame it. An org admin can
+  name up to 20 more origins per environment (`https://host`, no path or port) with
+  `PUT /v1/apps/{app_id}/environments/{environment_id}/form-targets`, audited as `org.updated`;
+  they are added to `form-action` from the next access snapshot. An app's own
+  `Content-Security-Policy` is kept beside it, and a browser enforces both, so this never loosens
+  the app's policy. [ssc_edge gate.py, `form_policy`; access-snapshot.md (CD-5.2)]
+- What this does not cover: a plain link or a script's `fetch()` to a sibling host. `fetch()`
+  from an app page carries no cookies of another host unless that host allows the app's origin
+  in its CORS answer; links are top-level navigations and the target host decides what they may
+  do.
+- Recommendation: for apps that handle sensitive data, or when your other systems under the
+  same name were not built expecting a neighbour, give Delimitus a dedicated sub-label
+  (`apps.tools.testorg.com` with nothing else under `tools`) or, better for regulated customers,
+  a dedicated domain you register for it (`testorg-tools.com`), which puts the apps on a site of
+  their own. The mechanics are the same.

@@ -2498,3 +2498,52 @@ def test_one_live_domain_per_org_and_its_columns_are_checked(dsns: Dsns) -> None
     assert refused(dsns.app, org.org_id, delete, (good["id"],)) == INSUFFICIENT_PRIVILEGE
     assert refused(dsns.app, None, "truncate ssc.org_domain") == INSUFFICIENT_PRIVILEGE
     assert refused(dsns.migrate, None, "truncate ssc.org_domain") == SqlState.TRUNCATE_REFUSED
+
+
+def test_0048_adds_form_target_and_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database form_targets owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="form_targets").render_as_string(hide_password=False)
+    exists = "select to_regclass('ssc.form_target') is not null"
+    upgrade(dsn, "0047_org_domain_provider")
+    assert run(dsn, None, exists) == [(False,)]
+    upgrade(dsn, "0048_form_target")
+    assert run(dsn, None, exists) == [(True,)]
+    downgrade(dsn, "0047_org_domain_provider")
+    assert run(dsn, None, exists) == [(False,)]
+    upgrade(dsn, "0048_form_target")
+    assert run(dsn, None, exists) == [(True,)]
+
+
+INSERT_TARGET = (
+    "insert into ssc.form_target (org_id, environment_id, origin) values (%s, %s, %s) "
+    "returning origin"
+)
+
+
+def test_form_targets_are_https_origins_of_the_org_s_own_environments(
+    dsns: Dsns, orgs: tuple[SeededOrg, SeededOrg]
+) -> None:
+    a, b = orgs
+    pay = "https://pay.testorg.com"
+    assert run(dsns.app, a.org, INSERT_TARGET, (a.org, a.env, pay)) == [(pay,)]
+    assert refused(dsns.app, a.org, INSERT_TARGET, (a.org, a.env, pay)) == UNIQUE_VIOLATION
+    for bad in (
+        "http://pay.testorg.com",
+        "https://pay.testorg.com/",
+        "https://pay.testorg.com:443",
+        "https://Pay.testorg.com",
+        "https://localhost",
+        "https://" + "a" * 64 + ".com",
+        "https://" + ".".join(["a" * 60] * 5),
+    ):
+        assert refused(dsns.app, a.org, INSERT_TARGET, (a.org, a.env, bad)) == CHECK_VIOLATION, bad
+    assert refused(dsns.app, b.org, INSERT_TARGET, (b.org, a.env, pay)) == FOREIGN_KEY_VIOLATION
+    assert refused(dsns.app, b.org, INSERT_TARGET, (a.org, a.env, pay)) == INSUFFICIENT_PRIVILEGE
+    assert run(dsns.app, b.org, "select origin from ssc.form_target") == []
+    update = "update ssc.form_target set origin = %s where org_id = %s"
+    assert refused(dsns.app, a.org, update, (pay, a.org)) == INSUFFICIENT_PRIVILEGE
+    delete = "delete from ssc.form_target where org_id = %s returning origin"
+    assert run(dsns.app, a.org, delete, (a.org,)) == [(pay,)]
+    assert refused(dsns.app, None, "truncate ssc.form_target") == INSUFFICIENT_PRIVILEGE
+    assert refused(dsns.migrate, None, "truncate ssc.form_target") == SqlState.TRUNCATE_REFUSED

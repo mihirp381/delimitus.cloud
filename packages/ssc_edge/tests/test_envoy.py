@@ -238,7 +238,7 @@ def test_only_a_marked_page_load_is_cut_at_two_seconds() -> None:
     assert authz["clear_route_cache"] is True
     on_success = authz["http_service"]["authorization_response"]
     assert on_success["allowed_client_headers_on_success"] == {
-        "patterns": [{"exact": "set-cookie"}]
+        "patterns": [{"exact": "set-cookie"}, {"exact": "content-security-policy"}]
     }
     assert {"exact": STREAM_HEADER} in on_success["allowed_upstream_headers"]["patterns"]
 
@@ -407,6 +407,9 @@ def test_an_app_cookie_that_names_a_domain_never_reaches_the_browser(stack: Stac
     assert r.headers.get_list("set-cookie") == [
         "app=2; Path=/",
         "keep=domain=x; Path=/domain=y; SameSite=Lax",
+    ]
+    assert r.headers.get_list("content-security-policy") == [
+        "form-action 'self'; frame-ancestors 'self'"
     ]
 
 

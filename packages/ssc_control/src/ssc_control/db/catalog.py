@@ -75,6 +75,8 @@ Revision 0046 adds ``org_domain`` (CD-3), an ordinary org-scoped table: an org's
 its name servers and its certificate's state; retired, never deleted.
 Revision 0047 adds ``org_domain.provider`` and ``stalled_at`` (CD-4): the DNS provider name read
 at request time and when a stalled certificate was first logged.
+Revision 0048 adds ``form_target`` (CD-5.2), keyed by org, environment and origin, so it is in
+``UNKEYED_TABLES``: origins an environment's forms may post to, nothing else.
 """
 
 from collections.abc import Mapping
@@ -131,6 +133,7 @@ TABLES: Final[frozenset[str]] = frozenset(
         "oauth_code",  # SSC gap 7, revision 0033
         "org_suffix_retired",  # CD-1, revision 0045
         "org_domain",  # CD-3, revision 0046
+        "form_target",  # CD-5.2, revision 0048
     }
 )
 
@@ -169,6 +172,7 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "egress_credential",
         "warm_gateway",
         "org_suffix_retired",
+        "form_target",
     }
 )
 
@@ -238,6 +242,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "oauth_client": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # unused ones pruned
     "org_suffix_retired": frozenset({"SELECT", "INSERT", "DELETE"}),  # pruned after until
     "org_domain": frozenset({"SELECT", "INSERT", "UPDATE"}),  # retired, never deleted
+    "form_target": frozenset({"SELECT", "INSERT", "DELETE"}),  # replaced as a list
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
     "cell": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; retired, never deleted
     "onboarding": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; abandoned, never deleted

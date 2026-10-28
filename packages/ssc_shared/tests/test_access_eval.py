@@ -384,6 +384,40 @@ def test_a_bad_suffix_member_is_refused(bad: dict[str, Any]) -> None:
         AccessView.from_document(json.dumps(doc(**bad)))
 
 
+def test_form_targets_are_optional_and_reach_the_view_byte_for_byte() -> None:
+    assert "form_targets" not in SnapshotDoc.model_validate(doc()).model_dump(mode="json")
+    nulled = SnapshotDoc.model_validate(doc(form_targets=None))
+    assert "form_targets" not in nulled.model_dump(mode="json")
+    assert view().form_targets == {}
+    raw = doc(form_targets={PROD: ["https://pay.example.com", "https://sso.testorg.com"]})
+    parsed = SnapshotDoc.model_validate(raw)
+    assert canonical_bytes(parsed.model_dump(mode="json")) == canonical_bytes(raw)
+    found = AccessView.from_document(json.dumps(raw)).form_targets
+    assert found == {PROD: ("https://pay.example.com", "https://sso.testorg.com")}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {PROD: []},
+        {PROD: ["https://b.example.com", "https://a.example.com"]},
+        {PROD: ["https://a.example.com", "https://a.example.com"]},
+        {PROD: [f"https://s{n:02d}.example.com" for n in range(21)]},
+        {"env_" + "x" * 20: ["https://a.example.com"]},
+        {PROD: ["http://a.example.com"]},
+        {PROD: ["https://a.example.com/"]},
+        {PROD: ["https://a.example.com:8443"]},
+        {PROD: ["https://A.example.com"]},
+        {PROD: ["https://localhost"]},
+        {PROD: ["https://user@a.example.com"]},
+        {PROD: ["a.example.com"]},
+    ],
+)
+def test_a_bad_form_targets_member_is_refused(bad: dict[str, Any]) -> None:
+    with pytest.raises(SnapshotInvalidError):
+        AccessView.from_document(json.dumps(doc(form_targets=bad)))
+
+
 def test_the_view_is_read_only() -> None:
     v = view()
     with pytest.raises(TypeError):
