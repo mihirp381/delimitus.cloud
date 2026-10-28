@@ -5,6 +5,7 @@ postgres:18 and a fake WorkOS.
                                                                   test_create_social_org_refuses_...
   2 the admin signs in and invites; the member signs in       -> test_the_invited_admin_signs_in_...
   3 restore-admin needs a social link in a social org          -> test_restore_admin_in_a_social_...
+  4 sync skips a social org with no connection                 -> test_sync_skips_a_social_org_...
   5 the chooser lists its providers; a miss is the same miss   -> test_the_chooser_of_a_created_...
   6 the directory path is unchanged                            -> every existing suite
 """
@@ -29,7 +30,8 @@ from ssc_contracts.ids import new_id
 from ssc_control.api import Settings, create_app
 from ssc_control.db import bound_org, make_engine
 from ssc_control.identity import __main__ as cli
-from ssc_control.identity import operator, pages, social
+from ssc_control.identity import jobs as identity_jobs
+from ssc_control.identity import operator, pages, social, sync
 from ssc_control.identity.connections import ConnectError
 
 WORKOS_ENV = ("SSC_WORKOS_API_KEY", "SSC_WORKOS_CLIENT_ID", "SSC_WORKOS_BASE")
@@ -243,7 +245,7 @@ async def test_the_chooser_of_a_created_social_org_lists_its_providers(dsns: Dsn
         }
 
 
-# ── restore-admin ────────────────────────────────────────────────────────────
+# ── restore-admin and sync ───────────────────────────────────────────────────
 
 
 async def test_restore_admin_in_a_social_org_needs_a_social_link(dsns: Dsns) -> None:
@@ -275,3 +277,30 @@ async def test_restore_admin_in_a_social_org_needs_a_social_link(dsns: Dsns) -> 
         await chain_ok(w.engine, w.org)
     finally:
         await w.engine.dispose()
+
+
+def test_sync_skips_a_social_org_without_a_connection(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def arrange(engine: AsyncEngine) -> tuple[str, int, object, list[str]]:
+        w = await social_org(engine)
+
+        async def only_it(_: AsyncEngine) -> list[str]:
+            return [w.org]
+
+        monkeypatch.setattr(identity_jobs, "all_org_ids", only_it)
+        client = w.wo.client()
+        try:
+            synced = await identity_jobs.sync_all(engine, client)
+            ticked = await sync.tick(engine, client, w.org)
+        finally:
+            await client.aclose()
+        return w.org, synced, ticked, w.wo.calls
+
+    org, synced, ticked, calls = run(dsns, arrange)
+    assert (synced, ticked, calls) == (0, None, [])
+    monkeypatch.setenv("SSC_DATABASE_DSN", dsns.app)
+    monkeypatch.setenv("SSC_WORKOS_API_KEY", "sk_test_fake")
+    monkeypatch.setenv("SSC_WORKOS_CLIENT_ID", "client_fake")
+    monkeypatch.setenv("SSC_WORKOS_BASE", "https://workos.invalid")
+    assert cli.main(["sync", "--org", org]) == 0
