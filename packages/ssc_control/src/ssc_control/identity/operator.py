@@ -51,6 +51,7 @@ _LONG_DIGITS: Final = re.compile(r"\d{6,}")
 _CONTROL: Final = re.compile(r"[\x00-\x1f\x7f]")
 _EMAIL: Final = re.compile(r"[^@\s\x00-\x1f\x7f]+@[^@\s\x00-\x1f\x7f]+")
 MAX_EMAIL: Final = 320
+MAX_ORG_NAME: Final = 200
 
 _SET_CELL_LABEL = text("update ssc.org set cell_label = :label where id = :org")
 _LOCK_USER = text(
@@ -105,6 +106,13 @@ def check_email(value: str) -> str:
     if len(email) > MAX_EMAIL or not _EMAIL.fullmatch(email):
         raise ValueError(f"an email address is name@domain, at most {MAX_EMAIL} characters")
     return email
+
+
+def check_org_name(value: str) -> str:
+    name = value.strip()
+    if not 1 <= len(name) <= MAX_ORG_NAME or _CONTROL.search(name):
+        raise ValueError(f"an org name is 1 to {MAX_ORG_NAME} characters on one line")
+    return name
 
 
 def check_reason(value: str) -> str:
@@ -210,9 +218,11 @@ async def create_social_org(  # noqa: PLR0913  (keyword-only)
     actor: Actor,
 ) -> SocialOrg:
     """The org in social mode with its first admin invited, and its cell label: all of it or
-    none. :class:`ConnectError` for a malformed address or label, or a label already taken."""
+    none. :class:`ConnectError` for a malformed name, address or label, or a label already
+    taken."""
     try:
         email, label = check_email(admin_email), check_cell_label(cell_label)
+        name = check_org_name(name)
     except ValueError as e:
         raise ConnectError(str(e)) from e
     org_id, admin_id = new_id("org"), new_id("usr")

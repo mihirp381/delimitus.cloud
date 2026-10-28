@@ -156,9 +156,12 @@ def test_create_social_org_refuses_bad_input_before_writing(
         {"admin_email": "two words@example.com"},
         {"admin_email": None},
         {"operator": "dana"},
+        {"name": " "},
+        {"name": "x" * 201},
+        {"name": "two\nlines"},
     ):
         with pytest.raises(SystemExit) as refused:
-            cli.main(argv(name=name, **bad))
+            cli.main(argv(**{"name": name, **bad}))
         assert refused.value.code == 2, bad
     capsys.readouterr()
     assert org_rows(dsns, name) == (0, 0)
@@ -173,7 +176,7 @@ def test_create_social_org_refuses_bad_input_before_writing(
 async def test_create_social_org_refuses_a_malformed_address_or_label(dsns: Dsns) -> None:
     engine = make_engine(dsns.app)
     try:
-        for change in ({"admin_email": "nobody"}, {"cell_label": "UPPERCASE1"}):
+        for change in ({"admin_email": "nobody"}, {"cell_label": "UPPERCASE1"}, {"name": ""}):
             kw: dict[str, Any] = {
                 "name": "Bad-direct",
                 "admin_email": "ada@example.com",
