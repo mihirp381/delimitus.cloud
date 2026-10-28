@@ -73,7 +73,8 @@ Success: answered above 2026-10-26; decision 004 amendment drafted (CD-7.1) with
   `SSC_APP_ORIGIN` still set for links but no longer used for verification. Data gateway checks environment
   id. `docs/contracts/identity-note.md` and vectors updated. `agentpack/content.py` text updated.
 - Success: adversarial matrix cases that replay a note across apps still fail; a suffix flip on a staging
-  org leaves every running revision answering 200 with no redeploy; `ssc_app` conformance green.
+  org leaves every running revision answering 200 with no redeploy; `ssc_app` conformance green; the
+  reconciler rolls each app once for the new `SSC_APP_ORIGIN`; verification never depends on it.
 
 **CD-2b (not built; Q1 answered environment id. Kept for the record.)**
 - Verifier accepts `SSC_APP_ORIGIN` and `SSC_APP_ORIGIN_PREVIOUS`; flip job re-applies every active

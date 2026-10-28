@@ -14,6 +14,7 @@ ENV_NAMES: Final = {
     "pool_size": str(app_database.POOL_SIZE),
     "connection_limit": str(app_database.CONNECTION_LIMIT),
     "max_instances": str(app_database.MAX_INSTANCES),
+    "app_env_id": app_env.APP_ENV_ID,
     "app_origin": app_env.APP_ORIGIN,
     "keys_url": app_env.IDENTITY_KEYS_URL,
     "egress_names": ", ".join(f"`{name}`" for name in app_env.EGRESS_NAMES),
@@ -220,12 +221,13 @@ own; its calls are recorded the same way. Set it up once:
 - Node: `import {{ IdentityVerifier }} from '@delimitus/ssc-identity'`, then
   `await new IdentityVerifier({{ audience, keys }}).fromHeaders(req.headers)`.
 - Key users on `note.sub`, never on email or name, which can change.
-- Take `audience` from `os.environ["{app_origin}"]` (Node: `process.env.{app_origin}`), the
-  app's own exact origin (such as `https://expenses.qtbvkmrdhpsc.delimitusapps.com`, and
-  `https://expenses--preview.qtbvkmrdhpsc.delimitusapps.com` in preview), and `keys` from
-  `os.environ["{keys_url}"]`, which in a cell holds the keys as a `data:` URL. Only code
+- Take `audience` from `os.environ["{app_env_id}"]` (Node: `process.env.{app_env_id}`), the
+  app environment's id (`env_` and 20 characters; prod and preview each have their own), and
+  `keys` from `os.environ["{keys_url}"]`, which in a cell holds the keys as a `data:` URL. Only code
   outside a cell passes the JWKS address, `https://keys.delimitus.com/<cell>/jwks.json`. Never
   hard-code either. While one is unset, treat every request as not signed in.
+- `{app_origin}` is the app's own address (such as
+  `https://expenses.qtbvkmrdhpsc.delimitusapps.com`), for links only; never verify with it.
 - Treat every refusal as "not a signed-in user": answer 401 and never echo the note.
 
 ### Data
@@ -315,7 +317,8 @@ postgres = true
 ```
 
 SSC sets `{port}`, `{home}`, `{database_url}` and the `PG` names (only with `postgres = true`),
-`{app_origin}` and `{keys_url}` itself; the last two are not set in every environment yet.
+`{app_env_id}`, `{app_origin}` and `{keys_url}` itself; the last three are not set in every
+environment yet.
 With `[egress] hosts` it also sets {egress_names}: outbound calls go through the cell's proxy,
 only over HTTPS and only to hosts on the company's allowlist; anything else is refused with a
 message that names the host. `ssc.toml` cannot set them, `PATH` or `DATABASE_CA`, nor any name

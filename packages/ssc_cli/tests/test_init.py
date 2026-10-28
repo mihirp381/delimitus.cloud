@@ -594,7 +594,9 @@ def test_init_help_names_every_file_it_writes(cli) -> None:
 def test_the_identity_rules_read_both_settings_from_the_environment() -> None:
     text = " ".join(guide([], MCP_URL).split())
     assert f'os.environ["{app_env.IDENTITY_KEYS_URL}"]' in text
-    assert f'os.environ["{app_env.APP_ORIGIN}"]' in text
+    assert f'os.environ["{app_env.APP_ENV_ID}"]' in text
+    assert f'os.environ["{app_env.APP_ORIGIN}"]' not in text
+    assert f"`{app_env.APP_ORIGIN}` is the app's own address" in text
     assert "a `data:` URL" in text
     jwks = text.split("keys.delimitus.com/<cell>/jwks.json", 1)[0][-160:]
     assert "outside a cell" in jwks
