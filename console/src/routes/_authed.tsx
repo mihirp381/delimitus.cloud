@@ -161,6 +161,12 @@ function AuthedLayout() {
                   <Icon name="globe" />
                   <span>Internet access</span>
                 </Link>
+                {admin ? (
+                  <Link to="/domain">
+                    <Icon name="domain" />
+                    <span>Your own address</span>
+                  </Link>
+                ) : null}
               </div>
               <hr className="nav-divider" />
               <div className="nav-group">

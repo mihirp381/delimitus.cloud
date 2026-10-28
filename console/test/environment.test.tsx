@@ -348,8 +348,8 @@ const APP = {
   status: 'active',
   created_at: '2026-09-28T10:00:00Z',
   environments: [
-    { id: PREVIEW, name: 'preview', config_version: 1, grants_version: 0, current_deployment_id: null, url: null },
-    { id: PROD, name: 'prod', config_version: 2, grants_version: 3, current_deployment_id: DEPLOY, url: null },
+    { id: PREVIEW, name: 'preview', config_version: 1, form_targets: [], grants_version: 0, current_deployment_id: null, url: null },
+    { id: PROD, name: 'prod', config_version: 2, form_targets: [], grants_version: 3, current_deployment_id: DEPLOY, url: null },
   ],
 } as const;
 

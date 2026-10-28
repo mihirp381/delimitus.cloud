@@ -1,6 +1,7 @@
 """The dev stack's API: dev settings, a metrics key and a filesystem blob store by default."""
 
 import argparse
+import asyncio
 import base64
 import json
 import stat
@@ -55,6 +56,26 @@ def test_what_the_environment_sets_wins(dev_stack, tmp_path):
         "SSC_METRICS_KEY": "k",
         "SSC_ENV": "test",
     }
+
+
+def test_fake_domains_share_one_file(dev_stack, tmp_path):
+    stack = dev_stack
+    ports = stack.worker.compose_ports(
+        {**BASE, "SSC_ENV": "dev", "SSC_RUNTIME_DRIVER": "fake", "SSC_BUILD_DRIVER": "fake"}
+    )
+    shared, api_cells = stack.fake_domain_ports(tmp_path, ports)
+    assert shared.cells.cell.runtime is ports.cells.cell.runtime
+    assert api_cells.cell.runtime is None
+    stack.main(["--dir", str(tmp_path), "fake-dns", "tools.acme.example", "ns1.x", "ns2.x"])
+    stack.main(["--dir", str(tmp_path), "fake-certificate", "tools.acme.example", "active"])
+
+    async def read() -> tuple[frozenset[str], str, str]:
+        names = await shared.resolvers["google"].ns("tools.acme.example")
+        status = await shared.cells.cell.domains.status("tools.acme.example")
+        before = await api_cells.cell.domains.status("other.acme.example")
+        return names, status.state, before.state
+
+    assert asyncio.run(read()) == (frozenset({"ns1.x", "ns2.x"}), "active", "provisioning")
 
 
 def test_live_bundle_upload(live, tmp_path):

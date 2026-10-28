@@ -2,11 +2,13 @@ import { Link, useRouteContext } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import type { Grant } from '../api/grants';
 import type { AppOut, EnvironmentOut } from '../api/lifecycle';
+import { AdminOnly } from '../components/AdminOnly';
 import { Ago } from '../components/Ago';
 import { Id } from '../components/Copy';
 import { Loading } from '../components/Loading';
 import { Notice } from '../components/Notice';
 import { Panel } from '../components/Panel';
+import { FormTargets } from './FormTargets';
 import { ENV_TITLE } from './names';
 import { Promote } from './Promote';
 import { Rollback } from './Rollback';
@@ -146,6 +148,9 @@ export function EnvironmentCard({ app, env, prod }: Props) {
           <p>{waiting}</p>
         </Notice>
       ) : null}
+      <AdminOnly quiet>
+        <FormTargets key={env.form_targets.join(' ')} app={app} env={env} />
+      </AdminOnly>
       <Details
         app={app}
         env={env}
