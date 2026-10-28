@@ -13,9 +13,12 @@
   label in one transaction (``identity.operator``). The label is required: an org left with its
   generated label has no applied cell, and its snapshot and anchor jobs would have nowhere to
   write (one such org, 2026-10-07). Prints the org id.
+* ``create-social-org --name N --admin-email E --providers google[,microsoft] --cell-label L
+  --operator op_x``: a pilot org in social mode with its first admin invited, linked at their
+  first sign-in, and the cell label, in one transaction (``identity.operator``). Prints the org id.
 * ``restore-admin --org ID --user ID --operator op_x --reason TEXT [--outside-admin-group]
   [--already-applied-at TIME]``: make a person an active admin again, audited
-  (``identity.operator``).
+  (``identity.operator``). In a social org the person must have signed in once.
 * ``invite create --org ID --operator op_x --expires-in 14d --max-uses 10 [--note TEXT]``,
   ``invite list --org ID``, ``invite revoke ID --operator op_x``: pilot invite codes
   (``identity.invites``). ``create`` prints the code once; only its SHA-256 is kept.
@@ -23,7 +26,8 @@
   ``--mode directory``: a pilot org's sign-in mode, audited (``identity.social``).
 
 Every command connects with ``SSC_DATABASE_DSN``; ``sync``, ``connect`` and ``create-org`` read
-``SSC_WORKOS_API_KEY``, ``SSC_WORKOS_CLIENT_ID`` and optionally ``SSC_WORKOS_BASE``.
+``SSC_WORKOS_API_KEY``, ``SSC_WORKOS_CLIENT_ID`` and optionally ``SSC_WORKOS_BASE``; the others
+need no WorkOS settings.
 """
 
 import argparse
@@ -127,6 +131,22 @@ async def run_create_org(dsn: str, client: WorkOSClient, args: argparse.Namespac
         return made.org.org_id
     finally:
         await client.aclose()
+        await engine.dispose()
+
+
+async def run_create_social_org(dsn: str, args: argparse.Namespace) -> str:
+    engine = make_engine(dsn)
+    try:
+        made = await operator.create_social_org(
+            engine,
+            name=args.name,
+            admin_email=args.admin_email,
+            providers=args.providers,
+            cell_label=args.cell_label,
+            actor=Actor(kind=ActorKind.OPERATOR, id=args.operator),
+        )
+        return made.org_id
+    finally:
         await engine.dispose()
 
 
@@ -246,6 +266,12 @@ def _parser() -> argparse.ArgumentParser:  # noqa: PLR0915  (one parser)
     p_make.add_argument("--join-rule", choices=["idp_id", "email"], required=True)
     p_make.add_argument("--admin-group")
     p_make.add_argument("--cell-label", type=operator.check_cell_label, required=True)
+    p_social = sub.add_parser("create-social-org")
+    p_social.add_argument("--name", required=True)
+    p_social.add_argument("--admin-email", type=operator.check_email, required=True)
+    p_social.add_argument("--providers", type=social.check_providers, required=True)
+    p_social.add_argument("--cell-label", type=operator.check_cell_label, required=True)
+    p_social.add_argument("--operator", type=operator.check_operator_id, required=True)
     p_restore = sub.add_parser("restore-admin")
     p_restore.add_argument("--org", type=check_org_id, required=True)
     p_restore.add_argument("--user", required=True)
@@ -306,6 +332,14 @@ def _run(args: argparse.Namespace, dsn: str, env: dict[str, str]) -> int:  # noq
             sys.stderr.write(f"not done: {e}\n")
             return 1
         sys.stdout.writelines(f"{line}\n" for line in lines)
+        return 0
+    if args.command == "create-social-org":
+        try:
+            org_id = asyncio.run(run_create_social_org(dsn, args))
+        except connections.ConnectError as e:
+            sys.stderr.write(f"not created: {e}\n")
+            return 1
+        sys.stdout.write(org_id + "\n")
         return 0
     if args.command == "restore-admin":
         try:

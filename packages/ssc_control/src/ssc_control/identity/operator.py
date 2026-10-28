@@ -6,6 +6,11 @@ connection and the org's cell label, all in ONE org-bound transaction. A refusal
 any step rolls back all of it: no org, no ``org_index`` row, no audit event. Events, in order:
 ``org.created``, ``directory.connected``, and ``org.updated`` when a cell label is given.
 
+``create-social-org`` makes a pilot org in social mode (decision 002 amendment 2026-10-27) with no
+WorkOS organisation or directory, in one transaction: ``org.created``, ``user.invited`` (the
+first admin, linked at their first sign-in), ``org.updated`` (the mode) and ``org.updated`` (the
+cell label).
+
 ``restore-admin`` is for an org the directory left with no active admin (decision 024 allows
 that: sync deactivates a founder it cannot find, and an operator restores an admin). In one
 transaction it reactivates the person and makes them admin, and audits ``user.updated`` (role and
@@ -14,7 +19,7 @@ all with the operator as actor. ``already_applied_at`` records a change somebody
 hand without touching the row: the chain is append-only, so the event is appended now and carries
 the real time of the change in its body.
 
-Both run as ``ssc_app`` with ``SSC_DATABASE_DSN`` (the role of ``connect``). There is no API route.
+All run as ``ssc_app`` with ``SSC_DATABASE_DSN`` (the role of ``connect``). There is no API route.
 """
 
 import re
@@ -29,9 +34,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_contracts.audit import AuditAction
 from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor, NewEvent, append_event
-from ssc_control.db import CreatedOrg, NewOrg, bound_org, check_org_id, create_org_in
+from ssc_control.db import CreatedOrg, NewOrg, bound_org, check_org_id, create_org_in, open_org_in
 from ssc_control.db.errors import UNIQUE_VIOLATION
-from ssc_control.identity import connections
+from ssc_control.identity import connections, social
 from ssc_control.identity.connections import ConnectError, FounderResult
 from ssc_control.identity.rules import JoinRule
 from ssc_control.identity.workos import WorkOSClient
@@ -42,6 +47,8 @@ _OPERATOR_ID: Final = re.compile(r"op_[a-z0-9][a-z0-9._-]{0,62}")
 _CELL_LABEL: Final = re.compile(r"[a-z][a-z0-9]{7,15}")
 _LONG_DIGITS: Final = re.compile(r"\d{6,}")
 _CONTROL: Final = re.compile(r"[\x00-\x1f\x7f]")
+_EMAIL: Final = re.compile(r"[^@\s\x00-\x1f\x7f]+@[^@\s\x00-\x1f\x7f]+")
+MAX_EMAIL: Final = 320
 
 _SET_CELL_LABEL = text("update ssc.org set cell_label = :label where id = :org")
 _LOCK_USER = text(
@@ -50,6 +57,10 @@ _LOCK_USER = text(
 _LINKED = text(
     "select 1 from ssc.identity_link where org_id = :org and user_id = :user "
     "and issuer = :issuer limit 1"
+)
+_INVITE_ADMIN = text(
+    "insert into ssc.user_account (id, org_id, display_name, email, role, status) "
+    "values (:id, :org, :email, :email, 'admin', 'invited')"
 )
 _IN_GROUP = text(
     "select 1 from ssc.group_member m join ssc.user_group g "
@@ -81,6 +92,13 @@ def check_cell_label(value: str) -> str:
     if not _CELL_LABEL.fullmatch(value):
         raise ValueError("a cell label is a letter then 7 to 15 lower-case letters or digits")
     return value
+
+
+def check_email(value: str) -> str:
+    email = value.strip().lower()
+    if len(email) > MAX_EMAIL or not _EMAIL.fullmatch(email):
+        raise ValueError(f"an email address is name@domain, at most {MAX_EMAIL} characters")
+    return email
 
 
 def check_reason(value: str) -> str:
@@ -159,19 +177,7 @@ async def create_org_with_directory(  # noqa: PLR0913  (keyword-only)
                 actor=actor,
             )
             if cell_label is not None:
-                await conn.execute(_SET_CELL_LABEL, {"label": cell_label, "org": org_id})
-                await append_event(
-                    conn,
-                    NewEvent(
-                        org_id=org_id,
-                        action=AuditAction.ORG_UPDATED,
-                        actor=actor,
-                        target_kind="org",
-                        target_id=org_id,
-                        before={"cell_label": created.cell_label},
-                        after={"cell_label": cell_label},
-                    ),
-                )
+                await _set_cell_label(conn, org_id, created.cell_label, cell_label, actor)
     except DBAPIError as e:
         if getattr(e.orig, "sqlstate", None) != UNIQUE_VIOLATION:
             raise
@@ -180,6 +186,72 @@ async def create_org_with_directory(  # noqa: PLR0913  (keyword-only)
             "already used by another org"
         ) from e
     return OrgSetUp(created, connection_id, founder)
+
+
+@dataclass(frozen=True, slots=True)
+class SocialOrg:
+    org_id: str
+    admin_user_id: str
+
+
+async def create_social_org(  # noqa: PLR0913  (keyword-only)
+    engine: AsyncEngine,
+    *,
+    name: str,
+    admin_email: str,
+    providers: tuple[str, ...],
+    cell_label: str,
+    actor: Actor,
+) -> SocialOrg:
+    """The org in social mode with its first admin invited, and its cell label: all of it or
+    none. :class:`ConnectError` for a malformed address or label, or a label already taken."""
+    try:
+        email, label = check_email(admin_email), check_cell_label(cell_label)
+    except ValueError as e:
+        raise ConnectError(str(e)) from e
+    org_id, admin_id = new_id("org"), new_id("usr")
+    try:
+        async with bound_org(engine, org_id) as conn:
+            generated = await open_org_in(conn, org_id, name, actor=actor)
+            await conn.execute(_INVITE_ADMIN, {"id": admin_id, "org": org_id, "email": email})
+            await append_event(
+                conn,
+                NewEvent(
+                    org_id=org_id,
+                    action=AuditAction.USER_INVITED,
+                    actor=actor,
+                    target_kind="user_account",
+                    target_id=admin_id,
+                    after={"role": "admin", "status": "invited"},
+                ),
+            )
+            await social.set_sign_in(conn, org_id, "social", providers, actor=actor)
+            await _set_cell_label(conn, org_id, generated, label, actor)
+    except DBAPIError as e:
+        if getattr(e.orig, "sqlstate", None) != UNIQUE_VIOLATION:
+            raise
+        raise ConnectError(
+            f"the cell label or the org id {org_id} is already used by another org"
+        ) from e
+    return SocialOrg(org_id, admin_id)
+
+
+async def _set_cell_label(
+    conn: AsyncConnection, org_id: str, before: str, label: str, actor: Actor
+) -> None:
+    await conn.execute(_SET_CELL_LABEL, {"label": label, "org": org_id})
+    await append_event(
+        conn,
+        NewEvent(
+            org_id=org_id,
+            action=AuditAction.ORG_UPDATED,
+            actor=actor,
+            target_kind="org",
+            target_id=org_id,
+            before={"cell_label": before},
+            after={"cell_label": label},
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)

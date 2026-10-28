@@ -52,6 +52,12 @@ async def rig_for(dsns: Dsns, providers: tuple[str, ...] = ()) -> AsyncIterator[
     if providers:
         async with bound_org(w.engine, w.org) as conn:
             await social.set_sign_in(conn, w.org, "social", providers, actor=OPERATOR)
+    async with rig_on(dsns, w) as rig:
+        yield rig
+
+
+@asynccontextmanager
+async def rig_on(dsns: Dsns, w: World) -> AsyncIterator[OAuthRig]:
     (label,) = await w.rows("select cell_label from ssc.org where id = :org")
     s = settings(dsns, console_url=CONSOLE)
     signer = tokens.Signer(s.signing_pem, s.signing_kid, s.auth_url)
